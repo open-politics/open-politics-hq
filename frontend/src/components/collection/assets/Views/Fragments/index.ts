@@ -1,9 +1,13 @@
 // Fragment display components
 export { FragmentDisplay, FragmentSectionHeader } from './FragmentDisplay';
-export { FragmentBadge, FragmentCountBadge } from './FragmentBadge';
+export { FragmentBadge, FragmentCountBadge, FragmentTypeBadge, getValueType } from './FragmentBadge';
 export { FragmentCard } from './FragmentCard';
 export { FragmentFull } from './FragmentFull';
 export { FragmentInline, FragmentInlineList } from './FragmentInline';
+
+// New accordion-based fragment display
+export { FragmentAccordion } from './FragmentAccordion';
+export { FragmentValueRenderer } from './FragmentValueRenderer';
 
 export type { 
   FragmentData,
@@ -19,5 +23,6 @@ export {
   getDisplayFragmentKey,
   formatFragmentValue,
   getFragmentColorScheme,
-  getFieldDescriptionFromSchema
+  getFieldDescriptionFromSchema,
+  generateFragmentPreview
 } from './utils';

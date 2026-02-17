@@ -3,47 +3,42 @@ Archive Handler
 ===============
 
 Handles remote archive (ZIP, TAR, etc.) downloads and extraction.
-Creates bundle hierarchy mirroring directory structure.
+Uses DirectoryImportHandler after extraction for flat bundle + virtual folders.
 """
 
 import os
+import re
 import logging
 import tempfile
 import zipfile
 import tarfile
 import aiohttp
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 
 from app.models import Asset, AssetKind, Bundle, ProcessingStatus, DatasetIngestionJob, IngestionStatus
 from app.api.services.asset_builder import AssetBuilder
 from app.api.services.bundle_service import BundleService
-from .base import IngestionContext
+from .base import BaseHandler, IngestionContext
+from .directory_import_handler import DirectoryImportHandler
 
 logger = logging.getLogger(__name__)
 
 
-class ArchiveHandler:
+class ArchiveHandler(BaseHandler):
     """
     Handle remote archive file ingestion.
     
-    Responsibilities:
+    Flow:
     - Stream download large archives (multi-GB)
-    - Extract to temporary directory
-    - Create bundle hierarchy mirroring directory structure
-    - Queue contained files for processing
+    - Extract to {LOCAL_STORAGE_BASE_PATH}/managed/archives/{name}/
+    - DirectoryImportHandler.handle(extracted_path, copy_mode=False)
+    - Flat bundle + virtual folders (no nested bundles)
     """
-    
+
     def __init__(self, context: IngestionContext):
-        self.context = context
-        self.session = context.session
-        self.storage_provider = context.storage_provider
-        self.asset_service = context.asset_service
-        self.bundle_service = context.bundle_service
-        self.user_id = context.user_id
-        self.infospace_id = context.infospace_id
-        self.settings = context.settings
-        self.options = context.options
+        super().__init__(context)
     
     async def handle(
         self,
@@ -60,10 +55,8 @@ class ArchiveHandler:
         Flow:
         1. Create root bundle for the dataset
         2. Download archive (streaming)
-        3. Extract to temp directory
-        4. Walk directory structure
-        5. Create bundle hierarchy
-        6. Queue files for processing
+        3. Extract to managed/archives/{name}/
+        4. DirectoryImportHandler for flat bundle + virtual folders
         
         Args:
             archive_url: URL of archive file
@@ -109,11 +102,7 @@ class ArchiveHandler:
         root_bundle_data = BundleCreate(
             name=archive_title,
             description=f"Extracted from {archive_url}",
-            bundle_metadata={
-                "source_url": archive_url,
-                "ingestion_type": "remote_archive",
-                "ingested_at": datetime.now(timezone.utc).isoformat()
-            }
+            bundle_metadata={},
         )
         
         root_bundle = self.bundle_service.create_bundle(
@@ -132,7 +121,7 @@ class ArchiveHandler:
             job = DatasetIngestionJob(
                 infospace_id=infospace_id,
                 user_id=user_id,
-                source_url=archive_url,
+                source_locator=archive_url,
                 kind=self._detect_archive_type(archive_url),
                 root_bundle_id=root_bundle.id,
                 status=IngestionStatus.PENDING,
@@ -172,7 +161,7 @@ class ArchiveHandler:
                 .as_kind(AssetKind.FILE)
                 .with_title(archive_title)
                 .with_metadata(
-                    source_url=archive_url,
+                    source_locator=archive_url,
                     root_bundle_id=root_bundle.id,
                     task_id=task.id,
                     job_id=job.id,
@@ -200,24 +189,67 @@ class ArchiveHandler:
         """
         Process archive synchronously (for small archives or testing).
         
-        This method downloads, extracts, and processes the entire archive
-        in the current request. Not recommended for large datasets.
+        Flow:
+        1. Download archive
+        2. Extract to {LOCAL_STORAGE_BASE_PATH}/managed/archives/{name}/
+        3. DirectoryImportHandler.handle(extracted_path, copy_mode=False)
+        4. Delete archive file (keep extracted files)
         """
+        from app.core.config import settings
+        from app.api.providers.factory import create_storage_provider
+
+        storage_base = Path(settings.LOCAL_STORAGE_BASE_PATH)
+        managed_archives = storage_base / "managed" / "archives"
+        managed_archives.mkdir(parents=True, exist_ok=True)
+
+        # Safe name from archive filename
+        filename = archive_url.split('/')[-1].split('?')[0]
+        base_name = Path(filename).stem or "archive"
+        safe_name = re.sub(r'[^\w\-_.]', '_', base_name)[:64]
+        extract_dir = managed_archives / safe_name
+        extract_dir.mkdir(parents=True, exist_ok=True)
+
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Download archive (pass user_agent if available in options)
             ua = options.get('user_agent')
             archive_path = await self._download_archive(archive_url, temp_dir, user_agent=ua)
-            
-            # Extract archive
-            extract_dir = await self._extract_archive(archive_path, temp_dir)
-            
-            # Walk directory and create bundles + assets
-            created_assets = await self._process_directory_structure(
-                extract_dir, root_bundle, infospace_id, user_id, options
-            )
-            
-            logger.info(f"Synchronous archive processing complete: {len(created_assets)} assets created")
-            return created_assets
+            # Extract to persistent location (archive in temp_dir is deleted when with exits)
+            await self._extract_archive(str(archive_path), str(extract_dir))
+
+        # Use DirectoryImportHandler for flat bundle + virtual folders
+        from app.api.handlers.base import IngestionContext
+        from app.api.services.asset_service import AssetService
+        allowed_paths = [p.strip() for p in (settings.ALLOWED_IMPORT_PATHS or "").split(",") if p.strip()]
+        if not allowed_paths:
+            allowed_paths = [str(storage_base)]
+        managed_path = str(storage_base / "managed")
+        if managed_path not in allowed_paths:
+            allowed_paths = list(allowed_paths) + [managed_path]
+        dir_context = IngestionContext(
+            session=self.session,
+            storage_provider=None,
+            scraping_provider=self.scraping_provider,
+            search_provider=self.search_provider,
+            asset_service=AssetService(self.session, create_storage_provider(settings)),
+            bundle_service=self.bundle_service,
+            user_id=user_id,
+            infospace_id=infospace_id,
+            settings=settings,
+            options={"allowed_import_paths": allowed_paths},
+        )
+        handler = DirectoryImportHandler(dir_context)
+        result = await handler.handle(
+            source_path=str(extract_dir),
+            options={"copy_mode": False, "root_bundle_id": root_bundle.id},
+        )
+
+        # Return stub assets for created assets (DirectoryImportHandler creates assets, not returned)
+        from sqlmodel import select
+        from app.models import Asset
+        assets = self.session.exec(
+            select(Asset).where(Asset.bundle_id == root_bundle.id).limit(100)
+        ).all()
+        logger.info(f"Archive processing complete: {result['assets_created']} assets created")
+        return list(assets)
     
     async def _download_archive(self, url: str, temp_dir: str, user_agent: Optional[str] = None) -> str:
         """
@@ -268,7 +300,7 @@ class ArchiveHandler:
         logger.info(f"Archive download complete: {os.path.getsize(filepath)} bytes")
         return filepath
     
-    async def _extract_archive(self, archive_path: str, temp_dir: str) -> str:
+    async def _extract_archive(self, archive_path: str, extract_dir: str) -> str:
         """
         Extract archive to directory.
         
@@ -276,7 +308,6 @@ class ArchiveHandler:
         
         Returns path to extraction directory.
         """
-        extract_dir = os.path.join(temp_dir, 'extracted')
         os.makedirs(extract_dir, exist_ok=True)
         
         logger.info(f"Extracting archive {archive_path} to {extract_dir}")
@@ -293,109 +324,6 @@ class ArchiveHandler:
         
         logger.info(f"Archive extraction complete")
         return extract_dir
-    
-    async def _process_directory_structure(
-        self,
-        base_path: str,
-        root_bundle: Bundle,
-        infospace_id: int,
-        user_id: int,
-        options: Dict[str, Any]
-    ) -> List[Asset]:
-        """
-        Walk directory structure and create bundles + assets.
-        
-        Creates:
-        - Nested bundles for directories
-        - Asset records for files (queued for processing)
-        
-        Returns list of created assets.
-        """
-        from app.api.handlers import FileHandler
-        from fastapi import UploadFile
-        from app.schemas import BundleCreate
-        
-        created_assets = []
-        bundle_map = {base_path: root_bundle}  # Map paths to Bundle objects
-        
-        logger.info(f"Walking directory structure from {base_path}")
-        
-        # Walk directory tree
-        for dirpath, dirnames, filenames in os.walk(base_path):
-            # Get or create bundle for this directory
-            current_bundle = bundle_map.get(dirpath, root_bundle)
-            
-            # Create bundles for subdirectories
-            for dirname in dirnames:
-                subdir_path = os.path.join(dirpath, dirname)
-                
-                # Find parent bundle
-                parent_bundle = current_bundle
-                
-                # Create nested bundle
-                bundle_data = BundleCreate(
-                    name=dirname,
-                    description=f"Folder from archive",
-                    parent_bundle_id=parent_bundle.id
-                )
-                
-                sub_bundle = self.bundle_service.create_bundle(
-                    bundle_in=bundle_data,
-                    infospace_id=infospace_id,
-                    user_id=user_id
-                )
-                
-                bundle_map[subdir_path] = sub_bundle
-                logger.debug(f"Created bundle {sub_bundle.id} for directory: {dirname}")
-            
-            # Process files in this directory
-            for filename in filenames:
-                file_path = os.path.join(dirpath, filename)
-                
-                try:
-                    # Read file and create asset
-                    with open(file_path, 'rb') as f:
-                        file_content = f.read()
-                    
-                    # Create UploadFile-like object
-                    from io import BytesIO
-                    file_obj = BytesIO(file_content)
-                    file_obj.name = filename
-                    
-                    upload_file = UploadFile(
-                        file=file_obj,
-                        filename=filename
-                    )
-                    
-                    # Use FileHandler to process file
-                    file_handler = FileHandler(self.context)
-                    file_assets = await file_handler.handle(
-                        file=upload_file,
-                        title=filename,
-                        options={'process_immediately': True}
-                    )
-                    
-                    # Add assets to current bundle
-                    if file_assets:
-                        for asset in file_assets:
-                            if asset.parent_asset_id is None:  # Only top-level assets
-                                self.bundle_service.add_asset_to_bundle(
-                                    bundle_id=current_bundle.id,
-                                    asset_id=asset.id,
-                                    infospace_id=infospace_id,
-                                    user_id=user_id,
-                                    include_child_assets=False  # Children already linked via parent_asset_id
-                                )
-                        
-                        created_assets.extend(file_assets)
-                        logger.debug(f"Processed file: {filename} -> {len(file_assets)} assets")
-                
-                except Exception as e:
-                    logger.error(f"Failed to process file {filename}: {e}")
-                    continue
-        
-        logger.info(f"Directory processing complete: {len(created_assets)} total assets created")
-        return created_assets
     
     def _detect_archive_type(self, url: str) -> str:
         """Detect archive type from URL extension."""

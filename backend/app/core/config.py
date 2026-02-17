@@ -139,6 +139,9 @@ class AppSettings(BaseSettings):
     S3_REGION: Optional[str] = Field(default=None, env="S3_REGION")
     # Local FS specific (example)
     LOCAL_STORAGE_BASE_PATH: str = Field(default="/tmp/osint_storage", env="LOCAL_STORAGE_BASE_PATH")
+    # Whitelist of paths allowed for directory import (comma-separated)
+    # Prevents import endpoint from reading arbitrary filesystem locations
+    ALLOWED_IMPORT_PATHS: str = Field(default="/data/import,/dataset_collection", env="ALLOWED_IMPORT_PATHS")
     
     # Temporary folder for file downloads
     TEMP_FOLDER: str = Field(default="/tmp/osint_temp", env="TEMP_FOLDER")
@@ -176,6 +179,7 @@ class AppSettings(BaseSettings):
     # Credentials (ensure these environment variables are set for the chosen provider)
     GOOGLE_API_KEY: Optional[str] = Field(default=None, env="GOOGLE_API_KEY")
     OPENAI_API_KEY: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
+    MISTRAL_API_KEY: Optional[str] = Field(default=None, env="MISTRAL_API_KEY")
     # OPOL specific config (if OPOL is used as an abstraction layer)
     OPOL_MODE: Optional[Literal["remote", "local", "container"]] = Field(default="remote", env="OPOL_MODE")
     OPOL_API_KEY: Optional[str] = Field(default=None, env="OPOL_API_KEY")
@@ -184,10 +188,6 @@ class AppSettings(BaseSettings):
     OLLAMA_BASE_URL: Optional[str] = Field(default="http://host.docker.internal:11434", env="OLLAMA_BASE_URL")
     OLLAMA_DEFAULT_MODEL: Optional[str] = Field(default="llama3", env="OLLAMA_DEFAULT_MODEL")
 
-    # --- Scraping Provider ---
-    SCRAPING_PROVIDER_TYPE: Literal["opol", "custom_playwright"] = Field(default="opol", env="SCRAPING_PROVIDER_TYPE")
-    # --- Search Provider ---
-    SEARCH_PROVIDER_TYPE: Literal["opol_searxng", "elasticsearch", "tavily"] = Field(default="opol_searxng", env="SEARCH_PROVIDER_TYPE")
 
     # --- Geospatial Provider ---
     GEOSPATIAL_PROVIDER_TYPE: Literal["opol", "nominatim"] = Field(default="opol", env="GEOSPATIAL_PROVIDER_TYPE")

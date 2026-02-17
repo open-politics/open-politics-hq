@@ -216,6 +216,7 @@ export interface PanelViewConfig {
     geocodedPointsCache?: GeocodedPointsCache;
     // For graphs
     selectedGraphSchemaId?: number;
+    graphViewConfig?: any; // GraphViewConfig from D3ForceGraph
     // For tables and maps - field selection
     selectedFieldsPerScheme?: Record<number, string[]>;
     // NEW: Table configuration settings

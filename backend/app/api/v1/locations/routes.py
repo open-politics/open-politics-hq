@@ -20,11 +20,10 @@ from datetime import date, timedelta, datetime
 from sentinelhub import SHConfig, DataCollection, SentinelHubRequest, BBox, CRS, MimeType
 from io import BytesIO
 from PIL import Image
-from opol import OPOL
 import os
 from app.core.config import settings
 
-opol = OPOL(mode=os.getenv("OPOL_MODE"), api_key=os.getenv("OPOL_API_KEY"))
+
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
@@ -34,159 +33,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-@router.get("/{location}/contents", response_model=None)
-async def get_location_contents(
-    location: str,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-):
-    """
-    Get articles related to a location with basic pagination.
-    """
-    try:
-        response = opol.articles.by_location(location, skip, limit)
-        response.raise_for_status()
-        
-        return JSONResponse(content=response.json(), status_code=200)
-        
-    except requests.RequestException as e:
-        logger.error(f"Error fetching contents for location {location}: {str(e)}")
-        return JSONResponse(
-            content={
-                'error': 'Failed to fetch contents',
-                'detail': str(e)
-            }, 
-            status_code=500
-        )
 
-@router.get("/{location}/entities/contents", response_model=None)
-async def get_location_entities_contents(
-    location: str,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-):
-    """
-    Get articles related to a location with basic pagination.
-    """
-    try:
-        response = opol.articles.by_entity(location, skip, limit)
-        
-        return JSONResponse(content=response.json(), status_code=200)
-        
-    except requests.RequestException as e:
-        logger.error(f"Error fetching contents for location {location}: {str(e)}")
-        return JSONResponse(
-            content={
-                'error': 'Failed to fetch contents',
-                'detail': str(e)
-            }, 
-            status_code=500
-        ) 
-
-@router.get("/location_from_query")
-async def location_from_query(query: str):
-    try:
-        # Get location from classification service
-        location_response = requests.get(
-            f"https://api.opol.io/classification-service/location_from_query?query={query}", 
-            verify=False
-        )
-        location_response.raise_for_status()
-        location = location_response.json()
-
-        # Get coordinates from geo service
-        geo_response = requests.get(
-            f"https://api.opol.io/geo-service/geocode_location?location={location}", 
-            verify=False
-        )
-        geo_response.raise_for_status()
-        data = geo_response.json()
-
-        # Log the full response for debugging
-        logger.info(f"Geo service response: {data}")
-
-        return {
-            "country_name": location,
-            "coordinates": data.get('coordinates'),  # This is already [lon, lat]
-            "bbox": data.get('bbox'),
-            "area": data.get('area'),
-            "location_type": data.get('location_type', 'locality')  # Add location_type
-        }
-    except requests.RequestException as e:
-        logger.error(f"Service request failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Service request failed: {str(e)}")
-    except (KeyError, IndexError, json.JSONDecodeError) as e:
-        logger.error(f"Error processing response: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing response: {str(e)}")
-
-@router.get("/geojson/")
-async def geojson_view():
-    request = requests.get("https://api.opol.io/geo-service/geojson", verify=False)
-    if request.status_code == 200:
-        return request.json()
-    else:
-        raise HTTPException(status_code=request.status_code, detail="Unable to fetch GeoJSON data")
-
-@router.get("/geojson_events")
-async def geojson_events_view(event_type: str = Query(...)):
-    request = requests.get(f"http://api.opol.io/geo-service/geojson_events/{event_type}", verify=False)
-    if request.status_code == 200:
-        return request.json()
-    else:
-        raise HTTPException(status_code=request.status_code, detail="Unable to fetch events GeoJSON data")
-
-@router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_view():
-    try:
-        # Update the URL to point to the correct service name or IP address
-        request = requests.get("http://api.opol.io/core_app/", verify=False)
-        request.raise_for_status()  # Raise an exception for HTTP errors
-        
-        # Return the raw HTML content
-        return HTMLResponse(content=request.text, status_code=200)
-    except requests.RequestException as e:
-        logger.error(f"Error fetching dashboard data: {str(e)}")
-        raise HTTPException(status_code=request.status_code, detail="Unable to fetch dashboard data")
-
-@router.get("/{location_name}/entities", response_model=None)
-async def get_location_entities(
-    location_name: str, 
-    skip: int = 0, 
-    limit: int = 50,
-    min_relevance: float = 0.0  # Add minimum relevance threshold
-):
-    try:
-        response = requests.get(
-            f"http://api.opol.io/postgres-service/location_entities/{location_name}",
-            params={
-                "skip": skip,
-                "limit": limit,
-                "min_relevance": min_relevance
-            }
-        )
-        response.raise_for_status()
-        
-        # Map entity types to match frontend expectations / due to changing NER model
-        entity_type_mapping = {
-            # "organization": "ORG",
-            # "person": "PERSON",
-            # "location": "GPE",
-            "x" : "y"
-        }
-        
-        entities = response.json()
-        mapped_entities = [{
-            **entity,
-            "type": entity_type_mapping.get(entity["type"].lower(), entity["type"].upper())
-        } for entity in entities]
-        
-        return JSONResponse(content=mapped_entities, status_code=200)
-    except requests.RequestException as e:
-        logger.error(f"Error fetching location entities: {str(e)}")
-        return JSONResponse(
-            content={'error': 'Failed to fetch location entities'}, 
-            status_code=500
-        )
 
 @router.get("/leaders/{state}")
 async def get_leader_info(state: str):
@@ -196,14 +43,10 @@ async def get_leader_info(state: str):
             leaders = json.load(f)
         for leader in leaders:
             if leader['State'] == state:
-                return leader
-        raise HTTPException(status_code=404, detail="State not found")
+                return JSONResponse(content=leader, status_code=200)
+        return JSONResponse(content={'error': 'State not found'}, status_code=404)
     except FileNotFoundError:
-        logging.error(f"Leaders JSON file not found at {leaders_file_path}")  
-        raise HTTPException(status_code=404, detail="Leaders file not found")
-    except json.JSONDecodeError:
-        logging.error("Error decoding JSON data.")
-        raise HTTPException(status_code=500, detail="Error decoding leaders data")
+        return JSONResponse(content={'error': 'Leaders file not found'}, status_code=404)
 
 @router.get("/legislation/{state}", response_model=None)
 async def get_legislation_data(state: str):
@@ -341,28 +184,6 @@ async def get_coordinates(location: str, language: str = "en"):
     except Exception as e:
         logger.error(f"Error fetching coordinates for location {location}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
-@router.post("/get_geojson_for_article_ids")
-async def get_geojson_for_article_ids(article_ids: List[str]):
-    # Ensure article_ids are strings
-    article_ids = [str(article_id) for article_id in article_ids]
-    
-    # Log the payload for debugging
-    logger.debug(f"Sending article_ids: {article_ids}")
-
-    # Send the request with the correct headers
-    geojson_data = requests.post(
-        "http://api.opol.io/geo-service/geojson_by_article_ids",
-        json=article_ids, 
-        headers={"Content-Type": "application/json"},
-        verify=False
-    )
-    
-    if geojson_data.status_code == 200:
-        return JSONResponse(content=geojson_data.json(), status_code=200)
-    else:
-        logger.error(f"Failed to fetch GeoJSON data: {geojson_data.text}")
-        raise HTTPException(status_code=geojson_data.status_code, detail="Unable to fetch GeoJSON data")
 
 from .country_services.economy import COUNTRY_TO_ISO  # Import the existing mapping
 

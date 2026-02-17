@@ -13,22 +13,6 @@ import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
 import { AnalysisAdaptersService } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
-import ReactFlow, {
-  Node,
-  Edge,
-  Controls,
-  Background,
-  useNodesState,
-  useEdgesState,
-  ConnectionMode,
-  Panel,
-  NodeTypes,
-  Position,
-  Handle,
-  useReactFlow,
-  ReactFlowProvider,
-} from 'reactflow';
-import 'reactflow/dist/style.css';
 import { VariableSplittingConfig, applySplittingToResults } from './VariableSplittingControls';
 import { 
   getAnnotationFieldValue,
@@ -36,10 +20,9 @@ import {
   createEmptyGraphEdits,
   hasGraphEdits,
   getGraphEditsCount,
-  type ReactFlowNode,
-  type ReactFlowEdge
 } from '@/lib/annotations/utils';
 import type { GraphEdits } from '@/lib/annotations/types';
+import { D3ForceGraph, GraphNode, GraphEdge, aggregatorResponseToGraphData, GraphViewConfig, defaultGraphViewConfig, GraphSettingsPopover } from '@/components/collection/graph';
 
 // Time filtering utility function (copied from AnnotationResultsChart.tsx)
 const getTimestamp = (result: FormattedAnnotation, assetsMap: Map<number, AssetRead>, timeAxisConfig: TimeAxisConfig | null): Date | null => {
@@ -74,30 +57,6 @@ const getTimestamp = (result: FormattedAnnotation, assetsMap: Map<number, AssetR
       return new Date(result.timestamp);
   }
 };
-
-// Types for graph data from backend
-interface GraphNode {
-  id: string;
-  data: {
-    label: string;
-    type: string;
-    frequency: number;
-    source_asset_count: number;
-  };
-  position: { x: number; y: number };
-}
-
-interface GraphEdge {
-  id: string;
-  source: string;
-  target: string;
-  label: string;
-  data: {
-    predicate: string;
-    frequency: number;
-    source_asset_count: number;
-  };
-}
 
 interface GraphData {
   nodes: GraphNode[];
@@ -136,74 +95,12 @@ interface AnnotationResultsGraphProps {
   onGraphEditsChange?: (edits: GraphEdits) => void;
 }
 
-// Custom node component for entities
-const EntityNode = ({ data, selected }: { data: any; selected?: boolean }) => {
-  const isHighlighted = data.isHighlighted;
-  const isConnected = data.isConnected;
-  const isDimmed = data.isDimmed;
-  
-  return (
-    <div 
-      className={`px-3 py-2 shadow-md rounded-md border-2 min-w-[120px] relative transition-all duration-200 cursor-pointer ${
-        isHighlighted 
-          ? 'bg-blue-100 border-blue-500 scale-110 shadow-lg' 
-          : isConnected
-          ? 'bg-green-50 border-green-400'
-          : isDimmed
-          ? 'bg-gray-100 border-gray-300 opacity-40'
-          : 'bg-white border-gray-200 hover:bg-gray-50'
-      }`}
-    >
-      {/* Source handle (outgoing edges) */}
-      <Handle
-        type="source"
-        position={Position.Right}
-        id="source"
-        style={{ background: '#555' }}
-      />
-      
-      {/* Target handle (incoming edges) */}
-      <Handle
-        type="target"
-        position={Position.Left}
-        id="target"
-        style={{ background: '#555' }}
-      />
-      
-      <div className={`font-bold text-sm text-center ${
-        isDimmed ? 'text-gray-400' : 'text-gray-800'
-      }`}>
-        {data.label}
-      </div>
-      <div className={`text-xs text-center ${
-        isDimmed ? 'text-gray-400' : 'text-gray-500'
-      }`}>
-        {data.type}
-      </div>
-      {data.frequency > 1 && (
-        <div className={`text-xs text-center ${
-          isDimmed ? 'text-gray-400' : 'text-blue-600'
-        }`}>
-          ({data.frequency}x)
-        </div>
-      )}
-    </div>
-  );
-};
-
-// Define nodeTypes outside component to prevent recreation
-const nodeTypes: NodeTypes = {
-  entity: EntityNode,
-};
-
-// Inner component that uses useReactFlow hook
-function AnnotationResultsGraphInner({
+export default function AnnotationResultsGraph({
   results,
   schemas,
   assets,
   activeRunId,
   allSchemas,
-  // NEW props
   timeAxisConfig = null,
   variableSplittingConfig = null,
   onVariableSplittingChange,
@@ -214,20 +111,27 @@ function AnnotationResultsGraphInner({
   onGraphEditsChange,
 }: AnnotationResultsGraphProps) {
   const { activeInfospace } = useInfospaceStore();
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes] = useState<GraphNode[]>([]);
+  const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [graphData, setGraphData] = useState<GraphData | null>(null);
-  const [selectedSchemaId, setSelectedSchemaId] = useState<string>('');
+  
+  // Schema selection - use persisted setting if available
+  const persistedSchemaId = initialSettings?.selectedGraphSchemaId;
+  const [selectedSchemaId, setSelectedSchemaId] = useState<string>(persistedSchemaId ? persistedSchemaId.toString() : '');
+  
+  // Graph view config - use persisted setting if available
+  const persistedGraphConfig = initialSettings?.graphViewConfig;
+  const [graphConfig, setGraphConfig] = useState<GraphViewConfig>(
+    persistedGraphConfig ? { ...defaultGraphViewConfig, ...persistedGraphConfig } : defaultGraphViewConfig
+  );
   
   // New state for search and highlighting
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [showDetailPanel, setShowDetailPanel] = useState(false);
-  
-  const { fitView } = useReactFlow();
 
   // NEW: Apply time frame filtering and variable splitting
   const assetsMap = useMemo(() => new Map(assets.map(asset => [asset.id, asset])), [assets]);
@@ -265,32 +169,108 @@ function AnnotationResultsGraphInner({
     return allResults.length > 0 ? allResults : timeFilteredResults;
   }, [processedResults, timeFilteredResults]);
 
+  // Helper function to detect if a schema has graph fields (nodes and edges)
+  const hasGraphFields = useCallback((schema: AnnotationSchemaRead): boolean => {
+    if (!schema.output_contract || typeof schema.output_contract !== 'object') {
+      return false;
+    }
+    
+    const properties = (schema.output_contract as any).properties;
+    if (!properties) return false;
+    
+    // Check for graph structure: nodes and edges arrays, or triplets array
+    // Can be at top level or nested under 'document'
+    const checkForGraphFields = (props: any): boolean => {
+      if (!props || typeof props !== 'object') return false;
+      
+      // Check for triplets array (new self-contained triplet format)
+      const hasTriplets = props.triplets && props.triplets.type === 'array';
+      if (hasTriplets) {
+        return true;
+      }
+      
+      // Check for nodes and edges arrays (legacy format)
+      const hasNodes = props.nodes && props.nodes.type === 'array';
+      const hasEdges = props.edges && props.edges.type === 'array';
+      
+      if (hasNodes && hasEdges) {
+        return true;
+      }
+      
+      // Check nested structures (e.g., document.nodes, document.edges)
+      for (const [key, value] of Object.entries(props)) {
+        if (value && typeof value === 'object' && (value as any).type === 'object' && (value as any).properties) {
+          if (checkForGraphFields((value as any).properties)) {
+            return true;
+          }
+        }
+      }
+      
+      return false;
+    };
+    
+    return checkForGraphFields(properties);
+  }, []);
+
   // Find Knowledge Graph schemas - check both run schemas and all available schemas
+  // Detection based on actual graph fields (nodes/edges) in output_contract, not just name
   const graphSchemas = useMemo(() => {
     // First, try to find graph schemas in the current run
-    const runGraphSchemas = schemas.filter(schema => 
-      schema.name.toLowerCase().includes('knowledge graph') ||
-      schema.name.toLowerCase().includes('graph extractor')
-    );
+    const runGraphSchemas = schemas.filter(schema => {
+      // Check by name (backward compatibility)
+      const nameMatch = schema.name.toLowerCase().includes('knowledge graph') ||
+                       schema.name.toLowerCase().includes('graph extractor') ||
+                       schema.name.toLowerCase().includes('kg');
+      
+      // Check by actual graph fields in output_contract
+      const hasGraph = hasGraphFields(schema);
+      
+      return nameMatch || hasGraph;
+    });
     
     // If no graph schemas in current run, check all available schemas
     if (runGraphSchemas.length === 0 && allSchemas) {
-      const allGraphSchemas = allSchemas.filter(schema => 
-        schema.name.toLowerCase().includes('knowledge graph') ||
-        schema.name.toLowerCase().includes('graph extractor')
-      );
+      const allGraphSchemas = allSchemas.filter(schema => {
+        const nameMatch = schema.name.toLowerCase().includes('knowledge graph') ||
+                         schema.name.toLowerCase().includes('graph extractor') ||
+                         schema.name.toLowerCase().includes('kg');
+        const hasGraph = hasGraphFields(schema);
+        return nameMatch || hasGraph;
+      });
       return allGraphSchemas;
     }
     
     return runGraphSchemas;
-  }, [schemas, allSchemas]);
+  }, [schemas, allSchemas, hasGraphFields]);
 
-  // Auto-select first graph schema
+  // Auto-select first graph schema if none selected
   useEffect(() => {
     if (graphSchemas.length > 0 && !selectedSchemaId) {
-      setSelectedSchemaId(graphSchemas[0].id.toString());
+      const firstSchemaId = graphSchemas[0].id.toString();
+      setSelectedSchemaId(firstSchemaId);
+      // Persist selection
+      onSettingsChange?.({ selectedGraphSchemaId: graphSchemas[0].id });
     }
-  }, [graphSchemas, selectedSchemaId]);
+  }, [graphSchemas, selectedSchemaId, onSettingsChange]);
+
+  // Handle schema selection change
+  const handleSchemaChange = useCallback((newSchemaId: string) => {
+    setSelectedSchemaId(newSchemaId);
+    // Persist selection
+    onSettingsChange?.({ selectedGraphSchemaId: parseInt(newSchemaId) });
+    // Clear selection when schema changes
+    setSelectedNodeId(null);
+    setShowDetailPanel(false);
+    setSearchTerm('');
+    setShowSuggestions(false);
+  }, [onSettingsChange]);
+
+  // Handle graph config change
+  const handleGraphConfigChange = useCallback((newConfig: GraphViewConfig) => {
+    setGraphConfig(newConfig);
+    // Persist config
+    onSettingsChange?.({ graphViewConfig: newConfig });
+  }, [onSettingsChange]);
 
   // Search suggestions based on node labels
   const searchSuggestions = useMemo(() => {
@@ -301,15 +281,15 @@ function AnnotationResultsGraphInner({
     
     nodes
       .filter(node => 
-        node.data.label.toLowerCase().includes(searchTerm.toLowerCase())
+        node.label.toLowerCase().includes(searchTerm.toLowerCase())
       )
       .forEach(node => {
         if (!uniqueSuggestions.has(node.id)) {
           uniqueSuggestions.set(node.id, {
             id: node.id,
-            label: node.data.label,
-            type: node.data.type,
-            frequency: node.data.frequency,
+            label: node.label,
+            type: node.type,
+            frequency: node.frequency || 1,
           });
         }
       });
@@ -322,11 +302,11 @@ function AnnotationResultsGraphInner({
     const connected = new Set<string>();
     
     edges.forEach(edge => {
-      if (edge.source === nodeId) {
-        connected.add(edge.target);
+      if (edge.sourceId === nodeId) {
+        connected.add(edge.targetId);
       }
-      if (edge.target === nodeId) {
-        connected.add(edge.source);
+      if (edge.targetId === nodeId) {
+        connected.add(edge.sourceId);
       }
     });
     
@@ -341,12 +321,11 @@ function AnnotationResultsGraphInner({
     const connectedNodeIds = getConnectedNodeIds(nodeId);
     const connectedNodes = nodes.filter(n => connectedNodeIds.includes(n.id));
     
-    const outgoingEdges = edges.filter(e => e.source === nodeId);
-    const incomingEdges = edges.filter(e => e.target === nodeId);
+    const outgoingEdges = edges.filter(e => e.sourceId === nodeId);
+    const incomingEdges = edges.filter(e => e.targetId === nodeId);
     
     return {
-      ...node.data,
-      id: nodeId,
+      ...node,
       connectedNodes,
       outgoingEdges,
       incomingEdges,
@@ -354,100 +333,21 @@ function AnnotationResultsGraphInner({
     };
   }, [nodes, edges, getConnectedNodeIds]);
 
-  // Update node highlighting based on selection
-  const updateNodeHighlighting = useCallback((selectedId: string | null) => {
-    if (!selectedId) {
-      // Clear all highlighting
-      setNodes(prevNodes => 
-        prevNodes.map(node => ({
-          ...node,
-          data: {
-            ...node.data,
-            isHighlighted: false,
-            isConnected: false,
-            isDimmed: false,
-          }
-        }))
-      );
-      setEdges(prevEdges =>
-        prevEdges.map(edge => {
-          const isHighFrequency = edge.data?.frequency > 2 || edge.animated || false;
-          return {
-            ...edge,
-            style: {
-              ...edge.style,
-              opacity: 1,
-              strokeWidth: isHighFrequency ? 3 : 2,
-            }
-          };
-        })
-      );
-      return;
-    }
-
-    const connectedNodeIds = getConnectedNodeIds(selectedId);
-    
-    setNodes(prevNodes => 
-      prevNodes.map(node => {
-        const isSelected = node.id === selectedId;
-        const isConnected = connectedNodeIds.includes(node.id);
-        const isDimmed = !isSelected && !isConnected;
-        
-        return {
-          ...node,
-          data: {
-            ...node.data,
-            isHighlighted: isSelected,
-            isConnected: isConnected && !isSelected,
-            isDimmed,
-          }
-        };
-      })
-    );
-
-    // Update edge highlighting
-    setEdges(prevEdges =>
-      prevEdges.map(edge => {
-        const isConnectedToSelected = edge.source === selectedId || edge.target === selectedId;
-        const isHighFrequency = edge.data?.frequency > 2 || edge.animated || false;
-        
-        return {
-          ...edge,
-          style: {
-            ...edge.style,
-            opacity: isConnectedToSelected ? 1 : 0.2,
-            strokeWidth: isConnectedToSelected 
-              ? (isHighFrequency ? 4 : 3)
-              : (isHighFrequency ? 2 : 1),
-          }
-        };
-      })
-    );
-  }, [getConnectedNodeIds, setNodes, setEdges]);
-
   // Handle node selection
-  const handleNodeSelect = useCallback((nodeId: string) => {
-    setSelectedNodeId(nodeId);
+  const handleNodeSelect = useCallback((node: GraphNode) => {
+    setSelectedNodeId(node.id);
     setShowDetailPanel(true);
-    updateNodeHighlighting(nodeId);
-    
-    // Focus on the selected node
-    const node = nodes.find(n => n.id === nodeId);
-    if (node) {
-      fitView({ 
-        nodes: [node], 
-        duration: 500,
-        padding: 0.3 
-      });
-    }
-  }, [nodes, fitView, updateNodeHighlighting]);
+  }, []);
 
   // Handle search selection
   const handleSearchSelect = useCallback((suggestion: any) => {
     setSearchTerm(suggestion.label);
     setShowSuggestions(false);
-    handleNodeSelect(suggestion.id);
-  }, [handleNodeSelect]);
+    const node = nodes.find(n => n.id === suggestion.id);
+    if (node) {
+      handleNodeSelect(node);
+    }
+  }, [nodes, handleNodeSelect]);
 
   // Clear selection
   const clearSelection = useCallback(() => {
@@ -455,13 +355,7 @@ function AnnotationResultsGraphInner({
     setShowDetailPanel(false);
     setSearchTerm('');
     setShowSuggestions(false);
-    updateNodeHighlighting(null);
-  }, [updateNodeHighlighting]);
-
-  // Handle node clicks in ReactFlow
-  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
-    handleNodeSelect(node.id);
-  }, [handleNodeSelect]);
+  }, []);
 
   const aggregateGraph = useCallback(async () => {
     if (!activeRunId || !selectedSchemaId) {
@@ -488,6 +382,8 @@ function AnnotationResultsGraphInner({
         max_nodes: 100, // Limit for performance
       };
 
+      // Note: The graph_aggregator adapter automatically reads graph_config from the run
+      // (including deduplication settings) when processing annotations. No need to pass it explicitly.
       const response = await AnalysisAdaptersService.executeAnalysisAdapter({
         adapterName: 'graph_aggregator',
         requestBody: config,
@@ -495,13 +391,36 @@ function AnnotationResultsGraphInner({
 
       // Handle the nested response structure from GraphAggregatorAdapter
       if (response.graph_data && response.graph_data.nodes && response.graph_data.edges) {
+        // Transform backend response to generic graph format
+        const { nodes: graphNodes, edges: graphEdges } = aggregatorResponseToGraphData(response);
+        
+        // Apply graph edits if they exist
+        // Note: applyGraphEdits expects ReactFlow format, so we need to adapt
+        // For now, we'll apply edits manually to the generic format
+        let finalNodes = graphNodes;
+        let finalEdges = graphEdges;
+        
+        if (graphEdits) {
+          // Filter out deleted nodes
+          const deletedNodeIds = new Set(graphEdits.deletedNodes.map(n => n.nodeId));
+          finalNodes = graphNodes.filter(n => !deletedNodeIds.has(n.id));
+          
+          // Filter out edges connected to deleted nodes
+          finalEdges = graphEdges.filter(e => 
+            !deletedNodeIds.has(e.sourceId) && !deletedNodeIds.has(e.targetId)
+          );
+          
+          // Filter out deleted edges
+          const deletedEdgeIds = new Set(graphEdits.deletedEdges.map(e => e.edgeId));
+          finalEdges = finalEdges.filter(e => !deletedEdgeIds.has(e.id));
+        }
         
         const graphData: GraphData = {
-          nodes: response.graph_data.nodes,
-          edges: response.graph_data.edges,
+          nodes: finalNodes,
+          edges: finalEdges,
           metadata: {
-            total_nodes: response.graph_metrics?.total_nodes || response.graph_data.nodes.length,
-            total_edges: response.graph_metrics?.total_edges || response.graph_data.edges.length,
+            total_nodes: response.graph_metrics?.total_nodes || finalNodes.length,
+            total_edges: response.graph_metrics?.total_edges || finalEdges.length,
             total_fragments_processed: response.processing_summary?.total_fragments_processed || 0,
             fragments_with_errors: response.processing_summary?.fragments_with_errors || 0,
             processing_stats: {
@@ -513,97 +432,12 @@ function AnnotationResultsGraphInner({
         };
         
         setGraphData(graphData);
-
-        // Convert to ReactFlow format with auto-layout
-        const reactFlowNodes: Node[] = graphData.nodes.map((node, index) => {
-          // Improved circular/grid layout to spread nodes better
-          const nodesPerRow = Math.ceil(Math.sqrt(graphData.nodes.length));
-          const row = Math.floor(index / nodesPerRow);
-          const col = index % nodesPerRow;
-          
-          return {
-            id: node.id,
-            type: 'entity',
-            position: {
-              x: col * 250 + (row % 2) * 125, // Offset every other row for better spacing
-              y: row * 200,
-            },
-            data: {
-              ...node.data,
-              label: node.data.label,
-            },
-          };
-        });
-
-        const reactFlowEdges: Edge[] = graphData.edges.map((edge) => {
-          
-          const isHighFrequency = edge.data?.frequency > 2 || false;
-          
-          return {
-            id: edge.id,
-            source: edge.source,
-            target: edge.target,
-            sourceHandle: 'source', // Connect to the source handle
-            targetHandle: 'target', // Connect to the target handle
-            label: edge.label,
-            type: 'smoothstep',
-            animated: isHighFrequency,
-            data: edge.data, // Preserve the original data
-            style: { 
-              stroke: isHighFrequency ? '#2563eb' : '#374151', // Darker, more visible colors
-              strokeWidth: isHighFrequency ? 3 : 2,
-              strokeOpacity: 1, // Ensure full opacity
-            },
-            labelStyle: { 
-              fontSize: 10, 
-              fontWeight: 600,
-              fill: '#1f2937', // Darker text
-            },
-            labelBgStyle: { 
-              fill: '#ffffff', 
-              fillOpacity: 0.9, // More opaque background
-              stroke: '#e5e7eb',
-              strokeWidth: 1,
-            },
-          };
-        });
-
-        // Debug logging
-        
-        // Check for ID mismatches
-        const nodeIds = new Set(reactFlowNodes.map(n => n.id));
-        const edgeWithInvalidIds = reactFlowEdges.filter(e => 
-          !nodeIds.has(e.source) || !nodeIds.has(e.target)
-        );
-        if (edgeWithInvalidIds.length > 0) {
-        }
-
-        // Filter out edges with undefined source/target
-        const validEdges = reactFlowEdges.filter(e => {
-          if (!e.source || !e.target) {
-            return false;
-          }
-          return true;
-        });
-
-        // Apply graph edits if they exist
-        const editedGraph = graphEdits 
-          ? applyGraphEdits(reactFlowNodes, validEdges, graphEdits)
-          : { nodes: reactFlowNodes, edges: validEdges };
-        
-        // Clear existing nodes and edges first to prevent duplication
-        setNodes([]);
-        setEdges([]);
-        
-        // Use setTimeout to ensure clearing happens before setting new data
-        setTimeout(() => {
-          setNodes(editedGraph.nodes);
-          setEdges(editedGraph.edges);
-        }, 0);
+        setNodes(finalNodes);
+        setEdges(finalEdges);
         
         const editCount = graphEdits ? getGraphEditsCount(graphEdits) : 0;
         const message = editCount > 0 
-          ? `Graph loaded: ${editedGraph.nodes.length} nodes, ${editedGraph.edges.length} edges (${editCount} edits applied)`
+          ? `Graph loaded: ${finalNodes.length} nodes, ${finalEdges.length} edges (${editCount} edits applied)`
           : `Graph loaded: ${graphData.metadata.total_nodes} nodes, ${graphData.metadata.total_edges} edges`;
         toast.success(message);
       } else {
@@ -615,19 +449,14 @@ function AnnotationResultsGraphInner({
     } finally {
       setIsLoading(false);
     }
-  }, [activeRunId, selectedSchemaId, schemas, setNodes, setEdges, graphEdits]);
+  }, [activeRunId, selectedSchemaId, schemas, graphEdits]);
 
   // Auto-load when schema is selected
   useEffect(() => {
     if (selectedSchemaId && activeRunId) {
-      // Clear any existing selection when schema changes
-      setSelectedNodeId(null);
-      setShowDetailPanel(false);
-      setSearchTerm('');
-      setShowSuggestions(false);
       aggregateGraph();
     }
-  }, [selectedSchemaId, activeRunId, aggregateGraph]);
+  }, [selectedSchemaId, activeRunId]); // Note: aggregateGraph is stable, but we want to re-run when dependencies change
 
   const handleExportGraph = () => {
     if (graphData) {
@@ -642,6 +471,12 @@ function AnnotationResultsGraphInner({
       toast.success('Graph data exported');
     }
   };
+
+  // Get connected node IDs for highlighting
+  const connectedNodeIds = useMemo(() => {
+    if (!selectedNodeId) return [];
+    return getConnectedNodeIds(selectedNodeId);
+  }, [selectedNodeId, getConnectedNodeIds]);
 
   if (graphSchemas.length === 0) {
     return (
@@ -667,7 +502,7 @@ function AnnotationResultsGraphInner({
         {/* Schema Selection */}
         <div className="flex items-center gap-2">
           <Label htmlFor="schema-select" className="text-sm font-medium">Schema:</Label>
-          <Select value={selectedSchemaId} onValueChange={setSelectedSchemaId}>
+          <Select value={selectedSchemaId} onValueChange={handleSchemaChange}>
             <SelectTrigger id="schema-select" className="w-[200px]">
               <SelectValue placeholder="Select a graph schema" />
             </SelectTrigger>
@@ -764,15 +599,22 @@ function AnnotationResultsGraphInner({
         </Button>
 
         {graphData && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExportGraph}
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Export
-          </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleExportGraph}
+        >
+          <Download className="h-4 w-4 mr-2" />
+          Export
+        </Button>
         )}
+
+        {/* Graph Settings */}
+        <GraphSettingsPopover
+          config={graphConfig}
+          onConfigChange={handleGraphConfigChange}
+          defaultConfig={defaultGraphViewConfig}
+        />
 
         {/* Stats */}
         {graphData && (
@@ -812,98 +654,84 @@ function AnnotationResultsGraphInner({
           <div className={`relative transition-all duration-300 ${
             showDetailPanel ? 'w-2/3' : 'w-full'
           }`}>
-            <ReactFlow
+            <D3ForceGraph
               nodes={nodes}
               edges={edges}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              onNodeClick={onNodeClick}
-              nodeTypes={nodeTypes}
-              connectionMode={ConnectionMode.Loose}
-              fitView
-              fitViewOptions={{ padding: 0.2 }}
-            >
-              <Background />
-              <Controls />
-              <Panel position="top-right" className="bg-white/90 p-2 rounded shadow-md">
-                <div className="text-xs space-y-1">
-                  <div><strong>Legend:</strong></div>
-                  <div>• Click nodes to explore</div>
-                  <div>• Blue = selected node</div>
-                  <div>• Green = connected nodes</div>
-                  <div>• Animated lines = frequent</div>
+              highlightedNodeId={selectedNodeId}
+              connectedNodeIds={connectedNodeIds}
+              onNodeClick={handleNodeSelect}
+              autoResize={true}
+              config={graphConfig}
+            />
+            
+            {/* Graph Editing Controls */}
+            {selectedNodeId && onGraphEditsChange && (
+              <div className="absolute top-2 left-2 bg-white/95 p-3 rounded-lg shadow-lg border z-10">
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold text-muted-foreground mb-2">
+                    Edit Graph
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="w-full text-xs"
+                    onClick={() => {
+                      const currentEdits = graphEdits || createEmptyGraphEdits();
+                      const updatedEdits: GraphEdits = {
+                        ...currentEdits,
+                        deletedNodes: [
+                          ...currentEdits.deletedNodes,
+                          {
+                            nodeId: selectedNodeId,
+                            deletedAt: new Date().toISOString(),
+                            reason: 'User deleted'
+                          }
+                        ]
+                      };
+                      onGraphEditsChange(updatedEdits);
+                      setSelectedNodeId(null);
+                      setShowDetailPanel(false);
+                      toast.success('Node deleted');
+                      // Re-aggregate to apply changes
+                      aggregateGraph();
+                    }}
+                  >
+                    <Trash2 className="h-3 w-3 mr-1" />
+                    Delete Node
+                  </Button>
+                  <div className="text-[10px] text-muted-foreground mt-1">
+                    Removes node and connected edges
+                  </div>
                 </div>
-              </Panel>
-              
-              {/* Graph Editing Controls */}
-              {selectedNodeId && onGraphEditsChange && (
-                <Panel position="top-left" className="bg-white/95 p-3 rounded-lg shadow-lg border">
-                  <div className="space-y-2">
-                    <div className="text-xs font-semibold text-muted-foreground mb-2">
-                      Edit Graph
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      className="w-full text-xs"
-                      onClick={() => {
-                        const currentEdits = graphEdits || createEmptyGraphEdits();
-                        const updatedEdits: GraphEdits = {
-                          ...currentEdits,
-                          deletedNodes: [
-                            ...currentEdits.deletedNodes,
-                            {
-                              nodeId: selectedNodeId,
-                              deletedAt: new Date().toISOString(),
-                              reason: 'User deleted'
-                            }
-                          ]
-                        };
-                        onGraphEditsChange(updatedEdits);
-                        setSelectedNodeId(null);
-                        setShowDetailPanel(false);
-                        toast.success('Node deleted');
-                        // Re-aggregate to apply changes
+              </div>
+            )}
+            
+            {/* Graph Edit Status */}
+            {hasGraphEdits(graphEdits) && (
+              <div className="absolute bottom-2 right-2 bg-blue-50/95 px-3 py-2 rounded-lg shadow border border-blue-200 z-10">
+                <div className="flex items-center gap-2">
+                  <Settings2 className="h-3 w-3 text-blue-600" />
+                  <span className="text-xs font-medium text-blue-700">
+                    {getGraphEditsCount(graphEdits)} edits applied
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-5 w-5 p-0 text-blue-600 hover:text-blue-700"
+                    onClick={() => {
+                      if (confirm('Clear all graph edits? This cannot be undone.')) {
+                        onGraphEditsChange?.(createEmptyGraphEdits());
+                        toast.success('Graph edits cleared');
                         aggregateGraph();
-                      }}
-                    >
-                      <Trash2 className="h-3 w-3 mr-1" />
-                      Delete Node
-                    </Button>
-                    <div className="text-[10px] text-muted-foreground mt-1">
-                      Removes node and connected edges
-                    </div>
-                  </div>
-                </Panel>
-              )}
-              
-              {/* Graph Edit Status */}
-              {hasGraphEdits(graphEdits) && (
-                <Panel position="bottom-right" className="bg-blue-50/95 px-3 py-2 rounded-lg shadow border border-blue-200">
-                  <div className="flex items-center gap-2">
-                    <Settings2 className="h-3 w-3 text-blue-600" />
-                    <span className="text-xs font-medium text-blue-700">
-                      {getGraphEditsCount(graphEdits)} edits applied
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-5 w-5 p-0 text-blue-600 hover:text-blue-700"
-                      onClick={() => {
-                        if (confirm('Clear all graph edits? This cannot be undone.')) {
-                          onGraphEditsChange?.(createEmptyGraphEdits());
-                          toast.success('Graph edits cleared');
-                          aggregateGraph();
-                        }
-                      }}
-                      title="Clear all edits"
-                    >
-                      <X className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </Panel>
-              )}
-            </ReactFlow>
+                      }
+                    }}
+                    title="Clear all edits"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Detail Panel */}
@@ -930,10 +758,40 @@ function AnnotationResultsGraphInner({
                     </h4>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-600">
                       <div><span className="font-medium">Type:</span> {selectedNodeDetails.type}</div>
-                      <div><span className="font-medium">Frequency:</span> {selectedNodeDetails.frequency}</div>
-                      <div><span className="font-medium">Sources:</span> {selectedNodeDetails.source_asset_count}</div>
+                      <div><span className="font-medium">Frequency:</span> {selectedNodeDetails.frequency || 1}</div>
+                      <div><span className="font-medium">Sources:</span> {selectedNodeDetails.sourceAssetCount || 0}</div>
                       <div><span className="font-medium">Connections:</span> {selectedNodeDetails.totalConnections}</div>
                     </div>
+                    {/* Show source asset IDs if available */}
+                    {selectedNodeDetails.sourceAssetIds && selectedNodeDetails.sourceAssetIds.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-xs font-medium text-gray-600 mb-1">Appears in documents:</div>
+                        <div className="flex flex-wrap gap-1">
+                          {selectedNodeDetails.sourceAssetIds.slice(0, 10).map((assetId) => {
+                            const asset = assetsMap.get(assetId);
+                            return (
+                              <button
+                                key={assetId}
+                                onClick={() => {
+                                  // Find a result from this asset to select
+                                  const result = results.find(r => r.asset_id === assetId);
+                                  if (result && onResultSelect) {
+                                    onResultSelect(result);
+                                  }
+                                }}
+                                className="text-xs px-2 py-1 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 cursor-pointer"
+                                title={asset?.title || `Asset ${assetId}`}
+                              >
+                                {asset?.title || `#${assetId}`}
+                              </button>
+                            );
+                          })}
+                          {selectedNodeDetails.sourceAssetIds.length > 10 && (
+                            <span className="text-xs text-gray-500">+{selectedNodeDetails.sourceAssetIds.length - 10} more</span>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Combined Connections View */}
@@ -944,24 +802,26 @@ function AnnotationResultsGraphInner({
                     <div className="space-y-1 max-h-64 overflow-y-auto">
                       {/* Outgoing Relationships */}
                       {selectedNodeDetails.outgoingEdges.map((edge) => {
-                        const targetNode = nodes.find(n => n.id === edge.target);
+                        const targetNode = nodes.find(n => n.id === edge.targetId);
                         return (
                           <div 
                             key={`out-${edge.id}`} 
                             className="p-2 bg-blue-50 rounded text-xs cursor-pointer hover:bg-blue-100 transition-colors border-l-2 border-blue-400"
-                            onClick={() => handleNodeSelect(edge.target)}
+                            onClick={() => {
+                              if (targetNode) handleNodeSelect(targetNode);
+                            }}
                           >
                             <div className="flex items-center gap-2">
                               <span className="text-blue-600 font-medium">→</span>
                               <div className="flex-1">
-                                <div className="font-medium text-gray-800 truncate" title={targetNode?.data.label}>
-                                  {targetNode?.data.label}
+                                <div className="font-medium text-gray-800 truncate" title={targetNode?.label}>
+                                  {targetNode?.label}
                                 </div>
-                                <div className="text-xs text-gray-500">{targetNode?.data.type}</div>
+                                <div className="text-xs text-gray-500">{targetNode?.type}</div>
                               </div>
                             </div>
-                            <div className="mt-1 text-xs text-blue-700 truncate italic" title={edge.label}>
-                              "{edge.label}"
+                            <div className="mt-1 text-xs text-blue-700 truncate italic" title={edge.predicate}>
+                              "{edge.predicate}"
                             </div>
                           </div>
                         );
@@ -969,24 +829,26 @@ function AnnotationResultsGraphInner({
                       
                       {/* Incoming Relationships */}
                       {selectedNodeDetails.incomingEdges.map((edge) => {
-                        const sourceNode = nodes.find(n => n.id === edge.source);
+                        const sourceNode = nodes.find(n => n.id === edge.sourceId);
                         return (
                           <div 
                             key={`in-${edge.id}`} 
                             className="p-2 bg-green-50 rounded text-xs cursor-pointer hover:bg-green-100 transition-colors border-l-2 border-green-400"
-                            onClick={() => handleNodeSelect(edge.source)}
+                            onClick={() => {
+                              if (sourceNode) handleNodeSelect(sourceNode);
+                            }}
                           >
                             <div className="flex items-center gap-2">
                               <span className="text-green-600 font-medium">←</span>
                               <div className="flex-1">
-                                <div className="font-medium text-gray-800 truncate" title={sourceNode?.data.label}>
-                                  {sourceNode?.data.label}
+                                <div className="font-medium text-gray-800 truncate" title={sourceNode?.label}>
+                                  {sourceNode?.label}
                                 </div>
-                                <div className="text-xs text-gray-500">{sourceNode?.data.type}</div>
+                                <div className="text-xs text-gray-500">{sourceNode?.type}</div>
                               </div>
                             </div>
-                            <div className="mt-1 text-xs text-green-700 truncate italic" title={edge.label}>
-                              "{edge.label}"
+                            <div className="mt-1 text-xs text-green-700 truncate italic" title={edge.predicate}>
+                              "{edge.predicate}"
                             </div>
                           </div>
                         );
@@ -1026,40 +888,3 @@ function AnnotationResultsGraphInner({
     </div>
   );
 }
-
-export default function AnnotationResultsGraph({
-  results,
-  schemas,
-  assets,
-  activeRunId,
-  allSchemas,
-  // NEW props
-  timeAxisConfig = null,
-  variableSplittingConfig = null,
-  onVariableSplittingChange,
-  onSettingsChange,
-  initialSettings,
-  onResultSelect,
-  graphEdits = null,
-  onGraphEditsChange,
-}: AnnotationResultsGraphProps) {
-  return (
-    <ReactFlowProvider>
-      <AnnotationResultsGraphInner
-        results={results}
-        schemas={schemas}
-        assets={assets}
-        activeRunId={activeRunId}
-        allSchemas={allSchemas}
-        timeAxisConfig={timeAxisConfig}
-        variableSplittingConfig={variableSplittingConfig}
-        onVariableSplittingChange={onVariableSplittingChange}
-        onSettingsChange={onSettingsChange}
-        initialSettings={initialSettings}
-        onResultSelect={onResultSelect}
-        graphEdits={graphEdits}
-        onGraphEditsChange={onGraphEditsChange}
-      />
-    </ReactFlowProvider>
-  );
-} 

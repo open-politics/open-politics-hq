@@ -114,8 +114,8 @@ class FileHandler(BaseHandler):
                 processor_context = self.context.to_processor_context(options)
                 
                 # Get processor class from registry
-                from app.api.processors.registry import get_registry
-                processor_class = get_registry().get_processor_class(asset)
+                from app.api.utils.content_types import get_content_type_registry
+                processor_class = get_content_type_registry().get_processor_class(asset)
                 
                 if processor_class:
                     processor = processor_class(processor_context)
@@ -163,6 +163,6 @@ class FileHandler(BaseHandler):
         
         return [asset]
     
-    # NOTE: Content type detection moved to app.api.processors.registry
+    # NOTE: Content type detection in app.api.utils.content_types
     # Use detect_asset_kind_from_extension() and needs_processing() instead
 

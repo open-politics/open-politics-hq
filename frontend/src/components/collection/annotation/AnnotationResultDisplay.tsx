@@ -21,11 +21,13 @@ import {
     ResponsiveContainer,
     Legend
 } from 'recharts';
-import { HelpCircle, FileText, ImageIcon } from 'lucide-react';
-import { getTargetKeysForScheme, getAnnotationFieldValue, formatFieldNameForDisplay as formatFieldNameUtil, getModalityIcon } from '@/lib/annotations/utils';
+import { HelpCircle, FileText, ImageIcon, PanelLeft, PanelLeftClose } from 'lucide-react';
+import { getTargetKeysForScheme, getAnnotationFieldValue, formatFieldNameForDisplay as formatFieldNameUtil, getModalityIcon, checkFilterMatch } from '@/lib/annotations/utils';
+import { searchInAnnotationValue } from '@/lib/annotations/search';
 import { TextSpanSnippets } from '@/components/ui/highlighted-text';
-import { useAnnotationTextSpans } from '@/components/collection/contexts/TextSpanHighlightContext';
+// Text span extraction is now handled by AnnotationFieldsPanel on field click
 import { Separator } from '@/components/ui/separator';
+import { useTextSpanHighlight } from '@/components/collection/contexts/TextSpanHighlightContext';
 // NEW: Enhanced panel components
 import AnnotationFieldsPanel from './AnnotationFieldsPanel';
 import AssetContentPanel from './AssetContentPanel';
@@ -48,6 +50,8 @@ import {
   type KGEntity,
   type KGTriplet
 } from '@/lib/annotations/utils';
+// Color system
+import { getEntityBadgeClasses } from '@/lib/annotations/colors';
 
 // Local interface for schema fields
 interface SchemaField {
@@ -98,6 +102,12 @@ interface AnnotationResultDisplayProps {
   onTimestampClick?: (timestamp: Date, fieldKey: string) => void;
   /** NEW: Callback when a location field is clicked for cross-panel navigation */
   onLocationClick?: (location: string, fieldKey: string) => void;
+  /** NEW: Filter array items to only show matching ones */
+  filterArrayItems?: boolean;
+  /** NEW: Search term for highlighting/filtering array items */
+  searchTerm?: string | null;
+  /** NEW: Active filters for matching array items */
+  filters?: any[];
 }
 
 interface SingleAnnotationResultProps {
@@ -117,6 +127,9 @@ interface SingleAnnotationResultProps {
   forceExpanded?: boolean;
   onTimestampClick?: (timestamp: Date, fieldKey: string) => void;
   onLocationClick?: (location: string, fieldKey: string) => void;
+  filterArrayItems?: boolean;
+  searchTerm?: string | null;
+  filters?: any[];
 }
 
 interface ConsolidatedSchemasViewProps {
@@ -137,6 +150,9 @@ interface ConsolidatedSchemasViewProps {
   forceExpanded?: boolean;
   onTimestampClick?: (timestamp: Date, fieldKey: string) => void;
   onLocationClick?: (location: string, fieldKey: string) => void;
+  filterArrayItems?: boolean;
+  searchTerm?: string | null;
+  filters?: any[];
 }
 
 /**
@@ -158,26 +174,32 @@ function SingleAnnotationResult({
   onResultSelect,
   forceExpanded = false,
   onTimestampClick,
-  onLocationClick
+  onLocationClick,
+  filterArrayItems = false,
+  searchTerm = null,
+  filters = []
 }: SingleAnnotationResultProps) {
-  const { extractTextSpansFromJustification } = useAnnotationTextSpans();
-  const [highlightedSpans, setHighlightedSpans] = useState<Set<string>>(new Set());
   const renderedRef = useRef<HTMLDivElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
-  
-  // Use forceExpanded prop to override local state
   const effectiveExpanded = forceExpanded || isExpanded;
-  
-  // Track which justifications we've already processed to prevent infinite loops
-  const processedJustificationsRef = useRef<Set<string>>(new Set());
 
-  // Enhanced layout hooks - MUST be called before any early returns
   const [activeFieldState, setActiveFieldState] = useState<string | null>(activeField || null);
   const [selectedSpan, setSelectedSpan] = useState<{ fieldKey: string; spanIndex: number; span: any } | null>(null);
-  
+  const [showEvidencePanel, setShowEvidencePanel] = useState<boolean>(false);
+
+  const { showSingleSpan, revertToFieldSpans, getFieldSpansForAsset, clearHighlights } = useTextSpanHighlight();
+  const assetId = result.asset_id;
+  const assetUuid = (result.asset as any)?.uuid;
+
+  // Clear highlights when evidence inspection panel is closed
+  useEffect(() => {
+    if (!showEvidencePanel) {
+      clearHighlights();
+    }
+  }, [showEvidencePanel, clearHighlights]);
+
   const handleFieldInteraction = useCallback((fieldKey: string, justification: any) => {
     setActiveFieldState(fieldKey);
-    // Clear span selection when switching fields
     setSelectedSpan(null);
     if (onFieldInteraction) {
       onFieldInteraction(fieldKey, justification);
@@ -186,114 +208,25 @@ function SingleAnnotationResult({
 
   const handleSpanSelect = useCallback((fieldKey: string, spanIndex: number, span: any) => {
     if (spanIndex === -1) {
-      // Deselect the span
       setSelectedSpan(null);
+      revertToFieldSpans();
     } else {
+      const fieldSpans = getFieldSpansForAsset(assetId, assetUuid);
+      const resolvedSpan = fieldSpans[spanIndex] ?? span;
       setSelectedSpan({ fieldKey, spanIndex, span });
-      // Also set the active field if it's not already active
-      setActiveFieldState(prev => prev !== fieldKey ? fieldKey : prev);
+      setActiveFieldState(prev => (prev !== fieldKey ? fieldKey : prev));
+      showSingleSpan(assetId, resolvedSpan, assetUuid, fieldSpans);
     }
+  }, [assetId, assetUuid, showSingleSpan, revertToFieldSpans, getFieldSpansForAsset]);
+
+  const handleSpanClick = useCallback((_spanId: string) => {
+    // No-op: span highlighting is now handled by the context
   }, []);
 
-  const handleSpanClick = useCallback((spanId: string) => {
-    setHighlightedSpans(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(spanId)) {
-        newSet.delete(spanId);
-      } else {
-        newSet.add(spanId);
-      }
-      return newSet;
-    });
-  }, []);
-
-  // Extract justifications from result value to process them
-  const justificationsToProcess = useMemo(() => {
-    if (!result?.value || typeof result.value !== 'object') return [];
-    
-    const justifications: Array<{
-      justificationObj: any;
-      assetId: number;
-      assetUuid?: string;
-      fieldName: string;
-      schemaName: string;
-      justificationKey: string;
-    }> = [];
-
-    // Use getTargetKeysForScheme directly from utils
-    const targetKeys = getTargetKeysForScheme(schema.id, [schema]);
-    const fieldsToDisplay = targetKeys.map(tk => ({
-        name: tk.key, // This is now the full hierarchical path like "document.topics"
-        type: tk.type,
-        description: '', // We don't have descriptions from getTargetKeysForScheme
-        config: {} // Placeholder
-    }));
-    
-    fieldsToDisplay.forEach((schemaField) => {
-      const justificationFieldPath = `${schemaField.name}_justification`;
-      const flatJustificationName = justificationFieldPath.includes('.') 
-        ? justificationFieldPath.split('.').pop() 
-        : justificationFieldPath;
-      
-      if (flatJustificationName && 
-          (flatJustificationName in result.value || 
-           Object.keys(result.value).some(key => 
-             key.toLowerCase().includes('justification') || 
-             key.toLowerCase().includes('reasoning')
-           ))) {
-        const justificationObj = getAnnotationFieldValue(result.value, justificationFieldPath);
-        
-        if (justificationObj && typeof justificationObj === 'object' && justificationObj.text_spans?.length > 0) {
-          const assetUuid = (result.asset as any)?.uuid;
-          const justificationKey = `${result.asset_id}-${schemaField.name}-${schema.id}-${JSON.stringify(justificationObj.text_spans.map(s => ({ start: s.start_char_offset, end: s.end_char_offset, text: s.text_snippet })))}`;
-          
-          if (!processedJustificationsRef.current.has(justificationKey)) {
-            justifications.push({
-              justificationObj,
-              assetId: result.asset_id,
-              assetUuid,
-              fieldName: schemaField.name,
-              schemaName: schema.name,
-              justificationKey
-            });
-          }
-        }
-      }
-    });
-
-    return justifications;
-  }, [result, schema]);
-
-  // Process justifications after render
-  useEffect(() => {
-    if (justificationsToProcess.length > 0) {
-      // Process justifications asynchronously
-      const processJustifications = async () => {
-        for (const { justificationObj, assetId, assetUuid, fieldName, schemaName, justificationKey } of justificationsToProcess) {
-          if (!processedJustificationsRef.current.has(justificationKey)) {
-            try {
-              await extractTextSpansFromJustification(
-                justificationObj,
-                assetId,
-                assetUuid,
-                fieldName,
-                schemaName
-              );
-              
-              // Mark this justification as processed
-              processedJustificationsRef.current.add(justificationKey);
-            } catch (error) {
-              console.error('Failed to process justification:', error);
-              // Still mark as processed to avoid infinite retries
-              processedJustificationsRef.current.add(justificationKey);
-            }
-          }
-        }
-      };
-
-      processJustifications();
-    }
-  }, [justificationsToProcess, extractTextSpansFromJustification]);
+  // NOTE: Text span extraction is now driven by user interaction only.
+  // When a user clicks a field in AnnotationFieldsPanel, handleFieldClick
+  // calls extractTextSpansFromJustification for that specific field.
+  // This avoids eagerly highlighting all text on mount.
 
   const fieldsToDisplay = useMemo(() => {
     // Use getTargetKeysForScheme directly from utils
@@ -304,6 +237,27 @@ function SingleAnnotationResult({
         description: '', // We don't have descriptions from getTargetKeysForScheme
         config: {} // Placeholder
     }));
+
+    // Filter out nested properties of array items (e.g., document.items.position, items.position)
+    // These should be displayed within the array, not as separate top-level fields
+    fields = fields.filter(f => {
+      // Check if this field is a nested property of an array item
+      const parts = f.name.split('.');
+      if (parts.length >= 2) {
+        // Check if any parent part is an array field
+        // For hierarchical: document.mails.position_in_conversation (3 parts)
+        // For flat: mails.position_in_conversation (2 parts)
+        for (let i = 1; i < parts.length; i++) {
+          const parentPath = parts.slice(0, i).join('.');
+          const parentField = targetKeys.find(tk => tk.key === parentPath);
+          if (parentField && parentField.type === 'array') {
+            // This is a nested property of an array item - exclude it
+            return false;
+          }
+        }
+      }
+      return true;
+    });
 
     if (selectedFieldKeys && selectedFieldKeys.length > 0) {
       fields = fields.filter(f => selectedFieldKeys.includes(f.name));
@@ -365,9 +319,9 @@ function SingleAnnotationResult({
             </div>
           </TooltipTrigger>
           <TooltipContent side="top" align="center" className="max-w-sm z-[1001]">
-            <div className="space-y-2 max-h-[300px] overflow-y-auto">
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold">Justification:</p>
+                <p className="text-xs font-semibold">Justification & Evidence</p>
               </div>
               {(() => {
                 if (typeof justificationValue === 'object' && justificationValue !== null) {
@@ -378,9 +332,8 @@ function SingleAnnotationResult({
                       )}
                       {justificationValue.text_spans && justificationValue.text_spans.length > 0 && (
                         <div className="space-y-1">
-                          <p className="text-xs font-medium">Evidence:</p>
                           {justificationValue.text_spans.map((span: any, i: number) => (
-                            <div key={i} className="text-xs bg-muted/50 p-1 rounded border-l-2 border-primary/30">
+                            <div key={i} className="text-xs bg-muted-foreground/40 p-1 rounded border-l-2 border-primary/30">
                               "{span.text_snippet}"
                             </div>
                           ))}
@@ -396,6 +349,41 @@ function SingleAnnotationResult({
         </Tooltip>
       </TooltipProvider>
     );
+  };
+
+  // Helper function to highlight all occurrences of search term in text
+  // Moved here to be accessible for all field types
+  const highlightTextInValue = (text: string, term: string | null): React.ReactNode => {
+    if (!term || !text) return text;
+    const searchLower = term.toLowerCase();
+    const textLower = text.toLowerCase();
+    
+    // Find all occurrences
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let index = textLower.indexOf(searchLower, lastIndex);
+    
+    while (index !== -1) {
+      // Add text before match
+      if (index > lastIndex) {
+        parts.push(text.slice(lastIndex, index));
+      }
+      // Add highlighted match
+      parts.push(
+        <mark key={index} className="bg-yellow-300 dark:bg-yellow-600 px-0.5 rounded">
+          {text.slice(index, index + term.length)}
+        </mark>
+      );
+      lastIndex = index + term.length;
+      index = textLower.indexOf(searchLower, lastIndex);
+    }
+    
+    // Add remaining text
+    if (lastIndex < text.length) {
+      parts.push(text.slice(lastIndex));
+    }
+    
+    return parts.length > 0 ? <>{parts}</> : text;
   };
 
   const formatFieldValue = (rawValueObject: any, field: SchemaField, highlightValue: string | null, context: string = 'default', justificationValue?: any, showIntegratedTooltip: boolean = false): React.ReactNode => {
@@ -562,6 +550,7 @@ function SingleAnnotationResult({
           case "string":
           case "boolean":
               const stringValue = String(valueForField);
+              const highlightedString = searchTerm ? highlightTextInValue(stringValue, searchTerm) : stringValue;
               
               let stringContent: React.ReactNode;
               // In table context, break longer strings to new line like arrays for better layout
@@ -569,15 +558,15 @@ function SingleAnnotationResult({
                 stringContent = (
                   <div className="w-full">
                     <div className="text-xs leading-tight break-words max-w-full">
-                      {stringValue}
+                      {highlightedString}
                     </div>
                   </div>
                 );
               } else {
                 // For shorter strings or non-table context, use inline wrapping
                 stringContent = (
-                  <div className="text-xs leading-tight max-w-full min-w-0">
-                    <span className="break-words">{stringValue}</span>
+                  <div className="text-xs leading-tight max-w-full min-w-0 ml-1">
+                    <span className="break-words">{highlightedString}</span>
                   </div>
                 );
               }
@@ -595,28 +584,19 @@ function SingleAnnotationResult({
                     
                     if (isEntitiesField) {
                       // Render entities as colored badges with type
-                      const entityColors: Record<string, string> = {
-                        'PERSON': 'bg-purple-100 border-purple-300 text-purple-700',
-                        'ORGANIZATION': 'bg-blue-100 border-blue-300 text-blue-700',
-                        'COMPANY': 'bg-blue-100 border-blue-300 text-blue-700',
-                        'LOCATION': 'bg-green-100 border-green-300 text-green-700',
-                        'EVENT': 'bg-orange-100 border-orange-300 text-orange-700',
-                        'DATE': 'bg-yellow-100 border-yellow-300 text-yellow-700',
-                        'OTHER': 'bg-gray-100 border-gray-300 text-gray-700',
-                      };
-                      
+                      // TODO: Extract schema colors from schema.output_contract when available
                       const kgContent = (
                         <div className="w-full">
                           <div className="flex flex-wrap gap-1 items-center">
                             {(valueForField as KGEntity[]).map((entity, i) => {
-                              const color = entityColors[entity.type] || entityColors['OTHER'];
+                              const badgeClasses = getEntityBadgeClasses(entity.type);
                               return (
                                 <Badge 
                                   key={i} 
                                   variant="outline"
                                   className={cn(
                                     "text-xs px-2 py-0.5 font-medium whitespace-nowrap",
-                                    color
+                                    badgeClasses
                                   )}
                                   title={`${entity.name} (${entity.type}) - ID: ${entity.id}`}
                                 >
@@ -670,6 +650,127 @@ function SingleAnnotationResult({
                       );
                       return wrapWithTooltipIfNeeded(tripletsContent, field, justificationValue, showIntegratedTooltip);
                     }
+                  }
+                  
+                  // Check if this is an array of objects - render as structured cards
+                  if (valueForField.length > 0 && typeof valueForField[0] === 'object') {
+                    // Filter array items if filterArrayItems is enabled
+                    // NOTE: Cannot use useMemo here as this is inside a nested function (formatFieldValue)
+                    // which violates React's Rules of Hooks. Calculate inline instead.
+                    const activeFiltersForArray = filters ? filters.filter((f: any) => f.isActive !== false) : [];
+                    const hasActiveFiltersForArray = activeFiltersForArray.length > 0;
+                    const hasSearchTermForArray = searchTerm && searchTerm.trim().length > 0;
+                    
+                    let arrayItemsToShow = valueForField;
+                    
+                    if (filterArrayItems && (hasSearchTermForArray || hasActiveFiltersForArray)) {
+                      arrayItemsToShow = valueForField.filter((item: any) => {
+                        // Check search term match
+                        if (hasSearchTermForArray && searchInAnnotationValue(item, searchTerm)) {
+                          return true;
+                        }
+                        
+                        // Check filter matches (only if we have active filters)
+                        if (hasActiveFiltersForArray) {
+                          // Create a mock annotation result for filter checking
+                          const mockResult = { ...result, value: item };
+                          return activeFiltersForArray.some((filter: any) => checkFilterMatch(filter, [mockResult], [schema]));
+                        }
+                        
+                        return false;
+                      });
+                    }
+                    
+                    const arrayOfObjectsContent = (
+                      <div className="w-full space-y-3">
+                        <div className="text-[10px] text-muted-foreground mb-1">
+                          {filterArrayItems && arrayItemsToShow.length !== valueForField.length
+                            ? `${arrayItemsToShow.length} of ${valueForField.length} item${valueForField.length > 1 ? 's' : ''}`
+                            : `${valueForField.length} item${valueForField.length > 1 ? 's' : ''}`}
+                        </div>
+                        {arrayItemsToShow.map((item: any, i: number) => {
+                          // Find original index for highlighting and display
+                          const originalIndex = valueForField.indexOf(item);
+                          const isMatch = searchTerm ? searchInAnnotationValue(item, searchTerm) : false;
+                          
+                          return (
+                          <div 
+                            key={originalIndex} 
+                            className={cn(
+                              "border-2 rounded-md p-3 space-y-1 shadow-sm transition-colors",
+                              isMatch 
+                                ? "border-yellow-400/60 bg-yellow-50/50 dark:bg-yellow-950/20" 
+                                : "border-border/60 bg-muted/25"
+                            )}
+                          >
+                            <div className="flex items-center gap-2 mb-2">
+                              <Badge variant="outline" className="text-[10px] border-border/60">
+                                Item {originalIndex + 1}
+                              </Badge>
+                            </div>
+                            <div className="text-xs space-y-0 divide-y divide-border/40">
+                              {Object.entries(item)
+                                .filter(([_, val]) => val !== null && val !== undefined)
+                                .map(([key, val]: [string, any], fieldIndex: number, filteredEntries: [string, any][]) => {
+                                
+                                // Handle arrays
+                                if (Array.isArray(val)) {
+                                  if (val.length === 0) return null;
+                                  return (
+                                    <div key={key} className="py-2.5 first:pt-0">
+                                      <span className="font-medium text-muted-foreground">{key}:</span>{' '}
+                                      <div className="flex flex-wrap gap-1 mt-1">
+                                        {val.map((v: any, idx: number) => (
+                                          <Badge key={idx} variant="outline" className="text-[10px]">
+                                            {typeof v === 'string' ? highlightTextInValue(String(v), searchTerm) : String(v)}
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                
+                                // Handle objects (nested)
+                                if (typeof val === 'object') {
+                                  return (
+                                    <div key={key} className="py-2.5 first:pt-0 bg-muted/20 -mx-3 px-3">
+                                      <div className="text-[10px] text-muted-foreground mb-2 font-medium">{key}:</div>
+                                      <div className="max-h-72 overflow-auto text-xs whitespace-pre-wrap break-words bg-background/50 p-2 rounded border border-border/30">
+                                        {JSON.stringify(val, null, 2)}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                
+                                // Handle strings (especially long ones)
+                                if (typeof val === 'string' && val.length > 100) {
+                                  return (
+                                    <div key={key} className="py-2.5 first:pt-0 bg-muted/20 -mx-3 px-3">
+                                      <div className="text-[10px] text-muted-foreground mb-2 font-medium">{key}:</div>
+                                      <div className="max-h-72 overflow-auto text-xs whitespace-pre-wrap break-words bg-background/50 p-2 rounded border border-border/30">
+                                        {highlightTextInValue(val, searchTerm)}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                
+                                // Handle simple values
+                                return (
+                                  <div key={key} className="py-2.5 first:pt-0">
+                                    <span className="font-medium text-muted-foreground">{key}:</span>{' '}
+                                    <span className="text-foreground">
+                                      {typeof val === 'string' ? highlightTextInValue(val, searchTerm) : String(val)}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          );
+                        })}
+                      </div>
+                    );
+                    return wrapWithTooltipIfNeeded(arrayOfObjectsContent, field, justificationValue, showIntegratedTooltip);
                   }
                   
                   let arrayContent: React.ReactNode;
@@ -734,7 +835,38 @@ function SingleAnnotationResult({
               return <span className="text-destructive italic text-xs">Expected Array, got: {typeof valueForField}</span>;
           default:
               if (typeof valueForField === 'object' && valueForField !== null) {
+                  // Check if this is a metadata object (small, structured)
+                  const isMetadataObject = Object.keys(valueForField).length <= 10 && 
+                                           !Array.isArray(valueForField);
+                  
+                  if (isMetadataObject) {
+                    const metadataContent = (
+                      <div className="w-full space-y-1">
+                        {Object.entries(valueForField).map(([key, val]) => {
+                          const valString = Array.isArray(val) 
+                            ? `[${(val as any[]).map(v => String(v)).join(', ')}]`
+                            : typeof val === 'object' && val !== null
+                            ? JSON.stringify(val)
+                            : String(val);
+                          const highlightedVal = searchTerm ? highlightTextInValue(valString, searchTerm) : valString;
+                          
+                          return (
+                            <div key={key} className="flex gap-2 text-xs">
+                              <span className="font-medium text-muted-foreground">{key}:</span>
+                              <span className="flex-1 break-words">
+                                {highlightedVal}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                    return wrapWithTooltipIfNeeded(metadataContent, field, justificationValue, showIntegratedTooltip);
+                  }
+                  
+                  // Fallback to JSON for complex objects
                   const jsonString = JSON.stringify(valueForField, null, 2);
+                  const highlightedJsonString = searchTerm ? highlightTextInValue(jsonString, searchTerm) : jsonString;
                   const objectContent = (
                     <div className="max-w-full min-w-0">
                       <pre className={cn(
@@ -742,13 +874,14 @@ function SingleAnnotationResult({
                         isTableContext ? "max-h-20 overflow-auto" : "max-h-32 overflow-auto",
                         "whitespace-pre-wrap break-words"
                       )}>
-                        {jsonString}
+                        {highlightedJsonString}
                       </pre>
                     </div>
                   );
                   return wrapWithTooltipIfNeeded(objectContent, field, justificationValue, showIntegratedTooltip);
               }
               const defaultStringValue = String(valueForField);
+              const highlightedDefaultString = searchTerm ? highlightTextInValue(defaultStringValue, searchTerm) : defaultStringValue;
               
               let defaultContent: React.ReactNode;
               // In table context, break longer strings to new line like arrays
@@ -756,14 +889,14 @@ function SingleAnnotationResult({
                 defaultContent = (
                   <div className="w-full">
                     <div className="text-xs leading-tight break-words max-w-full">
-                      {defaultStringValue}
+                      {highlightedDefaultString}
                     </div>
                   </div>
                 );
               } else {
                 defaultContent = (
-                  <div className="text-xs leading-tight max-w-full min-w-0">
-                    <span className="break-words">{defaultStringValue}</span>
+                  <div className="text-xs leading-tight max-w-full min-w-0 ml-1">
+                    <span className="break-words">{highlightedDefaultString}</span>
                   </div>
                 );
               }
@@ -781,61 +914,62 @@ function SingleAnnotationResult({
 
 
   // NEW: Enhanced layout for unified annotation and asset viewing
-  if (renderContext === 'enhanced') {
+  // Use enhanced layout if explicitly set OR if Justification & Evidence Inspection toggle is on (only in default context)
+  const shouldUseEnhanced = renderContext === 'enhanced' || (renderContext === 'default' && showEvidencePanel && !compact);
+  
+  if (shouldUseEnhanced) {
 
     return (
       <div className="h-full w-full flex flex-col">
-        {/* Three-column layout: Fields | Justifications | Content */}
-        <div className="flex-1 min-h-0 grid grid-cols-12 gap-3 p-4">
-          {/* Left column: Annotation fields (3 columns) */}
-          <div className="col-span-3 border rounded-lg bg-background overflow-hidden flex flex-col">
-            <AnnotationFieldsPanel
-              result={result}
-              schema={schema}
-              selectedFieldKeys={selectedFieldKeys}
-              activeField={activeFieldState}
-              selectedSpan={selectedSpan ? { fieldKey: selectedSpan.fieldKey, spanIndex: selectedSpan.spanIndex } : null}
-              onFieldInteraction={handleFieldInteraction}
-              highlightValue={highlightValue}
-            />
+        {/* Header with toggle button */}
+        {renderContext === 'default' && showEvidencePanel && (
+          <div className="flex-none px-4 pt-3 pb-2 bg-muted/40">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-semibold">Annotation Review</h4>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowEvidencePanel(false)}
+                className="gap-2"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+                Hide Justification & Evidence Inspection
+              </Button>
+            </div>
           </div>
-
-          {/* Middle column: Justifications (4 columns) */}
-          <div className="col-span-4 border rounded-lg bg-background overflow-hidden">
+        )}
+        
+        {/* Single column: Evidence at top, fields beneath */}
+        <div className="flex-1 min-h-0 flex flex-col gap-3 p-3">
+          {/* Evidence / Justifications - at top for immediate visibility */}
+          <div className="flex-1 min-h-0 border rounded-lg bg-background overflow-hidden">
             <JustificationSidebar
               result={result}
               activeField={activeFieldState}
               onSpanClick={handleSpanClick}
               onSpanSelect={handleSpanSelect}
               selectedSpan={selectedSpan ? { fieldKey: selectedSpan.fieldKey, spanIndex: selectedSpan.spanIndex } : null}
+              searchTerm={searchTerm}
+              filters={filters}
             />
           </div>
 
-          {/* Right column: Asset content (5 columns) */}
-          {asset && showAssetContent && (
-            <div className="col-span-5 border rounded-lg bg-background overflow-hidden">
-              <AssetContentPanel
-                asset={asset}
-                activeField={activeFieldState}
-                selectedSpan={selectedSpan}
-              />
-            </div>
-          )}
-
-          {/* Fallback: Expand justifications if no asset content */}
-          {(!asset || !showAssetContent) && (
-            <div className="col-span-5 border rounded-lg bg-background overflow-hidden flex items-center justify-center">
-              <div className="text-center text-muted-foreground p-8">
-                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-700 flex items-center justify-center mb-4 mx-auto">
-                  <FileText className="h-8 w-8 opacity-60" />
-                </div>
-                <p className="text-sm font-medium mb-2">No Content Available</p>
-                <p className="text-xs opacity-75 max-w-xs">
-                  Asset content will appear here when available for enhanced annotation review.
-                </p>
-              </div>
-            </div>
-          )}
+          {/* Annotation fields - compact view beneath evidence */}
+          <div className="flex-none bg-background max-h-[40vh] overflow-y-auto scrollbar-hide">
+            <AnnotationFieldsPanel
+              result={result}
+              schema={schema}
+              asset={asset}
+              selectedFieldKeys={selectedFieldKeys}
+              activeField={activeFieldState}
+              selectedSpan={selectedSpan ? { fieldKey: selectedSpan.fieldKey, spanIndex: selectedSpan.spanIndex } : null}
+              onFieldInteraction={handleFieldInteraction}
+              highlightValue={highlightValue}
+              formatFieldValue={(field) => formatFieldValue(result.value, { ...field, description: field.description ?? '', config: field.config ?? {} }, highlightValue, 'default', undefined, false)}
+            />
+          </div>
         </div>
       </div>
     );
@@ -850,6 +984,9 @@ function SingleAnnotationResult({
     // NEW: Add cursor pointer when clickable
     onResultSelect && (renderContext === 'table' || renderContext === 'default') && 'cursor-pointer'
   );
+  
+  // Show Justification & Evidence Inspection toggle button in default (non-compact) context
+  const canShowEvidencePanelToggle = renderContext === 'default' && !compact && !showEvidencePanel;
 
   const handleResultClick = (e: React.MouseEvent) => {
     // Only handle clicks if onResultSelect is provided and we're in appropriate contexts
@@ -867,10 +1004,23 @@ function SingleAnnotationResult({
         className={containerClasses}
         onClick={handleResultClick}
       >
-          <div className="flex items-center justify-between">
-            {/* <div className="flex items-center gap-2">
-              <span className="font-medium text-base text-yellow-500">{schema.name}</span>
-            </div> */}
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-2">
+              {canShowEvidencePanelToggle && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowEvidencePanel(true);
+                  }}
+                  className="h-7 px-2 gap-1.5 text-xs"
+                >
+                  <PanelLeft className="h-3.5 w-3.5" />
+                  Justification & Evidence Inspection
+                </Button>
+              )}
+            </div>
             {isFailed && (
               <TooltipProvider delayDuration={100}>
                 <Tooltip>
@@ -947,7 +1097,7 @@ function SingleAnnotationResult({
                   return (
                       <div key={idx} className={cn(
                         renderContext === 'table' ? 'mb-1 min-w-0 max-w-full' : 'space-y-1 min-w-0 max-w-full',
-                        renderContext !== 'table' && 'border-b border-dashed border-border/30 last:border-b-0'
+                        renderContext !== 'table' && ''
                       )}>
                           {/* Use flexible layout: allow values to wrap to new line for long content */}
                           {/* In unfolded column mode (table + compact + targetFieldKey), skip field names - headers show them */}
@@ -985,8 +1135,8 @@ function SingleAnnotationResult({
                                     </span>
                                   );
                                 })()}
-                              {/* Show justification tooltip - in table context only for compact/column mode */}
-                              {justificationValue && (renderContext !== 'table' || compact) && (
+                              {/* Show justification tooltip */}
+                              {justificationValue && (
                                   <TooltipProvider delayDuration={100}>
                                     <Tooltip>
                                       <TooltipTrigger asChild>
@@ -1014,9 +1164,9 @@ function SingleAnnotationResult({
                                           />
                                       </TooltipTrigger>
                                       <TooltipContent side="top" align="start" className="max-w-sm z-[1001]">
-                                        <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                                        <div className="space-y-2">
                                           <div className="flex items-center justify-between">
-                                            <p className="text-xs font-semibold">Justification:</p>
+                                            <p className="text-xs font-semibold">Justification & Evidence</p>
                                           </div>
                                           {(() => {
                                             // Handle structured justification objects
@@ -1033,7 +1183,7 @@ function SingleAnnotationResult({
                                                       </p>
                                                       <Separator className="my-2" />
                                                       <div className="text-xs">
-                                                        {justificationValue.text_spans.slice(0, 3).map((span: any, idx: number) => (
+                                                        {justificationValue.text_spans.slice(0, 10).map((span: any, idx: number) => (
                                                           <div key={idx} className="italic border border-border p-1 rounded text-wrap break-words mb-1">
                                                             "{span.text_snippet}"
                                                           </div>
@@ -1128,6 +1278,9 @@ interface ConsolidatedModalityViewProps {
   forceExpanded?: boolean;
   onTimestampClick?: (timestamp: Date, fieldKey: string) => void;
   onLocationClick?: (location: string, fieldKey: string) => void;
+  filterArrayItems?: boolean;
+  searchTerm?: string | null;
+  filters?: any[];
 }
 
 const ConsolidatedModalityView: React.FC<ConsolidatedModalityViewProps> = ({
@@ -1146,7 +1299,10 @@ const ConsolidatedModalityView: React.FC<ConsolidatedModalityViewProps> = ({
   onResultSelect,
   forceExpanded = false,
   onTimestampClick,
-  onLocationClick
+  onLocationClick,
+  filterArrayItems = false,
+  searchTerm = null,
+  filters = []
 }) => {
   // Determine which result is document vs image based on asset kind or field structure
   const docResult = results.find(r => {
@@ -1246,6 +1402,9 @@ const ConsolidatedModalityView: React.FC<ConsolidatedModalityViewProps> = ({
                         forceExpanded={forceExpanded}
                         onTimestampClick={onTimestampClick}
                         onLocationClick={onLocationClick}
+                        filterArrayItems={filterArrayItems}
+                        searchTerm={searchTerm}
+                        filters={filters}
                       />
                     </div>
                   ) : (
@@ -1299,6 +1458,9 @@ const ConsolidatedModalityView: React.FC<ConsolidatedModalityViewProps> = ({
                         forceExpanded={forceExpanded}
                         onTimestampClick={onTimestampClick}
                         onLocationClick={onLocationClick}
+                        filterArrayItems={filterArrayItems}
+                        searchTerm={searchTerm}
+                        filters={filters}
                       />
                     </div>
                   ) : (
@@ -1334,7 +1496,10 @@ const ConsolidatedSchemasView: React.FC<ConsolidatedSchemasViewProps> = ({
     onResultSelect,
     forceExpanded = false,
     onTimestampClick,
-    onLocationClick
+    onLocationClick,
+    filterArrayItems = false,
+    searchTerm = null,
+    filters = []
 }) => {
   const actuallyUseTabs = useTabs && renderContext !== 'dialog';
 
@@ -1371,6 +1536,9 @@ const ConsolidatedSchemasView: React.FC<ConsolidatedSchemasViewProps> = ({
                   forceExpanded={forceExpanded}
                   onTimestampClick={onTimestampClick}
                   onLocationClick={onLocationClick}
+                  filterArrayItems={filterArrayItems}
+                  searchTerm={searchTerm}
+                  filters={filters}
                 />
               ) : (
                 <div className="text-sm text-gray-500 italic">No results for this schema</div>
@@ -1407,6 +1575,9 @@ const ConsolidatedSchemasView: React.FC<ConsolidatedSchemasViewProps> = ({
             forceExpanded={forceExpanded}
             onTimestampClick={onTimestampClick}
             onLocationClick={onLocationClick}
+            filterArrayItems={filterArrayItems}
+            searchTerm={searchTerm}
+            filters={filters}
           />
         );
       })}
@@ -1436,7 +1607,10 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
     onResultSelect,
     forceExpanded = false,
     onTimestampClick,
-    onLocationClick
+    onLocationClick,
+    filterArrayItems = false,
+    searchTerm = null,
+    filters = []
 }) => {
     
   const findSchemaForResult = (res: FormattedAnnotation, sch: AnnotationSchemaRead | AnnotationSchemaRead[]): AnnotationSchemaRead | null => {
@@ -1476,6 +1650,9 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
           forceExpanded={forceExpanded}
           onTimestampClick={onTimestampClick}
           onLocationClick={onLocationClick}
+          filterArrayItems={filterArrayItems}
+          searchTerm={searchTerm}
+          filters={filters}
         />
       );
     }
@@ -1504,6 +1681,9 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
           forceExpanded={forceExpanded}
           onTimestampClick={onTimestampClick}
           onLocationClick={onLocationClick}
+          filterArrayItems={filterArrayItems}
+          searchTerm={searchTerm}
+          filters={filters}
         />
       );
     }
@@ -1527,6 +1707,9 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
         forceExpanded={forceExpanded}
         onTimestampClick={onTimestampClick}
         onLocationClick={onLocationClick}
+        filterArrayItems={filterArrayItems}
+        searchTerm={searchTerm}
+        filters={filters}
       />
     );
   }
@@ -1552,6 +1735,9 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
           forceExpanded={forceExpanded}
           onTimestampClick={onTimestampClick}
           onLocationClick={onLocationClick}
+          filterArrayItems={filterArrayItems}
+          searchTerm={searchTerm}
+          filters={filters}
         />
       );
     }

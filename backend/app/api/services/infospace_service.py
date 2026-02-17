@@ -223,6 +223,15 @@ class InfospaceService:
                 ).all()
                 for asset in assets_in_bundle:
                     asset.bundle_id = None
+                
+                # Clear root_bundle_id from DatasetIngestionJob records
+                from app.models import DatasetIngestionJob
+                jobs = self.session.exec(
+                    select(DatasetIngestionJob).where(DatasetIngestionJob.root_bundle_id == bundle.id)
+                ).all()
+                for job in jobs:
+                    job.root_bundle_id = None
+                
                 # Then delete the bundle itself
                 self.session.delete(bundle)
             
@@ -658,7 +667,11 @@ class InfospaceService:
                                 logger.debug(f"Asset {asset_uuid} not found for bundle {bundle.name}")
                     
                     if linked_asset_ids:
-                        assets_to_link = [self.session.get(Asset, aid) for aid in linked_asset_ids if self.session.get(Asset, aid)]
+                        assets_to_link = list(
+                            self.session.exec(
+                                select(Asset).where(Asset.id.in_(linked_asset_ids))
+                            ).all()
+                        )
                         bundle.assets = assets_to_link
                         bundle.asset_count = len(assets_to_link)
                         self.session.add(bundle)

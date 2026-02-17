@@ -115,14 +115,15 @@ def validate_hierarchical_schema(output_contract: dict) -> bool:
 
 def simplify_schema_for_model(schema: dict, model_name: str) -> dict:
     """
-    Simplify complex schemas for less capable models like Ollama.
+    Simplify schemas for less capable models like Ollama by truncating long descriptions.
+    This is a generic approach that preserves all fields but reduces description length.
     
     Args:
-        schema: Original JSON schema
+        schema: Original JSON schema (in standard JSON schema format with "type" and "properties")
         model_name: Name of the model being used
         
     Returns:
-        Potentially simplified schema
+        Potentially simplified schema (always in standard JSON schema format, all fields preserved)
     """
     # Check if this is an Ollama model that might struggle with complexity
     is_ollama = "ollama" in model_name.lower() or any(x in model_name.lower() for x in ["gpt-oss", "llama", "mistral", "phi"])
@@ -130,59 +131,40 @@ def simplify_schema_for_model(schema: dict, model_name: str) -> dict:
     if not is_ollama:
         return schema
     
-    # For complex political analysis schemas, simplify them
-    if isinstance(schema, dict) and "document_fields" in schema:
-        doc_fields = schema["document_fields"]
-        if isinstance(doc_fields, dict) and "properties" in doc_fields:
-            doc_props = doc_fields["properties"]
-            if isinstance(doc_props, dict) and "document" in doc_props:
-                document_schema = doc_props["document"]
-                if isinstance(document_schema, dict) and "properties" in document_schema:
-                    properties = document_schema["properties"]
-                    
-                    # If schema has more than 5 fields, it might be too complex for smaller models
-                    if len(properties) > 5:
-                        logger.info(f"Simplifying complex schema with {len(properties)} fields for Ollama model {model_name}")
-                        
-                        # Keep only the most essential fields for political analysis
-                        essential_fields = {}
-                        field_priority = [
-                            "Position Summary", "PositionSummary", "position_summary",
-                            "Location", "location", 
-                            "migration_attitude", "Migration Attitude",
-                            "Talking Point Topics", "TalkingPointTopics", "talking_point_topics"
-                        ]
-                        
-                        # Add essential fields if they exist
-                        for field_name in field_priority:
-                            if field_name in properties:
-                                essential_fields[field_name] = properties[field_name]
-                                # Simplify the description to be more concise
-                                if "description" in essential_fields[field_name]:
-                                    desc = essential_fields[field_name]["description"]
-                                    if len(desc) > 200:  # Long descriptions can overwhelm smaller models
-                                        essential_fields[field_name]["description"] = desc[:200] + "..."
-                        
-                        # If we found essential fields, use simplified schema
-                        if essential_fields:
-                            simplified_schema = {
-                                "document_fields": {
-                                    "type": "object",
-                                    "properties": {
-                                        "document": {
-                                            "type": "object",
-                                            "properties": essential_fields,
-                                            "required": ["Position Summary"] if "Position Summary" in essential_fields else list(essential_fields.keys())[:1]
-                                        }
-                                    }
-                                },
-                                "per_modality_fields": schema.get("per_modality_fields", {})
-                            }
-                            
-                            logger.info(f"Simplified schema from {len(properties)} to {len(essential_fields)} fields for Ollama")
-                            return simplified_schema
+    # For smaller models, truncate long descriptions to reduce token usage
+    # but preserve all fields - no hardcoded field names
+    def truncate_descriptions_in_schema(schema_part: dict, max_desc_length: int = 200) -> dict:
+        """Recursively truncate descriptions in a schema while preserving structure."""
+        if not isinstance(schema_part, dict):
+            return schema_part
+        
+        result = schema_part.copy()
+        
+        # Truncate description if present
+        if "description" in result and isinstance(result["description"], str):
+            if len(result["description"]) > max_desc_length:
+                result["description"] = result["description"][:max_desc_length] + "..."
+        
+        # Recursively process properties
+        if "properties" in result and isinstance(result["properties"], dict):
+            result["properties"] = {
+                key: truncate_descriptions_in_schema(value, max_desc_length)
+                for key, value in result["properties"].items()
+            }
+        
+        # Recursively process items (for arrays)
+        if "items" in result:
+            result["items"] = truncate_descriptions_in_schema(result["items"], max_desc_length)
+        
+        return result
     
-    return schema
+    # Apply description truncation to the entire schema
+    simplified = truncate_descriptions_in_schema(schema, max_desc_length=200)
+    
+    if simplified != schema:
+        logger.info(f"Truncated long descriptions in schema for Ollama model {model_name} (all fields preserved)")
+    
+    return simplified
 
 def detect_schema_structure(output_contract: dict) -> dict:
     """Detect which sections apply to which asset types"""
@@ -218,6 +200,192 @@ def detect_schema_structure(output_contract: dict) -> dict:
             logger.debug(f"Output contract is flat but not an object with properties. No document fields extracted for justification prompt generation. Contract: {output_contract}")
             
     return structure
+
+def simplify_schema_for_standalone_image(output_contract: dict) -> dict:
+    """
+    Simplify schema for standalone image assets (PDF_PAGE, IMAGE, IMAGE_REGION).
+    Removes per_modality_fields to eliminate ambiguity - standalone images should only use document field.
+    
+    Args:
+        output_contract: The original schema output contract (from Pydantic model_json_schema())
+        
+    Returns:
+        Simplified schema with only document field (if it exists), with $ref references resolved
+    """
+    # Create a copy to avoid mutating the original
+    simplified = json.loads(json.dumps(output_contract))
+    
+    # Get definitions for resolving $ref references
+    definitions = simplified.get("$defs", simplified.get("definitions", {}))
+    
+    # Helper function to resolve $ref references recursively
+    def resolve_ref(schema_part: dict) -> dict:
+        """Resolve $ref references in a schema part."""
+        if not isinstance(schema_part, dict):
+            return schema_part
+        
+        # If this is a $ref, resolve it
+        if "$ref" in schema_part:
+            ref_path = schema_part["$ref"]
+            # Extract the reference name (e.g., "#/$defs/DocumentSchema" -> "DocumentSchema")
+            if ref_path.startswith("#/$defs/"):
+                ref_name = ref_path.replace("#/$defs/", "")
+            elif ref_path.startswith("#/definitions/"):
+                ref_name = ref_path.replace("#/definitions/", "")
+            else:
+                # Unknown ref format, return as-is
+                logger.warning(f"Unknown $ref format: {ref_path}")
+                return schema_part
+            
+            if ref_name in definitions:
+                # Resolve the reference and recursively resolve any nested $refs
+                resolved = json.loads(json.dumps(definitions[ref_name]))
+                return resolve_ref(resolved)
+            else:
+                logger.warning(f"Reference '{ref_name}' not found in definitions")
+                return schema_part
+        
+        # Recursively resolve $ref in nested objects
+        resolved = {}
+        for key, value in schema_part.items():
+            if isinstance(value, dict):
+                resolved[key] = resolve_ref(value)
+            elif isinstance(value, list):
+                resolved[key] = [resolve_ref(item) if isinstance(item, dict) else item for item in value]
+            else:
+                resolved[key] = value
+        
+        return resolved
+    
+    # Unwrap if schema is wrapped in type/properties
+    schema_to_check = simplified
+    if simplified.get("type") == "object" and "properties" in simplified:
+        schema_to_check = simplified["properties"]
+    
+    # Remove all per_* fields
+    keys_to_remove = [key for key in schema_to_check.keys() if key.startswith("per_")]
+    for key in keys_to_remove:
+        del schema_to_check[key]
+        logger.info(f"Removed '{key}' field from schema for standalone image processing")
+    
+    # Update required fields if present
+    if "required" in schema_to_check:
+        schema_to_check["required"] = [field for field in schema_to_check["required"] if not field.startswith("per_")]
+    
+    # Helper function to flatten anyOf/oneOf/allOf and extract a concrete schema
+    def flatten_combinators(schema_part: dict) -> dict:
+        """Flatten anyOf/oneOf/allOf combinators to extract a concrete schema."""
+        if not isinstance(schema_part, dict):
+            return schema_part
+        
+        # Handle anyOf - take the first option that has a type or can be inferred
+        if "anyOf" in schema_part:
+            any_of_options = schema_part["anyOf"]
+            for option in any_of_options:
+                if isinstance(option, dict):
+                    # Prefer options with explicit type
+                    if "type" in option:
+                        logger.debug(f"Selected anyOf option with explicit type: {option.get('type')}")
+                        return flatten_combinators(option)
+                    # Or options with properties (objects)
+                    elif "properties" in option:
+                        flattened = flatten_combinators(option)
+                        if "type" not in flattened:
+                            flattened["type"] = "object"
+                        logger.debug(f"Selected anyOf option with properties, inferred type='object'")
+                        return flattened
+            
+            # If no good option found, take the first one and try to infer
+            if any_of_options:
+                first_option = any_of_options[0]
+                flattened = flatten_combinators(first_option)
+                if "type" not in flattened:
+                    if "properties" in flattened:
+                        flattened["type"] = "object"
+                    elif "items" in flattened:
+                        flattened["type"] = "array"
+                logger.debug(f"Selected first anyOf option, inferred type if needed")
+                return flattened
+        
+        # Handle oneOf - similar to anyOf
+        if "oneOf" in schema_part:
+            one_of_options = schema_part["oneOf"]
+            for option in one_of_options:
+                if isinstance(option, dict) and "type" in option:
+                    logger.debug(f"Selected oneOf option with explicit type: {option.get('type')}")
+                    return flatten_combinators(option)
+            if one_of_options:
+                first_option = one_of_options[0]
+                flattened = flatten_combinators(first_option)
+                if "type" not in flattened:
+                    if "properties" in flattened:
+                        flattened["type"] = "object"
+                    elif "items" in flattened:
+                        flattened["type"] = "array"
+                logger.debug(f"Selected first oneOf option, inferred type if needed")
+                return flattened
+        
+        # Handle allOf - merge all schemas
+        if "allOf" in schema_part:
+            all_of_options = schema_part["allOf"]
+            merged = {}
+            for option in all_of_options:
+                if isinstance(option, dict):
+                    flattened_option = flatten_combinators(option)
+                    merged.update(flattened_option)
+            logger.debug(f"Merged allOf options")
+            return merged
+        
+        # Recursively process nested combinators
+        result = {}
+        for key, value in schema_part.items():
+            if isinstance(value, dict):
+                result[key] = flatten_combinators(value)
+            elif isinstance(value, list):
+                result[key] = [flatten_combinators(item) if isinstance(item, dict) else item for item in value]
+            else:
+                result[key] = value
+        
+        return result
+    
+    # CRITICAL: Resolve $ref references and flatten combinators for all remaining properties
+    # OpenAI API doesn't support $ref, anyOf, oneOf, allOf - we need inline types
+    for prop_name, prop_schema in schema_to_check.items():
+        if isinstance(prop_schema, dict):
+            # First resolve $ref references
+            resolved_schema = resolve_ref(prop_schema)
+            # Then flatten anyOf/oneOf/allOf combinators
+            resolved_schema = flatten_combinators(resolved_schema)
+            
+            # If resolved schema still doesn't have a type key, infer it from structure
+            if "type" not in resolved_schema:
+                if "properties" in resolved_schema:
+                    # Has properties -> it's an object
+                    resolved_schema["type"] = "object"
+                    logger.debug(f"Inferred type='object' for property '{prop_name}' based on 'properties' key")
+                elif "items" in resolved_schema:
+                    # Has items -> it's an array
+                    resolved_schema["type"] = "array"
+                    logger.debug(f"Inferred type='array' for property '{prop_name}' based on 'items' key")
+                elif "enum" in resolved_schema:
+                    # Has enum -> it's likely a string
+                    resolved_schema["type"] = "string"
+                    logger.debug(f"Inferred type='string' for property '{prop_name}' based on 'enum' key")
+                else:
+                    # Can't infer - log error
+                    logger.error(f"Property '{prop_name}' is missing 'type' key after $ref resolution and cannot be inferred. Keys: {list(resolved_schema.keys())}")
+            
+            schema_to_check[prop_name] = resolved_schema
+            
+            # Validate that document field has type key (required by OpenAI)
+            if prop_name == "document":
+                if "type" not in resolved_schema:
+                    logger.error(f"Property 'document' is missing 'type' key after $ref resolution and inference - this will cause OpenAI API errors")
+                    logger.debug(f"Resolved document schema keys: {list(resolved_schema.keys())}")
+                else:
+                    logger.debug(f"Successfully resolved document schema with type: {resolved_schema.get('type')}")
+    
+    return simplified
 
 async def fetch_asset_content(asset: Asset, storage_provider: 'StorageProviderDep') -> bytes:
     """Fetch asset content from storage or web URL using the injected storage_provider."""
@@ -256,7 +424,77 @@ async def fetch_asset_content(asset: Asset, storage_provider: 'StorageProviderDe
             logger.error(f"Failed to fetch content for asset {asset.id} from {asset.blob_path}: {e}", exc_info=True)
             return b""
     
-    # Priority 2: Try source_identifier (web URL) for image assets without blob_path
+    # Priority 2: For PDF_PAGE assets without blob_path, extract page image from parent PDF
+    if asset.kind == AssetKind.PDF_PAGE and not asset.blob_path:
+        parent_asset_id = getattr(asset, 'parent_asset_id', None)
+        page_index = asset.part_index if asset.part_index is not None else 0
+        
+        # Get parent_asset_id and part_index from database if not loaded
+        from app.core.db import engine
+        with Session(engine) as session:
+            # Refresh asset to get parent_asset_id if missing
+            if not parent_asset_id:
+                refreshed_asset = session.get(Asset, asset.id)
+                if refreshed_asset:
+                    parent_asset_id = refreshed_asset.parent_asset_id
+                    if refreshed_asset.part_index is not None:
+                        page_index = refreshed_asset.part_index
+            
+            if not parent_asset_id:
+                logger.debug(f"PDF_PAGE asset {asset.id} has no parent_asset_id, cannot extract page image")
+                return b""
+            
+            logger.info(f"PDF_PAGE asset {asset.id} has no blob_path. Attempting to extract page {page_index} from parent PDF {parent_asset_id}")
+            # Get parent PDF asset
+            parent_asset = session.get(Asset, parent_asset_id)
+            if not parent_asset or parent_asset.kind != AssetKind.PDF or not parent_asset.blob_path:
+                logger.warning(
+                    f"Parent PDF asset {parent_asset_id} not found or invalid for PDF_PAGE {asset.id}. "
+                    f"Parent exists: {parent_asset is not None}, "
+                    f"Kind: {parent_asset.kind if parent_asset else 'None'}, "
+                    f"Blob: {bool(parent_asset.blob_path) if parent_asset else False}"
+                )
+                return b""
+            
+            # Fetch parent PDF content (outside session to avoid holding DB connection)
+            pdf_blob_path = parent_asset.blob_path
+        
+        # Extract page image using PyMuPDF (outside session)
+        try:
+            pdf_file_stream = await storage_provider.get_file(pdf_blob_path)
+            pdf_bytes = await asyncio.to_thread(pdf_file_stream.read)
+            pdf_file_stream.close()
+            
+            import fitz
+            
+            def extract_page_image(pdf_bytes: bytes, page_num: int) -> bytes:
+                """Extract a single page as PNG image."""
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                try:
+                    if page_num >= doc.page_count:
+                        logger.warning(f"Page {page_num} out of range for PDF with {doc.page_count} pages")
+                        return b""
+                    page = doc.load_page(page_num)
+                    # Render page as PNG image (matrix controls DPI - 2.0 = 144 DPI)
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+                    return pix.tobytes("png")
+                finally:
+                    doc.close()
+            
+            page_image_bytes = await asyncio.to_thread(extract_page_image, pdf_bytes, page_index)
+            
+            if page_image_bytes:
+                logger.info(f"Successfully extracted page {page_index} image ({len(page_image_bytes)} bytes) from parent PDF {parent_asset_id} for PDF_PAGE {asset.id}")
+                return page_image_bytes
+            else:
+                logger.warning(f"Failed to extract page {page_index} image from parent PDF {parent_asset_id}")
+                return b""
+                
+        except Exception as e:
+            logger.error(f"Failed to extract PDF page image for asset {asset.id}: {e}", exc_info=True)
+            return b""
+    
+    # Priority 3: Try source_identifier (web URL) for image assets without blob_path
     # This handles RSS images and other web-referenced images
     if asset.source_identifier:
         image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
@@ -338,6 +576,56 @@ def detect_image_mime_type(image_bytes: bytes, fallback: str = "image/png") -> s
     # If no format detected, use fallback
     return fallback
 
+def safe_log_content(content: Any, max_length: int = 500, max_depth: int = 3) -> str:
+    """
+    Safely log content by truncating long strings and removing binary/base64 data.
+    
+    Args:
+        content: Content to log (can be string, dict, list, etc.)
+        max_length: Maximum length for string values
+        max_depth: Maximum depth for nested structures
+        
+    Returns:
+        Safe string representation for logging
+    """
+    def is_base64_like(s: str) -> bool:
+        """Check if string looks like base64-encoded binary data."""
+        if not isinstance(s, str) or len(s) < 100:
+            return False
+        # Base64 strings are long and contain only base64 characters
+        base64_chars = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n')
+        if len(s) > 500 and all(c in base64_chars for c in s[:1000]):
+            return True
+        return False
+    
+    def sanitize_value(value: Any, depth: int = 0) -> Any:
+        """Recursively sanitize values for logging."""
+        if depth > max_depth:
+            return "... (max depth reached)"
+        
+        if isinstance(value, str):
+            if is_base64_like(value):
+                return f"[BASE64_DATA: {len(value)} bytes]"
+            if len(value) > max_length:
+                return value[:max_length] + f"... [truncated, {len(value)} total chars]"
+            return value
+        elif isinstance(value, dict):
+            return {k: sanitize_value(v, depth + 1) for k, v in list(value.items())[:20]}  # Limit dict size
+        elif isinstance(value, list):
+            return [sanitize_value(item, depth + 1) for item in value[:10]]  # Limit list size
+        elif isinstance(value, bytes):
+            return f"[BINARY_DATA: {len(value)} bytes]"
+        else:
+            return str(value)[:max_length]
+    
+    try:
+        sanitized = sanitize_value(content)
+        if isinstance(sanitized, (dict, list)):
+            return json.dumps(sanitized, indent=2, default=str)[:2000]  # Limit total output
+        return str(sanitized)[:2000]
+    except Exception as e:
+        return f"[Error sanitizing content: {e}]"
+
 async def assemble_multimodal_context(
     parent_asset: Asset,
     run_config: dict,
@@ -351,13 +639,32 @@ async def assemble_multimodal_context(
     media_inputs = []
     
     # Check if parent asset itself is an image that should be processed
-    image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+    # PDF_PAGE assets are conditionally treated as images based on process_pdfs_as_images flag
+    process_pdfs_as_images = run_config.get("process_pdfs_as_images", False)
+    
+    # Determine which asset kinds should be treated as images
+    if process_pdfs_as_images:
+        # Include PDF_PAGE when explicitly processing as images (OCR mode)
+        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+    else:
+        # Exclude PDF_PAGE - use text content instead (faster, cheaper for text-based PDFs)
+        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION}
+    
     parent_is_image = parent_asset.kind in image_asset_kinds
     
     if parent_is_image:
         # Process the parent asset itself as the image to analyze
-        logger.info(f"Parent asset {parent_asset.id} is an image ({parent_asset.kind.value}), processing directly")
+        if parent_asset.kind == AssetKind.PDF_PAGE and process_pdfs_as_images:
+            logger.info(f"PDF_PAGE asset {parent_asset.id} will be processed as image (OCR mode enabled)")
+        else:
+            logger.info(f"Parent asset {parent_asset.id} is an image ({parent_asset.kind.value}), processing directly")
         image_content_bytes = await fetch_asset_content(parent_asset, storage_provider)
+        
+        # For PDF_PAGE assets: if no text content and we have image, use multimodal with document field
+        is_pdf_page_without_text = (
+            parent_asset.kind == AssetKind.PDF_PAGE and 
+            (not parent_asset.text_content or not parent_asset.text_content.strip())
+        )
         
         if image_content_bytes:
             # Detect actual MIME type from image bytes
@@ -388,11 +695,29 @@ async def assemble_multimodal_context(
                     "original_kind": str(parent_asset.kind.value)
                 }
             })
+            
+            # For PDF_PAGE without text: use document field for multimodal analysis
+            if is_pdf_page_without_text:
+                logger.info(f"PDF_PAGE {parent_asset.id} has no text content. Using multimodal analysis with document graph field.")
+                text_content = (
+                    f"PDF Page Asset (UUID: {parent_asset_uuid_str})\n"
+                    f"Title: {parent_asset.title or 'Untitled'}\n"
+                    f"Page Number: {parent_asset.part_index + 1 if parent_asset.part_index is not None else 'Unknown'}\n"
+                    f"\nThis is a scanned PDF page with no extractable text. "
+                    f"You must analyze the image content and extract graph nodes and edges according to the schema.\n\n"
+                    f"IMPORTANT: You MUST populate the 'document' field with the graph data (nodes and edges) extracted from this image. "
+                    f"The 'document' field is where the graph structure for this page should go. "
+                    f"Do NOT leave 'document' as null - it must contain a valid object with 'nodes' and 'edges' arrays. "
+                    f"Extract ALL relevant nodes and edges from the image, not just one. "
+                    f"The 'per_image' field is only for analyzing other child images, not this page itself."
+                )
+            else:
+                # Text content is minimal for standalone images
+                text_content = f"Image Asset (UUID: {parent_asset_uuid_str})\nTitle: {parent_asset.title or 'Untitled'}\n"
         else:
             logger.warning(f"Parent asset {parent_asset.id} is an image but has no content available")
-        
-        # Text content is minimal for standalone images
-        text_content = f"Image Asset (UUID: {parent_asset_uuid_str})\nTitle: {parent_asset.title or 'Untitled'}\n"
+            # Fallback text content
+            text_content = f"Image Asset (UUID: {parent_asset_uuid_str})\nTitle: {parent_asset.title or 'Untitled'}\n"
     else:
         # Parent is a document/text asset - use existing logic
         text_content_header = f"Parent Document (UUID: {parent_asset_uuid_str})\n---\n"
@@ -531,15 +856,27 @@ async def demultiplex_results(
     """Map hierarchical results back to appropriate assets"""
     annotations = []
     
-    # DEBUG: Log what we received
-    logger.info(f"DEBUG: demultiplex_results called for Run {run.id}, Asset {parent_asset.id}")
-    logger.info(f"DEBUG: result keys: {list(result.keys()) if result else 'None'}")
-    logger.info(f"DEBUG: result type: {type(result)}, content preview: {str(result)[:200] if result is not None else 'None'}")
-    logger.info(f"DEBUG: schema_structure document_fields: {bool(schema_structure.get('document_fields'))}")
+    # DEBUG: Log what we received (safely, without binary data)
+    logger.debug(f"DEBUG: demultiplex_results called for Run {run.id}, Asset {parent_asset.id}")
+    logger.debug(f"DEBUG: result keys: {list(result.keys()) if result and isinstance(result, dict) else 'None'}")
+    logger.debug(f"DEBUG: result type: {type(result)}, content preview: {safe_log_content(result) if result is not None else 'None'}")
+    logger.debug(f"DEBUG: schema_structure document_fields: {bool(schema_structure.get('document_fields'))}")
     
-    # Check if parent is an image being annotated with a flat schema
-    image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+    # Check if parent is a standalone image (PDF_PAGE or IMAGE/IMAGE_REGION without text)
+    # PDF_PAGE is only treated as image if process_pdfs_as_images flag is enabled
+    process_pdfs_as_images = run.configuration.get("process_pdfs_as_images", False) if run.configuration else False
+    
+    if process_pdfs_as_images:
+        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+    else:
+        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION}
+    
     parent_is_image = parent_asset.kind in image_asset_kinds
+    is_standalone_image = (
+        (parent_asset.kind == AssetKind.PDF_PAGE and process_pdfs_as_images) or
+        (parent_asset.kind in {AssetKind.IMAGE, AssetKind.IMAGE_REGION} and 
+         (not parent_asset.text_content or not parent_asset.text_content.strip()))
+    )
     is_flat_schema = not schema_structure["per_modality_fields"]
     
     if parent_is_image and is_flat_schema:
@@ -556,6 +893,57 @@ async def demultiplex_results(
         )
         annotations.append(annotation)
         return annotations  # No child processing needed for standalone images
+    
+    # Special handling for standalone images with hierarchical schema (document + per_image)
+    # Merge document fields and per_image fields into a single annotation
+    if is_standalone_image and schema_structure.get("per_modality_fields"):
+        logger.info(
+            f"Standalone image {parent_asset.id} with hierarchical schema. "
+            f"Merging document and per_image fields into single annotation."
+        )
+        
+        merged_value = {}
+        
+        # Add document fields if present
+        if "document" in result and isinstance(result["document"], dict):
+            merged_value.update(result["document"])
+            logger.debug(f"Merged document fields: {list(result['document'].keys())}")
+        
+        # Merge per_image fields (take first item if array, or merge all items)
+        for modality, _ in schema_structure["per_modality_fields"].items():
+            per_key = f"per_{modality}"
+            if per_key in result:
+                modality_data = result[per_key]
+                if isinstance(modality_data, list) and len(modality_data) > 0:
+                    # For standalone images, typically there's one image, so take the first item
+                    # Merge its fields into the main annotation
+                    first_item = modality_data[0]
+                    if isinstance(first_item, dict):
+                        # Remove system UUID field as it's not needed in the final annotation
+                        first_item_clean = {k: v for k, v in first_item.items() if k != "system_asset_source_uuid"}
+                        merged_value.update(first_item_clean)
+                        logger.debug(f"Merged {per_key} fields: {list(first_item_clean.keys())}")
+                    else:
+                        logger.warning(f"per_{modality} item is not a dict, skipping merge")
+                elif isinstance(modality_data, dict):
+                    # If it's already a dict (not a list), merge it directly
+                    modality_clean = {k: v for k, v in modality_data.items() if k != "system_asset_source_uuid"}
+                    merged_value.update(modality_clean)
+                    logger.debug(f"Merged {per_key} fields directly: {list(modality_clean.keys())}")
+        
+        # Create single merged annotation
+        annotation = Annotation(
+            asset_id=parent_asset.id,
+            schema_id=schema.id,
+            run_id=run.id,
+            value=merged_value,
+            status=ResultStatus.SUCCESS,
+            infospace_id=run.infospace_id,
+            user_id=run.user_id
+        )
+        annotations.append(annotation)
+        logger.info(f"Created merged annotation for standalone image {parent_asset.id} with {len(merged_value)} fields")
+        return annotations
     
     # NEW: Handle nested document structure where result["document"] contains {"document": {...}, "per_image": [...]}
     # This can happen when the LLM wraps the response incorrectly
@@ -580,10 +968,10 @@ async def demultiplex_results(
                     result[per_key] = doc_value[per_key]
                     logger.info(f"Unwrapped {per_key} from nested document structure")
     
-    # Create annotation for parent asset from document fields
+        # Create annotation for parent asset from document fields
     if schema_structure["document_fields"] and "document" in result:
         parent_annotation_value = result["document"]
-        logger.info(f"DEBUG: Found document result, type: {type(parent_annotation_value)}, value: {parent_annotation_value}")
+        logger.debug(f"DEBUG: Found document result, type: {type(parent_annotation_value)}, value preview: {safe_log_content(parent_annotation_value)}")
         
         # Skip empty document annotations if we have per-modality data (avoids duplicate annotations on same asset)
         if isinstance(parent_annotation_value, dict) and (parent_annotation_value or not schema_structure["per_modality_fields"]):
@@ -597,13 +985,13 @@ async def demultiplex_results(
                 user_id=run.user_id
             )
             annotations.append(parent_annotation)
-            logger.info(f"DEBUG: Created parent annotation for Asset {parent_asset.id}, Run {run.id}")
+            logger.debug(f"DEBUG: Created parent annotation for Asset {parent_asset.id}, Run {run.id}")
         elif isinstance(parent_annotation_value, dict) and not parent_annotation_value:
-            logger.info(f"DEBUG: Skipping empty document annotation for Asset {parent_asset.id} (has per-modality fields)")
+            logger.debug(f"DEBUG: Skipping empty document annotation for Asset {parent_asset.id} (has per-modality fields)")
         else:
             logger.warning(f"LLM result for 'document' in Run {run.id}, Asset {parent_asset.id} was not a dict. Got: {type(parent_annotation_value)}. Skipping parent annotation.")
     else:
-        logger.info(f"DEBUG: No 'document' key in result or no document_fields. Available keys: {list(result.keys()) if result else 'None'}")
+        logger.debug(f"DEBUG: No 'document' key in result or no document_fields. Available keys: {list(result.keys()) if result and isinstance(result, dict) else 'None'}")
         
         # NEW: Handle schema envelope format that wasn't normalized earlier
         if isinstance(result, dict) and "$schema" in result and "$content" in result:
@@ -641,7 +1029,7 @@ async def demultiplex_results(
         
         # FALLBACK: If no hierarchical structure, treat the entire result as document-level
         if not schema_structure["per_modality_fields"] and result:
-            logger.info(f"DEBUG: No hierarchical structure detected, using entire result as document annotation")
+            logger.debug(f"DEBUG: No hierarchical structure detected, using entire result as document annotation")
             parent_annotation = Annotation(
                 asset_id=parent_asset.id,
                 schema_id=schema.id,
@@ -652,7 +1040,7 @@ async def demultiplex_results(
                 user_id=run.user_id
             )
             annotations.append(parent_annotation)
-            logger.info(f"DEBUG: Created fallback annotation for Asset {parent_asset.id}, Run {run.id}")
+            logger.debug(f"DEBUG: Created fallback annotation for Asset {parent_asset.id}, Run {run.id}")
     
     for modality, _ in schema_structure["per_modality_fields"].items():
         result_key_for_modality = f"per_{modality}"
@@ -697,7 +1085,14 @@ async def demultiplex_results(
                     continue
                 
                 # First check if parent asset itself matches (for standalone images)
-                if str(parent_asset.uuid) == llm_provided_uuid and parent_asset.kind == asset_kind:
+                # PDF_PAGE should be treated as an image kind for this matching
+                image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+                parent_matches_kind = (
+                    parent_asset.kind == asset_kind or
+                    (parent_asset.kind in image_asset_kinds and asset_kind == AssetKind.IMAGE)
+                )
+                
+                if str(parent_asset.uuid) == llm_provided_uuid and parent_matches_kind:
                     child_asset_to_annotate = parent_asset
                     logger.info(f"Mapped LLM result for modality '{modality}' item {i} to parent Asset ID {parent_asset.id} (standalone image)")
                 else:
@@ -734,7 +1129,7 @@ async def demultiplex_results(
                 )
                 annotations.append(child_annotation)
     
-    logger.info(f"DEBUG: demultiplex_results returning {len(annotations)} annotations for Run {run.id}, Asset {parent_asset.id}")
+    logger.debug(f"DEBUG: demultiplex_results returning {len(annotations)} annotations for Run {run.id}, Asset {parent_asset.id}")
     return annotations
 
 @celery.task
@@ -809,7 +1204,14 @@ async def process_single_asset_schema(
         
         # Auto-detect if image processing should be enabled
         run_config_enhanced = run_config.copy()
-        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+        process_pdfs_as_images = run_config.get("process_pdfs_as_images", False)
+        
+        # Determine image asset kinds based on process_pdfs_as_images flag
+        if process_pdfs_as_images:
+            image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+        else:
+            image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION}
+        
         has_per_image_schema = "per_image" in schema_structure.get("per_modality_fields", {})
         target_is_image = asset.kind in image_asset_kinds
         
@@ -826,6 +1228,37 @@ async def process_single_asset_schema(
         text_content_for_provider, provider_specific_config = await assemble_multimodal_context(
             asset, run_config_enhanced, session, storage_provider_instance
         )
+        
+        # For standalone image assets, simplify schema to remove per_image field
+        # This eliminates ambiguity - the LLM should only use document field for standalone images
+        # PDF_PAGE assets are ALWAYS treated as standalone images (even if they have text)
+        # because they're primarily image-based and should use multimodal analysis with document field
+        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+        is_standalone_image = (
+            asset.kind == AssetKind.PDF_PAGE or  # PDF_PAGE always treated as standalone image
+            (asset.kind in {AssetKind.IMAGE, AssetKind.IMAGE_REGION} and 
+             (not asset.text_content or not asset.text_content.strip()))  # IMAGE/IMAGE_REGION only if no text
+        )
+        
+        logger.info(
+            f"Asset {asset.id} standalone image check: kind={asset.kind}, "
+            f"in_image_kinds={asset.kind in image_asset_kinds}, "
+            f"text_content={'present' if asset.text_content else 'missing'}, "
+            f"is_standalone_image={is_standalone_image}, "
+            f"has_per_modality_fields={bool(schema_structure.get('per_modality_fields'))}"
+        )
+        
+        schema_to_use = OutputModelClass.model_json_schema()
+        # Create a local copy of schema_structure that we can modify for standalone images
+        schema_structure_to_use = schema_structure.copy()
+        
+        # For standalone images, keep the full schema (document + per_image) so the LLM can return both
+        # We'll merge them in demultiplex_results instead of simplifying the schema
+        if is_standalone_image and schema_structure.get("per_modality_fields"):
+            logger.info(
+                f"Asset {asset.id} is standalone image with per_modality_fields. "
+                f"Keeping full schema (document + per_image) - will merge results into single annotation."
+            )
         
         full_provider_config_for_classify = {**run_config, **provider_specific_config}
         # Pass thinking_config from run_config to provider_specific_config if not already there.
@@ -855,7 +1288,7 @@ async def process_single_asset_schema(
         try:
             provider_response = await model_registry.classify(
                 text_content=text_content_for_provider,
-                schema=OutputModelClass.model_json_schema(),
+                schema=schema_to_use,
                 model_name=model_name,
                 provider_name=provider_name,  # Pass provider name if specified
                 instructions=final_schema_instructions,
@@ -925,7 +1358,8 @@ async def process_single_asset_schema(
                 
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse provider response JSON for Asset {asset.id}, Schema {schema.id}, Run {run.id}: {e}")
-            logger.error(f"Raw response content: {provider_response.content}")
+            logger.error(f"Raw response content length: {len(provider_response.content) if provider_response.content else 0} chars")
+            logger.error(f"Raw response preview: {safe_log_content(provider_response.content[:1000] if provider_response.content else '')}")
             raise Exception(f"Invalid JSON response from provider: {str(e)}")
         
         provider_response_envelope = {
@@ -934,16 +1368,17 @@ async def process_single_asset_schema(
             "_thinking_trace": provider_response.thinking_trace
         }
         
-        # DEBUG: Log provider response details
-        logger.info(f"DEBUG: Provider response for Asset {asset.id}, Schema {schema.id}, Run {run.id}")
-        logger.info(f"DEBUG: Raw provider response content: {provider_response.content}")
-        logger.info(f"DEBUG: Parsed envelope data: {provider_response_envelope.get('data')}")
-        logger.info(f"DEBUG: Schema structure being used: {schema_structure}")
+        # DEBUG: Log provider response details (safely, without binary data)
+        logger.debug(f"DEBUG: Provider response for Asset {asset.id}, Schema {schema.id}, Run {run.id}")
+        logger.debug(f"DEBUG: Raw provider response content length: {len(provider_response.content) if provider_response.content else 0} chars")
+        logger.debug(f"DEBUG: Parsed envelope data preview: {safe_log_content(provider_response_envelope.get('data'))}")
+        logger.debug(f"DEBUG: Schema structure keys: {list(schema_structure_to_use.keys())}")
         
         # Demultiplex results to create annotations
+        # Use schema_structure_to_use (which may be simplified for standalone images)
         created_annotations_for_asset = await demultiplex_results(
             result=provider_response_envelope.get("data", provider_response_envelope),
-            schema_structure=schema_structure,
+            schema_structure=schema_structure_to_use,
             parent_asset=asset,
             schema=schema,
             run=run,
@@ -1104,7 +1539,14 @@ async def process_assets_sequential(
                 
                 # Auto-detect if image processing should be enabled (same as parallel path)
                 run_config_enhanced = run_config.copy()
-                image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+                process_pdfs_as_images = run_config.get("process_pdfs_as_images", False)
+                
+                # Determine image asset kinds based on process_pdfs_as_images flag
+                if process_pdfs_as_images:
+                    image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+                else:
+                    image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION}
+                
                 has_per_image_schema = "per_image" in schema_structure.get("per_modality_fields", {})
                 target_is_image = parent_asset.kind in image_asset_kinds
                 
@@ -1199,7 +1641,8 @@ async def process_assets_sequential(
                         
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse provider response JSON for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}: {e}")
-                    logger.error(f"Raw response content: {provider_response.content}")
+                    logger.error(f"Raw response content length: {len(provider_response.content) if provider_response.content else 0} chars")
+                    logger.error(f"Raw response preview: {safe_log_content(provider_response.content[:1000] if provider_response.content else '')}")
                     raise Exception(f"Invalid JSON response from provider: {str(e)}")
                 
                 provider_response_envelope = {
@@ -1208,11 +1651,11 @@ async def process_assets_sequential(
                     "_thinking_trace": provider_response.thinking_trace
                 }
                 
-                # DEBUG: Log provider response details (sequential path)
-                logger.info(f"DEBUG: Sequential - Provider response for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}")
-                logger.info(f"DEBUG: Sequential - Raw provider response content: {provider_response.content}")
-                logger.info(f"DEBUG: Sequential - Parsed envelope data: {provider_response_envelope.get('data')}")
-                logger.info(f"DEBUG: Sequential - Schema structure being used: {schema_structure}")
+                # DEBUG: Log provider response details (sequential path, safely without binary data)
+                logger.debug(f"DEBUG: Sequential - Provider response for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}")
+                logger.debug(f"DEBUG: Sequential - Raw provider response content length: {len(provider_response.content) if provider_response.content else 0} chars")
+                logger.debug(f"DEBUG: Sequential - Parsed envelope data preview: {safe_log_content(provider_response_envelope.get('data'))}")
+                logger.debug(f"DEBUG: Sequential - Schema structure keys: {list(schema_structure.keys())}")
                 
                 created_annotations_for_asset = await demultiplex_results(
                     result=provider_response_envelope.get("data", provider_response_envelope),
@@ -1321,9 +1764,14 @@ async def _process_annotation_run_async(run_id: int) -> None:
                 bundle_id = run.source_bundle_id
                 bundle = session.get(Bundle, bundle_id)
                 if bundle and bundle.infospace_id == run.infospace_id:
-                    # Get all assets from the source bundle
-                    all_bundle_asset_ids = [asset.id for asset in bundle.assets]
-                    logger.info(f"Task: Continuous run {run.id} watching bundle {bundle_id} with {len(all_bundle_asset_ids)} total assets")
+                    # Query asset IDs (do NOT use bundle.assets - loads all into memory)
+                    path_filter = run_config.get("path_filter")  # e.g. "data_set_1/politics/%"
+                    stmt = select(Asset.id).where(Asset.bundle_id == bundle_id)
+                    if path_filter:
+                        like_val = f"{path_filter}%" if not path_filter.endswith("%") else path_filter
+                        stmt = stmt.where(Asset.blob_path.like(like_val))
+                    all_bundle_asset_ids = list(session.exec(stmt).all())
+                    logger.info(f"Task: Continuous run {run.id} watching bundle {bundle_id} with {len(all_bundle_asset_ids)} total assets" + (f" (path_filter={path_filter})" if path_filter else ""))
                     
                     # ═══ DELTA TRACKING: Only process assets that don't have annotations for all required schemas ═══
                     # Get the schema IDs this run should process
@@ -1332,8 +1780,7 @@ async def _process_annotation_run_async(run_id: int) -> None:
                     if run_schema_ids and all_bundle_asset_ids:
                         # Find assets that already have annotations for ALL schemas (from ANY run in this infospace)
                         # This prevents reprocessing assets that have already been annotated
-                        from sqlmodel import select, func
-                        from app.models import Annotation
+                        # Note: select and func are already imported at module level
                         
                         # Query: For each asset, count how many schemas it has annotations for
                         # Check annotations from ANY run in the same infospace (not just this run)
@@ -1371,8 +1818,13 @@ async def _process_annotation_run_async(run_id: int) -> None:
                 bundle_id = run_config["target_bundle_id"]
                 bundle = session.get(Bundle, bundle_id)
                 if bundle and bundle.infospace_id == run.infospace_id:
-                    # Assuming Bundle.assets is the correct relationship to get asset IDs
-                    target_asset_ids_to_process.extend([asset.id for asset in bundle.assets])
+                    # Query asset IDs (do NOT use bundle.assets - loads all into memory)
+                    path_filter = run_config.get("path_filter")
+                    stmt = select(Asset.id).where(Asset.bundle_id == bundle_id)
+                    if path_filter:
+                        like_val = f"{path_filter}%" if not path_filter.endswith("%") else path_filter
+                        stmt = stmt.where(Asset.blob_path.like(like_val))
+                    target_asset_ids_to_process.extend(session.exec(stmt).all())
                 else:
                     logger.error(f"Task: Target Bundle {bundle_id} for Run {run.id} not found or not in infospace.")
                     run.status = RunStatus.FAILED
@@ -1408,23 +1860,33 @@ async def _process_annotation_run_async(run_id: int) -> None:
             if csv_row_processing:
                 expanded_asset_ids = []
                 csv_parents_processed = []
-                
+                # Bulk fetch all target assets
+                target_assets = session.exec(
+                    select(Asset)
+                    .where(Asset.id.in_(target_asset_ids_to_process))
+                    .where(Asset.infospace_id == run.infospace_id)
+                ).all()
+                assets_by_id = {a.id: a for a in target_assets}
+                csv_parent_ids = [a.id for a in target_assets if a.kind == AssetKind.CSV]
+                # Batch fetch CSV_ROW children for all CSV parents
+                csv_children_by_parent: Dict[int, List[Asset]] = {}
+                if csv_parent_ids:
+                    csv_row_children = session.exec(
+                        select(Asset)
+                        .where(Asset.parent_asset_id.in_(csv_parent_ids))
+                        .where(Asset.kind == AssetKind.CSV_ROW)
+                        .where(Asset.infospace_id == run.infospace_id)
+                        .order_by(Asset.parent_asset_id, Asset.part_index)
+                    ).all()
+                    for child in csv_row_children:
+                        if child.parent_asset_id:
+                            csv_children_by_parent.setdefault(child.parent_asset_id, []).append(child)
                 for asset_id in target_asset_ids_to_process:
-                    asset = session.get(Asset, asset_id)
+                    asset = assets_by_id.get(asset_id)
                     logger.debug(f"Task: Checking asset {asset_id} - Kind: {asset.kind if asset else 'NOT_FOUND'}, Infospace: {asset.infospace_id if asset else 'N/A'}")
-                    
-                    if asset and asset.infospace_id == run.infospace_id and asset.kind == AssetKind.CSV:
-                        # This is a CSV parent asset - fetch its CSV_ROW children
-                        csv_row_children = session.exec(
-                            select(Asset).where(
-                                Asset.parent_asset_id == asset.id,
-                                Asset.kind == AssetKind.CSV_ROW,
-                                Asset.infospace_id == run.infospace_id
-                            ).order_by(Asset.part_index)
-                        ).all()
-                        
+                    if asset and asset.kind == AssetKind.CSV:
+                        csv_row_children = csv_children_by_parent.get(asset.id, [])
                         logger.info(f"Task: Found {len(csv_row_children)} CSV_ROW children for CSV asset {asset.id}")
-                        
                         if csv_row_children:
                             logger.info(f"Task: Expanding CSV asset {asset.id} ({asset.title}) to {len(csv_row_children)} CSV row children for Run {run.id}")
                             expanded_asset_ids.extend([child.id for child in csv_row_children])
@@ -1433,7 +1895,6 @@ async def _process_annotation_run_async(run_id: int) -> None:
                             logger.warning(f"Task: CSV asset {asset.id} has no CSV_ROW children. Including parent asset for Run {run.id}")
                             expanded_asset_ids.append(asset_id)
                     else:
-                        # Not a CSV parent or asset not found - include as-is
                         expanded_asset_ids.append(asset_id)
                 
                 # Update the target asset list with expanded CSV rows
@@ -1445,6 +1906,62 @@ async def _process_annotation_run_async(run_id: int) -> None:
                     logger.info(f"Task: Run {run.id} expanded {len(csv_parents_processed)} CSV parent assets to {len(target_asset_ids_to_process)} total assets including CSV rows")
             else:
                 logger.info(f"Task: CSV row processing disabled for Run {run.id}. Processing CSV parent assets directly.")
+
+            # PDF Page Expansion: Check for PDF parent assets and optionally expand to their PDF_PAGE children
+            pdf_page_processing = run_config.get("pdf_page_processing", True)  # Default to True for PDF page processing
+            
+            logger.info(f"Task: PDF page processing setting for Run {run.id}: {pdf_page_processing}")
+            logger.info(f"Task: Target asset IDs before PDF expansion for Run {run.id}: {target_asset_ids_to_process}")
+            
+            if pdf_page_processing:
+                expanded_asset_ids = []
+                pdf_parents_processed = []
+                # Bulk fetch all target assets
+                target_assets = session.exec(
+                    select(Asset)
+                    .where(Asset.id.in_(target_asset_ids_to_process))
+                    .where(Asset.infospace_id == run.infospace_id)
+                ).all()
+                assets_by_id = {a.id: a for a in target_assets}
+                pdf_parent_ids = [a.id for a in target_assets if a.kind == AssetKind.PDF]
+                # Batch fetch PDF_PAGE children for all PDF parents
+                pdf_children_by_parent: Dict[int, List[Asset]] = {}
+                if pdf_parent_ids:
+                    pdf_page_children = session.exec(
+                        select(Asset)
+                        .where(Asset.parent_asset_id.in_(pdf_parent_ids))
+                        .where(Asset.kind == AssetKind.PDF_PAGE)
+                        .where(Asset.infospace_id == run.infospace_id)
+                        .order_by(Asset.parent_asset_id, Asset.part_index)
+                    ).all()
+                    for child in pdf_page_children:
+                        if child.parent_asset_id:
+                            pdf_children_by_parent.setdefault(child.parent_asset_id, []).append(child)
+                for asset_id in target_asset_ids_to_process:
+                    asset = assets_by_id.get(asset_id)
+                    logger.debug(f"Task: Checking asset {asset_id} for PDF expansion - Kind: {asset.kind if asset else 'NOT_FOUND'}, Infospace: {asset.infospace_id if asset else 'N/A'}")
+                    if asset and asset.kind == AssetKind.PDF:
+                        pdf_page_children = pdf_children_by_parent.get(asset.id, [])
+                        logger.info(f"Task: Found {len(pdf_page_children)} PDF_PAGE children for PDF asset {asset.id}")
+                        if pdf_page_children:
+                            logger.info(f"Task: Expanding PDF asset {asset.id} ({asset.title}) to {len(pdf_page_children)} PDF page children for Run {run.id}")
+                            expanded_asset_ids.extend([child.id for child in pdf_page_children])
+                            pdf_parents_processed.append(asset.id)
+                        else:
+                            logger.warning(f"Task: PDF asset {asset.id} has no PDF_PAGE children. Including parent asset for Run {run.id}")
+                            expanded_asset_ids.append(asset_id)
+                    else:
+                        expanded_asset_ids.append(asset_id)
+                
+                # Update the target asset list with expanded PDF pages
+                target_asset_ids_to_process = expanded_asset_ids
+                
+                logger.info(f"Task: Final target asset IDs after PDF expansion for Run {run.id}: {target_asset_ids_to_process}")
+                
+                if pdf_parents_processed:
+                    logger.info(f"Task: Run {run.id} expanded {len(pdf_parents_processed)} PDF parent assets to {len(target_asset_ids_to_process)} total assets including PDF pages")
+            else:
+                logger.info(f"Task: PDF page processing disabled for Run {run.id}. Processing PDF parent assets directly.")
 
             schemas_to_apply = run.target_schemas
             if not schemas_to_apply:
@@ -1474,12 +1991,29 @@ async def _process_annotation_run_async(run_id: int) -> None:
                 
                 # Simplify schema for less capable models
                 optimized_contract = simplify_schema_for_model(schema.output_contract, model_name)
+                
+                # Validate that optimized_contract is a valid JSON schema
+                if not isinstance(optimized_contract, dict):
+                    logger.error(f"Task: Schema {schema.id} ({schema.name}) for Run {run.id} has invalid output_contract type: {type(optimized_contract)}. Expected dict.")
+                    errors_run_level.append(f"Schema {schema.id} ({schema.name}) has invalid output_contract format.")
+                    continue
+                
+                # Ensure optimized_contract has the expected JSON schema structure
+                if optimized_contract.get("type") != "object" or "properties" not in optimized_contract:
+                    logger.error(f"Task: Schema {schema.id} ({schema.name}) for Run {run.id} output_contract is not a valid object schema with properties. Got: {list(optimized_contract.keys())[:10]}")
+                    errors_run_level.append(f"Schema {schema.id} ({schema.name}) output_contract missing 'type: object' or 'properties'.")
+                    continue
+                
                 schema_structure = detect_schema_structure(optimized_contract)
+                
+                # Validate that schema_structure found document_fields
+                if not schema_structure.get("document_fields"):
+                    logger.error(f"Task: Schema {schema.id} ({schema.name}) for Run {run.id} - detect_schema_structure did not find document_fields. Schema structure: {list(schema_structure.keys())}")
+                    errors_run_level.append(f"Schema {schema.id} ({schema.name}) - no document_fields detected in schema structure.")
+                    continue
                 
                 # Prepare justification-related configurations
                 justification_mode = run_config.get("justification_mode", "NONE")
-                default_justification_prompt_template = run_config.get("default_justification_prompt")
-                global_justification_prompt = run_config.get("global_justification_prompt")
                 # field_specific_justification_configs comes from schema.field_specific_justification_configs (already a dict)
                 schema_justification_configs = schema.field_specific_justification_configs or {}
 
@@ -1502,12 +2036,10 @@ async def _process_annotation_run_async(run_id: int) -> None:
                     errors_run_level.append(f"Schema {schema.id} ('{schema.name}') is invalid or empty and was skipped.")
                     continue
 
-                # Assemble justification prompts to append to schema.instructions
+                # Initialize final instructions with schema-level instructions
                 final_schema_instructions = schema.instructions or ""
-                justification_prompts_parts = []
-                needs_any_field_specific_justification_prompts = False
-
-                # This is a precursor to generating detailed prompts for them.
+                
+                # Determine which fields will have justification submodels (for model creation)
                 fields_that_will_have_justification_submodel = []
                 potential_fields_to_check_for_justification = []
                 
@@ -1557,68 +2089,10 @@ async def _process_annotation_run_async(run_id: int) -> None:
                         if should_add_just_for_this_field:
                             fields_that_will_have_justification_submodel.append(field_name_to_check)
 
-                if justification_mode != "NONE" and fields_that_will_have_justification_submodel:
-                    needs_any_field_specific_justification_prompts = True
-                    if justification_mode == "ALL_WITH_GLOBAL_PROMPT" and global_justification_prompt:
-                        justification_prompts_parts.append(global_justification_prompt)
-                        # If global prompt is very generic, we might still want to add structure info
-                        justification_prompts_parts.append(
-                            "When providing justifications as requested, ensure each justification object (e.g., 'fieldName_justification') includes a 'reasoning' text. "
-                            "For evidence: use 'text_spans' - IMPORTANT: Provide 2-5 high-quality text spans that directly support your reasoning. "
-                            "Each span should be a complete sentence or meaningful phrase. Ensure character offsets align with sentence boundaries when possible. "
-                            "Prefer fewer, more meaningful spans over many short fragments. Avoid overlapping spans. "
-                            "Format: list of objects with 'start_char_offset', 'end_char_offset', 'text_snippet', optional 'asset_uuid'. "
-                            "Other evidence types: 'image_regions' (list of objects with 'asset_uuid', 'bounding_box' dict {'x', 'y', 'width', 'height', 'label'}), "
-                            "'audio_segments' (list of objects with 'asset_uuid', 'start_time_seconds', 'end_time_seconds'), "
-                            "or 'additional_evidence' (a dictionary for any other structured data)."
-                        )
-                    else: # SCHEMA_DEFAULT or ALL_WITH_SCHEMA_OR_DEFAULT_PROMPT
-                        # Add general structural guidance once if any field needs it
-                        justification_prompts_parts.append(
-                            "For any field requiring justification (e.g., 'fieldName_justification'), structure it with: "
-                            "1. A 'reasoning' field (string) containing your explanation. "
-                            "2. Optional evidence fields: "
-                            "'text_spans': IMPORTANT TEXT EVIDENCE GUIDELINES - Provide 2-5 high-quality text spans that directly support your reasoning. "
-                            "Each span should be a complete sentence or meaningful phrase. Ensure character offsets align with sentence boundaries when possible. "
-                            "Format: list of objects with 'start_char_offset' (int), 'end_char_offset' (int), 'text_snippet' (str), and optionally 'asset_uuid' (str). "
-                            "Prefer fewer, more meaningful spans over many short fragments. Avoid overlapping spans. "
-                            "'image_regions': a list, each item an object with 'asset_uuid' (str) and a 'bounding_box' object (with 'x', 'y', 'width', 'height' as floats 0-1, and optional 'label' as str). "
-                            "'audio_segments': a list, each item an object with 'asset_uuid' (str), 'start_time_seconds' (float), 'end_time_seconds' (float). "
-                            "'additional_evidence': a dictionary for any other structured evidence types."
-                        )
-                        for field_name in fields_that_will_have_justification_submodel:
-                            prompt_for_field_reasoning = None
-                            metadata = field_metadata_map.get(field_name, {})
-                            original_name = metadata.get("original_name", field_name)
-                            title = metadata.get("title")
-                            
-                            field_display_name = f"'{original_name}'"
-                            if title and title.lower() != original_name.lower():
-                                field_display_name += f" (titled '{title}')"
-
-                            field_config = schema_justification_configs.get(original_name)
-                            
-                            if field_config and field_config.get("custom_prompt"):
-                                prompt_for_field_reasoning = field_config["custom_prompt"]
-                            elif default_justification_prompt_template:
-                                try:
-                                    prompt_for_field_reasoning = default_justification_prompt_template.format(field_name=original_name, field_path=original_name)
-                                except KeyError: # Handle if template has unexpected keys
-                                    logger.warning(f"Default justification prompt template has unfulfillable keys for field {original_name}. Using basic prompt.")
-                                    prompt_for_field_reasoning = f"Provide the reasoning for your value for the field {field_display_name}."
-                            else:
-                                prompt_for_field_reasoning = f"Provide the reasoning for your value for the field {field_display_name}."
-                            
-                            if prompt_for_field_reasoning:
-                                # This prompt now focuses on the 'reasoning' part, structure is separate.
-                                justification_prompts_parts.append(
-                                    f"For the field {field_display_name}, populate its '{field_name}_justification.reasoning' with: {prompt_for_field_reasoning}"
-                                )
-                
-                if needs_any_field_specific_justification_prompts and justification_prompts_parts:
-                    final_schema_instructions += "\\n\\n--- Justification Instructions ---\\n" + "\\n".join(justification_prompts_parts)
-                elif justification_mode == "ALL_WITH_GLOBAL_PROMPT" and global_justification_prompt and justification_prompts_parts: # Case where only global prompt was added
-                     final_schema_instructions += "\\n\\n--- Justification Instructions ---\\n" + "\\n".join(justification_prompts_parts)
+                # Note: Justification prompts are now ONLY sourced from:
+                # 1. schema.instructions (researcher-written)
+                # 2. field.custom_prompt (researcher-written, visible in schema editor)
+                # No hidden prompt injection - researchers have full control over evidence guidance.
 
                 # --- System instruction for per-modality asset UUID mapping --- 
                 # Check if the schema structure implies per-modality outputs that would need mapping
@@ -1651,13 +2125,15 @@ async def _process_annotation_run_async(run_id: int) -> None:
                 session.commit()
                 return
 
-            # OPTIMIZATION 3: Pre-fetch all assets to reduce DB queries
-            assets_map = {}
+            # OPTIMIZATION 3: Pre-fetch all assets in a single bulk query
+            assets_list = session.exec(
+                select(Asset)
+                .where(Asset.id.in_(target_asset_ids_to_process))
+                .where(Asset.infospace_id == run.infospace_id)
+            ).all()
+            assets_map = {a.id: a for a in assets_list}
             for asset_id in target_asset_ids_to_process:
-                asset = session.get(Asset, asset_id)
-                if asset and asset.infospace_id == run.infospace_id:
-                    assets_map[asset_id] = asset
-                else:
+                if asset_id not in assets_map:
                     logger.warning(f"Task: Asset {asset_id} for Run {run.id} not found/invalid. Skipping.")
                     errors_run_level.append(f"Asset {asset_id} not found/invalid.")
 
@@ -1756,8 +2232,10 @@ async def _process_annotation_run_async(run_id: int) -> None:
                 asset_service = AssetService(session, storage_provider_instance)
                 annotation_service = AnnotationService(session, model_registry, asset_service)
                 annotation_service.compute_run_aggregates(run_id=run.id)
-                if run.monitor_id:
-                    annotation_service.update_monitor_aggregates(monitor_id=run.monitor_id, run_id=run.id)
+                # Check for monitor_id attribute safely (may not exist on all AnnotationRun instances)
+                monitor_id = getattr(run, 'monitor_id', None)
+                if monitor_id:
+                    annotation_service.update_monitor_aggregates(monitor_id=monitor_id, run_id=run.id)
             except Exception as agg_exc:
                 logger.error(f"Task: Aggregation failed for run {run.id}: {agg_exc}", exc_info=True)
             

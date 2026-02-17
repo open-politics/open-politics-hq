@@ -1187,7 +1187,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
             </>
           ) : (
             /* Desktop Layout - Resizable panels */
-            <ResizablePanelGroup direction="horizontal" className="h-full w-full min-w-0 mx-auto rounded-lg border-primary/60 overflow-hidden">
+            <ResizablePanelGroup direction="horizontal" className="h-full w-full min-w-0 mx-auto rounded-lg border-primary/60">
               <ResizablePanel 
                 defaultSize={55} 
                 minSize={20} 
@@ -1212,9 +1212,8 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                 defaultSize={45} 
                 minSize={20} 
                 maxSize={80}
-                className="overflow-hidden"
               >
-                <div className="h-full w-full border-l overflow-hidden flex flex-col">
+                <div className="h-full w-full border-l flex flex-col">
                   {activeDetail?.type === 'asset' ? (
                     <>
                       {/* Back to Feed button */}
@@ -1234,6 +1233,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                         </Button>
                       </div>
                       <div className="flex-1 overflow-hidden">
+                        <ScrollArea className="h-full w-full">  
                         <AssetDetailView
                           selectedAssetId={activeDetail.id}
                           highlightAssetIdOnOpen={highlightAssetId}
@@ -1241,6 +1241,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                           schemas={[]}
                           onLoadIntoRunner={onLoadIntoRunner}
                         />
+                        </ScrollArea>
                       </div>
                     </>
                   ) : activeDetail?.type === 'bundle' ? (

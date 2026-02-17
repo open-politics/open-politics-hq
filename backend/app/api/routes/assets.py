@@ -20,10 +20,12 @@ from app.api.deps import (
     StorageProviderDep,
     ContentIngestionServiceDep,
     BundleServiceDep,
+    IngestionContextFactoryDep,
 )
 from app.api.services.service_utils import validate_infospace_access
 from app.api.providers.factory import create_scraping_provider, create_storage_provider
 from app.core.config import settings
+from sqlalchemy import func
 from sqlmodel import select, delete
 from app.api.tasks.content_tasks import process_content, ingest_bulk_urls
 from app.core.celery_app import celery
@@ -244,6 +246,7 @@ async def ingest_url(
     *,
     session: SessionDep,
     current_user: CurrentUser,
+    make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     url: str,
     title: Optional[str] = None,
@@ -251,28 +254,24 @@ async def ingest_url(
 ) -> Any:
     """
     Ingest content from a URL.
-    
+
     Uses WebHandler directly for clean URL ingestion.
     """
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
-        
-        # Use WebHandler directly (new pattern)
-        from app.api.handlers import WebHandler
-        
-        handler = WebHandler(session)
-        asset = await handler.handle(
-            url=url,
-            infospace_id=infospace_id,
-            user_id=current_user.id,
-            title=title,
-            options={"scrape_immediately": scrape_immediately}
-        )
 
-        if not asset:
+        from app.api.handlers import WebHandler
+
+        context = make_ingestion_context(
+            current_user.id, infospace_id, {"scrape_immediately": scrape_immediately}
+        )
+        handler = WebHandler(context)
+        assets = await handler.handle(url, title, {"scrape_immediately": scrape_immediately})
+
+        if not assets:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create asset from URL.")
-        
-        return AssetRead.model_validate(asset)
+
+        return AssetRead.model_validate(assets[0])
         
     except Exception as e:
         logger.error(f"URL ingestion failed: {e}")
@@ -286,6 +285,7 @@ async def ingest_text(
     *,
     session: SessionDep,
     current_user: CurrentUser,
+    make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     text_content: str,
     title: Optional[str] = None,
@@ -293,29 +293,23 @@ async def ingest_text(
 ) -> Any:
     """
     Ingest direct text content.
-    
+
     Uses TextHandler directly for clean text ingestion.
     """
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
-        
-        # Use TextHandler directly (new pattern)
+
         from app.api.handlers import TextHandler
-        
-        handler = TextHandler(session)
-        asset = await handler.handle(
-            text=text_content,
-            infospace_id=infospace_id,
-            user_id=current_user.id,
-            title=title,
-            event_timestamp=event_timestamp,
-            options={}
-        )
-        
-        if not asset:
+
+        options = {"event_timestamp": event_timestamp} if event_timestamp else {}
+        context = make_ingestion_context(current_user.id, infospace_id, options)
+        handler = TextHandler(context)
+        assets = await handler.handle(text_content, title, options)
+
+        if not assets:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create asset from text.")
 
-        return AssetRead.model_validate(asset)
+        return AssetRead.model_validate(assets[0])
         
     except Exception as e:
         logger.error(f"Text ingestion failed: {e}")
@@ -535,33 +529,40 @@ async def materialize_csv_from_rows(
             detail="CSV container has no column schema defined"
         )
     
-    # Get all child rows ordered by part_index
-    child_rows = session.exec(
-        select(Asset)
-        .where(Asset.parent_asset_id == asset_id)
-        .where(Asset.kind == AssetKind.CSV_ROW)
-        .order_by(Asset.part_index)
-    ).all()
-    
-    if len(child_rows) == 0:
+    # Stream child rows in batches to avoid unbounded memory
+    import csv
+    from io import StringIO
+
+    csv_buffer = StringIO()
+    writer = csv.DictWriter(csv_buffer, fieldnames=columns)
+    writer.writeheader()
+
+    batch_size = 500
+    offset = 0
+    total_rows = 0
+    while True:
+        child_rows = session.exec(
+            select(Asset)
+            .where(Asset.parent_asset_id == asset_id)
+            .where(Asset.kind == AssetKind.CSV_ROW)
+            .order_by(Asset.part_index)
+            .offset(offset)
+            .limit(batch_size)
+        ).all()
+        if not child_rows:
+            break
+        for row_asset in child_rows:
+            row_data = row_asset.source_metadata.get("original_row_data", {})
+            row_dict = {col: row_data.get(col, "") for col in columns}
+            writer.writerow(row_dict)
+            total_rows += 1
+        offset += batch_size
+
+    if total_rows == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="CSV container has no rows to materialize"
         )
-    
-    # Generate CSV content
-    import csv
-    from io import StringIO
-    
-    csv_buffer = StringIO()
-    writer = csv.DictWriter(csv_buffer, fieldnames=columns)
-    writer.writeheader()
-    
-    for row_asset in child_rows:
-        row_data = row_asset.source_metadata.get("original_row_data", {})
-        # Ensure all columns are present
-        row_dict = {col: row_data.get(col, "") for col in columns}
-        writer.writerow(row_dict)
     
     csv_content = csv_buffer.getvalue()
     csv_buffer.close()
@@ -593,7 +594,7 @@ async def materialize_csv_from_rows(
     session.commit()
     session.refresh(asset)
     
-    logger.info(f"Materialized CSV {asset_id}: {len(child_rows)} rows -> {blob_path}")
+    logger.info(f"Materialized CSV {asset_id}: {total_rows} rows -> {blob_path}")
     
     return asset
 
@@ -763,8 +764,8 @@ def list_assets(
         # For top-level assets, filter by user
         query = query.where(Asset.user_id == current_user.id)
     
-    # Get total count
-    count_query = select(Asset.id).where(
+    # Get total count (DB-side, scalable for large infospaces)
+    count_query = select(func.count(Asset.id)).where(
         Asset.infospace_id == infospace_id
     )
     if parent_asset_id is not None:
@@ -772,7 +773,7 @@ def list_assets(
     else:
         count_query = count_query.where(Asset.user_id == current_user.id)
     
-    total_count = len(session.exec(count_query).all())
+    total_count = session.exec(count_query).one() or 0
     
     # Get assets with pagination
     query = query.offset(skip).limit(limit).order_by(Asset.created_at.desc())
@@ -788,7 +789,6 @@ async def discover_rss_feeds(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentIngestionServiceDep,
     infospace_id: int,
     country: Optional[str] = None,
     category: Optional[str] = None,
@@ -804,13 +804,15 @@ async def discover_rss_feeds(
     """
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
-        
-        feeds = await content_service.discover_rss_feeds_from_awesome_repo(
+
+        from app.api.handlers import RSSHandler
+
+        feeds = await RSSHandler.discover_rss_feeds_from_awesome_repo(
             country=country,
             category=category,
             limit=limit
         )
-        
+
         return {
             "feeds": feeds,
             "count": len(feeds),
@@ -818,7 +820,7 @@ async def discover_rss_feeds(
             "category": category,
             "limit": limit
         }
-        
+
     except Exception as e:
         logger.error(f"RSS feed discovery failed: {e}")
         raise HTTPException(
@@ -831,7 +833,6 @@ async def preview_rss_feed(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentIngestionServiceDep,
     infospace_id: int,
     feed_url: str,
     max_items: int = 20
@@ -839,9 +840,10 @@ async def preview_rss_feed(
     """
     Preview the content of an RSS feed.
     """
-    # Use the content ingestion service to fetch and parse the feed
     try:
-        preview_data = await content_service.preview_rss_feed(feed_url, max_items)
+        from app.api.handlers import RSSHandler
+
+        preview_data = await RSSHandler.preview_rss_feed(feed_url, max_items)
         return preview_data
     except Exception as e:
         logger.error(f"Error previewing RSS feed {feed_url}: {e}", exc_info=True)
@@ -1024,23 +1026,22 @@ def delete_asset(
             detail="Asset not found"
         )
     
-    # Get all children before deletion
-    children = session.exec(
-        select(Asset).where(Asset.parent_asset_id == asset_id)
-    ).all()
-    num_children = len(children)
-    
-    # Explicitly delete children first (including their related records)
-    for child in children:
-        # Delete related records for child
-        from app.models import AssetChunk, Annotation
-        session.exec(
-            delete(AssetChunk).where(AssetChunk.asset_id == child.id)
-        )
-        session.exec(
-            delete(Annotation).where(Annotation.asset_id == child.id)
-        )
-        session.delete(child)
+    # Delete children in batches to avoid unbounded memory
+    from app.models import AssetChunk, Annotation
+    num_children = 0
+    batch_size = 1000
+    while True:
+        batch = session.exec(
+            select(Asset).where(Asset.parent_asset_id == asset_id).limit(batch_size)
+        ).all()
+        if not batch:
+            break
+        for child in batch:
+            session.exec(delete(AssetChunk).where(AssetChunk.asset_id == child.id))
+            session.exec(delete(Annotation).where(Annotation.asset_id == child.id))
+            session.delete(child)
+            num_children += 1
+        session.flush()
     
     # Delete related records for parent asset
     from app.models import AssetChunk, Annotation
@@ -1402,7 +1403,7 @@ async def ingest_rss_feeds_from_awesome(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentIngestionServiceDep,
+    make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     request: RSSDiscoveryRequest
 ) -> Any:
@@ -1417,20 +1418,27 @@ async def ingest_rss_feeds_from_awesome(
     """
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
-        
-        assets = await content_service.ingest_rss_feeds_from_awesome_repo(
-            country=request.country,
-            infospace_id=infospace_id,
+
+        from app.api.handlers import RSSHandler
+
+        context = make_ingestion_context(
             user_id=current_user.id,
+            infospace_id=infospace_id,
+            options=request.options,
+        )
+
+        assets = await RSSHandler.ingest_from_awesome_repo(
+            context,
+            country=request.country,
             category_filter=request.category_filter,
             max_feeds=request.max_feeds,
             max_items_per_feed=request.max_items_per_feed,
             bundle_id=request.bundle_id,
-            options=request.options
+            options=request.options,
         )
-        
+
         return [AssetRead.model_validate(asset) for asset in assets]
-        
+
     except Exception as e:
         logger.error(f"RSS feed ingestion from awesome repo failed: {e}")
         raise HTTPException(

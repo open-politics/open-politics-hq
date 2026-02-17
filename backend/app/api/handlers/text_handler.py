@@ -6,61 +6,55 @@ Handles direct text content ingestion.
 """
 
 import logging
-from typing import Optional, Dict, Any
 from datetime import datetime
-from sqlmodel import Session
+from typing import Any, Dict, List, Optional
 
 from app.models import Asset
 from app.api.services.asset_builder import AssetBuilder
+from .base import BaseHandler, IngestionContext
 
 logger = logging.getLogger(__name__)
 
 
-class TextHandler:
+class TextHandler(BaseHandler):
     """
     Handle direct text content ingestion.
-    
+
     Uses AssetBuilder's from_text() pattern.
     """
-    
-    def __init__(self, session: Session):
-        self.session = session
-    
+
     async def handle(
         self,
-        text: str,
-        infospace_id: int,
-        user_id: int,
+        locator: Any,
         title: Optional[str] = None,
-        event_timestamp: Optional[datetime] = None,
-        options: Optional[Dict[str, Any]] = None
-    ) -> Asset:
+        options: Optional[Dict[str, Any]] = None,
+    ) -> List[Asset]:
         """
         Handle text content ingestion.
-        
+
         Args:
-            text: Text content
-            infospace_id: Target infospace
-            user_id: User creating the text
+            locator: Text content string
             title: Optional custom title
-            event_timestamp: Optional event timestamp
-            options: Processing options
-            
+            options: May contain event_timestamp, metadata
+
         Returns:
-            Created asset
+            List containing the created asset
         """
+        text = locator if isinstance(locator, str) else str(locator)
         options = options or {}
-        
-        builder = (AssetBuilder(self.session, user_id, infospace_id)
-            .from_text(text, title))
-        
+
+        builder = (
+            AssetBuilder(self.session, self.user_id, self.infospace_id)
+            .from_text(text, title)
+        )
+
+        event_timestamp = options.get("event_timestamp")
         if event_timestamp:
             builder.with_timestamp(event_timestamp)
-        
-        if options.get('metadata'):
-            builder.with_metadata(**options['metadata'])
-        
-        asset = await builder.build()
-        
-        return asset
 
+        if options.get("metadata"):
+            builder.with_metadata(**options["metadata"])
+
+        asset = await builder.build()
+
+        return [asset]

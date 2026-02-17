@@ -137,6 +137,17 @@ class BundleService:
         if not db_bundle:
             return False
 
+        # Clear root_bundle_id from DatasetIngestionJob records that reference this bundle
+        from app.models import DatasetIngestionJob
+        jobs = self.session.exec(
+            select(DatasetIngestionJob).where(DatasetIngestionJob.root_bundle_id == bundle_id)
+        ).all()
+        if jobs:
+            logger.info(f"Service: Clearing root_bundle_id from {len(jobs)} dataset ingestion jobs")
+            for job in jobs:
+                job.root_bundle_id = None
+                self.session.add(job)
+
         self.session.delete(db_bundle)
         self.session.commit()
         logger.info(f"Service: Bundle {bundle_id} deleted.")
@@ -431,11 +442,9 @@ class BundleService:
         from app.schemas import AssetCreate
         from app.models import Asset as AssetModel
         
-        new_asset_ids = []
-        
+        new_assets = []
         for asset in assets:
             try:
-                # Create copy of asset in target infospace
                 new_asset = AssetModel(
                     title=asset.title,
                     kind=asset.kind,
@@ -449,17 +458,16 @@ class BundleService:
                     infospace_id=target_infospace_id,
                     processing_status=asset.processing_status
                 )
-                
-                self.session.add(new_asset)
-                self.session.flush()  # Get ID without committing
-                new_asset_ids.append(new_asset.id)
-                logger.info(f"Copied asset {asset.id} ('{asset.title}') to new asset {new_asset.id} in infospace {target_infospace_id}")
-                
+                new_assets.append(new_asset)
+                logger.debug(f"Prepared copy of asset {asset.id} ('{asset.title}') for infospace {target_infospace_id}")
             except Exception as e:
                 logger.error(f"Failed to copy asset {asset.id}: {e}")
-                # Continue with other assets
                 continue
-        
+        if new_assets:
+            self.session.add_all(new_assets)
+            self.session.flush()
+        new_asset_ids = [a.id for a in new_assets if a.id is not None]
+        logger.info(f"Copied {len(new_asset_ids)} assets to infospace {target_infospace_id}")
         return new_asset_ids
 
     def move_bundle_to_parent(

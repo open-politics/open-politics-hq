@@ -5,6 +5,60 @@ import { getDisplayFragmentKey } from './utils';
 import { cn } from '@/lib/utils';
 
 /**
+ * Get type information for a value
+ */
+export function getValueType(value: any): { type: string; label: string; count?: number } {
+  if (value === null || value === undefined) {
+    return { type: 'empty', label: 'Empty' };
+  }
+  
+  if (Array.isArray(value)) {
+    return { type: 'array', label: 'Array', count: value.length };
+  }
+  
+  if (typeof value === 'object') {
+    const keyCount = Object.keys(value).length;
+    return { type: 'object', label: 'Object', count: keyCount };
+  }
+  
+  // Check for date strings
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return { type: 'date', label: 'Date' };
+  }
+  
+  return { type: typeof value, label: typeof value === 'string' ? 'String' : typeof value === 'number' ? 'Number' : typeof value === 'boolean' ? 'Boolean' : 'Unknown' };
+}
+
+/**
+ * Type badge component - shows data type with optional count
+ * Simplified styling - no colors, just text
+ */
+export function FragmentTypeBadge({ 
+  value,
+  className 
+}: { 
+  value: any;
+  className?: string;
+}) {
+  const typeInfo = getValueType(value);
+  
+  const label = typeInfo.count !== undefined 
+    ? `${typeInfo.label}(${typeInfo.count})`
+    : typeInfo.label;
+  
+  return (
+    <span
+      className={cn(
+        "text-[10px] text-muted-foreground font-mono shrink-0 align-baseline",
+        className
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+/**
  * Minimal badge view of a fragment - just shows count or key
  */
 export function FragmentBadge({ 

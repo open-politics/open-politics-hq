@@ -31,7 +31,7 @@ const isSchemeFormData = (scheme: SchemeFormData | AnnotationSchemaRead): scheme
 const getJustificationConfig = (
   fieldName: string, 
   scheme: SchemeFormData | AnnotationSchemaRead
-): { enabled: boolean; custom_prompt?: string | null } | null => {
+): { enabled: boolean; custom_prompt?: string | null; rigor_level?: string | null } | null => {
   if (isSchemeFormData(scheme)) {
     // For form data, check the field's justification property
     const allFields = scheme.structure.flatMap(section => section.fields);
@@ -39,14 +39,20 @@ const getJustificationConfig = (
     if (field?.justification?.enabled) {
       return {
         enabled: true,
-        custom_prompt: field.justification.custom_prompt || null
+        custom_prompt: field.justification.custom_prompt || null,
+        rigor_level: field.justification.rigor_level || null
       };
     }
   } else {
     // For API schema data, check field_specific_justification_configs
     const configs = scheme.field_specific_justification_configs;
     if (configs && configs[fieldName]) {
-      return configs[fieldName];
+      const config = configs[fieldName];
+      return {
+        enabled: config.enabled || false,
+        custom_prompt: config.custom_prompt || null,
+        rigor_level: (config as any).rigor_level || null
+      };
     }
   }
   return null;
@@ -109,6 +115,11 @@ const FieldCard = ({ field, depth = 0, scheme }: { field: any; depth?: number; s
                           <HelpCircle className="h-3 w-3 mr-1" />
                           Justification
                         </Badge>
+                        {justificationConfig.rigor_level && justificationConfig.rigor_level !== 'standard' && (
+                          <Badge variant="outline" className="text-xs h-5 capitalize">
+                            {justificationConfig.rigor_level}
+                          </Badge>
+                        )}
                         {justificationConfig.custom_prompt && (
                           <MessageSquare className="h-3 w-3 text-indigo-600" />
                         )}
@@ -120,6 +131,14 @@ const FieldCard = ({ field, depth = 0, scheme }: { field: any; depth?: number; s
                         <p className="text-xs text-muted-foreground">
                           AI will provide reasoning for this field's values
                         </p>
+                        {justificationConfig.rigor_level && (
+                          <div className="pt-1 border-t">
+                            <p className="text-xs font-semibold mb-1">Evidence Rigor:</p>
+                            <p className="text-xs capitalize">
+                              {justificationConfig.rigor_level}
+                            </p>
+                          </div>
+                        )}
                         {justificationConfig.custom_prompt && (
                           <div className="pt-1 border-t">
                             <p className="text-xs font-semibold mb-1">Custom Prompt:</p>

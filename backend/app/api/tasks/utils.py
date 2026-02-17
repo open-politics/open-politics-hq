@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, Type, Dict, Any, List, Union
+from typing import Optional, Type, Dict, Any, List, Union, Literal
 from sqlmodel import Session
 from app.models import Task
 from app.core.db import engine  # Import engine for session creation
@@ -53,6 +53,22 @@ def make_python_identifier(name: str) -> str:
     elif name[0].isdigit(): # if starts with digit, prefix with underscore
         return f"_{name}"
     return name
+
+def create_literal_type(enum_values: List[str]) -> Type:
+    """
+    Create a Literal type from a list of enum values.
+    Handles both single and multiple values by creating nested Unions.
+    """
+    if len(enum_values) == 1:
+        return Literal[enum_values[0]]
+    elif len(enum_values) == 2:
+        return Union[Literal[enum_values[0]], Literal[enum_values[1]]]
+    else:
+        # For 3+ values, nest Unions: Union[Literal[v1], Union[Literal[v2], Literal[v3]]]
+        result = Union[Literal[enum_values[-2]], Literal[enum_values[-1]]]
+        for v in reversed(enum_values[:-2]):
+            result = Union[Literal[v], result]
+        return result
 
 def map_json_type_to_python_type(json_type: Union[str, List[str]]) -> Any:
     """Maps JSON schema types to Python types for Pydantic models."""
@@ -154,7 +170,16 @@ def create_pydantic_model_from_json_schema(
         # Pydantic's Field(default=...) causes the provider library to see a 'default' key, which it doesn't support.
         # Optional fields will default to `None` automatically unless a value is provided.
         # By NOT passing `default` to `Field`, we prevent Pydantic from adding `"default": null` to the generated JSON schema.
-        field_info = Field(description=prop_schema.get("description"))
+        field_info_kwargs = {"description": prop_schema.get("description")}
+        
+        # Add min/max constraints for number types (JSON schema uses "number" for both float and integer)
+        if prop_type_json == "number":
+            if "minimum" in prop_schema:
+                field_info_kwargs["ge"] = prop_schema["minimum"]  # ge = greater than or equal
+            if "maximum" in prop_schema:
+                field_info_kwargs["le"] = prop_schema["maximum"]  # le = less than or equal
+        
+        field_info = Field(**field_info_kwargs)
 
         current_field_path = prop_name 
 
@@ -186,9 +211,23 @@ def create_pydantic_model_from_json_schema(
                 )
             else:
                 list_item_type = map_json_type_to_python_type(items_type_json) if items_type_json else Any
+                # Handle enum constraints on array items (e.g., array of strings with limited choices)
+                if "enum" in items_schema and isinstance(items_schema["enum"], list) and len(items_schema["enum"]) > 0:
+                    enum_values = items_schema["enum"]
+                    # Use Literal type to enforce enum constraints
+                    # For strings, create a Literal with all allowed values
+                    if items_type_json == "string":
+                        list_item_type = create_literal_type(enum_values)
+                        logger.debug(f"Applied enum constraints to array items for field '{field_name}': {enum_values}")
             field_type = List[list_item_type]
         else:
             field_type = map_json_type_to_python_type(prop_type_json) if prop_type_json else Any
+            # Handle enum constraints on regular string fields
+            if prop_type_json == "string" and "enum" in prop_schema:
+                enum_values = prop_schema["enum"]
+                if isinstance(enum_values, list) and len(enum_values) > 0:
+                    field_type = create_literal_type(enum_values)
+                    logger.debug(f"Applied enum constraints to string field '{field_name}': {enum_values}")
 
         if isinstance(prop_type_json, list) and "null" in prop_type_json:
             is_optional = True

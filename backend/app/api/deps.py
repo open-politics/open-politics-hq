@@ -236,6 +236,45 @@ def get_content_ingestion_service(
 
 ContentIngestionServiceDep = Annotated[ContentIngestionService, Depends(get_content_ingestion_service)]
 
+
+def get_ingestion_context_factory(
+    session: SessionDep,
+    storage_provider: StorageProviderDep,
+    scraping_provider: ScrapingProviderDep,
+    search_provider: SearchProviderDep,
+    asset_service: AssetServiceDep,
+    bundle_service: BundleServiceDep,
+    settings: SettingsDep,
+):
+    """Factory that builds IngestionContext given user_id, infospace_id, options."""
+
+    def factory(
+        user_id: int,
+        infospace_id: int,
+        options: Optional[dict] = None,
+    ):
+        from app.api.handlers.base import IngestionContext
+        return IngestionContext(
+            session=session,
+            storage_provider=storage_provider,
+            scraping_provider=scraping_provider,
+            search_provider=search_provider,
+            asset_service=asset_service,
+            bundle_service=bundle_service,
+            user_id=user_id,
+            infospace_id=infospace_id,
+            settings=settings,
+            options=options or {},
+        )
+
+    return factory
+
+
+IngestionContextFactoryDep = Annotated[
+    Any,  # Callable[[int, int, Optional[dict]], IngestionContext]
+    Depends(get_ingestion_context_factory),
+]
+
 def get_dataset_service(
     request: Request, session: SessionDep, 
     storage_provider: StorageProviderDep, settings: SettingsDep

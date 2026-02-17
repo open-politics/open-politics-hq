@@ -17,6 +17,7 @@ from app.models import Asset, User, Infospace, Bundle, AnnotationSchema, Annotat
 from app.api.services.asset_service import AssetService
 from app.api.services.annotation_service import AnnotationService
 from app.api.services.content_ingestion_service import ContentIngestionService
+from app.api.services.search_service import SearchService
 from app.schemas import AnnotationRunCreate
 from app.api.mcp.client import IntelligenceMCPClient, get_mcp_client
 from app.core import security
@@ -386,17 +387,19 @@ class IntelligenceConversationService:
             except Exception:
                 return {"id": getattr(a, "id", None), "title": getattr(a, "title", None)}
 
+        search_service = SearchService(self.session)
+
         if search_method == "text":
-            assets = await self.content_ingestion_service._search_assets_text(query, infospace_id, limit, options)
+            assets = await search_service.search_assets_text(query, infospace_id, limit, options)
             return {"assets": [_serialize_asset(a) for a in assets], "total_found": len(assets), "search_method": "text"}
 
         elif search_method == "semantic":
-            assets = await self.content_ingestion_service._search_assets_semantic(query, infospace_id, limit, options)
+            assets = await search_service.search_assets_semantic(query, infospace_id, limit, options)
             return {"assets": [_serialize_asset(a) for a in assets], "total_found": len(assets), "search_method": "semantic"}
 
         elif search_method == "hybrid":
-            text_task = self.content_ingestion_service._search_assets_text(query, infospace_id, max(1, limit // 2), options)
-            sem_task = self.content_ingestion_service._search_assets_semantic(query, infospace_id, max(1, limit // 2), options)
+            text_task = search_service.search_assets_text(query, infospace_id, max(1, limit // 2), options)
+            sem_task = search_service.search_assets_semantic(query, infospace_id, max(1, limit // 2), options)
             text_list, sem_list = await asyncio.gather(text_task, sem_task)
 
             merged: Dict[int, Dict[str, Any]] = {}

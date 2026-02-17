@@ -18,14 +18,13 @@ python-jose
 beautifulsoup4
 openai
 anthropic
+mistralai
 sdmx1
 tavily-python
 sentinelsat
 sentinelhub
-opol >= 0.1.63
 aiohttp
-google-generativeai
-google-genai>=1.13.0
+google-genai
 instructor
 pytest
 pytest-asyncio
@@ -52,3 +51,4 @@ lxml[html_clean]
 uvloop
 httptools
 openpyxl
+langdetect

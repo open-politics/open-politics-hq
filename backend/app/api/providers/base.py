@@ -7,6 +7,7 @@ allowing the application to switch between different implementations without
 changing the core business logic.
 """
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, BinaryIO, Protocol, runtime_checkable, Type, Callable, Awaitable
 from fastapi import UploadFile
 from datetime import datetime
@@ -34,7 +35,14 @@ class StorageProvider(Protocol):
             A file-like object (e.g., stream) or raises error if not found.
         """
         pass
-    
+
+    def get_file_path(self, object_name: str) -> Path:
+        """Returns the local filesystem path for direct file access (zero-copy).
+        Optional: only implemented by local-filesystem providers. Remote storage
+        (MinIO, S3) should raise NotImplementedError.
+        """
+        pass
+
     async def download_file(self, source_object_name: str, destination_local_path: str) -> None:
         """Downloads a file from storage to a local path.
         Args:
@@ -54,10 +62,17 @@ class StorageProvider(Protocol):
         """Synchronous version of delete_file. Needed for cleanup in non-async contexts."""
         pass
 
-    async def list_files(self, prefix: Optional[str] = None) -> List[str]:
+    async def list_files(
+        self,
+        prefix: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> List[str]:
         """Lists files in storage, optionally filtered by prefix.
         Args:
             prefix: Optional prefix to filter files.
+            limit: Optional max number of results (None = no limit).
+            offset: Number of results to skip (for pagination).
         Returns:
             A list of object names/paths.
         """
@@ -68,6 +83,22 @@ class StorageProvider(Protocol):
         Args:
             source_object_name: The current name/path of the object.
             destination_object_name: The desired new name/path.
+        """
+        pass
+
+    async def upload_from_bytes(
+        self,
+        file_bytes: bytes,
+        object_name: str,
+        filename: Optional[str] = None,
+        content_type: Optional[str] = None,
+    ) -> None:
+        """Uploads file content from bytes to storage.
+        Args:
+            file_bytes: The raw bytes to upload.
+            object_name: The desired name/path for the object in storage.
+            filename: Optional filename for content-type guessing.
+            content_type: Optional MIME type (guessed from filename if not provided).
         """
         pass
 

@@ -46,6 +46,7 @@ celery.conf.update(
         'app.api.tasks.schedule',
         'app.api.tasks.content_tasks',
         'app.api.tasks.dataset_tasks',  # Archive/dataset ingestion
+        'app.api.tasks.batch_processing',  # Batch process PENDING assets
         'app.api.tasks.backup',
         'app.api.tasks.user_backup',
         'app.api.tasks.embed',

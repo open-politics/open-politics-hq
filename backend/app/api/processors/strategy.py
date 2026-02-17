@@ -9,6 +9,7 @@ Uses smart heuristics based on content type, file size, and user preference.
 import logging
 from typing import Optional
 from app.models import Asset, AssetKind
+from app.api.utils.content_types import get_content_type_registry
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,8 @@ class ProcessingStrategy:
         
         # Medium files with heavy processing → background
         if file_size and file_size > SMALL_FILE_THRESHOLD:
-            if asset.kind in [AssetKind.CSV, AssetKind.PDF]:
+            desc = get_content_type_registry().by_kind(asset.kind)
+            if desc and desc.is_heavy_processing:
                 logger.debug(
                     f"Asset {asset.id}: Medium file ({file_size} bytes) "
                     f"with heavy processing ({asset.kind}) → background"
@@ -94,8 +96,9 @@ class ProcessingStrategy:
             logger.debug(f"Asset {asset.id}: Web scraping → immediate")
             return True
         
-        # CSV/PDF without size info → use conservative approach
-        if asset.kind in [AssetKind.CSV, AssetKind.PDF]:
+        # Heavy processing types without size info → conservative (background)
+        desc = get_content_type_registry().by_kind(asset.kind)
+        if desc and desc.is_heavy_processing:
             logger.debug(
                 f"Asset {asset.id}: Heavy processing type ({asset.kind}), "
                 f"no size info → background (conservative)"
@@ -123,15 +126,16 @@ class ProcessingStrategy:
         if file_size and file_size > LARGE_FILE_THRESHOLD:
             return "several minutes"
         
-        if asset.kind == AssetKind.PDF:
-            if file_size and file_size > SMALL_FILE_THRESHOLD:
-                return "~1-2 minutes"
-            return "~30 seconds"
-        
-        if asset.kind == AssetKind.CSV:
-            if file_size and file_size > SMALL_FILE_THRESHOLD:
-                return "~2-5 minutes"
-            return "~10-30 seconds"
+        desc = get_content_type_registry().by_kind(asset.kind)
+        if desc and desc.is_heavy_processing:
+            if asset.kind == AssetKind.PDF:
+                if file_size and file_size > SMALL_FILE_THRESHOLD:
+                    return "~1-2 minutes"
+                return "~30 seconds"
+            if asset.kind == AssetKind.CSV:
+                if file_size and file_size > SMALL_FILE_THRESHOLD:
+                    return "~2-5 minutes"
+                return "~10-30 seconds"
         
         if asset.kind == AssetKind.WEB:
             return "< 5 seconds"

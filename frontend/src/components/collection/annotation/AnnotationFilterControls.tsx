@@ -105,7 +105,7 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
     const addFilter = () => {
         if (allSchemas.length === 0) return;
         const defaultSchema = allSchemas[0];
-        const targetKeys = getTargetKeysForScheme(defaultSchema.id, allSchemas);
+        const targetKeys = getTargetKeysForScheme(defaultSchema.id, allSchemas, { includeArrayItemFields: true });
         const initialFieldKey = targetKeys.length > 0 ? targetKeys[0].key : undefined;
         const { type: initialType } = getTargetFieldDefinition({ schemaId: defaultSchema.id, fieldKey: initialFieldKey, operator: 'equals', value: '', isActive: true }, allSchemas);
         const initialOperators = getOperatorsForType(initialType);
@@ -126,7 +126,7 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
         let needsValueReset = false;
         if (updatedFilterData.schemaId && updatedFilterData.schemaId !== currentFilter.schemaId) {
             const newSchemaId = updatedFilterData.schemaId;
-            const targetKeys = getTargetKeysForScheme(newSchemaId, allSchemas);
+            const targetKeys = getTargetKeysForScheme(newSchemaId, allSchemas, { includeArrayItemFields: true });
             mergedFilter.fieldKey = targetKeys.length > 0 ? targetKeys[0].key : undefined;
             needsValueReset = true;
         } else if ('fieldKey' in updatedFilterData && updatedFilterData.fieldKey !== currentFilter.fieldKey) {
@@ -211,7 +211,7 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
 
     const fieldOptions = useMemo(() => {
         if (sourceType !== 'schema' || !selectedSchemaId) return [];
-        const targetKeys = getTargetKeysForScheme(selectedSchemaId, allSchemas);
+        const targetKeys = getTargetKeysForScheme(selectedSchemaId, allSchemas, { includeArrayItemFields: true });
         return targetKeys
             .filter(tk => tk.type === 'string' || tk.type === 'integer' || tk.type === 'number')
             .map(tk => ({ value: tk.key, label: `${tk.name} (${tk.type})` }));
@@ -221,7 +221,7 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
         if (newType === 'schema') {
             const defaultSchemaId = allSchemas.length > 0 ? allSchemas[0].id : null;
             if (defaultSchemaId) {
-                const defaultFields = getTargetKeysForScheme(defaultSchemaId, allSchemas).filter(tk => tk.type === 'string' || tk.type === 'integer' || tk.type === 'number');
+                const defaultFields = getTargetKeysForScheme(defaultSchemaId, allSchemas, { includeArrayItemFields: true }).filter(tk => tk.type === 'string' || tk.type === 'integer' || tk.type === 'number');
                 const defaultFieldKey = defaultFields.length > 0 ? defaultFields[0].key : null;
                 onTimeAxisConfigChange({ ...timeAxisConfig, type: 'schema', schemaId: defaultSchemaId, fieldKey: defaultFieldKey || undefined });
             } else {
@@ -235,7 +235,7 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
     const handleSchemaChange = (schemaIdStr: string) => {
         const newSchemaId = schemaIdStr ? parseInt(schemaIdStr, 10) : null;
         if (newSchemaId) {
-            const defaultFields = getTargetKeysForScheme(newSchemaId, allSchemas).filter(tk => tk.type === 'string' || tk.type === 'integer' || tk.type === 'number');
+            const defaultFields = getTargetKeysForScheme(newSchemaId, allSchemas, { includeArrayItemFields: true }).filter(tk => tk.type === 'string' || tk.type === 'integer' || tk.type === 'number');
             const defaultFieldKey = defaultFields.length > 0 ? defaultFields[0].key : null;
             onTimeAxisConfigChange({ ...timeAxisConfig, type: 'schema', schemaId: newSchemaId, fieldKey: defaultFieldKey || undefined });
         } else {
@@ -348,7 +348,7 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
                             {filters.map((filter, index) => {
                                 const { type, definition } = getTargetFieldDefinition(filter, allSchemas);
                                 const operators = getOperatorsForType(type);
-                                const targetKeys = getTargetKeysForScheme(filter.schemaId, allSchemas);
+                                const targetKeys = getTargetKeysForScheme(filter.schemaId, allSchemas, { includeArrayItemFields: true });
                                 return (
                                     <div key={filter.id} className={cn("flex items-start gap-1.5 p-2 rounded-lg border", !filter.isActive && "bg-muted/50")}>
                                         <div className="flex-1 space-y-1.5">

@@ -41,6 +41,8 @@ interface AssetDetailProviderProps {
   schemas?: AnnotationSchemaRead[];
   // Render mode: 'overlay' (Dialog) or 'panel' (for layout integration)
   renderMode?: 'overlay' | 'panel';
+  // NEW: Optional run ID to filter annotations to current run only
+  activeRunId?: number | null;
 }
 
 export default function AssetDetailProvider({
@@ -48,7 +50,8 @@ export default function AssetDetailProvider({
   onLoadIntoRunner,
   annotationResults,
   schemas,
-  renderMode = 'overlay'
+  renderMode = 'overlay',
+  activeRunId = null
 }: AssetDetailProviderProps) {
   // Removed: const { isDetailOpen, selectedDocumentId, closeDocumentDetail } = useDocumentStore();
   const [isManagerOpen, setIsManagerOpen] = useState(false);
@@ -135,6 +138,7 @@ export default function AssetDetailProvider({
             onOpenManagerRequest={handleOpenManagerRequest}
             annotationResults={annotationResults}
             schemas={schemas}
+            activeRunId={activeRunId} // Pass run ID to filter annotations
           />
         )}
         <AssetManagerOverlay

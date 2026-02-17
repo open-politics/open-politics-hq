@@ -245,10 +245,10 @@ class AssetService:
         Returns:
             A list of Asset objects matching the search criteria.
         """
-        from app.api.services.content_ingestion_service import ContentIngestionService
-        
-        content_ingestion_service = ContentIngestionService(session=self.session)
-        
+        from app.api.services.search_service import SearchService
+
+        search_service = SearchService(session=self.session)
+
         options = {
             "asset_kinds": [kind.value for kind in asset_kinds],
             "distance_threshold": distance_threshold,
@@ -256,20 +256,20 @@ class AssetService:
             "parent_asset_id": parent_asset_id,
             "bundle_id": bundle_id
         }
-        
+
         if search_method == "text":
-            return await content_ingestion_service.search_assets_text(
+            return await search_service.search_assets_text(
                 query, infospace_id, limit, options
             )
         elif search_method == "semantic":
-            return await content_ingestion_service.search_assets_semantic(
+            return await search_service.search_assets_semantic(
                 query, infospace_id, limit, options
             )
         elif search_method == "hybrid":
-            text_task = content_ingestion_service.search_assets_text(
+            text_task = search_service.search_assets_text(
                 query, infospace_id, max(1, limit // 2), options
             )
-            sem_task = content_ingestion_service.search_assets_semantic(
+            sem_task = search_service.search_assets_semantic(
                 query, infospace_id, max(1, limit // 2), options
             )
             text_list, sem_list = await asyncio.gather(text_task, sem_task)

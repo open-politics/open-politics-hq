@@ -13,7 +13,6 @@ from app.models import (
 from app.api.deps import (
     SessionDep,
     CurrentUser,
-    ContentIngestionServiceDep,
     BundleServiceDep,
 )
 from app.api.services.source_service import SourceService
@@ -503,7 +502,6 @@ async def create_rss_source(
     current_user: CurrentUser,
     infospace_id: int,
     request: RssSourceCreateRequest,
-    content_service: ContentIngestionServiceDep,
     bundle_service: BundleServiceDep,
 ) -> Any:
     """
@@ -512,10 +510,12 @@ async def create_rss_source(
     Note: The auto_monitor parameter is deprecated. Use the Flows API to create
     processing workflows that watch this source's output bundle.
     """
+    from app.api.handlers import RSSHandler
+
     source_name = request.source_name
     if not source_name:
         try:
-            feed_info = await content_service.preview_rss_feed(
+            feed_info = await RSSHandler.preview_rss_feed(
                 request.feed_url, max_items=0
             )
             source_name = f"RSS: {feed_info['feed_info']['title']}"

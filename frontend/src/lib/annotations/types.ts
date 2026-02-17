@@ -38,7 +38,7 @@ export interface Asset {
 // --- Annotation Schema & Field Types --- //
 
 // Types for the Advanced Schema Builder, replacing the old flat structure.
-export type JsonSchemaType = 'string' | 'number' | 'boolean' | 'object' | 'array';
+export type JsonSchemaType = 'string' | 'number' | 'boolean' | 'object' | 'array' | 'graph';
 
 export interface AdvancedSchemeField {
   // UI-specific identifier for keys and loops
@@ -52,10 +52,16 @@ export interface AdvancedSchemeField {
   // For 'string' with a list of choices
   enum?: string[];
 
+  // For 'number' and 'integer' types - min/max constraints
+  minimum?: number;
+  maximum?: number;
+
   // For 'array' type, defines the schema of items in the array
   items?: {
     type: JsonSchemaType;
     properties?: AdvancedSchemeField[]; // For an array of objects
+    enum?: string[]; // For an array of strings with limited choices
+    includeOther?: boolean; // Whether to include an "other" fallback option
   };
 
   // For 'object' type
@@ -68,11 +74,15 @@ export interface AdvancedSchemeField {
   justification?: {
     enabled: boolean;
     custom_prompt?: string;
+    rigor_level?: 'minimal' | 'standard' | 'thorough' | 'exhaustive';
   };
 
   // Field-specific AI model configuration
   provider?: string;
   model_name?: string;
+  
+  // Graph-specific configuration (only when type === 'graph')
+  graphConfig?: GraphFieldConfig;
 }
 
 export interface SchemaSection {
@@ -185,10 +195,71 @@ export const ADVANCED_SCHEME_TYPE_OPTIONS = [
   { value: 'number', label: 'Number' },
   { value: 'boolean', label: 'True/False' },
   { value: 'array_string', label: 'List of Text' },
+  { value: 'array_string_enum', label: 'List of Labels (Limited Choices)' },
   { value: 'array_number', label: 'List of Numbers' },
-  { value: 'array_object', label: 'List of Objects' },
+  { value: 'array_object', label: 'List of Objects (Nested Fields)' },
   { value: 'object', label: 'Object (Nested Fields)' },
+  { value: 'graph', label: 'Knowledge Graph' },
 ];
+
+// =============================================================================
+// KNOWLEDGE GRAPH CONFIGURATION TYPES
+// =============================================================================
+
+/**
+ * Graph configuration for deduplication and future node management features.
+ * Stored on AnnotationRun (run-scoped).
+ */
+export interface GraphConfig {
+  // Deduplication settings (core feature)
+  deduplication: {
+    enabled: boolean;  // Default: true
+    strategy: 'exact' | 'normalized' | 'fuzzy';  // How to detect duplicates
+    fields: string[];  // Fields to use for deduplication (e.g., ['name', 'type'])
+    caseSensitive: boolean;  // For name matching
+    normalizeWhitespace: boolean;  // Trim and normalize spaces
+  };
+  
+  // Future extensibility - port for node management
+  nodeManagement?: {
+    // Future: merge strategies
+    mergeStrategy?: 'manual' | 'auto' | 'suggested';
+    // Future: annotation update settings
+    updateAnnotationsOnMerge?: boolean;
+    // Future: conflict resolution
+    conflictResolution?: 'keep_first' | 'merge_data' | 'user_prompt';
+  };
+  
+  // Extensible config dict for future features
+  [key: string]: any;  // Allow any additional config
+}
+
+/**
+ * Graph field configuration for schema definition.
+ * Uses self-contained triplets (subject -> predicate -> object) for simpler LLM extraction.
+ * Entity resolution and deduplication happens in post-processing.
+ */
+export interface GraphFieldConfig {
+  // Entity type configuration (shared for subject_type and object_type)
+  entityTypes: {
+    typeEnum?: string[];  // Allowed entity types (e.g., ['PERSON', 'ORGANIZATION', 'LOCATION'])
+    typeDescription?: string;  // Natural language guidance on how to categorize entities
+    typeConstrained?: boolean;  // Whether to enforce enum or allow free-form types
+    typeColors?: Record<string, string>;  // Custom hex colors per entity type (e.g., { "PERSON": "#3B82F6" })
+  };
+  
+  // Relationship/predicate configuration
+  relationshipSchema: {
+    predicateEnum?: string[];  // Allowed predicates (e.g., ['works_for', 'located_in', 'met_with'])
+    predicateDescription?: string;  // Natural language guidance on how to define relationships
+    predicateConstrained?: boolean;  // Whether to enforce enum or allow free-form predicates
+    predicateColors?: Record<string, string>;  // Custom hex colors per predicate (e.g., { "works_for": "#6366F1" })
+    optionalFields: AdvancedSchemeField[];  // Additional triplet fields (e.g., context, confidence)
+  };
+  
+  // Graph configuration (will be stored on AnnotationRun)
+  graphConfig: GraphConfig;
+}
 
 // =============================================================================
 // KNOWLEDGE GRAPH EDITING TYPES

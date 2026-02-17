@@ -3,12 +3,14 @@ CSV Processor
 =============
 
 Processes CSV files into row assets.
+Streams file reads to avoid loading entire file into memory.
 """
 
 import asyncio
 import csv
+import io
 import logging
-from typing import List
+from typing import Iterator, List, Optional
 from app.models import Asset, AssetKind, ProcessingStatus
 from app.schemas import AssetCreate
 from .base import BaseProcessor, ProcessingError
@@ -49,93 +51,37 @@ class CSVProcessor(BaseProcessor):
         encoding = self.context.options.get('encoding', 'utf-8')
         skip_rows = self.context.options.get('skip_rows', 0)
         max_rows = self.context.max_rows
-        
-        # Read file
-        file_stream = await self.context.storage_provider.get_file(asset.blob_path)
-        file_bytes = await asyncio.to_thread(file_stream.read)
-        
-        # Decode
-        csv_text = self._decode_csv(file_bytes, encoding)
-        
-        # Auto-detect delimiter
-        if not delimiter:
-            delimiter = self._detect_delimiter(csv_text)
-        
-        # Parse CSV
-        csv_lines = csv_text.split('\n')
-        csv_reader = csv.reader(csv_lines, delimiter=delimiter)
-        
-        # Skip rows if requested
-        for _ in range(skip_rows):
-            try:
-                next(csv_reader)
-            except StopIteration:
-                raise ProcessingError(f"CSV has fewer rows than skip_rows={skip_rows}")
-        
-        # Read header
-        try:
-            header = [h.strip() for h in next(csv_reader) if h.strip()]
-        except StopIteration:
-            raise ProcessingError("CSV is empty or has no header row")
-        
-        if not header:
-            raise ProcessingError("CSV header row is empty")
-        
-        # Process rows
-        child_assets = []
-        full_text_parts = [f"CSV Headers: {' | '.join(header)}"]
-        rows_processed = 0
-        
-        for idx, row in enumerate(csv_reader):
-            if rows_processed >= max_rows:
-                logger.warning(f"CSV processing stopped at {max_rows} rows limit")
-                break
-            
-            if not any(cell.strip() for cell in row if cell):
-                continue
-            
-            # Normalize row length
-            while len(row) < len(header):
-                row.append('')
-            if len(row) > len(header):
-                row = row[:len(header)]
-            
-            # Clean row data
-            cleaned_row = [cell.replace('\x00', '').strip() for cell in row]
-            row_data = {header[j]: cleaned_row[j] for j in range(len(header))}
-            row_text = ' | '.join(cleaned_row)
-            full_text_parts.append(row_text)
-            
-            # Generate title: {index} | {first_non_empty_cols[:25]}
-            title_parts = [str(rows_processed + 1)]
-            title_parts.extend(
-                v[:25] + ('...' if len(v) > 25 else '')
-                for v in cleaned_row[:3] if v.strip()
+
+        storage = self.context.storage_provider
+        if hasattr(storage, "get_file_path"):
+            file_path = storage.get_file_path(asset.blob_path)
+            result = await asyncio.to_thread(
+                self._process_csv_stream_from_path,
+                file_path,
+                asset,
+                encoding,
+                delimiter,
+                skip_rows,
+                max_rows,
             )
-            row_title = " | ".join(title_parts) if len(title_parts) > 1 else f"Row {rows_processed + 1}"
-            
-            # Create row asset
-            child_asset_create = AssetCreate(
-                title=row_title,
-                kind=AssetKind.CSV_ROW,
-                user_id=asset.user_id,
-                infospace_id=asset.infospace_id,
-                parent_asset_id=asset.id,
-                part_index=rows_processed,
-                text_content=row_text,
-                source_metadata={
-                    'row_number': skip_rows + rows_processed + 2,
-                    'data_row_index': rows_processed,
-                    'original_row_data': row_data
-                }
+        else:
+            file_stream = await storage.get_file(asset.blob_path)
+            result = await asyncio.to_thread(
+                self._process_csv_stream_from_file,
+                file_stream,
+                asset,
+                encoding,
+                delimiter,
+                skip_rows,
+                max_rows,
             )
-            child_assets.append(child_asset_create)
-            rows_processed += 1
-            
-            # Yield periodically
-            if rows_processed % 1000 == 0:
-                await asyncio.sleep(0.01)
-        
+
+        child_assets = result["child_assets"]
+        full_text_parts = result["full_text_parts"]
+        header = result["header"]
+        delimiter = result["delimiter"]
+        rows_processed = result["rows_processed"]
+
         # Update parent asset
         asset.text_content = "\n".join(full_text_parts)
         asset.source_metadata.update({
@@ -147,15 +93,159 @@ class CSVProcessor(BaseProcessor):
             'processing_options': self.context.options
         })
         
-        # Save child assets
+        # Save child assets in batches
         saved_children = []
-        for child_create in child_assets:
-            child_asset = self.context.asset_service.create_asset(child_create)
-            saved_children.append(child_asset)
-        
+        batch_size = 500
+        for i in range(0, len(child_assets), batch_size):
+            batch = child_assets[i : i + batch_size]
+            batch_assets = [Asset(**c.model_dump()) for c in batch]
+            saved_children.extend(batch_assets)
+            self.context.session.add_all(batch_assets)
+            self.context.session.flush()
+        self.context.session.commit()
+
         logger.info(f"Processed CSV: {rows_processed} rows, {len(header)} columns, created {len(saved_children)} child assets")
         return saved_children
-    
+
+    def _process_csv_stream_from_path(
+        self,
+        file_path,
+        asset: Asset,
+        encoding: str,
+        delimiter: Optional[str],
+        skip_rows: int,
+        max_rows: int,
+    ) -> dict:
+        """Stream CSV from local file path (zero-copy, no full load)."""
+        enc = self._resolve_encoding_for_path(file_path, encoding)
+        with open(file_path, "r", encoding=enc) as f:
+            return self._stream_process_csv(f, asset, enc, delimiter, skip_rows, max_rows)
+
+    def _process_csv_stream_from_file(
+        self,
+        file_stream,
+        asset: Asset,
+        encoding: str,
+        delimiter: Optional[str],
+        skip_rows: int,
+        max_rows: int,
+    ) -> dict:
+        """Stream CSV from file-like object (binary stream). Falls back to provided encoding."""
+        text_stream = io.TextIOWrapper(file_stream, encoding=encoding)
+        try:
+            return self._stream_process_csv(
+                text_stream, asset, encoding, delimiter, skip_rows, max_rows
+            )
+        finally:
+            try:
+                text_stream.detach()
+            except (ValueError, AttributeError):
+                pass
+
+    def _resolve_encoding_for_path(self, file_path, encoding: str) -> str:
+        """Try opening path with given encoding; fall back to common encodings."""
+        for enc in [encoding, "utf-8", "latin1", "cp1252"]:
+            try:
+                with open(file_path, "r", encoding=enc) as f:
+                    f.read(1)
+                return enc
+            except (UnicodeDecodeError, OSError):
+                continue
+        raise ProcessingError("Could not decode CSV file with any common encoding")
+
+    def _stream_process_csv(
+        self,
+        text_stream,
+        asset: Asset,
+        encoding: str,
+        delimiter: Optional[str],
+        skip_rows: int,
+        max_rows: int,
+    ) -> dict:
+        """Process CSV from text stream (iterator of lines)."""
+        lines = []
+        for i in range(50):
+            line = text_stream.readline()
+            if not line:
+                break
+            lines.append(line)
+        sample_text = "".join(lines)
+        if not delimiter:
+            delimiter = self._detect_delimiter(sample_text)
+
+        def line_iter() -> Iterator[str]:
+            for line in lines:
+                yield line
+            while True:
+                line = text_stream.readline()
+                if not line:
+                    break
+                yield line
+
+        csv_reader = csv.reader(line_iter(), delimiter=delimiter)
+        for _ in range(skip_rows):
+            try:
+                next(csv_reader)
+            except StopIteration:
+                raise ProcessingError(f"CSV has fewer rows than skip_rows={skip_rows}")
+        try:
+            header = [h.strip() for h in next(csv_reader) if h.strip()]
+        except StopIteration:
+            raise ProcessingError("CSV is empty or has no header row")
+        if not header:
+            raise ProcessingError("CSV header row is empty")
+
+        child_assets = []
+        full_text_parts = [f"CSV Headers: {' | '.join(header)}"]
+        rows_processed = 0
+
+        for row in csv_reader:
+            if rows_processed >= max_rows:
+                logger.warning(f"CSV processing stopped at {max_rows} rows limit")
+                break
+            if not any(cell.strip() for cell in row if cell):
+                continue
+            while len(row) < len(header):
+                row.append("")
+            if len(row) > len(header):
+                row = row[: len(header)]
+            cleaned_row = [cell.replace("\x00", "").strip() for cell in row]
+            row_data = {header[j]: cleaned_row[j] for j in range(len(header))}
+            row_text = " | ".join(cleaned_row)
+            full_text_parts.append(row_text)
+            title_parts = [str(rows_processed + 1)]
+            title_parts.extend(
+                v[:25] + ("..." if len(v) > 25 else "")
+                for v in cleaned_row[:3]
+                if v.strip()
+            )
+            row_title = " | ".join(title_parts) if len(title_parts) > 1 else f"Row {rows_processed + 1}"
+            child_assets.append(
+                AssetCreate(
+                    title=row_title,
+                    kind=AssetKind.CSV_ROW,
+                    user_id=asset.user_id,
+                    infospace_id=asset.infospace_id,
+                    parent_asset_id=asset.id,
+                    part_index=rows_processed,
+                    text_content=row_text,
+                    source_metadata={
+                        "row_number": skip_rows + rows_processed + 2,
+                        "data_row_index": rows_processed,
+                        "original_row_data": row_data,
+                    },
+                )
+            )
+            rows_processed += 1
+
+        return {
+            "child_assets": child_assets,
+            "full_text_parts": full_text_parts,
+            "header": header,
+            "delimiter": delimiter,
+            "rows_processed": rows_processed,
+        }
+
     def _decode_csv(self, file_bytes: bytes, encoding: str) -> str:
         """Decode CSV bytes with fallback encodings."""
         try:

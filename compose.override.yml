@@ -16,8 +16,13 @@ services:
     volumes:
       - ./backend/:/app
       - ./backend/openapi.json:/app/openapi.json
+      # Mount for local_fs storage (when STORAGE_PROVIDER_TYPE=local_fs)
+      # For VPS: add - /host/dataset_collection:/data/storage/datasets:ro
+      - osint_storage:/data/storage
     environment:
       - PORT=${BACKEND_PORT}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["bash", "/app/start-reload.sh"]
     build:
       context: ./backend
@@ -25,11 +30,14 @@ services:
         INSTALL_DEV: ${INSTALL_DEV-false}  
     networks:
       - default
+    
   
   celery_worker:
     restart: "no"
     volumes:
       - ./backend/:/app
+      # Same storage mount as backend (for VPS add datasets volume)
+      - osint_storage:/data/storage
   
   frontend:
     restart: "no"
@@ -85,6 +93,7 @@ volumes:
   redis_data:
   searxng_data:
   minio:
+  osint_storage:
   ollama_data:
     name: ollama_data
   frontend_node_modules:

@@ -16,6 +16,44 @@ from .base import BaseProcessor, ProcessingError
 logger = logging.getLogger(__name__)
 
 
+def extract_pdf_metadata(
+    *,
+    pdf_bytes: bytes | None = None,
+    file_path: str | None = None,
+    sample_pages: int = 3,
+) -> dict:
+    """
+    Lightweight PDF metadata extraction for Phase 1 content detection.
+    Samples first N pages to detect image-only PDFs without fully processing.
+    """
+    if file_path is not None:
+        doc = fitz.open(filename=file_path)
+    elif pdf_bytes is not None:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    else:
+        raise ProcessingError("Either pdf_bytes or file_path must be provided")
+
+    with doc:
+        page_count = doc.page_count
+        total_chars = 0
+        to_sample = min(sample_pages, page_count)
+        for i in range(to_sample):
+            try:
+                page = doc.load_page(i)
+                text = page.get_text("text").replace("\x00", "").strip()
+                total_chars += len(text)
+            except Exception:
+                pass
+        avg_chars = total_chars / max(1, to_sample)
+        is_image_only = avg_chars < 50
+        return {
+            "page_count": page_count,
+            "text_layer_chars": total_chars,
+            "is_image_only": is_image_only,
+            "embedded_images": 0,  # PyMuPDF would need image list; use chars heuristic for now
+        }
+
+
 class PDFProcessor(BaseProcessor):
     """
     Process PDF files.
@@ -47,15 +85,20 @@ class PDFProcessor(BaseProcessor):
             raise ProcessingError(f"Cannot process asset {asset.id} as PDF")
         
         max_pages = self.context.max_pages
-        
-        # Read file
-        file_stream = await self.context.storage_provider.get_file(asset.blob_path)
-        pdf_bytes = await asyncio.to_thread(file_stream.read)
-        
-        # Process PDF
-        full_text, child_assets, metadata = await asyncio.to_thread(
-            self._process_pdf_sync, pdf_bytes, asset, max_pages
-        )
+
+        # Use filesystem path when available (local_fs) to avoid loading full file into memory
+        storage = self.context.storage_provider
+        if hasattr(storage, "get_file_path"):
+            file_path = storage.get_file_path(asset.blob_path)
+            full_text, child_assets, metadata = await asyncio.to_thread(
+                self._process_pdf_sync, asset, max_pages, file_path=str(file_path)
+            )
+        else:
+            file_stream = await storage.get_file(asset.blob_path)
+            pdf_bytes = await asyncio.to_thread(file_stream.read)
+            full_text, child_assets, metadata = await asyncio.to_thread(
+                self._process_pdf_sync, asset, max_pages, pdf_bytes=pdf_bytes
+            )
         
         # Check if this is an image-only PDF (scanned document with no extractable text)
         is_image_only = metadata.get('is_image_only', False)
@@ -88,35 +131,49 @@ class PDFProcessor(BaseProcessor):
                 asset.title = metadata['extracted_title']
             asset.source_metadata.update(metadata)
             
-            # Save child assets
+            # Save child assets in batches
             saved_children = []
-            for child_create in child_assets:
-                child_asset = self.context.asset_service.create_asset(child_create)
-                saved_children.append(child_asset)
-            
+            batch_size = 500
+            for i in range(0, len(child_assets), batch_size):
+                batch = child_assets[i : i + batch_size]
+                batch_assets = [Asset(**c.model_dump()) for c in batch]
+                saved_children.extend(batch_assets)
+                self.context.session.add_all(batch_assets)
+                self.context.session.flush()
+            self.context.session.commit()
             logger.info(f"Processed PDF: {metadata['processed_pages']} pages extracted, created {len(saved_children)} page assets")
             
             return saved_children
     
     def _process_pdf_sync(
-        self, 
-        pdf_bytes: bytes, 
-        asset: Asset, 
-        max_pages: int
+        self,
+        asset: Asset,
+        max_pages: int,
+        *,
+        pdf_bytes: bytes | None = None,
+        file_path: str | None = None,
     ) -> tuple[str, List[AssetCreate], dict]:
         """
         Synchronous PDF processing (runs in thread).
         
         Detects image-only PDFs by checking if extractable text is minimal/absent.
+        Uses file_path when available (zero-copy for local_fs), else pdf_bytes.
         
         Returns:
             Tuple of (full_text, child_assets, metadata)
         """
+        if file_path is not None:
+            doc = fitz.open(filename=file_path)
+        elif pdf_bytes is not None:
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        else:
+            raise ProcessingError("Either pdf_bytes or file_path must be provided")
+
         full_text = ""
         child_assets = []
         total_chars_extracted = 0
-        
-        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+
+        with doc:
             page_count = doc.page_count
             pdf_title = None
             
@@ -179,5 +236,5 @@ class PDFProcessor(BaseProcessor):
                 'processing_options': self.context.options
             }
             
-            return full_text.strip(), child_assets, metadata
+        return full_text.strip(), child_assets, metadata
 

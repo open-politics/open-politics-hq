@@ -121,3 +121,97 @@ export function getFragmentColorScheme(fragment: FragmentData): {
     badgeText: 'text-purple-700 dark:text-purple-300',
   };
 }
+
+/**
+ * Generate smart one-line preview based on data type (generic, no hardcoding)
+ * @param value - The value to generate a preview for
+ * @param maxLength - Maximum length for the preview string
+ * @returns A one-line preview string
+ */
+export function generateFragmentPreview(value: any, maxLength: number = 60): string {
+  if (value === null || value === undefined) {
+    return 'Empty';
+  }
+
+  // Handle arrays
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      return 'Empty array';
+    }
+
+    const count = value.length;
+    const firstItem = value[0];
+
+    // Array of objects
+    if (typeof firstItem === 'object' && firstItem !== null) {
+      // Try to extract meaningful fields from first object
+      const keys = Object.keys(firstItem);
+      const previewParts: string[] = [];
+      
+      // Look for common fields that might be useful for preview
+      const previewFields = ['subject', 'title', 'name', 'date', 'from', 'to', 'id'];
+      for (const field of previewFields) {
+        if (field in firstItem && firstItem[field] !== null && firstItem[field] !== undefined) {
+          const fieldValue = String(firstItem[field]);
+          if (fieldValue.length > 0 && fieldValue.length < 30) {
+            previewParts.push(`${field}: ${fieldValue}`);
+            break; // Use first meaningful field found
+          }
+        }
+      }
+
+      // If no preview fields found, show first few keys
+      if (previewParts.length === 0 && keys.length > 0) {
+        previewParts.push(`${keys.slice(0, 2).join(', ')}...`);
+      }
+
+      const preview = previewParts.length > 0 ? previewParts[0] : 'object';
+      const fullPreview = `${count} item${count !== 1 ? 's' : ''} | First: ${preview}`;
+      return fullPreview.length > maxLength ? fullPreview.substring(0, maxLength - 3) + '...' : fullPreview;
+    }
+
+    // Array of primitives
+    const firstFew = value.slice(0, 3).map(v => String(v)).join(', ');
+    const preview = `${count} item${count !== 1 ? 's' : ''} | ${firstFew}${value.length > 3 ? '...' : ''}`;
+    return preview.length > maxLength ? preview.substring(0, maxLength - 3) + '...' : preview;
+  }
+
+  // Handle objects
+  if (typeof value === 'object') {
+    const keys = Object.keys(value);
+    if (keys.length === 0) {
+      return 'Empty object';
+    }
+
+    // Show first few key-value pairs
+    const previewPairs: string[] = [];
+    for (let i = 0; i < Math.min(2, keys.length); i++) {
+      const key = keys[i];
+      const val = value[key];
+      let valStr = '';
+      
+      if (Array.isArray(val)) {
+        valStr = `[${val.length} items]`;
+      } else if (typeof val === 'object' && val !== null) {
+        valStr = `{${Object.keys(val).length} fields}`;
+      } else {
+        valStr = String(val);
+        if (valStr.length > 15) {
+          valStr = valStr.substring(0, 15) + '...';
+        }
+      }
+      
+      previewPairs.push(`${key}: ${valStr}`);
+    }
+
+    const preview = `${keys.length} field${keys.length !== 1 ? 's' : ''} | ${previewPairs.join(', ')}${keys.length > 2 ? '...' : ''}`;
+    return preview.length > maxLength ? preview.substring(0, maxLength - 3) + '...' : preview;
+  }
+
+  // Handle primitives
+  const strValue = String(value);
+  if (strValue.length <= maxLength) {
+    return strValue;
+  }
+  return strValue.substring(0, maxLength - 3) + '...';
+}

@@ -74,6 +74,10 @@ class MinioStorageProvider(StorageProvider):
             logger.error(f"S3Error uploading bytes as '{object_name}': {e}", exc_info=True)
             raise IOError(f"Minio bytes upload failed: {e}") from e
 
+    def get_file_path(self, object_name: str):
+        """MinIO does not support direct file path access; use get_file() instead."""
+        raise NotImplementedError("MinIO does not support direct file path access")
+
     async def get_file(self, object_name: str) -> Any: # Should return a file-like object (stream)
         try:
             response = self.client.get_object(bucket_name=self.bucket_name, object_name=object_name)
@@ -122,10 +126,20 @@ class MinioStorageProvider(StorageProvider):
             # Not raising IOError here as it might be called in cleanup paths where exceptions are problematic
             # but logging the error is important.
 
-    async def list_files(self, prefix: Optional[str] = None) -> List[str]:
+    async def list_files(
+        self,
+        prefix: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
+    ) -> List[str]:
         try:
             objects = self.client.list_objects(bucket_name=self.bucket_name, prefix=prefix, recursive=True)
-            return [obj.object_name for obj in objects]
+            result = [obj.object_name for obj in objects]
+            if offset > 0:
+                result = result[offset:]
+            if limit is not None:
+                result = result[:limit]
+            return result
         except S3Error as e:
             logger.error(f"S3Error listing files with prefix '{prefix}': {e}", exc_info=True)
             raise IOError(f"Minio list_files failed: {e}") from e

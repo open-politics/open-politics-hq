@@ -756,7 +756,7 @@ class AssetBuilder:
         new_builder.blueprint._child_builders = []
         return new_builder
     
-    # NOTE: Content type detection moved to app.api.processors.registry
+    # NOTE: Content type detection in app.api.utils.content_types
     # Use detect_asset_kind_from_extension() instead
     
     # ═══════════════════════════════════════════════════════════════

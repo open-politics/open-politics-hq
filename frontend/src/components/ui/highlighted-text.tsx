@@ -40,15 +40,21 @@ export const HighlightedText: React.FC<HighlightedTextProps> = ({
   text,
   spans = [],
   className = '',
-  highlightClassName = 'bg-yellow-200 dark:bg-yellow-800 px-1 rounded',
+  highlightClassName = 'bg-yellow-200 dark:bg-yellow-800 px-1 ',
   maxLength,
   showContext = false,
   contextLength = 50
 }) => {
-  // Sort spans by start offset to process them in order
+  // Sort spans by start offset; clamp out-of-bounds spans instead of dropping
   const sortedSpans = React.useMemo(() => {
+    const len = text.length;
     return spans
-      .filter(span => span.start_char_offset >= 0 && span.end_char_offset <= text.length)
+      .map(span => {
+        const start = Math.max(0, Math.min(span.start_char_offset, len));
+        const end = Math.max(start, Math.min(span.end_char_offset, len));
+        return end > start ? { ...span, start_char_offset: start, end_char_offset: end } : null;
+      })
+      .filter((s): s is NonNullable<typeof s> => s !== null)
       .sort((a, b) => a.start_char_offset - b.start_char_offset);
   }, [spans, text.length]);
 
@@ -76,7 +82,7 @@ export const HighlightedText: React.FC<HighlightedTextProps> = ({
     });
   }, [showContext, sortedSpans, text, contextLength]);
 
-  // Build segments for full text highlighting
+  // Build segments for full text highlighting. Overlapping spans are clipped to avoid duplicating text.
   const segments = React.useMemo((): HighlightSegment[] => {
     if (showContext || sortedSpans.length === 0) return [];
 
@@ -92,12 +98,16 @@ export const HighlightedText: React.FC<HighlightedTextProps> = ({
         });
       }
 
-      // Add the highlighted span
-      result.push({
-        text: text.slice(span.start_char_offset, span.end_char_offset),
-        highlighted: true,
-        spanIndex
-      });
+      // Clip span to avoid overlap with already-rendered content (prevents text duplication)
+      const clipStart = Math.max(span.start_char_offset, currentIndex);
+      const clipEnd = span.end_char_offset;
+      if (clipStart < clipEnd) {
+        result.push({
+          text: text.slice(clipStart, clipEnd),
+          highlighted: true,
+          spanIndex
+        });
+      }
 
       currentIndex = Math.max(currentIndex, span.end_char_offset);
     });
@@ -118,6 +128,14 @@ export const HighlightedText: React.FC<HighlightedTextProps> = ({
     if (!maxLength || text.length <= maxLength) return text;
     return text.slice(0, maxLength) + '...';
   }, [text, maxLength]);
+
+  // Add visual distinction when multiple spans are present (using useMemo to avoid scoping issues)
+  const visualDistinctionClass = React.useMemo(() => {
+    const isMultipleSpans = sortedSpans.length > 1;
+    return isMultipleSpans 
+      ? "shadow-sm mx-0.5" // Distinct border and spacing for multiple spans
+      : "";
+  }, [sortedSpans.length]);
 
   if (showContext && contextSegments) {
     return (
@@ -175,7 +193,8 @@ export const HighlightedText: React.FC<HighlightedTextProps> = ({
                     id={spanId}
                     className={cn(
                       spanHighlightClass,
-                      "cursor-help border-b border-dashed border-current px-1 rounded"
+                      "cursor-help px-1",
+                      visualDistinctionClass
                     )}
                   >
                     {segment.text}
@@ -214,7 +233,7 @@ export const HighlightedText: React.FC<HighlightedTextProps> = ({
             <span
               key={index}
               id={spanId}
-              className={cn(spanHighlightClass, "px-1 rounded")}
+              className={cn(spanHighlightClass, "px-1 ", visualDistinctionClass)}
             >
               {segment.text}
             </span>
@@ -239,7 +258,7 @@ export const TextSpanSnippets: React.FC<{
   return (
     <div className={cn('space-y-1 z-[1002]', className)}>
       {displaySpans.map((span, index) => (
-        <div key={index} className="text-xs p-2 bg-muted/50 rounded border-l-2 border-primary">
+        <div key={index} className="text-xs p-2 bg-muted/50  border-l-2 border-primary">
           <div className="font-medium text-xs mb-1">Text Evidence {index + 1}:</div>
           <div className="text-xs italic">"{span.text_snippet}"</div>
         </div>

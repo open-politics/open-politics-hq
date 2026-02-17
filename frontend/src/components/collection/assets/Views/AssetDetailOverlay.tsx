@@ -5,18 +5,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import AssetDetailView from './AssetDetailView';
 import { Button } from '@/components/ui/button';
-import { Maximize, Loader2, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Maximize, Loader2, AlertCircle, ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { AssetRead, AnnotationSchemaRead } from '@/client';
-import { TextSpanHighlightProvider } from '@/components/collection/contexts/TextSpanHighlightContext';
+import { TextSpanHighlightProvider, useTextSpanHighlight } from '@/components/collection/contexts/TextSpanHighlightContext';
 import { FormattedAnnotation } from '@/lib/annotations/types';
 import AnnotationResultDisplay from '../../annotation/AnnotationResultDisplay';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { searchInAnnotationValue } from '@/lib/annotations/search';
 
 interface AssetDetailOverlayProps {
   open: boolean;
@@ -28,6 +30,8 @@ interface AssetDetailOverlayProps {
   // NEW: Optional annotation results to display alongside the asset
   annotationResults?: FormattedAnnotation[];
   schemas?: AnnotationSchemaRead[];
+  // NEW: Optional run ID to filter results by current run only
+  activeRunId?: number | null;
 }
 
 export default function AssetDetailOverlay({
@@ -38,7 +42,8 @@ export default function AssetDetailOverlay({
   onLoadIntoRunner,
   onOpenManagerRequest,
   annotationResults = [],
-  schemas = []
+  schemas = [],
+  activeRunId = null
 }: AssetDetailOverlayProps) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
@@ -50,6 +55,9 @@ export default function AssetDetailOverlay({
   
   // Mobile: track which panel is visible (asset or annotations)
   const [mobileView, setMobileView] = useState<'asset' | 'annotations'>('asset');
+  
+  // Local search state for overlay
+  const [overlaySearchTerm, setOverlaySearchTerm] = useState('');
 
   // Fetch the asset details
   const fetchAssetDetails = useCallback(async (id: number) => {
@@ -100,6 +108,7 @@ export default function AssetDetailOverlay({
       setAsset(null);
       setLoadError(null);
       setMobileView('asset'); // Reset to asset view when closing
+      setOverlaySearchTerm(''); // Reset search term when closing
     }
   }, [open]);
 
@@ -110,8 +119,8 @@ export default function AssetDetailOverlay({
     }
   };
 
-  const handleEdit = (asset: AssetRead) => {
-    console.warn('handleEdit needs refactoring for assets');
+  const handleEdit = (_asset: AssetRead) => {
+    // TODO: refactor handleEdit for assets
   };
 
   const handleLoadIntoRunner = (runId: number, runName: string) => {
@@ -126,44 +135,70 @@ export default function AssetDetailOverlay({
     }
   };
 
-  // Filter annotation results for this specific asset
+  // Filter annotation results for this specific asset and run
   const assetResults = useMemo(() => {
     if (!assetId || !annotationResults) {
-      console.log('[AssetDetailOverlay] No assetId or annotationResults', { assetId, annotationResultsCount: annotationResults?.length });
       return [];
     }
-    const filtered = annotationResults.filter(result => result.asset_id === assetId);
-    console.log('[AssetDetailOverlay] Filtered annotation results', {
-      assetId,
-      totalResults: annotationResults.length,
-      filteredResults: filtered.length,
-      filtered: filtered.map(r => ({ id: r.id, schema_id: r.schema_id }))
+    
+    let filtered = annotationResults.filter(result => {
+      const matchesAsset = result.asset_id === assetId;
+      // If activeRunId is provided, also filter by run_id (use Number() to handle type mismatches)
+      const matchesRun = !activeRunId || Number(result.run_id) === Number(activeRunId);
+      return matchesAsset && matchesRun;
     });
+    
+    // Apply search term filtering if present (uses recursive search through nested values)
+    if (overlaySearchTerm && overlaySearchTerm.trim().length > 0) {
+      const searchTerm = overlaySearchTerm.trim();
+      filtered = filtered.filter(result => {
+        // Check asset title (if available)
+        if (result.asset && typeof result.asset === 'object' && 'title' in result.asset) {
+          const assetTitle = String((result.asset as any).title || '');
+          if (assetTitle.toLowerCase().includes(searchTerm.toLowerCase())) return true;
+        }
+        // Check result value recursively
+        if (result.value && searchInAnnotationValue(result.value, searchTerm)) {
+          return true;
+        }
+        return false;
+      });
+    }
+    
     return filtered;
-  }, [assetId, annotationResults]);
+  }, [assetId, annotationResults, activeRunId, overlaySearchTerm]);
 
-  // Check if we should show the annotations panel
-  const showAnnotations = assetResults.length > 0 && schemas.length > 0;
-  
-  console.log('[AssetDetailOverlay] Rendering with', {
-    open,
-    assetId,
-    asset: asset?.id,
-    assetKind: asset?.kind,
-    assetResultsCount: assetResults.length,
-    schemasCount: schemas.length,
-    showAnnotations,
-    annotationResultsTotal: annotationResults?.length
-  });
+  // Count results before search filtering (for panel visibility)
+  const resultsBeforeSearch = useMemo(() => {
+    if (!assetId || !annotationResults) return 0;
+    return annotationResults.filter(result => {
+      const matchesAsset = result.asset_id === assetId;
+      // Use Number() to handle type mismatches
+      const matchesRun = !activeRunId || Number(result.run_id) === Number(activeRunId);
+      return matchesAsset && matchesRun;
+    }).length;
+  }, [assetId, annotationResults, activeRunId]);
+
+  // Check if we should show the annotations panel (based on pre-search results, not post-search)
+  const showAnnotations = resultsBeforeSearch > 0 && schemas.length > 0;
+
+  // Helper component to clear highlights when overlay opens or assetId changes
+  const HighlightClearer = ({ assetId, open }: { assetId: number | null; open: boolean }) => {
+    const { clearHighlights } = useTextSpanHighlight();
+    useEffect(() => {
+      if (open && assetId) clearHighlights();
+    }, [open, assetId, clearHighlights]);
+    return null;
+  };
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <DialogContent className={cn(
         "flex flex-col p-0",
         // Desktop: wider when showing annotations
-        showAnnotations ? "max-w-[95vw]" : "max-w-4xl",
+        showAnnotations ? "max-w-[100vw] h-full" : "max-w-4xl",
         // Mobile: full screen
-        "max-h-[90vh] sm:max-h-[90vh]",
+        "max-h-[90vh] sm:max-h-[100vh]",
         "w-auto md:w-[100vw]"
       )}>
         <DialogHeader className="flex flex-row items-center justify-between p-3 sm:p-4 border-b flex-shrink-0">
@@ -212,6 +247,8 @@ export default function AssetDetailOverlay({
           </div>
         )}
         
+        <TextSpanHighlightProvider>
+          <HighlightClearer assetId={assetId} open={open} />
         <div className="flex-1 min-h-0 flex">
           {/* Left Panel: Asset Detail */}
           <div className={cn(
@@ -234,15 +271,14 @@ export default function AssetDetailOverlay({
                   <p className="text-center text-sm">{loadError}</p>
                 </div>
               ) : asset ? (
-                <TextSpanHighlightProvider>
-                  <AssetDetailView
-                    onEdit={handleEdit}
-                    schemas={[]}
-                    selectedAssetId={assetId}
-                    highlightAssetIdOnOpen={highlightAssetIdOnOpen}
-                    onLoadIntoRunner={handleLoadIntoRunner}
-                  />
-                </TextSpanHighlightProvider>
+                <AssetDetailView
+                  onEdit={handleEdit}
+                  schemas={[]}
+                  selectedAssetId={assetId}
+                  highlightAssetIdOnOpen={highlightAssetIdOnOpen}
+                  onLoadIntoRunner={handleLoadIntoRunner}
+                  enableHighlighting={true}
+                />
               ) : (
                 <div className="flex items-center justify-center h-full">
                   <p className="text-sm">No asset found or item does not exist.</p>
@@ -260,71 +296,76 @@ export default function AssetDetailOverlay({
               // Mobile: full width when active
               mobileView === 'annotations' && "flex flex-1"
             )}>
-              <div className="p-2.5 sm:p-3 border-b bg-card flex-shrink-0">
-                <h3 className="font-semibold text-xs sm:text-sm">Annotation Results</h3>
-                <p className="text-[10px] sm:text-xs text-muted-foreground mt-0.5">
-                  {assetResults.length} result{assetResults.length !== 1 ? 's' : ''} for this asset
-                </p>
+              <div className="p-2.5 sm:p-3 border-b bg-card flex-shrink-0 space-y-2">
+                <div>
+                  <h3 className="font-semibold text-xs sm:text-sm">Annotation Results</h3>
+                  <p className="text-[10px] sm:text-xs text-muted-foreground mt-0.5">
+                    {overlaySearchTerm && overlaySearchTerm.trim().length > 0
+                      ? `${assetResults.length} of ${annotationResults.filter(r => r.asset_id === assetId && (!activeRunId || r.run_id === activeRunId)).length} result${assetResults.length !== 1 ? 's' : ''} match${assetResults.length !== 1 ? '' : 'es'} search`
+                      : `${assetResults.length} result${assetResults.length !== 1 ? 's' : ''} for this asset`}
+                  </p>
+                </div>
+                <div className="relative">
+                  <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Search annotations..."
+                    value={overlaySearchTerm}
+                    onChange={(e) => setOverlaySearchTerm(e.target.value)}
+                    className="pl-7 pr-2 h-7 text-xs"
+                  />
+                  {overlaySearchTerm && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setOverlaySearchTerm('')}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 h-5 w-5 p-0"
+                    >
+                      <X className="h-3 w-3" />
+                      <span className="sr-only">Clear search</span>
+                    </Button>
+                  )}
+                </div>
               </div>
               <ScrollArea className="flex-1">
                 <div className="p-2.5 sm:p-3 space-y-2.5 sm:space-y-3">
-                  {assetResults.map((result) => {
-                    const schema = schemas.find(s => s.id === result.schema_id);
-                    if (!schema) {
-                      console.warn('[AssetDetailOverlay] No schema found for result', {
-                        resultId: result.id,
-                        schemaId: result.schema_id,
-                        availableSchemas: schemas.map(s => s.id)
-                      });
-                      return null;
-                    }
-                    
-                    return (
-                      <Card key={result.id} className="p-2.5 sm:p-3">
-                        <AnnotationResultDisplay
-                          result={result}
-                          schema={schema}
-                          compact={false}
-                          renderContext="default"
-                        />
-                      </Card>
-                    );
-                  })}
+                  {assetResults.length === 0 && overlaySearchTerm && overlaySearchTerm.trim().length > 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <p className="text-sm">No matches found for "{overlaySearchTerm}"</p>
+                      <Button
+                        variant="link"
+                        size="sm"
+                        onClick={() => setOverlaySearchTerm('')}
+                        className="mt-2 text-xs"
+                      >
+                        Clear search
+                      </Button>
+                    </div>
+                  ) : (
+                    assetResults.map((result) => {
+                      const schema = schemas.find(s => s.id === result.schema_id);
+                      if (!schema) return null;
+                      
+                      return (
+                        <Card key={result.id} className="p-2.5 sm:p-3">
+                          <AnnotationResultDisplay
+                            result={result}
+                            schema={schema}
+                            asset={asset}
+                            compact={false}
+                            renderContext="default"
+                            searchTerm={overlaySearchTerm}
+                          />
+                        </Card>
+                      );
+                    })
+                  )}
                 </div>
               </ScrollArea>
             </div>
           )}
           
-          {/* Debug Panel - temporarily show when annotations should be there but aren't */}
-          {!showAnnotations && assetId && annotationResults && annotationResults.length > 0 && (
-            <div className="w-full sm:w-[300px] flex flex-col overflow-hidden bg-yellow-50 dark:bg-yellow-950/20 border-l-2 border-yellow-500">
-              <div className="p-2.5 sm:p-3 border-b bg-yellow-100 dark:bg-yellow-900/20">
-                <h3 className="font-semibold text-xs sm:text-sm text-yellow-900 dark:text-yellow-100">Debug Info</h3>
-                <p className="text-[10px] sm:text-xs text-yellow-700 dark:text-yellow-300 mt-0.5">
-                  Why aren't annotations showing?
-                </p>
-              </div>
-              <ScrollArea className="flex-1">
-                <div className="p-2.5 sm:p-3 space-y-2 text-[10px] sm:text-xs">
-                  <div><strong>Asset ID:</strong> {assetId}</div>
-                  <div><strong>Total Results:</strong> {annotationResults.length}</div>
-                  <div><strong>Filtered Results:</strong> {assetResults.length}</div>
-                  <div><strong>Schemas Available:</strong> {schemas.length}</div>
-                  <div><strong>Show Annotations:</strong> {showAnnotations ? 'Yes' : 'No'}</div>
-                  <Separator className="my-2" />
-                  <div className="space-y-1">
-                    <strong>Sample Results Asset IDs:</strong>
-                    {annotationResults.slice(0, 5).map(r => (
-                      <div key={r.id} className="font-mono text-[9px] sm:text-[10px]">
-                        Result {r.id}: asset_id={r.asset_id} {r.asset_id === assetId ? '✓' : '✗'}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </ScrollArea>
-            </div>
-          )}
         </div>
+        </TextSpanHighlightProvider>
       </DialogContent>
     </Dialog>
   );

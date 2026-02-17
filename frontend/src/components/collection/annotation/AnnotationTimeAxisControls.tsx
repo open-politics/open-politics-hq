@@ -57,7 +57,10 @@ export const AnnotationTimeAxisControls: React.FC<AnnotationTimeAxisControlsProp
   const fieldOptions = useMemo(() => {
     if (sourceType !== 'schema' || !selectedSchemaId) return [];
     
-    const targetKeys = getTargetKeysForScheme(selectedSchemaId, schemas);
+    // Include array item fields for time axis (e.g., document.mails.date)
+    const targetKeys = getTargetKeysForScheme(selectedSchemaId, schemas, { 
+      includeArrayItemFields: true 
+    });
     
     return targetKeys
       .filter(tk => tk.type === 'string' || tk.type === 'integer' || tk.type === 'number')
@@ -71,7 +74,7 @@ export const AnnotationTimeAxisControls: React.FC<AnnotationTimeAxisControlsProp
     if (newType === 'schema') {
       const defaultSchemaId = schemas.length > 0 ? schemas[0].id : null;
       if (defaultSchemaId) {
-        const defaultFields = getTargetKeysForScheme(defaultSchemaId, schemas)
+        const defaultFields = getTargetKeysForScheme(defaultSchemaId, schemas, { includeArrayItemFields: true })
           .filter(tk => tk.type === 'string' || tk.type === 'integer' || tk.type === 'number');
         const defaultFieldKey = defaultFields.length > 0 ? defaultFields[0].key : null;
         onChange({ 
@@ -91,7 +94,7 @@ export const AnnotationTimeAxisControls: React.FC<AnnotationTimeAxisControlsProp
   const handleSchemaChange = (schemaIdStr: string) => {
     const newSchemaId = schemaIdStr ? parseInt(schemaIdStr, 10) : null;
     if (newSchemaId) {
-       const defaultFields = getTargetKeysForScheme(newSchemaId, schemas)
+       const defaultFields = getTargetKeysForScheme(newSchemaId, schemas, { includeArrayItemFields: true })
          .filter(tk => tk.type === 'string' || tk.type === 'integer' || tk.type === 'number');
        const defaultFieldKey = defaultFields.length > 0 ? defaultFields[0].key : null;
        onChange({ 

@@ -9,7 +9,6 @@ from app.core.celery_app import celery  # noqa: F401
 from app.core.config import settings
 
 from app.api.main import api_router
-# from app.api.main import api_router_v2
 from app.api.mcp.server import mcp as intelligence_mcp_server
 
 
@@ -64,5 +63,4 @@ if settings.BACKEND_CORS_ORIGINS:
 app.mount("/tools", mcp_asgi_app)
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
-# app.include_router(api_router_v2, prefix=settings.API_V2_STR)
 

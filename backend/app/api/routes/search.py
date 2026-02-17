@@ -4,10 +4,9 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
-from app.api.deps import SearchProviderDep, get_current_user, get_db
+from app.api.deps import SearchProviderDep, get_current_user, get_db, IngestionContextFactoryDep
 from app.api.providers.base import SearchProvider
 from app.api.providers.impl.search_tavily import TavilySearchProvider
-from app.api.providers.impl.search_opol import OpolSearchProvider
 from app.api.providers.search_registry import SearchProviderRegistryService
 from app.api.services.content_ingestion_service import ContentIngestionService
 from app.models import User
@@ -27,8 +26,6 @@ def create_search_provider_by_name(provider_name: str) -> SearchProvider:
         if not settings.TAVILY_API_KEY:
             raise ValueError("TAVILY_API_KEY is required for the Tavily search provider.")
         return TavilySearchProvider(api_key=settings.TAVILY_API_KEY)
-    elif provider_name in ["opol_searxng", "opol", "searxng"]:
-        return OpolSearchProvider(opol_mode=settings.OPOL_MODE, opol_api_key=settings.OPOL_API_KEY)
     else:
         raise ValueError(f"Unsupported search provider: {provider_name}")
 
@@ -138,6 +135,7 @@ async def search_and_ingest(
     request: ExternalSearchRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    make_ingestion_context: IngestionContextFactoryDep,
 ) -> SearchAndIngestResponse:
     """
     Search using external providers (Tavily, etc.) and create assets from results.
@@ -220,12 +218,13 @@ async def search_and_ingest(
                 search_results.append(search_result)
             
             # Then create assets from the results
-            handler = SearchHandler(db)
+            context = make_ingestion_context(
+                current_user.id, request.infospace_id, search_options
+            )
+            handler = SearchHandler(context)
             assets = await handler.handle_bulk(
                 results=search_results,
                 query=request.query,
-                infospace_id=request.infospace_id,
-                user_id=current_user.id,
                 options=search_options
             )
             
@@ -387,6 +386,7 @@ async def create_assets_from_results(
     request: DirectAssetCreationRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    make_ingestion_context: IngestionContextFactoryDep,
 ) -> SearchAndIngestResponse:
     """
     Create assets directly from search result data without re-scraping.
@@ -397,54 +397,33 @@ async def create_assets_from_results(
     logger.info(f"Creating assets from {len(request.search_results)} search results for user {current_user.id}")
     
     try:
-        # Initialize content ingestion service
-        content_ingestion_service = ContentIngestionService(session=db)
-        
-        created_assets = []
-        failed_results = []
-        
         query = request.search_metadata.get('query', 'Search Results') if request.search_metadata else 'Search Results'
-        
-        # Use SearchHandler to create assets from search results
+
         from app.api.handlers import SearchHandler
-        handler = SearchHandler(db)
-        
-        # Process each search result
-        for i, result_data in enumerate(request.search_results):
-            try:
-                # Convert dict back to SearchResult object
-                from app.schemas import SearchResult
-                search_result = SearchResult(
-                    title=result_data.get("title", ""),
-                    url=result_data.get("url", ""),
-                    content=result_data.get("content", ""),
-                    score=result_data.get("score"),
-                    provider=request.search_metadata.get('provider', 'unknown') if request.search_metadata else 'unknown',
-                    raw_data=result_data.get("raw", {})
-                )
-                
-                # Create asset using SearchHandler
-                asset = await handler.handle(
-                    result=search_result,
-                    query=query,
-                    infospace_id=request.infospace_id,
-                    user_id=current_user.id,
-                    rank=i,
-                    options={}
-                )
-                created_assets.append(asset)
-                
-            except Exception as e:
-                logger.error(f"Failed to create asset from search result {result_data.get('url', 'unknown')}: {e}")
-                failed_results.append(result_data.get('url', 'unknown'))
-                continue
-        
-        # Commit all assets
+        from app.schemas import SearchResult
+
+        context = make_ingestion_context(current_user.id, request.infospace_id, {})
+        handler = SearchHandler(context)
+        search_results = [
+            SearchResult(
+                title=result_data.get("title", ""),
+                url=result_data.get("url", ""),
+                content=result_data.get("content", ""),
+                score=result_data.get("score"),
+                provider=request.search_metadata.get('provider', 'unknown') if request.search_metadata else 'unknown',
+                raw_data=result_data.get("raw", {})
+            )
+            for result_data in request.search_results
+        ]
+        created_assets = await handler.handle_bulk(
+            results=search_results,
+            query=query,
+            options={}
+        )
         db.commit()
+        failed_count = len(request.search_results) - len(created_assets)
         
         success_count = len(created_assets)
-        failed_count = len(failed_results)
-        
         message = f"Successfully created {success_count} assets from search results"
         if failed_count > 0:
             message += f", {failed_count} results failed"

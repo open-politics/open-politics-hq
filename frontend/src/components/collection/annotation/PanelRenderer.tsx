@@ -1000,7 +1000,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         return (
           <div className="h-full flex flex-col overflow-y-auto">
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas}>
+              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas} activeRunId={activeRunId}>
                 <AnnotationResultsTable 
                   results={filteredResults as any} 
                   schemas={allSchemas} 
@@ -1044,7 +1044,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         return (
           <div className="h-full flex flex-col overflow-y-auto">
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas}>
+              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas} activeRunId={activeRunId}>
                 <AnnotationResultsChart
                   results={filteredResults}
                   schemas={allSchemas}
@@ -1080,7 +1080,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
               </div>
             )}
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas}>
+              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas} activeRunId={activeRunId}>
                 <AnnotationResultsPieChart
                 results={filteredResults}
                 schemas={allSchemas}
@@ -1131,7 +1131,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
               </div>
             )}
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas}>
+              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas} activeRunId={activeRunId}>
                 <AnnotationResultsMap
                   points={geocodedPoints}
                   results={filteredResults}
@@ -1176,7 +1176,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
               </div>
             )}
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas}>
+              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas} activeRunId={activeRunId}>
                 <AnnotationResultsGraph
                   results={filteredResults}
                   schemas={allSchemas}
@@ -1192,6 +1192,11 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   graphEdits={panel.settings?.graphEdits || null}
                   onGraphEditsChange={(edits) => {
                     handlePanelSettingsUpdate({ graphEdits: edits });
+                  }}
+                  // NEW: Settings persistence
+                  initialSettings={panel.settings}
+                  onSettingsChange={(settings) => {
+                    handlePanelSettingsUpdate(settings);
                   }}
                 />
               </AssetDetailProvider>

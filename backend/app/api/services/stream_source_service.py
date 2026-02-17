@@ -21,8 +21,15 @@ from app.models import (
     FlowStatus,
 )
 from app.api.services.service_utils import validate_infospace_access
-from app.api.handlers import RSSHandler, SearchHandler
+from app.api.handlers import RSSHandler, SearchHandler, IngestionContext
 from app.api.services.bundle_service import BundleService
+from app.api.services.asset_service import AssetService
+from app.api.providers.factory import (
+    create_storage_provider,
+    create_scraping_provider,
+    create_search_provider,
+)
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +52,33 @@ class StreamSourceService:
         bundle_service: Optional[BundleService] = None,
     ):
         self.session = session
-        self.bundle_service = bundle_service
-        
+        self.bundle_service = bundle_service or BundleService(session)
+        self.storage_provider = create_storage_provider(settings)
+        self.scraping_provider = create_scraping_provider(settings)
+        try:
+            self.search_provider = create_search_provider(settings)
+        except Exception as e:
+            logger.warning(f"Search provider init failed: {e}")
+            self.search_provider = None
+        self.asset_service = AssetService(session, self.storage_provider)
+
         logger.info("StreamSourceService initialized")
+
+    def _make_ingestion_context(
+        self, user_id: int, infospace_id: int, options: Optional[Dict] = None
+    ) -> IngestionContext:
+        return IngestionContext(
+            session=self.session,
+            storage_provider=self.storage_provider,
+            scraping_provider=self.scraping_provider,
+            search_provider=self.search_provider,
+            asset_service=self.asset_service,
+            bundle_service=self.bundle_service,
+            user_id=user_id,
+            infospace_id=infospace_id,
+            settings=settings,
+            options=options or {},
+        )
     
     def activate_stream(self, source_id: int, user_id: int) -> Source:
         """
@@ -168,14 +199,12 @@ class StreamSourceService:
                 feed_url = source.details.get('feed_url')
                 if not feed_url:
                     raise ValueError("RSS source missing feed_url")
-                
-                handler = RSSHandler(self.session)
-                assets = await handler.handle(
-                    feed_url=feed_url,
-                    infospace_id=source.infospace_id,
-                    user_id=source.user_id,
-                    options=options
+
+                context = self._make_ingestion_context(
+                    source.user_id, source.infospace_id, options
                 )
+                handler = RSSHandler(context)
+                assets = await handler.handle(feed_url, None, options)
                 
                 # Update cursor state for RSS (store last seen GUID)
                 if assets:
@@ -201,8 +230,6 @@ class StreamSourceService:
                 
                 # Import search provider registry
                 from app.api.providers.search_registry import SearchProviderRegistryService
-                from app.api.services.content_ingestion_service import ContentIngestionService
-                from app.api.handlers.search_handler import SearchHandler
                 
                 # Create search provider
                 search_registry = SearchProviderRegistryService()
@@ -274,16 +301,18 @@ class StreamSourceService:
                 
                 # Convert search results to assets using SearchHandler
                 if search_results:
-                    search_handler = SearchHandler(self.session)
+                    handler_options = {
+                        'scrape_content': search_config.get('scrape_content', True),
+                        'cursor_state': source.cursor_state,
+                    }
+                    context = self._make_ingestion_context(
+                        source.user_id, source.infospace_id, handler_options
+                    )
+                    search_handler = SearchHandler(context)
                     assets = await search_handler.handle_bulk(
                         results=search_results,
                         query=query,
-                        infospace_id=source.infospace_id,
-                        user_id=source.user_id,
-                        options={
-                            'scrape_content': search_config.get('scrape_content', True),
-                            'cursor_state': source.cursor_state,
-                        }
+                        options=handler_options
                     )
                 else:
                     assets = []

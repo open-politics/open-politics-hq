@@ -198,3 +198,119 @@ def ingest_archive_task(
         raise
 
 
+@celery.task(bind=True, name="import_directory_task", max_retries=3)
+def import_directory_task(
+    self,
+    job_id: int,
+    source_path: str,
+    infospace_id: int,
+    user_id: int,
+    options: Dict[str, Any],
+):
+    """
+    Background task for importing files from a local directory.
+
+    Supports two modes (via options["copy_mode"]):
+    - copy_mode=True (default): Copies files to managed storage, creates assets with PENDING status
+    - copy_mode=False: Reference-only, no copying; source must be under LOCAL_STORAGE_BASE_PATH
+    """
+    logger.info(f"[Directory Import] Starting task for job {job_id}, source: {source_path}")
+
+    def update_progress(session, job, stage: str, message: str, progress_pct: int = 0, **kwargs):
+        job.cursor_state.update({"stage": stage, "message": message, "progress_pct": progress_pct, **kwargs})
+        job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+        session.commit()
+        self.update_state(
+            state="PROGRESS",
+            meta={
+                "job_id": job_id,
+                "stage": stage,
+                "message": message,
+                "progress": progress_pct,
+                "processed_files": job.processed_files,
+                "total_files": job.total_files,
+            },
+        )
+
+    copy_mode = options.get("copy_mode", True)
+
+    with Session(engine) as session:
+        from app.models import DatasetIngestionJob, IngestionStatus
+        from app.api.services.bundle_service import BundleService
+        from app.api.providers.factory import create_storage_provider
+        from app.api.handlers.directory_import_handler import DirectoryImportHandler
+        from app.core.config import settings
+
+        job = session.get(DatasetIngestionJob, job_id)
+        if not job:
+            raise ValueError(f"DatasetIngestionJob {job_id} not found")
+
+        update_progress(session, job, "initializing", "Starting directory import...", 5)
+
+        job.status = IngestionStatus.PROCESSING
+        update_progress(session, job, "walking", "Walking directory...", 20)
+
+        allowed_paths = [p.strip() for p in (settings.ALLOWED_IMPORT_PATHS or "").split(",") if p.strip()]
+        if not allowed_paths:
+            allowed_paths = [settings.LOCAL_STORAGE_BASE_PATH]
+
+        try:
+            from app.api.handlers.base import IngestionContext
+            from app.api.services.asset_service import AssetService
+            from app.api.services.bundle_service import BundleService
+            from app.api.providers.factory import create_storage_provider, create_scraping_provider
+            bundle_service = BundleService(session)
+            storage_provider = create_storage_provider(settings) if copy_mode else None
+            asset_service = AssetService(session, storage_provider or create_storage_provider(settings))
+            scraping_provider = create_scraping_provider(settings)
+            ctx = IngestionContext(
+                session=session,
+                storage_provider=storage_provider,
+                scraping_provider=scraping_provider,
+                search_provider=None,
+                asset_service=asset_service,
+                bundle_service=bundle_service,
+                user_id=user_id,
+                infospace_id=infospace_id,
+                settings=settings,
+                options={"allowed_import_paths": allowed_paths},
+            )
+            handler = DirectoryImportHandler(ctx)
+            result = run_async_in_celery(
+                handler.handle,
+                source_path=source_path,
+                options={**options, "copy_mode": copy_mode},
+            )
+        except Exception as e:
+            logger.exception(f"[Directory Import] Handler failed: {e}")
+            job.status = IngestionStatus.FAILED
+            job.error_message = str(e)
+            job.last_error_at = datetime.now(timezone.utc)
+            job.cursor_state.update({"stage": "failed", "message": str(e)[:200], "progress_pct": 0})
+            session.add(job)
+            session.commit()
+            raise
+
+        job.status = IngestionStatus.COMPLETED
+        job.processed_files = result["assets_created"]
+        job.root_bundle_id = result.get("bundle_id")
+        job.completed_at = datetime.now(timezone.utc)
+        skipped = result.get("assets_skipped", result.get("assets_failed", 0))
+        update_progress(
+            session,
+            job,
+            "completed",
+            f"Imported {result['assets_created']} assets (skipped/failed: {skipped})",
+            100,
+        )
+
+        logger.info(f"[Directory Import] Job {job_id} completed: {result['assets_created']} assets created")
+
+    return {
+        "job_id": job_id,
+        "root_bundle_id": result.get("bundle_id"),
+        "assets_created": result["assets_created"],
+        "assets_skipped": result.get("assets_skipped", result.get("assets_failed", 0)),
+        "status": "completed",
+    }

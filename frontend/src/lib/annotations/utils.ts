@@ -199,7 +199,11 @@ export const getDateFieldsForScheme = (schemeId: number, schemes: AnnotationSche
     return dateFields;
 };
 
-export const getTargetKeysForScheme = (schemeId: number, schemes: AnnotationSchemaRead[]): { key: string, name: string, type: string }[] => {
+export const getTargetKeysForScheme = (
+    schemeId: number, 
+    schemes: AnnotationSchemaRead[],
+    options?: { includeArrayItemFields?: boolean }
+): { key: string, name: string, type: string }[] => {
     const scheme = schemes.find(s => s.id === schemeId);
     if (!scheme || !scheme.output_contract || !(scheme.output_contract as any).properties) return [];
 
@@ -207,7 +211,7 @@ export const getTargetKeysForScheme = (schemeId: number, schemes: AnnotationSche
     const results: { key: string, name: string, type: string }[] = [];
     
     // Helper function to extract fields from a properties object
-    const extractFromProperties = (props: any, prefix: string = '') => {
+    const extractFromProperties = (props: any, prefix: string = '', insideArrayOfObjects: boolean = false) => {
         if (!props || typeof props !== 'object') return;
         
         Object.entries(props).forEach(([key, value]: [string, any]) => {
@@ -215,7 +219,9 @@ export const getTargetKeysForScheme = (schemeId: number, schemes: AnnotationSche
             
             // Add the field itself if it's a supported type for visualization
             if (value.type === 'string' || value.type === 'integer' || value.type === 'number' || value.type === 'boolean' || 
-                (value.type === 'array' && value.items?.type === 'string')) {
+                (value.type === 'array' && value.items?.type === 'string') ||
+                (value.type === 'array' && value.items?.type === 'object') ||  // Array of objects
+                value.type === 'object') {  // Objects themselves
                 results.push({
                     key: fullKey,
                     name: value.title || key,
@@ -223,14 +229,23 @@ export const getTargetKeysForScheme = (schemeId: number, schemes: AnnotationSche
                 });
             }
             
-            // Recursively extract from nested object properties
-            if (value.type === 'object' && value.properties) {
-                extractFromProperties(value.properties, fullKey);
+            // Recursively extract from nested object properties (for backward compatibility and nested field access)
+            // BUT: Don't recurse into nested objects if we're already inside an array of objects
+            // This prevents creating columns for fields like "document.mails.subject" which don't make sense
+            // as standalone columns (they're properties of array items, not top-level fields)
+            if (value.type === 'object' && value.properties && !insideArrayOfObjects) {
+                extractFromProperties(value.properties, fullKey, false);
             }
             
-            // Handle array of objects (per_modality patterns)
-            if (value.type === 'array' && value.items?.type === 'object' && value.items.properties) {
-                extractFromProperties(value.items.properties, fullKey);
+            // Handle array of objects (per_modality patterns and mail arrays)
+            // NEW: Conditionally recurse into array item properties when includeArrayItemFields is true
+            if (value.type === 'array' && value.items?.type === 'object' && value.items.properties && !insideArrayOfObjects) {
+                // If includeArrayItemFields is enabled, recurse into array item properties
+                // This allows fields like "document.mails.date" to be available for time axis selection
+                if (options?.includeArrayItemFields) {
+                    extractFromProperties(value.items.properties, fullKey, true); // Mark as inside array
+                }
+                // Otherwise, don't recurse - prevents showing nested fields as columns
             }
         });
     };
@@ -353,6 +368,59 @@ export const checkFilterMatch = (
     // Use smart hierarchical value retrieval
     const actualValue = getAnnotationFieldValue(targetSchemaResult.value, filter.fieldKey || '');
 
+    // SPECIAL CASE: If the field path goes through an array of objects,
+    // we need to check if ANY item in the array matches the filter
+    // Example: document.mails.subject should check subject in each mail item
+    const fieldPath = filter.fieldKey.split('.');
+    
+    // Detect if we're navigating through an array structure by checking schema definition
+    // Walk through the path and detect arrays
+    let needsArrayTraversal = false;
+    let arrayPath = '';
+    let remainingPath = '';
+    
+    if (fieldPath.length >= 2) {
+        // Try each possible split point to find where the array is
+        for (let i = 1; i < fieldPath.length; i++) {
+            const potentialArrayPath = fieldPath.slice(0, i).join('.');
+            const potentialRemainingPath = fieldPath.slice(i).join('.');
+            const potentialArray = getAnnotationFieldValue(targetSchemaResult.value, potentialArrayPath);
+            
+            // Check if this is an array of objects
+            if (Array.isArray(potentialArray) && potentialArray.length > 0 && 
+                typeof potentialArray[0] === 'object' && potentialArray[0] !== null) {
+                needsArrayTraversal = true;
+                arrayPath = potentialArrayPath;
+                remainingPath = potentialRemainingPath;
+                break;
+            }
+        }
+    }
+    
+    if (needsArrayTraversal && arrayPath && remainingPath) {
+        // Get the array container
+        const arrayContainer = getAnnotationFieldValue(targetSchemaResult.value, arrayPath);
+        
+        if (Array.isArray(arrayContainer) && arrayContainer.length > 0) {
+            // Check if any item in the array has a matching nested field value
+            const hasMatch = arrayContainer.some(item => {
+                if (typeof item === 'object' && item !== null) {
+                    // Navigate through remaining path in the item
+                    const itemValue = getNestedValue(item, remainingPath);
+                    if (itemValue !== undefined && itemValue !== null) {
+                        return compareValues(itemValue, filter.value, filter.operator, fieldType);
+                    }
+                }
+                return false;
+            });
+            
+            return hasMatch;
+        }
+        
+        // If array is empty, fail the filter (nothing to match)
+        return false;
+    }
+
     if (filter.operator === 'contains' && typeof actualValue === 'object' && actualValue !== null) {
         try {
             const stringified = JSON.stringify(actualValue);
@@ -435,6 +503,11 @@ export const formatDisplayValue = (value: any, schema: AnnotationSchemaRead): st
 export const getAnnotationFieldValue = (annotationValue: any, fieldKey: string): any => {
     if (!annotationValue || !fieldKey) return undefined;
     
+    // Strategy 0: Direct access to the fieldKey itself (exact match)
+    if (fieldKey in annotationValue) {
+        return annotationValue[fieldKey];
+    }
+    
     // Strategy 1: Try flat field access first (handles LLM outputs that don't follow hierarchical structure)
     // Extract the final field name from hierarchical path (e.g., "document.Topics" -> "Topics")
     const flatFieldName = fieldKey.includes('.') ? fieldKey.split('.').pop() : fieldKey;
@@ -448,15 +521,26 @@ export const getAnnotationFieldValue = (annotationValue: any, fieldKey: string):
         return hierarchicalValue;
     }
     
-    // Strategy 3: For document.* paths, try direct access without "document" prefix
+    // Strategy 3: For document.* paths, try nested access without "document" prefix
     if (fieldKey.startsWith('document.')) {
         const withoutDocument = fieldKey.substring('document.'.length);
-        if (withoutDocument in annotationValue) {
-            return annotationValue[withoutDocument];
+        const nestedValue = getNestedValue(annotationValue, withoutDocument);
+        if (nestedValue !== undefined) {
+            return nestedValue;
         }
     }
     
-    // Strategy 4: Case-insensitive flat field access (for robustness)
+    // Strategy 4: For per_modality.* paths (per_image, per_audio, etc.), try nested access without prefix
+    const perModalityMatch = fieldKey.match(/^per_(\w+)\.(.*)/);
+    if (perModalityMatch) {
+        const withoutModality = perModalityMatch[2]; // The part after per_xxx.
+        const nestedValue = getNestedValue(annotationValue, withoutModality);
+        if (nestedValue !== undefined) {
+            return nestedValue;
+        }
+    }
+    
+    // Strategy 5: Case-insensitive flat field access (for robustness)
     if (flatFieldName) {
         const keys = Object.keys(annotationValue);
         const matchingKey = keys.find(key => key.toLowerCase() === flatFieldName.toLowerCase());
@@ -465,7 +549,7 @@ export const getAnnotationFieldValue = (annotationValue: any, fieldKey: string):
         }
     }
     
-    // Strategy 5: Handle space/formatting differences in field names
+    // Strategy 6: Handle space/formatting differences in field names
     if (flatFieldName) {
         const keys = Object.keys(annotationValue);
         // Try removing spaces, hyphens, underscores from both field name and keys

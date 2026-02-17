@@ -12,6 +12,55 @@ from app.api.providers.base import LanguageModelProvider, ModelInfo, GenerationR
 logger = logging.getLogger(__name__)
 
 
+def safe_log_payload(payload: Dict[str, Any], max_length: int = 500) -> str:
+    """
+    Safely log payload by truncating long strings and removing binary/base64 data.
+    
+    Args:
+        payload: Payload dict to sanitize
+        max_length: Maximum length for string values
+        
+    Returns:
+        Safe string representation for logging
+    """
+    def is_base64_like(s: str) -> bool:
+        """Check if string looks like base64-encoded binary data."""
+        if not isinstance(s, str) or len(s) < 100:
+            return False
+        # Base64 strings are long and contain only base64 characters
+        base64_chars = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n')
+        if len(s) > 500 and all(c in base64_chars for c in s[:1000]):
+            return True
+        return False
+    
+    def sanitize_value(value: Any, depth: int = 0) -> Any:
+        """Recursively sanitize values for logging."""
+        if depth > 3:  # Max depth
+            return "... (max depth reached)"
+        
+        if isinstance(value, str):
+            if is_base64_like(value):
+                return f"[BASE64_DATA: {len(value)} bytes]"
+            if len(value) > max_length:
+                return value[:max_length] + f"... [truncated, {len(value)} total chars]"
+            return value
+        elif isinstance(value, dict):
+            return {k: sanitize_value(v, depth + 1) for k, v in list(value.items())[:20]}  # Limit dict size
+        elif isinstance(value, list):
+            return [sanitize_value(item, depth + 1) for item in value[:10]]  # Limit list size
+        elif isinstance(value, bytes):
+            return f"[BINARY_DATA: {len(value)} bytes]"
+        else:
+            return str(value)[:max_length]
+    
+    try:
+        sanitized = sanitize_value(payload)
+        result = json.dumps(sanitized, indent=2, default=str)
+        return result[:2000]  # Limit total output
+    except Exception as e:
+        return f"[Error sanitizing payload: {e}]"
+
+
 class OllamaLanguageModelProvider(LanguageModelProvider):
     """
     Ollama implementation of the LanguageModelProvider interface.
@@ -135,8 +184,8 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
         media_inputs = kwargs.pop("media_inputs", [])
         if media_inputs:
             logger.info(f"Processing {len(media_inputs)} media inputs for Ollama")
-            # Process images and add to messages
-            messages = self._prepare_messages_with_media(messages, media_inputs)
+            # Process images and add to messages (check if model supports vision)
+            messages = await self._prepare_messages_with_media(messages, media_inputs, model_name)
         
         # Tools with executor: implement tool loop (both streaming and non-streaming)
         if tools and tool_executor:
@@ -225,30 +274,106 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
         else:
             return await self._generate(payload)
     
-    def _prepare_messages_with_media(
+    async def _prepare_messages_with_media(
         self,
         messages: List[Dict[str, Any]],
-        media_inputs: List[Dict[str, Any]]
+        media_inputs: List[Dict[str, Any]],
+        model_name: str
     ) -> List[Dict[str, Any]]:
         """
         Convert text + media_inputs into Ollama message format.
         
-        Ollama supports images in messages as base64-encoded strings in content arrays.
-        Format: {"role": "user", "content": [{"type": "image", "source": {"type": "base64", "media_type": "...", "data": "..."}}, {"type": "text", "text": "..."}]}
+        Ollama supports images via an `images` array at the message level:
+        {"role": "user", "content": "text", "images": ["base64_encoded_image"]}
         
         Args:
             messages: Original message list
             media_inputs: List of media items with type, content (bytes), mime_type
+            model_name: Name of the model to check for vision support
             
         Returns:
-            Updated messages list with images added to last user message
+            Updated messages list with images added if model supports vision
         """
         import base64
         
         if not media_inputs:
             return messages
         
-        # Find the last user message
+        # Filter to only images (Ollama only supports images, not audio/video)
+        image_inputs = [m for m in media_inputs if m.get("type") == "image"]
+        
+        if not image_inputs:
+            return messages
+        
+        # Check if model supports vision - try cache first, then check dynamically
+        model_info = self._model_cache.get(model_name)
+        supports_vision = model_info and model_info.supports_multimodal if model_info else False
+        
+        # If not in cache, check capabilities dynamically via /api/show
+        if not supports_vision:
+            try:
+                logger.info(f"Model '{model_name}' not in cache or vision not detected. Checking capabilities dynamically...")
+                show_resp = await self.client.post(f"{self.base_url}/api/show", json={"model": model_name}, timeout=10.0)
+                if show_resp.status_code == 200:
+                    show_data = show_resp.json() or {}
+                    raw_caps = show_data.get("capabilities") or []
+                    try:
+                        show_caps = {str(c).lower() for c in raw_caps}
+                        supports_vision = "vision" in show_caps
+                        logger.info(
+                            f"Dynamically checked model '{model_name}' capabilities: {show_caps}, "
+                            f"vision support: {supports_vision}"
+                        )
+                        
+                        # Update cache for future use
+                        if model_info:
+                            model_info.supports_multimodal = supports_vision
+                        else:
+                            # Create a basic model info entry
+                            from app.api.providers.base import ModelInfo
+                            model_info = ModelInfo(
+                                name=model_name,
+                                provider="ollama",
+                                supports_multimodal=supports_vision,
+                                supports_structured_output=True,
+                                supports_tools="tools" in show_caps,
+                                supports_streaming=True,
+                                supports_thinking="thinking" in show_caps
+                            )
+                            self._model_cache[model_name] = model_info
+                    except Exception as e:
+                        logger.warning(f"Failed to parse capabilities from /api/show response for '{model_name}': {e}")
+                else:
+                    logger.warning(
+                        f"Failed to check capabilities for model '{model_name}': "
+                        f"HTTP {show_resp.status_code} - {show_resp.text[:200]}"
+                    )
+            except Exception as e:
+                logger.warning(f"Could not check vision capabilities for model '{model_name}': {e}")
+        
+        if not supports_vision:
+            # Fallback: Check if model name suggests vision capability (common vision model names)
+            vision_model_patterns = ["llava", "vision", "multimodal", "ministral", "gemma", "qwen"]
+            model_lower = model_name.lower()
+            might_support_vision = any(pattern in model_lower for pattern in vision_model_patterns)
+            
+            if might_support_vision:
+                logger.warning(
+                    f"Ollama provider: Could not confirm vision support for model '{model_name}' "
+                    f"(capability check failed), but model name suggests vision capability. "
+                    f"Attempting to send {len(image_inputs)} image(s) anyway. "
+                    f"If this fails, ensure the model supports vision or use a different model."
+                )
+                # Continue processing - try sending images anyway
+            else:
+                logger.warning(
+                    f"Ollama provider: Model '{model_name}' does not support vision. "
+                    f"{len(image_inputs)} image(s) will be skipped. "
+                    f"Use a vision-capable model like 'ministral-3:14b' or 'gemma3' for image analysis."
+                )
+                return messages
+        
+        # Find the last user message to attach images to
         processed_messages = list(messages)
         last_user_idx = -1
         for i in range(len(processed_messages) - 1, -1, -1):
@@ -264,15 +389,9 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
         last_msg = processed_messages[last_user_idx]
         original_content = last_msg.get("content", "")
         
-        # Build content array for Ollama
-        content_array = []
-        
-        # Add images FIRST (similar to Anthropic best practice)
-        for media in media_inputs:
-            if media.get("type") != "image":
-                continue  # Skip non-image media for now
-            
-            # Validate media type
+        # Convert images to base64 strings for Ollama
+        images_base64 = []
+        for media in image_inputs:
             mime_type = media.get("mime_type", "image/png")
             allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
             
@@ -280,7 +399,6 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                 logger.warning(f"Unsupported image type: {mime_type}, skipping (allowed: {allowed_types})")
                 continue
             
-            # Get image bytes
             image_bytes = media.get("content")
             if not isinstance(image_bytes, bytes):
                 logger.warning(f"Image content is not bytes (got {type(image_bytes)}), skipping")
@@ -290,42 +408,35 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                 logger.warning("Image content is empty, skipping")
                 continue
             
-            # Convert to base64
+            # Convert to base64 (Ollama expects base64 strings in images array)
             try:
                 image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+                images_base64.append(image_base64)
+                logger.debug(f"Added image to Ollama request: {mime_type}, {len(image_bytes)} bytes")
             except Exception as e:
                 logger.error(f"Failed to encode image to base64: {e}")
                 continue
-            
-            # Add image block (Ollama format)
-            content_array.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": mime_type,
-                    "data": image_base64
-                }
-            })
-            
-            logger.debug(f"Added image block: {mime_type}, {len(image_bytes)} bytes")
         
-        # Add text content AFTER images
-        if isinstance(original_content, str) and original_content.strip():
-            content_array.append({
-                "type": "text",
-                "text": original_content
-            })
-        elif isinstance(original_content, list):
-            # Already content blocks - extend them
-            content_array.extend(original_content)
+        if not images_base64:
+            logger.warning("No valid images to add to Ollama request")
+            return messages
         
-        # Update the last user message
-        processed_messages[last_user_idx] = {
+        # Update the last user message with images array
+        # Ollama format: content is a string, images is a separate array
+        updated_msg = {
             **last_msg,
-            "content": content_array if content_array else original_content
+            "content": original_content if isinstance(original_content, str) else str(original_content),
+            "images": images_base64
         }
         
-        logger.info(f"Added {len([m for m in media_inputs if m.get('type') == 'image'])} images to last user message")
+        processed_messages[last_user_idx] = updated_msg
+        
+        logger.info(
+            f"Added {len(images_base64)} image(s) to Ollama request for model '{model_name}'. "
+            f"Message now has 'images' array with {len(images_base64)} base64-encoded image(s). "
+            f"Content length: {len(updated_msg.get('content', ''))} chars"
+        )
+        logger.debug(f"First image base64 length: {len(images_base64[0]) if images_base64 else 0} chars")
         return processed_messages
     
     def _extract_tool_result_streams(self, tool_result: Any, tool_name: str) -> tuple[str, Any]:
@@ -735,7 +846,7 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                     logger.error(f"Error appears to be schema-related: {error_text}")
                     
                 try:
-                    logger.error(f"Full Ollama request payload: {json.dumps(payload, indent=2)}")
+                    logger.error(f"Full Ollama request payload: {safe_log_payload(payload)}")
                 except Exception:
                     logger.error("Ollama request payload: <unserializable>")
             except RuntimeError:
@@ -873,7 +984,7 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                 if error_json:
                     logger.error(f"Ollama error JSON: {json.dumps(error_json, indent=2)}")
                 try:
-                    logger.error(f"Ollama request payload: {json.dumps(payload, indent=2)}")
+                    logger.error(f"Ollama request payload: {safe_log_payload(payload)}")
                 except Exception:
                     logger.error("Ollama request payload: <unserializable>")
             except Exception:

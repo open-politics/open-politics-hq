@@ -39,7 +39,7 @@ class ProviderMetadata:
     api_key_url: Optional[str] = None  # URL to get API key
     enabled: bool = True
     is_local: bool = False  # True for Ollama, local Nominatim, etc.
-    is_oss: bool = False  # True for open-source solutions (Ollama, Nominatim, OPOL)
+    is_oss: bool = False  # True for open-source solutions (Ollama, Nominatim)
     is_free: bool = False  # True for free-tier available (Nominatim API, some have free tiers)
     has_env_fallback: bool = False  # True if server has env var configured
     features: Optional[List[str]] = None  # Provider-specific features
@@ -121,6 +121,20 @@ class UnifiedProviderRegistry:
             features=["tools", "streaming"]
         )
         
+        self._providers["mistral"] = ProviderMetadata(
+            id="mistral",
+            name="Mistral AI",
+            capability=ProviderCapability.LLM,
+            description="Mistral AI models with EU hosting for data sovereignty",
+            requires_api_key=True,
+            api_key_name="Mistral API Key",
+            api_key_url="https://console.mistral.ai/api-keys",
+            enabled=True,
+            is_oss=False,
+            is_free=False,  # Has free tier
+            features=["structured_output", "tools", "streaming", "EU Hosting"]
+        )
+        
         # ── Embedding Providers ──
         self._providers["ollama_embeddings"] = ProviderMetadata(
             id="ollama_embeddings",
@@ -189,20 +203,6 @@ class UnifiedProviderRegistry:
             has_env_fallback=bool(getattr(settings, 'TAVILY_API_KEY', None)),
             rate_limited=True,
             rate_limit_info="1000 requests/month (free tier)"
-        )
-        
-        self._providers["opol_search"] = ProviderMetadata(
-            id="opol_search",
-            name="OPOL Search (SearXNG)",
-            capability=ProviderCapability.SEARCH,
-            description="Open-source privacy-focused metasearch. Self-hosted for unlimited use",
-            requires_api_key=False,
-            enabled=True,
-            is_local=True,  # Self-hosted
-            is_oss=True,    # SearXNG is open source
-            is_free=True,   # Free
-            has_env_fallback=True,
-            rate_limited=False
         )
         
         # ── Geocoding Providers ──

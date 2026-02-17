@@ -35,7 +35,8 @@ import AnnotationResultDisplay from './AnnotationResultDisplay';
 import { ResultFilter } from './AnnotationFilterControls';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Settings2, ArrowDownUp, SortAsc, SortDesc, Info } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Settings2, ArrowDownUp, SortAsc, SortDesc, Info, Layers, Maximize2 } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
@@ -117,6 +118,8 @@ interface Props {
   expectedSchemaIds?: number[];  // Schemas to expect for completion
   showPendingAssets?: boolean;  // Toggle for pending assets visibility
   onShowPendingChange?: (show: boolean) => void;
+  // NEW: Array handling mode for charts
+  arrayHandling?: 'aggregate' | 'explode';
 }
 
 // NEW: Interface for group selection in timeline charts
@@ -126,7 +129,19 @@ export interface GroupSelectionConfig {
 }
 
 // --- HELPER FUNCTIONS --- //
-const getTimestamp = (result: FormattedAnnotation, assetsMap: Map<number, AssetRead>, timeAxisConfig: TimeAxisConfig | null): Date | null => {
+// Helper to get nested value from object using dot notation
+const getNestedValue = (obj: any, path: string): any => {
+  return path.split('.').reduce((current, key) => {
+    return current && typeof current === 'object' ? current[key] : undefined;
+  }, obj);
+};
+
+const getTimestamp = (
+  result: FormattedAnnotation, 
+  assetsMap: Map<number, AssetRead>, 
+  timeAxisConfig: TimeAxisConfig | null,
+  arrayIndex?: number // NEW: For exploded array items
+): Date | null => {
   if (!timeAxisConfig) return null;
   let dateSource: string | number | Date | null = null;
   switch (timeAxisConfig.type) {
@@ -134,6 +149,27 @@ const getTimestamp = (result: FormattedAnnotation, assetsMap: Map<number, AssetR
     case 'schema':
       if (timeAxisConfig.schemaId === result.schema_id && timeAxisConfig.fieldKey) {
         dateSource = getAnnotationFieldValue(result.value, timeAxisConfig.fieldKey) || null;
+        
+        // NEW: If field path goes through an array and we're exploding, extract from specific array item
+        if (arrayIndex !== undefined && dateSource === null && timeAxisConfig.fieldKey.includes('.')) {
+          const fieldPath = timeAxisConfig.fieldKey.split('.');
+          // Find the array path (e.g., "document.mails" from "document.mails.date")
+          for (let i = 1; i < fieldPath.length; i++) {
+            const potentialArrayPath = fieldPath.slice(0, i).join('.');
+            const remainingPath = fieldPath.slice(i).join('.');
+            const potentialArray = getAnnotationFieldValue(result.value, potentialArrayPath);
+            
+            if (Array.isArray(potentialArray) && potentialArray.length > 0 && 
+                typeof potentialArray[0] === 'object' && potentialArray[arrayIndex]) {
+              // Extract from specific array item
+              const arrayItem = potentialArray[arrayIndex];
+              if (typeof arrayItem === 'object' && arrayItem !== null) {
+                dateSource = getNestedValue(arrayItem, remainingPath) || null;
+                break;
+              }
+            }
+          }
+        }
         
         // If hierarchical extraction failed, try flat extraction
         if (!dateSource && timeAxisConfig.fieldKey.includes('.')) {
@@ -151,6 +187,57 @@ const getTimestamp = (result: FormattedAnnotation, assetsMap: Map<number, AssetR
     const d = new Date(dateSource);
     return isNaN(d.getTime()) ? null : d;
   } catch { return null; }
+};
+
+// NEW: Explode array results for chart visualization
+const explodeArrayResults = (
+  results: FormattedAnnotation[],
+  timeAxisConfig: TimeAxisConfig | null
+): Array<FormattedAnnotation & { arrayIndex?: number; arrayItemCount?: number }> => {
+  if (!timeAxisConfig?.fieldKey) return results;
+  
+  const explodedResults: Array<FormattedAnnotation & { arrayIndex?: number; arrayItemCount?: number }> = [];
+  
+  for (const result of results) {
+    // Check if the field path goes through an array
+    const fieldPath = timeAxisConfig.fieldKey.split('.');
+    let arrayPath = '';
+    let isArrayField = false;
+    
+    // Detect if field path traverses an array (e.g., "document.mails.date")
+    for (let i = 1; i < fieldPath.length; i++) {
+      const potentialArrayPath = fieldPath.slice(0, i).join('.');
+      const potentialArray = getAnnotationFieldValue(result.value, potentialArrayPath);
+      
+      if (Array.isArray(potentialArray) && potentialArray.length > 0 && 
+          typeof potentialArray[0] === 'object' && potentialArray[0] !== null) {
+        arrayPath = potentialArrayPath;
+        isArrayField = true;
+        break;
+      }
+    }
+    
+    if (isArrayField && arrayPath) {
+      // Explode: Create one result per array item
+      const arrayContainer = getAnnotationFieldValue(result.value, arrayPath);
+      if (Array.isArray(arrayContainer) && arrayContainer.length > 0) {
+        arrayContainer.forEach((item, index) => {
+          explodedResults.push({
+            ...result,
+            arrayIndex: index,
+            arrayItemCount: arrayContainer.length,
+          });
+        });
+      } else {
+        // Empty array - don't add any points
+      }
+    } else {
+      // No array, use as-is
+      explodedResults.push(result);
+    }
+  }
+  
+  return explodedResults;
 };
 
 // Helper to get the primary plottable value from an annotation result
@@ -506,7 +593,9 @@ const processLineChartData = (
   
   // Group results by date and asset
   const resultsByDateAndAsset = results.reduce<Record<string, Record<string, FormattedAnnotation[]>>>((acc, result) => {
-    const timestamp = getTimestamp(result, assetsMap, timeAxisConfig);
+    // NEW: Pass arrayIndex if result has it (from exploded arrays)
+    const arrayIndex = (result as any).arrayIndex;
+    const timestamp = getTimestamp(result, assetsMap, timeAxisConfig, arrayIndex);
     if (!timestamp || isNaN(timestamp.getTime())) return acc;
 
     // Generate date key for grouping
@@ -1311,9 +1400,12 @@ const AnnotationResultsChart: React.FC<Props> = ({
   expectedSchemaIds = [],
   showPendingAssets: showPendingAssetsProp,
   onShowPendingChange,
+  // NEW: Array handling mode
+  arrayHandling = 'aggregate',
 }) => {
   const [isGrouped, setIsGrouped] = useState(false);
   const [aggregateSources, setAggregateSources] = useState(aggregateSourcesDefault);
+  const [arrayHandlingState, setArrayHandlingState] = useState<'aggregate' | 'explode'>(arrayHandling);
   const [groupingSchemeId, setGroupingSchemeId] = useState<number | null>(() => {
     const initialId = schemas.length > 0 ? schemas[0].id : null;
     return initialId;
@@ -1447,6 +1539,11 @@ const AnnotationResultsChart: React.FC<Props> = ({
       });
     }
     
+    // NEW: Explode arrays if configured
+    if (arrayHandlingState === 'explode' && timeAxisConfig?.fieldKey) {
+      filteredResults = explodeArrayResults(filteredResults, timeAxisConfig);
+    }
+    
     return filteredResults;
   }, [
     results, 
@@ -1458,7 +1555,8 @@ const AnnotationResultsChart: React.FC<Props> = ({
     timeAxisConfig?.timeFrame?.endDate instanceof Date ? timeAxisConfig.timeFrame.endDate.getTime() : String(timeAxisConfig?.timeFrame?.endDate || ''),
     timeAxisConfig?.type,
     timeAxisConfig?.schemaId,
-    timeAxisConfig?.fieldKey
+    timeAxisConfig?.fieldKey,
+    arrayHandlingState // NEW: Include arrayHandlingState in dependencies
   ]);
 
   // === UNIFIED DATA PROCESSING: Single pass that handles both splitting and field detection ===
@@ -1956,28 +2054,68 @@ const AnnotationResultsChart: React.FC<Props> = ({
             </div>
             
             {!isGrouped && timeAxisConfig && (
-              <div className="flex items-center space-x-2">
-                <Label className="text-sm font-medium">Interval:</Label>
-                <Select
-                  value={selectedTimeInterval}
-                  onValueChange={(value) => {
-                    if (onSettingsChange) {
-                      onSettingsChange({ selectedTimeInterval: value });
-                    }
-                  }}
-                >
-                  <SelectTrigger className="w-24">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="day">Day</SelectItem>
-                    <SelectItem value="week">Week</SelectItem>
-                    <SelectItem value="month">Month</SelectItem>
-                    <SelectItem value="quarter">Quarter</SelectItem>
-                    <SelectItem value="year">Year</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              <>
+                <div className="flex items-center space-x-2">
+                  <Label className="text-sm font-medium">Interval:</Label>
+                  <Select
+                    value={selectedTimeInterval}
+                    onValueChange={(value) => {
+                      if (onSettingsChange) {
+                        onSettingsChange({ selectedTimeInterval: value });
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-24">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="day">Day</SelectItem>
+                      <SelectItem value="week">Week</SelectItem>
+                      <SelectItem value="month">Month</SelectItem>
+                      <SelectItem value="quarter">Quarter</SelectItem>
+                      <SelectItem value="year">Year</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                {/* NEW: Array Handling Toggle */}
+                {timeAxisConfig.fieldKey && timeAxisConfig.fieldKey.includes('.') && (
+                  <div className="flex items-center space-x-2">
+                    <Label className="text-sm font-medium">Array Mode:</Label>
+                    <TooltipProvider delayDuration={100}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <ToggleGroup 
+                            type="single" 
+                            value={arrayHandlingState} 
+                            onValueChange={(v) => {
+                              if (v === 'aggregate' || v === 'explode') {
+                                setArrayHandlingState(v);
+                              }
+                            }}
+                            size="sm"
+                          >
+                            <ToggleGroupItem value="aggregate" className="h-7 px-2 text-xs">
+                              <Layers className="h-3 w-3 mr-1" />
+                              Aggregate
+                            </ToggleGroupItem>
+                            <ToggleGroupItem value="explode" className="h-7 px-2 text-xs">
+                              <Maximize2 className="h-3 w-3 mr-1" />
+                              Explode
+                            </ToggleGroupItem>
+                          </ToggleGroup>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="text-xs">
+                            Aggregate: One point per annotation<br/>
+                            Explode: One point per array item
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                )}
+              </>
             )}
           </div>
 

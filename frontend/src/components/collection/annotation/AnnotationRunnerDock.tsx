@@ -136,6 +136,8 @@ export default function AnnotationRunnerDock({
   const [previewScheme, setPreviewScheme] = useState<AnnotationSchemaRead | null>(null);
   const [isSchemeEditorOpen, setIsSchemeEditorOpen] = useState(false);
   const [csvRowProcessing, setCsvRowProcessing] = useState(true);
+  const [pdfPageProcessing, setPdfPageProcessing] = useState(true);
+  const [processPdfsAsImages, setProcessPdfsAsImages] = useState(false);
   const [includeThoughts, setIncludeThoughts] = useState(false);
   const [annotationConcurrency, setAnnotationConcurrency] = useState(5);
   const [enableParallelProcessing, setEnableParallelProcessing] = useState(true);
@@ -186,7 +188,8 @@ export default function AnnotationRunnerDock({
     });
     
     // Auto-enable if images detected or schema requires images
-    if (hasImages || hasPerImageSchema) {
+    // But only if vision processing is not already explicitly disabled
+    if ((hasImages || hasPerImageSchema) && !enableVisionProcessing) {
       setEnableVisionProcessing(true);
     }
   }, [selectedAssetItems, selectedSchemeIds, allAssets, allSchemes]);
@@ -258,6 +261,8 @@ export default function AnnotationRunnerDock({
     const configuration: Record<string, any> = {};
     configuration.justification_mode = justificationOverride === 'all' ? "ALL_WITH_SCHEMA_OR_DEFAULT_PROMPT" : "SCHEMA_DEFAULT";
     configuration.csv_row_processing = csvRowProcessing;
+    configuration.pdf_page_processing = pdfPageProcessing;
+    configuration.process_pdfs_as_images = processPdfsAsImages;
     configuration.include_thoughts = includeThoughts;
     configuration.annotation_concurrency = annotationConcurrency;
     configuration.enable_parallel_processing = enableParallelProcessing;
@@ -343,12 +348,55 @@ export default function AnnotationRunnerDock({
     };
   }, [selectedAssetItems, allAssets]);
 
+  // Compute PDF processing info
+  const pdfProcessingInfo = useMemo(() => {
+    const selectedAssetIds = Array.from(selectedAssetItems)
+      .filter(item => item.startsWith('asset-'))
+      .map(item => parseInt(item.replace('asset-', '')))
+      .filter(id => !isNaN(id));
+      
+    const pdfAssets = allAssets.filter(asset => 
+      selectedAssetIds.includes(asset.id) && asset.kind === 'pdf'
+    );
+    
+    // Calculate total pages estimate from source metadata OR child assets
+    const totalPagesEstimate = pdfAssets.reduce((total, asset) => {
+      // First try to get from source metadata (most efficient)
+      const metadataPageCount = asset.source_metadata?.page_count || 
+                                asset.source_metadata?.pages_processed || 
+                                asset.source_metadata?.page_count_processed;
+      
+      if (metadataPageCount && typeof metadataPageCount === 'number' && metadataPageCount > 0) {
+        return total + metadataPageCount;
+      }
+      
+      // Fallback: count actual PDF_PAGE children in allAssets
+      const pdfPageChildren = allAssets.filter(childAsset => 
+        childAsset.parent_asset_id === asset.id && childAsset.kind === 'pdf_page'
+      );
+      
+      return total + pdfPageChildren.length;
+    }, 0);
+    
+    return {
+      pdfAssetCount: pdfAssets.length,
+      totalPagesEstimate
+    };
+  }, [selectedAssetItems, allAssets]);
+
   // Reset CSV row processing when no CSV assets are selected
   useEffect(() => {
     if (csvProcessingInfo.csvAssetCount === 0) {
       setCsvRowProcessing(true); // Reset to default
     }
   }, [csvProcessingInfo.csvAssetCount]);
+
+  // Reset PDF page processing when no PDF assets are selected
+  useEffect(() => {
+    if (pdfProcessingInfo.pdfAssetCount === 0) {
+      setPdfPageProcessing(true); // Reset to default
+    }
+  }, [pdfProcessingInfo.pdfAssetCount]);
 
   // Handler for saving API keys
   const handleSaveApiKey = useCallback(() => {
@@ -686,6 +734,49 @@ export default function AnnotationRunnerDock({
                             </div>
                           )}
                           
+                          {/* PDF Page Processing Configuration */}
+                          {pdfProcessingInfo.pdfAssetCount > 0 && (
+                            <div className="space-y-3">
+                              <div className="space-y-1.5">
+                                <div className="flex items-center space-x-2">
+                                  <Switch
+                                    id="pdf-page-processing"
+                                    checked={pdfPageProcessing}
+                                    onCheckedChange={setPdfPageProcessing}
+                                  />
+                                  <Label htmlFor="pdf-page-processing" className="text-xs font-medium cursor-pointer">
+                                    Process PDF Pages Individually
+                                  </Label>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground ml-6">
+                                  {pdfPageProcessing 
+                                    ? `Process each page as a separate asset (~${pdfProcessingInfo.totalPagesEstimate} pages)`
+                                    : `Process PDF files as complete documents (${pdfProcessingInfo.pdfAssetCount} files)`
+                                  }
+                                </p>
+                              </div>
+                              
+                              <div className="space-y-1.5">
+                                <div className="flex items-center space-x-2">
+                                  <Switch
+                                    id="process-pdfs-as-images"
+                                    checked={processPdfsAsImages}
+                                    onCheckedChange={setProcessPdfsAsImages}
+                                  />
+                                  <Label htmlFor="process-pdfs-as-images" className="text-xs font-medium cursor-pointer">
+                                    Process PDFs as Images (OCR)
+                                  </Label>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground ml-6">
+                                  {processPdfsAsImages
+                                    ? `Use vision models for OCR (for scanned PDFs without text)`
+                                    : `Use extracted text content (faster, cheaper for text-based PDFs)`
+                                  }
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                          
                           {/* Parallel Processing Configuration */}
                           <div className="space-y-2">
                             <div className="flex items-center space-x-2">
@@ -788,6 +879,41 @@ export default function AnnotationRunnerDock({
                             </div>
                           </div>
                           
+                          {/* Vision Processing Configuration */}
+                          {(Array.from(selectedAssetItems).some(id => {
+                            if (!id.startsWith('asset-')) return false;
+                            const asset = allAssets.find(a => a.id === parseInt(id.replace('asset-', '')));
+                            return asset?.kind === 'image' || asset?.kind === 'pdf_page' || asset?.kind === 'image_region';
+                          }) || Array.from(selectedSchemeIds).some(schemaId => {
+                            const schema = allSchemes.find(s => s.id === schemaId);
+                            return schema?.output_contract && typeof schema.output_contract === 'object' && 'per_image' in schema.output_contract;
+                          })) && (
+                            <div className="space-y-1.5">
+                              <div className="flex items-center space-x-2">
+                                <Switch
+                                  id="vision-processing-advanced"
+                                  checked={enableVisionProcessing}
+                                  onCheckedChange={setEnableVisionProcessing}
+                                />
+                                <Label htmlFor="vision-processing-advanced" className="text-xs font-medium cursor-pointer flex items-center gap-1.5">
+                                  <ImageIcon className="h-3 w-3" />
+                                  Enable Vision Processing
+                                </Label>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground ml-6">
+                                {enableVisionProcessing 
+                                  ? 'Images will be analyzed by vision-capable models (e.g., ministral-3:14b, gemma3). Required for PDF pages and image assets.'
+                                  : 'Images will be skipped. Only text content will be analyzed. Enable this for image/PDF analysis.'
+                                }
+                              </p>
+                              {selectedProvider === 'ollama' && enableVisionProcessing && (
+                                <p className="text-[10px] text-amber-600 dark:text-amber-500 ml-6 mt-1">
+                                  Note: Ensure your Ollama model supports vision (check model capabilities)
+                                </p>
+                              )}
+                            </div>
+                          )}
+
                           {/* Include Thoughts Configuration */}
                           <div className="space-y-1.5">
                             <div className="flex items-center space-x-2">
@@ -925,6 +1051,19 @@ export default function AnnotationRunnerDock({
                             </Badge>
                           </div>
                         )}
+                        {pdfProcessingInfo.pdfAssetCount > 0 && (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-2 h-2 rounded-full bg-blue-600 shadow-sm"></div>
+                              <span className="text-xs font-medium">
+                                {pdfPageProcessing ? 'PDF Pages to Process' : 'PDF Files to Process'}
+                              </span>
+                            </div>
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-800 text-xs">
+                              {pdfPageProcessing ? `~${pdfProcessingInfo.totalPagesEstimate}` : pdfProcessingInfo.pdfAssetCount}
+                            </Badge>
+                          </div>
+                        )}
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
                             <div className="w-2 h-2 rounded-full bg-sky-500 shadow-sm"></div>
@@ -976,7 +1115,25 @@ export default function AnnotationRunnerDock({
                             </div>
                           </div>
                         )}
-                        {/* Vision Processing Toggle */}
+                        {pdfProcessingInfo.pdfAssetCount > 0 && (
+                          <div className="mt-2 p-2 rounded-md bg-blue-50 border border-blue-200 dark:bg-blue-950/20 dark:border-blue-800">
+                            <div className="flex items-start gap-1.5">
+                              <div className="w-3 h-3 rounded-full bg-blue-500 shadow-sm mt-0.5 flex-shrink-0"></div>
+                              <div className="text-[11px] text-blue-700 dark:text-blue-400">
+                                <p className="font-medium mb-0.5">
+                                  {pdfPageProcessing ? 'PDF Page Processing Enabled' : 'PDF File Processing'}
+                                </p>
+                                <p>
+                                  {pdfPageProcessing 
+                                    ? `${pdfProcessingInfo.pdfAssetCount} PDF file${pdfProcessingInfo.pdfAssetCount > 1 ? 's' : ''} will be expanded to process individual pages (~${pdfProcessingInfo.totalPagesEstimate} total pages).`
+                                    : `${pdfProcessingInfo.pdfAssetCount} PDF file${pdfProcessingInfo.pdfAssetCount > 1 ? 's' : ''} will be processed as complete documents.`
+                                  }
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {/* Vision Processing Toggle - Show when images are selected or schema has per_image */}
                         {(Array.from(selectedAssetItems).some(id => {
                           if (!id.startsWith('asset-')) return false;
                           const asset = allAssets.find(a => a.id === parseInt(id.replace('asset-', '')));
@@ -986,17 +1143,24 @@ export default function AnnotationRunnerDock({
                           return schema?.output_contract && typeof schema.output_contract === 'object' && 'per_image' in schema.output_contract;
                         })) && (
                           <div className="flex items-center justify-between mt-2 p-2 rounded-md bg-purple-50 border border-purple-200 dark:bg-purple-950/20 dark:border-purple-800">
-                            <div className="flex items-center gap-2">
-                              <ImageIcon className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
-                              <Label htmlFor="vision-toggle" className="text-xs font-medium text-purple-700 dark:text-purple-400 cursor-pointer">
-                                Vision Processing {enableVisionProcessing && "(Auto-enabled)"}
-                              </Label>
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <ImageIcon className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400 flex-shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <Label htmlFor="vision-toggle" className="text-xs font-medium text-purple-700 dark:text-purple-400 cursor-pointer block">
+                                  Vision Processing
+                                </Label>
+                                <p className="text-[10px] text-purple-600 dark:text-purple-500 mt-0.5">
+                                  {enableVisionProcessing 
+                                    ? 'Images will be analyzed by vision-capable models'
+                                    : 'Images will be skipped (text-only analysis)'}
+                                </p>
+                              </div>
                             </div>
                             <Switch
                               id="vision-toggle"
                               checked={enableVisionProcessing}
                               onCheckedChange={setEnableVisionProcessing}
-                              className="scale-75"
+                              className="scale-75 flex-shrink-0"
                             />
                           </div>
                         )}

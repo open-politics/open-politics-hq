@@ -197,13 +197,13 @@ async def list_files(
         
         files = await storage_provider.list_files(
             prefix=effective_prefix,
-            max_keys=max_keys
+            limit=max_keys,
         )
-        
-        # Remove user prefix from displayed paths for cleaner UX
-        for file_info in files:
-            if file_info.key.startswith(user_prefix):
-                file_info.key = file_info.key[len(user_prefix):]
+        # Storage returns List[str]; normalize to API format with key and strip user prefix
+        files = [
+            {"key": (k[len(user_prefix):] if k.startswith(user_prefix) else k)}
+            for k in files
+        ]
         
         logging.info(f"Found {len(files)} files for user {current_user.id}")
         return files

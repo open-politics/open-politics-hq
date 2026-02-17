@@ -8,12 +8,13 @@ Each processor is responsible for one content type.
 Architecture:
 - BaseProcessor: Abstract interface
 - Concrete processors: CSVProcessor, PDFProcessor, etc.
-- ProcessorRegistry: Maps asset kinds/extensions to processors
+- ContentTypeRegistry (utils/content_types): Maps asset kinds/extensions to processors
 - ProcessingStrategy: Decides immediate vs background processing
 
-Centralized Configuration:
+Centralized Configuration (from utils/content_types):
 - detect_asset_kind_from_extension(): File extension → AssetKind
 - needs_processing(): Check if kind needs processing
+- importable_extensions(): Extensions that can be imported
 - FILE_EXTENSION_MAP, PROCESSABLE_KINDS: Content type rules
 """
 
@@ -22,10 +23,10 @@ from .csv_processor import CSVProcessor
 from .excel_processor import ExcelProcessor
 from .pdf_processor import PDFProcessor
 from .web_processor import WebProcessor
-from .registry import (
-    ProcessorRegistry, 
-    get_processor, 
-    get_registry,
+from .strategy import ProcessingStrategy, should_process_immediately, get_strategy
+from app.api.utils.content_types import (
+    ContentTypeRegistry,
+    get_content_type_registry,
     detect_asset_kind_from_extension,
     needs_processing,
     is_rss_feed_url,
@@ -37,7 +38,15 @@ from .registry import (
     DEFAULT_MAX_IMAGES,
     DEFAULT_TIMEOUT,
 )
-from .strategy import ProcessingStrategy, should_process_immediately, get_strategy
+
+# Backward compat: ProcessorRegistry and get_registry point to content type registry
+ProcessorRegistry = ContentTypeRegistry
+get_registry = get_content_type_registry
+
+
+def get_processor(asset, context):
+    """Get instantiated processor for an asset."""
+    return get_content_type_registry().get_processor(asset, context)
 
 __all__ = [
     # Base classes
@@ -73,4 +82,3 @@ __all__ = [
     "DEFAULT_MAX_IMAGES",
     "DEFAULT_TIMEOUT",
 ]
-

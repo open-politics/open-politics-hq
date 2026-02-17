@@ -14,6 +14,7 @@ from app.api.routes import (
     dataset_jobs,  # Dataset ingestion job tracking
     datasets,
     embeddings,
+    entities as canonical_entities,  # Graph canonical entities
     filestorage,
     filters,
     flows,  # Unified Flow architecture (replaces monitors + pipelines)
@@ -55,6 +56,7 @@ api_router.include_router(chunking.router, prefix="/chunking", tags=["chunking"]
 api_router.include_router(dataset_jobs.router, tags=["Dataset Jobs"])  # Archive ingestion tracking
 api_router.include_router(datasets.router, tags=["datasets"])
 api_router.include_router(embeddings.router, prefix="/embeddings", tags=["embeddings"])
+api_router.include_router(canonical_entities.router, tags=["Canonical Entities"])
 api_router.include_router(filestorage.router, prefix="/files", tags=["filestorage"])
 api_router.include_router(filters.router, prefix="/filters", tags=["filters"])
 api_router.include_router(flows.router, tags=["Flows"])  # NEW: Unified Flow architecture

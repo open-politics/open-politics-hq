@@ -1,45 +1,40 @@
 'use client';
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useMemo, useCallback } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from '@/components/ui/button';
-import { ChevronDown, ChevronUp, HelpCircle, FileText, MessageCircle, Zap, Eye } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { FormattedAnnotation } from '@/lib/annotations/types';
-import { AnnotationSchemaRead } from '@/client';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { getTargetKeysForScheme, getAnnotationFieldValue, formatFieldNameForDisplay as formatFieldNameUtil, getModalityIcon } from '@/lib/annotations/utils';
-import { TextSpanSnippets } from '@/components/ui/highlighted-text';
-import { useAnnotationTextSpans } from '@/components/collection/contexts/TextSpanHighlightContext';
+import { AnnotationSchemaRead, AssetRead } from '@/client';
+import { getTargetKeysForScheme, getAnnotationFieldValue, formatFieldNameForDisplay as formatFieldNameUtil } from '@/lib/annotations/utils';
+import { useTextSpanHighlight } from '@/components/collection/contexts/TextSpanHighlightContext';
+import { resolveSpans } from '@/lib/annotations/textSpanCorrection';
 
 interface AnnotationFieldsPanelProps {
   result: FormattedAnnotation;
   schema: AnnotationSchemaRead;
+  asset?: AssetRead | null;
   selectedFieldKeys?: string[] | null;
   activeField?: string | null;
   selectedSpan?: { fieldKey: string; spanIndex: number } | null;
   onFieldInteraction?: (fieldKey: string, justification: any) => void;
   highlightValue?: string | null;
+  /** Optional: use shared formatFieldValue from parent for badges, arrays, etc. */
+  formatFieldValue?: (field: { name: string; type: string; description?: string; config?: any }) => React.ReactNode;
 }
-
-// Utility function to format field names for display (now uses shared utility)
-const formatFieldNameForDisplay = (fieldName: string): string => {
-  return formatFieldNameUtil(fieldName).displayName;
-};
 
 const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
   result,
   schema,
+  asset = null,
   selectedFieldKeys = null,
   activeField = null,
   selectedSpan = null,
   onFieldInteraction,
-  highlightValue = null
+  highlightValue = null,
+  formatFieldValue: formatFieldValueProp
 }) => {
-  const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
-  const { extractTextSpansFromJustification } = useAnnotationTextSpans();
+  const { showFieldSpans, clearHighlights } = useTextSpanHighlight();
 
   const fieldsToDisplay = useMemo(() => {
     const targetKeys = getTargetKeysForScheme(schema.id, [schema]);
@@ -57,88 +52,34 @@ const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
     return fields;
   }, [schema, selectedFieldKeys]);
 
-
-
-
-
-  const toggleFieldExpansion = useCallback((fieldKey: string) => {
-    setExpandedFields(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(fieldKey)) {
-        newSet.delete(fieldKey);
-      } else {
-        newSet.add(fieldKey);
-      }
-      return newSet;
-    });
-  }, []);
-
-  const renderFieldValue = (field: any, fieldValue: any, isActive: boolean) => {
+  const renderFieldValueFallback = (fieldValue: any) => {
     if (fieldValue === null || fieldValue === undefined) {
-      return <span className="text-muted-foreground italic">N/A</span>;
+      return <span className="text-muted-foreground/60 italic text-xs">N/A</span>;
     }
-    
-    // Handle different value types
     if (typeof fieldValue === 'boolean') {
-      return (
-        <Badge variant={fieldValue ? "default" : "secondary"} className={cn(
-          "transition-colors",
-          isActive && "ring-2 ring-primary ring-opacity-50"
-        )}>
-          {fieldValue ? "Yes" : "No"}
-        </Badge>
-      );
+      return <span className="text-xs">{fieldValue ? "Yes" : "No"}</span>;
     }
-
     if (typeof fieldValue === 'number') {
-      return (
-        <span className={cn(
-          "font-medium",
-          isActive && "bg-primary/10 px-1 rounded"
-        )}>
-          {fieldValue}
-        </span>
-      );
+      return <span className="text-xs tabular-nums">{fieldValue}</span>;
     }
-
     if (Array.isArray(fieldValue)) {
+      if (fieldValue.length === 0) return <span className="text-muted-foreground/60 italic text-xs">empty</span>;
+      if (typeof fieldValue[0] === 'object') {
+        return <span className="text-xs text-muted-foreground">{fieldValue.length} items</span>;
+      }
       return (
-        <div className={cn(
-          "space-y-1",
-          isActive && "bg-primary/5 p-2 rounded border border-primary/20"
-        )}>
-          {fieldValue.map((item: any, index: number) => (
-            <Badge 
-              key={index} 
-              variant="outline" 
-              className={cn(
-                "mr-1 mb-1 transition-colors",
-                highlightValue && String(item) === highlightValue && "bg-yellow-100 border-yellow-400",
-                isActive && "border-primary/50"
-              )}
-            >
+        <div className="flex flex-wrap gap-1 items-center">
+          {fieldValue.map((item: any, i: number) => (
+            <Badge key={i} variant="outline" className="text-[10px] px-1.5 py-0 font-normal border-border/40">
               {String(item)}
             </Badge>
           ))}
         </div>
       );
     }
-
-    // Handle string values - always show full content
     const stringValue = String(fieldValue);
-    return (
-      <div className={cn(
-        "space-y-1 max-w-full",
-        isActive && "bg-primary/5 p-2 rounded border border-primary/20"
-      )}>
-        <div className={cn(
-          "whitespace-pre-wrap break-words text-sm leading-relaxed",
-          isActive && "font-medium"
-        )}>
-          {stringValue}
-        </div>
-      </div>
-    );
+    const display = stringValue.length > 80 ? stringValue.slice(0, 180) + '...' : stringValue;
+    return <span className="text-xs break-words">{display}</span>;
   };
 
   // Memoized field evidence cache to avoid repeated computations
@@ -235,11 +176,6 @@ const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
     return cache;
   }, [result.value, fieldsToDisplay]);
 
-  // Stable helper functions using the cache
-  const hasJustification = useCallback((field: any): boolean => {
-    return fieldEvidenceCache.get(field.name)?.hasJustification || false;
-  }, [fieldEvidenceCache]);
-
   const getEvidenceInfo = useCallback((field: any) => {
     return fieldEvidenceCache.get(field.name)?.evidenceInfo || null;
   }, [fieldEvidenceCache]);
@@ -248,129 +184,34 @@ const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
   const handleFieldClick = useCallback((fieldKey: string) => {
     if (!onFieldInteraction) return;
 
-    // Get justification from the cache
     const evidenceInfo = fieldEvidenceCache.get(fieldKey)?.evidenceInfo;
     const justification = evidenceInfo?.justification || null;
 
-    // Extract and process text spans from justification if available
-    if (justification && typeof justification === 'object' && justification['text_spans']?.length > 0) {
-      // Process text spans for highlighting asynchronously
-      const assetUuid = (result.asset as any)?.uuid;
-      extractTextSpansFromJustification(
-        justification,
-        result.asset_id,
-        assetUuid,
-        fieldKey,
-        schema.name
-      ).catch(error => {
-        console.error('Failed to process text spans for field interaction:', error);
-      });
+    if (justification && typeof justification === 'object' && justification.text_spans?.length > 0) {
+      const assetText = asset?.text_content ?? (result.asset as any)?.text_content ?? '';
+      const assetUuid = asset?.uuid ?? (result.asset as any)?.uuid;
+      const resolved = resolveSpans(assetText, justification.text_spans).map(span => ({
+        ...span,
+        fieldName: fieldKey,
+        schemaName: schema.name,
+        justificationReasoning: justification.reasoning,
+      }));
+      showFieldSpans(result.asset_id, resolved, assetUuid);
+    } else {
+      clearHighlights();
     }
 
     onFieldInteraction(fieldKey, justification);
-  }, [fieldEvidenceCache, result.asset_id, result.asset, onFieldInteraction, extractTextSpansFromJustification, schema.name]);
+  }, [fieldEvidenceCache, result.asset_id, result.asset, asset, onFieldInteraction, schema.name, showFieldSpans, clearHighlights]);
 
-  // Render professional evidence status indicator
-  const renderEvidenceStatus = (field: any, isActive: boolean, hasSelectedSpan: boolean) => {
+  // Minimal evidence indicator - just a small dot
+  const renderEvidenceDot = (field: any) => {
     const evidenceInfo = getEvidenceInfo(field);
-    
     if (!evidenceInfo) return null;
-
-    const { hasEvidence, hasReasoning, spanCount, justification } = evidenceInfo;
-
+    const { spanCount } = evidenceInfo;
+    if (spanCount === 0) return null;
     return (
-      <div className="flex items-center gap-2">
-        {/* Evidence type indicator - show multiple badges when multiple types exist */}
-        {isActive ? (
-          <div className={cn(
-            "flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors",
-            "bg-primary text-primary-foreground shadow-sm"
-          )}>
-            <Eye className="h-3 w-3" />
-            Active
-          </div>
-        ) : (
-          <div className="flex items-center gap-1">
-            {hasEvidence && (
-              <div className={cn(
-                "flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors",
-                hasSelectedSpan
-                  ? "bg-yellow-100 text-yellow-800 border border-yellow-200"
-                  : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-              )}>
-                <FileText className="h-3 w-3" />
-                {spanCount} Evidence{spanCount !== 1 && 's'}
-              </div>
-            )}
-            {hasReasoning && (
-              <div className={cn(
-                "flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors",
-                hasSelectedSpan
-                  ? "bg-yellow-100 text-yellow-800 border border-yellow-200"
-                  : "bg-blue-50 text-blue-700 border border-blue-200"
-              )}>
-                <MessageCircle className="h-3 w-3" />
-                Reasoning
-              </div>
-            )}
-            {!hasEvidence && !hasReasoning && hasJustification(field) && (
-              <div className={cn(
-                "flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-colors",
-                "bg-gray-50 text-gray-600 border border-gray-200"
-              )}>
-                <Zap className="h-3 w-3" />
-                Basic
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Tooltip with details */}
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground transition-colors"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <HelpCircle className="h-3 w-3" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent className="max-w-sm" align="start">
-              <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                <h4 className="font-medium text-sm">Field Evidence</h4>
-                {justification && typeof justification === 'object' && typeof justification.reasoning === 'string' && (
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-1">Reasoning</p>
-                    <p className="text-xs leading-relaxed">{justification.reasoning}</p>
-                  </div>
-                )}
-                {justification && typeof justification === 'object' && Array.isArray(justification.text_spans) && justification.text_spans.length > 0 && (
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-1">
-                      Text Evidence ({justification.text_spans.length} span{justification.text_spans.length !== 1 ? 's' : ''})
-                    </p>
-                    <div className="text-xs space-y-1">
-                      {justification.text_spans.slice(0, 3).map((span: any, idx: number) => (
-                        <div key={idx} className="italic bg-muted/20 p-1.5 rounded text-wrap break-words border-l-2 border-emerald-200">
-                          "{span.text_snippet || span.text}"
-                        </div>
-                      ))}
-                      {justification.text_spans.length > 3 && (
-                        <p className="text-muted-foreground font-medium">
-                          ...and {justification.text_spans.length - 3} more span{justification.text_spans.length - 3 !== 1 ? 's' : ''}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      </div>
+      <span className="text-[10px] text-muted-foreground tabular-nums">{spanCount} piece{spanCount > 1 ? 's' : ''} of evidence</span>
     );
   };
 
@@ -392,78 +233,42 @@ const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex-none p-3 border-b bg-muted/10">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold truncate">{schema.name}</h3>
-          <Badge variant="outline" className="text-xs">
-            {fieldsToDisplay.length}
-          </Badge>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">
-          Click fields to view evidence and justifications
-        </p>
-      </div>
-
       <ScrollArea className="flex-1">
-        <div className="p-3 space-y-3">
-          {fieldsToDisplay.map((field, fieldIndex) => {
+        <div className="py-1 px-1 space-y-2">
+          {fieldsToDisplay.map((field) => {
             const fieldValue = getAnnotationFieldValue(result.value, field.name);
             const isActive = activeField === field.name;
-            const hasSelectedSpan = selectedSpan?.fieldKey === field.name;
-            
+            const displayName = formatFieldNameUtil(field.name).displayName;
+
             return (
               <div
                 key={field.name}
                 className={cn(
-                  "rounded-lg border p-2.5 transition-all cursor-pointer hover:shadow-sm",
-                  isActive 
-                    ? "border-primary bg-primary/5 shadow-sm" 
-                    : hasSelectedSpan
-                    ? "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/20 shadow-sm"
-                    : "border-border bg-background hover:border-primary/30"
+                  "rounded-md px-2.5 py-2 cursor-pointer transition-colors",
+                  isActive
+                    ? "bg-primary/5 ring-1 ring-primary/20"
+                    : "bg-muted/30 hover:bg-muted/50"
                 )}
                 onClick={() => handleFieldClick(field.name)}
               >
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-1 mb-1">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <h4 className={cn(
-                          "text-sm font-medium transition-colors flex-1 min-w-0 flex items-center gap-1.5",
-                          isActive ? "text-primary font-semibold" : "text-foreground"
-                        )}>
-                          {/* Show modality icon if applicable */}
-                          {(() => {
-                            const formatted = formatFieldNameUtil(field.name);
-                            if (formatted.modality && formatted.modality !== 'document') {
-                              return (
-                                <>
-                                  {getModalityIcon(formatted.modality, 'md')}
-                                  <span>{formatted.displayName}</span>
-                                </>
-                              );
-                            }
-                            return <span>{formatted.displayName}</span>;
-                          })()}
-                        </h4>
-                      </div>
-                      {hasSelectedSpan && (
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          <span className="text-xs px-2 py-1 rounded-md bg-yellow-100 text-yellow-800 border border-yellow-200 font-medium">
-                            Span {selectedSpan!.spanIndex + 1}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-2">
-                      {field.type}
-                    </p>
-                    {/* Professional evidence status */}
-                    {hasJustification(field) && renderEvidenceStatus(field, isActive, hasSelectedSpan)}
-                  </div>
+                <div className="flex items-center justify-between gap-2 min-w-0">
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "text-[10px] px-1.5 py-0.5 font-medium truncate max-w-full",
+                      isActive
+                        ? "bg-primary/10 text-primary border-primary/40"
+                        : "bg-background"
+                    )}
+                  >
+                    {displayName}
+                  </Badge>
+                  {renderEvidenceDot(field)}
                 </div>
-                <div className="mt-2">
-                  {renderFieldValue(field, fieldValue, isActive)}
+                <div className="mt-1.5 text-foreground">
+                  {formatFieldValueProp
+                    ? formatFieldValueProp(field)
+                    : renderFieldValueFallback(fieldValue)}
                 </div>
               </div>
             );

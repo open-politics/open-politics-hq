@@ -9,13 +9,17 @@ Architecture:
 - Each handler knows how to prepare one input type
 - All handlers use AssetBuilder for actual asset creation
 - Handlers are composable and testable in isolation
+- All handlers inherit BaseHandler and accept IngestionContext
 
 Available Handlers:
 - FileHandler: Uploaded files
-- WebHandler: URLs and web scraping
+- WebHandler: URLs and web scraping (handle, handle_bulk)
 - SearchHandler: Search results
-- RSSHandler: RSS feeds
+- RSSHandler: RSS feeds (handle, preview_rss_feed, discover_rss_feeds_from_awesome_repo,
+  ingest_from_awesome_repo)
 - TextHandler: Direct text content
+- ArchiveHandler: ZIP/TAR extraction and directory mirroring
+- DirectoryImportHandler: Local directory import
 """
 
 from .base import BaseHandler, IngestionContext, IngestionError
@@ -25,6 +29,7 @@ from .search_handler import SearchHandler
 from .rss_handler import RSSHandler
 from .text_handler import TextHandler
 from .archive_handler import ArchiveHandler
+from .directory_import_handler import DirectoryImportHandler
 
 __all__ = [
     "BaseHandler",
@@ -36,5 +41,6 @@ __all__ = [
     "RSSHandler",
     "TextHandler",
     "ArchiveHandler",
+    "DirectoryImportHandler",
 ]
 

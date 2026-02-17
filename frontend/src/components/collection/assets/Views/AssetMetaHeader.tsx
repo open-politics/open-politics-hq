@@ -33,7 +33,7 @@ import {
 import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict, format } from 'date-fns';
 import { toast } from 'sonner';
-import { FragmentInlineList } from './Fragments';
+import { FragmentAccordion } from './Fragments';
 import { FragmentData } from './Fragments/types';
 import { 
   getAssetIcon, 
@@ -159,7 +159,7 @@ export default function AssetMetaHeader({
   compactMode = false,
 }: AssetMetaHeaderProps) {
   const [fragmentSort, setFragmentSort] = useState<FragmentSortMode>('alphabetical');
-  const [fragmentsExpanded, setFragmentsExpanded] = useState(false);
+  const [fragmentsExpanded, setFragmentsExpanded] = useState(true);
   
   // Get fragments and sort them
   const fragments = asset.fragments as Record<string, any> | null;
@@ -443,12 +443,13 @@ export default function AssetMetaHeader({
           
           {/* Fragment List */}
           {fragmentsExpanded && (
-            <FragmentInlineList
-              fragments={sortedFragments}
-              onDelete={onFragmentDelete}
-              defaultExpanded={false}
-              peekCount={6}
-            />
+            <div className="mt-2">
+              <FragmentAccordion
+                fragments={sortedFragments}
+                onDelete={onFragmentDelete}
+                defaultExpanded={false}
+              />
+            </div>
           )}
         </div>
       )}

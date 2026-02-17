@@ -32,6 +32,7 @@ export interface ArticleViewProps {
   onEdit?: (asset: AssetRead) => void;
   onAssetClick?: (asset: AssetRead) => void;
   className?: string;
+  enableHighlighting?: boolean;
 }
 
 export interface ArticleRendererProps {

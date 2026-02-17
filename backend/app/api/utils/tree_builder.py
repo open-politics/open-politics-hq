@@ -7,11 +7,12 @@ No service class needed - just pure functions for formatting data.
 """
 
 from typing import List, Dict, Set, Optional, Any
+from urllib.parse import quote, unquote
 from sqlmodel import Session, select
 from app.models import Asset, Bundle, AssetKind, Source, Flow, FlowStatus, Task, TaskStatus, DatasetIngestionJob, IngestionStatus
 from app.schemas import TreeNode, TreeNodeType
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def build_tree_node_from_bundle(bundle: Bundle, session: Optional[Session] = None) -> TreeNode:
@@ -247,20 +248,50 @@ def build_asset_children_nodes(
     return nodes
 
 
+def make_vfolder_node_id(bundle_id: int, path_prefix: str) -> str:
+    """Encode bundle_id and path_prefix for virtual folder node ID.
+    Uses URL-encoding for path to handle |, __, and other special chars in filenames.
+    """
+    encoded = quote(path_prefix, safe="")
+    return f"vfolder-{bundle_id}__{encoded}"
+
+
+def build_tree_node_from_vfolder(
+    bundle_id: int,
+    path_prefix: str,
+    folder_name: str,
+) -> TreeNode:
+    """Build TreeNode for a virtual folder (derived from blob_path)."""
+    new_prefix = f"{path_prefix}/{folder_name}" if path_prefix else folder_name
+    return TreeNode(
+        id=make_vfolder_node_id(bundle_id, new_prefix),
+        type=TreeNodeType.VIRTUAL_FOLDER,
+        name=folder_name,
+        path_prefix=new_prefix,
+        has_children=True,
+        updated_at=datetime.now(timezone.utc),
+    )
+
+
 def parse_tree_node_id(node_id: str) -> tuple[str, int]:
     """
     Parse a tree node ID string into type and numeric ID.
     
     Args:
-        node_id: Format "bundle-123" or "asset-456"
+        node_id: Format "bundle-123", "asset-456", or "vfolder-123" / "vfolder-123__path|to|folder"
     
     Returns:
-        Tuple of (type_str, numeric_id)
+        Tuple of (type_str, numeric_id). For vfolder, use parse_vfolder_node_id for path_prefix.
         
     Raises:
         ValueError: If format is invalid
     """
     try:
+        if node_id.startswith("vfolder-"):
+            rest = node_id[8:]
+            numeric_id = int(rest.split("__")[0])
+            return "vfolder", numeric_id
+
         type_str, id_str = node_id.split('-', 1)
         numeric_id = int(id_str)
         
@@ -270,6 +301,24 @@ def parse_tree_node_id(node_id: str) -> tuple[str, int]:
         return type_str, numeric_id
     except (ValueError, AttributeError) as e:
         raise ValueError(f"Invalid tree node ID format '{node_id}': {e}")
+
+
+def parse_vfolder_node_id(node_id: str) -> tuple[int, str]:
+    """
+    Parse a virtual folder node ID into bundle_id and path_prefix.
+    
+    Args:
+        node_id: Format "vfolder-123__urlencoded_path" (path is URL-encoded)
+    
+    Returns:
+        Tuple of (bundle_id, path_prefix with slashes)
+    """
+    if not node_id.startswith("vfolder-"):
+        raise ValueError(f"Invalid vfolder node ID: {node_id}")
+    parts = node_id.split("__", 1)
+    bundle_id = int(parts[0].split("-")[1])  # "vfolder-123" -> 123
+    path_prefix = unquote(parts[1]) if len(parts) > 1 else ""
+    return bundle_id, path_prefix
 
 
 # ============================================================================
@@ -715,6 +764,16 @@ def delete_bundle(
     for asset in assets:
         asset.bundle_id = None
         session.add(asset)
+    
+    # Clear root_bundle_id from DatasetIngestionJob records that reference this bundle
+    from app.models import DatasetIngestionJob
+    jobs = session.exec(
+        select(DatasetIngestionJob).where(DatasetIngestionJob.root_bundle_id == bundle_id)
+    ).all()
+    if jobs:
+        for job in jobs:
+            job.root_bundle_id = None
+            session.add(job)
     
     bundle_name = bundle.name
     session.delete(bundle)

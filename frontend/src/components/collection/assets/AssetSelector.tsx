@@ -52,6 +52,7 @@ import { Label } from '@/components/ui/label';
 import { BundleActivityIndicators } from './BundleActivityIndicators';
 import { useSemanticSearch } from '@/hooks/useSemanticSearch';
 import { useTextSearch } from '@/hooks/useTextSearch';
+import { useDatasetIngestionJobs } from '@/hooks/useDatasetIngestionJobs';
 import { 
   getAssetIcon, 
   formatAssetKind, 
@@ -166,6 +167,19 @@ export default function AssetSelector({
     createBundle,
     moveBundleToParent,
   } = useBundleStore();
+
+  // Poll for active dataset ingestion jobs
+  const { activeJobs, getJob, refresh: refreshJobs } = useDatasetIngestionJobs({
+    pollInterval: 2000,
+    activeOnly: true,
+    onJobComplete: async (job) => {
+      // Refresh tree when a job completes
+      console.log('[AssetSelector] Dataset ingestion job completed:', job.id);
+      await useTreeStore.getState().clearCache();
+      await fetchRootTree();
+      toast.success(`Dataset ingestion completed: ${job.processed_files} files processed`);
+    },
+  });
 
   // UI State
   const [searchTerm, setSearchTerm] = useState(initialSearchTerm);
@@ -622,6 +636,7 @@ export default function AssetSelector({
         uuid: '',
         part_index: null,
         source_id: null,
+        source_metadata: node.source_metadata || null,
       } as AssetRead;
     } else if (node.type === 'bundle') {
       const bundleId = parseInt(node.id.replace('bundle-', ''));
@@ -657,13 +672,13 @@ export default function AssetSelector({
     
     return {
       id: node.id,
-      type: node.type === 'bundle' ? 'folder' : 'asset',
+      type: (node.type === 'bundle' || node.type === 'virtual_folder') ? 'folder' : 'asset',
       name: node.name,
       level,
       isExpanded,
       isSelected,
       parentId: node.parent_id || undefined,
-      isContainer: node.type === 'bundle' || node.is_container || undefined,
+      isContainer: node.type === 'bundle' || node.type === 'virtual_folder' || node.is_container || undefined,
       children,
       asset,
       bundle,
@@ -1235,6 +1250,22 @@ export default function AssetSelector({
 
   const getIndentationStyle = (level: number) => ({ paddingLeft: `${level * 1.5}rem` });
 
+  // Helper to get dataset ingestion job info for an asset/bundle
+  const getJobInfo = useCallback((item: AssetTreeItem) => {
+    // Check if asset has job_id in source_metadata
+    if (item.asset?.source_metadata) {
+      const jobId = (item.asset.source_metadata as any)?.job_id;
+      if (jobId && typeof jobId === 'number') {
+        return getJob(jobId);
+      }
+    }
+    // Check if bundle is root_bundle_id for any active job
+    if (item.bundle) {
+      return activeJobs.find(job => job.root_bundle_id === item.bundle?.id);
+    }
+    return undefined;
+  }, [getJob, activeJobs]);
+
   const renderTreeItem = useCallback((item: AssetTreeItem, itemIndex?: number) => {
     const hasChildren = item.children && item.children.length > 0;
     const canExpand = hasChildren || item.isContainer;
@@ -1249,6 +1280,8 @@ export default function AssetSelector({
       const bundleId = item.bundle.id;
       const isFullySelected = isBundleFullySelected(bundleId);
       const isPartiallySelected = isBundlePartiallySelected(bundleId);
+      const jobInfo = getJobInfo(item);
+      const isJobActive = jobInfo && ['pending', 'downloading', 'extracting', 'processing'].includes(jobInfo.status);
       return (
         <div key={item.id}>
           <div
@@ -1364,6 +1397,20 @@ export default function AssetSelector({
                 ) : (
                   <>
                     <span className="text-sm font-normal truncate flex-1 max-w-32 sm:max-w-40 md:max-w-64">{item.name}</span>
+                    {/* Dataset ingestion progress indicator */}
+                    {isJobActive && jobInfo && (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+                          {jobInfo.stage_message || (typeof jobInfo.cursor_state?.message === 'string' ? jobInfo.cursor_state.message : '') || `${jobInfo.status}...`}
+                        </span>
+                        {jobInfo.progress_pct !== undefined && jobInfo.progress_pct > 0 && (
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">
+                            ({Math.round(jobInfo.progress_pct)}%)
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {/* Inline activity indicators for bundles */}
                     {item.bundle && (
                       <BundleActivityIndicators
@@ -1424,12 +1471,72 @@ export default function AssetSelector({
         </div>
       );
     }
+
+    // Virtual folder (directory import path abstraction): folder icon, expandable, no bundle
+    if (item.type === 'folder' && !item.bundle) {
+      return (
+        <div key={item.id}>
+          <div
+            data-item-index={itemIndex}
+            className={cn("group flex items-center mb-0.5 justify-between gap-2 rounded-md hover:bg-muted cursor-pointer transition-colors border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/30 w-full overflow-hidden", compact ? "py-1 px-2" : "py-2 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50", isFocused && "ring-1 ring-inset ring-primary")}
+            style={getIndentationStyle(item.level)}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (bundleClickTimeoutRef.current) {
+                clearTimeout(bundleClickTimeoutRef.current);
+              }
+              bundleClickTimeoutRef.current = setTimeout(() => {
+                toggleExpanded(item.id);
+                bundleClickTimeoutRef.current = null;
+              }, 100);
+            }}
+          >
+            <div className="ml-1 w-4 h-4 flex items-center justify-center shrink-0">
+              {canExpand && (
+                <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => { e.stopPropagation(); toggleExpanded(item.id); }}>
+                  {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <motion.div animate={{ rotate: item.isExpanded ? 90 : 0 }} transition={{ type: "spring", stiffness: 400, damping: 30 }}><ChevronRight className="h-3 w-3" /></motion.div>}
+                </Button>
+              )}
+            </div>
+            <div className="w-4 h-4 flex items-center justify-center shrink-0">
+              <Folder className="h-4 w-4 text-amber-600 dark:text-amber-500" title="Virtual folder" />
+            </div>
+            <div className="flex-1 min-w-0 overflow-hidden">
+              <span className="text-sm font-normal truncate text-muted-foreground flex-1">{item.name}</span>
+            </div>
+          </div>
+          <AnimatePresence initial={false}>
+            {item.isExpanded && item.children && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1, transition: { height: { type: "spring", stiffness: 400, damping: 35, mass: 0.6 }, opacity: { duration: 0.1 } } }}
+                exit={{ height: 0, opacity: 0, transition: { height: { type: "spring", stiffness: 400, damping: 35, mass: 0.6 }, opacity: { duration: 0.1 } } }}
+                className="overflow-hidden max-h-72 overflow-y-auto scrollbar-hide"
+              >
+                <div className="ml-0 pl-0 space-y-0.5 pb-2 pt-1">
+                  <div className="space-y-0.5">
+                    {item.children.map(child => {
+                      const childIndex = flattenedItemsRef.current.findIndex(fi => fi.id === child.id);
+                      return renderTreeItem(child, childIndex >= 0 ? childIndex : undefined);
+                    })}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      );
+    }
+    
+    // Check for dataset ingestion job
+    const jobInfo = getJobInfo(item);
+    const isJobActive = jobInfo && ['pending', 'downloading', 'extracting', 'processing'].includes(jobInfo.status);
     
     return (
       <div key={item.id}>
         <div
           data-item-index={itemIndex}
-          className={cn("group flex items-center justify-between gap-2 hover:bg-muted/50 cursor-pointer transition-colors rounded-md w-full overflow-hidden", compact ? "py-1 px-2" : "py-1.5 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 rounded-none border-blue-500", isDragOverAsset && "bg-green-100 dark:bg-green-900 ring-1 ring-green-500", isFocused && "ring-1 ring-inset ring-primary")}
+          className={cn("group flex items-center justify-between gap-2 hover:bg-muted/50 cursor-pointer transition-colors rounded-md w-full overflow-hidden", compact ? "py-1 px-2" : "py-1.5 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 rounded-none border-blue-500", isDragOverAsset && "bg-green-100 dark:bg-green-900 ring-1 ring-green-500", isFocused && "ring-1 ring-inset ring-primary", isJobActive && "bg-blue-50/50 dark:bg-blue-900/30")}
           style={getIndentationStyle(item.level)}
           onClick={() => handleItemClick(item)}
           onDoubleClick={() => handleItemDoubleClickInternal(item)}
@@ -1524,6 +1631,20 @@ export default function AssetSelector({
             ) : (
               <div className="flex items-center gap-2 overflow-hidden">
                 <span className="text-sm font-normal truncate flex-1 max-w-32 sm:max-w-40 md:max-w-64 lg:max-w-96">{item.name}</span>
+                {/* Dataset ingestion progress indicator */}
+                {isJobActive && jobInfo && (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {jobInfo.stage_message || (typeof jobInfo.cursor_state?.message === 'string' ? jobInfo.cursor_state.message : '') || `${jobInfo.status}...`}
+                    </span>
+                    {jobInfo.progress_pct !== undefined && jobInfo.progress_pct > 0 && (
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">
+                        ({Math.round(jobInfo.progress_pct)}%)
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1579,7 +1700,7 @@ export default function AssetSelector({
         </AnimatePresence>
       </div>
     );
-  }, [toggleSelected, toggleExpanded, handleItemClick, handleItemDoubleClickInternal, handleEditItem, handleSaveEditing, handleCancelEdit, isLoadingChildren, toggleBundleSelection, isBundleFullySelected, isBundlePartiallySelected, editingItem, draggedOverBundleId, draggedOverAssetId, handleDropOnBundle, handleDropOnAsset, renderItemActions, focusedIndex]);
+  }, [toggleSelected, toggleExpanded, handleItemClick, handleItemDoubleClickInternal, handleEditItem, handleSaveEditing, handleCancelEdit, isLoadingChildren, toggleBundleSelection, isBundleFullySelected, isBundlePartiallySelected, editingItem, draggedOverBundleId, draggedOverAssetId, handleDropOnBundle, handleDropOnAsset, renderItemActions, focusedIndex, getJobInfo, activeJobs]);
 
   // Get flat list of visible items for keyboard navigation (respecting hierarchy/expansion)
   const flattenedItems = useMemo(() => {

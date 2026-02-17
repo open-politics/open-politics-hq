@@ -36,9 +36,17 @@ from .models import (
 # ────────────────────────────────────────────── User & Auth ──── #
 
 # New Models for Justification Configuration (moved up to fix forward references)
+class EvidenceRigor(str, enum.Enum):
+    """Evidence rigor levels for formal research annotation."""
+    MINIMAL = "minimal"      # 1-2 text snippets
+    STANDARD = "standard"    # 3-5 text snippets
+    THOROUGH = "thorough"    # 5-8 text snippets
+    EXHAUSTIVE = "exhaustive" # 8+ text snippets
+
 class FieldJustificationConfig(SQLModel):
     enabled: bool
     custom_prompt: Optional[str] = None
+    rigor_level: Optional[EvidenceRigor] = None  # Evidence rigor level for this field
 
 class UserOut(UserBase):
     id: int
@@ -238,6 +246,8 @@ class InfospaceBase(SQLModel):
     name: str
     description: Optional[str] = None
     icon: Optional[str] = None
+    # UI/feature flags
+    enable_related_assets: Optional[bool] = False
 
 class InfospaceCreate(InfospaceBase):
     owner_id: int
@@ -272,6 +282,7 @@ class InfospaceUpdate(SQLModel):
     chunk_overlap: Optional[int] = None
     chunk_strategy: Optional[str] = None
     icon: Optional[str] = None
+    enable_related_assets: Optional[bool] = None
 
 class InfospacesOut(SQLModel):
     data: List[InfospaceRead]
@@ -432,6 +443,7 @@ class AssetRead(AssetBase):
     created_at: datetime
     text_content: Optional[str] = None
     blob_path: Optional[str] = None
+    logical_path: Optional[str] = None
     source_identifier: Optional[str] = None
     source_metadata: Optional[Dict[str, Any]] = None
     content_hash: Optional[str] = None
@@ -445,15 +457,11 @@ class AssetRead(AssetBase):
     # Helper flags
     @computed_field  # type: ignore[misc]
     @property
-    def is_container(self) -> bool:  
+    def is_container(self) -> bool:
         """True if this asset can have child assets."""
-        return self.kind in {
-            AssetKind.CSV,
-            AssetKind.PDF,
-            AssetKind.MBOX,
-            AssetKind.WEB,
-            AssetKind.ARTICLE,
-        }
+        from app.api.utils.content_types import get_content_type_registry
+        desc = get_content_type_registry().by_kind(self.kind)
+        return desc.is_container if desc else False
 
 class AssetsOut(SQLModel):
     data: List[AssetRead]
@@ -597,6 +605,7 @@ class AnnotationRunRead(AnnotationRunBase):
     triggered_by_source_id: Optional[int] = None
     monitor_id: Optional[int] = None
     source_bundle_id: Optional[int] = None  # NEW: For continuous runs watching a bundle
+    graph_config: Optional[Dict[str, Any]] = None  # NEW: Graph configuration for Knowledge Graph schemas
 
 
 class AnnotationRunsOut(SQLModel):
@@ -1083,8 +1092,8 @@ class BoundingBox(SQLModel):
 
 class TextSpanEvidence(SQLModel):
     asset_uuid: Optional[str] = None # UUID of the asset (e.g., parent or a specific child PDF page)
-    start_char_offset: int
-    end_char_offset: int
+    start_char_offset: Optional[int] = None  # Optional - LLMs unreliable at providing accurate offsets
+    end_char_offset: Optional[int] = None    # Optional - LLMs unreliable at providing accurate offsets
     text_snippet: str # The actual referenced text
 
 class ImageRegionEvidence(SQLModel):
@@ -1570,12 +1579,14 @@ class TreeNodeType(str, enum.Enum):
     """Type of node in the file tree."""
     BUNDLE = "bundle"
     ASSET = "asset"
+    VIRTUAL_FOLDER = "virtual_folder"
 
 class TreeNode(SQLModel):
     """Minimal representation of a tree node for efficient tree rendering."""
-    id: str  # Format: "bundle-123" or "asset-456"
+    id: str  # Format: "bundle-123", "asset-456", or "vfolder-123--path|to|folder"
     type: TreeNodeType
     name: str
+    path_prefix: Optional[str] = None  # For virtual folders: blob_path prefix (e.g. "data_set_1/politics")
     
     # Optional fields based on type
     kind: Optional[AssetKind] = None  # For assets

@@ -300,6 +300,8 @@ class Infospace(SQLModel, table=True):
     chunk_size: Optional[int] = Field(default=512)
     chunk_overlap: Optional[int] = Field(default=50)
     chunk_strategy: Optional[str] = Field(default="token")
+    # UI/feature flags
+    enable_related_assets: bool = Field(default=False)
 
     owner_id: int = Field(foreign_key="user.id")
     owner: Optional[User] = Relationship(back_populates="infospaces")
@@ -396,8 +398,9 @@ class Asset(SQLModel, table=True):
     stub: bool = Field(default=False, index=True)  # True = reference only, False = has content
     text_content: Optional[str] = Field(default=None, sa_column=Column(Text))
     blob_path: Optional[str] = None
+    logical_path: Optional[str] = Field(default=None, index=True)  # Organizational path for directory/archive imports
     source_identifier: Optional[str] = Field(default=None, index=True)
-    source_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
+    source_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSONB))
     content_hash: Optional[str] = Field(default=None, index=True)
     fragments: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSONB))
     
@@ -405,7 +408,7 @@ class Asset(SQLModel, table=True):
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
     
     # Processing status for hierarchical assets (CSV, PDF)
-    processing_status: ProcessingStatus = ProcessingStatus.READY
+    processing_status: ProcessingStatus = Field(default=ProcessingStatus.READY, index=True)
     processing_error: Optional[str] = None
     
     infospace_id: int = Field(foreign_key="infospace.id")
@@ -418,7 +421,7 @@ class Asset(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
 
     # Parent-child relationship
-    parent_asset_id: Optional[int] = Field(default=None, foreign_key="asset.id")
+    parent_asset_id: Optional[int] = Field(default=None, foreign_key="asset.id", index=True)
     part_index: Optional[int] = Field(default=None, index=True)
     # Version lineage for dynamic content
     previous_asset_id: Optional[int] = Field(default=None, foreign_key="asset.id", index=True)
@@ -465,18 +468,15 @@ class Asset(SQLModel, table=True):
 
     __table_args__ = (
         Index("ix_asset_fragments", "fragments", postgresql_using="gin", postgresql_ops={"fragments": "jsonb_path_ops"}),
+        Index("ix_asset_source_metadata", "source_metadata", postgresql_using="gin", postgresql_ops={"source_metadata": "jsonb_path_ops"}),
     )
 
     @property
-    def is_container(self) -> bool:  
+    def is_container(self) -> bool:
         """Read-only property to check if this asset can have child assets."""
-        return self.kind in {
-            AssetKind.CSV,
-            AssetKind.PDF,
-            AssetKind.MBOX,
-            AssetKind.WEB,
-            AssetKind.ARTICLE,
-        }
+        from app.api.utils.content_types import get_content_type_registry
+        desc = get_content_type_registry().by_kind(self.kind)
+        return desc.is_container if desc else False
 
 
 # ──────────────────────────────────────────────────── Embedding Models ──── #
@@ -699,6 +699,9 @@ class AnnotationRun(SQLModel, table=True):
     
     # Source bundle for continuous run support
     source_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id", index=True)
+    
+    # Graph configuration for deduplication and node management (run-scoped)
+    graph_config: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
 
     infospace: Optional[Infospace] = Relationship(back_populates="runs")
     user: Optional[User] = Relationship(back_populates="runs")
@@ -772,6 +775,54 @@ class Justification(SQLModel, table=True):
 
     __table_args__ = (
         Index("ix_justification_annotation_field", "annotation_id", "field_name"),
+    )
+
+# ─────────────────────────────────────────────────────────────── Graph Curation ──── #
+
+class EntityCanonical(SQLModel, table=True):
+    """Canonical entity for resolution at infospace level."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    infospace_id: int = Field(foreign_key="infospace.id", index=True)
+    
+    canonical_name: str
+    entity_type: str
+    aliases: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    embedding: Optional[List[float]] = Field(default=None, sa_column=Column(JSON))
+    properties: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)}
+    )
+    
+    infospace: Optional[Infospace] = Relationship()
+    
+    __table_args__ = (
+        Index("ix_entity_canonical_infospace_type", "infospace_id", "entity_type"),
+    )
+
+
+class FragmentCuration(SQLModel, table=True):
+    """Curation metadata for an annotation fragment."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    annotation_id: int = Field(foreign_key="annotation.id", index=True)
+    fragment_path: str  # "triplets[0]", "triplets[3]", etc.
+    
+    status: str = Field(default="curated")  # "curated", "rejected"
+    
+    # For triplets: resolved entity references
+    resolved_refs: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    # e.g., {"subject_id": 1, "object_id": 2} → EntityCanonical IDs
+    
+    curated_by: Optional[int] = Field(default=None, foreign_key="user.id")
+    curated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    
+    annotation: Optional["Annotation"] = Relationship()
+    curator: Optional["User"] = Relationship()
+    
+    __table_args__ = (
+        Index("ix_fragment_curation_annotation_path", "annotation_id", "fragment_path"),
     )
 
 # ─────────────────────────────────────────────────────────────── Tasks ──── #
@@ -1213,8 +1264,8 @@ class DatasetIngestionJob(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id")
     
     # Source and destination (aligned with Source model pattern)
-    source_url: str = Field(index=True)  # Archive URL
-    kind: str = Field(default="archive_zip")  # archive_zip, archive_tar, etc. (aligned with Source.kind)
+    source_locator: str = Field(index=True)  # URL, local path, S3 URI - whatever identifies the source
+    kind: str = Field(default="archive_zip")  # archive_zip, directory_local, directory_reimport, s3_prefix, etc.
     root_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id")
     
     # Progress tracking

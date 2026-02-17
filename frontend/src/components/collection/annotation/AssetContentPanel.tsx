@@ -1,10 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AssetRead } from '@/client';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from '@/components/ui/button';
 import { FileText, Image as ImageIcon, Video, Music, Globe, ExternalLink, Loader2 } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { useTextSpanHighlight } from '@/components/collection/contexts/TextSpanHighlightContext';
@@ -25,115 +24,33 @@ const AssetContentPanel: React.FC<AssetContentPanelProps> = ({
 }) => {
   const [mediaBlobUrl, setMediaBlobUrl] = useState<string | null>(null);
   const [isLoadingMedia, setIsLoadingMedia] = useState(false);
-  const [showAllFields, setShowAllFields] = useState(false);
-  const { getHighlightsForAsset, getColoredHighlightsForAsset } = useTextSpanHighlight();
+  const { getSpansForAsset } = useTextSpanHighlight();
+  const highlights = getSpansForAsset(asset.id, asset.uuid);
 
-  // Scroll to selected span when it changes
   useEffect(() => {
-    if (selectedSpan?.span && selectedSpan.span.text_snippet) {
-      // Use a slight delay to ensure the DOM has updated with the new highlights
+    if (selectedSpan?.span?.text_snippet) {
       const timeoutId = setTimeout(() => {
-        // Find span by text content (corrected spans should match properly)
         const allSpans = document.querySelectorAll('[id^="span-"]');
         const targetText = selectedSpan.span.text_snippet.trim();
-        
         let spanElement: HTMLElement | null = null;
-        
-        // Exact text match
         for (const span of allSpans) {
           const spanText = span.textContent?.trim();
-          if (spanText && spanText === targetText) {
+          if (spanText && (spanText === targetText || (targetText.length > 20 && (spanText.includes(targetText) || targetText.includes(spanText))))) {
             spanElement = span as HTMLElement;
             break;
           }
         }
-        
-        // Partial match fallback for longer snippets
-        if (!spanElement && targetText.length > 20) {
-          for (const span of allSpans) {
-            const spanText = span.textContent?.trim();
-            if (spanText && (spanText.includes(targetText) || targetText.includes(spanText))) {
-              spanElement = span as HTMLElement;
-              break;
-            }
-          }
-        }
-        
         if (spanElement) {
-          // Scroll to the span with smooth animation and center it in view
-          spanElement.scrollIntoView({
-            behavior: 'smooth',
-            block: 'center',
-            inline: 'nearest'
-          });
-          
-          // Add a brief flash effect to help user locate the span
+          spanElement.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
           spanElement.style.transition = 'all 0.3s ease';
           spanElement.style.transform = 'scale(1.02)';
           spanElement.style.boxShadow = '0 0 12px rgba(234, 179, 8, 0.6)';
-          
-          setTimeout(() => {
-            spanElement.style.transform = '';
-            spanElement.style.boxShadow = '';
-          }, 800);
-        } else {
-          console.warn(`[AssetContentPanel] Could not find span for text: "${selectedSpan.span.text_snippet}"`);
+          setTimeout(() => { spanElement!.style.transform = ''; spanElement!.style.boxShadow = ''; }, 800);
         }
       }, 100);
-      
       return () => clearTimeout(timeoutId);
     }
   }, [selectedSpan]);
-
-  // Get text spans for highlighting - update when activeField, showAllFields, or selectedSpan changes
-  const highlights = useMemo(() => {
-    let baseHighlights: any[] = [];
-    
-    if (showAllFields) {
-      // Use colored highlights for all fields
-      baseHighlights = getColoredHighlightsForAsset(asset.id, asset.uuid, true);
-    } else if (activeField) {
-      // Show only active field highlights
-      const allHighlights = getHighlightsForAsset(asset.id, asset.uuid);
-      baseHighlights = allHighlights.filter(highlight => 
-        highlight.fieldName === activeField || 
-        highlight.fieldName === `document.${activeField}` ||
-        highlight.fieldName === activeField.replace('document.', '')
-      );
-    }
-    
-    // If a specific span is selected, enhance it with special styling
-    if (selectedSpan && selectedSpan.span) {
-      const span = selectedSpan.span;
-      
-      // Find if the selected span is already in baseHighlights and replace it
-      const existingSpanIndex = baseHighlights.findIndex(h => 
-        h.start_char_offset === span.start_char_offset && 
-        h.end_char_offset === span.end_char_offset
-      );
-      
-      const selectedHighlight = {
-        ...span,
-        fieldName: selectedSpan.fieldKey,
-        highlightClassName: 'bg-yellow-300 dark:bg-yellow-700/80 ring-2 ring-yellow-500 shadow-lg px-1 rounded'
-      };
-      
-      if (existingSpanIndex >= 0) {
-        // Replace the existing span with enhanced styling
-        baseHighlights[existingSpanIndex] = selectedHighlight;
-      } else {
-        // Add the selected span if it's not already there
-        baseHighlights.push(selectedHighlight);
-      }
-      
-      // If showAllFields is false and we only want to show the selected span
-      if (!showAllFields) {
-        return [selectedHighlight];
-      }
-    }
-    
-    return baseHighlights;
-  }, [asset.id, asset.uuid, activeField, showAllFields, selectedSpan, getHighlightsForAsset, getColoredHighlightsForAsset]);
 
   const renderAssetHeader = () => (
     <div className="flex-none p-3 border-b bg-muted/10">
@@ -169,34 +86,6 @@ const AssetContentPanel: React.FC<AssetContentPanelProps> = ({
                 <ExternalLink className="h-3 w-3 flex-shrink-0" />
               </a>
             </div>
-          )}
-        </div>
-        
-        {/* Highlight Toggle Controls */}
-        <div className="flex items-center gap-1 ml-2">
-          {selectedSpan ? (
-            <div className="flex items-center gap-1">
-              <span className="text-xs bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded border border-yellow-300">
-                Span Selected
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowAllFields(!showAllFields)}
-                className="text-xs h-6 px-2"
-              >
-                {showAllFields ? "Selected Only" : "Show All"}
-              </Button>
-            </div>
-          ) : (
-            <Button
-              variant={showAllFields ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowAllFields(!showAllFields)}
-              className="text-xs h-6 px-2"
-            >
-              {showAllFields ? "Active Only" : "Show All"}
-            </Button>
           )}
         </div>
       </div>

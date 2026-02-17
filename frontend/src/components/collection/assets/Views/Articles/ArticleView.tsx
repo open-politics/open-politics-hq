@@ -4,6 +4,8 @@ import { detectArticleFormat } from './utils';
 import ArticleFeaturedImage from './ArticleFeaturedImage';
 import ComposedArticleRenderer from './ComposedArticleRenderer';
 import TextContentRenderer from './TextContentRenderer';
+import { HighlightedText } from '@/components/ui/highlighted-text';
+import { useTextSpanHighlightSafe } from '@/components/collection/contexts/TextSpanHighlightContext';
 import { cn } from '@/lib/utils';
 
 /**
@@ -17,14 +19,35 @@ export default function ArticleView({
   childAssets = [], 
   onEdit, 
   onAssetClick,
-  className 
+  className,
+  enableHighlighting = false
 }: ArticleViewProps) {
   const format = detectArticleFormat(asset);
   const metadata = asset.source_metadata as ArticleMetadata;
   const content = asset.text_content || '';
 
+  // Text span highlighting - safe hook returns null when no provider is available
+  const highlightContext = useTextSpanHighlightSafe();
+  const textSpans = (enableHighlighting && highlightContext && content) 
+    ? highlightContext.getSpansForAsset(asset.id, asset.uuid) 
+    : [];
+  const shouldHighlight = textSpans.length > 0;
+
   // Select appropriate renderer
   const renderContent = () => {
+    // If highlighting is active, use HighlightedText for text content
+    if (shouldHighlight && content) {
+      return (
+        <div className="prose prose-sm md:prose-base dark:prose-invert max-w-none">
+          <HighlightedText 
+            text={content} 
+            spans={textSpans}
+            highlightClassName="bg-yellow-200 dark:bg-yellow-800/70 px-0.5 text-yellow-900 dark:text-yellow-100"
+          />
+        </div>
+      );
+    }
+
     // Only composed articles need special handling
     // Everything else (html, markdown, text) goes through TextContentRenderer
     if (format === 'composed') {
@@ -52,11 +75,19 @@ export default function ArticleView({
             {asset.title || 'Untitled Article'}
           </h1>
           
-          {/* Summary if available */}
-          {metadata?.summary && (
+          {/* Summary if available - hide when duplicated at start of content */}
+          {metadata?.summary && (() => {
+            const sum = (metadata.summary || '').trim();
+            const cont = content.trim();
+            if (!sum || !cont || sum.length < 20) return true;
+            const prefixLen = Math.min(50, sum.length);
+            const sumPrefix = sum.slice(0, prefixLen).replace(/\s+/g, ' ').toLowerCase();
+            const contPrefix = cont.slice(0, prefixLen + 10).replace(/\s+/g, ' ').toLowerCase();
+            return !contPrefix.startsWith(sumPrefix);
+          })() && (
             <div className="mb-4 px-3 pb-2 bg-muted/90 rounded-lg border-l-2 rounded-l-xs border-primary">
               <span className="text-sm font-semibold text-muted-foreground">Summary:</span>
-            <p className="text-sm text-muted-foreground italic">
+              <p className="text-sm text-muted-foreground italic">
                 {metadata.summary}
               </p>
             </div>

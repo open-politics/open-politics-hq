@@ -10,6 +10,7 @@ from app.api.providers.impl.language_openai import OpenAILanguageModelProvider
 from app.api.providers.impl.language_ollama import OllamaLanguageModelProvider
 from app.api.providers.impl.language_gemini import GeminiLanguageModelProvider
 from app.api.providers.impl.language_anthropic import AnthropicLanguageModelProvider
+from app.api.providers.impl.language_mistral import MistralLanguageModelProvider
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +158,7 @@ class ModelRegistryService:
             # Try API-based providers if we have runtime API keys
             if runtime_api_keys:
                 for provider_name, api_key in runtime_api_keys.items():
-                    if provider_name in ["openai", "anthropic", "gemini"] and api_key and api_key != "placeholder":
+                    if provider_name in ["openai", "anthropic", "gemini", "mistral"] and api_key and api_key != "placeholder":
                         logger.info(f"Attempting to discover models from runtime provider: {provider_name}")
                         try:
                             runtime_provider = await self._create_runtime_provider(provider_name, api_key)
@@ -188,7 +189,7 @@ class ModelRegistryService:
                     return None, None
             
             # For providers that need API keys, create runtime provider
-            if provider_name in ["openai", "anthropic", "gemini"]:
+            if provider_name in ["openai", "anthropic", "gemini", "mistral"]:
                 if not runtime_api_keys or provider_name not in runtime_api_keys:
                     logger.error(f"Provider '{provider_name}' requires API key from frontend")
                     return None, None
@@ -248,6 +249,18 @@ class ModelRegistryService:
             except Exception as e:
                 logger.error(f"Failed to discover models for runtime provider {provider_name}: {e}")
             return provider
+        elif provider_name == "mistral":
+            from app.api.providers.impl.language_mistral import MistralLanguageModelProvider
+            provider = MistralLanguageModelProvider(api_key=api_key)
+            # Discover models for this runtime provider
+            try:
+                models = await provider.discover_models()
+                for model in models:
+                    self.models_cache[model.name] = model
+                logger.info(f"Created runtime Mistral provider and discovered {len(models)} models")
+            except Exception as e:
+                logger.error(f"Failed to discover models for runtime provider {provider_name}: {e}")
+            return provider
         else:
             logger.warning(f"Runtime provider creation not supported for: {provider_name}")
             return None
@@ -263,7 +276,7 @@ class ModelRegistryService:
             return provider
         
         # For API-based providers, need runtime API keys
-        if provider_name in ["openai", "anthropic", "gemini"]:
+        if provider_name in ["openai", "anthropic", "gemini", "mistral"]:
             if not runtime_api_keys or provider_name not in runtime_api_keys:
                 logger.error(f"Provider '{provider_name}' requires API key from frontend")
                 return None

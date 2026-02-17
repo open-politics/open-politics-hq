@@ -2208,6 +2208,192 @@
         }
       }
     },
+    "/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}/curate": {
+      "post": {
+        "tags": [
+          "annotations",
+          "Annotations"
+        ],
+        "summary": "Curate Fragments",
+        "description": "Curate annotation fragments with entity resolution.\n\nBody: {\n    \"fragment_paths\": [\"triplets[0]\", \"triplets[3]\", ...],\n    \"resolve\": true,  # Whether to resolve entities\n    \"status\": \"curated\"  # \"curated\" or \"rejected\"\n}",
+        "operationId": "curate_fragments",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "annotation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Annotation Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Curation Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Annotations-Curate Fragments"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}/curate/{fragment_path}": {
+      "delete": {
+        "tags": [
+          "annotations",
+          "Annotations"
+        ],
+        "summary": "Remove Curation",
+        "description": "Remove curation from an annotation fragment.",
+        "operationId": "remove_curation",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "annotation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Annotation Id"
+            }
+          },
+          {
+            "name": "fragment_path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Fragment Path"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/annotations/infospaces/{infospace_id}/annotations/curated/triplets": {
+      "get": {
+        "tags": [
+          "annotations",
+          "Annotations"
+        ],
+        "summary": "Get Curated Triplets",
+        "description": "Get all curated triplets for an infospace.\nReturns triplets with resolved entity information.",
+        "operationId": "get_curated_triplets",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Annotations-Get Curated Triplets"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/infospaces/{infospace_id}/assets/": {
       "post": {
         "tags": [
@@ -6641,6 +6827,133 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/import-directory": {
+      "post": {
+        "tags": [
+          "Dataset Jobs"
+        ],
+        "summary": "Create Directory Import Job",
+        "description": "Import files from a local directory.\n\nCopy mode (default): Copies files to storage, processes via FileHandler. Works with MinIO or local_fs.\nReference-only (copy_mode=False): Creates assets with blob_path pointing to source. No copying.\n\nSource path must be under ALLOWED_IMPORT_PATHS.\nReturns job ID for tracking progress via /dataset-jobs/{job_id}.",
+        "operationId": "create_directory_import_job",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectoryImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetIngestionJobRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/process-pending": {
+      "post": {
+        "tags": [
+          "Dataset Jobs"
+        ],
+        "summary": "Trigger Batch Process Pending",
+        "description": "Trigger batch processing of PENDING assets in a bundle.\n\nAfter directory import (reference mode), assets are created with PENDING status.\nThis endpoint starts background processing (PDF extraction, CSV row creation).\nProcessing runs in self-chaining batches until all PENDING assets are done.",
+        "operationId": "trigger_batch_process_pending",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "bundle_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Bundle Id"
+            }
+          },
+          {
+            "name": "batch_size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Batch Size"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchProcessResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/infospaces/{infospace_id}/dataset-jobs": {
       "get": {
         "tags": [
@@ -8001,6 +8314,384 @@
             "OAuth2PasswordBearer": []
           }
         ]
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/entities": {
+      "get": {
+        "tags": [
+          "Canonical Entities",
+          "Entities"
+        ],
+        "summary": "List Entities",
+        "description": "List canonical entities for an infospace.\nOptionally filter by entity_type.",
+        "operationId": "list_entities",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "entity_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Canonical Entities-List Entities"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Canonical Entities",
+          "Entities"
+        ],
+        "summary": "Create Entity",
+        "description": "Create a canonical entity manually.\n\nBody: {\n    \"canonical_name\": str,\n    \"entity_type\": str,\n    \"aliases\": List[str] (optional),\n    \"properties\": dict (optional)\n}",
+        "operationId": "create_entity",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Entity In"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Canonical Entities-Create Entity"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/entities/{entity_id}": {
+      "put": {
+        "tags": [
+          "Canonical Entities",
+          "Entities"
+        ],
+        "summary": "Update Entity",
+        "description": "Update a canonical entity (rename, edit aliases, properties).\n\nBody: {\n    \"canonical_name\": str (optional),\n    \"aliases\": List[str] (optional),\n    \"properties\": dict (optional)\n}",
+        "operationId": "update_entity",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Entity In"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Canonical Entities-Update Entity"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Canonical Entities",
+          "Entities"
+        ],
+        "summary": "Delete Entity",
+        "description": "Delete a canonical entity.",
+        "operationId": "delete_entity",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/entities/merge": {
+      "post": {
+        "tags": [
+          "Canonical Entities",
+          "Entities"
+        ],
+        "summary": "Merge Entities",
+        "description": "Merge multiple entities into one canonical entity.\n\nBody: {\n    \"entity_ids\": List[int],\n    \"canonical_name\": str (optional, uses first entity's name if not provided),\n    \"keep_id\": int (optional, which entity ID to keep, defaults to first)\n}",
+        "operationId": "merge_entities",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Merge Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Canonical Entities-Merge Entities"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/entities/resolve": {
+      "post": {
+        "tags": [
+          "Canonical Entities",
+          "Entities"
+        ],
+        "summary": "Trigger Resolution",
+        "description": "Trigger automatic entity resolution for raw entity mentions.\n\nBody: {\n    \"raw_entities\": List[{\"name\": str, \"type\": str}],\n    \"similarity_threshold\": float (optional, default 0.85),\n    \"use_embeddings\": bool (optional, default true)\n}",
+        "operationId": "trigger_resolution",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Resolve Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Canonical Entities-Trigger Resolution"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/files/upload": {
@@ -13824,6 +14515,100 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/tree/virtual-children": {
+      "get": {
+        "tags": [
+          "Tree Navigation"
+        ],
+        "summary": "Get Virtual Folder Children",
+        "description": "Get virtual folder structure from blob_path for path-based bundles.\nParses blob_path to extract immediate subfolders and files under path_prefix.\nUsed for lightweight directory-imported bundles (one root Bundle, virtual folders).",
+        "operationId": "get_virtual_folder_children",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "bundle_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "Bundle ID (root bundle for dataset)",
+              "title": "Bundle Id"
+            },
+            "description": "Bundle ID (root bundle for dataset)"
+          },
+          {
+            "name": "path_prefix",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Path prefix for filtering (e.g. data_set_1/politics)",
+              "default": "",
+              "title": "Path Prefix"
+            },
+            "description": "Path prefix for filtering (e.g. data_set_1/politics)"
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VirtualFolderChildrenResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/infospaces/{infospace_id}/tree/feed": {
       "get": {
         "tags": [
@@ -16897,85 +17682,6 @@
         }
       }
     },
-    "/api/v1/entities/geojson/": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Geojson View",
-        "operationId": "geojson_view",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/{entity_name}/articles": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Entity Articles",
-        "operationId": "get_entity_articles",
-        "parameters": [
-          {
-            "name": "entity_name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Entity Name"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 50,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/entities/leaders/{state}": {
       "get": {
         "tags": [
@@ -17293,324 +17999,6 @@
         }
       }
     },
-    "/api/v1/locations/{location}/contents": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Location Contents",
-        "description": "Get articles related to a location with basic pagination.",
-        "operationId": "get_location_contents",
-        "parameters": [
-          {
-            "name": "location",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Location"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 20,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/{location}/entities/contents": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Location Entities Contents",
-        "description": "Get articles related to a location with basic pagination.",
-        "operationId": "get_location_entities_contents",
-        "parameters": [
-          {
-            "name": "location",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Location"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 20,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/location_from_query": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Location From Query",
-        "operationId": "location_from_query",
-        "parameters": [
-          {
-            "name": "query",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Query"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/geojson/": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Geojson View",
-        "operationId": "geojson_view",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/geojson_events": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Geojson Events View",
-        "operationId": "geojson_events_view",
-        "parameters": [
-          {
-            "name": "event_type",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Event Type"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/dashboard": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Dashboard View",
-        "operationId": "dashboard_view",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "text/html": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/{location_name}/entities": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Location Entities",
-        "operationId": "get_location_entities",
-        "parameters": [
-          {
-            "name": "location_name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Location Name"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 50,
-              "title": "Limit"
-            }
-          },
-          {
-            "name": "min_relevance",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "number",
-              "default": 0.0,
-              "title": "Min Relevance"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/locations/leaders/{state}": {
       "get": {
         "tags": [
@@ -17814,49 +18202,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/get_geojson_for_article_ids": {
-      "post": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Geojson For Article Ids",
-        "operationId": "get_geojson_for_article_ids",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array",
-                "title": "Article Ids"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -18820,6 +19165,18 @@
               }
             ],
             "title": "Source Bundle Id"
+          },
+          "graph_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Config"
           }
         },
         "type": "object",
@@ -20136,6 +20493,35 @@
           "asset_ids"
         ],
         "title": "BatchGetAssetsRequest"
+      },
+      "BatchProcessResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "bundle_id": {
+            "type": "integer",
+            "title": "Bundle Id"
+          },
+          "batch_size": {
+            "type": "integer",
+            "title": "Batch Size"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message",
+          "bundle_id",
+          "batch_size",
+          "task_id"
+        ],
+        "title": "BatchProcessResponse",
+        "description": "Response for batch process trigger."
       },
       "Body_Infospaces-import_infospace": {
         "properties": {
@@ -22704,6 +23090,70 @@
         "title": "DirectAssetCreationRequest",
         "description": "Request for creating assets directly from search result data"
       },
+      "DirectoryImportRequest": {
+        "properties": {
+          "source_path": {
+            "type": "string",
+            "title": "Source Path"
+          },
+          "file_extensions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Extensions"
+          },
+          "preserve_structure": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preserve Structure",
+            "default": true
+          },
+          "copy_mode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Copy Mode",
+            "default": true
+          },
+          "options": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_path"
+        ],
+        "title": "DirectoryImportRequest",
+        "description": "Request to import files from a local directory."
+      },
       "DiscoverModelsRequest": {
         "properties": {
           "api_keys": {
@@ -22806,6 +23256,17 @@
         ],
         "title": "EmbeddingStatsResponse",
         "description": "Response with embedding statistics."
+      },
+      "EvidenceRigor": {
+        "type": "string",
+        "enum": [
+          "minimal",
+          "standard",
+          "thorough",
+          "exhaustive"
+        ],
+        "title": "EvidenceRigor",
+        "description": "Evidence rigor levels for formal research annotation."
       },
       "ExportBatchRequest": {
         "properties": {
@@ -23074,6 +23535,16 @@
               }
             ],
             "title": "Custom Prompt"
+          },
+          "rigor_level": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceRigor"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -24203,6 +24674,18 @@
             ],
             "title": "Icon"
           },
+          "enable_related_assets": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Related Assets",
+            "default": false
+          },
           "owner_id": {
             "type": "integer",
             "title": "Owner Id"
@@ -24308,6 +24791,18 @@
               }
             ],
             "title": "Icon"
+          },
+          "enable_related_assets": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Related Assets",
+            "default": false
           },
           "id": {
             "type": "integer",
@@ -24498,6 +24993,17 @@
               }
             ],
             "title": "Icon"
+          },
+          "enable_related_assets": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Related Assets"
           }
         },
         "type": "object",
@@ -26711,6 +27217,17 @@
             "type": "string",
             "title": "Name"
           },
+          "path_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path Prefix"
+          },
           "kind": {
             "anyOf": [
               {
@@ -26930,6 +27447,40 @@
               }
             ],
             "title": "Pipeline Output Count"
+          },
+          "has_active_jobs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Active Jobs"
+          },
+          "active_job_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Job Count"
+          },
+          "job_status": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Status"
           }
         },
         "type": "object",
@@ -26946,7 +27497,8 @@
         "type": "string",
         "enum": [
           "bundle",
-          "asset"
+          "asset",
+          "virtual_folder"
         ],
         "title": "TreeNodeType",
         "description": "Type of node in the file tree."
@@ -27983,6 +28535,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",
@@ -27992,6 +28551,46 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VirtualFolderChildrenResponse": {
+        "properties": {
+          "folders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Folders"
+          },
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/AssetRead"
+            },
+            "type": "array",
+            "title": "Assets"
+          },
+          "path_prefix": {
+            "type": "string",
+            "title": "Path Prefix"
+          },
+          "total_folders": {
+            "type": "integer",
+            "title": "Total Folders"
+          },
+          "total_assets": {
+            "type": "integer",
+            "title": "Total Assets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "folders",
+          "assets",
+          "path_prefix",
+          "total_folders",
+          "total_assets"
+        ],
+        "title": "VirtualFolderChildrenResponse",
+        "description": "Response for virtual folder children (path-based tree from blob_path)."
       }
     },
     "securitySchemes": {

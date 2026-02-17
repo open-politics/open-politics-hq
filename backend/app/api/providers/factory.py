@@ -16,8 +16,8 @@ from app.api.providers.base import (
 # These paths assume you will move your concrete provider classes to an 'impl' subdirectory
 # and rename files appropriately, e.g., storage.py -> impl/storage_minio.py & impl/storage_s3.py
 from app.api.providers.impl.storage_minio import MinioStorageProvider
+from app.api.providers.impl.storage_local import LocalFileSystemStorageProvider
 # from app.api.providers.impl.storage_s3 import S3StorageProvider # Example for S3
-# from app.api.providers.impl.storage_local import LocalFileSystemStorageProvider # Example for Local FS
 
 # Language model providers (unified interface)
 from app.api.providers.model_registry import ModelRegistryService
@@ -25,13 +25,12 @@ from app.api.providers.impl.language_openai import OpenAILanguageModelProvider
 from app.api.providers.impl.language_ollama import OllamaLanguageModelProvider  
 from app.api.providers.impl.language_gemini import GeminiLanguageModelProvider
 from app.api.providers.impl.language_anthropic import AnthropicLanguageModelProvider
+from app.api.providers.impl.language_mistral import MistralLanguageModelProvider
 
 
 
-from app.api.providers.impl.scraping_opol import OpolScrapingProvider
 # from app.api.providers.impl.scraping_playwright import PlaywrightScrapingProvider # Example
 
-from app.api.providers.impl.search_opol import OpolSearchProvider # Assuming search.py becomes search_opol.py
 from app.api.providers.impl.search_tavily import TavilySearchProvider
 # from app.api.providers.impl.search_elasticsearch import ElasticsearchSearchProvider # Example
 
@@ -42,7 +41,6 @@ from app.api.providers.impl.embedding_openai import OpenAIEmbeddingProvider
 from app.api.providers.impl.embedding_voyage import VoyageAIEmbeddingProvider
 from app.api.providers.embedding_registry import EmbeddingProviderRegistryService
 
-from app.api.providers.impl.geospatial_opol import OpolGeospatialProvider
 
 # Geocoding provider implementations
 from app.api.providers.impl.geocoding_nominatim_local import NominatimLocalGeocodingProvider
@@ -74,8 +72,8 @@ def create_storage_provider(settings: AppSettings) -> StorageProvider:
     #         secret_access_key=settings.S3_SECRET_ACCESS_KEY,
     #         region_name=settings.S3_REGION
     #     )
-    # elif provider_type == "local_fs":
-    #     return LocalFileSystemStorageProvider(base_path=settings.LOCAL_STORAGE_BASE_PATH)
+    elif provider_type == "local_fs":
+        return LocalFileSystemStorageProvider(base_path=settings.LOCAL_STORAGE_BASE_PATH)
     else:
         raise ValueError(f"Unsupported storage provider type configured: {settings.STORAGE_PROVIDER_TYPE}")
 
@@ -131,10 +129,19 @@ def create_model_registry(settings: AppSettings) -> ModelRegistryService:
     )
     logger.info("Configured Gemini provider (requires runtime API key from frontend)")
     
+    # Configure Mistral provider - requires runtime API key from frontend
+    registry.configure_provider(
+        name="mistral",
+        provider_class=MistralLanguageModelProvider,
+        config={"api_key": getattr(settings, 'MISTRAL_API_KEY', None) or "placeholder"},  # Placeholder if no server key
+        enabled=True
+    )
+    logger.info("Configured Mistral provider (requires runtime API key from frontend)" if not getattr(settings, 'MISTRAL_API_KEY', None) else "Configured Mistral provider with server API key")
+    
     return registry
 
 def create_scraping_provider(settings: AppSettings) -> ScrapingProvider:
-    # Default to newspaper4k, fallback to opol if specified
+    # Default to newspaper4k
     provider_type = 'newspaper4k'
     logger.info(f"Factory: Creating scraping provider of type: {provider_type}")
 
@@ -162,29 +169,13 @@ def create_scraping_provider(settings: AppSettings) -> ScrapingProvider:
             
             return Newspaper4kScrapingProvider(config=config)
         except ImportError as e:
-            logger.warning(f"newspaper4k not available, falling back to OPOL: {e}")
-            # Fall back to OPOL if newspaper4k is not available
-            return OpolScrapingProvider(opol_mode=settings.OPOL_MODE, opol_api_key=settings.OPOL_API_KEY)
-    elif provider_type == "opol":
-        # Fallback to OPOL if explicitly configured
-        return OpolScrapingProvider(opol_mode=settings.OPOL_MODE, opol_api_key=settings.OPOL_API_KEY)
+            logger.warning(f"newspaper4k not available: {e}")
     else:
         raise ValueError(f"Unsupported scraping provider type configured: {settings.SCRAPING_PROVIDER_TYPE}")
 
 def create_search_provider(settings: AppSettings) -> SearchProvider:
-    provider_type = settings.SEARCH_PROVIDER_TYPE.lower()
-    logger.info(f"Factory: Creating search provider of type: {provider_type}")
-
-    if provider_type == "opol_searxng":
-        # OpolSearchProvider constructor might take opol_mode, opol_api_key
-        return OpolSearchProvider(opol_mode=settings.OPOL_MODE, opol_api_key=settings.OPOL_API_KEY)
-    elif provider_type == "tavily":
-        if not settings.TAVILY_API_KEY:
-            raise ValueError("TAVILY_API_KEY is required for the Tavily search provider.")
-        return TavilySearchProvider(api_key=settings.TAVILY_API_KEY)
-    # Add elif for "elasticsearch" here if implemented
-    else:
-        raise ValueError(f"Unsupported search provider type configured: {settings.SEARCH_PROVIDER_TYPE}")
+    assert settings.TAVILY_API_KEY is not None, "TAVILY_API_KEY is required for the Tavily search provider."
+    return TavilySearchProvider(api_key=settings.TAVILY_API_KEY)
 
 def create_embedding_provider(settings: AppSettings) -> EmbeddingProvider:
     """Create and configure an embedding provider based on settings."""
@@ -213,10 +204,7 @@ def create_embedding_provider(settings: AppSettings) -> EmbeddingProvider:
 def create_geospatial_provider(settings: AppSettings) -> GeospatialProvider:
     provider_type = settings.GEOSPATIAL_PROVIDER_TYPE.lower()
     logger.info(f"Factory: Creating geospatial provider of type: {provider_type}")
-    if provider_type == "opol":
-        return OpolGeospatialProvider(opol_mode=settings.OPOL_MODE, opol_api_key=settings.OPOL_API_KEY)
-    else:
-        raise ValueError(f"Unsupported geospatial provider type configured: {provider_type}") 
+    raise ValueError(f"Unsupported geospatial provider type configured: {provider_type}") 
 
 
 def create_geocoding_provider(settings: AppSettings) -> GeocodingProvider:

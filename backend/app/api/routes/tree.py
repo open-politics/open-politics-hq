@@ -10,7 +10,7 @@ import logging
 from typing import Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlmodel import Session, select, delete
-from sqlalchemy import update, or_, func
+from sqlalchemy import update, or_, func, text
 from pydantic import BaseModel, Field
 
 from app.api import deps
@@ -21,13 +21,106 @@ from app.api.utils.tree_builder import (
     build_root_tree_nodes,
     build_bundle_children_nodes,
     build_asset_children_nodes,
+    build_tree_node_from_asset,
+    build_tree_node_from_vfolder,
     parse_tree_node_id,
-    get_bundled_asset_ids,
+    parse_vfolder_node_id,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _get_virtual_folder_children(
+    db: Session,
+    bundle: Bundle,
+    infospace_id: int,
+    path_prefix: str,
+    skip: int,
+    limit: int,
+) -> tuple[List[Any], int]:
+    """
+    Get virtual folder children (subfolders + files) from logical_path.
+    Uses pure SQL for folder names (no full asset load) and bounded file query.
+    """
+    base_prefix = f"{path_prefix}/" if path_prefix else ""
+    like_prefix = f"{base_prefix}%"
+    prefix_len = len(base_prefix)
+
+    params = {
+        "prefix_len": prefix_len,
+        "bundle_id": bundle.id,
+        "like_prefix": like_prefix,
+        "slash_pattern": "%/%",
+    }
+    # Pure SQL: distinct folder names (first path segment after prefix)
+    folder_stmt = text("""
+        SELECT DISTINCT split_part(
+            substring(logical_path from :prefix_len + 1), '/', 1
+        ) AS segment
+        FROM asset
+        WHERE bundle_id = :bundle_id
+          AND logical_path IS NOT NULL
+          AND logical_path LIKE :like_prefix
+          AND parent_asset_id IS NULL
+          AND substring(logical_path from :prefix_len + 1) LIKE :slash_pattern
+        ORDER BY segment
+    """)
+    folder_rows = db.execute(folder_stmt, params).fetchall()
+    all_folders = [r[0] for r in folder_rows if r[0]]
+
+    # Files at this level (suffix has no slash)
+    files_count_stmt = text("""
+        SELECT count(*) FROM asset
+        WHERE bundle_id = :bundle_id
+          AND logical_path IS NOT NULL
+          AND logical_path LIKE :like_prefix
+          AND parent_asset_id IS NULL
+          AND substring(logical_path from :prefix_len + 1) != ''
+          AND substring(logical_path from :prefix_len + 1) NOT LIKE :slash_pattern
+    """)
+    total_files = db.execute(files_count_stmt, params).scalar() or 0
+
+    total_children = len(all_folders) + total_files
+
+    if skip < len(all_folders):
+        folders_page = all_folders[skip : skip + limit]
+        remaining = limit - len(folders_page)
+        file_skip = 0
+    else:
+        folders_page = []
+        file_skip = skip - len(all_folders)
+        remaining = limit
+
+    files_page: List[Asset] = []
+    if remaining > 0:
+        files_params = {**params, "file_skip": file_skip, "remaining": remaining}
+        files_stmt = text("""
+            SELECT id FROM asset
+            WHERE bundle_id = :bundle_id
+              AND logical_path IS NOT NULL
+              AND logical_path LIKE :like_prefix
+              AND parent_asset_id IS NULL
+              AND substring(logical_path from :prefix_len + 1) != ''
+              AND substring(logical_path from :prefix_len + 1) NOT LIKE :slash_pattern
+            ORDER BY logical_path
+            OFFSET :file_skip LIMIT :remaining
+        """)
+        file_ids = [r[0] for r in db.execute(files_stmt, files_params).fetchall()]
+        if file_ids:
+            files_page = list(
+                db.exec(
+                    select(Asset).where(Asset.id.in_(file_ids)).order_by(Asset.logical_path)
+                ).all()
+            )
+
+    nodes = []
+    for folder_name in folders_page:
+        nodes.append(build_tree_node_from_vfolder(bundle.id, path_prefix, folder_name))
+    for asset in files_page:
+        nodes.append(build_tree_node_from_asset(asset, parent_type="bundle", parent_id=bundle.id))
+    return nodes, total_children
 
 
 @router.get("/infospaces/{infospace_id}/tree", response_model=TreeResponse)
@@ -51,7 +144,7 @@ def get_infospace_tree(
     """
     validate_infospace_access(db, infospace_id, current_user.id)
     
-    # Query root bundles (no parent)
+    # Query root bundles (no parent) - limited to root level only
     root_bundles = db.exec(
         select(Bundle)
         .where(Bundle.infospace_id == infospace_id)
@@ -61,45 +154,32 @@ def get_infospace_tree(
     
     logger.info(f"Found {len(root_bundles)} root bundles in infospace {infospace_id}")
     
-    # Get IDs of all assets that are in ANY bundle (to exclude from root assets)
-    bundled_asset_ids = get_bundled_asset_ids(root_bundles)
-    
-    # Also need to check nested bundles for their assets
-    all_bundles = db.exec(
-        select(Bundle)
-        .where(Bundle.infospace_id == infospace_id)
-    ).all()
-    all_bundled_ids = get_bundled_asset_ids(all_bundles)
-    
-    # Query root assets (not in bundles, no parent asset)
-    root_assets_query = (
+    # Query root assets (not in any bundle, no parent asset)
+    # Use bundle_id IS NULL instead of loading all bundled IDs - scalable for large infospaces
+    root_assets = db.exec(
         select(Asset)
         .where(Asset.infospace_id == infospace_id)
         .where(Asset.parent_asset_id.is_(None))
+        .where(Asset.bundle_id.is_(None))
         .where(Asset.user_id == current_user.id)
         .order_by(Asset.updated_at.desc())
-    )
-    
-    if all_bundled_ids:
-        root_assets_query = root_assets_query.where(Asset.id.not_in(all_bundled_ids))
-    
-    root_assets = db.exec(root_assets_query).all()
+    ).all()
     
     logger.info(f"Found {len(root_assets)} root assets in infospace {infospace_id}")
     
     # Build tree nodes using utility functions
     tree_nodes = build_root_tree_nodes(root_bundles, root_assets, db)
     
-    # Count totals
-    total_bundles = len(db.exec(
-        select(Bundle.id).where(Bundle.infospace_id == infospace_id)
-    ).all())
+    # Count totals (DB-side, scalable for large infospaces)
+    total_bundles = db.exec(
+        select(func.count(Bundle.id)).where(Bundle.infospace_id == infospace_id)
+    ).one() or 0
     
-    total_assets = len(db.exec(
-        select(Asset.id)
+    total_assets = db.exec(
+        select(func.count(Asset.id))
         .where(Asset.infospace_id == infospace_id)
         .where(Asset.user_id == current_user.id)
-    ).all())
+    ).one() or 0
     
     return TreeResponse(
         nodes=tree_nodes,
@@ -149,33 +229,65 @@ def get_tree_children(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Bundle {parent_numeric_id} not found"
             )
-        
-        # Get child bundles
-        child_bundles = db.exec(
-            select(Bundle)
-            .where(Bundle.parent_bundle_id == parent_numeric_id)
-            .order_by(Bundle.name)
-            .offset(skip)
-            .limit(limit)
-        ).all()
-        
-        # Get assets in this bundle (not their children, just direct members)
-        # We need to account for skip/limit across both bundles and assets
-        remaining_limit = limit - len(child_bundles)
-        asset_skip = max(0, skip - (bundle.child_bundle_count or 0))
-        
-        bundle_assets = []
-        if remaining_limit > 0:
-            # Get assets through the many-to-many relationship
-            all_bundle_assets = bundle.assets
-            # Apply skip and limit
-            bundle_assets = all_bundle_assets[asset_skip:asset_skip + remaining_limit]
-        
-        # Build tree nodes
-        children_nodes = build_bundle_children_nodes(bundle, child_bundles, bundle_assets, db)
-        total_children = (bundle.child_bundle_count or 0) + (bundle.asset_count or 0)
-        
+
+        # Bundles with assets that have logical_path use virtual folders
+        has_logical_path = db.exec(
+            select(Asset.id)
+            .where(Asset.bundle_id == parent_numeric_id)
+            .where(Asset.logical_path.is_not(None))
+            .limit(1)
+        ).first()
+        if has_logical_path:
+            children_nodes, total_children = _get_virtual_folder_children(
+                db, bundle, infospace_id, "", skip, limit
+            )
+        else:
+            # Standard bundles: child bundles + direct assets (SQL query, not relationship)
+            child_bundles = db.exec(
+                select(Bundle)
+                .where(Bundle.parent_bundle_id == parent_numeric_id)
+                .order_by(Bundle.name)
+                .offset(skip)
+                .limit(limit)
+            ).all()
+
+            remaining_limit = limit - len(child_bundles)
+            asset_skip = max(0, skip - (bundle.child_bundle_count or 0))
+
+            bundle_assets = []
+            if remaining_limit > 0:
+                bundle_assets = db.exec(
+                    select(Asset)
+                    .where(Asset.bundle_id == parent_numeric_id)
+                    .where(Asset.parent_asset_id.is_(None))
+                    .order_by(Asset.title)
+                    .offset(asset_skip)
+                    .limit(remaining_limit)
+                ).all()
+
+            children_nodes = build_bundle_children_nodes(bundle, child_bundles, bundle_assets, db)
+            total_children = (bundle.child_bundle_count or 0) + (bundle.asset_count or 0)
+
         logger.info(f"Loaded {len(children_nodes)} children for bundle {parent_numeric_id}")
+
+    elif parent_type == "vfolder":
+        try:
+            bundle_id, path_prefix = parse_vfolder_node_id(parent_id)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+        bundle = db.get(Bundle, bundle_id)
+        if not bundle or bundle.infospace_id != infospace_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Bundle {bundle_id} not found"
+            )
+        children_nodes, total_children = _get_virtual_folder_children(
+            db, bundle, infospace_id, path_prefix, skip, limit
+        )
+        logger.info(f"Loaded {len(children_nodes)} children for vfolder {path_prefix}")
     
     elif parent_type == "asset":
         # Get the asset and verify access
@@ -204,10 +316,10 @@ def get_tree_children(
             .limit(limit)
         ).all()
         
-        # Count total children
-        total_children = len(db.exec(
-            select(Asset.id).where(Asset.parent_asset_id == parent_numeric_id)
-        ).all())
+        # Count total children (DB-side, scalable)
+        total_children = db.exec(
+            select(func.count(Asset.id)).where(Asset.parent_asset_id == parent_numeric_id)
+        ).one() or 0
         
         # Build tree nodes
         children_nodes = build_asset_children_nodes(asset, child_assets)
@@ -367,7 +479,22 @@ def delete_tree_nodes(
         )
         deleted_assets = result.rowcount if hasattr(result, 'rowcount') else len(asset_ids_to_delete)
     
-    # PHASE 5: Delete bundles (safe now that assets are gone)
+    # PHASE 5: Clear DatasetIngestionJob references before deleting bundles
+    if bundles_to_delete:
+        from app.models import DatasetIngestionJob
+        bundle_ids_to_delete = [b.id for b in bundles_to_delete]
+        jobs_to_update = db.exec(
+            select(DatasetIngestionJob).where(
+                DatasetIngestionJob.root_bundle_id.in_(bundle_ids_to_delete)
+            )
+        ).all()
+        if jobs_to_update:
+            logger.info(f"Clearing root_bundle_id from {len(jobs_to_update)} dataset ingestion jobs")
+            for job in jobs_to_update:
+                job.root_bundle_id = None
+                db.add(job)
+    
+    # PHASE 6: Delete bundles (safe now that assets and job references are cleared)
     deleted_bundles = 0
     for bundle in bundles_to_delete:
         try:
@@ -391,6 +518,82 @@ def delete_tree_nodes(
         message += f" ({failed_count} failed)"
     
     return Message(message=message)
+
+
+class VirtualFolderChildrenResponse(BaseModel):
+    """Response for virtual folder children (path-based tree from blob_path)."""
+    folders: List[str]
+    assets: List[AssetRead]
+    path_prefix: str
+    total_folders: int
+    total_assets: int
+
+
+@router.get("/infospaces/{infospace_id}/tree/virtual-children", response_model=VirtualFolderChildrenResponse)
+def get_virtual_folder_children(
+    *,
+    infospace_id: int,
+    bundle_id: int = Query(..., description="Bundle ID (root bundle for dataset)"),
+    path_prefix: str = Query("", description="Path prefix for filtering (e.g. data_set_1/politics)"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = deps.Depends(deps.get_db),
+    current_user = deps.Depends(deps.get_current_user),
+) -> Any:
+    """
+    Get virtual folder structure from blob_path for path-based bundles.
+    Parses blob_path to extract immediate subfolders and files under path_prefix.
+    Used for lightweight directory-imported bundles (one root Bundle, virtual folders).
+    """
+    validate_infospace_access(db, infospace_id, current_user.id)
+
+    bundle = db.get(Bundle, bundle_id)
+    if not bundle or bundle.infospace_id != infospace_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bundle not found")
+
+    # When path_prefix is empty, we're at bundle root - use bundle.name as base (e.g. data_set_1)
+    base_prefix = f"{bundle.name}/" if not path_prefix else f"{path_prefix}/"
+    like_prefix = f"{base_prefix}%"
+
+    query = (
+        select(Asset)
+        .where(Asset.bundle_id == bundle_id)
+        .where(Asset.blob_path.is_not(None))
+        .where(Asset.blob_path.like(like_prefix))
+    )
+
+    assets_raw = db.exec(query.limit(limit * 10)).all()  # Fetch more to parse folders
+    folders_set: set = set()
+    files_at_level: List[Asset] = []
+
+    prefix_len = len(base_prefix)
+
+    for asset in assets_raw:
+        if not asset.blob_path:
+            continue
+        if not asset.blob_path.startswith(base_prefix):
+            continue
+        suffix = asset.blob_path[prefix_len:]
+        parts = suffix.split("/")
+        if len(parts) == 1 and parts[0]:
+            files_at_level.append(asset)
+        elif len(parts) > 1:
+            folders_set.add(parts[0])
+
+    folders = sorted(folders_set)[skip : skip + limit]
+    asset_skip = max(0, skip - len(folders))
+    assets_page = files_at_level[asset_skip : asset_skip + limit]
+
+    total_folders = len(folders_set)
+    total_assets = len(files_at_level)
+
+    return VirtualFolderChildrenResponse(
+        folders=folders,
+        assets=[AssetRead.model_validate(a) for a in assets_page],
+        path_prefix=path_prefix,
+        total_folders=total_folders,
+        total_assets=total_assets,
+    )
 
 
 class FeedAssetsResponse(BaseModel):
@@ -439,16 +642,16 @@ def get_feed_assets(
     if kinds:
         query = query.where(Asset.kind.in_(kinds))
     
-    # Get total count
+    # Get total count (DB-side, scalable for large infospaces)
     count_query = (
-        select(Asset.id)
+        select(func.count(Asset.id))
         .where(Asset.infospace_id == infospace_id)
         .where(Asset.user_id == current_user.id)
         .where(Asset.parent_asset_id.is_(None))
     )
     if kinds:
         count_query = count_query.where(Asset.kind.in_(kinds))
-    total = len(db.exec(count_query).all())
+    total = db.exec(count_query).one() or 0
     
     # Apply sorting
     if sort_by == "created_at":

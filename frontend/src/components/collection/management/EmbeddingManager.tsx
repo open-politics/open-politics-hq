@@ -69,6 +69,7 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
   const [showChangeModelDialog, setShowChangeModelDialog] = useState(false);
   const [showApiKeysDialog, setShowApiKeysDialog] = useState(false);
   const [newModel, setNewModel] = useState<string>('');
+  const [isUpdatingRelatedAssets, setIsUpdatingRelatedAssets] = useState(false);
   
   // API key visibility toggles
   const [showOpenAIKey, setShowOpenAIKey] = useState(false);
@@ -357,6 +358,38 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
       toast.error(`Failed to change model: ${error?.body?.detail || error?.message || 'Unknown error'}`);
     } finally {
       setIsEnabling(false);
+    }
+  };
+
+  const handleToggleRelatedAssets = async (value: boolean) => {
+    setIsUpdatingRelatedAssets(true);
+    try {
+      await InfospacesService.updateInfospace({
+        infospaceId: infospace.id,
+        requestBody: {
+          enable_related_assets: value,
+        },
+      });
+
+      toast.success(
+        value
+          ? 'Related articles in Asset Manager enabled'
+          : 'Related articles in Asset Manager disabled'
+      );
+
+      if (onInfospaceUpdate) {
+        const updated = await InfospacesService.getInfospace({ infospaceId: infospace.id });
+        onInfospaceUpdate(updated);
+      }
+    } catch (error: any) {
+      console.error('Failed to update related assets setting:', error);
+      toast.error(
+        `Failed to update related articles setting: ${
+          error?.body?.detail || error?.message || 'Unknown error'
+        }`
+      );
+    } finally {
+      setIsUpdatingRelatedAssets(false);
     }
   };
 
@@ -768,6 +801,26 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
           )}
+
+          {/* Related assets toggle for Asset Manager */}
+          <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
+            <div className="pr-4">
+              <div className="text-sm font-medium">
+                Related articles in Asset Manager
+              </div>
+              <div className="text-xs text-muted-foreground">
+                When enabled, article and web assets in the Asset Manager will show a
+                semantic \"Related Articles\" panel. This uses the same embeddings
+                configuration as semantic search.
+              </div>
+            </div>
+            <Switch
+              checked={!!infospace.enable_related_assets}
+              disabled={isUpdatingRelatedAssets}
+              onCheckedChange={handleToggleRelatedAssets}
+              aria-label="Toggle related articles in Asset Manager"
+            />
+          </div>
 
           {/* Info Alert */}
           <Alert>

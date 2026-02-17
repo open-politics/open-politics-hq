@@ -40,25 +40,6 @@ async def get_location_articles(
         logger.error(f"Error fetching articles: {str(e)}")
         return JSONResponse(content={'error': 'Failed to fetch articles'}, status_code=500)
 
-
-
-
-@router.get("/geojson/")
-async def geojson_view():
-    request = requests.get("http://api.opol.io/geo-service/geojson", verify=False)
-    return request.json()
-
-@router.get("/{entity_name}/articles", response_model=None)
-async def get_entity_articles(entity_name: str, skip: int = 0, limit: int = 50):
-    try:
-        logger.info(f"Fetching articles for entity: {entity_name}")
-        response = requests.get(f"http://api.opol.io/postgres-service/articles_by_entity/{entity_name}?skip={skip}&limit={limit}")
-        response.raise_for_status()
-        return JSONResponse(content=response.json(), status_code=200)
-    except requests.RequestException as e:
-        logger.error(f"Error fetching location entities: {str(e)}")
-        return JSONResponse(content={'error': 'Failed to fetch location entities'}, status_code=500)
-
 @router.get("/leaders/{state}")
 async def get_leader_info(state: str):
     leaders_file_path = BASE_DIR / 'static' / 'country_data' / 'leaders.json'
@@ -67,14 +48,11 @@ async def get_leader_info(state: str):
             leaders = json.load(f)
         for leader in leaders:
             if leader['State'] == state:
-                return leader
-        raise HTTPException(status_code=404, detail="State not found")
+                return JSONResponse(content=leader, status_code=200)
+        return JSONResponse(content={'error': 'State not found'}, status_code=404)
+        
     except FileNotFoundError:
-        logging.error(f"Leaders JSON file not found at {leaders_file_path}")  
-        raise HTTPException(status_code=404, detail="Leaders file not found")
-    except json.JSONDecodeError:
-        logging.error("Error decoding JSON data.")
-        raise HTTPException(status_code=500, detail="Error decoding leaders data")
+        return JSONResponse(content={'error': 'Leaders file not found'}, status_code=404)
 
 @router.get("/legislation/{state}", response_model=None)
 async def get_legislation_data(state: str):

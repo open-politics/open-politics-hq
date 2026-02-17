@@ -167,7 +167,7 @@ export default function ShareTokenPage() {
   const isTopLevelBundle = resource && isBundle(resource.content);
 
   return (
-    <div className="bg-muted/30 min-h-screen max-w-7xl mx-auto mt-16 p-4">
+    <div className="bg-muted/30 min-h-screen max-w-full mx-auto mt-16 p-4">
         <div className="container mx-auto p-4 sm:p-6 lg:p-8">
             <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 p-4 bg-card/80 backdrop-blur-sm border rounded-lg">
                 <div className='flex-grow'>
@@ -234,7 +234,7 @@ export default function ShareTokenPage() {
                 viewMode === 'preview' ? (
                   <SharedAnnotationRunViewer runData={resource.content as any} />
                 ) : (
-                  <SharedAnnotationRunDashboard runData={resource.content as any} />
+                  <SharedAnnotationRunDashboard runData={resource.content as any} token={token} />
                 )
               ) : (
                  <div className="text-center p-8"><p className="text-muted-foreground">Select an item to view.</p></div>

@@ -42,7 +42,6 @@ export function isLocationField(fieldKey: string, fieldValue: any): boolean {
   const namePatterns = [
     /location/i,
     /place/i,
-    /address/i,
     /city/i,
     /country/i,
     /region/i,
@@ -116,9 +115,19 @@ export function getTimestampFields(resultValue: any): Array<{ fieldKey: string; 
         }
       }
       
-      // Recurse into nested objects (but not arrays to avoid performance issues)
+      // Recurse into nested objects
       if (value && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
         traverse(value, fullKey);
+      }
+      
+      // NEW: Recurse into arrays of objects to find timestamp fields within array items
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => {
+          if (item && typeof item === 'object' && !(item instanceof Date)) {
+            // Traverse into array item without adding index to path (we want field names like "document.mails.date")
+            traverse(item, fullKey);
+          }
+        });
       }
     }
   }
@@ -146,9 +155,19 @@ export function getLocationFields(resultValue: any): Array<{ fieldKey: string; v
         }
       }
       
-      // Recurse into nested objects (but not arrays)
+      // Recurse into nested objects
       if (value && typeof value === 'object' && !Array.isArray(value)) {
         traverse(value, fullKey);
+      }
+      
+      // NEW: Recurse into arrays of objects to find location fields within array items
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => {
+          if (item && typeof item === 'object') {
+            // Traverse into array item without adding index to path (we want field names like "document.mails.location")
+            traverse(item, fullKey);
+          }
+        });
       }
     }
   }
@@ -157,3 +176,80 @@ export function getLocationFields(resultValue: any): Array<{ fieldKey: string; v
   return locationFields;
 }
 
+/**
+ * Determines if an array contains node-like objects (structure-based detection)
+ * Nodes must have: id, name, type
+ */
+export function isNodeArray(fieldValue: any): boolean {
+  if (!Array.isArray(fieldValue) || fieldValue.length === 0) return false;
+  
+  const first = fieldValue[0];
+  if (!first || typeof first !== 'object') return false;
+  
+  // Check for required node fields: id, name, type
+  return 'id' in first && 'name' in first && 'type' in first;
+}
+
+/**
+ * Determines if an array contains edge-like objects (structure-based detection)
+ * Edges must have: source_id (or source), target_id (or target), predicate
+ */
+export function isEdgeArray(fieldValue: any): boolean {
+  if (!Array.isArray(fieldValue) || fieldValue.length === 0) return false;
+  
+  const first = fieldValue[0];
+  if (!first || typeof first !== 'object') return false;
+  
+  // Check for required edge fields: source_id/source, target_id/target, predicate
+  const hasSource = ('source_id' in first) || ('source' in first);
+  const hasTarget = ('target_id' in first) || ('target' in first);
+  const hasPredicate = 'predicate' in first;
+  
+  return hasSource && hasTarget && hasPredicate;
+}
+
+/**
+ * Determines if a field contains Knowledge Graph data (structure-based detection)
+ * No name pattern matching - purely structure-based
+ */
+export function isKnowledgeGraphField(fieldKey: string, fieldValue: any): boolean {
+  if (!fieldValue) return false;
+  
+  // Check if it's a node array or edge array
+  return isNodeArray(fieldValue) || isEdgeArray(fieldValue);
+}
+
+/**
+ * Get all graph fields (nodes and edges) from an annotation result
+ * Uses structure-based detection, not name patterns
+ */
+export function getGraphFields(
+  resultValue: any
+): Array<{ fieldKey: string; value: any; type: 'nodes' | 'edges' }> {
+  if (!resultValue || typeof resultValue !== 'object') return [];
+  
+  const graphFields: Array<{ fieldKey: string; value: any; type: 'nodes' | 'edges' }> = [];
+  
+  function traverse(obj: any, prefix: string = '') {
+    for (const [key, value] of Object.entries(obj)) {
+      const fullKey = prefix ? `${prefix}.${key}` : key;
+      
+      // Check if this is a node array
+      if (isNodeArray(value)) {
+        graphFields.push({ fieldKey: fullKey, value, type: 'nodes' });
+      }
+      // Check if this is an edge array
+      else if (isEdgeArray(value)) {
+        graphFields.push({ fieldKey: fullKey, value, type: 'edges' });
+      }
+      
+      // Recurse into nested objects (but not arrays to avoid performance issues)
+      if (value && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
+        traverse(value, fullKey);
+      }
+    }
+  }
+  
+  traverse(resultValue);
+  return graphFields;
+}

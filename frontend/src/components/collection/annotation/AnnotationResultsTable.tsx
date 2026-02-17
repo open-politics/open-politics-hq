@@ -29,11 +29,12 @@ import AssetLink from '../assets/Helper/AssetLink';
 import { adaptEnhancedAnnotationToFormattedAnnotation } from '@/lib/annotations/adapters';
 import { ResultFilter } from './AnnotationFilterControls';
 import { checkFilterMatch, getTargetKeysForScheme, getAnnotationFieldValue, getTargetFieldDefinition, formatFieldNameForDisplay as formatFieldNameUtil, getModalityIcon } from '@/lib/annotations/utils';
+import { searchInAnnotationValue } from '@/lib/annotations/search';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search, SlidersHorizontal, Sparkles, Maximize2, Minimize2, Columns3, Columns, ArrowUpToLine, UnfoldVertical, FoldVertical, Wand2, HelpCircle, Download, Image as ImageIcon, FileText } from 'lucide-react';
+import { ArrowUpDown, ChevronDown, MoreHorizontal, ExternalLink, Eye, Trash2, Filter, X, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Loader2, RefreshCw, Ban, Search, SlidersHorizontal, Sparkles, Maximize2, Minimize2, Columns3, Columns, ArrowUpToLine, UnfoldVertical, FoldVertical, Wand2, HelpCircle, Download, Image as ImageIcon, FileText, Focus } from 'lucide-react';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -248,6 +249,7 @@ export function AnnotationResultsTable({
   const [expanded, setExpanded] = useState<Record<string, boolean>>(initialTableConfig?.expanded || {});
   const [expandAllAnnotations, setExpandAllAnnotations] = useState(false); // NEW: Global expand state for annotation cards
   const [unfoldFields, setUnfoldFields] = useState(false); // NEW: Toggle for unfolding schema fields into separate columns
+  const [filterArrayItems, setFilterArrayItems] = useState(false); // NEW: Toggle to filter array items to matching ones only
   const { activeInfospace } = useInfospaceStore();
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem(); // Renaming for clarity
 
@@ -393,6 +395,12 @@ export function AnnotationResultsTable({
 
   // CSV Export handler
   const [isExporting, setIsExporting] = useState(false);
+  const [exportOptionsOpen, setExportOptionsOpen] = useState(false);
+  const [exportOptions, setExportOptions] = useState({
+    includeJustifications: true,
+    includeMetadata: true,
+    flattenJson: true,
+  });
   
   const handleExportCSV = useCallback(async () => {
     if (!runId || !activeInfospace?.id) {
@@ -403,8 +411,15 @@ export function AnnotationResultsTable({
     setIsExporting(true);
     
     try {
+      const params = new URLSearchParams({
+        flatten_json: String(exportOptions.flattenJson),
+        include_metadata: String(exportOptions.includeMetadata),
+        include_justifications: String(exportOptions.includeJustifications),
+      });
+      const apiUrl = `/api/v1/annotation_jobs/infospaces/${activeInfospace.id}/runs/${runId}/export/csv?${params}`;
+      
       const response = await fetch(
-        `/api/v1/annotation_jobs/infospaces/${activeInfospace.id}/runs/${runId}/export/csv?flatten_json=true&include_metadata=true`,
+        apiUrl,
         {
           headers: {
             Authorization: `Bearer ${localStorage.getItem('access_token')}`,
@@ -435,13 +450,14 @@ export function AnnotationResultsTable({
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
+      setExportOptionsOpen(false);
     } catch (error) {
       console.error('CSV export failed:', error);
       // TODO: Add toast notification
     } finally {
       setIsExporting(false);
     }
-  }, [runId, activeInfospace?.id]);
+  }, [runId, activeInfospace?.id, exportOptions]);
 
   // Debounced function to notify parent of config changes
   const debouncedConfigUpdate = useCallback((config: any) => {
@@ -868,49 +884,125 @@ export function AnnotationResultsTable({
 
     console.log('[AnnotationResultsTable] topLevelRecords:', topLevelRecords.map(r => ({ id: r.id, title: r.title, resultsMap: Object.keys(r.resultsMap) })));
 
-    // Apply filters to top-level records
-    // FIXED: Only apply filter logic if there are ACTIVE filters
+    // Helper function to check if a result value matches search term
+    // When filterArrayItems is true, only check array items; otherwise check all fields
+    const resultMatchesSearch = (result: ResultWithSourceInfo, searchTerm: string, checkArrayItemsOnly: boolean): boolean => {
+      if (!searchTerm || !result.value) return true;
+      
+      if (checkArrayItemsOnly) {
+        // Only check if search matches within array items
+        // Recursively check for arrays in the value structure
+        const checkArrayItems = (value: any): boolean => {
+          if (Array.isArray(value)) {
+            // Check if any array item matches
+            return value.some(item => {
+              if (typeof item === 'object' && item !== null) {
+                // For objects, check all properties recursively
+                return Object.values(item).some(v => checkArrayItems(v) || searchInAnnotationValue(v, searchTerm));
+              }
+              return searchInAnnotationValue(item, searchTerm);
+            });
+          }
+          if (typeof value === 'object' && value !== null) {
+            // Recurse into nested objects
+            return Object.values(value).some(v => checkArrayItems(v));
+          }
+          return false;
+        };
+        return checkArrayItems(result.value);
+      } else {
+        // Check all fields (current behavior)
+        return searchInAnnotationValue(result.value, searchTerm);
+      }
+    };
+
+    // Helper function to check if record matches search term
+    const recordMatchesSearch = (record: EnrichedAssetRecord, searchTerm: string, checkArrayItemsOnly: boolean): boolean => {
+      if (!searchTerm) return true;
+      
+      // Check asset title and source name
+      if (record.title?.toLowerCase().includes(searchTerm.toLowerCase())) return true;
+      if (record.sourceName?.toLowerCase().includes(searchTerm.toLowerCase())) return true;
+      
+      // Check results
+      if (record.hasChildren && record.children) {
+        // For CSV parents, check children
+        return record.children.some(child => {
+          const childResults = Object.values(child.resultsMap);
+          return childResults.some(result => resultMatchesSearch(result, searchTerm, checkArrayItemsOnly));
+        });
+      }
+      
+      if (record.consolidatedResultsMap) {
+        // For consolidated results, check both document and image
+        return Object.values(record.consolidatedResultsMap).some(consolidated => {
+          if (consolidated.document && resultMatchesSearch(consolidated.document, searchTerm, checkArrayItemsOnly)) return true;
+          if (consolidated.image && resultMatchesSearch(consolidated.image, searchTerm, checkArrayItemsOnly)) return true;
+          return false;
+        });
+      }
+      
+      // For regular assets, check direct results
+      const assetResults = Object.values(record.resultsMap);
+      return assetResults.some(result => resultMatchesSearch(result, searchTerm, checkArrayItemsOnly));
+    };
+
+    // Apply filters and search to top-level records
     const activeFilters = filters.filter(f => f.isActive);
+    const hasSearchTerm = Boolean(globalFilter && globalFilter.trim().length > 0);
+    const searchTermString = hasSearchTerm ? globalFilter : '';
+    const checkArrayItemsOnly = Boolean(filterArrayItems && hasSearchTerm);
+    
     const filteredRecords = topLevelRecords.filter(record => {
-      // If no active filters, include all records that have results
-      if (activeFilters.length === 0) {
-        // For CSV parents, check if any children have results
+      // First check: Must have results
+      const hasResults = (() => {
         if (record.hasChildren && record.children) {
           return record.children.some(child => Object.keys(child.resultsMap).length > 0);
         }
-        // For consolidated results (document + image), check if any exist
         if (record.consolidatedResultsMap) {
           return Object.values(record.consolidatedResultsMap).some(consolidated => 
             consolidated.document || consolidated.image
           );
         }
-        // For regular assets, check if they have direct results
         return Object.keys(record.resultsMap).length > 0;
-      }
+      })();
+      
+      if (!hasResults) return false;
 
-      // For CSV parents, check if any children match filters
-      if (record.hasChildren && record.children) {
-        return record.children.some(child => {
-          const childResults = Object.values(child.resultsMap);
-          return childResults.length > 0 && activeFilters.every(filter => checkFilterMatch(filter, childResults, schemas));
-        });
+      // Second check: Filter matching
+      const matchesFilters = (() => {
+        if (activeFilters.length === 0) return true;
+        
+        if (record.hasChildren && record.children) {
+          return record.children.some(child => {
+            const childResults = Object.values(child.resultsMap);
+            return childResults.length > 0 && activeFilters.every(filter => checkFilterMatch(filter, childResults, schemas));
+          });
+        }
+        
+        if (record.consolidatedResultsMap) {
+          const allResults: ResultWithSourceInfo[] = [];
+          Object.values(record.consolidatedResultsMap).forEach(consolidated => {
+            if (consolidated.document) allResults.push(consolidated.document);
+            if (consolidated.image) allResults.push(consolidated.image);
+          });
+          if (allResults.length === 0) return false;
+          return activeFilters.every(filter => checkFilterMatch(filter, allResults, schemas));
+        }
+        
+        const assetResults = Object.values(record.resultsMap);
+        if (assetResults.length === 0) return false;
+        return activeFilters.every(filter => checkFilterMatch(filter, assetResults, schemas));
+      })();
+      
+      if (!matchesFilters) return false;
+
+      // Third check: Search term matching
+      if (hasSearchTerm) {
+        return recordMatchesSearch(record, searchTermString, checkArrayItemsOnly);
       }
       
-      // For regular assets, check direct results
-      // If consolidated results exist, check both document and image results
-      if (record.consolidatedResultsMap) {
-        const allResults: ResultWithSourceInfo[] = [];
-        Object.values(record.consolidatedResultsMap).forEach(consolidated => {
-          if (consolidated.document) allResults.push(consolidated.document);
-          if (consolidated.image) allResults.push(consolidated.image);
-        });
-        if (allResults.length === 0) return false;
-        return activeFilters.every(filter => checkFilterMatch(filter, allResults, schemas));
-      }
-      
-      const assetResults = Object.values(record.resultsMap);
-      if (assetResults.length === 0) return false;
-      return activeFilters.every(filter => checkFilterMatch(filter, assetResults, schemas));
+      return true;
     });
 
     return filteredRecords;
@@ -919,7 +1011,9 @@ export function AnnotationResultsTable({
     filters.map(f => `${f.id}-${f.isActive}-${f.schemaId}-${f.fieldKey}-${f.operator}-${JSON.stringify(f.value)}`).join('|'), // FIXED: Stable filter representation
     schemas.map(s => s.id).sort().join(','), // FIXED: Use stable schema IDs
     assets.map(a => a.id).sort().join(','), // FIXED: Use stable asset IDs
-    sources.map(s => `${s.id}-${s.name}`).sort().join(',') // FIXED: Use stable source representation
+    sources.map(s => `${s.id}-${s.name}`).sort().join(','), // FIXED: Use stable source representation
+    globalFilter, // NEW: Include search term for filtering
+    filterArrayItems // NEW: Include focus toggle state for filtering
   ]);
 
   // Create flattened data for table display (including expanded children)
@@ -1244,6 +1338,9 @@ export function AnnotationResultsTable({
                   forceExpanded={false}
                   onTimestampClick={onTimestampClick}
                   onLocationClick={onLocationClick}
+                  filterArrayItems={filterArrayItems}
+                  searchTerm={globalFilter}
+                  filters={filters}
                 />
               </div>
             </div>
@@ -1427,6 +1524,9 @@ export function AnnotationResultsTable({
                                 forceExpanded={expandAllAnnotations}
                                 onTimestampClick={onTimestampClick}
                                 onLocationClick={onLocationClick}
+                                filterArrayItems={filterArrayItems}
+                                searchTerm={globalFilter}
+                                filters={filters}
                               />
                             </div>
                           ) : (
@@ -1473,6 +1573,9 @@ export function AnnotationResultsTable({
                                 forceExpanded={expandAllAnnotations}
                                 onTimestampClick={onTimestampClick}
                                 onLocationClick={onLocationClick}
+                                filterArrayItems={filterArrayItems}
+                                searchTerm={globalFilter}
+                                filters={filters}
                               />
                             </div>
                           ) : (
@@ -1530,6 +1633,9 @@ export function AnnotationResultsTable({
                 forceExpanded={expandAllAnnotations}
                 onTimestampClick={onTimestampClick}
                 onLocationClick={onLocationClick}
+                filterArrayItems={filterArrayItems}
+                searchTerm={globalFilter}
+                filters={filters}
               />
             </div>
           </div>
@@ -1665,8 +1771,34 @@ export function AnnotationResultsTable({
       variableSplittingConfig?.enabled, // Only track enabled state for column changes
       expandAllAnnotations, // NEW: Track expand all state for annotation display
       unfoldFields, // NEW: Track unfold fields state for column generation
+      filterArrayItems, // NEW: Track filter array items state
+      globalFilter, // NEW: Track global filter for array filtering
+      filters.length, // NEW: Track filters for array filtering
   ]);
   
+  // Custom global filter function that searches within nested arrays
+  const globalFilterFn = useCallback((row: Row<EnrichedAssetRecord>, columnId: string, filterValue: string): boolean => {
+    if (!filterValue) return true;
+    
+    const searchLower = filterValue.toLowerCase();
+    const record = row.original;
+    
+    // Search in asset title
+    if (record.title?.toLowerCase().includes(searchLower)) return true;
+    
+    // Search in source name
+    if (record.sourceName?.toLowerCase().includes(searchLower)) return true;
+    
+    // Search within all result values (including nested arrays)
+    for (const result of Object.values(record.resultsMap)) {
+      if (result.value && searchInAnnotationValue(result.value, filterValue)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }, []);
+
   // Optimize table configuration to prevent automatic resets
   const table = useReactTable<EnrichedAssetRecord>({ 
     data: flattenedTableData,
@@ -1685,6 +1817,7 @@ export function AnnotationResultsTable({
     getFilteredRowModel: getFilteredRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
     getRowId: (record) => record.id.toString(),
+    globalFilterFn: globalFilterFn, // Add custom filter function
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
@@ -1713,42 +1846,133 @@ export function AnnotationResultsTable({
   return (
     <div className="w-full min-w-0 flex flex-col h-full">
       <div className="flex items-center justify-between py-1.5 flex-shrink-0 gap-2">
-         <div className="relative flex-1 max-w-xs">
+         <div className="relative flex-1 max-w-xs pl-1">
            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
            <Input
              placeholder="Search..."
              value={globalFilter ?? ''}
              onChange={(event) => setGlobalFilter(event.target.value)}
-             className="pl-8 h-7 text-xs"
+             className="pl-8 pr-8 h-7 text-xs"
            />
+           {globalFilter && (
+             <TooltipProvider delayDuration={100}>
+               <Tooltip>
+                 <TooltipTrigger asChild>
+                   <Button
+                     variant="ghost"
+                     size="sm"
+                     onClick={() => setFilterArrayItems(!filterArrayItems)}
+                     className={cn(
+                       "absolute right-1 top-1/2 -translate-y-1/2 h-5 w-5 p-0",
+                       filterArrayItems && "bg-primary/10 text-primary"
+                     )}
+                   >
+                     <Focus className="h-3 w-3" />
+                   </Button>
+                 </TooltipTrigger>
+                 <TooltipContent>
+                   <p className="text-xs">
+                     {filterArrayItems 
+                       ? "Show only matching array items" 
+                       : "Showing all array items"}
+                   </p>
+                 </TooltipContent>
+               </Tooltip>
+             </TooltipProvider>
+           )}
          </div>
          
          <div className="flex items-center gap-0.5">
            {/* CSV Export Button */}
            {runId && (
-             <TooltipProvider delayDuration={100}>
-               <Tooltip>
-                 <TooltipTrigger asChild>
-                   <Button 
-                     variant="ghost"
-                     size="sm" 
-                     className="h-6 px-2 gap-1 text-xs"
+             <Popover open={exportOptionsOpen} onOpenChange={setExportOptionsOpen}>
+               <PopoverTrigger asChild>
+                 <Button 
+                   variant="ghost"
+                   size="sm" 
+                   className="h-6 px-2 gap-1 text-xs"
+                   disabled={isExporting}
+                 >
+                   {isExporting ? (
+                     <Loader2 className="h-3 w-3 animate-spin" />
+                   ) : (
+                     <Download className="h-3 w-3" />
+                   )}
+                   <span>CSV</span>
+                 </Button>
+               </PopoverTrigger>
+               <PopoverContent className="w-56 p-0" align="end">
+                 <div className="p-2 font-medium text-xs border-b">Export CSV</div>
+                 <div className="p-2 space-y-2">
+                   <div className="flex items-center space-x-2 px-2 py-1.5 text-xs">
+                     <Checkbox
+                       id="export-justifications"
+                       checked={exportOptions.includeJustifications}
+                       onCheckedChange={(checked) => 
+                         setExportOptions(prev => ({ ...prev, includeJustifications: !!checked }))
+                       }
+                     />
+                     <Label
+                       htmlFor="export-justifications"
+                       className="font-normal cursor-pointer text-xs"
+                     >
+                       Include justifications
+                     </Label>
+                   </div>
+                   <div className="flex items-center space-x-2 px-2 py-1.5 text-xs">
+                     <Checkbox
+                       id="export-metadata"
+                       checked={exportOptions.includeMetadata}
+                       onCheckedChange={(checked) => 
+                         setExportOptions(prev => ({ ...prev, includeMetadata: !!checked }))
+                       }
+                     />
+                     <Label
+                       htmlFor="export-metadata"
+                       className="font-normal cursor-pointer text-xs"
+                     >
+                       Include metadata
+                     </Label>
+                   </div>
+                   <div className="flex items-center space-x-2 px-2 py-1.5 text-xs">
+                     <Checkbox
+                       id="export-flatten"
+                       checked={exportOptions.flattenJson}
+                       onCheckedChange={(checked) => 
+                         setExportOptions(prev => ({ ...prev, flattenJson: !!checked }))
+                       }
+                     />
+                     <Label
+                       htmlFor="export-flatten"
+                       className="font-normal cursor-pointer text-xs"
+                     >
+                       Flatten JSON fields
+                     </Label>
+                   </div>
+                 </div>
+                 <div className="p-2 border-t">
+                   <Button
+                     variant="default"
+                     size="sm"
+                     className="w-full h-7 text-xs"
                      onClick={handleExportCSV}
                      disabled={isExporting}
                    >
                      {isExporting ? (
-                       <Loader2 className="h-3 w-3 animate-spin" />
+                       <>
+                         <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                         Exporting...
+                       </>
                      ) : (
-                       <Download className="h-3 w-3" />
+                       <>
+                         <Download className="h-3 w-3 mr-1" />
+                         Download
+                       </>
                      )}
-                     <span>CSV</span>
                    </Button>
-                 </TooltipTrigger>
-                 <TooltipContent side="bottom">
-                   <p className="text-xs">Export annotations as CSV for analysis</p>
-                 </TooltipContent>
-               </Tooltip>
-             </TooltipProvider>
+                 </div>
+               </PopoverContent>
+             </Popover>
            )}
            
            {/* Unfold Fields Toggle */}

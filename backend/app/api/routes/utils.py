@@ -6,10 +6,9 @@ from typing import Dict, Any, Optional, List
 import requests
 from datetime import datetime, timezone
 
-from app.api.deps import get_current_active_superuser, get_current_user, ContentIngestionServiceDep, SessionDep, CurrentUser
+from app.api.deps import get_current_active_superuser, get_current_user, SessionDep, CurrentUser
 from app.schemas import Message, ProviderInfo, ProviderModel, ProviderListResponse
 from app.utils import generate_test_email, send_email
-from app.core.opol_config import opol
 from app.core.config import settings
 import logging
 
@@ -75,7 +74,6 @@ def get_available_rss_countries():
 async def discover_rss_feeds(
     *,
     session: SessionDep,
-    content_service: ContentIngestionServiceDep,
     country: Optional[str] = None,
     category: Optional[str] = None,
     limit: int = 50
@@ -89,14 +87,14 @@ async def discover_rss_feeds(
         limit: Maximum number of feeds to return
     """
     try:
+        from app.api.handlers import RSSHandler
 
-        
-        feeds = await content_service.discover_rss_feeds_from_awesome_repo(
+        feeds = await RSSHandler.discover_rss_feeds_from_awesome_repo(
             country=country,
             category=category,
             limit=limit
         )
-        
+
         return {
             "feeds": feeds,
             "count": len(feeds),
@@ -104,7 +102,7 @@ async def discover_rss_feeds(
             "category": category,
             "limit": limit
         }
-        
+
     except Exception as e:
         logger.error(f"RSS feed discovery failed: {e}")
         raise HTTPException(

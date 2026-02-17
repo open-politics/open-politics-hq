@@ -165,6 +165,9 @@ export type AnnotationRunRead = {
     triggered_by_source_id?: (number | null);
     monitor_id?: (number | null);
     source_bundle_id?: (number | null);
+    graph_config?: ({
+    [key: string]: unknown;
+} | null);
 };
 
 export type AnnotationRunsOut = {
@@ -408,6 +411,16 @@ export type BatchGetAssetsRequest = {
      * List of asset IDs to fetch
      */
     asset_ids: Array<number>;
+};
+
+/**
+ * Response for batch process trigger.
+ */
+export type BatchProcessResponse = {
+    message: string;
+    bundle_id: number;
+    batch_size: number;
+    task_id: string;
 };
 
 export type Body_assets_add_files_to_bundle_background = {
@@ -938,6 +951,19 @@ export type DirectAssetCreationRequest = {
 };
 
 /**
+ * Request to import files from a local directory.
+ */
+export type DirectoryImportRequest = {
+    source_path: string;
+    file_extensions?: (Array<string> | null);
+    preserve_structure?: (boolean | null);
+    copy_mode?: (boolean | null);
+    options?: ({
+    [key: string]: unknown;
+} | null);
+};
+
+/**
  * Request for discovering embedding models with runtime API keys.
  */
 export type DiscoverModelsRequest = {
@@ -972,6 +998,11 @@ export type EmbeddingStatsResponse = {
         [key: string]: unknown;
     };
 };
+
+/**
+ * Evidence rigor levels for formal research annotation.
+ */
+export type EvidenceRigor = 'minimal' | 'standard' | 'thorough' | 'exhaustive';
 
 export type ExportBatchRequest = {
     resource_type: ResourceType;
@@ -1016,6 +1047,7 @@ export type FeedAssetsResponse = {
 export type FieldJustificationConfig = {
     enabled: boolean;
     custom_prompt?: (string | null);
+    rigor_level?: (EvidenceRigor | null);
 };
 
 export type FileUploadResponse = {
@@ -1270,6 +1302,7 @@ export type InfospaceCreate = {
     name: string;
     description?: (string | null);
     icon?: (string | null);
+    enable_related_assets?: (boolean | null);
     owner_id: number;
     vector_backend?: (string | null);
     embedding_model?: (string | null);
@@ -1283,6 +1316,7 @@ export type InfospaceRead = {
     name: string;
     description?: (string | null);
     icon?: (string | null);
+    enable_related_assets?: (boolean | null);
     id: number;
     owner_id: number;
     created_at: string;
@@ -1309,6 +1343,7 @@ export type InfospaceUpdate = {
     chunk_overlap?: (number | null);
     chunk_strategy?: (string | null);
     icon?: (string | null);
+    enable_related_assets?: (boolean | null);
 };
 
 /**
@@ -1832,6 +1867,7 @@ export type TreeNode = {
     id: string;
     type: TreeNodeType;
     name: string;
+    path_prefix?: (string | null);
     kind?: (AssetKind | null);
     is_container?: (boolean | null);
     children_count?: (number | null);
@@ -1857,12 +1893,17 @@ export type TreeNode = {
     pipeline_input_count?: (number | null);
     is_pipeline_output?: (boolean | null);
     pipeline_output_count?: (number | null);
+    has_active_jobs?: (boolean | null);
+    active_job_count?: (number | null);
+    job_status?: ({
+    [key: string]: unknown;
+} | null);
 };
 
 /**
  * Type of node in the file tree.
  */
-export type TreeNodeType = 'bundle' | 'asset';
+export type TreeNodeType = 'bundle' | 'asset' | 'virtual_folder';
 
 /**
  * Response containing tree structure.
@@ -2061,6 +2102,21 @@ export type ValidationError = {
     loc: Array<(string | number)>;
     msg: string;
     type: string;
+    input?: unknown;
+    ctx?: {
+        [key: string]: unknown;
+    };
+};
+
+/**
+ * Response for virtual folder children (path-based tree from blob_path).
+ */
+export type VirtualFolderChildrenResponse = {
+    folders: Array<string>;
+    assets: Array<AssetRead>;
+    path_prefix: string;
+    total_folders: number;
+    total_assets: number;
 };
 
 export type GetRegistrationStatsResponse = (RegistrationStats);
@@ -2354,6 +2410,62 @@ export type RetrySingleAnnotation1Data = {
 };
 
 export type RetrySingleAnnotation1Response = (AnnotationRead);
+
+export type CurateFragmentsData = {
+    annotationId: number;
+    infospaceId: number;
+    requestBody: {
+        [key: string]: unknown;
+    };
+};
+
+export type CurateFragmentsResponse = ({
+    [key: string]: unknown;
+});
+
+export type CurateFragments1Data = {
+    annotationId: number;
+    infospaceId: number;
+    requestBody: {
+        [key: string]: unknown;
+    };
+};
+
+export type CurateFragments1Response = ({
+    [key: string]: unknown;
+});
+
+export type RemoveCurationData = {
+    annotationId: number;
+    fragmentPath: string;
+    infospaceId: number;
+};
+
+export type RemoveCurationResponse = (void);
+
+export type RemoveCuration1Data = {
+    annotationId: number;
+    fragmentPath: string;
+    infospaceId: number;
+};
+
+export type RemoveCuration1Response = (void);
+
+export type GetCuratedTripletsData = {
+    infospaceId: number;
+};
+
+export type GetCuratedTripletsResponse = (Array<{
+    [key: string]: unknown;
+}>);
+
+export type GetCuratedTriplets1Data = {
+    infospaceId: number;
+};
+
+export type GetCuratedTriplets1Response = (Array<{
+    [key: string]: unknown;
+}>);
 
 export type CreateAnnotationSchemaData = {
     /**
@@ -3101,6 +3213,67 @@ export type GetBulkBundleAssetsResponse = ({
     [key: string]: unknown;
 });
 
+export type ListEntitiesData = {
+    entityType?: (string | null);
+    infospaceId: number;
+};
+
+export type ListEntitiesResponse = (Array<{
+    [key: string]: unknown;
+}>);
+
+export type CreateEntityData = {
+    infospaceId: number;
+    requestBody: {
+        [key: string]: unknown;
+    };
+};
+
+export type CreateEntityResponse = ({
+    [key: string]: unknown;
+});
+
+export type UpdateEntityData = {
+    entityId: number;
+    infospaceId: number;
+    requestBody: {
+        [key: string]: unknown;
+    };
+};
+
+export type UpdateEntityResponse = ({
+    [key: string]: unknown;
+});
+
+export type DeleteEntityData = {
+    entityId: number;
+    infospaceId: number;
+};
+
+export type DeleteEntityResponse = (void);
+
+export type MergeEntitiesData = {
+    infospaceId: number;
+    requestBody: {
+        [key: string]: unknown;
+    };
+};
+
+export type MergeEntitiesResponse = ({
+    [key: string]: unknown;
+});
+
+export type TriggerResolutionData = {
+    infospaceId: number;
+    requestBody: {
+        [key: string]: unknown;
+    };
+};
+
+export type TriggerResolutionResponse = ({
+    [key: string]: unknown;
+});
+
 export type ListConversationsData = {
     includeArchived?: boolean;
     infospaceId?: (number | null);
@@ -3190,6 +3363,21 @@ export type GetChunkingStatisticsData = {
 };
 
 export type GetChunkingStatisticsResponse = (ChunkingStatsResponse);
+
+export type CreateDirectoryImportJobData = {
+    infospaceId: number;
+    requestBody: DirectoryImportRequest;
+};
+
+export type CreateDirectoryImportJobResponse = (DatasetIngestionJobRead);
+
+export type TriggerBatchProcessPendingData = {
+    batchSize?: number;
+    bundleId: number;
+    infospaceId: number;
+};
+
+export type TriggerBatchProcessPendingResponse = (BatchProcessResponse);
 
 export type ListDatasetJobsData = {
     infospaceId: number;
@@ -3387,16 +3575,6 @@ export type GetLocationArticlesData = {
 };
 
 export type GetLocationArticlesResponse = (unknown);
-
-export type GeojsonViewResponse = (unknown);
-
-export type GetEntityArticlesData = {
-    entityName: string;
-    limit?: number;
-    skip?: number;
-};
-
-export type GetEntityArticlesResponse = (unknown);
 
 export type GetLeaderInfoData = {
     state: string;
@@ -3805,57 +3983,12 @@ export type GetInfospaceToolContextData = {
 
 export type GetInfospaceToolContextResponse = (unknown);
 
-export type GetLocationContentsData = {
-    limit?: number;
-    location: string;
-    skip?: number;
-};
-
-export type GetLocationContentsResponse = (unknown);
-
-export type GetLocationEntitiesContentsData = {
-    limit?: number;
-    location: string;
-    skip?: number;
-};
-
-export type GetLocationEntitiesContentsResponse = (unknown);
-
-export type LocationFromQueryData = {
-    query: string;
-};
-
-export type LocationFromQueryResponse = (unknown);
-
-export type GeojsonEventsViewData = {
-    eventType: string;
-};
-
-export type GeojsonEventsViewResponse = (unknown);
-
-export type DashboardViewResponse = (string);
-
-export type GetLocationEntitiesData = {
-    limit?: number;
-    locationName: string;
-    minRelevance?: number;
-    skip?: number;
-};
-
-export type GetLocationEntitiesResponse = (unknown);
-
 export type GetCoordinatesData = {
     language?: string;
     location: string;
 };
 
 export type GetCoordinatesResponse = (unknown);
-
-export type GetGeojsonForArticleIdsData = {
-    requestBody: Array<string>;
-};
-
-export type GetGeojsonForArticleIdsResponse = (unknown);
 
 export type GetLocationMetadataData = {
     location: string;
@@ -4466,6 +4599,22 @@ export type DeleteTreeNodesData = {
 };
 
 export type DeleteTreeNodesResponse = (Message);
+
+export type GetVirtualFolderChildrenData = {
+    /**
+     * Bundle ID (root bundle for dataset)
+     */
+    bundleId: number;
+    infospaceId: number;
+    limit?: number;
+    /**
+     * Path prefix for filtering (e.g. data_set_1/politics)
+     */
+    pathPrefix?: string;
+    skip?: number;
+};
+
+export type GetVirtualFolderChildrenResponse = (VirtualFolderChildrenResponse);
 
 export type GetFeedAssetsData = {
     infospaceId: number;

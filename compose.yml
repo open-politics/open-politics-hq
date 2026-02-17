@@ -73,7 +73,8 @@ services:
     command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info", "-P", "prefork", "--concurrency=4"]
     volumes:
       - ./backend:/app
-
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
   
   # nominatim:
   #   image: mediagis/nominatim:5.1

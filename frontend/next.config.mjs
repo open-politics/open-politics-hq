@@ -94,6 +94,7 @@ const nextConfig = {
     },
   },
   experimental: {
+    mdxRs: true,
     serverComponentsHmrCache: true,
     optimizePackageImports: [
       '@/components/ui',
@@ -112,9 +113,6 @@ const withMDX = createMDX({
   options: {
     remarkPlugins: ['remark-gfm'],
     rehypePlugins: [],
-  },
-  experimental: {
-    mdxRs: true,
   },
 });
 

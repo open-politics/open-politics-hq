@@ -58,6 +58,138 @@ class GraphAggregatorAdapter(AnalysisAdapterProtocol):
         edge_key = f"{source_node_id}_{target_node_id}_{predicate.lower().replace(' ', '_')}"
         return f"edge_{abs(hash(edge_key))}"
 
+    def _is_triplet_array(self, value: Any) -> bool:
+        """Structure-based detection: check if array contains self-contained triplet objects.
+        
+        Triplet format: {subject_name, subject_type, predicate, object_name, object_type}
+        """
+        if not isinstance(value, list) or len(value) == 0:
+            return False
+        first = value[0]
+        if not isinstance(first, dict):
+            return False
+        # Check for required triplet fields
+        has_subject = 'subject_name' in first and 'subject_type' in first
+        has_predicate = 'predicate' in first
+        has_object = 'object_name' in first and 'object_type' in first
+        return has_subject and has_predicate and has_object
+    
+    def _find_triplets(self, data: Dict[str, Any]) -> Optional[List[Dict]]:
+        """Find triplets array in data structure."""
+        # Check common locations for triplets
+        if isinstance(data, dict):
+            # Direct triplets key
+            if 'triplets' in data and self._is_triplet_array(data['triplets']):
+                return data['triplets']
+            # Nested in document
+            if 'document' in data and isinstance(data['document'], dict):
+                if 'triplets' in data['document'] and self._is_triplet_array(data['document']['triplets']):
+                    return data['document']['triplets']
+        return None
+    
+    def _is_node_array(self, value: Any) -> bool:
+        """Structure-based detection: check if array contains node-like objects (legacy format)."""
+        if not isinstance(value, list) or len(value) == 0:
+            return False
+        first = value[0]
+        if not isinstance(first, dict):
+            return False
+        # Check for required node fields: id, name, type
+        return 'id' in first and 'name' in first and 'type' in first
+    
+    def _is_edge_array(self, value: Any) -> bool:
+        """Structure-based detection: check if array contains edge-like objects (legacy format)."""
+        if not isinstance(value, list) or len(value) == 0:
+            return False
+        first = value[0]
+        if not isinstance(first, dict):
+            return False
+        # Check for required edge fields: source_id/source, target_id/target, predicate
+        has_source = 'source_id' in first or 'source' in first
+        has_target = 'target_id' in first or 'target' in first
+        has_predicate = 'predicate' in first
+        return has_source and has_target and has_predicate
+    
+    def _find_nodes_and_edges(self, data: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+        """Find nodes and edges arrays using structure-based detection (legacy format)."""
+        nodes_key = None
+        edges_key = None
+        
+        def traverse(obj: Any, prefix: str = ""):
+            nonlocal nodes_key, edges_key
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    full_key = f"{prefix}.{key}" if prefix else key
+                    if self._is_node_array(value) and nodes_key is None:
+                        nodes_key = full_key
+                    elif self._is_edge_array(value) and edges_key is None:
+                        edges_key = full_key
+                    elif isinstance(value, dict):
+                        traverse(value, full_key)
+        
+        traverse(data)
+        return nodes_key, edges_key
+    
+    def _normalize_value(self, value: Any, dedup_config: Dict[str, Any]) -> str:
+        """Normalize a value for deduplication comparison."""
+        if not isinstance(value, str):
+            value = str(value)
+        
+        if not dedup_config.get('caseSensitive', False):
+            value = value.lower()
+        
+        if dedup_config.get('normalizeWhitespace', True):
+            import re
+            value = re.sub(r'\s+', ' ', value.strip())
+        
+        return value
+    
+    def _deduplicate_nodes(self, nodes: List[Dict], config: Dict[str, Any]) -> List[Dict]:
+        """Deduplicate nodes based on configuration."""
+        # Get deduplication config with safe defaults
+        dedup_config = config.get('deduplication', {})
+        
+        # Default to enabled if not specified
+        if not dedup_config.get('enabled', True):
+            return nodes
+        
+        # Get strategy and fields with defaults
+        strategy = dedup_config.get('strategy', 'normalized')
+        fields = dedup_config.get('fields', ['name', 'type'])
+        
+        if strategy == 'exact':
+            seen = set()
+            deduplicated = []
+            for node in nodes:
+                key_parts = []
+                for field in fields:
+                    if field in node:
+                        key_parts.append(str(node[field]))
+                key = tuple(key_parts)
+                if key not in seen:
+                    seen.add(key)
+                    deduplicated.append(node)
+            return deduplicated
+        
+        elif strategy == 'normalized':
+            seen = set()
+            deduplicated = []
+            for node in nodes:
+                key_parts = []
+                for field in fields:
+                    if field in node:
+                        normalized = self._normalize_value(node[field], dedup_config)
+                        key_parts.append(normalized)
+                key = tuple(key_parts)
+                if key not in seen:
+                    seen.add(key)
+                    deduplicated.append(node)
+            return deduplicated
+        
+        # For 'fuzzy', fall back to normalized for now
+        # Future: implement fuzzy string matching
+        return self._deduplicate_nodes(nodes, {**config, 'deduplication': {**dedup_config, 'strategy': 'normalized'}})
+
     async def execute(self) -> Dict[str, Any]:
         logger.info(f"Executing GraphAggregatorAdapter for run {self.target_run_id}")
 
@@ -73,6 +205,9 @@ class GraphAggregatorAdapter(AnalysisAdapterProtocol):
         # Security check
         if self.infospace_id_context and run.infospace_id != self.infospace_id_context:
             raise ValueError(f"AnnotationRun {run.id} does not belong to the current infospace.")
+        
+        # Get graph config from run (run-scoped)
+        graph_config = run.graph_config or {}
 
         # Fetch all annotations for the run and schema
         query = select(Annotation).where(
@@ -90,21 +225,6 @@ class GraphAggregatorAdapter(AnalysisAdapterProtocol):
         total_fragments_processed = 0
         fragments_with_errors = 0
 
-        # DEBUG: Log the first annotation structure for debugging
-        if annotations:
-            first_annotation = annotations[0]
-            logger.info(f"DEBUG: First annotation value structure: {first_annotation.value}")
-            if isinstance(first_annotation.value, dict):
-                entities = first_annotation.value.get("entities", [])
-                triplets = first_annotation.value.get("triplets", [])
-                logger.info(f"DEBUG: Found {len(entities)} entities and {len(triplets)} triplets in first annotation")
-                if entities:
-                    logger.info(f"DEBUG: Sample entity: {entities[0] if entities else 'None'}")
-                if triplets:
-                    logger.info(f"DEBUG: Sample triplet: {triplets[0] if triplets else 'None'}")
-                else:
-                    logger.warning("DEBUG: No triplets found in first annotation!")
-
         for annotation in annotations:
             try:
                 graph_fragment = annotation.value
@@ -113,27 +233,139 @@ class GraphAggregatorAdapter(AnalysisAdapterProtocol):
                     fragments_with_errors += 1
                     continue
 
-                # Check if this is nested under 'document' key
+                # PRIMARY: Try to find self-contained triplets (subject_name/object_name format)
+                triplets_data = self._find_triplets(graph_fragment)
+                
+                if triplets_data:
+                    # Process self-contained triplets
+                    logger.info(f"Processing annotation {annotation.id} with {len(triplets_data)} self-contained triplets")
+                    
+                    for triplet in triplets_data:
+                        if not isinstance(triplet, dict):
+                            continue
+                        
+                        subject_name = triplet.get("subject_name", "")
+                        subject_type = triplet.get("subject_type", "UNKNOWN")
+                        predicate = triplet.get("predicate", "")
+                        object_name = triplet.get("object_name", "")
+                        object_type = triplet.get("object_type", "UNKNOWN")
+                        
+                        if not subject_name or not object_name or not predicate:
+                            logger.debug(f"Skipping incomplete triplet: {triplet}")
+                            continue
+                        
+                        # Register subject entity
+                        subject_key = self._normalize_entity_key(subject_name, subject_type)
+                        if subject_key not in entity_registry:
+                            entity_registry[subject_key] = {
+                                "entity_data": {
+                                    "id": None,  # No ID in triplet format
+                                    "name": subject_name,
+                                    "type": subject_type
+                                },
+                                "frequency": 1,
+                                "node_id": f"entity_{abs(hash(subject_key))}",
+                                "source_assets": {annotation.asset_id}
+                            }
+                        else:
+                            entity_registry[subject_key]["frequency"] += 1
+                            entity_registry[subject_key]["source_assets"].add(annotation.asset_id)
+                        
+                        # Register object entity
+                        object_key = self._normalize_entity_key(object_name, object_type)
+                        if object_key not in entity_registry:
+                            entity_registry[object_key] = {
+                                "entity_data": {
+                                    "id": None,
+                                    "name": object_name,
+                                    "type": object_type
+                                },
+                                "frequency": 1,
+                                "node_id": f"entity_{abs(hash(object_key))}",
+                                "source_assets": {annotation.asset_id}
+                            }
+                        else:
+                            entity_registry[object_key]["frequency"] += 1
+                            entity_registry[object_key]["source_assets"].add(annotation.asset_id)
+                        
+                        # Register edge
+                        edge_key = f"{subject_key}|{predicate.lower()}|{object_key}"
+                        if edge_key not in edge_registry:
+                            edge_registry[edge_key] = {
+                                "edge_data": {
+                                    "source_entity": {"name": subject_name, "type": subject_type},
+                                    "target_entity": {"name": object_name, "type": object_type},
+                                    "predicate": predicate,
+                                    "context": triplet.get("context")
+                                },
+                                "frequency": 1,
+                                "source_assets": {annotation.asset_id}
+                            }
+                        else:
+                            edge_registry[edge_key]["frequency"] += 1
+                            edge_registry[edge_key]["source_assets"].add(annotation.asset_id)
+                    
+                    total_fragments_processed += 1
+                    continue  # Skip legacy processing for this annotation
+                
+                # FALLBACK: Legacy nodes+edges format with ID references
+                nodes_data = None
+                edges_data = None
+                
                 if 'document' in graph_fragment and isinstance(graph_fragment['document'], dict):
-                    # Extract from nested structure
                     document_data = graph_fragment['document']
-                    entities = document_data.get("entities", [])
-                    triplets = document_data.get("triplets", [])
-                    logger.info(f"DEBUG: Found nested structure, extracted {len(entities)} entities and {len(triplets)} triplets")
+                    nodes_key, edges_key = self._find_nodes_and_edges(document_data)
+                    if nodes_key:
+                        keys = nodes_key.split('.')
+                        nodes_data = document_data
+                        for key in keys:
+                            if isinstance(nodes_data, dict):
+                                nodes_data = nodes_data.get(key)
+                    if edges_key:
+                        keys = edges_key.split('.')
+                        edges_data = document_data
+                        for key in keys:
+                            if isinstance(edges_data, dict):
+                                edges_data = edges_data.get(key)
                 else:
-                    # Direct structure
-                    entities = graph_fragment.get("entities", [])
-                    triplets = graph_fragment.get("triplets", [])
+                    nodes_key, edges_key = self._find_nodes_and_edges(graph_fragment)
+                    if nodes_key:
+                        keys = nodes_key.split('.')
+                        nodes_data = graph_fragment
+                        for key in keys:
+                            if isinstance(nodes_data, dict):
+                                nodes_data = nodes_data.get(key)
+                    if edges_key:
+                        keys = edges_key.split('.')
+                        edges_data = graph_fragment
+                        for key in keys:
+                            if isinstance(edges_data, dict):
+                                edges_data = edges_data.get(key)
+                
+                # Fallback to legacy field names
+                if nodes_data is None:
+                    if 'document' in graph_fragment and isinstance(graph_fragment['document'], dict):
+                        nodes_data = graph_fragment['document'].get("entities", [])
+                    else:
+                        nodes_data = graph_fragment.get("entities", [])
+                
+                if edges_data is None:
+                    if 'document' in graph_fragment and isinstance(graph_fragment['document'], dict):
+                        edges_data = graph_fragment['document'].get("triplets", [])
+                    else:
+                        edges_data = graph_fragment.get("triplets", [])
+                
+                entities = nodes_data if isinstance(nodes_data, list) else []
+                triplets = edges_data if isinstance(edges_data, list) else []
 
-                if not isinstance(entities, list) or not isinstance(triplets, list):
-                    logger.warning(f"Annotation {annotation.id} has invalid entities/triplets format. Skipping.")
+                if not entities and not triplets:
+                    logger.warning(f"Annotation {annotation.id} has no graph data. Skipping.")
                     fragments_with_errors += 1
                     continue
 
-                # Log detailed info about triplets
-                logger.info(f"DEBUG: Processing annotation {annotation.id} - {len(entities)} entities, {len(triplets)} triplets")
+                logger.info(f"Processing annotation {annotation.id} with legacy format: {len(entities)} entities, {len(triplets)} edges")
 
-                # Process entities
+                # Process legacy entities
                 for entity in entities:
                     if not isinstance(entity, dict):
                         continue
@@ -163,22 +395,17 @@ class GraphAggregatorAdapter(AnalysisAdapterProtocol):
                         entity_registry[normalized_key]["frequency"] += 1
                         entity_registry[normalized_key]["source_assets"].add(annotation.asset_id)
 
-                # Process triplets
-                triplets_processed = 0
+                # Process legacy triplets (with ID references)
+                triplets_processed = 0  # Initialize counter
                 for triplet in triplets:
                     if not isinstance(triplet, dict):
-                        logger.warning(f"DEBUG: Triplet is not a dict: {triplet}")
                         continue
                     
-                    # Handle both field naming conventions: source_id/target_id OR source/target
                     source_id = triplet.get("source_id") or triplet.get("source")
                     target_id = triplet.get("target_id") or triplet.get("target")
                     predicate = triplet.get("predicate", "")
 
-                    logger.info(f"DEBUG: Processing triplet - source_id: {source_id}, target_id: {target_id}, predicate: '{predicate}'")
-
                     if source_id is None or target_id is None or not predicate:
-                        logger.warning(f"DEBUG: Skipping triplet with missing data - source_id: {source_id}, target_id: {target_id}, predicate: '{predicate}'")
                         continue
 
                     # Find corresponding entities by ID
@@ -192,8 +419,7 @@ class GraphAggregatorAdapter(AnalysisAdapterProtocol):
                             target_entity = entity
 
                     if not source_entity or not target_entity:
-                        logger.warning(f"DEBUG: Triplet references unknown entity IDs: source={source_id}, target={target_id}")
-                        logger.info(f"DEBUG: Available entity IDs: {[e.get('id') for e in entities]}")
+                        logger.debug(f"Triplet references unknown entity IDs: source={source_id}, target={target_id}")
                         continue
 
                     # Create edge key for deduplication
@@ -225,6 +451,52 @@ class GraphAggregatorAdapter(AnalysisAdapterProtocol):
                 logger.error(f"Error processing annotation {annotation.id}: {e}")
                 fragments_with_errors += 1
 
+        # Apply deduplication if enabled (before frequency filtering)
+        # Ensure graph_config has default deduplication settings if missing
+        dedup_config = graph_config.get('deduplication', {})
+        if dedup_config.get('enabled', True):
+            logger.info(f"Applying deduplication with strategy: {dedup_config.get('strategy', 'normalized')}")
+            
+            # Convert registry to list for deduplication
+            all_entities_list = [
+                {
+                    **data["entity_data"],
+                    "frequency": data["frequency"],
+                    "source_assets": list(data["source_assets"]),
+                    "_normalized_key": key  # Preserve the key for reference
+                }
+                for key, data in entity_registry.items()
+            ]
+            
+            deduplicated_entities = self._deduplicate_nodes(all_entities_list, graph_config)
+            
+            # Rebuild registry from deduplicated list, merging frequencies and source assets
+            new_entity_registry = {}
+            seen_keys = set()
+            
+            for entity in deduplicated_entities:
+                normalized_key = self._normalize_entity_key(entity.get("name", ""), entity.get("type", ""))
+                
+                # If we've seen this key, merge with existing entry
+                if normalized_key in new_entity_registry:
+                    existing = new_entity_registry[normalized_key]
+                    existing["frequency"] += entity.get("frequency", 1)
+                    existing["source_assets"].update(entity.get("source_assets", []))
+                else:
+                    node_id = self._create_node_id(entity.get("id"), entity.get("name", ""), entity.get("type", ""))
+                    new_entity_registry[normalized_key] = {
+                        "entity_data": {
+                            "id": entity.get("id"),
+                            "name": entity.get("name", ""),
+                            "type": entity.get("type", "")
+                        },
+                        "frequency": entity.get("frequency", 1),
+                        "node_id": node_id,
+                        "source_assets": set(entity.get("source_assets", []))
+                    }
+            
+            entity_registry = new_entity_registry
+        
         # Filter entities by frequency threshold
         filtered_entities = {
             key: data for key, data in entity_registry.items() 
@@ -256,7 +528,8 @@ class GraphAggregatorAdapter(AnalysisAdapterProtocol):
                     "label": entity_data["name"],
                     "type": entity_data["type"],
                     "frequency": entity_info["frequency"],
-                    "source_asset_count": len(entity_info["source_assets"])
+                    "source_asset_count": len(entity_info["source_assets"]),
+                    "source_asset_ids": list(entity_info["source_assets"])
                 },
                 "position": {"x": 0, "y": 0}  # Frontend will handle layout
             }
@@ -305,7 +578,8 @@ class GraphAggregatorAdapter(AnalysisAdapterProtocol):
                     "data": {
                         "predicate": edge_data["predicate"],
                         "frequency": edge_info["frequency"],
-                        "source_asset_count": len(edge_info["source_assets"])
+                        "source_asset_count": len(edge_info["source_assets"]),
+                        "source_asset_ids": list(edge_info["source_assets"])
                     }
                 }
                 edges.append(edge)

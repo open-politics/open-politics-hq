@@ -50,7 +50,7 @@ import { toast } from 'sonner';
 import { ExternalLink, Info, Edit2, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, PlusCircle, Save, X, CheckCircle, AlertCircle, ArrowUp, ArrowDown, Files, Type, Loader2, Table as TableIcon, Layers, Image as ImageIcon, Globe, Video, Music, FileSpreadsheet, Settings, Copy } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { useTextSpanHighlight } from '@/components/collection/contexts/TextSpanHighlightContext';
+import { useTextSpanHighlight, useTextSpanHighlightSafe } from '@/components/collection/contexts/TextSpanHighlightContext';
 import { HighlightedText } from '@/components/ui/highlighted-text';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import AssetDetailViewCsv from './AssetDetailViewCsv';
@@ -89,6 +89,7 @@ interface AssetDetailViewProps {
   selectedAssetId: number | null;
   highlightAssetIdOnOpen: number | null;
   onLoadIntoRunner?: (jobId: number, jobName: string) => void;
+  enableHighlighting?: boolean; // Enable text span highlighting (default: false)
 }
 
 const AssetDetailView = ({
@@ -96,7 +97,8 @@ const AssetDetailView = ({
   schemas,
   selectedAssetId,
   highlightAssetIdOnOpen,
-  onLoadIntoRunner
+  onLoadIntoRunner,
+  enableHighlighting = false
 }: AssetDetailViewProps) => {
   // --- State Hooks ---
   const [asset, setAsset] = useState<AssetRead | null>(null);
@@ -113,7 +115,7 @@ const AssetDetailView = ({
   const [childSearchTerm, setChildSearchTerm] = useState('');
 
   // Text span highlighting 
-  const { getHighlightsForAsset, hasHighlights } = useTextSpanHighlight();
+  const { getSpansForAsset } = useTextSpanHighlight();
 
   // Media blob URLs are now managed by Zustand store (storeMediaBlobs)
   
@@ -145,7 +147,12 @@ const AssetDetailView = ({
   
   const { results: relatedAssetsResults } = useSemanticSearch({
     query: relatedAssetsQuery,
-    enabled: !!asset && (asset.kind === 'article' || asset.kind === 'web') && !!activeInfospace?.embedding_model && relatedAssetsQuery.length > 0,
+    enabled:
+      !!asset &&
+      !!activeInfospace?.enable_related_assets &&
+      (asset.kind === 'article' || asset.kind === 'web') &&
+      !!activeInfospace?.embedding_model &&
+      relatedAssetsQuery.length > 0,
     limit: 6,
     parentAssetId: asset?.parent_asset_id || undefined,
     assetKinds: ['article', 'web'],
@@ -547,8 +554,8 @@ const AssetDetailView = ({
       );
     }
 
-    // Check if we have text spans to highlight for this asset
-    const textSpans = (assetId !== undefined) ? getHighlightsForAsset(assetId, assetUuid) : [];
+    // Check if we have text spans to highlight for this asset (only if highlighting is enabled)
+    const textSpans = (enableHighlighting && assetId !== undefined) ? getSpansForAsset(assetId, assetUuid) : [];
     const shouldHighlight = textSpans.length > 0;
 
     return (
@@ -559,7 +566,7 @@ const AssetDetailView = ({
               <HighlightedText 
                 text={text} 
                 spans={textSpans}
-                highlightClassName="bg-yellow-200 dark:bg-yellow-800/70 px-1 rounded text-yellow-900 dark:text-yellow-100 z-[1001]"
+                highlightClassName="bg-yellow-200 dark:bg-yellow-800/70 px-1 text-yellow-900 dark:text-yellow-100 z-[1001]"
               />
             ) : (
               text
@@ -800,9 +807,16 @@ const AudioAssetContent = ({ asset, renderEditableField, AuthenticatedAudio }: {
         </div>
       );
 
-const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren, childAssets, setActiveTab, handleChildAssetClick, AuthenticatedImage }: { asset: AssetRead, renderEditableField: any, renderTextDisplay: any, hasChildren: boolean, childAssets: AssetRead[], setActiveTab: any, handleChildAssetClick: any, AuthenticatedImage: any }) => {
+const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren, childAssets, setActiveTab, handleChildAssetClick, AuthenticatedImage, enableHighlighting = false }: { asset: AssetRead, renderEditableField: any, renderTextDisplay: any, hasChildren: boolean, childAssets: AssetRead[], setActiveTab: any, handleChildAssetClick: any, AuthenticatedImage: any, enableHighlighting?: boolean }) => {
   // Add state for featured image swapping
   const [currentFeaturedImage, setCurrentFeaturedImage] = React.useState<AssetRead | null>(null);
+
+  // Text span highlighting - safe hook returns null when no provider is available
+  const highlightCtx = useTextSpanHighlightSafe();
+  const webTextSpans = (enableHighlighting && highlightCtx && asset.text_content) 
+    ? highlightCtx.getSpansForAsset(asset.id, asset.uuid) 
+    : [];
+  const shouldHighlightWeb = webTextSpans.length > 0;
 
   // Helper function to check if an image URL is a .gif file
   const isGifImage = (url: string): boolean => {
@@ -966,10 +980,20 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
           {/* Article Text Content */}
           {asset.text_content && (
             <div className="w-full min-w-0 max-w-full overflow-hidden">
-              <TextContentRenderer 
-                content={asset.text_content} 
-                className="w-full min-w-0 max-w-full overflow-hidden break-words"
-              />
+              {shouldHighlightWeb ? (
+                <div className="prose prose-sm md:prose-base dark:prose-invert max-w-none w-full min-w-0 max-w-full overflow-hidden break-words">
+                  <HighlightedText 
+                    text={asset.text_content} 
+                    spans={webTextSpans}
+                    highlightClassName="bg-yellow-200 dark:bg-yellow-800/70 px-0.5 text-yellow-900 dark:text-yellow-100"
+                  />
+                </div>
+              ) : (
+                <TextContentRenderer 
+                  content={asset.text_content} 
+                  className="w-full min-w-0 max-w-full overflow-hidden break-words"
+                />
+              )}
             </div>
           )}
 
@@ -1140,19 +1164,6 @@ const CsvOverviewContent = React.memo(({ asset, renderEditableField, hasChildren
                   <li>The header row is not at the expected position</li>
                   <li>Processing failed during initial upload</li>
                 </ul>
-                <div className="mt-3 p-2 bg-yellow-100 border-yellow-300 rounded text-xs w-full max-w-full">
-                  <div className="font-semibold mb-1">Debug Info:</div>
-                  <div className="space-y-1 break-words">
-                    <div>Child assets array length: {childAssets.length}</div>
-                    <div>Is loading children: {isLoadingChildren ? 'Yes' : 'No'}</div>
-                    <div className="min-w-0">Children error: <span className="break-all">{childrenError || 'None'}</span></div>
-                    <div>Has children computed: {hasChildren ? 'Yes' : 'No'}</div>
-                    <div>Is hierarchical asset: {isHierarchicalAsset ? 'Yes' : 'No'}</div>
-                    <div>Asset ID: {asset.id}</div>
-                    <div>Active tab: {activeTab}</div>
-                  </div>
-                  <button onClick={() => { console.log('=== DEBUG STATE ==='); console.log('childAssets:', childAssets); console.log('hasChildren:', hasChildren); console.log('isLoadingChildren:', isLoadingChildren); console.log('childrenError:', childrenError); console.log('isHierarchicalAsset:', isHierarchicalAsset); fetchChildren(asset.id, asset); }} className="mt-2 px-2 py-1 bg-blue-100 border-blue-300 rounded hover:bg-blue-200 text-blue-800 text-xs">🔍 Debug & Refetch</button>
-                </div>
                 <div className="flex flex-wrap gap-2 mt-3">
                   <Button variant="outline" size="sm" onClick={() => handleReprocessAsset(false)} disabled={isReprocessing} className="h-7 px-2 text-xs bg-blue-100 border-blue-300 hover:bg-blue-200">{isReprocessing ? <><Loader2 className="h-3 w-3 animate-spin mr-1" />Processing...</> : <><RefreshCw className="h-3 w-3 mr-1" />Auto Reprocess</>}</Button>
                   <Button variant="outline" size="sm" onClick={() => setIsReprocessDialogOpen(true)} disabled={isReprocessing} className="h-7 px-2 text-xs bg-orange-100 border-orange-300 hover:bg-orange-200"><Settings className="h-3 w-3 mr-1" />Custom Options</Button>
@@ -1266,6 +1277,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
             childAssets={childAssets}
             onEdit={onEdit}
             onAssetClick={handleChildAssetClick}
+            enableHighlighting={enableHighlighting}
           />
         );
       case 'image':
@@ -1286,7 +1298,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
       case 'audio':
         return <AudioAssetContent asset={asset} renderEditableField={renderEditableField} AuthenticatedAudio={AuthenticatedAudio} />;
       case 'web':
-        return <WebContent asset={asset} renderEditableField={renderEditableField} renderTextDisplay={renderTextDisplay} hasChildren={hasChildren} childAssets={childAssets} setActiveTab={setActiveTab} handleChildAssetClick={handleChildAssetClick} AuthenticatedImage={AuthenticatedImage} />;
+        return <WebContent asset={asset} renderEditableField={renderEditableField} renderTextDisplay={renderTextDisplay} hasChildren={hasChildren} childAssets={childAssets} setActiveTab={setActiveTab} handleChildAssetClick={handleChildAssetClick} AuthenticatedImage={AuthenticatedImage} enableHighlighting={enableHighlighting} />;
       case 'csv':
         return <CsvOverviewContent asset={asset} renderEditableField={renderEditableField} hasChildren={hasChildren} childAssets={childAssets} isReprocessing={isReprocessing} handleReprocessAsset={handleReprocessAsset} setIsReprocessDialogOpen={setIsReprocessDialogOpen} setSelectedChildAsset={setSelectedChildAsset} isLoadingChildren={isLoadingChildren} childrenError={childrenError} isHierarchicalAsset={isHierarchicalAsset} fetchChildren={fetchChildren} renderTextDisplay={renderTextDisplay} setActiveTab={setActiveTab} activeInfospace={activeInfospace} getAssetById={getAssetById} />;
       case 'csv_row':
@@ -1683,7 +1695,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
         </div>
 
         {/* PDF Pages Grid - Compact thumbnails */}
-        <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
           {sortedPages.map((pageAsset, index) => (
             <Card
               key={pageAsset.id}
@@ -1826,7 +1838,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
   };
 
   return (
-    <div className="asset-detail-view w-full h-full flex flex-col max-w-full overflow-hidden">
+    <div className="asset-detail-view w-full h-full flex flex-col max-w-full">
       {isLoadingAsset ? (
         <div className="flex items-center justify-center h-full">
           <Loader2 className="h-6 w-6 animate-spin mr-2" />
@@ -1914,7 +1926,10 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                   {renderContent()}
                   
                   {/* Related Assets - Semantic Search */}
-                  {asset && (asset.kind === 'article' || asset.kind === 'web') && activeInfospace?.embedding_model && (
+                  {asset &&
+                    activeInfospace?.enable_related_assets &&
+                    (asset.kind === 'article' || asset.kind === 'web') &&
+                    activeInfospace?.embedding_model && (
                     <div className="mt-8 pt-8 border-t">
                       <AssetFeedView
                         title="Related Articles"

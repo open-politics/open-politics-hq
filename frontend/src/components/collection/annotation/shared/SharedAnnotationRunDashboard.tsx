@@ -1,7 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Button } from '@/components/ui/button';
 import { PanelRenderer } from '@/components/collection/annotation/PanelRenderer';
 import { FormattedAnnotation, AnnotationResultStatus } from '@/lib/annotations/types';
 import { AnnotationSchemaRead, AssetRead, AssetKind } from '@/client';
@@ -17,10 +18,18 @@ import {
   BarChart3,
   Target,
   Eye,
-  Lock
+  Lock,
+  Import,
+  RotateCcw
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { useParams, useRouter } from 'next/navigation';
+import { useShareableStore } from '@/zustand_stores/storeShareables';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
+import { toast } from 'sonner';
+import { ImportResourceDialog } from '@/components/collection/assets/Helper/ImportResourceDialog';
+import useAuth from '@/hooks/useAuth';
 
 interface AnnotationRunPreview {
   id: number;
@@ -66,9 +75,18 @@ interface AnnotationRunPreview {
 
 interface SharedAnnotationRunDashboardProps {
   runData: AnnotationRunPreview;
+  token?: string; // Optional share token for import functionality
 }
 
-const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> = ({ runData }) => {
+const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> = ({ runData, token: tokenProp }) => {
+  const params = useParams();
+  const router = useRouter();
+  const token = tokenProp || (params?.token as string | undefined);
+  const { importResourceFromToken } = useShareableStore();
+  const activeInfospaceId = useInfospaceStore((state) => state.activeInfospace?.id);
+  const { user } = useAuth();
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const getStatusIcon = (status: string) => {
     switch (status?.toLowerCase()) {
       case 'completed':
@@ -189,8 +207,8 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
     }];
   }, []);
 
-  // Create default dashboard panels if views_config is not available
-  const dashboardPanels = useMemo<PanelViewConfig[]>(() => {
+  // Compute initial panels from shared config
+  const initialPanels = useMemo<PanelViewConfig[]>(() => {
     if (runData.views_config && runData.views_config.length > 0) {
       const dashboardConfig = runData.views_config[0];
       const originalPanels = dashboardConfig.panels || [];
@@ -364,15 +382,103 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
         collapsed: false,
       },
     ];
-  }, [runData.views_config, formattedSchemas]);
+  }, [runData.views_config, formattedSchemas, runData.target_schemas]);
 
-  // No-op functions for read-only mode
-  const handleUpdatePanel = () => {};
-  const handleRemovePanel = () => {};
+  // Local state for editable dashboard panels (starts with shared config)
+  const [dashboardPanels, setDashboardPanels] = useState<PanelViewConfig[]>(initialPanels);
+  const [hasChanges, setHasChanges] = useState(false);
+
+  // Update local panels when shared config changes
+  useEffect(() => {
+    setDashboardPanels(initialPanels);
+    setHasChanges(false);
+  }, [initialPanels]);
+
+  // Panel update handler
+  const handleUpdatePanel = useCallback((panelId: string, updates: Partial<PanelViewConfig>) => {
+    setDashboardPanels(prevPanels => {
+      const panelIndex = prevPanels.findIndex(p => p.id === panelId);
+      if (panelIndex === -1) return prevPanels;
+
+      const currentPanel = prevPanels[panelIndex];
+      const updatedPanel: PanelViewConfig = {
+        ...currentPanel,
+        ...updates,
+        gridPos: updates.gridPos 
+          ? {
+              x: Math.max(0, Math.min(11, updates.gridPos.x ?? currentPanel.gridPos.x)),
+              y: Math.max(0, updates.gridPos.y ?? currentPanel.gridPos.y),
+              w: Math.max(1, Math.min(12, updates.gridPos.w ?? currentPanel.gridPos.w)),
+              h: Math.max(1, updates.gridPos.h ?? currentPanel.gridPos.h),
+            }
+          : currentPanel.gridPos,
+        settings: updates.settings 
+          ? { ...currentPanel.settings, ...updates.settings }
+          : currentPanel.settings,
+        filters: updates.filters 
+          ? { ...currentPanel.filters, ...updates.filters }
+          : currentPanel.filters,
+      };
+
+      const newPanels = [...prevPanels];
+      newPanels[panelIndex] = updatedPanel;
+      setHasChanges(true);
+      return newPanels;
+    });
+  }, []);
+
+  // Panel remove handler
+  const handleRemovePanel = useCallback((panelId: string) => {
+    setDashboardPanels(prevPanels => {
+      const filtered = prevPanels.filter(p => p.id !== panelId);
+      setHasChanges(true);
+      return filtered;
+    });
+  }, []);
+
+  // Reset to shared config
+  const handleResetToShared = useCallback(() => {
+    setDashboardPanels(initialPanels);
+    setHasChanges(false);
+    toast.success('Dashboard reset to shared configuration');
+  }, [initialPanels]);
+
+  // Import handler
+  const handleOpenImportDialog = useCallback(() => {
+    if (!token) {
+      toast.error('Share token not available');
+      return;
+    }
+    setIsImportDialogOpen(true);
+  }, [token]);
+
+  const executeImport = useCallback(async (targetInfospaceId: number) => {
+    if (!token) return;
+
+    setIsImporting(true);
+    try {
+      const result = await importResourceFromToken(token, targetInfospaceId);
+
+      if (result && result.imported_resource_id) {
+        toast.success(`Successfully imported "${result.imported_resource_name}" into your Infospace.`);
+        
+        // Redirect to the imported run
+        router.push(`/infospace/${targetInfospaceId}/annotations?runId=${result.imported_resource_id}`);
+      } else {
+        toast.error('Failed to import annotation run');
+      }
+    } catch (error) {
+      console.error('Import error:', error);
+      toast.error('An unexpected error occurred during import.');
+    } finally {
+      setIsImporting(false);
+      setIsImportDialogOpen(false);
+    }
+  }, [token, importResourceFromToken, router]);
 
   return (
     <div className="min-h-screen py-8">
-      <div className="container mx-auto px-4 max-w-7xl">
+      <div className="container mx-auto px-4 max-w-full">
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-start justify-between mb-4">
@@ -388,11 +494,13 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
               </div>
             </div>
             
-            <div className="flex items-center gap-3">
-              <Badge variant="outline" className="text-sm px-3 py-1">
-                <Eye className="h-3 w-3 mr-1" />
-                Read-only View
-              </Badge>
+            <div className="flex items-center gap-3 flex-wrap">
+              {hasChanges && (
+                <Badge variant="outline" className="text-sm px-3 py-1 border-amber-300 text-amber-700">
+                  <div className="w-2 h-2 bg-amber-500 rounded-full mr-1.5 animate-pulse" />
+                  Unsaved changes
+                </Badge>
+              )}
               <div className="flex items-center gap-2">
                 {getStatusIcon(runData.status)}
                 <Badge className={cn("text-sm px-4 py-2", getStatusColor(runData.status))}>
@@ -422,6 +530,54 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
               <Target className="h-4 w-4" />
               <span>{runData.target_schemas.length} schemas</span>
             </div>
+          </div>
+        </div>
+
+        {/* Toolbar */}
+        <div className="mb-6 flex items-center justify-between gap-4 p-4 bg-card rounded-lg border shadow-sm">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Eye className="h-4 w-4" />
+            <span>Editable dashboard view - changes are local only</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleResetToShared}
+              disabled={!hasChanges}
+            >
+              <RotateCcw className="h-4 w-4 mr-2" />
+              Reset to Shared Config
+            </Button>
+            {user && activeInfospaceId ? (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleOpenImportDialog}
+                disabled={isImporting}
+              >
+                {isImporting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Importing...
+                  </>
+                ) : (
+                  <>
+                    <Import className="h-4 w-4 mr-2" />
+                    Import to my Infospace
+                  </>
+                )}
+              </Button>
+            ) : (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => router.push(`/login?redirect=/share/${token}`)}
+              >
+                <Lock className="h-4 w-4 mr-2" />
+                Log In to Import
+              </Button>
+            )}
           </div>
         </div>
 
@@ -468,9 +624,10 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
                 allSchemas={formattedSchemas}
                 allSources={formattedSources}
                 allAssets={formattedAssets}
+                activeRunId={runData.id}
                 onUpdatePanel={handleUpdatePanel}
                 onRemovePanel={handleRemovePanel}
-                // Shared dashboard is read-only: disable all interactive features
+                // Editable mode: allow filter/config changes but disable asset navigation
                 // Assets don't exist in viewer's infospace, so navigation would fail
                 onResultSelect={undefined}
                 onRetrySingleResult={undefined}
@@ -510,16 +667,27 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
 
         {/* Footer */}
         <div className="mt-8 pt-6 border-t border-border/50">
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <div className="flex items-center justify-between text-sm text-muted-foreground flex-wrap gap-4">
             <div className="flex items-center gap-2">
-              <Lock className="h-4 w-4" />
-              <span>This is a read-only view of a shared annotation run</span>
+              <Eye className="h-4 w-4" />
+              <span>Editable dashboard - changes are local and cannot be saved</span>
             </div>
             <div>
               <span>Run ID: {runData.id} | UUID: {runData.uuid}</span>
             </div>
           </div>
         </div>
+
+        {/* Import Dialog */}
+        {isImportDialogOpen && token && (
+          <ImportResourceDialog
+            isOpen={isImportDialogOpen}
+            onClose={() => setIsImportDialogOpen(false)}
+            onConfirm={executeImport}
+            resourceName={runData.name}
+            isImporting={isImporting}
+          />
+        )}
       </div>
     </div>
   );

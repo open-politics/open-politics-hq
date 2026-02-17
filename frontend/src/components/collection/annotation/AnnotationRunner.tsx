@@ -272,6 +272,7 @@ export default function AnnotationRunner({
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
+  const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const [isSchemesCollapsed, setIsSchemesCollapsed] = useState(false);
   const [isSourceStatsOpen, setIsSourceStatsOpen] = useState(false);
   const [isAssetSelectorOpen, setIsAssetSelectorOpen] = useState(false);
@@ -450,18 +451,34 @@ export default function AnnotationRunner({
                 </TooltipProvider>
               </div>
               <div className="flex items-center gap-1 mt-1">
-                 <span
-                    id="run-description-editable"
-                    className={`text-sm px-1 truncate ${isEditingDescription ? 'outline outline-1 outline-primary bg-background w-full' : 'hover:bg-muted/50 cursor-text italic text-muted-foreground'}`}
-                    contentEditable={isEditingDescription ? 'true' : 'false'}
-                    suppressContentEditableWarning={true}
-                    onBlur={(e) => handleUpdate('description', e.currentTarget.innerText)}
-                    onKeyDown={(e) => handleKeyDown(e, 'description')}
-                    onClick={() => !isEditingDescription && handleEditClick('description')}
-                    title={activeRun.description || 'Add a description...'}
-                >
-                    {activeRun.description || 'Add a description...'}
-                </span>
+                <div className="flex-1 min-w-0">
+                  <span
+                      id="run-description-editable"
+                      className={`text-sm px-1 ${isDescriptionExpanded ? '' : 'line-clamp-2'} ${isEditingDescription ? 'outline outline-1 outline-primary bg-background w-full' : 'hover:bg-muted/50 cursor-text italic text-muted-foreground'}`}
+                      contentEditable={isEditingDescription ? 'true' : 'false'}
+                      suppressContentEditableWarning={true}
+                      onBlur={(e) => handleUpdate('description', e.currentTarget.innerText)}
+                      onKeyDown={(e) => handleKeyDown(e, 'description')}
+                      onClick={() => !isEditingDescription && handleEditClick('description')}
+                      title={activeRun.description || 'Add a description...'}
+                  >
+                      {activeRun.description || 'Add a description...'}
+                  </span>
+                  {activeRun.description && activeRun.description.length > 100 && !isEditingDescription && (
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      className="h-5 px-1 text-xs mt-0.5" 
+                      onClick={() => setIsDescriptionExpanded(!isDescriptionExpanded)}
+                    >
+                      {isDescriptionExpanded ? (
+                        <><ChevronUp className="h-3 w-3 mr-0.5" /> Show Less</>
+                      ) : (
+                        <><ChevronDown className="h-3 w-3 mr-0.5" /> Show More</>
+                      )}
+                    </Button>
+                  )}
+                </div>
                  <TooltipProvider delayDuration={100}>
                     <Tooltip>
                         <TooltipTrigger asChild>
@@ -989,6 +1006,7 @@ export default function AnnotationRunner({
                 <AnnotationResultDisplay
                   result={selectedAnnotationResult}
                   schema={runSchemes.find(s => s.id === selectedAnnotationResult.schema_id) || runSchemes[0]}
+                  asset={currentRunAssets?.find(a => a.id === selectedAnnotationResult.asset_id) ?? null}
                   renderContext="dialog"
                   compact={false}
                 />
@@ -999,6 +1017,7 @@ export default function AnnotationRunner({
                     onLoadIntoRunner={() => {}}
                     onEdit={() => {}}
                     highlightAssetIdOnOpen={null}
+                    enableHighlighting={true}
                 />
               ) : selectedMapPointForDialog ? (
                 <div className="space-y-4">
@@ -1011,6 +1030,7 @@ export default function AnnotationRunner({
                               onLoadIntoRunner={() => {}}
                               onEdit={() => {}}
                               highlightAssetIdOnOpen={null}
+                              enableHighlighting={true}
                            />
                       </div>
                   ))}
@@ -1063,17 +1083,16 @@ export default function AnnotationRunner({
         activeRunId: activeRun?.id
       });
       return (
-        <TextSpanHighlightProvider>
-          <AssetDetailOverlay
-            open={isAssetDetailOpen}
-            onClose={closeAssetDetail}
-            assetId={selectedAssetIdForDetail}
-            highlightAssetIdOnOpen={null}
-            annotationResults={currentRunResults}
-            schemas={runSchemes}
-            // Don't pass onLoadIntoRunner since we're already in the runner context
-          />
-        </TextSpanHighlightProvider>
+        <AssetDetailOverlay
+          open={isAssetDetailOpen}
+          onClose={closeAssetDetail}
+          assetId={selectedAssetIdForDetail}
+          highlightAssetIdOnOpen={null}
+          annotationResults={currentRunResults}
+          schemas={runSchemes}
+          activeRunId={activeRun?.id}
+          // Don't pass onLoadIntoRunner since we're already in the runner context
+        />
       );
     })()}
 
