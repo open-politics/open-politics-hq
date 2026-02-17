@@ -1,0 +1,81 @@
+/**
+ * Search utilities for annotation values with nested array support.
+ * 
+ * This module provides functions for searching within annotation values,
+ * including recursive traversal of nested arrays and objects.
+ * 
+ * Backend Migration Path:
+ * When migrating to backend search, these functions will be replaced
+ * with API calls to GET /api/v1/infospaces/{id}/runs/{run_id}/search
+ */
+
+/**
+ * Recursively search for a term within an annotation value.
+ * Searches through strings, numbers, arrays, and nested objects.
+ * 
+ * @param value - The value to search within (can be any type)
+ * @param searchTerm - The search term (will be lowercased for comparison)
+ * @returns true if the search term is found anywhere in the value structure
+ */
+export function searchInAnnotationValue(value: any, searchTerm: string): boolean {
+  if (value === null || value === undefined) return false;
+  
+  const searchLower = searchTerm.toLowerCase();
+  
+  // Search in strings
+  if (typeof value === 'string') {
+    return value.toLowerCase().includes(searchLower);
+  }
+  
+  // Search in numbers and booleans (convert to string)
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value).toLowerCase().includes(searchLower);
+  }
+  
+  // Search in arrays (recursively check each item)
+  if (Array.isArray(value)) {
+    return value.some(item => searchInAnnotationValue(item, searchLower));
+  }
+  
+  // Search in objects (recursively check each property value)
+  if (typeof value === 'object') {
+    return Object.values(value).some(v => searchInAnnotationValue(v, searchLower));
+  }
+  
+  return false;
+}
+
+/**
+ * Search annotations with support for nested arrays.
+ * This is a frontend implementation that can be replaced with backend API calls.
+ * 
+ * @param annotations - Array of annotations to search
+ * @param query - Search query string
+ * @param options - Search options
+ * @returns Array of matching annotations
+ */
+export function searchAnnotations(
+  annotations: any[],
+  query: string,
+  options: { searchNestedArrays?: boolean } = {}
+): any[] {
+  if (!query || !query.trim()) {
+    return annotations;
+  }
+  
+  const searchTerm = query.trim();
+  
+  return annotations.filter(annotation => {
+    // Search in annotation value
+    if (annotation.value) {
+      if (searchInAnnotationValue(annotation.value, searchTerm)) {
+        return true;
+      }
+    }
+    
+    // Search in other annotation properties if needed
+    // (e.g., asset title, source name - these are typically handled at table level)
+    
+    return false;
+  });
+}
