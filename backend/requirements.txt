@@ -51,4 +51,3 @@ lxml[html_clean]
 uvloop
 httptools
 openpyxl
-langdetect

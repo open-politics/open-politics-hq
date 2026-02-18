@@ -4,7 +4,9 @@ Celery app configuration.
 import os
 import logging
 from celery import Celery
-from celery.schedules import crontab 
+from celery.schedules import crontab
+from kombu import Queue
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -18,12 +20,26 @@ celery = Celery(
     backend=redis_url,
 )
 
+# Task queue routing: separate queues for concurrency limits and rate limiting
+# default: flow execution, source polling, dispatch
+# processing: content processing, metadata extraction (CPU-bound)
+# llm: language detection, quality scoring, annotation (LLM API rate limits)
+# embedding: embed_task, entity similarity (embedding API limits)
+# external_api: geocoding, OCR (external API limits)
+CELERY_TASK_QUEUES = (
+    Queue('default'),
+    Queue('processing'),
+    Queue('llm'),
+    Queue('embedding'),
+    Queue('external_api'),
+)
+
 # Celery configuration
 celery.conf.update(
     broker_url=redis_url,
     result_backend=redis_url,
+    result_expires=86400,  # 24h TTL for task results
     # Connection retry on broker failures
-
     broker_connection_retry_on_startup=True,
     broker_connection_retry=True,
     broker_connection_max_retries=10,
@@ -39,32 +55,66 @@ celery.conf.update(
     result_serializer='json',
     enable_utc=True,
     timezone='UTC',
+    # Queue routing
+    task_queues=CELERY_TASK_QUEUES,
+    task_default_queue='default',
+    task_routes={
+        'app.api.annotation.tasks.annotate.process_annotation_run': {'queue': 'llm'},
+        'app.api.annotation.tasks.annotate.retry_failed_annotations': {'queue': 'llm'},
+        'process_content': {'queue': 'processing'},
+        'reprocess_content': {'queue': 'processing'},
+        'ingest_bulk_urls': {'queue': 'processing'},
+        'ingest_bulk_files': {'queue': 'processing'},
+        'batch_process_pending': {'queue': 'processing'},
+        'batch_enrich': {'queue': 'processing'},
+        'ingest_archive_task': {'queue': 'processing'},
+        'import_directory_task': {'queue': 'processing'},
+        'embed_asset': {'queue': 'embedding'},
+        'embed_infospace': {'queue': 'embedding'},
+        'embed_batch_assets': {'queue': 'embedding'},
+        'reactive_embed_pending_assets': {'queue': 'embedding'},
+        'reactive_curate_annotated': {'queue': 'llm'},
+        'enrich_geocoding': {'queue': 'external_api'},
+    },
+    task_default_delivery_mode=2,  # persistent
+    # Task time limits (avoid runaway workers)
+    task_soft_time_limit=3600,
+    task_time_limit=3720,
     # Task imports - only load when worker starts
     imports=(
-        'app.api.tasks.annotate',
-        'app.api.tasks.ingest',
-        'app.api.tasks.schedule',
-        'app.api.tasks.content_tasks',
-        'app.api.tasks.dataset_tasks',  # Archive/dataset ingestion
-        'app.api.tasks.batch_processing',  # Batch process PENDING assets
-        'app.api.tasks.backup',
-        'app.api.tasks.user_backup',
-        'app.api.tasks.embed',
-        'app.api.tasks.flow_tasks',  # Unified Flow execution
-        'app.api.tasks.source_monitoring',  # Source polling (RSS, search, etc.)
+        'app.core.dispatch',
+        'app.api.content.watchers',
+        'app.api.annotation.watchers',
+        'app.api.annotation.tasks.annotate',
+        'app.api.graph.tasks',
+        'app.api.content.tasks.ingest',
+        'app.api.flow.tasks.schedule',
+        'app.api.content.tasks.content_tasks',
+        'app.api.content.tasks.dataset_tasks',
+        'app.api.content.tasks.batch_processing',
+        'app.api.content.tasks.enrichment',
+        'app.api.sharing.tasks.backup',
+        'app.api.sharing.tasks.user_backup',
+        'app.api.search.tasks.embed',
+        'app.api.flow.tasks.flow_tasks',
+        'app.api.content.tasks.source_monitoring',
     ),
     # Beat schedule
     beat_schedule={
         'check-recurring-tasks-every-minute': {
-            'task': 'app.api.tasks.schedule.check_recurring_tasks',
+            'task': 'app.api.flow.tasks.schedule.check_recurring_tasks',
             'schedule': 60.0,
         },
         'check-on-arrival-flows-every-minute': {
-            'task': 'app.api.tasks.flow_tasks.check_on_arrival_flows',
+            'task': 'app.api.flow.tasks.flow_tasks.check_on_arrival_flows',
             'schedule': 60.0,
         },
         'poll-active-sources-every-minute': {
-            'task': 'app.api.tasks.source_monitoring.poll_active_sources',
+            'task': 'app.api.content.tasks.source_monitoring.poll_active_sources',
+            'schedule': 60.0,
+        },
+        'dispatch-reactive-work-every-minute': {
+            'task': 'dispatch_reactive_work',
             'schedule': 60.0,
         },
         'automatic-backup-all-infospaces': {

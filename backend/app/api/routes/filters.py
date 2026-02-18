@@ -5,7 +5,7 @@ from sqlmodel import Session
 from app.api import deps
 from app.api.deps import CurrentUser
 from app.schemas import Message
-from app.api.services.filter_service import FilterService, FilterExpression, FilterFactory
+from app.api.flow.services import FilterService, FilterExpression, FilterFactory
 
 router = APIRouter()
 
@@ -197,7 +197,7 @@ def create_threshold_filter(
     current_user: CurrentUser
 ):
     """Create a threshold filter using the factory."""
-    from app.api.services.filter_service import FilterOperator
+    from app.api.flow.services import FilterOperator
     
     try:
         filter_expr = FilterFactory.create_threshold_filter(field, threshold, FilterOperator(operator))

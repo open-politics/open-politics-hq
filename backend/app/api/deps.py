@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 from collections.abc import Generator
-from typing import Annotated, Any, Optional, Union, TYPE_CHECKING
+from typing import Annotated, Any, Optional, Union
 
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
@@ -34,56 +34,20 @@ from app.api.providers.factory import (
     create_geocoding_provider,
     create_model_registry,
 )
-from app.api.services.annotation_service import AnnotationService
-from app.api.services.infospace_service import InfospaceService 
-from app.api.services.shareable_service import ShareableService 
-from app.api.services.package_service import PackageService
-from app.api.services.bundle_service import BundleService 
-from app.api.services.asset_service import AssetService 
-from app.api.services.analysis_service import AnalysisService
-from app.api.services.dataset_service import DatasetService
-from app.api.services.content_ingestion_service import ContentIngestionService
-from app.api.services.backup_service import BackupService
-from app.api.services.user_backup_service import UserBackupService
-from app.api.services.task_service import TaskService
-from app.api.services.source_service import SourceService
-from app.api.services.chunking_service import ChunkingService
-from app.api.services.embedding_service import EmbeddingService
-from app.api.services.conversation_service import IntelligenceConversationService
-
-# --- Service Class Imports --- 
-# Use TYPE_CHECKING to ensure imports are only for type analysis, avoiding runtime circularities
-# The actual classes will be resolved from their modules by FastAPI when dependencies are built.
-if TYPE_CHECKING:
-    from app.api.services.annotation_service import AnnotationService
-    from app.api.services.infospace_service import InfospaceService 
-    from app.api.services.shareable_service import ShareableService 
-    from app.api.services.package_service import PackageService 
-    from app.api.services.bundle_service import BundleService 
-    from app.api.services.asset_service import AssetService 
-    from app.api.services.task_service import TaskService 
-    from app.api.services.analysis_service import AnalysisService
-    from app.api.services.dataset_service import DatasetService
-
-# These imports are needed if service classes are directly referenced in `Annotated` without string literals,
-# but using string literals (e.g., Annotated['InfospaceService', ...]) is safer for complex DI graphs.
-# For Pylance to be happy with direct types in Annotated, these imports must be resolvable.
-from app.api.services.annotation_service import AnnotationService
-from app.api.services.infospace_service import InfospaceService 
-from app.api.services.shareable_service import ShareableService 
-from app.api.services.package_service import PackageService
-from app.api.services.bundle_service import BundleService 
-from app.api.services.asset_service import AssetService 
-from app.api.services.analysis_service import AnalysisService
-from app.api.services.dataset_service import DatasetService
-from app.api.services.content_ingestion_service import ContentIngestionService
-from app.api.services.backup_service import BackupService
-from app.api.services.user_backup_service import UserBackupService
-from app.api.services.task_service import TaskService
-from app.api.services.source_service import SourceService
-from app.api.services.chunking_service import ChunkingService
-from app.api.services.embedding_service import EmbeddingService
-from app.api.services.conversation_service import IntelligenceConversationService
+# --- Service Class Imports (direct paths to avoid circular import) ---
+from app.api.annotation.services import AnnotationService
+from app.api.identity.services import InfospaceService
+from app.api.sharing.services import ShareableService, PackageService, BackupService, UserBackupService
+from app.api.content.services import (
+    AssetService, BundleService, SourceService, ContentIngestionService,
+    DatasetService,
+)
+from app.api.analysis.services import AnalysisService
+from app.api.flow.services import TaskService
+from app.api.search.services import ChunkingService, EmbeddingService
+from app.api.conversational_intelligence.services.conversation_service import (
+    IntelligenceConversationService,
+)
 
 logger = logging.getLogger(__name__) 
 
@@ -94,6 +58,25 @@ reusable_oauth2 = OAuth2PasswordBearer(
 )
 
 SettingsDep = Annotated[AppSettings, Depends(lambda: settings)]
+
+
+def check_upload_size(request: Request, settings: SettingsDep) -> None:
+    """Enforce MAX_UPLOAD_SIZE_BYTES from config. Raise 413 if exceeded."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            size = int(content_length)
+            if size > settings.MAX_UPLOAD_SIZE_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Request body exceeds maximum size of {settings.MAX_UPLOAD_SIZE_BYTES} bytes",
+                )
+        except ValueError:
+            pass
+
+
+CheckUploadSizeDep = Annotated[None, Depends(check_upload_size)]
+
 
 def get_db() -> Generator[Session, None, None]:
     with Session(engine) as session:
@@ -253,7 +236,7 @@ def get_ingestion_context_factory(
         infospace_id: int,
         options: Optional[dict] = None,
     ):
-        from app.api.handlers.base import IngestionContext
+        from app.api.content.handlers import IngestionContext
         return IngestionContext(
             session=session,
             storage_provider=storage_provider,

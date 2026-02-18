@@ -1,24 +1,149 @@
-api/
-  analysis/     -> analysis adapters for annotation results (RAG, graph, time series)
-  handlers/     -> input adaptation (file, web, directory, archive, RSS, search, text)
-                   RSSHandler also: preview_rss_feed, discover_rss_feeds_from_awesome_repo,
-                   ingest_from_awesome_repo (static/class methods)
-  mcp/          -> MCP server & functions
-  processors/   -> content transformation only (PDF->pages, CSV->rows, Web->scraped content)
-  providers/    -> external services (storage, LLM, search, embedding, geocoding)
-  routes/       -> HTTP surface (FastAPI routers)
-  services/     -> business logic orchestration:
-      content_ingestion_service.py -> thin compatibility shim (ingest_content, compose_article, etc.)
-      processing_service.py        -> Phase 1–3 pipeline, reprocess, CSV reprocessing
-      search_service.py            -> text + semantic search over assets
-      bundle_service.py            -> bundle CRUD
-      asset_service.py             -> asset CRUD
-  tasks/        -> Celery background jobs (batch_process_pending, batch_enrich, annotation)
-  utils/        -> shared domain utilities:
-      content_types.py      -> THE registry: what types exist, their properties, extensions, processors
-      content_detection.py -> reclassification checks (flat if-checks, one function)
-      facets.py             -> well-known source_metadata.facets keys + query helpers
-      enrichers.py          -> enricher registry (language_detection, quality_score)
-      entity_resolution.py  -> entity matching (alias + embedding similarity)
-      tree_builder.py       -> tree node construction for tree API
-  v1/ (legacy)  -> versioned API sub-routers (entities, locations, satellite, search)
+# Backend API Directory Overview
+
+Reference for the domain-driven backend layout. See `docs/internal/BACKEND_ARCHITECTURE_HANDOVER.md` for full handover context.
+
+---
+
+## Target Structure
+
+```
+app/
+  core/                         # Infrastructure
+    config.py                   # AppSettings
+    security.py                 # Auth, JWT, encryption
+    db.py                       # Engine, session
+    celery_app.py               # Celery config + beat schedule + queue routing
+    sso.py                      # SSO
+    initial_data.py             # Seed data
+    dispatch.py                 # ReactiveWatcher protocol, watcher registry, beat dispatcher
+    task_primitives.py          # @self_chaining_task, TaskContext factory
+
+  api/
+    content/                    # Content lifecycle
+      models.py                 # Asset, AssetChunk, Bundle, Source, SourcePollHistory,
+                                # EmbeddingModel, Dataset, DatasetIngestionJob
+      schemas.py
+      handlers/                 # File, Web, RSS, Search, Text, Archive, DirectoryImport
+                                # + resolve.py (resolve_handler — single dispatch)
+      processors/               # PDF, CSV, Excel, Web + base + strategy
+      services/                # AssetService, BundleService, SourceService,
+                                # ProcessingService, DatasetService, AssetBuilder
+      tasks/                    # ingest, content_tasks, batch_processing,
+                                # dataset_tasks, source_monitoring, enrichment
+      types.py                  # ContentTypeRegistry, ContentTypeDescriptor
+      facets.py                 # WELL_KNOWN_FACETS, facet constants + query helpers
+      enrichers.py              # Enricher registry + enrichment watchers (content/watchers.py)
+      detection.py              # Content kind reclassification
+      query.py                  # AssetQuery composable builder
+
+    annotation/                 # Annotation lifecycle
+      models.py                 # AnnotationSchema, AnnotationRun, Annotation,
+                                # Justification, RunSchemaLink, RunAggregate
+      schemas.py
+      services/                 # AnnotationService
+      tasks/                    # annotate (self-chaining), retry
+      model_factory.py          # Dynamic pydantic from JSON schema
+      promotion.py              # PromotionRule system
+
+    graph/                      # Knowledge graph
+      models.py                 # EntityCanonical, FragmentCuration
+      schemas.py
+      services/                 # GraphService (query, traversal, curation, merge)
+      resolution.py             # Entity resolution (alias + embedding)
+
+    flow/                       # Automation & orchestration
+      models.py                 # Flow, FlowExecution, Task
+      schemas.py
+      services/                 # FlowService, TaskService, FilterService
+      tasks/                    # flow_tasks, schedule
+
+    search/                     # Search & retrieval
+      models.py                 # SearchHistory
+      schemas.py
+      services/                 # SearchService, VectorSearchService,
+                                # EmbeddingService, ChunkingService
+      tasks/                    # embed_task
+
+    conversational_intelligence/ # AI interaction (chat, MCP)
+      models.py                 # ChatConversation, ChatConversationMessage
+      schemas.py
+      services/                 # IntelligenceConversationService
+      mcp/                      # server.py, client.py, auth.py
+
+    sharing/                    # Sharing, export, backup
+      models.py                 # ShareableLink, Package, InfospaceBackup, UserBackup
+      schemas.py
+      services/                 # ShareableService, PackageService,
+                                # BackupService, UserBackupService
+      tasks/                    # backup, user_backup
+
+    identity/                   # Users & workspaces
+      models.py                 # User, Infospace + all enums
+      schemas.py
+      services/                 # InfospaceService
+
+    analysis/                   # Pluggable adapters
+    providers/                  # Foundation services (storage, LLM, search, embedding)
+    routes/                     # HTTP surface
+    deps.py                     # DI wiring
+    main.py                     # Router registration
+    tree.py                     # Tree building (presentation logic)
+
+  models.py                     # RE-EXPORT HUB: from all domain models
+  schemas.py                    # RE-EXPORT HUB: from all domain schemas
+  main.py                       # App lifecycle
+  alembic/
+```
+
+**Note:** v1/ and v2/ are removed. Domain migration complete: handlers, processors, services, tasks live in domain modules; `deps.py` imports from domain `__init__` APIs.
+
+---
+
+## Dependency Rules
+
+Strict, one-directional. A domain may only import from domains **above** it:
+
+```
+LAYER 0 (infrastructure):  core (config, db, security, celery, dispatch, task_primitives), providers
+LAYER 1 (foundational):    identity
+LAYER 2 (content core):     content          (imports: identity, core)
+LAYER 3 (enrichment):       annotation       (imports: identity, content, core)
+                            search           (imports: identity, content, core)
+LAYER 4 (composition):      graph            (imports: identity, content, annotation, search, core)
+                            flow             (imports: identity, content, annotation, search, core)
+LAYER 5 (interaction):      conversational_intelligence (imports: identity, content, annotation, search, core)
+LAYER 6 (cross-cutting):    sharing          (imports: all above)
+OUTSIDE:                    routes, deps     (imports: any domain)
+```
+
+**Rule:** A domain never imports from a domain at its own layer or below.
+
+**Exception 1:** Cross-domain foreign keys use string references (`"user.id"`, `"asset.id"`); model files may reference other tables as strings without creating Python import dependencies.
+
+**Exception 2:** Enrichment watchers dispatch by Celery task name string, not Python import. A watcher defines `task_name` (e.g. `"enrich_geocoding"`, `"reactive_embed_pending_assets"`); the beat dispatcher calls `celery.send_task(task_name, args=[ids])`.
+
+---
+
+## Current State (Target = Actual)
+
+| Domain                      | Models | Schemas | Services | Tasks | Notes |
+|-----------------------------|--------|---------|----------|-------|-------|
+| identity                    | ✅     | ✅      | ✅       | —     | InfospaceService |
+| content                     | ✅     | ✅      | ✅       | ✅    | Handlers, processors, services, tasks in content/ |
+| annotation                  | ✅     | ✅      | ✅       | ✅    | AnnotationService, annotate task |
+| graph                       | ✅     | ✅      | ✅       | —     | GraphService, resolution.py |
+| flow                        | ✅     | ✅      | ✅       | ✅    | FlowService, TaskService, flow_tasks |
+| search                      | ✅     | ✅      | ✅       | ✅    | VectorSearchService, EmbeddingService, ChunkingService, embed task |
+| conversational_intelligence| ✅     | ✅      | ✅       | —     | MCP server, client, auth |
+| sharing                     | ✅     | ✅      | ✅       | ✅    | PackageService, BackupService, backup tasks |
+| analysis                    | ✅     | —       | ✅       | —     | Adapters in analysis/adapters/ |
+
+**Imports:** `deps.py` uses direct service paths (`from app.api.content.services import AssetService`, etc.) to avoid circular import. Celery imports domain task paths.
+
+**Embedding storage:** Dimension-class vector columns (embedding_384..1536), pgvector HNSW indexed; `embedding_json` deprecated.
+
+---
+
+## Ingestion
+
+See `INGESTION.md` (or `docs/internal/BACKEND_ARCHITECTURE_HANDOVER.md` § Ingestion Pipeline) for the ingestion pipeline: handlers → Asset creation → Phase 1–2 processing → READY. Enrichment (geocoding, embedding) is reactive via watchers.

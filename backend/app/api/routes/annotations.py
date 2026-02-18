@@ -24,9 +24,9 @@ from app.api.deps import (
     CurrentUser,
     AnnotationServiceDep,
 )
-from app.api.services.service_utils import validate_infospace_access
-from app.api.utils.entity_resolution import resolve_entity
-from app.api.services.embedding_service import EmbeddingService
+from app.api.service_utils import validate_infospace_access
+from app.api.graph.resolution import resolve_entity
+from app.api.search.services import EmbeddingService
 from sqlmodel import select, func
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

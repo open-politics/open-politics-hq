@@ -1,53 +1,13 @@
 # Ingestion Pipeline
 
-```
-ANY SOURCE                    HANDLER                         ASSET CREATED
-─────────────────────────────────────────────────────────────────────────────
-Local directory        → DirectoryImportHandler  ─┐
-Remote archive (.zip)  → ArchiveHandler           │
-File upload            → FileUploadHandler        ├→  Asset(blob_path, logical_path?, kind)
-Images (.jpg, .png…)   → DirectoryImportHandler  │      processing_status = PENDING
-URL / webpage          → WebHandler               │      (or READY if no processor)
-RSS feed               → RSSHandler               │
-Search result          → SearchHandler           ─┘
-```
+**This document has been moved.** The ingestion pipeline is documented in:
 
-```
-PROCESSING (Celery: batch_process_pending)
-─────────────────────────────────────────────────────────────────────────────
-Phase 1 ─ Metadata + Type Refinement
-  │  extract_pdf_metadata()          → source_metadata.file.*
-  │  detect_content_kind(asset)      → reclassify kind if needed
-  │                                    (e.g. image-only PDF → IMAGE)
-  ▼
-Phase 2 ─ Content Extraction
-  │  PDFProcessor.process()          → text_content, child pages
-  │  CSVProcessor.process()          → text_content, child rows
-  │  WebProcessor.process()          → scraped text_content
-  │  IMAGE (no processor)            → skip to READY
-  ▼
-Phase 3 ─ Quality Gate + Enrichment (implemented)
-     language detection              → source_metadata.facets.language (langdetect)
-     quality scoring                → source_metadata.facets.quality_score
-     OCR (future)                   → replace text_content when quality low
-```
+- **`docs/internal/BACKEND_ARCHITECTURE_HANDOVER.md`** — see § Ingestion Pipeline
+- **`directory_overview.md`** — target structure and module layout
 
-```
-KEY MODULES
-─────────────────────────────────────────────────────────────────────────────
-utils/content_types.py       Registry: kind → extensions, processor, importable?, container?
-utils/content_detection.py   detect_content_kind() — flat if-checks, reclassifies kind
-utils/facets.py              Well-known keys in source_metadata.facets + query helpers
-utils/enrichers.py           Enricher registry: language_detection, quality_score (Phase 3)
-processors/*                 Pure content transformation (PDF→pages, CSV→rows)
-handlers/*                   Source adaptation → Asset creation (BaseHandler + IngestionContext)
-services/processing_service  Orchestrates Phase 1 → 2 → 3 pipeline
-services/content_ingestion   Thin compatibility shim (ingest_content, compose_article)
-services/search_service      Text + semantic search (AssetService, ConversationService)
-tasks/batch_processing       batch_process_pending, batch_enrich (Celery)
-```
+Quick reference:
 
-Enrichment endpoints:
-  POST /infospaces/{id}/bundles/{bid}/enrich     — trigger batch_enrich (retroactive facet backfill)
-  GET  /infospaces/{id}/bundles/{bid}/processing-status — counts by PENDING/READY/FAILED
-```
+- **Handlers:** File, Web, RSS, Search, Text, Archive, DirectoryImport → create Assets with `processing_status=PENDING`
+- **Processing:** `batch_process_pending` (Celery) runs Phase 1 (metadata), Phase 2 (content extraction) → READY
+- **Enrichment:** Reactive watchers dispatch tasks when facets are missing (geocoding, embedding). No synchronous Phase 3.
+- **Key modules:** `content/handlers/`, `content/processors/`, `content/types.py`, `content/facets.py`, `content/enrichers.py`, `content/watchers.py`, `content/services/processing_service.py`, `content/tasks/batch_processing.py`, `content/tasks/enrichment.py`

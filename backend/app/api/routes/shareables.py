@@ -26,7 +26,7 @@ from app.schemas import (
     SharedResourcePreview
 )
 
-from app.api.services.shareable_service import ShareableService
+from app.api.sharing.services import ShareableService
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)

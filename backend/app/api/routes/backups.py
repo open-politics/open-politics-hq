@@ -14,9 +14,9 @@ from app.schemas import (
     InfospaceRead,
     Message
 )
-from app.api.services.backup_service import BackupService
-from app.api.services.service_utils import validate_infospace_access
-from app.api.tasks.backup import automatic_backup_all_infospaces, backup_specific_infospaces
+from app.api.sharing.services import BackupService
+from app.api.service_utils import validate_infospace_access
+from app.api.sharing.tasks.backup import automatic_backup_all_infospaces, backup_specific_infospaces
 from app.models import Infospace
 from sqlmodel import select
 

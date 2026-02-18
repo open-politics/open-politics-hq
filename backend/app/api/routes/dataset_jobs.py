@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from app.api import deps
 from app.models import DatasetIngestionJob, IngestionStatus, Bundle
 from app.schemas import Message
-from app.api.services.service_utils import validate_infospace_access
+from app.api.service_utils import validate_infospace_access
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ def create_directory_import_job(
     """
     from pathlib import Path
     from app.core.config import settings
-    from app.api.tasks.dataset_tasks import import_directory_task
+    from app.api.content.tasks.dataset_tasks import import_directory_task
 
     validate_infospace_access(db, infospace_id, current_user.id)
 
@@ -204,7 +204,7 @@ def trigger_batch_process_pending(
     This endpoint starts background processing (PDF extraction, CSV row creation).
     Processing runs in self-chaining batches until all PENDING assets are done.
     """
-    from app.api.tasks.batch_processing import batch_process_pending
+    from app.api.content.tasks.batch_processing import batch_process_pending
 
     validate_infospace_access(db, infospace_id, current_user.id)
 
@@ -239,14 +239,12 @@ def trigger_batch_enrich(
     """
     Trigger batch enrichment for assets in a bundle missing a facet.
 
-    Runs enrichers (language_detection, quality_score) on assets that don't
-    yet have the target facet set. Self-chaining until all are enriched.
+    Runs enrichers (geocoding, etc.) on assets that don't yet have the target
+    facet set. Self-chaining until all are enriched.
     """
-    from app.api.tasks.batch_processing import batch_enrich
-    from app.api.utils.enrichers import get_enricher
-    from app.api.utils.facets import (
-        FACET_LANGUAGE,
-        FACET_QUALITY_SCORE,
+    from app.api.content.tasks.batch_processing import batch_enrich
+    from app.api.content.enrichers import get_enricher
+    from app.api.content.facets import (
         FACET_LOCATION_LAT,
         FACET_LOCATION_LON,
         FACET_SUMMARY,
@@ -270,7 +268,7 @@ def trigger_batch_enrich(
         )
 
     target_facet = request.missing_facet or enricher.target_facet
-    allowed = {FACET_LANGUAGE, FACET_QUALITY_SCORE, FACET_LOCATION_LAT, FACET_LOCATION_LON, FACET_SUMMARY, FACET_OCR_USED}
+    allowed = {FACET_LOCATION_LAT, FACET_LOCATION_LON, FACET_SUMMARY, FACET_OCR_USED}
     if target_facet not in allowed:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -461,7 +459,7 @@ async def create_archive_ingestion_job(
     validate_infospace_access(db, infospace_id, current_user.id)
     
     # Validate it's actually an archive URL
-    from app.api.processors import is_archive_url
+    from app.api.content.processors import is_archive_url
     if not is_archive_url(request.source_locator):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -469,7 +467,7 @@ async def create_archive_ingestion_job(
         )
     
     # Use ContentIngestionService to trigger ingestion
-    from app.api.services.content_ingestion_service import ContentIngestionService
+    from app.api.content.services import ContentIngestionService
     content_service = ContentIngestionService(db)
     
     options = request.options or {}

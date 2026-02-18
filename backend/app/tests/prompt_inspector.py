@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def inspect_chat_prompt(infospace_name: str = "Example Workspace", 
                        infospace_description: str = "Research workspace") -> str:
     """Get the actual chat system prompt by calling the real function"""
-    from app.api.services.conversation_service import IntelligenceConversationService
+    from app.api.conversational_intelligence.services import IntelligenceConversationService
     
     # Mock infospace
     mock_infospace = type('Infospace', (), {
@@ -44,7 +44,7 @@ def inspect_annotation_prompt(
     Build a realistic annotation prompt showing actual construction logic.
     Returns dict with 'instructions', 'example_schema', and 'pydantic_json_schema' keys.
     """
-    from app.api.tasks.utils import create_pydantic_model_from_json_schema
+    from app.core.task_utils import create_pydantic_model_from_json_schema
     
     # Example schema structure (realistic political analysis schema)
     # This matches the actual format of AnnotationSchema.output_contract
@@ -141,7 +141,7 @@ def inspect_annotation_prompt(
 
 def inspect_mcp_tools() -> List[Dict[str, Any]]:
     """Get actual MCP tool definitions with EXACT JSON schemas sent to models"""
-    from app.api.mcp.server import mcp
+    from app.api.conversational_intelligence.mcp.server import mcp
     import asyncio
     
     tools_info = []

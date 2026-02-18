@@ -9,7 +9,7 @@ from app.core.celery_app import celery  # noqa: F401
 from app.core.config import settings
 
 from app.api.main import api_router
-from app.api.mcp.server import mcp as intelligence_mcp_server
+from app.api.conversational_intelligence.mcp.server import mcp as intelligence_mcp_server
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -47,17 +47,48 @@ app = FastAPI(
     lifespan=combined_lifespan,
 )
 
-# Set all CORS enabled origins
+# Set all CORS enabled origins (from AppSettings)
 if settings.BACKEND_CORS_ORIGINS:
+    cors_origins = [str(o).strip("/") for o in settings.BACKEND_CORS_ORIGINS]
+    cors_methods = settings.CORS_ALLOWED_METHODS
+    cors_headers = settings.CORS_ALLOWED_HEADERS
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            str(origin).strip("/") for origin in settings.BACKEND_CORS_ORIGINS
-        ],
+        allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=cors_methods,
+        allow_headers=cors_headers,
     )
+
+# Security headers middleware (HSTS, CSP, X-Frame-Options)
+class SecurityHeadersMiddleware:
+    """Add security headers to all responses."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                if settings.ENVIRONMENT == "production":
+                    headers.append([b"strict-transport-security", b"max-age=31536000; includeSubDomains"])
+                headers.append([b"x-content-type-options", b"nosniff"])
+                headers.append([b"x-frame-options", b"DENY"])
+                headers.append([b"x-xss-protection", b"1; mode=block"])
+                csp = b"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: wss:; frame-ancestors 'none'"
+                headers.append([b"content-security-policy", csp])
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Mount the MCP server at its designated path.
 app.mount("/tools", mcp_asgi_app)

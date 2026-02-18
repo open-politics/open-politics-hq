@@ -31,7 +31,7 @@ router = APIRouter(
 
 def get_flow_service(session: SessionDep):
     """Get FlowService instance."""
-    from app.api.services.flow_service import FlowService
+    from app.api.flow.services import FlowService
     return FlowService(session)
 
 

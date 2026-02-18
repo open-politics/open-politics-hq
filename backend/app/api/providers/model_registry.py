@@ -1,9 +1,11 @@
 """
 Model Registry Service for Language Model Provider Management
 """
+import asyncio
 import logging
+import time
 from typing import Dict, List, Optional, Tuple, Union, AsyncIterator, Callable, Awaitable, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.api.providers.base import LanguageModelProvider, ModelInfo, GenerationResponse
 from app.api.providers.impl.language_openai import OpenAILanguageModelProvider
@@ -24,6 +26,31 @@ class ProviderConfig:
     enabled: bool = True
 
 
+class TokenBucket:
+    """Async token bucket for per-provider rate limiting."""
+
+    def __init__(self, capacity: int = 60, refill_rate: float = 1.0):
+        self.capacity = capacity
+        self.refill_rate = refill_rate
+        self.tokens = float(capacity)
+        self.last_refill = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self.last_refill
+            self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
+            self.last_refill = now
+            if self.tokens < 1:
+                wait_time = (1 - self.tokens) / self.refill_rate
+                self.tokens = 0
+                await asyncio.sleep(wait_time)
+                self.tokens = 1
+                self.last_refill = time.monotonic()
+            self.tokens -= 1
+
+
 class ModelRegistryService:
     """
     Centralized service for discovering and managing language model providers.
@@ -39,7 +66,13 @@ class ModelRegistryService:
         self.providers: Dict[str, LanguageModelProvider] = {}
         self.models_cache: Dict[str, ModelInfo] = {}
         self.provider_configs: Dict[str, ProviderConfig] = {}
+        self._rate_limiters: Dict[str, TokenBucket] = {}
         logger.info("ModelRegistryService initialized")
+
+    def _get_rate_limiter(self, provider_name: str) -> TokenBucket:
+        if provider_name not in self._rate_limiters:
+            self._rate_limiters[provider_name] = TokenBucket(capacity=60, refill_rate=1.0)
+        return self._rate_limiters[provider_name]
     
     def add_provider(self, name: str, provider: LanguageModelProvider):
         """Add a provider to the registry"""
@@ -331,7 +364,8 @@ class ModelRegistryService:
                 raise ValueError(f"Model '{model_name}' not found in any provider")
         
         logger.debug(f"Routing model '{model_name}' to provider '{provider_name}'")
-        
+        rate_limiter = self._get_rate_limiter(provider_name)
+        await rate_limiter.acquire()
         try:
             return await provider.generate(
                 messages=messages,

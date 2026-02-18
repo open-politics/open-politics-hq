@@ -87,7 +87,7 @@ async def discover_rss_feeds(
         limit: Maximum number of feeds to return
     """
     try:
-        from app.api.handlers import RSSHandler
+        from app.api.content.handlers import RSSHandler
 
         feeds = await RSSHandler.discover_rss_feeds_from_awesome_repo(
             country=country,

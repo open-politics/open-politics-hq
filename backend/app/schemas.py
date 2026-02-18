@@ -1,13 +1,36 @@
 """API Schemas for OSINT Kernel (schemas.py)
 ================================================
-Pure‑API pydantic/SQLModel classes for FastAPI endpoints, matching the canonical OSINT Kernel models.
-Includes:
-  • CRUD schemas for all core entities (Infospace, Source, Asset, Bundle, Schema, Run, Annotation, Task, Package, ShareableLink)
-  • Utility/summary schemas (e.g., DatasetPackageSummary)
-  • Hide internal columns, add validators, computed helpers, and split create/read/update payloads.
+Re-export hub: imports from domain schemas where available.
+Identity and conversational_intelligence schemas live in their domains.
+Remaining schemas (content, annotation, flow, search, sharing, auth) will be
+extracted to domain schemas in a follow-up. See docs/internal/BACKEND_ARCHITECTURE_HANDOVER.md.
+Existing code uses: from app.schemas import *
 """
 
 from __future__ import annotations
+
+from app.api.identity.schemas import (
+    UserOut,
+    UserPublicProfile,
+    UsersOut,
+    UserCreate,
+    UserCreateOpen,
+    UserUpdate,
+    UserUpdateMe,
+    UserProfileUpdate,
+    UserProfileStats,
+    UserUIPreferences,
+    InfospaceBase,
+    InfospaceCreate,
+    InfospaceRead,
+    InfospaceUpdate,
+    InfospacesOut,
+    UpdatePassword,
+    Token,
+    TokenPayload,
+    NewPassword,
+    Message,
+)
 
 from datetime import datetime, timezone
 import enum
@@ -48,112 +71,6 @@ class FieldJustificationConfig(SQLModel):
     custom_prompt: Optional[str] = None
     rigor_level: Optional[EvidenceRigor] = None  # Evidence rigor level for this field
 
-class UserOut(UserBase):
-    id: int
-    is_active: bool = True
-    is_superuser: bool = False
-    ui_preferences: Optional[Dict[str, Any]] = None
-    created_at: datetime
-    updated_at: datetime
-
-class UserPublicProfile(SQLModel):
-    """Public user profile (no sensitive information)."""
-    id: int
-    full_name: Optional[str] = None
-    profile_picture_url: Optional[str] = None
-    bio: Optional[str] = None
-    description: Optional[str] = None
-    created_at: datetime
-
-class UsersOut(SQLModel):
-    data: List[UserOut]
-    count: int
-
-class UserCreate(UserBase):
-    password: str
-    is_superuser: bool = False
-    is_active: bool = True
-    # Control whether to send a welcome email on admin/user creation
-    send_welcome_email: bool = True
-
-class UserCreateOpen(SQLModel):
-    email: str
-    password: str
-    full_name: Optional[str] = None
-    profile_picture_url: Optional[str] = None
-    bio: Optional[str] = None
-    description: Optional[str] = None
-
-class UserUpdate(SQLModel):
-    full_name: Optional[str] = None
-    email: Optional[str] = None
-    password: Optional[str] = None
-    is_active: Optional[bool] = None
-    tier: Optional[UserTier] = None
-    profile_picture_url: Optional[str] = None
-    bio: Optional[str] = None
-    description: Optional[str] = None
-    ui_preferences: Optional[Dict[str, Any]] = None
-
-class UserUpdateMe(SQLModel):
-    full_name: Optional[str] = Field(None, max_length=100)
-    email: Optional[str] = None
-    profile_picture_url: Optional[str] = Field(None, max_length=500)
-    bio: Optional[str] = Field(None, max_length=500, description="Short bio (max 500 characters)")
-    description: Optional[str] = Field(None, max_length=2000, description="Longer description (max 2000 characters)")
-    ui_preferences: Optional[Dict[str, Any]] = None
-
-class UserProfileUpdate(SQLModel):
-    """Dedicated schema for profile-only updates (no email/password)."""
-    full_name: Optional[str] = Field(None, max_length=100)
-    profile_picture_url: Optional[str] = Field(None, max_length=500)
-    bio: Optional[str] = Field(None, max_length=500, description="Short bio (max 500 characters)")
-    description: Optional[str] = Field(None, max_length=2000, description="Longer description (max 2000 characters)")
-
-class UserProfileStats(SQLModel):
-    """User profile statistics."""
-    user_id: int
-    infospaces_count: int
-    assets_count: int
-    annotations_count: int
-    member_since: datetime
-
-class UserUIPreferences(SQLModel):
-    """Structured schema for user UI preferences and settings."""
-    # Globe animation
-    globe_enabled: bool = False
-    
-    # Banners and notifications
-    docs_banner_dismissed: bool = False
-    
-    # Tutorial and onboarding
-    tutorial_completed: bool = False
-    tutorial_step: Optional[int] = None
-    
-    # Visual customization
-    custom_background_url: Optional[str] = None
-    
-    # Future settings can be added here
-    # theme: Optional[str] = None
-    # sidebar_collapsed: Optional[bool] = None
-
-class UpdatePassword(SQLModel):
-    current_password: str
-    new_password: str
-
-class Token(SQLModel):
-    access_token: str
-    token_type: str = "bearer"
-
-class TokenPayload(SQLModel):
-    sub: Optional[int] = None
-
-class NewPassword(SQLModel):
-    token: str
-    new_password: str
-
-class Message(SQLModel):
-    message: str
 
 @dataclass
 class SearchResult:
@@ -240,82 +157,12 @@ class SearchFilter:
                 
         return True
 
-# ───────────────────────────────────────────── Infospace ──── #
-
-class InfospaceBase(SQLModel):
-    name: str
-    description: Optional[str] = None
-    icon: Optional[str] = None
-    # UI/feature flags
-    enable_related_assets: Optional[bool] = False
-
-class InfospaceCreate(InfospaceBase):
-    owner_id: int
-    # Optional vector‑store overrides
-    vector_backend: Optional[str] = None
-    embedding_model: Optional[str] = None
-    embedding_dim: Optional[int] = None
-    chunk_size: Optional[int] = None
-    chunk_overlap: Optional[int] = None
-    chunk_strategy: Optional[str] = None
-    icon: Optional[str] = None
-
-class InfospaceRead(InfospaceBase):
-    id: int
-    owner_id: int
-    created_at: datetime
-    # Vector store configuration
-    vector_backend: Optional[str] = None
-    embedding_model: Optional[str] = None
-    embedding_dim: Optional[int] = None
-    chunk_size: Optional[int] = None
-    chunk_overlap: Optional[int] = None
-    chunk_strategy: Optional[str] = None
-
-class InfospaceUpdate(SQLModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    vector_backend: Optional[str] = None
-    embedding_model: Optional[str] = None
-    embedding_dim: Optional[int] = None
-    chunk_size: Optional[int] = None
-    chunk_overlap: Optional[int] = None
-    chunk_strategy: Optional[str] = None
-    icon: Optional[str] = None
-    enable_related_assets: Optional[bool] = None
-
-class InfospacesOut(SQLModel):
-    data: List[InfospaceRead]
-    count: int
-
-
-# ─────────────────────────────────────────────── Task ──── #
-
-class TaskBase(SQLModel):
-    name: str
-    type: TaskType
-    schedule: str
-    configuration: Dict[str, Any] = {}
-
-class TaskCreate(TaskBase):
-    source_id: Optional[int] = None
-
-class TaskUpdate(SQLModel):
-    name: Optional[str] = None
-    type: Optional[TaskType] = None
-    schedule: Optional[str] = None
-    configuration: Optional[Dict[str, Any]] = None
-    status: Optional[TaskStatus] = None
-    is_enabled: Optional[bool] = None
-
-class TaskRead(TaskBase):
-    id: int
-    infospace_id: int
-    status: TaskStatus
-    is_enabled: bool
-    last_run_at: Optional[datetime]
-    consecutive_failure_count: int
-
+# ─────────────────────────────────────────────── Task & Flow ──── #
+from app.api.flow.schemas import (
+    TaskBase, TaskCreate, TaskUpdate, TaskRead, TasksOut,
+    FlowStepConfig, FlowBase, FlowCreate, FlowUpdate, FlowRead, FlowsOut,
+    FlowExecutionCreate, FlowExecutionRead, FlowExecutionsOut,
+)
 
 # ─────────────────────────────────────────────── Source ──── #
 
@@ -459,7 +306,7 @@ class AssetRead(AssetBase):
     @property
     def is_container(self) -> bool:
         """True if this asset can have child assets."""
-        from app.api.utils.content_types import get_content_type_registry
+        from app.api.content.types import get_content_type_registry
         desc = get_content_type_registry().by_kind(self.kind)
         return desc.is_container if desc else False
 
@@ -780,10 +627,6 @@ class SearchHistoriesOut(SQLModel):
     data: List[SearchHistoryRead]
     count: int
 
-class TasksOut(SQLModel): # For listing multiple tasks
-    data: List[TaskRead]
-    count: int
-
 class SourceCreateRequest(SourceBase):
     """Request to create a source with optional streaming configuration."""
     target_bundle_id: Optional[int] = None
@@ -792,124 +635,6 @@ class SourceCreateRequest(SourceBase):
     is_active: Optional[bool] = False
     poll_interval_seconds: Optional[int] = 300
     output_bundle_id: Optional[int] = None
-
-# ================================================================================================
-# FLOW SCHEMAS (Unified Flow Architecture)
-# ================================================================================================
-
-class FlowStepConfig(SQLModel):
-    """Configuration for a single step in a Flow."""
-    type: str  # ANNOTATE, FILTER, CURATE, ROUTE, EMBED, ANALYZE
-    # For ANNOTATE
-    schema_ids: Optional[List[int]] = None
-    config: Optional[Dict[str, Any]] = None
-    # For FILTER
-    expression: Optional[Dict[str, Any]] = None
-    # For CURATE
-    fields: Optional[List[str]] = None
-    # For ROUTE
-    bundle_id: Optional[int] = None
-    bundle_ids: Optional[List[int]] = None
-    conditions: Optional[List[Dict[str, Any]]] = None
-    # For EMBED
-    model: Optional[str] = None
-    chunk_config: Optional[Dict[str, Any]] = None
-    # For ANALYZE
-    adapter_name: Optional[str] = None
-    adapter_config: Optional[Dict[str, Any]] = None
-
-
-class FlowBase(SQLModel):
-    """Base schema for Flow."""
-    name: str
-    description: Optional[str] = None
-    input_type: str = "bundle"  # stream | bundle | manual
-    input_source_id: Optional[int] = None
-    input_bundle_id: Optional[int] = None
-    trigger_mode: str = "manual"  # on_arrival | scheduled | manual
-    steps: List[Dict[str, Any]] = []
-    views_config: Optional[List[Dict[str, Any]]] = None
-    tags: Optional[List[str]] = None
-
-
-class FlowCreate(FlowBase):
-    """Schema for creating a Flow."""
-    pass
-
-
-class FlowUpdate(SQLModel):
-    """Schema for updating a Flow."""
-    name: Optional[str] = None
-    description: Optional[str] = None
-    status: Optional[str] = None
-    input_type: Optional[str] = None
-    input_source_id: Optional[int] = None
-    input_bundle_id: Optional[int] = None
-    trigger_mode: Optional[str] = None
-    steps: Optional[List[Dict[str, Any]]] = None
-    views_config: Optional[List[Dict[str, Any]]] = None
-    tags: Optional[List[str]] = None
-
-
-class FlowRead(FlowBase):
-    """Schema for reading a Flow."""
-    id: int
-    uuid: str
-    infospace_id: int
-    user_id: int
-    status: str
-    linked_task_id: Optional[int] = None
-    cursor_state: Dict[str, Any] = {}
-    total_executions: int = 0
-    total_assets_processed: int = 0
-    last_execution_at: Optional[datetime] = None
-    last_execution_status: Optional[str] = None
-    consecutive_failures: int = 0
-    created_at: datetime
-    updated_at: datetime
-
-
-class FlowsOut(SQLModel):
-    """Paginated list of Flows."""
-    data: List[FlowRead]
-    count: int
-
-
-class FlowExecutionCreate(SQLModel):
-    """Schema for triggering a Flow execution."""
-    asset_ids: Optional[List[int]] = None  # For manual triggers with specific assets
-    tags: Optional[List[str]] = None
-
-
-class FlowExecutionRead(SQLModel):
-    """Schema for reading a FlowExecution."""
-    id: int
-    uuid: str
-    flow_id: int
-    triggered_by: str
-    triggered_by_task_id: Optional[int] = None
-    triggered_by_source_id: Optional[int] = None
-    trigger_context: Dict[str, Any] = {}
-    status: str
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    error_message: Optional[str] = None
-    input_asset_ids: List[int] = []
-    output_asset_ids: List[int] = []
-    step_outputs: Dict[str, Any] = {}
-    tags: Optional[List[str]] = None
-    created_at: datetime
-
-
-class FlowExecutionsOut(SQLModel):
-    """Paginated list of FlowExecutions."""
-    data: List[FlowExecutionRead]
-    count: int
-
-
-# ================================================================================================
-# END FLOW SCHEMAS
-# ================================================================================================
 
 # --- New Models for Provider Discovery ---
 class ProviderModel(SQLModel):
@@ -1177,35 +902,12 @@ class SharedResourcePreview(SQLModel):
     content: Union[AssetPreview, BundlePreview, AnnotationRunPreview]
 
 # ───────────────────────────────────── Analysis Adapters ──── #
-class AnalysisAdapterBase(SQLModel):
-    name: str
-    description: Optional[str] = None
-    input_schema_definition: Optional[Dict[str, Any]] = Field(default_factory=dict)
-    output_schema_definition: Optional[Dict[str, Any]] = Field(default_factory=dict)
-    version: str = "1.0"
-    module_path: Optional[str] = None
-    adapter_type: str
-    is_public: bool = False
-
-class AnalysisAdapterCreate(AnalysisAdapterBase):
-    pass
-
-class AnalysisAdapterUpdate(SQLModel):
-    description: Optional[str] = None
-    input_schema_definition: Optional[Dict[str, Any]] = None
-    output_schema_definition: Optional[Dict[str, Any]] = None
-    version: Optional[str] = None
-    module_path: Optional[str] = None
-    adapter_type: Optional[str] = None
-    is_active: Optional[bool] = None
-    is_public: Optional[bool] = None
-
-class AnalysisAdapterRead(AnalysisAdapterBase):
-    id: int
-    is_active: bool
-    creator_user_id: Optional[int] = None
-    created_at: datetime
-    updated_at: datetime
+from app.api.analysis.schemas import (
+    AnalysisAdapterBase,
+    AnalysisAdapterCreate,
+    AnalysisAdapterUpdate,
+    AnalysisAdapterRead,
+)
 
 # ─────────────────────────────────────────────────────────── Backup Schemas ──── #
 
@@ -1424,83 +1126,19 @@ class ModelListResponse(SQLModel):
 
 
 # ─────────────────────────────────────────── Chat Conversations & History ──── #
-
-class ChatConversationMessageBase(SQLModel):
-    """Base schema for chat conversation messages."""
-    role: str
-    content: str
-    message_metadata: Optional[Dict[str, Any]] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = None
-    tool_executions: Optional[List[Dict[str, Any]]] = None
-    thinking_trace: Optional[str] = None
-    model_used: Optional[str] = None
-    usage: Optional[Dict[str, Any]] = None
-
-class ChatConversationMessageCreate(SQLModel):
-    """Schema for creating a new chat message."""
-    role: str
-    content: str
-    message_metadata: Optional[Dict[str, Any]] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = None
-    tool_executions: Optional[List[Dict[str, Any]]] = None
-    thinking_trace: Optional[str] = None
-    model_used: Optional[str] = None
-    usage: Optional[Dict[str, Any]] = None
-
-class ChatConversationMessageRead(ChatConversationMessageBase):
-    """Schema for reading a chat message."""
-    id: int
-    conversation_id: int
-    created_at: datetime
-
-class ChatConversationBase(SQLModel):
-    """Base schema for chat conversations."""
-    title: str
-    description: Optional[str] = None
-    model_name: Optional[str] = None
-    temperature: Optional[float] = None
-    conversation_metadata: Optional[Dict[str, Any]] = None
-
-class ChatConversationCreate(ChatConversationBase):
-    """Schema for creating a new chat conversation."""
-    infospace_id: int
-    messages: Optional[List[ChatConversationMessageCreate]] = None
-
-class ChatConversationUpdate(SQLModel):
-    """Schema for updating a chat conversation."""
-    title: Optional[str] = None
-    description: Optional[str] = None
-    model_name: Optional[str] = None
-    temperature: Optional[float] = None
-    conversation_metadata: Optional[Dict[str, Any]] = None
-    is_archived: Optional[bool] = None
-    is_pinned: Optional[bool] = None
-
-class ChatConversationRead(ChatConversationBase):
-    """Schema for reading a chat conversation."""
-    id: int
-    uuid: str
-    infospace_id: int
-    user_id: int
-    is_archived: bool
-    is_pinned: bool
-    created_at: datetime
-    updated_at: datetime
-    last_message_at: Optional[datetime]
-    message_count: Optional[int] = None
-
-class ChatConversationWithMessages(ChatConversationRead):
-    """Schema for chat conversation with full message history."""
-    messages: List[ChatConversationMessageRead]
-
-class ChatConversationsOut(SQLModel):
-    """Paginated list of chat conversations."""
-    data: List[ChatConversationRead]
-    count: int
-
-class AddMessageToConversationRequest(SQLModel):
-    """Request to add a message to an existing conversation."""
-    message: ChatConversationMessageCreate
+# Re-exported from conversational_intelligence domain
+from app.api.conversational_intelligence.schemas import (
+    ChatConversationMessageBase,
+    ChatConversationMessageCreate,
+    ChatConversationMessageRead,
+    ChatConversationBase,
+    ChatConversationCreate,
+    ChatConversationUpdate,
+    ChatConversationRead,
+    ChatConversationWithMessages,
+    ChatConversationsOut,
+    AddMessageToConversationRequest,
+)
 
 # ─────────────────────────────────────────────── MCP Tool Responses ──── #
 

@@ -21,7 +21,7 @@ from app.api.deps import (
     CurrentUser,
     get_infospace_service
 )
-from app.api.services.infospace_service import InfospaceService
+from app.api.identity.services import InfospaceService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field
 from app.api import deps
 from app.models import Asset, Bundle, AssetKind
 from app.schemas import TreeResponse, TreeNode, TreeChildrenResponse, Message, AssetRead
-from app.api.services.service_utils import validate_infospace_access
-from app.api.utils.tree_builder import (
+from app.api.service_utils import validate_infospace_access
+from app.api.tree_builder import (
     build_root_tree_nodes,
     build_bundle_children_nodes,
     build_asset_children_nodes,

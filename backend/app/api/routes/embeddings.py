@@ -10,9 +10,8 @@ from sqlmodel import Session
 from app.api.deps import CurrentUser, SessionDep
 from app.models import User, Infospace, Asset, AssetKind
 from app.schemas import Message
-from app.api.services.embedding_service import EmbeddingService
-from app.api.services.vector_search_service import VectorSearchService
-from app.api.tasks.embed import embed_asset_task, embed_infospace_task
+from app.api.search.services import EmbeddingService, VectorSearchService
+from app.api.search.tasks.embed import embed_asset_task, embed_infospace_task
 from app.api.providers.impl.embedding_ollama import OllamaEmbeddingProvider
 from pydantic import BaseModel, Field
 
@@ -313,22 +312,23 @@ async def clear_infospace_embeddings(
         raise HTTPException(status_code=403, detail="Not authorized")
     
     try:
-        # Clear embeddings from all chunks in this infospace
         from sqlalchemy import select
+        from app.api.content.models import EMBEDDING_SUPPORTED_DIMS
+
         chunks_query = (
             select(AssetChunk.id)
             .join(Asset)
             .where(Asset.infospace_id == infospace_id)
         )
-        chunk_ids = session.exec(chunks_query).all()
-        
+        chunk_ids = [r[0] for r in session.exec(chunks_query).all()]
+
         if chunk_ids:
-            # Clear embedding data
             for chunk_id in chunk_ids:
                 chunk = session.get(AssetChunk, chunk_id)
                 if chunk:
-                    chunk.embedding_json = None
                     chunk.embedding_model_id = None
+                    for dim in EMBEDDING_SUPPORTED_DIMS:
+                        setattr(chunk, f"embedding_{dim}", None)
                     session.add(chunk)
             
             session.commit()

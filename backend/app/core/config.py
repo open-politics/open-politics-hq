@@ -32,7 +32,6 @@ class AppSettings(BaseSettings):
         env_file=".env", env_ignore_empty=True, extra="ignore", case_sensitive=False
     )
     API_V1_STR: str = "/api/v1"
-    API_V2_STR: str = "/api/v2"
     SECRET_KEY: str = secrets.token_urlsafe(32)
     # 60 minutes * 24 hours * 8 days = 8 days
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
@@ -58,6 +57,16 @@ class AppSettings(BaseSettings):
     BACKEND_CORS_ORIGINS: Annotated[
         list[AnyUrl] | str, BeforeValidator(parse_cors)
     ] = ["http://localhost:3000", "http://localhost:8000"]
+    CORS_ALLOWED_METHODS: Annotated[
+        list[str],
+        BeforeValidator(parse_cors),
+        Field(default=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], env="CORS_ALLOWED_METHODS"),
+    ]
+    CORS_ALLOWED_HEADERS: Annotated[
+        list[str],
+        BeforeValidator(parse_cors),
+        Field(default=["*"], env="CORS_ALLOWED_HEADERS"),
+    ]
 
     PROJECT_NAME: str = "OSINT Kernel"
     POSTGRES_SERVER: str
@@ -148,6 +157,16 @@ class AppSettings(BaseSettings):
 
     # Instance identifier for data transfer
     INSTANCE_ID: str = Field(default_factory=lambda: str(uuid.uuid4()))
+
+    # --- Connection pool (tuned for concurrent task workers) ---
+    DB_POOL_SIZE: int = Field(default=10, env="DB_POOL_SIZE")
+    DB_MAX_OVERFLOW: int = Field(default=20, env="DB_MAX_OVERFLOW")
+    DB_POOL_PRE_PING: bool = Field(default=True, env="DB_POOL_PRE_PING")
+
+    # --- Upload / content limits (security) ---
+    MAX_UPLOAD_SIZE_BYTES: int = Field(default=1024 * 1024 * 1024, env="MAX_UPLOAD_SIZE_BYTES")  # 1GB default
+    # PDF processing: max pages per document (0 = no limit, for 400GB+ bulk deployments)
+    PDF_MAX_PAGES: int = Field(default=0, env="PDF_MAX_PAGES", description="Max pages to process per PDF; 0 = no limit")
 
     # === Provider Configurations ===
 
@@ -252,6 +271,8 @@ class AppSettings(BaseSettings):
     MAX_ANNOTATION_CONCURRENCY: int = Field(default=20, env="MAX_ANNOTATION_CONCURRENCY")
     # Enable/disable parallel processing (fallback to sequential if disabled)
     ENABLE_PARALLEL_ANNOTATION_PROCESSING: bool = Field(default=True, env="ENABLE_PARALLEL_ANNOTATION_PROCESSING")
+    # Chunk size for per-chunk commits in large runs (50K-asset run avoids single tx)
+    ANNOTATION_CHUNK_SIZE: int = Field(default=50, env="ANNOTATION_CHUNK_SIZE")
     
     # --- Development & Testing ---
     INSPECT_PROMPTS_ON_STARTUP: bool = Field(default=False, env="INSPECT_PROMPTS_ON_STARTUP")

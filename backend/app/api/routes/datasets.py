@@ -20,7 +20,7 @@ from app.schemas import (
     DatasetsOut,
     Message,
 )
-from app.api.services.package_service import DataPackage
+from app.api.sharing.services import DataPackage
 
 logger = logging.getLogger(__name__)
 

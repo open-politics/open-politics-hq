@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.api.deps import CurrentUser, SessionDep, StorageProviderDep
+from app.api.deps import CurrentUser, SessionDep, StorageProviderDep, CheckUploadSizeDep
 from app.api.providers.factory import create_storage_provider
 
 # Configure logging
@@ -82,6 +82,7 @@ class FileUploadResponse(BaseModel):
 async def file_upload(
     current_user: CurrentUser,
     storage_provider: StorageProviderDep,
+    _: CheckUploadSizeDep,
     file: UploadFile = File(..., description="File to upload"),
 ):
     """

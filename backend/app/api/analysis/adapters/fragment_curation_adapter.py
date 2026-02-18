@@ -5,7 +5,6 @@ from typing import Any, Dict
 from sqlmodel import Session, select
 
 from app.api.analysis.protocols import AnalysisAdapterProtocol
-from app.api.v1.endpoints.asset.utils import get_asset_by_id
 from app.models import Asset
 
 logger = logging.getLogger(__name__)
@@ -65,7 +64,9 @@ class FragmentCurationAdapter(AnalysisAdapterProtocol):
             f"with key '{fragment_key}'."
         )
 
-        asset = get_asset_by_id(self.session, target_asset_id)
+        asset = self.session.get(Asset, target_asset_id)
+        if asset is None:
+            raise ValueError(f"Asset with id {target_asset_id} not found")
 
         # Ensure fragments is a dictionary
         if asset.fragments is None:

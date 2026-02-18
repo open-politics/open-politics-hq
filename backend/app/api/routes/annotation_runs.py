@@ -29,9 +29,9 @@ from app.api.deps import (
     get_annotation_service,
     get_package_service
 )
-from app.api.services.annotation_service import AnnotationService
-from app.api.services.package_service import PackageService
-from app.api.services.service_utils import validate_infospace_access
+from app.api.annotation.services import AnnotationService
+from app.api.sharing.services import PackageService
+from app.api.service_utils import validate_infospace_access
 from sqlmodel import select, func
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

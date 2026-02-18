@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Optional, Type
 from sqlmodel import Session, select
 from app.models import User, EmbeddingModel, AssetChunk, Asset, AnnotationRun, AnnotationSchema
 from app.api.analysis.protocols import AnalysisAdapterProtocol
-from app.api.services.embedding_service import EmbeddingService
+from app.api.search.services.embedding_service import EmbeddingService
 from app.api.providers.factory import create_classification_provider, create_embedding_provider
 from app.api.providers.llm_config import llm_models_config
 from app.core.config import settings
@@ -132,24 +132,18 @@ class RagAdapter(AnalysisAdapterProtocol):
         else:
             distance_threshold = 2.0 * (1.0 - self.similarity_threshold)  # l2 distance threshold
         
+        if not self.infospace_filter:
+            raise ValueError("RAG adapter requires infospace_id (or infospace_filter) to perform vector search")
         search_results = await self.embedding_service.similarity_search(
             query_text=self.question,
             model_name=embedding_model.name,
             provider=embedding_model.provider,
             limit=self.top_k,
             distance_threshold=distance_threshold,
-            distance_function=self.distance_function
+            distance_function=self.distance_function,
+            infospace_id=self.infospace_filter,
+            embedding_model_id=embedding_model.id,
         )
-        
-        # Filter by infospace if specified
-        if self.infospace_filter:
-            filtered_results = []
-            for result in search_results:
-                chunk = self.session.get(AssetChunk, result["chunk_id"])
-                if chunk and chunk.asset:
-                    if chunk.asset.infospace_id == self.infospace_filter:
-                        filtered_results.append(result)
-            search_results = filtered_results
         
         # Apply additional asset filters if specified
         if self.asset_filters:

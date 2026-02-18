@@ -21,16 +21,17 @@ from app.api.deps import (
     ContentIngestionServiceDep,
     BundleServiceDep,
     IngestionContextFactoryDep,
+    AssetServiceDep,
+    CheckUploadSizeDep,
 )
-from app.api.services.service_utils import validate_infospace_access
+from app.api.service_utils import validate_infospace_access
 from app.api.providers.factory import create_scraping_provider, create_storage_provider
 from app.core.config import settings
 from sqlalchemy import func
 from sqlmodel import select, delete
-from app.api.tasks.content_tasks import process_content, ingest_bulk_urls
+from app.api.content.tasks.content_tasks import process_content, ingest_bulk_urls
 from app.core.celery_app import celery
-from app.api.services.content_ingestion_service import ContentIngestionService
-from app.api.services.bundle_service import BundleService
+from app.api.content.services import ContentIngestionService, BundleService
 from app.core.db import engine
 from sqlmodel import Session
 
@@ -87,6 +88,14 @@ class BulkSearchResultIngestion(BaseModel):
     results: List[SearchResultItem]
     bundle_id: Optional[int] = None
 
+
+class BatchAssetCreateRequest(BaseModel):
+    """Batch create assets - single pattern for CSV rows, PDF pages, directory imports."""
+    assets: List[AssetCreate]
+    batch_size: int = 500
+    skip_dedupe: bool = True
+
+
 @router.post("", response_model=AssetRead, status_code=status.HTTP_201_CREATED)
 @router.post("/", response_model=AssetRead, status_code=status.HTTP_201_CREATED)
 async def create_asset(
@@ -133,8 +142,8 @@ async def create_asset(
             asset = assets[0] if assets else None
         else:
             # No locator - create asset record
-            from app.api.services.asset_service import AssetService
-            from app.api.processors import detect_asset_kind_from_extension, needs_processing
+            from app.api.content.services import AssetService
+            from app.api.content.processors import detect_asset_kind_from_extension, needs_processing
             storage_provider = create_storage_provider(settings)
             asset_service = AssetService(session, storage_provider)
             
@@ -168,7 +177,7 @@ async def create_asset(
         # Auto-embed if infospace has embedding enabled
         infospace = session.get(Infospace, infospace_id)
         if infospace and infospace.embedding_model and asset.text_content:
-            from app.api.tasks.embed import embed_asset_task
+            from app.api.search.tasks.embed import embed_asset_task
             embed_asset_task.delay(
                 asset_id=asset.id,
                 infospace_id=infospace_id,
@@ -185,6 +194,38 @@ async def create_asset(
             detail=f"Asset creation failed: {str(e)}"
         )
 
+
+@router.post("/batch", response_model=List[AssetRead])
+def batch_create_assets(
+    *,
+    session: SessionDep,
+    current_user: CurrentUser,
+    asset_service: AssetServiceDep,
+    infospace_id: int,
+    request: BatchAssetCreateRequest,
+) -> List[AssetRead]:
+    """
+    Batch create assets. Single pattern for CSV rows, PDF pages, directory imports, RSS articles.
+    Uses per-batch commits (default 500) for scale.
+    """
+    validate_infospace_access(session, infospace_id, current_user.id)
+    if not request.assets:
+        return []
+    # Ensure user_id and infospace_id on each asset
+    normalized = []
+    for ac in request.assets:
+        data = ac.model_dump(exclude_unset=True)
+        data["user_id"] = current_user.id
+        data["infospace_id"] = infospace_id
+        normalized.append(data)
+    created = asset_service.batch_create_assets(
+        normalized,
+        batch_size=request.batch_size,
+        skip_dedupe=request.skip_dedupe,
+    )
+    return [AssetRead.model_validate(a) for a in created]
+
+
 @router.post("/upload", response_model=AssetRead)
 async def upload_file(
     *,
@@ -192,6 +233,7 @@ async def upload_file(
     current_user: CurrentUser,
     storage_provider: StorageProviderDep,
     infospace_id: int,
+    _: CheckUploadSizeDep,
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
     process_immediately: bool = Form(True)
@@ -205,9 +247,8 @@ async def upload_file(
         validate_infospace_access(session, infospace_id, current_user.id)
         
         # Use FileHandler directly (new pattern)
-        from app.api.handlers import FileHandler, IngestionContext
-        from app.api.services.asset_service import AssetService
-        from app.api.services.bundle_service import BundleService
+        from app.api.content.handlers import FileHandler, IngestionContext
+        from app.api.content.services import AssetService, BundleService
         
         scraping_provider = create_scraping_provider(settings)
         asset_service = AssetService(session, storage_provider)
@@ -260,7 +301,7 @@ async def ingest_url(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
 
-        from app.api.handlers import WebHandler
+        from app.api.content.handlers import WebHandler
 
         context = make_ingestion_context(
             current_user.id, infospace_id, {"scrape_immediately": scrape_immediately}
@@ -299,7 +340,7 @@ async def ingest_text(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
 
-        from app.api.handlers import TextHandler
+        from app.api.content.handlers import TextHandler
 
         options = {"event_timestamp": event_timestamp} if event_timestamp else {}
         context = make_ingestion_context(current_user.id, infospace_id, options)
@@ -371,7 +412,7 @@ async def bulk_ingest_urls(
         
         if len(bulk_request.urls) > 100:
             # For large batches, use background task
-            from app.api.tasks.content_tasks import ingest_bulk_urls
+            from app.api.content.tasks.content_tasks import ingest_bulk_urls
             ingest_bulk_urls.delay(
                 urls=bulk_request.urls,
                 infospace_id=infospace_id,
@@ -421,7 +462,7 @@ async def ingest_search_results(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
         
-        from app.api.services.asset_builder import AssetBuilder
+        from app.api.content.services import AssetBuilder
         from app.schemas import SearchResult
         
         created_assets = []
@@ -805,7 +846,7 @@ async def discover_rss_feeds(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
 
-        from app.api.handlers import RSSHandler
+        from app.api.content.handlers import RSSHandler
 
         feeds = await RSSHandler.discover_rss_feeds_from_awesome_repo(
             country=country,
@@ -841,7 +882,7 @@ async def preview_rss_feed(
     Preview the content of an RSS feed.
     """
     try:
-        from app.api.handlers import RSSHandler
+        from app.api.content.handlers import RSSHandler
 
         preview_data = await RSSHandler.preview_rss_feed(feed_url, max_items)
         return preview_data
@@ -1143,7 +1184,7 @@ def transfer_assets(
     validate_infospace_access(session, request.target_infospace_id, current_user.id)
     
     # Get asset service
-    from app.api.services.asset_service import AssetService
+    from app.api.content.services import AssetService
     from app.api.providers.factory import create_storage_provider
     from app.core.config import settings
     
@@ -1276,6 +1317,7 @@ async def add_files_to_bundle_background(
     *,
     infospace_id: int,
     bundle_id: int,
+    _: CheckUploadSizeDep,
     files: List[UploadFile] = File(...),
     options: str = Form("{}"),
     current_user: CurrentUser,
@@ -1419,7 +1461,7 @@ async def ingest_rss_feeds_from_awesome(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
 
-        from app.api.handlers import RSSHandler
+        from app.api.content.handlers import RSSHandler
 
         context = make_ingestion_context(
             user_id=current_user.id,

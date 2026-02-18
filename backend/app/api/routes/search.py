@@ -4,11 +4,11 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
-from app.api.deps import SearchProviderDep, get_current_user, get_db, IngestionContextFactoryDep
+from app.api.deps import SearchProviderDep, get_current_user, get_db, IngestionContextFactoryDep, get_ingestion_context_factory
 from app.api.providers.base import SearchProvider
 from app.api.providers.impl.search_tavily import TavilySearchProvider
 from app.api.providers.search_registry import SearchProviderRegistryService
-from app.api.services.content_ingestion_service import ContentIngestionService
+from app.api.content.services import ContentIngestionService
 from app.models import User
 from app.schemas import SearchResultsOut, SearchRequest
 from app.core.config import settings
@@ -133,9 +133,9 @@ async def search_content(
 @router.post("/external", response_model=SearchAndIngestResponse)
 async def search_and_ingest(
     request: ExternalSearchRequest,
+    make_ingestion_context: IngestionContextFactoryDep,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    make_ingestion_context: IngestionContextFactoryDep,
 ) -> SearchAndIngestResponse:
     """
     Search using external providers (Tavily, etc.) and create assets from results.
@@ -191,7 +191,7 @@ async def search_and_ingest(
         
         if request.create_assets:
             # Use SearchHandler to create assets from search results
-            from app.api.handlers import SearchHandler
+            from app.api.content.handlers import SearchHandler
             from app.schemas import SearchResult
             
             # First, perform the search using the provider directly
@@ -384,9 +384,9 @@ async def create_assets_from_urls(
 @router.post("/create-assets-from-results", response_model=SearchAndIngestResponse)
 async def create_assets_from_results(
     request: DirectAssetCreationRequest,
+    make_ingestion_context: IngestionContextFactoryDep,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    make_ingestion_context: IngestionContextFactoryDep,
 ) -> SearchAndIngestResponse:
     """
     Create assets directly from search result data without re-scraping.
@@ -399,7 +399,7 @@ async def create_assets_from_results(
     try:
         query = request.search_metadata.get('query', 'Search Results') if request.search_metadata else 'Search Results'
 
-        from app.api.handlers import SearchHandler
+        from app.api.content.handlers import SearchHandler
         from app.schemas import SearchResult
 
         context = make_ingestion_context(current_user.id, request.infospace_id, {})

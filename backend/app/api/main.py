@@ -11,6 +11,7 @@ from app.api.routes import (
     chat,  # Intelligence chat routes
     chat_history,  # Chat conversation history routes
     chunking,
+    search_history,
     dataset_jobs,  # Dataset ingestion job tracking
     datasets,
     embeddings,
@@ -31,13 +32,6 @@ from app.api.routes import (
     users,
     utils,
 )
-from app.api.v1 import (
-    entities,
-    locations,
-    satellite
-)
-
-
 api_router = APIRouter()
 
 # V1/ Main APIs - Using app.api.routes directly now for user-centric features
@@ -64,7 +58,7 @@ api_router.include_router(healthcheck.router, prefix="/healthz", tags=["app"])
 api_router.include_router(infospaces.router, prefix="/infospaces", tags=["Infospaces"])
 api_router.include_router(login.router, tags=["login"])
 api_router.include_router(search.router, prefix="/search", tags=["Search"])
-
+api_router.include_router(search_history.router, prefix="/search_history", tags=["Search History"])
 api_router.include_router(shareables.router, prefix="/shareables", tags=["sharing"])
 api_router.include_router(sources.router, tags=["Sources"])
 api_router.include_router(sso.router, tags=["sso"])
@@ -73,12 +67,3 @@ api_router.include_router(tree.router, tags=["Tree Navigation"])
 api_router.include_router(user_backups.router, tags=["User Backups"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(utils.router, tags=["utils"])
-
-# Original V1 routes 
-api_router.include_router(entities.router, prefix="/entities", tags=["entities"])
-api_router.include_router(locations.router, prefix="/locations", tags=["locations"])
-api_router.include_router(satellite.router, prefix="/satellite", tags=["satellite"])
-
-# Backwards-compatible aliases expected by app.main
-# api_router_v1 = api_router
-# api_router_v2 = api_router

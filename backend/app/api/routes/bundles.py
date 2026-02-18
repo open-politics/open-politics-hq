@@ -17,8 +17,8 @@ from app.schemas import (
     BundleMoveRequest,
     BundleHierarchy,
 )
-from app.api.services.bundle_service import BundleService
-from app.api.services.service_utils import validate_infospace_access
+from app.api.content.services import BundleService
+from app.api.service_utils import validate_infospace_access
 
 router = APIRouter()
 
