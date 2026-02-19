@@ -6,7 +6,7 @@ import pandas as pd
 
 from sqlmodel import Session, select
 from app.models import Annotation, AnnotationRun, AnnotationSchema, Asset, User, Bundle # Ensure User and Bundle are imported
-# from app.api.analysis.protocols import AnalysisAdapterProtocol # Optional for structural typing
+# from app.api.modules.analysis.protocols import AnalysisAdapterProtocol # Optional for structural typing
 
 logger = logging.getLogger(__name__)
 

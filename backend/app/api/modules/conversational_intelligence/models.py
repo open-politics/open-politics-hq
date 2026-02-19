@@ -7,7 +7,7 @@ import uuid
 from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Column, Index, JSON, Text
 
-from app.api.identity.models import User, Infospace
+from app.api.modules.identity_infospace_user.models import User, Infospace
 
 
 class ChatConversation(SQLModel, table=True):

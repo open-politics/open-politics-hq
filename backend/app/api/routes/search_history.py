@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from sqlalchemy import func
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.dependency_injection import CurrentUser, SessionDep
 from app.models import SearchHistory
 from app.schemas import SearchHistoryCreate, SearchHistoriesOut, SearchHistoryOut
 

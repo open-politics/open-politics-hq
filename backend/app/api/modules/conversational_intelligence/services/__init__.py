@@ -1,6 +1,6 @@
 """Conversational intelligence services."""
 
-from app.api.conversational_intelligence.services.conversation_service import (
+from app.api.modules.conversational_intelligence.services.conversation_service import (
     IntelligenceConversationService,
 )
 

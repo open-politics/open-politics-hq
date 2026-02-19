@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 from sqlalchemy import text
 
 from app.models import Asset, AssetChunk, Infospace, EmbeddingModel, AssetKind, EmbeddingProvider as EmbeddingProviderEnum
-from app.api.content.models import get_embedding_column_for_dimension
+from app.api.modules.content.models import get_embedding_column_for_dimension
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ class VectorSearchService:
 
         # Get the appropriate embedding provider for this model
         try:
-            from app.api.providers.factory import get_embedding_registry
+            from app.api.modules.foundation_service_providers.factory import get_embedding_registry
             registry = get_embedding_registry()
 
             provider, provider_name = await registry.get_provider_for_model(
@@ -151,7 +151,7 @@ class VectorSearchService:
                 f"not found in database. Auto-registering..."
             )
             try:
-                from app.api.embedding.services.embedding_service import EmbeddingService
+                from app.api.modules.embedding.services.embedding_service import EmbeddingService
                 embedding_service = EmbeddingService(
                     self.session,
                     runtime_api_keys=self.runtime_api_keys

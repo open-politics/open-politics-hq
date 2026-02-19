@@ -3,7 +3,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse
 
-from app.api.deps import CurrentUser, SessionDep, get_user_backup_service
+from app.api.dependency_injection import CurrentUser, SessionDep, get_user_backup_service
 from app.core.config import settings
 from app.schemas import (
     UserBackupCreate,
@@ -296,7 +296,7 @@ async def cleanup_expired_user_backups(
     
     try:
         # Trigger cleanup task
-        from app.api.sharing.tasks.user_backup import cleanup_expired_user_backups
+        from app.api.modules.sharing.tasks.user_backup import cleanup_expired_user_backups
         cleanup_expired_user_backups.delay()
         
         return Message(message="User backup cleanup task started")
@@ -417,7 +417,7 @@ def trigger_backup_all_users(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can trigger bulk user backups")
     
     try:
-        from app.api.sharing.tasks.user_backup import backup_all_users
+        from app.api.modules.sharing.tasks.user_backup import backup_all_users
         backup_all_users.delay(backup_type=backup_type, admin_user_id=current_user.id)
         
         return Message(message=f"Bulk user backup ({backup_type}) triggered successfully")
@@ -443,7 +443,7 @@ def trigger_backup_specific_users(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can trigger bulk user backups")
     
     try:
-        from app.api.sharing.tasks.user_backup import backup_specific_users
+        from app.api.modules.sharing.tasks.user_backup import backup_specific_users
         backup_specific_users.delay(
             user_ids=user_ids,
             backup_type=backup_type,

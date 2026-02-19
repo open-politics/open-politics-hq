@@ -21,8 +21,8 @@ from typing import Any, Dict, List, Optional
 from sqlmodel import Session, select
 
 from app.models import Asset, AssetKind, ProcessingStatus
-from app.api.providers.base import StorageProvider, ScrapingProvider
-from app.api.content.services.asset_service import AssetService
+from app.api.modules.foundation_service_providers.base import StorageProvider, ScrapingProvider
+from app.api.modules.content.services.asset_service import AssetService
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class ProcessingService:
         Returns metadata dict or None if no extractor for this type.
         """
         if asset.kind == AssetKind.PDF and asset.blob_path:
-            from app.api.content.processors.pdf_processor import extract_pdf_metadata
+            from app.api.modules.content.processors.pdf_processor import extract_pdf_metadata
 
             storage = self.storage_provider
             if hasattr(storage, "get_file_path"):
@@ -86,12 +86,12 @@ class ProcessingService:
         if asset.processing_status == ProcessingStatus.PROCESSING:
             return
 
-        from app.api.content.types import get_content_type_registry
+        from app.api.modules.content.types import get_content_type_registry
 
         # Phase 1: Metadata extraction + type refinement
         metadata = await self._run_phase1_metadata(asset)
         if metadata is not None:
-            from app.api.content.detection import detect_content_kind
+            from app.api.modules.content.detection import detect_content_kind
 
             new_kind = detect_content_kind(asset, metadata)
             if new_kind is not None and new_kind != asset.kind:
@@ -112,8 +112,8 @@ class ProcessingService:
                     return
 
         # Phase 2: Content extraction
-        from app.api.content.processors.base import ProcessingContext
-        from app.api.content.services.bundle_service import BundleService
+        from app.api.modules.content.processors.base import ProcessingContext
+        from app.api.modules.content.services.bundle_service import BundleService
 
         processor_class = get_content_type_registry().get_processor_class(asset)
         if not processor_class:
@@ -235,9 +235,9 @@ class ProcessingService:
         self, asset: Asset, options: Dict[str, Any]
     ) -> None:
         """Reprocess CSV by updating existing row assets in-place."""
-        from app.api.content.processors import get_processor
-        from app.api.content.processors.base import ProcessingContext
-        from app.api.content.services.bundle_service import BundleService
+        from app.api.modules.content.processors import get_processor
+        from app.api.modules.content.processors.base import ProcessingContext
+        from app.api.modules.content.services.bundle_service import BundleService
 
         existing_children = self.session.exec(
             select(Asset)

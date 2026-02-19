@@ -15,10 +15,10 @@ Asset.is_container, etc.) become derived views from this registry.
 from dataclasses import dataclass, field
 from typing import FrozenSet, List, Optional, Set, Tuple, Type, TypeVar
 
-from app.api.content.models import Asset, AssetKind, Modality
+from app.api.modules.content.models import Asset, AssetKind, Modality
 
 # Import base only to avoid circular dependency; concrete processors registered lazily
-from app.api.content.processors.base import BaseProcessor, ProcessingContext
+from app.api.modules.content.processors.base import BaseProcessor, ProcessingContext
 
 # Type for metadata extractors (Phase 1 pipeline - defined later)
 MetadataExtractorT = TypeVar("MetadataExtractorT")
@@ -60,10 +60,10 @@ class ContentTypeRegistry:
 
     def _register_builtin(self) -> None:
         # Import processors here to avoid circular imports at module load
-        from app.api.content.processors.csv_processor import CSVProcessor
-        from app.api.content.processors.excel_processor import ExcelProcessor
-        from app.api.content.processors.pdf_processor import PDFProcessor
-        from app.api.content.processors.web_processor import WebProcessor
+        from app.api.modules.content.processors.csv_processor import CSVProcessor
+        from app.api.modules.content.processors.excel_processor import ExcelProcessor
+        from app.api.modules.content.processors.pdf_processor import PDFProcessor
+        from app.api.modules.content.processors.web_processor import WebProcessor
 
         descriptors = [
             # Documents

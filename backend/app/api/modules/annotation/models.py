@@ -9,8 +9,8 @@ from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Column, Index, JSON, Text, text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 
-from app.api.identity.models import User, Infospace
-from app.api.content.models import Asset, Bundle
+from app.api.modules.identity_infospace_user.models import User, Infospace
+from app.api.modules.content.models import Asset, Bundle
 
 
 # ─── Annotation enums ───

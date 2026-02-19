@@ -13,10 +13,10 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlmodel import Session, select
 from pydantic import BaseModel
 
-from app.api import deps
+from app.api import dependency_injection
 from app.models import DatasetIngestionJob, IngestionStatus, Bundle
 from app.schemas import Message
-from app.api.service_utils import validate_infospace_access
+from app.api.global_utils import validate_infospace_access
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +76,8 @@ def create_directory_import_job(
     *,
     infospace_id: int,
     request: DirectoryImportRequest,
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Import files from a local directory.
@@ -90,7 +90,7 @@ def create_directory_import_job(
     """
     from pathlib import Path
     from app.core.config import settings
-    from app.api.content.tasks.dataset_tasks import import_directory_task
+    from app.api.modules.content.tasks.dataset_tasks import import_directory_task
 
     validate_infospace_access(db, infospace_id, current_user.id)
 
@@ -194,8 +194,8 @@ def trigger_batch_process_pending(
     infospace_id: int,
     bundle_id: int,
     batch_size: int = Query(100, ge=1, le=500),
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Trigger batch processing of PENDING assets in a bundle.
@@ -204,7 +204,7 @@ def trigger_batch_process_pending(
     This endpoint starts background processing (PDF extraction, CSV row creation).
     Processing runs in self-chaining batches until all PENDING assets are done.
     """
-    from app.api.content.tasks.batch_processing import batch_process_pending
+    from app.api.modules.content.tasks.batch_processing import batch_process_pending
 
     validate_infospace_access(db, infospace_id, current_user.id)
 
@@ -233,8 +233,8 @@ def trigger_batch_enrich(
     infospace_id: int,
     bundle_id: int,
     request: BatchEnrichRequest,
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Trigger batch enrichment for assets in a bundle missing a facet.
@@ -242,9 +242,9 @@ def trigger_batch_enrich(
     Runs enrichers (geocoding, etc.) on assets that don't yet have the target
     facet set. Self-chaining until all are enriched.
     """
-    from app.api.content.tasks.batch_processing import batch_enrich
-    from app.api.content.enrichers import get_enricher
-    from app.api.content.facets import (
+    from app.api.modules.content.tasks.batch_processing import batch_enrich
+    from app.api.modules.content.enrichers import get_enricher
+    from app.api.modules.content.facets import (
         FACET_LOCATION_LAT,
         FACET_LOCATION_LON,
         FACET_SUMMARY,
@@ -298,8 +298,8 @@ def get_processing_status(
     *,
     infospace_id: int,
     bundle_id: int,
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Get processing status counts for assets in a bundle.
@@ -349,8 +349,8 @@ def list_dataset_jobs(
     infospace_id: int,
     status: Optional[IngestionStatus] = Query(None, description="Filter by status"),
     limit: int = Query(50, ge=1, le=100),
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     List dataset ingestion jobs for an infospace.
@@ -385,8 +385,8 @@ def list_dataset_jobs(
 def get_dataset_job_status(
     *,
     job_id: int,
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Get status of a specific dataset ingestion job.
@@ -415,8 +415,8 @@ def get_dataset_job_status(
 def get_dataset_job_by_uuid(
     *,
     job_uuid: str,
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Get job status by UUID (useful when only UUID is known).
@@ -447,8 +447,8 @@ async def create_archive_ingestion_job(
     *,
     infospace_id: int,
     request: DatasetIngestionJobCreate,
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Create a new archive ingestion job.
@@ -459,7 +459,7 @@ async def create_archive_ingestion_job(
     validate_infospace_access(db, infospace_id, current_user.id)
     
     # Validate it's actually an archive URL
-    from app.api.content.processors import is_archive_url
+    from app.api.modules.content.processors import is_archive_url
     if not is_archive_url(request.source_locator):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -467,7 +467,7 @@ async def create_archive_ingestion_job(
         )
     
     # Use ContentIngestionService to trigger ingestion
-    from app.api.content.services import ContentIngestionService
+    from app.api.modules.content.services import ContentIngestionService
     content_service = ContentIngestionService(db)
     
     options = request.options or {}
@@ -502,8 +502,8 @@ async def create_archive_ingestion_job(
 def cancel_dataset_job(
     *,
     job_id: int,
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Cancel a running dataset ingestion job.
@@ -548,8 +548,8 @@ def cancel_dataset_job(
 def delete_dataset_job(
     *,
     job_id: int,
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Delete a dataset ingestion job record.

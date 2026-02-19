@@ -10,7 +10,7 @@ from sqlalchemy.sql import exists
 from sqlmodel import select
 
 from app.core.dispatch import register_watcher
-from app.api.content.models import Asset, AssetChunk, ProcessingStatus
+from app.api.modules.content.models import Asset, AssetChunk, ProcessingStatus
 
 
 class _ReadyToEmbedWatcher:

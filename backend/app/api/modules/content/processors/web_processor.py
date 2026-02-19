@@ -9,7 +9,7 @@ import logging
 import dateutil.parser
 from datetime import timezone
 from typing import List
-from app.api.content.models import Asset, AssetKind
+from app.api.modules.content.models import Asset, AssetKind
 from app.schemas import AssetCreate
 from .base import BaseProcessor, ProcessingError
 

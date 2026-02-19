@@ -3,7 +3,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
 
-from app.api.deps import CurrentUser, SessionDep, get_backup_service
+from app.api.dependency_injection import CurrentUser, SessionDep, get_backup_service
 from app.core.config import settings
 from app.schemas import (
     InfospaceBackupCreate,
@@ -15,9 +15,9 @@ from app.schemas import (
     InfospaceRead,
     Message
 )
-from app.api.sharing.services import BackupService
-from app.api.service_utils import validate_infospace_access
-from app.api.sharing.tasks.backup import automatic_backup_all_infospaces, backup_specific_infospaces
+from app.api.modules.sharing.services import BackupService
+from app.api.global_utils import validate_infospace_access
+from app.api.modules.sharing.tasks.backup import automatic_backup_all_infospaces, backup_specific_infospaces
 from app.models import Infospace
 from sqlmodel import select
 

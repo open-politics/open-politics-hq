@@ -16,10 +16,10 @@ from app.models import (
     RunAggregate,
 )
 from app.schemas import AnnotationCreate
-from app.api.service_utils import validate_infospace_access
-from app.api.annotation.tasks.annotate import process_annotation_run, retry_failed_annotations
-from app.api.providers.model_registry import ModelRegistryService
-from app.api.content.services.asset_service import AssetService
+from app.api.global_utils import validate_infospace_access
+from app.api.modules.annotation.tasks.annotate import process_annotation_run, retry_failed_annotations
+from app.api.modules.foundation_service_providers.model_registry import ModelRegistryService
+from app.api.modules.content.services.asset_service import AssetService
 from collections import Counter
 from math import sqrt
 from app.schemas import AnnotationRunCreate, AnnotationSchemaCreate
@@ -602,7 +602,7 @@ class AnnotationService:
                 final_instructions = f"--- Custom Instructions ---\n{custom_prompt}"
         
         # Create a temporary schema info for processing
-        from app.api.annotation.tasks.annotate import (
+        from app.api.modules.annotation.tasks.annotate import (
             validate_hierarchical_schema, 
             detect_schema_structure,
             process_single_asset_schema
@@ -661,7 +661,7 @@ class AnnotationService:
             # Define the complete async workflow to avoid event loop conflicts
             async def complete_retry_workflow():
                 # Create providers directly (not cached) within the new event loop context
-                from app.api.providers.factory import create_model_registry, create_storage_provider
+                from app.api.modules.foundation_service_providers.factory import create_model_registry, create_storage_provider
                 
                 fresh_model_registry = create_model_registry(settings)
                 await fresh_model_registry.initialize_providers()

@@ -8,8 +8,8 @@ from sqlalchemy.sql import exists
 from sqlmodel import select
 
 from app.core.dispatch import register_watcher
-from app.api.annotation.models import Annotation, AnnotationRun
-from app.api.graph.models import FragmentCuration
+from app.api.modules.annotation.models import Annotation, AnnotationRun
+from app.api.modules.graph.models import FragmentCuration
 from app.models import ResultStatus
 
 

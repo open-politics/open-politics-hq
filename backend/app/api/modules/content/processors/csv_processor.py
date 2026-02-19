@@ -11,7 +11,7 @@ import csv
 import io
 import logging
 from typing import Iterator, List, Optional
-from app.api.content.models import Asset, AssetKind, ProcessingStatus
+from app.api.modules.content.models import Asset, AssetKind, ProcessingStatus
 from app.schemas import AssetCreate
 from .base import BaseProcessor, ProcessingError
 

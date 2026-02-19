@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import select, func
 from pydantic import BaseModel
 
-from app.api.deps import (
+from app.api.dependency_injection import (
     CurrentUser,
     SessionDep,
     get_current_active_superuser,

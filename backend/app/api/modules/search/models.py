@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Column, JSON
 
-from app.api.identity.models import User
+from app.api.modules.identity_infospace_user.models import User
 
 
 class SearchHistory(SQLModel, table=True):

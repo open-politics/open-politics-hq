@@ -8,7 +8,7 @@ import logging
 import tempfile
 import os
 
-from app.api.deps import SessionDep, CurrentUser, DatasetServiceDep, ShareableServiceDep, StorageProviderDep
+from app.api.dependency_injection import SessionDep, CurrentUser, DatasetServiceDep, ShareableServiceDep, StorageProviderDep
 from app.models import (
     Dataset,
     ResourceType,
@@ -20,7 +20,7 @@ from app.schemas import (
     DatasetsOut,
     Message,
 )
-from app.api.sharing.services import DataPackage
+from app.api.modules.sharing.services import DataPackage
 
 logger = logging.getLogger(__name__)
 

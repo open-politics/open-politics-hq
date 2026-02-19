@@ -34,21 +34,21 @@ from sqlmodel import Session, select, func, col
 from app.core.config import AppSettings
 
 if TYPE_CHECKING:
-    from app.api.annotation.services.annotation_service import AnnotationService
-    from app.api.identity.services.infospace_service import InfospaceService
-    from app.api.content.services.dataset_service import DatasetService
-    from app.api.sharing.services.package_service import PackageService
-    from app.api.content.services.bundle_service import BundleService
-    from app.api.content.services.asset_service import AssetService
+    from app.api.modules.annotation.services.annotation_service import AnnotationService
+    from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
+    from app.api.modules.content.services.dataset_service import DatasetService
+    from app.api.modules.sharing.services.package_service import PackageService
+    from app.api.modules.content.services.bundle_service import BundleService
+    from app.api.modules.content.services.asset_service import AssetService
 
-from app.api.annotation.services.annotation_service import AnnotationService
-from app.api.content.services.dataset_service import DatasetService
-from app.api.identity.services.infospace_service import InfospaceService
-from app.api.sharing.services.package_service import PackageService, PackageBuilder
-from app.api.content.services.bundle_service import BundleService
-from app.api.content.services.asset_service import AssetService
+from app.api.modules.annotation.services.annotation_service import AnnotationService
+from app.api.modules.content.services.dataset_service import DatasetService
+from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
+from app.api.modules.sharing.services.package_service import PackageService, PackageBuilder
+from app.api.modules.content.services.bundle_service import BundleService
+from app.api.modules.content.services.asset_service import AssetService
 
-from app.api.service_utils import validate_infospace_access
+from app.api.global_utils import validate_infospace_access
 from app.models import (
     ResourceType, 
     ShareableLink,  
@@ -77,8 +77,8 @@ from app.schemas import (
     BundlePreview,
     AnnotationRunPreview
 )
-from app.api.providers.base import StorageProvider
-from app.api.sharing.services.package_service import DataPackage, PackageMetadata
+from app.api.modules.foundation_service_providers.base import StorageProvider
+from app.api.modules.sharing.services.package_service import DataPackage, PackageMetadata
 logger = logging.getLogger(__name__)
 
 class ShareableService:

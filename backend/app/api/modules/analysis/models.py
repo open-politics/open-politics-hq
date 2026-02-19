@@ -7,7 +7,7 @@ from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Column, JSON
 
 if TYPE_CHECKING:
-    from app.api.identity.models import User
+    from app.api.modules.identity_infospace_user.models import User
 
 
 class AnalysisAdapter(SQLModel, table=True):

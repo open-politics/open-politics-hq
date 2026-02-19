@@ -1,6 +1,6 @@
 """Embedding domain: EmbeddingService, ChunkingService, VectorSearchService."""
 
-from app.api.embedding.services import (
+from app.api.modules.embedding.services import (
     EmbeddingService,
     ChunkingService,
     VectorSearchService,

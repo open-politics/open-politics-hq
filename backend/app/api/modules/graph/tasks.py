@@ -9,7 +9,7 @@ from app.core.celery_app import celery
 from sqlmodel import Session, select
 
 from app.core.db import engine
-from app.api.graph.models import FragmentCuration
+from app.api.modules.graph.models import FragmentCuration
 from app.models import Annotation
 
 logger = logging.getLogger(__name__)

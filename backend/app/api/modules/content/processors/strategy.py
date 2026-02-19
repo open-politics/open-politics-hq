@@ -8,8 +8,8 @@ Uses smart heuristics based on content type, file size, and user preference.
 
 import logging
 from typing import Optional
-from app.api.content.models import Asset, AssetKind
-from app.api.content.types import get_content_type_registry
+from app.api.modules.content.models import Asset, AssetKind
+from app.api.modules.content.types import get_content_type_registry
 
 logger = logging.getLogger(__name__)
 

@@ -5,16 +5,18 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
 
-from app import crud
-from app.api.deps import CurrentUser, SessionDep, get_current_active_superuser
+from app.api.modules.identity_infospace_user.services import user_service as crud
+from app.api.dependency_injection import CurrentUser, SessionDep, get_current_active_superuser
 from app.core import security
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.schemas import Message, NewPassword, Token, UserOut
-from app.utils import (
-    generate_password_reset_token,
+from app.api.modules.identity_infospace_user.services import (
     generate_reset_password_email,
     send_email,
+)
+from app.core.security import (
+    generate_password_reset_token,
     verify_password_reset_token,
 )
 

@@ -15,10 +15,10 @@ from app.schemas import (
     AnnotationSchemaUpdate,
     AnnotationSchemasOut,
 )
-from app.api.deps import SessionDep, CurrentUser, get_annotation_service
-from app.api.service_utils import validate_infospace_access
+from app.api.dependency_injection import SessionDep, CurrentUser, get_annotation_service
+from app.api.global_utils import validate_infospace_access
 from sqlmodel import select, func
-from app.api.annotation.services import AnnotationService
+from app.api.modules.annotation.services import AnnotationService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

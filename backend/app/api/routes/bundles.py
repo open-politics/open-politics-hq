@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session
 from pydantic import BaseModel
 
-from app.api import deps
+from app.api import dependency_injection
 from app.models import (
     Bundle,
     Asset
@@ -17,8 +17,8 @@ from app.schemas import (
     BundleMoveRequest,
     BundleHierarchy,
 )
-from app.api.content.services import BundleService
-from app.api.service_utils import validate_infospace_access
+from app.api.modules.content.services import BundleService
+from app.api.global_utils import validate_infospace_access
 
 router = APIRouter()
 
@@ -27,9 +27,9 @@ def create_bundle(
     *,
     infospace_id: int,
     bundle_in: BundleCreate,
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> Bundle:
     """Create a new bundle in an infospace."""
     bundle = service.create_bundle(
@@ -44,9 +44,9 @@ def create_bundle(
 @router.get("/bundles/{bundle_id}", response_model=BundleRead)
 def get_bundle(
     bundle_id: int,
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> Bundle:
     """Get a bundle by ID."""
     bundle = db.get(Bundle, bundle_id)
@@ -60,9 +60,9 @@ def get_bundles(
     infospace_id: int,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> List[Bundle]:
     """Get bundles for an infospace."""
     return service.get_bundles(
@@ -77,9 +77,9 @@ def update_bundle(
     *,
     bundle_id: int,
     bundle_in: BundleUpdate,
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> Bundle:
     """Update a bundle."""
     bundle = db.get(Bundle, bundle_id)
@@ -100,9 +100,9 @@ def update_bundle(
 @router.delete("/bundles/{bundle_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_bundle(
     bundle_id: int,
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ):
     """Delete a bundle."""
     bundle = db.get(Bundle, bundle_id)
@@ -121,9 +121,9 @@ class BulkDeleteBundlesRequest(BaseModel):
 def bulk_delete_bundles(
     *,
     request: BulkDeleteBundlesRequest,
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> Message:
     """
     Delete multiple bundles in one request.
@@ -170,9 +170,9 @@ def add_asset_to_bundle(
     *,
     bundle_id: int,
     asset_id: int,
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> Bundle:
     """Add an existing asset to a bundle by ID."""
     bundle = db.get(Bundle, bundle_id)
@@ -195,9 +195,9 @@ def remove_asset_from_bundle(
     *,
     bundle_id: int,
     asset_id: int,
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> Bundle:
     """Remove an asset from a bundle by ID."""
     bundle = db.get(Bundle, bundle_id)
@@ -219,8 +219,8 @@ def remove_asset_from_bundle(
 def get_assets_in_bundle(
     bundle_id: int,
     infospace_id: int,
-    service: BundleService = Depends(deps.get_bundle_service),
-    current_user = Depends(deps.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service),
+    current_user = Depends(dependency_injection.get_current_user),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
 ):
@@ -239,9 +239,9 @@ def get_assets_in_bundle(
 @router.get("/assets/{asset_id}", response_model=AssetRead)
 def get_asset(
     asset_id: int,
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> Asset:
     """Get an asset by ID."""
     asset = db.get(Asset, asset_id)
@@ -256,9 +256,9 @@ def transfer_bundle(
     bundle_id: int,
     target_infospace_id: int,
     copy: bool = True,
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> Bundle:
     """
     Transfer a bundle to another infospace.
@@ -292,9 +292,9 @@ def move_bundle_to_parent(
     *,
     bundle_id: int,
     move_request: BundleMoveRequest,
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> Bundle:
     """Move a bundle into another bundle or to root level."""
     bundle = db.get(Bundle, bundle_id)
@@ -319,9 +319,9 @@ def get_bundle_hierarchy(
     *,
     bundle_id: int,
     max_depth: int = Query(default=10, ge=1, le=20),
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> BundleHierarchy:
     """Get bundle with its complete child hierarchy."""
     bundle = db.get(Bundle, bundle_id)
@@ -342,9 +342,9 @@ def get_bundle_hierarchy(
 def get_root_bundles(
     *,
     infospace_id: int,
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> List[Bundle]:
     """Get all top-level bundles (those without parent bundles) in an infospace."""
     return service.get_root_bundles(
@@ -359,9 +359,9 @@ def get_bulk_bundle_assets(
     bundle_ids: str = Query(..., description="Comma-separated list of bundle IDs"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
-    db: Session = Depends(deps.get_db),
-    current_user = Depends(deps.get_current_user),
-    service: BundleService = Depends(deps.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> dict:
     """
     Get assets from multiple bundles in a single request.

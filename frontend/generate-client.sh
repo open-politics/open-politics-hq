@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+echo "Because of with "/" and without "/" compatibilty errors you will see prints of dupliate operationIds. So these logs are expected."
+
+
 curl http://localhost:8022/api/v1/openapi.json > openapi.json &&
 
 # Replace the Node.js script with a jq command for modifying openapi.json
@@ -13,18 +16,6 @@ jq '.paths |= map_values(map_values(if (.tags and (.tags | length > 0) and .oper
 
 npm run generate-client
 
-
-# This fixes a few literals in the schemas.ts file that were not being properly parsed by the client generator.
-sed -i "s/default: pending,/default: 'pending',/g" ./src/client/schemas.ts
-sed -i "s/default: paused,/default: 'paused',/g" ./src/client/schemas.ts
-sed -i "s/default: read_only,/default: 'read_only',/g" ./src/client/schemas.ts
-sed -i "s/default: success,/default: 'success',/g" ./src/client/schemas.ts
-sed -i "s/default: tier_0,/default: 'tier_0',/g" ./src/client/schemas.ts
-sed -i "s/default: ready,/default: 'ready',/g" ./src/client/schemas.ts
-
-# Patch ShareablesService.exportResourcesBatch in services.ts to set responseType: 'blob'
-# This ensures that axios handles the ZIP response correctly as a Blob for file download.
-sed -i "/\\/api\\/v1\\/shareables\\/shareables\\/export-batch/,/^[[:space:]]*errors: {/s/\(^[[:space:]]*body: requestBody,\)/            responseType: 'blob',\\n\1/" ./src/client/services.ts
 
 # Patch ApiRequestOptions.ts to include an optional responseType property
 sed -i "/readonly errors?: Record<number, string>;/a \\\    readonly responseType?: 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream';" ./src/client/core/ApiRequestOptions.ts

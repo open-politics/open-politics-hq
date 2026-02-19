@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 from app.core.celery_app import celery_app
 from app.core.db import engine
 from app.models import Source, SourceStatus
-from app.api.content.services.stream_source_service import StreamSourceService
+from app.api.modules.content.services.stream_source_service import StreamSourceService
 
 logger = logging.getLogger(__name__)
 

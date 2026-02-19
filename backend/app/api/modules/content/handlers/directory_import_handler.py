@@ -21,7 +21,7 @@ from sqlmodel import Session, select
 
 from app.models import Asset, AssetKind, Bundle, ProcessingStatus
 from app.schemas import BundleCreate
-from app.api.content.types import (
+from app.api.modules.content.types import (
     detect_asset_kind_from_extension,
     importable_extensions,
 )

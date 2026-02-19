@@ -7,12 +7,12 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 from sqlmodel import Session
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.dependency_injection import CurrentUser, SessionDep
 from app.models import User, Infospace, Asset, AssetKind
 from app.schemas import Message
-from app.api.embedding.services import EmbeddingService, VectorSearchService
-from app.api.embedding.tasks.embed import embed_asset_task, embed_infospace_task
-from app.api.providers.impl.embedding_ollama import OllamaEmbeddingProvider
+from app.api.modules.embedding.services import EmbeddingService, VectorSearchService
+from app.api.modules.embedding.tasks.embed import embed_asset_task, embed_infospace_task
+from app.api.modules.foundation_service_providers.implemented.embedding_ollama import OllamaEmbeddingProvider
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -313,7 +313,7 @@ async def clear_infospace_embeddings(
     
     try:
         from sqlalchemy import select
-        from app.api.content.models import EMBEDDING_SUPPORTED_DIMS
+        from app.api.modules.content.models import EMBEDDING_SUPPORTED_DIMS
 
         chunks_query = (
             select(AssetChunk.id)
@@ -363,7 +363,7 @@ async def discover_embedding_models(
     - Ollama: no API key needed
     """
     try:
-        from app.api.providers.factory import get_embedding_registry
+        from app.api.modules.foundation_service_providers.factory import get_embedding_registry
         
         registry = get_embedding_registry()
         

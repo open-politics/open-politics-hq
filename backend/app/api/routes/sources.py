@@ -10,13 +10,13 @@ from app.models import (
     SourceStatus,
     Bundle,
 )
-from app.api.deps import (
+from app.api.dependency_injection import (
     SessionDep,
     CurrentUser,
     BundleServiceDep,
 )
-from app.api.content.services import SourceService
-from app.api.service_utils import validate_infospace_access
+from app.api.modules.content.services import SourceService
+from app.api.global_utils import validate_infospace_access
 from app.schemas import (
     SourceCreate,
     SourceRead,
@@ -510,7 +510,7 @@ async def create_rss_source(
     Note: The auto_monitor parameter is deprecated. Use the Flows API to create
     processing workflows that watch this source's output bundle.
     """
-    from app.api.content.handlers import RSSHandler
+    from app.api.modules.content.handlers import RSSHandler
 
     source_name = request.source_name
     if not source_name:

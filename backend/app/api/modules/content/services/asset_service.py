@@ -5,7 +5,7 @@ import asyncio
 
 from app.models import Asset, AssetKind, ProcessingStatus
 from app.schemas import AssetCreate, AssetUpdate
-from app.api.providers.base import StorageProvider
+from app.api.modules.foundation_service_providers.base import StorageProvider
 from app.core.celery_app import celery
 
 logger = logging.getLogger(__name__)
@@ -208,7 +208,7 @@ class AssetService:
             return False
         
         try:
-            from app.api.content.tasks.content_tasks import reprocess_content
+            from app.api.modules.content.tasks.content_tasks import reprocess_content
             reprocess_content.delay(asset.id, options=options)
             logger.info(f"Triggered reprocessing for asset {asset.id} with options: {options}")
             return True
@@ -247,7 +247,7 @@ class AssetService:
         Returns:
             A list of Asset objects matching the search criteria.
         """
-        from app.api.search.services.search_service import SearchService
+        from app.api.modules.search.services.search_service import SearchService
 
         search_service = SearchService(session=self.session)
 

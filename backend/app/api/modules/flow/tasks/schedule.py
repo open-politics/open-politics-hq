@@ -88,7 +88,7 @@ def _dispatch_ingest_task(task: Task):
     """Dispatch an INGEST task to process_source with user context."""
     target_source_id = task.configuration.get("target_source_id")
     if target_source_id:
-        from app.api.content.tasks.ingest import process_source
+        from app.api.modules.content.tasks.ingest import process_source
         # Pass task.user_id for credential lookup
         process_source.delay(target_source_id, user_id=task.user_id)
         logger.info(f"Dispatched INGEST task {task.id} for source {target_source_id} (user {task.user_id})")
@@ -99,7 +99,7 @@ def _dispatch_ingest_task(task: Task):
 
 def _dispatch_flow_task(task: Task):
     """Dispatch a FLOW task to trigger_flow_by_task."""
-    from app.api.flow.tasks.flow_tasks import trigger_flow_by_task
+    from app.api.modules.flow.tasks.flow_tasks import trigger_flow_by_task
     trigger_flow_by_task.delay(task.id)
     logger.info(f"Dispatched FLOW task {task.id}")
     _update_task_status(task.id, "running", "Task dispatched to trigger_flow_by_task")
@@ -108,7 +108,7 @@ def _dispatch_source_poll_task(task: Task):
     """Dispatch a SOURCE_POLL task to poll a source for new content."""
     source_id = task.configuration.get("source_id") or task.configuration.get("target_source_id")
     if source_id:
-        from app.api.content.tasks.ingest import process_source
+        from app.api.modules.content.tasks.ingest import process_source
         process_source.delay(source_id, user_id=task.user_id)
         logger.info(f"Dispatched SOURCE_POLL task {task.id} for source {source_id}")
         _update_task_status(task.id, "running", "Task dispatched to process_source")
@@ -118,7 +118,7 @@ def _dispatch_source_poll_task(task: Task):
 
 def _dispatch_embed_task(task: Task):
     """Dispatch an EMBED task to generate embeddings."""
-    from app.api.embedding.tasks.embed import embed_infospace_task
+    from app.api.modules.embedding.tasks.embed import embed_infospace_task
     
     infospace_id = task.configuration.get("infospace_id") or task.infospace_id
     if infospace_id:
@@ -137,9 +137,9 @@ def _dispatch_embed_task(task: Task):
 def _dispatch_annotate_task(task: Task):
     """Dispatch an ANNOTATE task to annotation processing"""
     try:
-        from app.api.annotation.services.annotation_service import AnnotationService
-        from app.api.content.services.asset_service import AssetService
-        from app.api.providers.factory import create_model_registry, create_storage_provider
+        from app.api.modules.annotation.services.annotation_service import AnnotationService
+        from app.api.modules.content.services.asset_service import AssetService
+        from app.api.modules.foundation_service_providers.factory import create_model_registry, create_storage_provider
         from app.core.config import settings
         from app.schemas import AnnotationRunCreate
         import asyncio

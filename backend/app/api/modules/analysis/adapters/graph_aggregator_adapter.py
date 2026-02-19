@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Optional, Set
 from collections import defaultdict
 from sqlmodel import Session, select
 from app.models import Annotation, AnnotationRun, AnnotationSchema, User
-from app.api.analysis.protocols import AnalysisAdapterProtocol
+from app.api.modules.analysis.protocols import AnalysisAdapterProtocol
 
 logger = logging.getLogger(__name__)
 

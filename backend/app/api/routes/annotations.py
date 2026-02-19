@@ -19,14 +19,14 @@ from app.schemas import (
     Message,
     AnnotationRetryRequest,
 )
-from app.api.deps import (
+from app.api.dependency_injection import (
     SessionDep,
     CurrentUser,
     AnnotationServiceDep,
 )
-from app.api.service_utils import validate_infospace_access
-from app.api.graph.resolution import resolve_entity
-from app.api.embedding.services import EmbeddingService
+from app.api.global_utils import validate_infospace_access
+from app.api.modules.graph.resolution import resolve_entity
+from app.api.modules.embedding.services import EmbeddingService
 from sqlmodel import select, func
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

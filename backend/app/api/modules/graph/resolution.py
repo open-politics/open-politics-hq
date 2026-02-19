@@ -10,8 +10,8 @@ from sqlmodel import Session, select
 from sqlalchemy import func
 import numpy as np
 
-from app.api.graph.models import EntityCanonical
-from app.api.embedding.services import EmbeddingService
+from app.api.modules.graph.models import EntityCanonical
+from app.api.modules.embedding.services import EmbeddingService
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ async def find_by_embedding(
     # Generate embedding for raw name
     try:
         # Get infospace to determine embedding model
-        from app.api.identity.models import Infospace
+        from app.api.modules.identity_infospace_user.models import Infospace
         infospace = session.get(Infospace, infospace_id)
         if not infospace or not infospace.embedding_model:
             logger.debug(f"No embedding model configured for infospace {infospace_id}")
@@ -288,7 +288,7 @@ async def resolve_entities_batch(
     raw_embeddings: Optional[List[List[float]]] = None
     if embedding_service and raw_names:
         try:
-            from app.api.identity.models import Infospace
+            from app.api.modules.identity_infospace_user.models import Infospace
             infospace = session.get(Infospace, infospace_id)
             if infospace and infospace.embedding_model:
                 emb_result = await embedding_service.generate_embeddings_for_chunks(

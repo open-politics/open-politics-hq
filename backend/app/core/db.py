@@ -1,10 +1,9 @@
 from sqlmodel import SQLModel
 from sqlmodel import Session, create_engine, select, text
 
-from app import crud
 from app.core.config import settings
 from app.models import User, Infospace, AnnotationSchema, Asset, AssetKind, Source, Bundle, Task, SourceStatus, AnalysisAdapter, EmbeddingModel, EmbeddingProvider
-from app.api.providers.embedding_config import embedding_models_config
+from app.api.modules.foundation_service_providers.embedding_config import embedding_models_config
 from app.schemas import UserCreate, InfospaceCreate
 from app.core.security import get_password_hash
 from app.core.initial_data import (
@@ -26,7 +25,7 @@ import csv
 import io
 
 # Import the correct factory function
-from app.api.providers.factory import create_storage_provider
+from app.api.modules.foundation_service_providers.factory import create_storage_provider
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +173,7 @@ def init_db(session: Session) -> None:
         graph_adapter = AnalysisAdapter(
             name="graph_aggregator",
             description="Aggregates graph entities and triplets from annotation results into a unified knowledge graph for visualization",
-            module_path="app.api.analysis.adapters.graph_aggregator_adapter.GraphAggregatorAdapter",
+            module_path="app.api.modules.analysis.adapters.graph_aggregator_adapter.GraphAggregatorAdapter",
             adapter_type="graph",
             is_public=True,
             creator_user_id=user.id,

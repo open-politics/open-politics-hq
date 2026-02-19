@@ -10,7 +10,7 @@ from app.models import (
     User
 )
 from app.schemas import BundleCreate, BundleUpdate, InfospaceCreate
-from app.api.service_utils import validate_infospace_access
+from app.api.global_utils import validate_infospace_access
 
 logger = logging.getLogger(__name__)
 

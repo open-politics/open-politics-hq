@@ -27,10 +27,10 @@ from app.schemas import (
     UserBackupUpdate,
     UserBackupRestoreRequest
 )
-from app.api.service_utils import validate_infospace_access
-from app.api.sharing.services.package_service import PackageBuilder, PackageImporter, DataPackage, PackageMetadata
-from app.api.identity.services.infospace_service import InfospaceService
-from app.api.providers.base import StorageProvider
+from app.api.global_utils import validate_infospace_access
+from app.api.modules.sharing.services.package_service import PackageBuilder, PackageImporter, DataPackage, PackageMetadata
+from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
+from app.api.modules.foundation_service_providers.base import StorageProvider
 from app.core.config import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -108,7 +108,7 @@ class UserBackupService:
         self.session.refresh(backup)
         
         # Queue backup processing task
-        from app.api.sharing.tasks.user_backup import process_user_backup
+        from app.api.modules.sharing.tasks.user_backup import process_user_backup
         process_user_backup.delay(backup.id, {
             "include_files": True,
             "include_annotations": True,

@@ -19,7 +19,7 @@ from app.schemas import (
     FlowExecutionRead,
     FlowExecutionsOut,
 )
-from app.api.deps import CurrentUser, SessionDep
+from app.api.dependency_injection import CurrentUser, SessionDep
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ router = APIRouter(
 
 def get_flow_service(session: SessionDep):
     """Get FlowService instance."""
-    from app.api.flow.services import FlowService
+    from app.api.modules.flow.services import FlowService
     return FlowService(session)
 
 

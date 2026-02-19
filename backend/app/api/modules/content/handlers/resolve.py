@@ -18,7 +18,7 @@ from .text_handler import TextHandler
 from .archive_handler import ArchiveHandler
 from .rss_handler import RSSHandler
 
-from app.api.content.processors import is_archive_url, is_rss_feed_url
+from app.api.modules.content.processors import is_archive_url, is_rss_feed_url
 
 
 @dataclass

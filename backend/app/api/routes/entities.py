@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from app.models import EntityCanonical, Infospace, User
-from app.api.deps import CurrentUser, get_db
-from app.api.graph.resolution import resolve_entity
-from app.api.embedding.services import EmbeddingService
+from app.api.dependency_injection import CurrentUser, get_db
+from app.api.modules.graph.resolution import resolve_entity
+from app.api.modules.embedding.services import EmbeddingService
 
 logger = logging.getLogger(__name__)
 

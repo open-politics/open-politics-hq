@@ -8,8 +8,8 @@ from contextlib import asynccontextmanager
 from app.core.celery_app import celery  # noqa: F401
 from app.core.config import settings
 
-from app.api.main import api_router
-from app.api.conversational_intelligence.mcp.server import mcp as intelligence_mcp_server
+from app.api.api_router_global import api_router
+from app.api.modules.conversational_intelligence.mcp_server.server import mcp as intelligence_mcp_server
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:

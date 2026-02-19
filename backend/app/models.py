@@ -3,8 +3,8 @@
 Re-export hub: imports from domain models. Alembic and existing code use from app.models import *.
 """
 
-from app.api.identity.models import User, Infospace, UserBase, UserTier
-from app.api.content.models import (
+from app.api.modules.identity_infospace_user.models import User, Infospace, UserBase, UserTier
+from app.api.modules.content.models import (
     Asset,
     AssetChunk,
     AssetKind,
@@ -21,7 +21,7 @@ from app.api.content.models import (
     SourceStatus,
     SourceType,
 )
-from app.api.annotation.models import (
+from app.api.modules.annotation.models import (
     Annotation,
     AnnotationRun,
     AnnotationSchema,
@@ -37,8 +37,8 @@ from app.api.annotation.models import (
 
 # Association table for MCP/raw SQL joins (RunSchemaLink link model)
 annotation_run_schema_association = RunSchemaLink.__table__
-from app.api.graph.models import EntityCanonical, FragmentCuration
-from app.api.flow.models import (
+from app.api.modules.graph.models import EntityCanonical, FragmentCuration
+from app.api.modules.flow.models import (
     Flow,
     FlowExecution,
     Task,
@@ -49,9 +49,9 @@ from app.api.flow.models import (
     TaskType,
     TaskStatus,
 )
-from app.api.search.models import SearchHistory
-from app.api.conversational_intelligence.models import ChatConversation, ChatConversationMessage
-from app.api.sharing.models import (
+from app.api.modules.search.models import SearchHistory
+from app.api.modules.conversational_intelligence.models import ChatConversation, ChatConversationMessage
+from app.api.modules.sharing.models import (
     ShareableLink,
     Package,
     InfospaceBackup,
@@ -61,7 +61,7 @@ from app.api.sharing.models import (
     BackupType,
     BackupStatus,
 )
-from app.api.analysis.models import AnalysisAdapter
+from app.api.modules.analysis.models import AnalysisAdapter
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -85,19 +85,19 @@ from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 
 # ─────────────────────────────────────────────────────────────── Enums ──── #
-# PermissionLevel, ResourceType, BackupType, BackupStatus imported from app.api.sharing.models
+# PermissionLevel, ResourceType, BackupType, BackupStatus imported from app.api.modules.sharing.models
 
-# Flow enums, Task, Flow, FlowExecution imported from app.api.flow.models
+# Flow enums, Task, Flow, FlowExecution imported from app.api.modules.flow.models
 # RunType, AnnotationRunTrigger, AnnotationSchemaTargetLevel imported from annotation
 
-# Sources, Assets, Bundles, etc. imported from app.api.content.models
+# Sources, Assets, Bundles, etc. imported from app.api.modules.content.models
 
 
 
-# Annotation models imported from app.api.annotation.models
-# Graph models (EntityCanonical, FragmentCuration) imported from app.api.graph.models
-# Task, Flow, FlowExecution imported from app.api.flow.models
-# SearchHistory imported from app.api.search.models
-# ChatConversation, ChatConversationMessage imported from app.api.conversational_intelligence.models
-# ShareableLink, Package, InfospaceBackup, UserBackup, PermissionLevel, ResourceType, BackupType, BackupStatus from app.api.sharing.models
-# AnalysisAdapter from app.api.analysis.models
+# Annotation models imported from app.api.modules.annotation.models
+# Graph models (EntityCanonical, FragmentCuration) imported from app.api.modules.graph.models
+# Task, Flow, FlowExecution imported from app.api.modules.flow.models
+# SearchHistory imported from app.api.modules.search.models
+# ChatConversation, ChatConversationMessage imported from app.api.modules.conversational_intelligence.models
+# ShareableLink, Package, InfospaceBackup, UserBackup, PermissionLevel, ResourceType, BackupType, BackupStatus from app.api.modules.sharing.models
+# AnalysisAdapter from app.api.modules.analysis.models

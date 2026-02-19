@@ -9,16 +9,16 @@ from sqlmodel import Session, select, and_, or_
 import asyncio
 from jose import jwt
 
-from app.api.providers.model_registry import ModelRegistryService
-from app.api.providers.web_search_registry import WebSearchProviderRegistryService
-from app.api.providers.base import GenerationResponse
-from app.api.service_utils import validate_infospace_access
+from app.api.modules.foundation_service_providers.model_registry import ModelRegistryService
+from app.api.modules.foundation_service_providers.web_search_registry import WebSearchProviderRegistryService
+from app.api.modules.foundation_service_providers.base import GenerationResponse
+from app.api.global_utils import validate_infospace_access
 from app.models import Asset, User, Infospace, Bundle, AnnotationSchema, Annotation
-from app.api.content.services import AssetService, ContentIngestionService
-from app.api.annotation.services import AnnotationService
-from app.api.search.services import SearchService
+from app.api.modules.content.services import AssetService, ContentIngestionService
+from app.api.modules.annotation.services import AnnotationService
+from app.api.modules.search.services import SearchService
 from app.schemas import AnnotationRunCreate
-from app.api.conversational_intelligence.mcp.client import (
+from app.api.modules.conversational_intelligence.mcp_server.client import (
     IntelligenceMCPClient,
     get_mcp_client,
     create_mcp_context_token_with_api_keys,

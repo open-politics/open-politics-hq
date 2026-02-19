@@ -3,8 +3,8 @@ from app.models import (
     AnalysisAdapter,
     # ... other models
 )
-from app.api.analysis.adapters.rag_adapter import RAGAdapter
-from app.api.analysis.adapters.promote_field_adapter import PromoteFieldAdapter
+from app.api.modules.analysis.adapters.rag_adapter import RAGAdapter
+from app.api.modules.analysis.adapters.promote_field_adapter import PromoteFieldAdapter
 
 def init_db(session: Session) -> None:
     # Register RAGAdapter
@@ -15,7 +15,7 @@ def init_db(session: Session) -> None:
         rag_adapter_entry = AnalysisAdapter(
             name="RAGAdapter",
             description="RAGAdapter",
-            module_path="app.api.analysis.adapters.rag_adapter.RAGAdapter",
+            module_path="app.api.modules.analysis.adapters.rag_adapter.RAGAdapter",
             adapter_type="curation",
             is_public=True,
             creator_user_id=user.id,
@@ -30,7 +30,7 @@ def init_db(session: Session) -> None:
         promote_adapter_entry = AnalysisAdapter(
             name="PromoteFieldAdapter",
             description="Promotes a field from an annotation value to a core asset field.",
-            module_path="app.api.analysis.adapters.promote_field_adapter.PromoteFieldAdapter",
+            module_path="app.api.modules.analysis.adapters.promote_field_adapter.PromoteFieldAdapter",
             adapter_type="curation",
             is_public=True,
             creator_user_id=user.id,

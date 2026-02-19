@@ -6,9 +6,9 @@ from typing import Dict, Any, Optional, List
 import requests
 from datetime import datetime, timezone
 
-from app.api.deps import get_current_active_superuser, get_current_user, SessionDep, CurrentUser
+from app.api.dependency_injection import get_current_active_superuser, get_current_user, SessionDep, CurrentUser
 from app.schemas import Message, ProviderInfo, ProviderModel, ProviderListResponse
-from app.utils import generate_test_email, send_email
+from app.api.modules.identity_infospace_user.services import generate_test_email, send_email
 from app.core.config import settings
 import logging
 
@@ -71,7 +71,7 @@ def get_available_rss_countries():
     }
 
 @router.get("/discover-rss-feeds")
-async def discover_rss_feeds(
+async def discover_curated_rss_feeds(
     *,
     session: SessionDep,
     country: Optional[str] = None,
@@ -87,7 +87,7 @@ async def discover_rss_feeds(
         limit: Maximum number of feeds to return
     """
     try:
-        from app.api.content.handlers import RSSHandler
+        from app.api.modules.content.handlers import RSSHandler
 
         feeds = await RSSHandler.discover_rss_feeds_from_awesome_repo(
             country=country,
@@ -197,7 +197,7 @@ async def scrape_article(url: str):
         The scraped article content
     """
     try:
-        from app.api.providers.factory import create_scraping_provider
+        from app.api.modules.foundation_service_providers.factory import create_scraping_provider
         scraping_provider = create_scraping_provider(settings)
         
         article_data = await scraping_provider.scrape_url(url)
@@ -222,7 +222,7 @@ async def analyze_source(base_url: str):
         Source analysis results including RSS feeds, categories, and articles
     """
     try:
-        from app.api.providers.factory import create_scraping_provider
+        from app.api.modules.foundation_service_providers.factory import create_scraping_provider
         scraping_provider = create_scraping_provider(settings)
         
         analysis_result = await scraping_provider.analyze_source(base_url)
@@ -236,7 +236,7 @@ async def analyze_source(base_url: str):
         )
 
 @router.get("/discover_rss_feeds")
-async def discover_rss_feeds(base_url: str):
+async def discover_rss_feeds_from_site(base_url: str):
     """
     Discover RSS feeds from a news source.
     
@@ -247,7 +247,7 @@ async def discover_rss_feeds(base_url: str):
         List of discovered RSS feed URLs
     """
     try:
-        from app.api.providers.factory import create_scraping_provider
+        from app.api.modules.foundation_service_providers.factory import create_scraping_provider
         scraping_provider = create_scraping_provider(settings)
         
         rss_feeds = await scraping_provider.discover_rss_feeds(base_url)
@@ -329,7 +329,7 @@ async def get_unified_providers():
     This provides metadata about requirements (API keys, local, etc.) and capabilities.
     """
     try:
-        from app.api.providers.unified_registry import get_unified_registry
+        from app.api.modules.foundation_service_providers.unified_registry import get_unified_registry
         
         registry = get_unified_registry()
         
@@ -385,7 +385,7 @@ async def get_providers() -> ProviderListResponse:
     
     try:
         # Import the model registry from the factory
-        from app.api.providers.factory import create_model_registry
+        from app.api.modules.foundation_service_providers.factory import create_model_registry
         from app.core.config import settings
         
         # Create and initialize the model registry
@@ -706,7 +706,7 @@ async def get_geocoding_providers():
     Helps frontend display provider options and understand what credentials are needed.
     Uses registry service to dynamically discover providers.
     """
-    from app.api.providers.geocoding_registry import GeocodingProviderRegistryService
+    from app.api.modules.foundation_service_providers.geocoding_registry import GeocodingProviderRegistryService
     
     registry = GeocodingProviderRegistryService()
     available_providers = registry.get_available_providers()
@@ -781,7 +781,7 @@ async def geocode_location(
         location: Location name or address to geocode
         language: Language code for results (default: 'en')
     """
-    from app.api.providers.geocoding_registry import GeocodingProviderRegistryService
+    from app.api.modules.foundation_service_providers.geocoding_registry import GeocodingProviderRegistryService
     
     logger.info(f"Geocoding location (public): {location}")
     
@@ -832,7 +832,7 @@ async def geocode_location_with_provider(
         language: Language code for results (default: 'en')
         current_user: Authenticated user (injected)
     """
-    from app.api.providers.geocoding_registry import GeocodingProviderRegistryService
+    from app.api.modules.foundation_service_providers.geocoding_registry import GeocodingProviderRegistryService
     
     logger.info(f"Geocoding location (authenticated): {location} with provider: {provider_type} for user: {current_user.email}")
     

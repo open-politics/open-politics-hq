@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 from sqlmodel import Session, select
 
-from app.api.analysis.protocols import AnalysisAdapterProtocol
+from app.api.modules.analysis.protocols import AnalysisAdapterProtocol
 from app.models import Asset
 
 logger = logging.getLogger(__name__)

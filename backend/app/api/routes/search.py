@@ -4,11 +4,11 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
-from app.api.deps import WebSearchProviderDep, get_current_user, get_db, IngestionContextFactoryDep, get_ingestion_context_factory
-from app.api.providers.base import WebSearchProvider
-from app.api.providers.impl.search_tavily import TavilyWebSearchProvider
-from app.api.providers.web_search_registry import WebSearchProviderRegistryService
-from app.api.content.services import ContentIngestionService
+from app.api.dependency_injection import WebSearchProviderDep, get_current_user, get_db, IngestionContextFactoryDep, get_ingestion_context_factory
+from app.api.modules.foundation_service_providers.base import WebSearchProvider
+from app.api.modules.foundation_service_providers.implemented.search_tavily import TavilyWebSearchProvider
+from app.api.modules.foundation_service_providers.web_search_registry import WebSearchProviderRegistryService
+from app.api.modules.content.services import ContentIngestionService
 from app.models import User
 from app.schemas import SearchResultsOut, SearchRequest
 from app.core.config import settings
@@ -191,7 +191,7 @@ async def search_and_ingest(
         
         if request.create_assets:
             # Use SearchHandler to create assets from search results
-            from app.api.content.handlers import SearchHandler
+            from app.api.modules.content.handlers import SearchHandler
             from app.schemas import SearchResult
             
             # First, perform the search using the provider directly
@@ -399,7 +399,7 @@ async def create_assets_from_results(
     try:
         query = request.search_metadata.get('query', 'Search Results') if request.search_metadata else 'Search Results'
 
-        from app.api.content.handlers import SearchHandler
+        from app.api.modules.content.handlers import SearchHandler
         from app.schemas import SearchResult
 
         context = make_ingestion_context(current_user.id, request.infospace_id, {})

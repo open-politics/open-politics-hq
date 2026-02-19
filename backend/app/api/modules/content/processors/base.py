@@ -8,7 +8,7 @@ All processors must inherit from BaseProcessor and implement process().
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
-from app.api.content.models import Asset
+from app.api.modules.content.models import Asset
 
 
 @dataclass

@@ -8,9 +8,9 @@ from sqlmodel import Session, select
 from sqlalchemy import func
 
 from app.models import Asset, AssetChunk, Infospace, EmbeddingModel, EmbeddingProvider as EmbeddingProviderEnum, AssetKind, User
-from app.api.content.models import get_embedding_column_for_dimension, EMBEDDING_SUPPORTED_DIMS
-from app.api.embedding.services.chunking_service import ChunkingService
-from app.api.providers.impl.embedding_ollama import OllamaEmbeddingProvider
+from app.api.modules.content.models import get_embedding_column_for_dimension, EMBEDDING_SUPPORTED_DIMS
+from app.api.modules.embedding.services.chunking_service import ChunkingService
+from app.api.modules.foundation_service_providers.implemented.embedding_ollama import OllamaEmbeddingProvider
 from app.core.security import merge_credentials
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ class EmbeddingService:
         # Try registry-based provider resolution
         if api_keys or provider_name.lower() != "ollama":
             try:
-                from app.api.providers.factory import get_embedding_registry
+                from app.api.modules.foundation_service_providers.factory import get_embedding_registry
                 registry = get_embedding_registry()
 
                 # If we have a model name, use it to find the right provider
@@ -219,7 +219,7 @@ class EmbeddingService:
                 "similarity_search requires infospace_id to scope the search. "
                 "Pass infospace_filter from the RAG adapter config."
             )
-        from app.api.embedding.services.vector_search_service import VectorSearchService
+        from app.api.modules.embedding.services.vector_search_service import VectorSearchService
 
         search_svc = VectorSearchService(self.session, runtime_api_keys=self.runtime_api_keys)
         results = await search_svc.semantic_search(
@@ -269,7 +269,7 @@ class EmbeddingService:
 
         # Determine the correct provider for this model
         try:
-            from app.api.providers.factory import get_embedding_registry
+            from app.api.modules.foundation_service_providers.factory import get_embedding_registry
             registry = get_embedding_registry()
             _, provider_name = await registry.get_provider_for_model(
                 infospace.embedding_model,

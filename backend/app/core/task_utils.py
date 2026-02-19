@@ -227,7 +227,7 @@ def create_pydantic_model_from_json_schema(
 def monitor_provider_cache():
     """Monitor provider cache status. For management commands or monitoring endpoints."""
     try:
-        from app.api.annotation.tasks.annotate import get_cache_status
+        from app.api.modules.annotation.tasks.annotate import get_cache_status
         return get_cache_status()
     except ImportError:
         return None
@@ -276,7 +276,7 @@ def run_async_in_celery(async_func, *args, **kwargs):
 def clear_all_provider_caches():
     """Clear all provider caches. For memory cleanup or cache invalidation."""
     try:
-        from app.api.annotation.tasks.annotate import clear_provider_cache
+        from app.api.modules.annotation.tasks.annotate import clear_provider_cache
         clear_provider_cache()
         return True
     except ImportError:

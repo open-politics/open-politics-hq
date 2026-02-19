@@ -23,15 +23,15 @@ from app.schemas import (
     PackageRead,
     CreatePackageFromRunRequest,
 )
-from app.api.deps import (
+from app.api.dependency_injection import (
     SessionDep,
     CurrentUser,
     get_annotation_service,
     get_package_service
 )
-from app.api.annotation.services import AnnotationService
-from app.api.sharing.services import PackageService
-from app.api.service_utils import validate_infospace_access
+from app.api.modules.annotation.services import AnnotationService
+from app.api.modules.sharing.services import PackageService
+from app.api.global_utils import validate_infospace_access
 from sqlmodel import select, func
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

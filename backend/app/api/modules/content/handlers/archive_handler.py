@@ -18,8 +18,8 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 
 from app.models import Asset, AssetKind, Bundle, ProcessingStatus, DatasetIngestionJob, IngestionStatus
-from app.api.content.services.asset_builder import AssetBuilder
-from app.api.content.services.bundle_service import BundleService
+from app.api.modules.content.services.asset_builder import AssetBuilder
+from app.api.modules.content.services.bundle_service import BundleService
 from .base import BaseHandler, IngestionContext
 from .directory_import_handler import DirectoryImportHandler
 
@@ -137,7 +137,7 @@ class ArchiveHandler(BaseHandler):
             self.session.refresh(job)
             
             # Queue celery task for background processing
-            from app.api.content.tasks.dataset_tasks import ingest_archive_task
+            from app.api.modules.content.tasks.dataset_tasks import ingest_archive_task
             task = ingest_archive_task.delay(
                 job_id=job.id,
                 archive_url=archive_url,
@@ -196,7 +196,7 @@ class ArchiveHandler(BaseHandler):
         4. Delete archive file (keep extracted files)
         """
         from app.core.config import settings
-        from app.api.providers.factory import create_storage_provider
+        from app.api.modules.foundation_service_providers.factory import create_storage_provider
 
         storage_base = Path(settings.LOCAL_STORAGE_BASE_PATH)
         managed_archives = storage_base / "managed" / "archives"
@@ -216,8 +216,8 @@ class ArchiveHandler(BaseHandler):
             await self._extract_archive(str(archive_path), str(extract_dir))
 
         # Use DirectoryImportHandler for flat bundle + virtual folders
-        from app.api.content.handlers.base import IngestionContext
-        from app.api.content.services.asset_service import AssetService
+        from app.api.modules.content.handlers.base import IngestionContext
+        from app.api.modules.content.services.asset_service import AssetService
         allowed_paths = [p.strip() for p in (settings.ALLOWED_IMPORT_PATHS or "").split(",") if p.strip()]
         if not allowed_paths:
             allowed_paths = [str(storage_base)]

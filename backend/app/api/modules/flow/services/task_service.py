@@ -16,8 +16,8 @@ from app.models import (
     Flow,
     FlowStatus,
 )
-from app.api.annotation.services.annotation_service import AnnotationService
-from app.api.service_utils import validate_infospace_access
+from app.api.modules.annotation.services.annotation_service import AnnotationService
+from app.api.global_utils import validate_infospace_access
 
 
 def _add_or_update_schedule(
@@ -30,7 +30,7 @@ def _add_or_update_schedule(
 def _remove_schedule(recurring_task_id: int) -> None:
     """No-op: Beat schedule removal not implemented."""
     pass
-from app.api.content.tasks.ingest import process_source
+from app.api.modules.content.tasks.ingest import process_source
 from app.schemas import AnnotationRunCreate, TaskCreate, TaskUpdate
 
 
@@ -423,15 +423,15 @@ class TaskService:
                     
                     # Dispatch to appropriate monitoring task based on source kind
                     if source.kind == "rss_feed":
-                        from app.api.content.tasks.source_monitoring import execute_source_poll
+                        from app.api.modules.content.tasks.source_monitoring import execute_source_poll
                         execute_source_poll.delay(task.source_id)
                         logger.info(f"TaskService: Dispatched RSS monitoring task {task.id} for source {task.source_id}")
                     elif source.kind == "search":
-                        from app.api.content.tasks.source_monitoring import execute_source_poll
+                        from app.api.modules.content.tasks.source_monitoring import execute_source_poll
                         execute_source_poll.delay(task.source_id)
                         logger.info(f"TaskService: Dispatched search monitoring task {task.id} for source {task.source_id}")
                     elif source.kind in ["news_source_monitor", "site_discovery"]:
-                        from app.api.content.tasks.source_monitoring import execute_source_poll
+                        from app.api.modules.content.tasks.source_monitoring import execute_source_poll
                         execute_source_poll.delay(task.source_id)
                         logger.info(f"TaskService: Dispatched news source monitoring task {task.id} for source {task.source_id}")
                     else:
@@ -464,7 +464,7 @@ class TaskService:
 
             elif task.type == TaskType.FLOW:
                 # New unified FLOW task type
-                from app.api.flow.tasks.flow_tasks import trigger_flow_by_task
+                from app.api.modules.flow.tasks.flow_tasks import trigger_flow_by_task
                 trigger_flow_by_task.delay(task.id)
                 logger.info(f"TaskService: Dispatched FLOW task {task.id}")
                 task.last_run_status = "running"

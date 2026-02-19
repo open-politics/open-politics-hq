@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Form
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session
 
-from app import crud
-from app.api.deps import CurrentUser, SessionDep, OptionalUser
+from app.api.modules.identity_infospace_user.services import user_service as crud
+from app.api.dependency_injection import CurrentUser, SessionDep, OptionalUser
 from app.core.config import settings
 from app.core.sso import (
     generate_discourse_login_url,

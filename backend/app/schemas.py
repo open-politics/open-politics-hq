@@ -10,7 +10,7 @@ Existing code uses: from app.schemas import *
 from __future__ import annotations
 
 from app.core.config import settings
-from app.api.identity.schemas import (
+from app.api.modules.identity_infospace_user.schemas import (
     UserOut,
     UserPublicProfile,
     UsersOut,
@@ -159,7 +159,7 @@ class SearchFilter:
         return True
 
 # ─────────────────────────────────────────────── Task & Flow ──── #
-from app.api.flow.schemas import (
+from app.api.modules.flow.schemas import (
     TaskBase, TaskCreate, TaskUpdate, TaskRead, TasksOut,
     FlowStepConfig, FlowBase, FlowCreate, FlowUpdate, FlowRead, FlowsOut,
     FlowExecutionCreate, FlowExecutionRead, FlowExecutionsOut,
@@ -307,7 +307,7 @@ class AssetRead(AssetBase):
     @property
     def is_container(self) -> bool:
         """True if this asset can have child assets."""
-        from app.api.content.types import get_content_type_registry
+        from app.api.modules.content.types import get_content_type_registry
         desc = get_content_type_registry().by_kind(self.kind)
         return desc.is_container if desc else False
 
@@ -903,7 +903,7 @@ class SharedResourcePreview(SQLModel):
     content: Union[AssetPreview, BundlePreview, AnnotationRunPreview]
 
 # ───────────────────────────────────── Analysis Adapters ──── #
-from app.api.analysis.schemas import (
+from app.api.modules.analysis.schemas import (
     AnalysisAdapterBase,
     AnalysisAdapterCreate,
     AnalysisAdapterUpdate,
@@ -1128,7 +1128,7 @@ class ModelListResponse(SQLModel):
 
 # ─────────────────────────────────────────── Chat Conversations & History ──── #
 # Re-exported from conversational_intelligence domain
-from app.api.conversational_intelligence.schemas import (
+from app.api.modules.conversational_intelligence.schemas import (
     ChatConversationMessageBase,
     ChatConversationMessageCreate,
     ChatConversationMessageRead,

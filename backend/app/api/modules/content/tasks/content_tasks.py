@@ -19,9 +19,9 @@ from sqlmodel import Session, select, func
 from app.core.celery_app import celery
 from app.core.db import engine
 from app.models import Asset, AssetKind, ProcessingStatus
-from app.api.providers.factory import create_storage_provider, create_scraping_provider
-from app.api.content.services.content_ingestion_service import ContentIngestionService
-from app.api.content.services.asset_service import AssetService
+from app.api.modules.foundation_service_providers.factory import create_storage_provider, create_scraping_provider
+from app.api.modules.content.services.content_ingestion_service import ContentIngestionService
+from app.api.modules.content.services.asset_service import AssetService
 from app.core.config import settings
 from app.core.task_utils import run_async_in_celery
 

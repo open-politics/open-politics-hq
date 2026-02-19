@@ -26,15 +26,15 @@ from app.models import (
     Annotation, Asset, Bundle, Infospace, User, AssetKind, SourceStatus, 
     AnnotationSchemaTargetLevel, RunStatus, ResultStatus, Justification, Source
 )
-from app.api.providers.base import StorageProvider
+from app.api.modules.foundation_service_providers.base import StorageProvider
 from app.core.config import AppSettings
 from app.schemas import AssetRead, SourceRead 
 
-from app.api.content.services.asset_service import AssetService
-from app.api.annotation.services.annotation_service import AnnotationService
-from app.api.content.services.content_ingestion_service import ContentIngestionService
-from app.api.content.services.bundle_service import BundleService
-from app.api.content.services.dataset_service import DatasetService
+from app.api.modules.content.services.asset_service import AssetService
+from app.api.modules.annotation.services.annotation_service import AnnotationService
+from app.api.modules.content.services.content_ingestion_service import ContentIngestionService
+from app.api.modules.content.services.bundle_service import BundleService
+from app.api.modules.content.services.dataset_service import DatasetService
 
 logger = logging.getLogger(__name__)
 
@@ -339,7 +339,7 @@ class PackageBuilder:
             
             # Include embeddings if requested and available
             if include_embeddings:
-                from app.api.content.models import EMBEDDING_SUPPORTED_DIMS
+                from app.api.modules.content.models import EMBEDDING_SUPPORTED_DIMS
 
                 emb_val = None
                 for dim in EMBEDDING_SUPPORTED_DIMS:
@@ -1733,7 +1733,7 @@ class PackageService:
         if pt == ResourceType.SOURCE:
             imported_entity = await importer.import_source_package(package, conflict_strategy)
             if imported_entity and imported_entity.kind in ["upload_csv", "upload_pdf", "url_list_scrape", "rss_feed"]:
-                from app.api.content.tasks.ingest import process_source
+                from app.api.modules.content.tasks.ingest import process_source
                 process_source.delay(imported_entity.id)
                 logger.info(f"Queued Celery task for imported Source ID: {imported_entity.id} (Kind: {imported_entity.kind})")
         elif pt == ResourceType.ASSET:

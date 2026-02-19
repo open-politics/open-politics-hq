@@ -6,8 +6,8 @@ from sqlmodel import Session, create_engine, select
 
 from app.core.config import settings
 from app.core.celery_app import celery
-from app.api.providers.factory import create_storage_provider
-from app.api.sharing.services.backup_service import BackupService
+from app.api.modules.foundation_service_providers.factory import create_storage_provider
+from app.api.modules.sharing.services.backup_service import BackupService
 from app.models import Infospace, User, InfospaceBackup
 
 logger = logging.getLogger(__name__)

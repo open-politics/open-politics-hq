@@ -1,6 +1,6 @@
 """Sharing domain: ShareableLink, Package, InfospaceBackup, UserBackup. Use sharing.services for services."""
 
-from app.api.sharing.models import (
+from app.api.modules.sharing.models import (
     ShareableLink, Package, InfospaceBackup, UserBackup,
     PermissionLevel, ResourceType, BackupType, BackupStatus,
 )

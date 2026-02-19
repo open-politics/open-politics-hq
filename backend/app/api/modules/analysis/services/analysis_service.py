@@ -11,10 +11,10 @@ from app.core.config import AppSettings
 
 # Import specific service dependencies this service might orchestrate or use
 
-from app.api.annotation.services import AnnotationService
-from app.api.content.services import AssetService
-from app.api.providers.model_registry import ModelRegistryService
-from app.api.analysis.protocols import AnalysisAdapterProtocol # Import the protocol
+from app.api.modules.annotation.services import AnnotationService
+from app.api.modules.content.services import AssetService
+from app.api.modules.foundation_service_providers.model_registry import ModelRegistryService
+from app.api.modules.analysis.protocols import AnalysisAdapterProtocol # Import the protocol
 
 logger = logging.getLogger(__name__)
 

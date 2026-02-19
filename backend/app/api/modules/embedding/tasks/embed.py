@@ -7,7 +7,7 @@ from sqlmodel import Session
 
 from app.core.celery_app import celery
 from app.core.db import engine
-from app.api.embedding.services.embedding_service import EmbeddingService
+from app.api.modules.embedding.services.embedding_service import EmbeddingService
 from app.core.task_utils import update_task_status, run_async_in_celery
 from app.models import AssetKind
 

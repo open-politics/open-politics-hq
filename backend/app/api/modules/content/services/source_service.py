@@ -25,9 +25,9 @@ from app.models import (
     ProcessingStatus
 )
 from app.schemas import SourceCreate, SourceUpdate, SourceRead
-from app.api.service_utils import validate_infospace_access
-from app.api.content.services.content_ingestion_service import ContentIngestionService
-from app.api.content.tasks.ingest import process_source
+from app.api.global_utils import validate_infospace_access
+from app.api.modules.content.services.content_ingestion_service import ContentIngestionService
+from app.api.modules.content.tasks.ingest import process_source
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -559,7 +559,7 @@ class SourceService:
             Poll result with statistics
         """
         # Delegate to StreamSourceService for the actual poll implementation
-        from app.api.content.services.stream_source_service import StreamSourceService
+        from app.api.modules.content.services.stream_source_service import StreamSourceService
         
         stream_service = StreamSourceService(self.session)
         return await stream_service.execute_poll(source_id, user_id, runtime_api_keys)

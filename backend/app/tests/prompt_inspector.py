@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def inspect_chat_prompt(infospace_name: str = "Example Workspace", 
                        infospace_description: str = "Research workspace") -> str:
     """Get the actual chat system prompt by calling the real function"""
-    from app.api.conversational_intelligence.services import IntelligenceConversationService
+    from app.api.modules.conversational_intelligence.services import IntelligenceConversationService
     
     # Mock infospace
     mock_infospace = type('Infospace', (), {
@@ -141,7 +141,7 @@ def inspect_annotation_prompt(
 
 def inspect_mcp_tools() -> List[Dict[str, Any]]:
     """Get actual MCP tool definitions with EXACT JSON schemas sent to models"""
-    from app.api.conversational_intelligence.mcp.server import mcp
+    from app.api.modules.conversational_intelligence.mcp_server.server import mcp
     import asyncio
     
     tools_info = []

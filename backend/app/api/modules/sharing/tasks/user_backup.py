@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from app.core.celery_app import celery
 from app.core.db import engine
 from sqlmodel import Session
-from app.api.providers.factory import create_storage_provider
+from app.api.modules.foundation_service_providers.factory import create_storage_provider
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ def process_user_backup(self, backup_id: int, backup_options: Dict[str, Any]) ->
     
     try:
         with Session(engine) as session:
-            from app.api.sharing.services.user_backup_service import UserBackupService
+            from app.api.modules.sharing.services.user_backup_service import UserBackupService
             
             # Create service dependencies
             storage_provider = create_storage_provider(settings)
@@ -95,7 +95,7 @@ def cleanup_expired_user_backups(self) -> Dict[str, Any]:
     
     try:
         with Session(engine) as session:
-            from app.api.sharing.services.user_backup_service import UserBackupService
+            from app.api.modules.sharing.services.user_backup_service import UserBackupService
             
             # Create service dependencies
             storage_provider = create_storage_provider(settings)
@@ -145,7 +145,7 @@ def backup_all_users(self, backup_type: str = "system", admin_user_id: int = 1) 
     
     try:
         with Session(engine) as session:
-            from app.api.sharing.services.user_backup_service import UserBackupService
+            from app.api.modules.sharing.services.user_backup_service import UserBackupService
             from app.models import User
             from app.schemas import UserBackupCreate
             from sqlmodel import select
@@ -223,7 +223,7 @@ def backup_specific_users(
     
     try:
         with Session(engine) as session:
-            from app.api.sharing.services.user_backup_service import UserBackupService
+            from app.api.modules.sharing.services.user_backup_service import UserBackupService
             from app.models import User
             from app.schemas import UserBackupCreate
             from sqlmodel import select

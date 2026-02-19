@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 import logging
 
-from jose import jwt
+from jose import JWTError, jwt
 from cryptography.fernet import Fernet
 
 from app.core.config import settings
@@ -99,6 +99,48 @@ def decrypt_credentials(encrypted: Optional[str]) -> Dict[str, str]:
     except Exception as e:
         logger.error(f"Failed to decrypt credentials: {e}", exc_info=True)
         return {}
+
+
+def generate_password_reset_token(email: str) -> str:
+    delta = timedelta(hours=settings.EMAIL_RESET_TOKEN_EXPIRE_HOURS)
+    now = datetime.now(timezone.utc)
+    expires = now + delta
+    encoded_jwt = jwt.encode(
+        {"exp": expires.timestamp(), "nbf": now.timestamp(), "sub": email},
+        settings.SECRET_KEY,
+        algorithm=ALGORITHM,
+    )
+    return encoded_jwt
+
+
+def verify_password_reset_token(token: str) -> str | None:
+    try:
+        decoded = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        return str(decoded["sub"])
+    except JWTError:
+        return None
+
+
+def generate_email_verification_token(email: str) -> str:
+    delta = timedelta(hours=24)
+    now = datetime.now(timezone.utc)
+    expires = now + delta
+    encoded_jwt = jwt.encode(
+        {"exp": expires.timestamp(), "nbf": now.timestamp(), "sub": email, "type": "email_verification"},
+        settings.SECRET_KEY,
+        algorithm=ALGORITHM,
+    )
+    return encoded_jwt
+
+
+def verify_email_verification_token(token: str) -> str | None:
+    try:
+        decoded = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        if decoded.get("type") != "email_verification":
+            return None
+        return str(decoded["sub"])
+    except JWTError:
+        return None
 
 
 def merge_credentials(

@@ -13,8 +13,8 @@ from fastapi import UploadFile
 from datetime import datetime, timezone
 
 from app.models import Asset, AssetKind, ProcessingStatus
-from app.api.content.services.asset_builder import AssetBuilder
-from app.api.content.processors import (
+from app.api.modules.content.services.asset_builder import AssetBuilder
+from app.api.modules.content.processors import (
     ProcessingContext, 
     get_processor, 
     should_process_immediately,
@@ -114,7 +114,7 @@ class FileHandler(BaseHandler):
                 processor_context = self.context.to_processor_context(options)
                 
                 # Get processor class from registry
-                from app.api.content.types import get_content_type_registry
+                from app.api.modules.content.types import get_content_type_registry
                 processor_class = get_content_type_registry().get_processor_class(asset)
                 
                 if processor_class:
@@ -153,7 +153,7 @@ class FileHandler(BaseHandler):
                 asset = await builder.build()
                 
                 # Trigger background task
-                from app.api.content.tasks.content_tasks import process_content
+                from app.api.modules.content.tasks.content_tasks import process_content
                 process_content.delay(asset.id, options)
                 logger.info(f"Queued background processing for asset {asset.id}")
         else:

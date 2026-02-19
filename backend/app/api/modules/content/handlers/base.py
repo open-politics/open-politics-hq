@@ -11,9 +11,9 @@ from typing import Optional, Dict, Any
 from sqlmodel import Session
 
 from app.models import Asset
-from app.api.providers.base import StorageProvider, ScrapingProvider, WebSearchProvider
-from app.api.content.services.asset_service import AssetService
-from app.api.content.services.bundle_service import BundleService
+from app.api.modules.foundation_service_providers.base import StorageProvider, ScrapingProvider, WebSearchProvider
+from app.api.modules.content.services.asset_service import AssetService
+from app.api.modules.content.services.bundle_service import BundleService
 from app.core.config import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class IngestionContext:
         Returns:
             ProcessingContext instance
         """
-        from app.api.content.processors.base import ProcessingContext
+        from app.api.modules.content.processors.base import ProcessingContext
 
         options = {**self.options}
         if additional_options:

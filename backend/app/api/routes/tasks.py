@@ -21,7 +21,7 @@ from app.schemas import (
     TaskUpdate,
     TasksOut
 )
-from app.api.deps import (
+from app.api.dependency_injection import (
     CurrentUser,
     TaskServiceDep
 )

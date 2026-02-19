@@ -22,12 +22,12 @@ from app.models import (
 from app.schemas import AnnotationCreate
 from app.core.db import engine
 from app.core.celery_app import celery
-from app.api.providers.factory import create_model_registry, create_storage_provider
+from app.api.modules.foundation_service_providers.factory import create_model_registry, create_storage_provider
 from app.core.task_utils import create_pydantic_model_from_json_schema, make_python_identifier, run_async_in_celery
 from app.core.config import settings
 
 if TYPE_CHECKING:
-    from app.api.deps import StorageProviderDep # Import StorageProviderDep under TYPE_CHECKING
+    from app.api.dependency_injection import StorageProviderDep # Import StorageProviderDep under TYPE_CHECKING
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -2275,8 +2275,8 @@ async def _process_annotation_run_async(
 
             # Compute aggregates for this run and update monitor aggregates if applicable
             try:
-                from app.api.annotation.services.annotation_service import AnnotationService
-                from app.api.content.services.asset_service import AssetService
+                from app.api.modules.annotation.services.annotation_service import AnnotationService
+                from app.api.modules.content.services.asset_service import AssetService
                 asset_service = AssetService(session, storage_provider_instance)
                 annotation_service = AnnotationService(session, model_registry, asset_service)
                 annotation_service.compute_run_aggregates(run_id=run.id)

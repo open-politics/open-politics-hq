@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 
 # Identity types (Layer 1) - content is Layer 2
-from app.api.identity.models import User, Infospace
+from app.api.modules.identity_infospace_user.models import User, Infospace
 
 
 # ─── Content enums ───
@@ -240,7 +240,7 @@ class Asset(SQLModel, table=True):
 
     @property
     def is_container(self) -> bool:
-        from app.api.content.types import get_content_type_registry
+        from app.api.modules.content.types import get_content_type_registry
         desc = get_content_type_registry().by_kind(self.kind)
         return desc.is_container if desc else False
 

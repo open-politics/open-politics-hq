@@ -94,10 +94,10 @@ def ingest_archive_task(
     
     async def process_archive_async():
         with Session(engine) as session:
-            from app.api.providers.factory import create_storage_provider, create_scraping_provider
-            from app.api.content.services.asset_service import AssetService
-            from app.api.content.services.bundle_service import BundleService
-            from app.api.content.handlers import ArchiveHandler, IngestionContext
+            from app.api.modules.foundation_service_providers.factory import create_storage_provider, create_scraping_provider
+            from app.api.modules.content.services.asset_service import AssetService
+            from app.api.modules.content.services.bundle_service import BundleService
+            from app.api.modules.content.handlers import ArchiveHandler, IngestionContext
             from app.core.config import settings
             from app.models import DatasetIngestionJob, IngestionStatus
             
@@ -237,9 +237,9 @@ def import_directory_task(
 
     with Session(engine) as session:
         from app.models import DatasetIngestionJob, IngestionStatus
-        from app.api.content.services.bundle_service import BundleService
-        from app.api.providers.factory import create_storage_provider
-        from app.api.content.handlers.directory_import_handler import DirectoryImportHandler
+        from app.api.modules.content.services.bundle_service import BundleService
+        from app.api.modules.foundation_service_providers.factory import create_storage_provider
+        from app.api.modules.content.handlers.directory_import_handler import DirectoryImportHandler
         from app.core.config import settings
 
         job = session.get(DatasetIngestionJob, job_id)
@@ -256,10 +256,10 @@ def import_directory_task(
             allowed_paths = [settings.LOCAL_STORAGE_BASE_PATH]
 
         try:
-            from app.api.content.handlers.base import IngestionContext
-            from app.api.content.services.asset_service import AssetService
-            from app.api.content.services.bundle_service import BundleService
-            from app.api.providers.factory import create_storage_provider, create_scraping_provider
+            from app.api.modules.content.handlers.base import IngestionContext
+            from app.api.modules.content.services.asset_service import AssetService
+            from app.api.modules.content.services.bundle_service import BundleService
+            from app.api.modules.foundation_service_providers.factory import create_storage_provider, create_scraping_provider
             bundle_service = BundleService(session)
             storage_provider = create_storage_provider(settings) if copy_mode else None
             asset_service = AssetService(session, storage_provider or create_storage_provider(settings))

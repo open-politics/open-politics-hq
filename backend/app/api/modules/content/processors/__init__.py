@@ -18,7 +18,7 @@ from .excel_processor import ExcelProcessor
 from .pdf_processor import PDFProcessor
 from .web_processor import WebProcessor
 from .strategy import ProcessingStrategy, should_process_immediately, get_strategy
-from app.api.content.types import (
+from app.api.modules.content.types import (
     ContentTypeRegistry,
     get_content_type_registry,
     detect_asset_kind_from_extension,

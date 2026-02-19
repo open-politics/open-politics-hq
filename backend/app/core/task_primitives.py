@@ -34,7 +34,7 @@ def task_context(
             # ... do work
             session.commit()
 
-    Providers are created via app.api.providers.factory and cached per invocation.
+    Providers are created via app.api.modules.foundation_service_providers.factory and cached per invocation.
     """
     from app.core.db import engine
     from app.core.config import settings
@@ -43,20 +43,20 @@ def task_context(
     prov_dict: dict[str, Any] = {}
 
     if "storage" in providers:
-        from app.api.providers.factory import create_storage_provider
+        from app.api.modules.foundation_service_providers.factory import create_storage_provider
         prov_dict["storage"] = create_storage_provider(settings)
     if "scraping" in providers:
-        from app.api.providers.factory import create_scraping_provider
+        from app.api.modules.foundation_service_providers.factory import create_scraping_provider
         prov_dict["scraping"] = create_scraping_provider(settings)
     if "embedding" in providers:
-        from app.api.providers.factory import create_embedding_provider
+        from app.api.modules.foundation_service_providers.factory import create_embedding_provider
         prov_dict["embedding"] = create_embedding_provider(settings)
     if "model_registry" in providers:
-        from app.api.providers.factory import create_model_registry
+        from app.api.modules.foundation_service_providers.factory import create_model_registry
         reg = create_model_registry(settings)
         prov_dict["model_registry"] = reg
     if "geocoding" in providers:
-        from app.api.providers.factory import create_geocoding_provider
+        from app.api.modules.foundation_service_providers.factory import create_geocoding_provider
         prov_dict["geocoding"] = create_geocoding_provider(settings)
 
     with Session(engine) as session:

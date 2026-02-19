@@ -20,9 +20,9 @@ from app.schemas import (
     InfospaceBackupUpdate,
     BackupRestoreRequest
 )
-from app.api.service_utils import validate_infospace_access
-from app.api.sharing.services.package_service import PackageBuilder, PackageImporter, DataPackage, PackageMetadata
-from app.api.providers.base import StorageProvider
+from app.api.global_utils import validate_infospace_access
+from app.api.modules.sharing.services.package_service import PackageBuilder, PackageImporter, DataPackage, PackageMetadata
+from app.api.modules.foundation_service_providers.base import StorageProvider
 from app.core.config import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ class BackupService:
         self.session.refresh(backup)
         
         # Trigger async backup creation
-        from app.api.sharing.tasks.backup import process_infospace_backup
+        from app.api.modules.sharing.tasks.backup import process_infospace_backup
         process_infospace_backup.delay(backup.id, backup_data.model_dump())
         
         logger.info(f"Backup record created with ID {backup.id}, queued for processing")
@@ -119,7 +119,7 @@ class BackupService:
             logger.info(f"Executing backup {backup_id} for infospace {backup.infospace_id}")
             
             # Use InfospaceService to create the backup package
-            from app.api.identity.services.infospace_service import InfospaceService
+            from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
             infospace_service = InfospaceService(
                 session=self.session,
                 settings=self.settings,
@@ -370,7 +370,7 @@ class BackupService:
             new_name = restore_request.target_infospace_name or f"{original_name} (Restored {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')})"
             
             # Use InfospaceService to import the backup
-            from app.api.identity.services.infospace_service import InfospaceService
+            from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
             infospace_service = InfospaceService(
                 session=self.session,
                 settings=self.settings,

@@ -14,7 +14,7 @@ from app.models import (
     Infospace,
 )
 from app.schemas import AssetRead, AssetCreate, AssetUpdate, AssetsOut, Message
-from app.api.deps import (
+from app.api.dependency_injection import (
     SessionDep,
     CurrentUser,
     StorageProviderDep,
@@ -24,14 +24,14 @@ from app.api.deps import (
     AssetServiceDep,
     CheckUploadSizeDep,
 )
-from app.api.service_utils import validate_infospace_access
-from app.api.providers.factory import create_scraping_provider, create_storage_provider
+from app.api.global_utils import validate_infospace_access
+from app.api.modules.foundation_service_providers.factory import create_scraping_provider, create_storage_provider
 from app.core.config import settings
 from sqlalchemy import func
 from sqlmodel import select, delete
-from app.api.content.tasks.content_tasks import process_content, ingest_bulk_urls
+from app.api.modules.content.tasks.content_tasks import process_content, ingest_bulk_urls
 from app.core.celery_app import celery
-from app.api.content.services import ContentIngestionService, BundleService
+from app.api.modules.content.services import ContentIngestionService, BundleService
 from app.core.db import engine
 from sqlmodel import Session
 
@@ -142,8 +142,8 @@ async def create_asset(
             asset = assets[0] if assets else None
         else:
             # No locator - create asset record
-            from app.api.content.services import AssetService
-            from app.api.content.processors import detect_asset_kind_from_extension, needs_processing
+            from app.api.modules.content.services import AssetService
+            from app.api.modules.content.processors import detect_asset_kind_from_extension, needs_processing
             storage_provider = create_storage_provider(settings)
             asset_service = AssetService(session, storage_provider)
             
@@ -177,7 +177,7 @@ async def create_asset(
         # Auto-embed if infospace has embedding enabled
         infospace = session.get(Infospace, infospace_id)
         if infospace and infospace.embedding_model and asset.text_content:
-            from app.api.embedding.tasks.embed import embed_asset_task
+            from app.api.modules.embedding.tasks.embed import embed_asset_task
             embed_asset_task.delay(
                 asset_id=asset.id,
                 infospace_id=infospace_id,
@@ -247,8 +247,8 @@ async def upload_file(
         validate_infospace_access(session, infospace_id, current_user.id)
         
         # Use FileHandler directly (new pattern)
-        from app.api.content.handlers import FileHandler, IngestionContext
-        from app.api.content.services import AssetService, BundleService
+        from app.api.modules.content.handlers import FileHandler, IngestionContext
+        from app.api.modules.content.services import AssetService, BundleService
         
         scraping_provider = create_scraping_provider(settings)
         asset_service = AssetService(session, storage_provider)
@@ -301,7 +301,7 @@ async def ingest_url(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
 
-        from app.api.content.handlers import WebHandler
+        from app.api.modules.content.handlers import WebHandler
 
         context = make_ingestion_context(
             current_user.id, infospace_id, {"scrape_immediately": scrape_immediately}
@@ -340,7 +340,7 @@ async def ingest_text(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
 
-        from app.api.content.handlers import TextHandler
+        from app.api.modules.content.handlers import TextHandler
 
         options = {"event_timestamp": event_timestamp} if event_timestamp else {}
         context = make_ingestion_context(current_user.id, infospace_id, options)
@@ -412,7 +412,7 @@ async def bulk_ingest_urls(
         
         if len(bulk_request.urls) > 100:
             # For large batches, use background task
-            from app.api.content.tasks.content_tasks import ingest_bulk_urls
+            from app.api.modules.content.tasks.content_tasks import ingest_bulk_urls
             ingest_bulk_urls.delay(
                 urls=bulk_request.urls,
                 infospace_id=infospace_id,
@@ -462,7 +462,7 @@ async def ingest_search_results(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
         
-        from app.api.content.services import AssetBuilder
+        from app.api.modules.content.services import AssetBuilder
         from app.schemas import SearchResult
         
         created_assets = []
@@ -846,7 +846,7 @@ async def discover_rss_feeds(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
 
-        from app.api.content.handlers import RSSHandler
+        from app.api.modules.content.handlers import RSSHandler
 
         feeds = await RSSHandler.discover_rss_feeds_from_awesome_repo(
             country=country,
@@ -882,7 +882,7 @@ async def preview_rss_feed(
     Preview the content of an RSS feed.
     """
     try:
-        from app.api.content.handlers import RSSHandler
+        from app.api.modules.content.handlers import RSSHandler
 
         preview_data = await RSSHandler.preview_rss_feed(feed_url, max_items)
         return preview_data
@@ -1184,8 +1184,8 @@ def transfer_assets(
     validate_infospace_access(session, request.target_infospace_id, current_user.id)
     
     # Get asset service
-    from app.api.content.services import AssetService
-    from app.api.providers.factory import create_storage_provider
+    from app.api.modules.content.services import AssetService
+    from app.api.modules.foundation_service_providers.factory import create_storage_provider
     from app.core.config import settings
     
     storage_provider = create_storage_provider(settings)
@@ -1461,7 +1461,7 @@ async def ingest_rss_feeds_from_awesome(
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
 
-        from app.api.content.handlers import RSSHandler
+        from app.api.modules.content.handlers import RSSHandler
 
         context = make_ingestion_context(
             user_id=current_user.id,

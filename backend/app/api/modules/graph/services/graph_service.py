@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlmodel import Session, select
 
-from app.api.graph.models import EntityCanonical, FragmentCuration
+from app.api.modules.graph.models import EntityCanonical, FragmentCuration
 from app.models import Annotation
 
 logger = logging.getLogger(__name__)

@@ -15,9 +15,9 @@ from sqlalchemy import text
 from app.core.celery_app import celery
 from app.core.db import engine
 from app.models import Asset, ProcessingStatus
-from app.api.providers.factory import create_storage_provider, create_scraping_provider
-from app.api.content.services.processing_service import ProcessingService
-from app.api.content.services.asset_service import AssetService
+from app.api.modules.foundation_service_providers.factory import create_storage_provider, create_scraping_provider
+from app.api.modules.content.services.processing_service import ProcessingService
+from app.api.modules.content.services.asset_service import AssetService
 from app.core.config import settings
 from app.core.task_utils import run_async_in_celery
 
@@ -40,7 +40,7 @@ def batch_process_pending(
         bundle_id: Bundle to process
         batch_size: Number of assets per batch (dispatched as individual tasks)
     """
-    from app.api.content.tasks.content_tasks import process_content
+    from app.api.modules.content.tasks.content_tasks import process_content
 
     logger.info(f"[Batch Processing] Starting for bundle {bundle_id}, batch_size={batch_size}")
 
@@ -95,7 +95,7 @@ def batch_enrich(
         bundle_id: Optional bundle to limit scope
         batch_size: Assets per batch
     """
-    from app.api.content.facets import (
+    from app.api.modules.content.facets import (
         FACET_LOCATION_LAT,
         FACET_LOCATION_LON,
         FACET_SUMMARY,
@@ -133,7 +133,7 @@ def batch_enrich(
             logger.info(f"[Batch Enrich] No assets missing facet {missing_facet}")
             return {"status": "done", "processed": 0, "remaining": 0}
 
-        from app.api.content.enrichers import get_enricher
+        from app.api.modules.content.enrichers import get_enricher
 
         enricher = get_enricher(enricher_name)
         if not enricher:

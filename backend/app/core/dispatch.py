@@ -36,7 +36,7 @@ class ReactiveWatcher(Protocol):
     """Human-readable watcher name for logging."""
 
     task_name: str
-    """Celery task name as string, e.g. 'app.api.search.tasks.embed.embed_task'."""
+    """Celery task name as string, e.g. 'app.api.modules.search.tasks.embed.embed_task'."""
 
     batch_size: int
     """Max IDs to pass per task invocation."""

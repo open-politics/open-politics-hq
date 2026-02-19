@@ -13,11 +13,11 @@ from sqlmodel import Session, select, delete
 from sqlalchemy import update, or_, func, text
 from pydantic import BaseModel, Field
 
-from app.api import deps
+from app.api import dependency_injection
 from app.models import Asset, Bundle, AssetKind
 from app.schemas import TreeResponse, TreeNode, TreeChildrenResponse, Message, AssetRead
-from app.api.service_utils import validate_infospace_access
-from app.api.tree_builder import (
+from app.api.global_utils import validate_infospace_access
+from app.api.content_tree_builder import (
     build_root_tree_nodes,
     build_bundle_children_nodes,
     build_asset_children_nodes,
@@ -127,8 +127,8 @@ def _get_virtual_folder_children(
 def get_infospace_tree(
     *,
     infospace_id: int,
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Get the root-level tree structure for an infospace.
@@ -196,8 +196,8 @@ def get_tree_children(
     parent_id: str = Query(..., description="Parent node ID (format: 'bundle-123' or 'asset-456')"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Get children of a specific tree node (lazy loading).
@@ -350,8 +350,8 @@ def delete_tree_nodes(
     *,
     infospace_id: int,
     request: TreeDeleteRequest,
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Delete tree nodes (bundles and/or assets).
@@ -537,8 +537,8 @@ def get_virtual_folder_children(
     path_prefix: str = Query("", description="Path prefix for filtering (e.g. data_set_1/politics)"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Get virtual folder structure from blob_path for path-based bundles.
@@ -612,8 +612,8 @@ def get_feed_assets(
     kinds: List[str] = Query(None, description="Filter by asset kinds"),
     sort_by: str = Query("updated_at", description="Sort field: created_at, updated_at"),
     sort_order: str = Query("desc", description="Sort order: asc, desc"),
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Get a feed of recent assets sorted by date.
@@ -686,8 +686,8 @@ def batch_get_assets(
     *,
     infospace_id: int,
     request: BatchGetAssetsRequest,
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Batch fetch multiple assets by IDs in a single request.
@@ -745,8 +745,8 @@ def text_search_assets(
     limit: int = Query(100, ge=1, le=500, description="Maximum number of results"),
     asset_kinds: Optional[List[AssetKind]] = Query(None, description="Filter by asset types"),
     bundle_id: Optional[int] = Query(None, description="Search within specific bundle"),
-    db: Session = deps.Depends(deps.get_db),
-    current_user = deps.Depends(deps.get_current_user),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Comprehensive text search across all assets in an infospace.

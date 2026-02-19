@@ -11,7 +11,7 @@ from app.core.task_primitives import task_context
 from app.core.task_utils import run_async_in_celery
 
 from app.models import Asset, ProcessingStatus
-from app.api.content.facets import (
+from app.api.modules.content.facets import (
     FACET_LOCATION,
     FACET_LOCATION_LAT,
     FACET_LOCATION_LON,

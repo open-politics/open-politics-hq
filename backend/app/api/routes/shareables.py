@@ -7,8 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Query, 
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from sqlmodel import Session
 
-from app.api import deps
-from app.api.deps import CurrentUser, ShareableServiceDep, OptionalUser, SessionDep, get_shareable_service
+from app.api import dependency_injection
+from app.api.dependency_injection import CurrentUser, ShareableServiceDep, OptionalUser, SessionDep, get_shareable_service
 from app.models import (
     ShareableLink,
     ResourceType,
@@ -26,7 +26,7 @@ from app.schemas import (
     SharedResourcePreview
 )
 
-from app.api.sharing.services import ShareableService
+from app.api.modules.sharing.services import ShareableService
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)

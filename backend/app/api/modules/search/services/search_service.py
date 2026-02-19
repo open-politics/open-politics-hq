@@ -91,7 +91,7 @@ class SearchService:
         Used by: AssetService search_assets method for semantic/hybrid search
         """
         try:
-            from app.api.embedding.services import VectorSearchService
+            from app.api.modules.embedding.services import VectorSearchService
 
             runtime_api_keys = options.get('runtime_api_keys')
 

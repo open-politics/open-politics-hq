@@ -2,7 +2,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from sqlmodel import Session, select
 from app.models import Annotation, AnnotationRun, User
-from app.api.analysis.protocols import AnalysisAdapterProtocol
+from app.api.modules.analysis.protocols import AnalysisAdapterProtocol
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)

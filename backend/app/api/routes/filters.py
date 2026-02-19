@@ -2,10 +2,10 @@ from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
-from app.api import deps
-from app.api.deps import CurrentUser
+from app.api import dependency_injection
+from app.api.dependency_injection import CurrentUser
 from app.schemas import Message
-from app.api.flow.services import FilterService, FilterExpression, FilterFactory
+from app.api.modules.flow.services import FilterService, FilterExpression, FilterFactory
 
 router = APIRouter()
 
@@ -197,7 +197,7 @@ def create_threshold_filter(
     current_user: CurrentUser
 ):
     """Create a threshold filter using the factory."""
-    from app.api.flow.services import FilterOperator
+    from app.api.modules.flow.services import FilterOperator
     
     try:
         filter_expr = FilterFactory.create_threshold_filter(field, threshold, FilterOperator(operator))

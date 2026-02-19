@@ -1,7 +1,7 @@
 """Conversational intelligence domain: models, schemas, services, MCP."""
 
-from app.api.conversational_intelligence.models import ChatConversation, ChatConversationMessage
-from app.api.conversational_intelligence.schemas import (
+from app.api.modules.conversational_intelligence.models import ChatConversation, ChatConversationMessage
+from app.api.modules.conversational_intelligence.schemas import (
     ChatConversationCreate,
     ChatConversationRead,
     ChatConversationUpdate,
@@ -13,7 +13,7 @@ from app.api.conversational_intelligence.schemas import (
 )
 
 # Service import deferred to avoid circular import (models -> schemas -> models).
-# Use: from app.api.conversational_intelligence.services import IntelligenceConversationService
+# Use: from app.api.modules.conversational_intelligence.services import IntelligenceConversationService
 __all__ = [
     "ChatConversation",
     "ChatConversationMessage",

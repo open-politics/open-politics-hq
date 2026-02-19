@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional
 import feedparser
 
 from app.models import Asset, AssetKind
-from app.api.content.services.asset_builder import AssetBuilder
+from app.api.modules.content.services.asset_builder import AssetBuilder
 from .base import BaseHandler, IngestionContext
 
 logger = logging.getLogger(__name__)
@@ -298,7 +298,7 @@ class RSSHandler(BaseHandler):
         """
         Discover and ingest RSS feeds from awesome-rss-feeds repository.
         """
-        from app.api.tree_builder import add_assets_to_bundle
+        from app.api.content_tree_builder import add_assets_to_bundle
 
         try:
             discovered_feeds = await cls.discover_rss_feeds_from_awesome_repo(

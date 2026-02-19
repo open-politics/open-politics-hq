@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlmodel import Session, select, func, and_, desc
 
-from app.api.deps import CurrentUser, SessionDep
+from app.api.dependency_injection import CurrentUser, SessionDep
 from app.models import ChatConversation, ChatConversationMessage, User
 from app.schemas import (
     ChatConversationCreate,

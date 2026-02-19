@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Optional
 from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Column, Index, JSON
 
-from app.api.identity.models import User, Infospace
-from app.api.annotation.models import Annotation
+from app.api.modules.identity_infospace_user.models import User, Infospace
+from app.api.modules.annotation.models import Annotation
 
 
 class EntityCanonical(SQLModel, table=True):

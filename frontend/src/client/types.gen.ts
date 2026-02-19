@@ -343,6 +343,7 @@ export type AssetRead = {
     created_at: string;
     text_content?: (string | null);
     blob_path?: (string | null);
+    logical_path?: (string | null);
     source_identifier?: (string | null);
     source_metadata?: ({
     [key: string]: unknown;
@@ -404,6 +405,34 @@ export type BackupShareRequest = {
     backup_id: number;
     is_shareable?: boolean;
     expiration_hours?: (number | null);
+};
+
+/**
+ * Batch create assets - single pattern for CSV rows, PDF pages, directory imports.
+ */
+export type BatchAssetCreateRequest = {
+    assets: Array<AssetCreate>;
+    batch_size?: number;
+    skip_dedupe?: boolean;
+};
+
+/**
+ * Request to trigger batch enrichment.
+ */
+export type BatchEnrichRequest = {
+    enricher_name: string;
+    missing_facet?: (string | null);
+    batch_size?: number;
+};
+
+/**
+ * Response for batch enrich trigger.
+ */
+export type BatchEnrichResponse = {
+    message: string;
+    bundle_id: number;
+    enricher_name: string;
+    task_id: string;
 };
 
 export type BatchGetAssetsRequest = {
@@ -842,7 +871,7 @@ export type DatasetCreate = {
  * Request to create a dataset ingestion job.
  */
 export type DatasetIngestionJobCreate = {
-    source_url: string;
+    source_locator: string;
     title?: (string | null);
     options?: ({
     [key: string]: unknown;
@@ -857,7 +886,7 @@ export type DatasetIngestionJobRead = {
     uuid: string;
     infospace_id: number;
     user_id: number;
-    source_url: string;
+    source_locator: string;
     kind: string;
     root_bundle_id: (number | null);
     status: IngestionStatus;
@@ -1061,9 +1090,6 @@ export type FileUploadResponse = {
     object_name: string;
 };
 
-/**
- * Schema for creating a Flow.
- */
 export type FlowCreate = {
     name: string;
     description?: (string | null);
@@ -1080,17 +1106,11 @@ export type FlowCreate = {
     tags?: (Array<string> | null);
 };
 
-/**
- * Schema for triggering a Flow execution.
- */
 export type FlowExecutionCreate = {
     asset_ids?: (Array<number> | null);
     tags?: (Array<string> | null);
 };
 
-/**
- * Schema for reading a FlowExecution.
- */
 export type FlowExecutionRead = {
     id: number;
     uuid: string;
@@ -1114,17 +1134,11 @@ export type FlowExecutionRead = {
     created_at: string;
 };
 
-/**
- * Paginated list of FlowExecutions.
- */
 export type FlowExecutionsOut = {
     data: Array<FlowExecutionRead>;
     count: number;
 };
 
-/**
- * Schema for reading a Flow.
- */
 export type FlowRead = {
     name: string;
     description?: (string | null);
@@ -1157,17 +1171,11 @@ export type FlowRead = {
     updated_at: string;
 };
 
-/**
- * Paginated list of Flows.
- */
 export type FlowsOut = {
     data: Array<FlowRead>;
     count: number;
 };
 
-/**
- * Schema for updating a Flow.
- */
 export type FlowUpdate = {
     name?: (string | null);
     description?: (string | null);
@@ -1346,9 +1354,6 @@ export type InfospaceUpdate = {
     enable_related_assets?: (boolean | null);
 };
 
-/**
- * Status for long-running dataset ingestion jobs.
- */
 export type IngestionStatus = 'pending' | 'downloading' | 'extracting' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 export type Message = {
@@ -1399,10 +1404,19 @@ export type Paginated = {
 
 export type PermissionLevel = 'read_only' | 'edit' | 'full_access';
 
-/**
- * Status for asset processing (creating child assets).
- */
 export type ProcessingStatus = 'ready' | 'pending' | 'processing' | 'failed';
+
+/**
+ * Processing status counts per bundle.
+ */
+export type ProcessingStatusResponse = {
+    bundle_id: number;
+    pending: number;
+    processing: number;
+    ready: number;
+    failed: number;
+    total: number;
+};
 
 export type PromoteFragmentRequest = {
     fragment_key: string;
@@ -1424,10 +1438,6 @@ export type ProviderModel = {
     description?: (string | null);
 };
 
-export type QueryType = {
-    type: string;
-};
-
 export type RegistrationStats = {
     total_users: number;
     users_created_today: number;
@@ -1443,14 +1453,6 @@ export type ReprocessOptions = {
     skip_rows?: (number | null);
     max_rows?: (number | null);
     timeout?: (number | null);
-};
-
-/**
- * Request object for search synthesizer
- */
-export type Request = {
-    query: string;
-    query_type: QueryType;
 };
 
 export type ResourceType = 'source' | 'bundle' | 'asset' | 'schema' | 'infospace' | 'run' | 'package' | 'dataset' | 'mixed';
@@ -1501,6 +1503,30 @@ export type SearchAndIngestResponse = {
     message: string;
 };
 
+export type SearchHistoriesOut = {
+    data: Array<SearchHistoryRead>;
+    count: number;
+};
+
+export type SearchHistoryCreate = {
+    query: string;
+    filters?: ({
+    [key: string]: unknown;
+} | null);
+    result_count?: (number | null);
+};
+
+export type SearchHistoryRead = {
+    query: string;
+    filters?: ({
+    [key: string]: unknown;
+} | null);
+    result_count?: (number | null);
+    id: number;
+    user_id: number;
+    timestamp: string;
+};
+
 export type SearchRequest = {
     query: string;
     limit?: number;
@@ -1539,8 +1565,6 @@ export type SearchResultsOut = {
     provider: string;
     results: Array<SearchResultOut>;
 };
-
-export type SearchType = 'text' | 'semantic';
 
 /**
  * Request for creating assets from specific search result URLs
@@ -2637,6 +2661,20 @@ export type ListAssets3Data = {
 
 export type ListAssets3Response = (AssetsOut);
 
+export type BatchCreateAssetsData = {
+    infospaceId: number;
+    requestBody: BatchAssetCreateRequest;
+};
+
+export type BatchCreateAssetsResponse = (Array<AssetRead>);
+
+export type BatchCreateAssets1Data = {
+    infospaceId: number;
+    requestBody: BatchAssetCreateRequest;
+};
+
+export type BatchCreateAssets1Response = (Array<AssetRead>);
+
 export type UploadFileData = {
     formData: Body_assets_upload_file;
     infospaceId: number;
@@ -3379,6 +3417,21 @@ export type TriggerBatchProcessPendingData = {
 
 export type TriggerBatchProcessPendingResponse = (BatchProcessResponse);
 
+export type TriggerBatchEnrichData = {
+    bundleId: number;
+    infospaceId: number;
+    requestBody: BatchEnrichRequest;
+};
+
+export type TriggerBatchEnrichResponse = (BatchEnrichResponse);
+
+export type GetProcessingStatusData = {
+    bundleId: number;
+    infospaceId: number;
+};
+
+export type GetProcessingStatusResponse = (ProcessingStatusResponse);
+
 export type ListDatasetJobsData = {
     infospaceId: number;
     limit?: number;
@@ -3565,69 +3618,6 @@ export type DiscoverEmbeddingModelsData = {
 export type DiscoverEmbeddingModelsResponse = (AvailableModelsResponse);
 
 export type ListAvailableEmbeddingModelsResponse = (AvailableModelsResponse);
-
-export type GetLocationArticlesData = {
-    limit?: number;
-    location: string;
-    searchQuery?: (string | null);
-    searchType?: SearchType;
-    skip?: number;
-};
-
-export type GetLocationArticlesResponse = (unknown);
-
-export type GetLeaderInfoData = {
-    state: string;
-};
-
-export type GetLeaderInfoResponse = (unknown);
-
-export type GetLegislationDataData = {
-    state: string;
-};
-
-export type GetLegislationDataResponse = (unknown);
-
-export type GetEconDataData = {
-    indicators?: Array<string>;
-    state: string;
-};
-
-export type GetEconDataResponse = (unknown);
-
-export type UpdateLeadersResponse = (unknown);
-
-export type GetTavilyDataResponse = (unknown);
-
-export type GetEntityScoreOverTimeData = {
-    entity: string;
-    scoreType: string;
-    timeframeFrom: string;
-    timeframeTo: string;
-};
-
-export type GetEntityScoreOverTimeResponse = (unknown);
-
-export type GetTopEntitiesByScoreData = {
-    /**
-     * Number of top entities to retrieve
-     */
-    limit?: number;
-    /**
-     * Type of score to rank entities by
-     */
-    scoreType: string;
-    /**
-     * Start date in ISO format
-     */
-    timeframeFrom: string;
-    /**
-     * End date in ISO format
-     */
-    timeframeTo: string;
-};
-
-export type GetTopEntitiesByScoreResponse = (unknown);
 
 export type FileUploadData = {
     formData: Body_filestorage_file_upload;
@@ -3983,27 +3973,6 @@ export type GetInfospaceToolContextData = {
 
 export type GetInfospaceToolContextResponse = (unknown);
 
-export type GetCoordinatesData = {
-    language?: string;
-    location: string;
-};
-
-export type GetCoordinatesResponse = (unknown);
-
-export type GetLocationMetadataData = {
-    location: string;
-};
-
-export type GetLocationMetadataResponse = (unknown);
-
-export type ChannelRouteData = {
-    path: string;
-    requestBody: Request;
-    serviceName: string;
-};
-
-export type ChannelRouteResponse = (unknown);
-
 export type LoginAccessTokenData = {
     formData: Body_login_login_access_token;
 };
@@ -4063,6 +4032,19 @@ export type CreateAssetsFromResultsData = {
 };
 
 export type CreateAssetsFromResultsResponse = (SearchAndIngestResponse);
+
+export type CreateSearchHistoryData = {
+    requestBody: SearchHistoryCreate;
+};
+
+export type CreateSearchHistoryResponse = (SearchHistoryRead);
+
+export type ReadSearchHistoriesData = {
+    limit?: number;
+    skip?: number;
+};
+
+export type ReadSearchHistoriesResponse = (SearchHistoriesOut);
 
 export type CreateShareableLinkData = {
     infospaceId: number;
@@ -4904,6 +4886,14 @@ export type TestEmailResponse = (Message);
 
 export type GetAvailableRssCountriesResponse = (unknown);
 
+export type DiscoverCuratedRssFeedsData = {
+    category?: (string | null);
+    country?: (string | null);
+    limit?: number;
+};
+
+export type DiscoverCuratedRssFeedsResponse = (unknown);
+
 export type ExtractPdfTextData = {
     formData: Body_utils_extract_pdf_text;
 };
@@ -4927,6 +4917,12 @@ export type AnalyzeSourceData = {
 };
 
 export type AnalyzeSourceResponse = (unknown);
+
+export type DiscoverRssFeedsFromSiteData = {
+    baseUrl: string;
+};
+
+export type DiscoverRssFeedsFromSiteResponse = (unknown);
 
 export type BrowseRssFeedData = {
     feedUrl: string;

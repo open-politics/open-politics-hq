@@ -2678,6 +2678,69 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/assets/batch": {
+      "post": {
+        "tags": [
+          "assets",
+          "Assets"
+        ],
+        "summary": "Batch Create Assets",
+        "description": "Batch create assets. Single pattern for CSV rows, PDF pages, directory imports, RSS articles.\nUses per-batch commits (default 500) for scale.",
+        "operationId": "batch_create_assets",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchAssetCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AssetRead"
+                  },
+                  "title": "Response Assets-Batch Create Assets"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/infospaces/{infospace_id}/assets/upload": {
       "post": {
         "tags": [
@@ -6937,6 +7000,130 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BatchProcessResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/enrich": {
+      "post": {
+        "tags": [
+          "Dataset Jobs"
+        ],
+        "summary": "Trigger Batch Enrich",
+        "description": "Trigger batch enrichment for assets in a bundle missing a facet.\n\nRuns enrichers (geocoding, etc.) on assets that don't yet have the target\nfacet set. Self-chaining until all are enriched.",
+        "operationId": "trigger_batch_enrich",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "bundle_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Bundle Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchEnrichRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchEnrichResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/processing-status": {
+      "get": {
+        "tags": [
+          "Dataset Jobs"
+        ],
+        "summary": "Get Processing Status",
+        "description": "Get processing status counts for assets in a bundle.\n\nReturns counts by processing_status (PENDING, PROCESSING, READY, FAILED).",
+        "operationId": "get_processing_status",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "bundle_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Bundle Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessingStatusResponse"
                 }
               }
             }
@@ -11570,6 +11757,112 @@
             "OAuth2PasswordBearer": []
           }
         ]
+      }
+    },
+    "/api/v1/search_history/create": {
+      "post": {
+        "tags": [
+          "Search History"
+        ],
+        "summary": "Create Search History",
+        "description": "Create a new search history entry.",
+        "operationId": "create_search_history",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchHistoryCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchHistoryRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/search_history/read": {
+      "get": {
+        "tags": [
+          "Search History"
+        ],
+        "summary": "Read Search Histories",
+        "description": "Retrieve search histories for the current user.",
+        "operationId": "read_search_histories",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Skip"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchHistoriesOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/shareables/{infospace_id}/links": {
@@ -16855,9 +17148,9 @@
           "utils",
           "Utilities"
         ],
-        "summary": "Discover Rss Feeds",
+        "summary": "Discover Curated Rss Feeds",
         "description": "Discover RSS feeds from the awesome-rss-feeds repository.\n\nArgs:\n    country: Country name (e.g., \"Australia\", \"United States\") - if None, returns all countries\n    category: Category filter (e.g., \"News\", \"Technology\") - if None, returns all categories\n    limit: Maximum number of feeds to return",
-        "operationId": "discover_rss_feeds",
+        "operationId": "discover_curated_rss_feeds",
         "parameters": [
           {
             "name": "country",
@@ -16908,7 +17201,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "title": "Response Utils-Discover Rss Feeds"
+                  "title": "Response Utils-Discover Curated Rss Feeds"
                 }
               }
             }
@@ -17098,9 +17391,9 @@
           "utils",
           "Utilities"
         ],
-        "summary": "Discover Rss Feeds",
+        "summary": "Discover Rss Feeds From Site",
         "description": "Discover RSS feeds from a news source.\n\nArgs:\n    base_url: The base URL of the news source\n    \nReturns:\n    List of discovered RSS feed URLs",
-        "operationId": "discover_rss_feeds",
+        "operationId": "discover_rss_feeds_from_site",
         "parameters": [
           {
             "name": "base_url",
@@ -17572,737 +17865,6 @@
             }
           }
         ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/{location}/articles": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Location Articles",
-        "operationId": "get_location_articles",
-        "parameters": [
-          {
-            "name": "location",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Location"
-            }
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 20,
-              "title": "Limit"
-            }
-          },
-          {
-            "name": "search_query",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Search Query"
-            }
-          },
-          {
-            "name": "search_type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "$ref": "#/components/schemas/SearchType",
-              "default": "text"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/leaders/{state}": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Leader Info",
-        "operationId": "get_leader_info",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/legislation/{state}": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Legislation Data",
-        "operationId": "get_legislation_data",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/econ_data/{state}": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Econ Data",
-        "operationId": "get_econ_data",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          },
-          {
-            "name": "indicators",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "default": [
-                "GDP",
-                "GDP_GROWTH"
-              ],
-              "title": "Indicators"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/update_leaders/": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Update Leaders",
-        "operationId": "update_leaders",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/get_articles": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Tavily Data",
-        "operationId": "get_tavily_data",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/score_over_time/{entity}": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Entity Score Over Time",
-        "operationId": "get_entity_score_over_time",
-        "parameters": [
-          {
-            "name": "entity",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Entity"
-            }
-          },
-          {
-            "name": "score_type",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Score Type"
-            }
-          },
-          {
-            "name": "timeframe_from",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Timeframe From"
-            }
-          },
-          {
-            "name": "timeframe_to",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Timeframe To"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/entities/top_entities_by_score": {
-      "get": {
-        "tags": [
-          "entities"
-        ],
-        "summary": "Get Top Entities By Score",
-        "operationId": "get_top_entities_by_score",
-        "parameters": [
-          {
-            "name": "score_type",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "Type of score to rank entities by",
-              "title": "Score Type"
-            },
-            "description": "Type of score to rank entities by"
-          },
-          {
-            "name": "timeframe_from",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "Start date in ISO format",
-              "title": "Timeframe From"
-            },
-            "description": "Start date in ISO format"
-          },
-          {
-            "name": "timeframe_to",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "End date in ISO format",
-              "title": "Timeframe To"
-            },
-            "description": "End date in ISO format"
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "description": "Number of top entities to retrieve",
-              "default": 10,
-              "title": "Limit"
-            },
-            "description": "Number of top entities to retrieve"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/leaders/{state}": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Leader Info",
-        "operationId": "get_leader_info",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/legislation/{state}": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Legislation Data",
-        "operationId": "get_legislation_data",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/econ_data/{state}": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Econ Data",
-        "operationId": "get_econ_data",
-        "parameters": [
-          {
-            "name": "state",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "State"
-            }
-          },
-          {
-            "name": "indicators",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              },
-              "default": [
-                "GDP",
-                "GDP_GROWTH"
-              ],
-              "title": "Indicators"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/update_leaders/": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Update Leaders",
-        "operationId": "update_leaders",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/get_articles": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Tavily Data",
-        "operationId": "get_tavily_data",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/get_coordinates": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Coordinates",
-        "description": "Fetches the coordinates, bounding box, and location type for a given location.",
-        "operationId": "get_coordinates",
-        "parameters": [
-          {
-            "name": "location",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Location"
-            }
-          },
-          {
-            "name": "language",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "en",
-              "title": "Language"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/metadata/{location}": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Get Location Metadata",
-        "description": "Get metadata about a location including supported features",
-        "operationId": "get_location_metadata",
-        "parameters": [
-          {
-            "name": "location",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Location"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/locations/channel/{service_name}/{path}": {
-      "get": {
-        "tags": [
-          "locations"
-        ],
-        "summary": "Channel Route",
-        "description": "A channel route that forwards requests to a specified service.",
-        "operationId": "channel_route",
-        "parameters": [
-          {
-            "name": "service_name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Service Name"
-            }
-          },
-          {
-            "name": "path",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Path"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Request"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -20142,6 +19704,17 @@
             ],
             "title": "Blob Path"
           },
+          "logical_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logical Path"
+          },
           "source_identifier": {
             "anyOf": [
               {
@@ -20475,6 +20048,92 @@
           "backup_id"
         ],
         "title": "BackupShareRequest"
+      },
+      "BatchAssetCreateRequest": {
+        "properties": {
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/AssetCreate"
+            },
+            "type": "array",
+            "title": "Assets"
+          },
+          "batch_size": {
+            "type": "integer",
+            "title": "Batch Size",
+            "default": 500
+          },
+          "skip_dedupe": {
+            "type": "boolean",
+            "title": "Skip Dedupe",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "assets"
+        ],
+        "title": "BatchAssetCreateRequest",
+        "description": "Batch create assets - single pattern for CSV rows, PDF pages, directory imports."
+      },
+      "BatchEnrichRequest": {
+        "properties": {
+          "enricher_name": {
+            "type": "string",
+            "title": "Enricher Name"
+          },
+          "missing_facet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missing Facet"
+          },
+          "batch_size": {
+            "type": "integer",
+            "title": "Batch Size",
+            "default": 100
+          }
+        },
+        "type": "object",
+        "required": [
+          "enricher_name"
+        ],
+        "title": "BatchEnrichRequest",
+        "description": "Request to trigger batch enrichment."
+      },
+      "BatchEnrichResponse": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "bundle_id": {
+            "type": "integer",
+            "title": "Bundle Id"
+          },
+          "enricher_name": {
+            "type": "string",
+            "title": "Enricher Name"
+          },
+          "task_id": {
+            "type": "string",
+            "title": "Task Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "message",
+          "bundle_id",
+          "enricher_name",
+          "task_id"
+        ],
+        "title": "BatchEnrichResponse",
+        "description": "Response for batch enrich trigger."
       },
       "BatchGetAssetsRequest": {
         "properties": {
@@ -22517,9 +22176,9 @@
       },
       "DatasetIngestionJobCreate": {
         "properties": {
-          "source_url": {
+          "source_locator": {
             "type": "string",
-            "title": "Source Url"
+            "title": "Source Locator"
           },
           "title": {
             "anyOf": [
@@ -22547,7 +22206,7 @@
         },
         "type": "object",
         "required": [
-          "source_url"
+          "source_locator"
         ],
         "title": "DatasetIngestionJobCreate",
         "description": "Request to create a dataset ingestion job."
@@ -22570,9 +22229,9 @@
             "type": "integer",
             "title": "User Id"
           },
-          "source_url": {
+          "source_locator": {
             "type": "string",
-            "title": "Source Url"
+            "title": "Source Locator"
           },
           "kind": {
             "type": "string",
@@ -22715,7 +22374,7 @@
           "uuid",
           "infospace_id",
           "user_id",
-          "source_url",
+          "source_locator",
           "kind",
           "root_bundle_id",
           "status",
@@ -23665,8 +23324,7 @@
         "required": [
           "name"
         ],
-        "title": "FlowCreate",
-        "description": "Schema for creating a Flow."
+        "title": "FlowCreate"
       },
       "FlowExecutionCreate": {
         "properties": {
@@ -23700,8 +23358,7 @@
           }
         },
         "type": "object",
-        "title": "FlowExecutionCreate",
-        "description": "Schema for triggering a Flow execution."
+        "title": "FlowExecutionCreate"
       },
       "FlowExecutionRead": {
         "properties": {
@@ -23839,8 +23496,7 @@
           "status",
           "created_at"
         ],
-        "title": "FlowExecutionRead",
-        "description": "Schema for reading a FlowExecution."
+        "title": "FlowExecutionRead"
       },
       "FlowExecutionsOut": {
         "properties": {
@@ -23861,8 +23517,7 @@
           "data",
           "count"
         ],
-        "title": "FlowExecutionsOut",
-        "description": "Paginated list of FlowExecutions."
+        "title": "FlowExecutionsOut"
       },
       "FlowRead": {
         "properties": {
@@ -24048,8 +23703,7 @@
           "created_at",
           "updated_at"
         ],
-        "title": "FlowRead",
-        "description": "Schema for reading a Flow."
+        "title": "FlowRead"
       },
       "FlowUpdate": {
         "properties": {
@@ -24176,8 +23830,7 @@
           }
         },
         "type": "object",
-        "title": "FlowUpdate",
-        "description": "Schema for updating a Flow."
+        "title": "FlowUpdate"
       },
       "FlowsOut": {
         "properties": {
@@ -24198,8 +23851,7 @@
           "data",
           "count"
         ],
-        "title": "FlowsOut",
-        "description": "Paginated list of Flows."
+        "title": "FlowsOut"
       },
       "GenerateAssetEmbeddingsRequest": {
         "properties": {
@@ -25041,8 +24693,7 @@
           "failed",
           "cancelled"
         ],
-        "title": "IngestionStatus",
-        "description": "Status for long-running dataset ingestion jobs."
+        "title": "IngestionStatus"
       },
       "Message": {
         "properties": {
@@ -25253,8 +24904,46 @@
           "processing",
           "failed"
         ],
-        "title": "ProcessingStatus",
-        "description": "Status for asset processing (creating child assets)."
+        "title": "ProcessingStatus"
+      },
+      "ProcessingStatusResponse": {
+        "properties": {
+          "bundle_id": {
+            "type": "integer",
+            "title": "Bundle Id"
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending"
+          },
+          "processing": {
+            "type": "integer",
+            "title": "Processing"
+          },
+          "ready": {
+            "type": "integer",
+            "title": "Ready"
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bundle_id",
+          "pending",
+          "processing",
+          "ready",
+          "failed",
+          "total"
+        ],
+        "title": "ProcessingStatusResponse",
+        "description": "Processing status counts per bundle."
       },
       "PromoteFragmentRequest": {
         "properties": {
@@ -25344,19 +25033,6 @@
           "name"
         ],
         "title": "ProviderModel"
-      },
-      "QueryType": {
-        "properties": {
-          "type": {
-            "type": "string",
-            "title": "Type"
-          }
-        },
-        "type": "object",
-        "required": [
-          "type"
-        ],
-        "title": "QueryType"
       },
       "RSSDiscoveryRequest": {
         "properties": {
@@ -25523,24 +25199,6 @@
         },
         "type": "object",
         "title": "ReprocessOptions"
-      },
-      "Request": {
-        "properties": {
-          "query": {
-            "type": "string",
-            "title": "Query"
-          },
-          "query_type": {
-            "$ref": "#/components/schemas/QueryType"
-          }
-        },
-        "type": "object",
-        "required": [
-          "query",
-          "query_type"
-        ],
-        "title": "Request",
-        "description": "Request object for search synthesizer"
       },
       "ResourceType": {
         "type": "string",
@@ -25716,6 +25374,115 @@
         ],
         "title": "SearchAndIngestResponse"
       },
+      "SearchHistoriesOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SearchHistoryRead"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "count"
+        ],
+        "title": "SearchHistoriesOut"
+      },
+      "SearchHistoryCreate": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters"
+          },
+          "result_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "SearchHistoryCreate"
+      },
+      "SearchHistoryRead": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters"
+          },
+          "result_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Count"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "id",
+          "user_id",
+          "timestamp"
+        ],
+        "title": "SearchHistoryRead"
+      },
       "SearchRequest": {
         "properties": {
           "query": {
@@ -25877,14 +25644,6 @@
           "results"
         ],
         "title": "SearchResultsOut"
-      },
-      "SearchType": {
-        "type": "string",
-        "enum": [
-          "text",
-          "semantic"
-        ],
-        "title": "SearchType"
       },
       "SelectiveAssetCreationRequest": {
         "properties": {

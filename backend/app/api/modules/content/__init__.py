@@ -1,6 +1,6 @@
 """Content domain: Asset, Bundle, Source, Dataset. Use content.services for services, content.types for registry, content.facets for facets."""
 
-from app.api.content.models import (
+from app.api.modules.content.models import (
     Asset,
     AssetChunk,
     AssetKind,

@@ -3,8 +3,8 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlmodel import Session
 
-from app.api.deps import SessionDep, CurrentUser
-from app.api.embedding.services import ChunkingService
+from app.api.dependency_injection import SessionDep, CurrentUser
+from app.api.modules.embedding.services import ChunkingService
 from app.models import Asset, AssetKind
 from app.schemas import (
     ChunkAssetRequest,

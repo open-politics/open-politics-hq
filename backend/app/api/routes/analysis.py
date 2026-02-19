@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.models import AnalysisAdapter, Annotation # Ensure this is correctly imported
-from app.api.deps import SessionDep, CurrentUser, AnalysisServiceDep # Ensure these are correctly imported
+from app.api.dependency_injection import SessionDep, CurrentUser, AnalysisServiceDep # Ensure these are correctly imported
 from app.schemas import AnalysisAdapterRead, AnnotationRead # We'll need a Pydantic model for the response
 
 logger = logging.getLogger(__name__)

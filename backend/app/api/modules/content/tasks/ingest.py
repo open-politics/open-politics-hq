@@ -39,8 +39,8 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
     Asynchronous core logic for processing a source using the unified discovery service.
     """
     with Session(engine) as session:
-        from app.api.content.services.source_service import SourceService
-        from app.api.content.services.content_ingestion_service import ContentIngestionService
+        from app.api.modules.content.services.source_service import SourceService
+        from app.api.modules.content.services.content_ingestion_service import ContentIngestionService
 
         source_service = SourceService(session)
         content_ingestion_service = ContentIngestionService(session)
@@ -71,7 +71,7 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
                 if not bundle:
                     logger.warning(f"Bundle {bundle_id} referenced in source {source_id} no longer exists. Finding or creating bundle.")
                     from app.schemas import BundleCreate
-                    from app.api.content.services.bundle_service import BundleService
+                    from app.api.modules.content.services.bundle_service import BundleService
                     from sqlmodel import select
                     
                     bundle_service = BundleService(session)

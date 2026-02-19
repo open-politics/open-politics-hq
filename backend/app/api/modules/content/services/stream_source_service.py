@@ -18,11 +18,11 @@ from app.models import (
     Asset,
     Bundle,
 )
-from app.api.service_utils import validate_infospace_access
-from app.api.content.handlers import RSSHandler, SearchHandler, IngestionContext
-from app.api.content.services.bundle_service import BundleService
-from app.api.content.services.asset_service import AssetService
-from app.api.providers.factory import (
+from app.api.global_utils import validate_infospace_access
+from app.api.modules.content.handlers import RSSHandler, SearchHandler, IngestionContext
+from app.api.modules.content.services.bundle_service import BundleService
+from app.api.modules.content.services.asset_service import AssetService
+from app.api.modules.foundation_service_providers.factory import (
     create_storage_provider,
     create_scraping_provider,
     create_web_search_provider,
@@ -227,7 +227,7 @@ class StreamSourceService:
                 cursor_timestamp = source.cursor_state.get('last_query_timestamp')
                 
                 # Import search provider registry
-                from app.api.providers.web_search_registry import WebSearchProviderRegistryService
+                from app.api.modules.foundation_service_providers.web_search_registry import WebSearchProviderRegistryService
                 
                 # Create search provider
                 search_registry = WebSearchProviderRegistryService()

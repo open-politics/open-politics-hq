@@ -2,10 +2,10 @@ import logging
 from typing import Dict, Any, List, Optional, Set
 from sqlmodel import Session, select
 from app.models import User, EmbeddingModel, AssetChunk, Asset, Annotation, AnnotationRun, AnnotationSchema
-from app.api.analysis.protocols import AnalysisAdapterProtocol
-from app.api.embedding.services import EmbeddingService
-from app.api.providers.factory import create_classification_provider, create_embedding_provider
-from app.api.providers.llm_config import llm_models_config
+from app.api.modules.analysis.protocols import AnalysisAdapterProtocol
+from app.api.modules.embedding.services import EmbeddingService
+from app.api.modules.foundation_service_providers.factory import create_classification_provider, create_embedding_provider
+from app.api.modules.foundation_service_providers.llm_config import llm_models_config
 from app.core.config import settings
 from pydantic import BaseModel, Field
 import json

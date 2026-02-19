@@ -52,8 +52,8 @@ def celery_enable_logging():
 @pytest.fixture(scope="session")
 def celery_includes():
     return [
-        "app.api.content.tasks.ingest",
-        "app.api.annotation.tasks.annotate",
+        "app.api.modules.content.tasks.ingest",
+        "app.api.modules.annotation.tasks.annotate",
     ]
 
 @pytest.fixture(scope="function")

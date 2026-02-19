@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 
 from app.core.celery_app import celery
 from app.core.db import engine
-from app.api.flow.services.flow_service import FlowService
+from app.api.modules.flow.services.flow_service import FlowService
 
 logger = logging.getLogger(__name__)
 

@@ -39,10 +39,10 @@ from fastapi import UploadFile
 
 from app.models import Asset, AssetKind, ProcessingStatus
 from app.schemas import SearchResult
-from app.api.providers.base import WebSearchProvider, ScrapingProvider, StorageProvider
-from app.api.providers.factory import create_web_search_provider, create_scraping_provider, create_storage_provider
-from app.api.content.services.asset_service import AssetService
-from app.api.service_utils import validate_infospace_access
+from app.api.modules.foundation_service_providers.base import WebSearchProvider, ScrapingProvider, StorageProvider
+from app.api.modules.foundation_service_providers.factory import create_web_search_provider, create_scraping_provider, create_storage_provider
+from app.api.modules.content.services.asset_service import AssetService
+from app.api.global_utils import validate_infospace_access
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -53,10 +53,10 @@ class ContentIngestionService:
     Compatibility layer for legacy ingestion code.
 
     Use Handlers and specialized services for new code:
-    - Ingestion: app.api.handlers (FileHandler, WebHandler, RSSHandler, etc.)
-    - Search: app.api.services.search_service.SearchService
-    - Processing: app.api.services.processing_service.ProcessingService
-    - RSS preview/discovery: app.api.handlers.RSSHandler.preview_rss_feed, etc.
+    - Ingestion: app.api.modules.handlers (FileHandler, WebHandler, RSSHandler, etc.)
+    - Search: app.api.modules.services.search_service.SearchService
+    - Processing: app.api.modules.services.processing_service.ProcessingService
+    - RSS preview/discovery: app.api.modules.handlers.RSSHandler.preview_rss_feed, etc.
 
     Retained for: celery tasks, process_source, ingest_content route shim,
     compose_article, create_report, get_supported_content_types.
@@ -82,7 +82,7 @@ class ContentIngestionService:
 
     def _get_processing_service(self) -> "ProcessingService":
         """Lazy-create ProcessingService for processing operations."""
-        from app.api.content.services.processing_service import ProcessingService
+        from app.api.modules.content.services.processing_service import ProcessingService
         return ProcessingService(
             session=self.session,
             storage_provider=self.storage_provider,
@@ -111,7 +111,7 @@ class ContentIngestionService:
         - Scheduled source processing (process_source task)
         
         NEW CODE SHOULD USE HANDLERS DIRECTLY:
-            from app.api.content.handlers import FileHandler, WebHandler
+            from app.api.modules.content.handlers import FileHandler, WebHandler
             handler = FileHandler(context)
             assets = await handler.handle(file, options)
         
@@ -138,9 +138,9 @@ class ContentIngestionService:
             logger.info(f"Validated bundle {bundle_id} exists for ingestion")
         
         # Single-dispatch: resolve handler from locator type
-        from app.api.content.handlers import IngestionContext
-        from app.api.content.handlers.resolve import resolve_handler
-        from app.api.content.services.bundle_service import BundleService
+        from app.api.modules.content.handlers import IngestionContext
+        from app.api.modules.content.handlers.resolve import resolve_handler
+        from app.api.modules.content.services.bundle_service import BundleService
         
         context = IngestionContext(
             session=self.session,
@@ -264,7 +264,7 @@ class ContentIngestionService:
         
         Used by: POST /assets/compose-article route
         """
-        from app.api.content.services.asset_builder import AssetBuilder
+        from app.api.modules.content.services.asset_builder import AssetBuilder
         validate_infospace_access(self.session, infospace_id, user_id)
         
         builder = AssetBuilder(self.session, user_id, infospace_id) \
@@ -329,7 +329,7 @@ class ContentIngestionService:
     
     def get_supported_content_types(self) -> Dict[str, List[str]]:
         """Get supported content types (for UI). Derived from ContentTypeRegistry."""
-        from app.api.content.types import get_content_type_registry
+        from app.api.modules.content.types import get_content_type_registry
 
         registry = get_content_type_registry()
         result: Dict[str, List[str]] = {}
@@ -349,7 +349,7 @@ class ContentIngestionService:
     # ═══════════════════════════════════════════════════════════════
     #
     # Ingestion: _handle_* → FileHandler, WebHandler, RSSHandler, TextHandler,
-    #   ArchiveHandler, SearchHandler (app.api.handlers)
+    #   ArchiveHandler, SearchHandler (app.api.modules.handlers)
     # Search: search_assets_text, search_assets_semantic → SearchService
     # Processing: _process_content, reprocess_content → ProcessingService
     # RSS discovery: preview_rss_feed, discover_rss_feeds_from_awesome_repo,

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
-from app.api.deps import CurrentUser, ConversationServiceDep, SessionDep, StorageProviderDep
+from app.api.dependency_injection import CurrentUser, ConversationServiceDep, SessionDep, StorageProviderDep
 from app.models import User, ChatConversation, ChatConversationMessage, Asset, AssetKind
 from app.schemas import (
     Message, 

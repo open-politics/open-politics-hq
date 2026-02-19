@@ -12,7 +12,7 @@ import asyncio
 import csv
 import logging
 from typing import List, Dict, Any, Tuple, Optional
-from app.api.content.models import Asset, AssetKind
+from app.api.modules.content.models import Asset, AssetKind
 from app.schemas import AssetCreate
 from .base import BaseProcessor, ProcessingError
 

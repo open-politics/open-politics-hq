@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Union, Optional
 from collections import Counter
 from sqlmodel import Session, select
 from app.models import Asset, Annotation, AnnotationRun, AnnotationSchema, User, Bundle  # Ensure User and Bundle are imported
-# from app.api.analysis.protocols import AnalysisAdapterProtocol # Import if you want to explicitly inherit, not strictly needed for Protocol adherence
+# from app.api.modules.analysis.protocols import AnalysisAdapterProtocol # Import if you want to explicitly inherit, not strictly needed for Protocol adherence
 
 logger = logging.getLogger(__name__)
 

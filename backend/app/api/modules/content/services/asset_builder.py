@@ -40,10 +40,10 @@ from sqlmodel import Session, select
 
 from app.models import Asset, AssetKind, ProcessingStatus
 from app.schemas import AssetCreate, SearchResult
-from app.api.providers.base import WebSearchProvider, ScrapingProvider, StorageProvider
-from app.api.providers.factory import create_web_search_provider, create_scraping_provider, create_storage_provider
-from app.api.content.services.asset_service import AssetService
-from app.api.content.processors import detect_asset_kind_from_extension
+from app.api.modules.foundation_service_providers.base import WebSearchProvider, ScrapingProvider, StorageProvider
+from app.api.modules.foundation_service_providers.factory import create_web_search_provider, create_scraping_provider, create_storage_provider
+from app.api.modules.content.services.asset_service import AssetService
+from app.api.modules.content.processors import detect_asset_kind_from_extension
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)

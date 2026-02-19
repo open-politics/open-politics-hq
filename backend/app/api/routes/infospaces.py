@@ -17,11 +17,11 @@ from app.schemas import (
     InfospaceUpdate,
     InfospacesOut,
 )
-from app.api.deps import (
+from app.api.dependency_injection import (
     CurrentUser,
     get_infospace_service
 )
-from app.api.identity.services import InfospaceService
+from app.api.modules.identity_infospace_user.services import InfospaceService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

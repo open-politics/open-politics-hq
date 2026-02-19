@@ -7,8 +7,8 @@ from sqlmodel import col, delete, func, select
 import uuid
 import mimetypes
 
-from app import crud
-from app.api.deps import (
+from app.api.modules.identity_infospace_user.services import user_service as crud
+from app.api.dependency_injection import (
     CurrentUser,
     SessionDep,
     get_current_active_superuser,
@@ -25,12 +25,14 @@ from app.models import (
 from app.schemas import Message, UserCreate, UserOut, UserUpdate, UserUpdateMe, UserCreateOpen, UsersOut, UpdatePassword, UserPublicProfile, UserProfileUpdate, UserProfileStats
 from pydantic import BaseModel
 from typing import Dict
-from app.utils import (
-    generate_new_account_email, 
-    send_email, 
-    generate_email_verification_token, 
+from app.api.modules.identity_infospace_user.services import (
+    generate_new_account_email,
+    send_email,
     generate_email_verification_email,
-    verify_email_verification_token
+)
+from app.core.security import (
+    generate_email_verification_token,
+    verify_email_verification_token,
 )
 
 router = APIRouter()
@@ -404,7 +406,7 @@ async def get_profile_picture(user_id: int, filename: str, session: SessionDep) 
     
     try:
         # Get storage provider (we'll need to create this dependency)
-        from app.api.providers.factory import create_storage_provider
+        from app.api.modules.foundation_service_providers.factory import create_storage_provider
         storage_provider = create_storage_provider(settings)
         
         # Get file stream from storage
@@ -462,7 +464,7 @@ async def get_background_image(user_id: int, filename: str, session: SessionDep,
     
     try:
         # Get storage provider
-        from app.api.providers.factory import create_storage_provider
+        from app.api.modules.foundation_service_providers.factory import create_storage_provider
         storage_provider = create_storage_provider(settings)
         
         # Get file stream from storage

@@ -9,7 +9,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from app.models import Asset
-from app.api.content.services.asset_builder import AssetBuilder
+from app.api.modules.content.services.asset_builder import AssetBuilder
 from .base import BaseHandler, IngestionContext
 
 logger = logging.getLogger(__name__)

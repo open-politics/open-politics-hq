@@ -1,6 +1,6 @@
 from typing import Dict, Any
 from sqlmodel import select
-from app.api.analysis.adapters.base import AnalysisAdapterProtocol
+from app.api.modules.analysis.adapters.base import AnalysisAdapterProtocol
 from app.models import Annotation, Asset
 
 

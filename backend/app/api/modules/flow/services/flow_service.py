@@ -34,10 +34,10 @@ from app.models import (
     User,
 )
 from app.schemas import FlowCreate, FlowUpdate, FlowExecutionCreate
-from app.api.service_utils import validate_infospace_access
-from app.api.annotation.services.annotation_service import AnnotationService
-from app.api.content.services.bundle_service import BundleService
-from app.api.flow.services.filter_service import FilterService, FilterExpression
+from app.api.global_utils import validate_infospace_access
+from app.api.modules.annotation.services.annotation_service import AnnotationService
+from app.api.modules.content.services.bundle_service import BundleService
+from app.api.modules.flow.services.filter_service import FilterService, FilterExpression
 
 logger = logging.getLogger(__name__)
 
@@ -355,7 +355,7 @@ class FlowService:
         self.session.refresh(execution)
         
         # Queue the execution for processing
-        from app.api.flow.tasks.flow_tasks import execute_flow
+        from app.api.modules.flow.tasks.flow_tasks import execute_flow
         execute_flow.delay(execution.id)
         
         logger.info(f"Triggered Flow {flow_id} execution {execution.id} with {len(input_asset_ids)} assets")
@@ -553,8 +553,8 @@ class FlowService:
         
         # Initialize annotation service if needed
         if not self.annotation_service:
-            from app.api.content.services.asset_service import AssetService
-            from app.api.providers.model_registry import ModelRegistryService
+            from app.api.modules.content.services.asset_service import AssetService
+            from app.api.modules.foundation_service_providers.model_registry import ModelRegistryService
             asset_service = AssetService(self.session)
             model_registry = ModelRegistryService()
             self.annotation_service = AnnotationService(
@@ -581,7 +581,7 @@ class FlowService:
         logger.info(f"FlowExecution {execution.id}: Processing annotation run {annotation_run.id} inline")
         
         try:
-            from app.api.annotation.tasks.annotate import process_annotation_run
+            from app.api.modules.annotation.tasks.annotate import process_annotation_run
             # Call the task function directly (not .delay()) for synchronous execution
             process_annotation_run(annotation_run.id)
             
@@ -944,7 +944,7 @@ class FlowService:
         Uses the infospace's configured embedding model to generate embeddings
         for each asset, enabling semantic search capabilities.
         """
-        from app.api.embedding.services import EmbeddingService
+        from app.api.modules.embedding.services import EmbeddingService
         from app.core.task_utils import run_async_in_celery
         
         overwrite = step_config.get("overwrite", False)
@@ -1031,9 +1031,9 @@ class FlowService:
         
         # Map adapter names to classes
         adapter_map = {
-            "time_series": "app.api.analysis.adapters.time_series_adapter.TimeSeriesAggregationAdapter",
-            "label_distribution": "app.api.analysis.adapters.label_distribution.LabelDistributionAdapter",
-            "graph_aggregator": "app.api.analysis.adapters.graph_aggregator_adapter.GraphAggregatorAdapter",
+            "time_series": "app.api.modules.analysis.adapters.time_series_adapter.TimeSeriesAggregationAdapter",
+            "label_distribution": "app.api.modules.analysis.adapters.label_distribution.LabelDistributionAdapter",
+            "graph_aggregator": "app.api.modules.analysis.adapters.graph_aggregator_adapter.GraphAggregatorAdapter",
         }
         
         adapter_path = adapter_map.get(adapter_name)
