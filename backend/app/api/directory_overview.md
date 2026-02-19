@@ -57,12 +57,14 @@ app/
       services/                 # FlowService, TaskService, FilterService
       tasks/                    # flow_tasks, schedule
 
+    embedding/                  # Shared embedding infrastructure (Layer 2.5)
+      services/                 # EmbeddingService, ChunkingService, VectorSearchService
+      tasks/                    # embed_asset, embed_infospace, embed_batch_assets
+
     search/                     # Search & retrieval
       models.py                 # SearchHistory
       schemas.py
-      services/                 # SearchService, VectorSearchService,
-                                # EmbeddingService, ChunkingService
-      tasks/                    # embed_task
+      services/                 # SearchService (imports VectorSearchService from embedding/)
 
     conversational_intelligence/ # AI interaction (chat, MCP)
       models.py                 # ChatConversation, ChatConversationMessage
@@ -82,8 +84,8 @@ app/
       schemas.py
       services/                 # InfospaceService
 
-    analysis/                   # Pluggable adapters
-    providers/                  # Foundation services (storage, LLM, search, embedding)
+    analysis/                   # Pluggable adapters (Layer 4)
+    providers/                  # Foundation services (storage, LLM, WebSearch, embedding)
     routes/                     # HTTP surface
     deps.py                     # DI wiring
     main.py                     # Router registration
@@ -107,11 +109,13 @@ Strict, one-directional. A domain may only import from domains **above** it:
 LAYER 0 (infrastructure):  core (config, db, security, celery, dispatch, task_primitives), providers
 LAYER 1 (foundational):    identity
 LAYER 2 (content core):     content          (imports: identity, core)
+LAYER 2.5 (embedding):      embedding        (imports: content, providers, core)
 LAYER 3 (enrichment):       annotation       (imports: identity, content, core)
-                            search           (imports: identity, content, core)
-LAYER 4 (composition):      graph            (imports: identity, content, annotation, search, core)
-                            flow             (imports: identity, content, annotation, search, core)
-LAYER 5 (interaction):      conversational_intelligence (imports: identity, content, annotation, search, core)
+                            search           (imports: identity, content, embedding, core)
+LAYER 4 (composition):      graph            (imports: identity, content, annotation, search, embedding, core)
+                            flow             (imports: identity, content, annotation, search, embedding, core)
+                            analysis         (imports: identity, content, annotation, search, embedding, core)
+LAYER 5 (interaction):      conversational_intelligence (imports: identity, content, annotation, search, embedding, core)
 LAYER 6 (cross-cutting):    sharing          (imports: all above)
 OUTSIDE:                    routes, deps     (imports: any domain)
 ```
@@ -133,7 +137,8 @@ OUTSIDE:                    routes, deps     (imports: any domain)
 | annotation                  | ✅     | ✅      | ✅       | ✅    | AnnotationService, annotate task |
 | graph                       | ✅     | ✅      | ✅       | —     | GraphService, resolution.py |
 | flow                        | ✅     | ✅      | ✅       | ✅    | FlowService, TaskService, flow_tasks |
-| search                      | ✅     | ✅      | ✅       | ✅    | VectorSearchService, EmbeddingService, ChunkingService, embed task |
+| embedding                   | —      | —       | ✅       | ✅    | EmbeddingService, ChunkingService, VectorSearchService, embed tasks |
+| search                      | ✅     | ✅      | ✅       | —     | SearchService (imports VectorSearchService from embedding) |
 | conversational_intelligence| ✅     | ✅      | ✅       | —     | MCP server, client, auth |
 | sharing                     | ✅     | ✅      | ✅       | ✅    | PackageService, BackupService, backup tasks |
 | analysis                    | ✅     | —       | ✅       | —     | Adapters in analysis/adapters/ |

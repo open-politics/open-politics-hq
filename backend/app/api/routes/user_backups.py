@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Background
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import CurrentUser, SessionDep, get_user_backup_service
+from app.core.config import settings
 from app.schemas import (
     UserBackupCreate,
     UserBackupRead,
@@ -229,7 +230,7 @@ def create_user_backup_share_link(
         
         return {
             "share_token": backup.share_token if backup.is_shareable else None,
-            "download_url": f"/api/v1/user-backups/download/{backup.share_token}" if backup.is_shareable else None,
+            "download_url": f"{settings.API_V1_STR}/user-backups/download/{backup.share_token}" if backup.is_shareable else None,
             "expires_at": backup.expires_at.isoformat() if backup.expires_at else None
         }
     

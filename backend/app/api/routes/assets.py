@@ -177,7 +177,7 @@ async def create_asset(
         # Auto-embed if infospace has embedding enabled
         infospace = session.get(Infospace, infospace_id)
         if infospace and infospace.embedding_model and asset.text_content:
-            from app.api.search.tasks.embed import embed_asset_task
+            from app.api.embedding.tasks.embed import embed_asset_task
             embed_asset_task.delay(
                 asset_id=asset.id,
                 infospace_id=infospace_id,

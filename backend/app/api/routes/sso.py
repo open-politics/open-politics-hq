@@ -106,8 +106,8 @@ def get_discourse_sso_info() -> Any:
         "enabled": True,
         "discourse_url": settings.DISCOURSE_CONNECT_URL,
         "has_secret": bool(settings.DISCOURSE_CONNECT_SECRET),
-        "login_url": "/api/v1/sso/discourse/login",
-        "callback_url": "/api/v1/sso/discourse/callback",
+        "login_url": f"{settings.API_V1_STR}/sso/discourse/login",
+        "callback_url": f"{settings.API_V1_STR}/sso/discourse/callback",
     }
 
 

@@ -10,8 +10,8 @@ from sqlmodel import Session
 from app.api.deps import CurrentUser, SessionDep
 from app.models import User, Infospace, Asset, AssetKind
 from app.schemas import Message
-from app.api.search.services import EmbeddingService, VectorSearchService
-from app.api.search.tasks.embed import embed_asset_task, embed_infospace_task
+from app.api.embedding.services import EmbeddingService, VectorSearchService
+from app.api.embedding.tasks.embed import embed_asset_task, embed_infospace_task
 from app.api.providers.impl.embedding_ollama import OllamaEmbeddingProvider
 from pydantic import BaseModel, Field
 

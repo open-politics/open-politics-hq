@@ -76,7 +76,7 @@ Everything external is abstracted behind provider interfaces:
 
 - **StorageProvider**: MinIO, S3, Google Cloud Storage
 - **ScrapingProvider**: newspaper4k or external scraping services
-- **SearchProvider**: Tavily or other search APIs
+- **WebSearchProvider**: Tavily or other web search APIs
 - **LLMProvider**: OpenAI, Google, Anthropic, Ollama
 
 Providers are created by factories that read settings. Adding support for a new service means implementing the interface and registering in the factory. Routes and services use dependency injection to get the right provider.

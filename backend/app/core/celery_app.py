@@ -95,7 +95,7 @@ celery.conf.update(
         'app.api.content.tasks.enrichment',
         'app.api.sharing.tasks.backup',
         'app.api.sharing.tasks.user_backup',
-        'app.api.search.tasks.embed',
+        'app.api.embedding.tasks.embed',
         'app.api.flow.tasks.flow_tasks',
         'app.api.content.tasks.source_monitoring',
     ),

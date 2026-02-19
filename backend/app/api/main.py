@@ -34,7 +34,7 @@ from app.api.routes import (
 )
 api_router = APIRouter()
 
-# V1/ Main APIs - Using app.api.routes directly now for user-centric features
+# Main APIs - Routes mounted under API_V1_STR (/api/v1)
 api_router.include_router(admin.router, tags=["admin"])
 api_router.include_router(analysis.router, tags=["Analysis Service"])
 api_router.include_router(annotation_runs.router, prefix="/annotation_jobs", tags=["annotation_jobs"])

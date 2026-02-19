@@ -4,10 +4,10 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
-from app.api.deps import SearchProviderDep, get_current_user, get_db, IngestionContextFactoryDep, get_ingestion_context_factory
-from app.api.providers.base import SearchProvider
-from app.api.providers.impl.search_tavily import TavilySearchProvider
-from app.api.providers.search_registry import SearchProviderRegistryService
+from app.api.deps import WebSearchProviderDep, get_current_user, get_db, IngestionContextFactoryDep, get_ingestion_context_factory
+from app.api.providers.base import WebSearchProvider
+from app.api.providers.impl.search_tavily import TavilyWebSearchProvider
+from app.api.providers.web_search_registry import WebSearchProviderRegistryService
 from app.api.content.services import ContentIngestionService
 from app.models import User
 from app.schemas import SearchResultsOut, SearchRequest
@@ -18,16 +18,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-def create_search_provider_by_name(provider_name: str) -> SearchProvider:
-    """Create a search provider instance based on the provider name."""
+def create_web_search_provider_by_name(provider_name: str) -> WebSearchProvider:
+    """Create a web search provider instance based on the provider name."""
     provider_name = provider_name.lower()
-    
+
     if provider_name == "tavily":
         if not settings.TAVILY_API_KEY:
-            raise ValueError("TAVILY_API_KEY is required for the Tavily search provider.")
-        return TavilySearchProvider(api_key=settings.TAVILY_API_KEY)
+            raise ValueError("TAVILY_API_KEY is required for the Tavily web search provider.")
+        return TavilyWebSearchProvider(api_key=settings.TAVILY_API_KEY)
     else:
-        raise ValueError(f"Unsupported search provider: {provider_name}")
+        raise ValueError(f"Unsupported web search provider: {provider_name}")
 
 # Request models for the new search and ingest endpoint
 class ExternalSearchRequest(BaseModel):
@@ -84,7 +84,7 @@ class SearchAndIngestResponse(BaseModel):
 @router.get("/", response_model=SearchResultsOut)
 async def search_content(
     search_request: SearchRequest,
-    search_provider: SearchProvider = Depends(SearchProviderDep),
+    web_search_provider: WebSearchProvider = Depends(WebSearchProviderDep),
 ) -> SearchResultsOut:
     """
     Performs a search using the configured search provider (e.g., Tavily)
@@ -114,9 +114,9 @@ async def search_content(
 
     logger.info(f"Route: Performing search for query: '{query}' with limit: {limit} and extra params: {provider_kwargs}")
     try:
-        provider_results = await search_provider.search(query=query, limit=limit, **provider_kwargs)
+        provider_results = await web_search_provider.search(query=query, limit=limit, **provider_kwargs)
 
-        provider_name = getattr(search_provider.__class__, "__name__", "unknown")
+        provider_name = getattr(web_search_provider.__class__, "__name__", "unknown")
 
         return SearchResultsOut(provider=provider_name, results=provider_results)
 
@@ -149,8 +149,8 @@ async def search_and_ingest(
     try:
         # Create the requested search provider using the registry
         try:
-            search_registry = SearchProviderRegistryService()
-            search_provider = search_registry.create_provider(request.provider, request.api_key)
+            web_search_registry = WebSearchProviderRegistryService()
+            web_search_provider = web_search_registry.create_provider(request.provider, request.api_key)
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -196,13 +196,13 @@ async def search_and_ingest(
             
             # First, perform the search using the provider directly
             provider_params = search_options.get('provider_params', {})
-            raw_results = await search_provider.search(
+            raw_results = await web_search_provider.search(
                 query=request.query,
                 limit=request.limit,
                 **provider_params
             )
-            
-            logger.info(f"Search provider returned {len(raw_results)} results")
+
+            logger.info(f"Web search provider returned {len(raw_results)} results")
             
             # Convert dict results to SearchResult objects
             search_results = []
@@ -262,12 +262,12 @@ async def search_and_ingest(
         else:
             # Just search without creating assets - use the provider directly
             provider_params = search_options.get('provider_params', {})
-            raw_results = await search_provider.search(
+            raw_results = await web_search_provider.search(
                 query=request.query,
                 limit=request.limit,
                 **provider_params
             )
-            
+
             # Results are already dictionaries from the provider, just format them
             results_data = []
             for result in raw_results:

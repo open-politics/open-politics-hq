@@ -19,7 +19,7 @@ from app.schemas import TokenPayload
 from app.api.providers.base import (
     StorageProvider,
     ScrapingProvider, 
-    SearchProvider,
+    WebSearchProvider,
     GeospatialProvider,
     GeocodingProvider,
     EmbeddingProvider
@@ -28,7 +28,7 @@ from app.api.providers.model_registry import ModelRegistryService
 from app.api.providers.factory import (
     create_storage_provider,
     create_scraping_provider,
-    create_search_provider,
+    create_web_search_provider,
     create_embedding_provider,
     create_geospatial_provider,
     create_geocoding_provider,
@@ -44,7 +44,7 @@ from app.api.content.services import (
 )
 from app.api.analysis.services import AnalysisService
 from app.api.flow.services import TaskService
-from app.api.search.services import ChunkingService, EmbeddingService
+from app.api.embedding.services import ChunkingService, EmbeddingService
 from app.api.conversational_intelligence.services.conversation_service import (
     IntelligenceConversationService,
 )
@@ -142,8 +142,8 @@ def get_storage_provider_dependency(settings: SettingsDep) -> StorageProvider:
 def get_scraping_provider_dependency(settings: SettingsDep) -> ScrapingProvider:
     return create_scraping_provider(settings)
 
-def get_search_provider_dependency(settings: SettingsDep) -> SearchProvider:
-    return create_search_provider(settings)
+def get_web_search_provider_dependency(settings: SettingsDep) -> WebSearchProvider:
+    return create_web_search_provider(settings)
 
 def get_geospatial_provider_dependency(settings: SettingsDep) -> GeospatialProvider:
     return create_geospatial_provider(settings)
@@ -163,7 +163,7 @@ async def get_model_registry_dependency(settings: SettingsDep):
 
 StorageProviderDep = Annotated[StorageProvider, Depends(get_storage_provider_dependency)]
 ScrapingProviderDep = Annotated[ScrapingProvider, Depends(get_scraping_provider_dependency)]
-SearchProviderDep = Annotated[SearchProvider, Depends(get_search_provider_dependency)]
+WebSearchProviderDep = Annotated[WebSearchProvider, Depends(get_web_search_provider_dependency)]
 GeospatialProviderDep = Annotated[GeospatialProvider, Depends(get_geospatial_provider_dependency)]
 GeocodingProviderDep = Annotated[GeocodingProvider, Depends(get_geocoding_provider_dependency)]
 EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provider_dependency)]
@@ -224,7 +224,7 @@ def get_ingestion_context_factory(
     session: SessionDep,
     storage_provider: StorageProviderDep,
     scraping_provider: ScrapingProviderDep,
-    search_provider: SearchProviderDep,
+    web_search_provider: WebSearchProviderDep,
     asset_service: AssetServiceDep,
     bundle_service: BundleServiceDep,
     settings: SettingsDep,
@@ -241,7 +241,7 @@ def get_ingestion_context_factory(
             session=session,
             storage_provider=storage_provider,
             scraping_provider=scraping_provider,
-            search_provider=search_provider,
+            search_provider=web_search_provider,
             asset_service=asset_service,
             bundle_service=bundle_service,
             user_id=user_id,
@@ -378,13 +378,12 @@ UserBackupServiceDep = Annotated[UserBackupService, Depends(get_user_backup_serv
 def get_embedding_service(
     request: Request,
     session: SessionDep,
-    embedding_provider: EmbeddingProviderDep
 ) -> EmbeddingService:
     """Dependency to get embedding service with request caching."""
     service_name = "embedding_service"
     if hasattr(request.state, service_name):
         return getattr(request.state, service_name)
-    instance = EmbeddingService(session=session, embedding_provider=embedding_provider)
+    instance = EmbeddingService(session=session)
     setattr(request.state, service_name, instance)
     return instance
 

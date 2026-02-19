@@ -9,6 +9,7 @@ Existing code uses: from app.schemas import *
 
 from __future__ import annotations
 
+from app.core.config import settings
 from app.api.identity.schemas import (
     UserOut,
     UserPublicProfile,
@@ -976,7 +977,7 @@ class InfospaceBackupRead(InfospaceBackupBase):
     def download_url(self) -> Optional[str]:
         """Generate download URL if backup is shareable."""
         if self.is_shareable and self.share_token:
-            return f"/api/v1/backups/download/{self.share_token}"
+            return f"{settings.API_V1_STR}/backups/download/{self.share_token}"
         return None
 
 class InfospaceBackupsOut(SQLModel):
@@ -1039,7 +1040,7 @@ class UserBackupRead(UserBackupBase):
     def download_url(self) -> Optional[str]:
         """Generate download URL if shareable."""
         if self.is_shareable and self.share_token:
-            return f"/api/v1/user-backups/download/{self.share_token}"
+            return f"{settings.API_V1_STR}/user-backups/download/{self.share_token}"
         return None
 
 class UserBackupsOut(SQLModel):

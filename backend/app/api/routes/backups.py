@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Background
 from fastapi.responses import StreamingResponse, FileResponse
 
 from app.api.deps import CurrentUser, SessionDep, get_backup_service
+from app.core.config import settings
 from app.schemas import (
     InfospaceBackupCreate,
     InfospaceBackupRead,
@@ -217,7 +218,7 @@ def create_backup_share_link(
         
         return {
             "share_token": share_token,
-            "download_url": f"/api/v1/backups/download/{share_token}",
+            "download_url": f"{settings.API_V1_STR}/backups/download/{share_token}",
             "message": "Share link created successfully"
         }
     except HTTPException:

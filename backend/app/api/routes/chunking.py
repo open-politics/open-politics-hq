@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlmodel import Session
 
 from app.api.deps import SessionDep, CurrentUser
-from app.api.search.services import ChunkingService
+from app.api.embedding.services import ChunkingService
 from app.models import Asset, AssetKind
 from app.schemas import (
     ChunkAssetRequest,

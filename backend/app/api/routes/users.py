@@ -278,7 +278,7 @@ async def upload_profile_picture(
         await storage_provider.upload_file(file, object_name)
         
         # Generate public URL for the uploaded file
-        profile_picture_url = f"/api/v1/users/profile-picture/{current_user.id}/{object_name.split('/')[-1]}"
+        profile_picture_url = f"{settings.API_V1_STR}/users/profile-picture/{current_user.id}/{object_name.split('/')[-1]}"
         current_user.profile_picture_url = profile_picture_url
         
         session.add(current_user)
@@ -346,7 +346,7 @@ async def upload_background_image(
         await storage_provider.upload_file(file, object_name)
         
         # Generate public URL for the uploaded file
-        background_url = f"/api/v1/users/background-image/{current_user.id}/{object_name.split('/')[-1]}"
+        background_url = f"{settings.API_V1_STR}/users/background-image/{current_user.id}/{object_name.split('/')[-1]}"
         
         # Update ui_preferences
         if not current_user.ui_preferences:
