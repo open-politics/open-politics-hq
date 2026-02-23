@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Set
 
 from app.models import Asset, AssetKind
 
-from .facets import FACET_LOCATION_LAT
+from .facets import FACET_LOCATION_LAT, FACET_OCR_USED, CONTENT_HASH_FIELD
 
 logger = logging.getLogger(__name__)
 
@@ -70,5 +70,25 @@ register_enricher(
         applicable_kinds=set(),
         task_name="enrich_geocoding",
         required_provider="geocoding",
+    )
+)
+
+register_enricher(
+    Enricher(
+        name="ocr",
+        target_facet=FACET_OCR_USED,
+        applicable_kinds={AssetKind.PDF_PAGE},
+        task_name="enrich_ocr",
+        required_provider="ocr",
+    )
+)
+
+register_enricher(
+    Enricher(
+        name="hash",
+        target_facet=CONTENT_HASH_FIELD,
+        applicable_kinds=set(),  # Any kind with blob_path
+        task_name="enrich_file_hash",
+        required_provider=None,  # Uses storage, always available
     )
 )

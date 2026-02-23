@@ -85,7 +85,7 @@ class FlowService:
         Returns:
             Created Flow
         """
-        validate_infospace_access(self.session, infospace_id, user_id)
+        validate_infospace_access(self.session, infospace_id, user_id, require_editor=True)
         
         # Validate input configuration
         self._validate_flow_input(flow_in, infospace_id)
@@ -176,6 +176,7 @@ class FlowService:
         infospace_id: int,
     ) -> Optional[Flow]:
         """Update a Flow."""
+        validate_infospace_access(self.session, infospace_id, user_id, require_editor=True)
         flow = self.get_flow(flow_id, user_id, infospace_id)
         if not flow:
             return None
@@ -221,6 +222,7 @@ class FlowService:
         infospace_id: int,
     ) -> bool:
         """Delete a Flow and its executions."""
+        validate_infospace_access(self.session, infospace_id, user_id, require_editor=True)
         flow = self.get_flow(flow_id, user_id, infospace_id)
         if not flow:
             return False
@@ -505,13 +507,15 @@ class FlowService:
         flow: Flow,
     ) -> Dict[str, Any]:
         """Execute a single step and return the output."""
-        
+
+        if step_type == "INGEST":
+            return self._execute_ingest_step(step_config, asset_ids, execution, flow)
         if step_type == "ANNOTATE":
             return self._execute_annotate_step(step_config, asset_ids, execution, flow)
         elif step_type == "FILTER":
             return self._execute_filter_step(step_config, asset_ids, execution)
         elif step_type == "CURATE":
-            return self._execute_curate_step(step_config, asset_ids, execution)
+            return self._execute_curate_step(step_config, asset_ids, execution, flow)
         elif step_type == "ROUTE":
             return self._execute_route_step(step_config, asset_ids, execution, flow)
         elif step_type == "EMBED":
@@ -543,12 +547,14 @@ class FlowService:
         # Create an AnnotationRun for this step
         from app.schemas import AnnotationRunCreate
         
+        follow_on_version_change = config.get("follow_on_version_change", False)
         run_in = AnnotationRunCreate(
             name=f"{flow.name} - Step Annotation",
             description=f"Annotation run for FlowExecution {execution.id}",
             schema_ids=schema_ids,
             target_asset_ids=asset_ids,
             configuration=config,
+            follow_on_version_change=follow_on_version_change,
         )
         
         # Initialize annotation service if needed
@@ -614,6 +620,90 @@ class FlowService:
             "passed_asset_ids": asset_ids,  # All assets pass through
         }
     
+    def _execute_ingest_step(
+        self,
+        step_config: Dict[str, Any],
+        asset_ids: List[int],
+        execution: FlowExecution,
+        flow: Flow,
+    ) -> Dict[str, Any]:
+        """
+        Execute an INGEST step - selective ingestion from a source.
+
+        Triggers ingestion from source_id; optional filter applied to discovered items.
+        Returns asset_ids of ingested assets for downstream steps.
+        """
+        source_id = step_config.get("source_id")
+        target_bundle_id = step_config.get("target_bundle_id")
+        filter_config = step_config.get("expression", step_config.get("filter"))
+
+        if not source_id:
+            return {
+                "type": "INGEST",
+                "error": "INGEST step requires source_id",
+                "passed_asset_ids": [],
+            }
+
+        source = self.session.get(Source, source_id)
+        if not source or source.infospace_id != execution.infospace_id:
+            return {
+                "type": "INGEST",
+                "error": "Source not found",
+                "passed_asset_ids": [],
+            }
+
+        bundle_id = target_bundle_id or (flow.input_bundle_id if flow else None)
+        if not bundle_id and source.details and "target_bundle_id" in source.details:
+            bundle_id = source.details["target_bundle_id"]
+
+        # Get max asset id before ingest to identify newly created assets
+        max_id_before = 0
+        if bundle_id:
+            row = self.session.exec(
+                select(func.coalesce(func.max(Asset.id), 0)).where(
+                    Asset.bundle_id == bundle_id,
+                    Asset.infospace_id == execution.infospace_id,
+                )
+            ).first()
+            max_id_before = row[0] if row else 0
+
+        try:
+            from app.api.modules.content.tasks.ingest import process_source
+
+            opts = {"target_bundle_id": bundle_id} if bundle_id else {}
+            if execution.triggered_by_user_id:
+                opts["user_id"] = execution.triggered_by_user_id
+            result = process_source.delay(source_id, opts)
+            result.get(timeout=300)
+        except Exception as e:
+            logger.warning("INGEST step failed: %s", e)
+            return {
+                "type": "INGEST",
+                "error": str(e),
+                "passed_asset_ids": [],
+            }
+
+        if not bundle_id:
+            return {"type": "INGEST", "passed_asset_ids": [], "source_id": source_id}
+
+        # Get assets created in this run (id > max_id_before)
+        stmt = (
+            select(Asset.id)
+            .where(
+                Asset.bundle_id == bundle_id,
+                Asset.infospace_id == execution.infospace_id,
+                Asset.id > max_id_before,
+            )
+            .order_by(Asset.id.asc())
+        )
+        ingested_ids = [r[0] for r in self.session.exec(stmt).all()]
+
+        return {
+            "type": "INGEST",
+            "passed_asset_ids": ingested_ids,
+            "source_id": source_id,
+        }
+
     def _execute_filter_step(
         self,
         step_config: Dict[str, Any],
@@ -656,32 +746,39 @@ class FlowService:
         
         # Build filter expression
         filter_expr = self.filter_service.create_from_config({"expression": expression_config})
-        
+
         # Collect ALL annotation run IDs from previous steps (not just immediate predecessor)
-        # This allows FILTER to access annotations from any prior ANNOTATE step
         annotation_run_ids = self._collect_annotation_run_ids(execution)
-        
-        passed_ids = []
-        rejected_ids = []
         filter_mode = "pre_annotation" if not annotation_run_ids else "post_annotation"
-        
-        for asset_id in asset_ids:
-            asset = self.session.get(Asset, asset_id)
-            if not asset:
-                rejected_ids.append(asset_id)
-                continue
-            
-            # Build comprehensive filter context
-            context = self._build_filter_context(asset, annotation_run_ids)
-            
-            try:
-                if filter_expr.evaluate(context):
-                    passed_ids.append(asset_id)
-                else:
+
+        # Try SQL pushdown via AssetQuery when filter is compatible
+        passed_ids = self.filter_service.apply_filter_sql(
+            self.session,
+            execution.infospace_id,
+            asset_ids,
+            filter_expr,
+            annotation_run_ids,
+        )
+
+        if passed_ids is not None:
+            rejected_ids = [i for i in asset_ids if i not in passed_ids]
+        else:
+            passed_ids = []
+            rejected_ids = []
+            for asset_id in asset_ids:
+                asset = self.session.get(Asset, asset_id)
+                if not asset:
                     rejected_ids.append(asset_id)
-            except Exception as e:
-                logger.warning(f"Filter evaluation error for asset {asset_id}: {e}")
-                rejected_ids.append(asset_id)
+                    continue
+                context = self._build_filter_context(asset, annotation_run_ids)
+                try:
+                    if filter_expr.evaluate(context):
+                        passed_ids.append(asset_id)
+                    else:
+                        rejected_ids.append(asset_id)
+                except Exception as e:
+                    logger.warning(f"Filter evaluation error for asset {asset_id}: {e}")
+                    rejected_ids.append(asset_id)
         
         return {
             "type": "FILTER",
@@ -766,20 +863,26 @@ class FlowService:
         step_config: Dict[str, Any],
         asset_ids: List[int],
         execution: FlowExecution,
+        flow: Optional[Flow] = None,
     ) -> Dict[str, Any]:
         """
-        Execute a CURATE step - promote annotation fields to asset.fragments.
-        
-        CURATE looks at ALL previous ANNOTATE steps in the flow, not just the 
-        immediately preceding one. This allows pipelines like:
-        
-            ANNOTATE (sentiment) → FILTER → ANNOTATE (entities) → CURATE (both)
-        
-        The `fields` list specifies which annotation fields to promote.
-        Fields are searched across all annotation runs from this execution.
+        Execute a CURATE step - promote annotation fields to asset.fragments or trigger graph resolution.
+
+        target: "fragments" (default) - promote to asset.fragments
+        target: "graph" with graph_id - trigger entity resolution into knowledge graph (graph_id optional until KnowledgeGraph model exists)
+
+        CURATE looks at ALL previous ANNOTATE steps in the flow.
+        The `fields` list specifies which annotation fields to promote/extract.
         """
+        target = step_config.get("target", "fragments")
+        graph_id = step_config.get("graph_id")  # Optional; used when KnowledgeGraph model exists
         fields_to_curate = step_config.get("fields", [])
-        
+
+        if target == "graph":
+            return self._execute_curate_graph(
+                step_config, asset_ids, execution, flow, fields_to_curate, graph_id
+            )
+
         if not fields_to_curate:
             return {
                 "type": "CURATE",
@@ -842,12 +945,129 @@ class FlowService:
         
         return {
             "type": "CURATE",
+            "target": "fragments",
             "fields": fields_to_curate,
             "annotation_runs_used": annotation_run_ids,
             "promoted_count": promoted_count,
             "passed_asset_ids": asset_ids,
         }
-    
+
+    def _execute_curate_graph(
+        self,
+        step_config: Dict[str, Any],
+        asset_ids: List[int],
+        execution: FlowExecution,
+        flow: Optional[Flow],
+        fields_to_curate: List[str],
+        graph_id: Optional[int],
+    ) -> Dict[str, Any]:
+        """
+        CURATE target=graph: extract entities from annotations and run entity resolution.
+        Creates FragmentCuration records for audit trail to source annotation run.
+        """
+        annotation_run_ids = self._collect_annotation_run_ids(execution)
+        if not annotation_run_ids:
+            return {
+                "type": "CURATE",
+                "target": "graph",
+                "resolved_count": 0,
+                "error": "No preceding annotation runs",
+                "passed_asset_ids": asset_ids,
+            }
+        if not flow:
+            flow = self.session.get(Flow, execution.flow_id)
+        infospace_id = flow.infospace_id if flow else None
+        if not infospace_id:
+            return {
+                "type": "CURATE",
+                "target": "graph",
+                "resolved_count": 0,
+                "error": "Could not determine infospace_id",
+                "passed_asset_ids": asset_ids,
+            }
+        entities_to_resolve: List[Tuple[str, str]] = []
+        annotation_entity_map: List[tuple] = []  # (annotation_id, (name, type))
+
+        for asset_id in asset_ids:
+            for run_id in annotation_run_ids:
+                annotations = self.session.exec(
+                    select(Annotation).where(
+                        Annotation.run_id == run_id,
+                        Annotation.asset_id == asset_id,
+                    )
+                ).all()
+                for ann in annotations:
+                    val = ann.value or {}
+                    for field in fields_to_curate or list(val.keys()):
+                        v = val.get(field)
+                        if isinstance(v, dict) and "name" in v and "type" in v:
+                            entities_to_resolve.append((str(v["name"]), str(v["type"])))
+                            annotation_entity_map.append((ann.id, (str(v["name"]), str(v["type"]))))
+                        elif isinstance(v, list):
+                            for item in v:
+                                if isinstance(item, dict) and item.get("name") and item.get("type"):
+                                    entities_to_resolve.append((str(item["name"]), str(item["type"])))
+                                    annotation_entity_map.append((ann.id, (str(item["name"]), str(item["type"]))))
+
+        if not entities_to_resolve:
+            return {
+                "type": "CURATE",
+                "target": "graph",
+                "resolved_count": 0,
+                "passed_asset_ids": asset_ids,
+            }
+
+        import asyncio
+        from app.api.modules.graph.resolution import resolve_entities_batch
+
+        loop = asyncio.new_event_loop()
+        try:
+            resolved = loop.run_until_complete(
+                resolve_entities_batch(
+                    self.session,
+                    infospace_id,
+                    list(dict.fromkeys(entities_to_resolve)),
+                    graph_id=graph_id,
+                )
+            )
+        finally:
+            loop.close()
+
+        from app.api.modules.graph.models import FragmentCuration
+        from sqlalchemy.orm.attributes import flag_modified
+
+        curated = 0
+        for ann_id, (raw_name, entity_type) in annotation_entity_map:
+            canonical = resolved.get((raw_name, entity_type))
+            if not canonical:
+                continue
+            path = f"{entity_type}:{raw_name}"
+            existing = self.session.exec(
+                select(FragmentCuration).where(
+                    FragmentCuration.annotation_id == ann_id,
+                    FragmentCuration.fragment_path == path,
+                )
+            ).first()
+            if not existing:
+                fc = FragmentCuration(
+                    annotation_id=ann_id,
+                    fragment_path=path,
+                    status="curated",
+                    resolved_refs={"entity_canonical_id": canonical.id, "source_run_id": execution.id},
+                )
+                self.session.add(fc)
+                curated += 1
+
+        self.session.commit()
+        return {
+            "type": "CURATE",
+            "target": "graph",
+            "graph_id": graph_id,
+            "resolved_count": len(resolved),
+            "curated_count": curated,
+            "passed_asset_ids": asset_ids,
+        }
+
     def _execute_route_step(
         self,
         step_config: Dict[str, Any],
@@ -1266,7 +1486,10 @@ class FlowService:
             if step_type not in [e.value for e in FlowStepType]:
                 raise ValueError(f"Unknown step type at index {i}: {step_type}")
             
-            if step_type == "ANNOTATE":
+            if step_type == "INGEST":
+                if not step.get("source_id"):
+                    raise ValueError(f"INGEST step at index {i} requires source_id")
+            elif step_type == "ANNOTATE":
                 schema_ids = step.get("schema_ids", [])
                 if not schema_ids:
                     raise ValueError(f"ANNOTATE step at index {i} requires schema_ids")

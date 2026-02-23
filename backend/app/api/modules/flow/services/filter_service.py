@@ -242,28 +242,104 @@ class FilterFactory:
         """Create a blacklist filter."""
         return FilterExpression().add_rule(field, FilterOperator.NOT_IN, blocked_values)
 
+def _expression_to_asset_query(
+    filter_expr: FilterExpression,
+    asset_query,
+    annotation_run_ids: Optional[List[int]] = None,
+) -> bool:
+    """
+    Try to translate filter expression to AssetQuery conditions.
+    Returns True if fully translated, False if fallback to in-memory needed.
+    """
+    # Only handle simple AND of rules (no sub-expressions)
+    if filter_expr.sub_expressions or filter_expr.operator != LogicalOperator.AND:
+        return False
+
+    for rule in filter_expr.rules:
+        field, op, val = rule.field, rule.operator, rule.value
+        if field == "source_metadata.facets.language" and op == FilterOperator.EQ and val:
+            asset_query.facets(language=val)
+        elif field == "source_metadata.facets.quality_score":
+            if op == FilterOperator.GE:
+                asset_query.facets(quality_score_gte=float(val))
+            elif op == FilterOperator.LE:
+                asset_query.facets(quality_score_lte=float(val))
+            elif op == FilterOperator.GT:
+                asset_query.facets(quality_score_gte=float(val) + 1e-9)
+            elif op == FilterOperator.LT:
+                asset_query.facets(quality_score_lte=float(val) - 1e-9)
+            else:
+                return False
+        elif field == "text_content" and op == FilterOperator.CONTAINS and val:
+            asset_query.text(str(val), mode="fts")
+        elif field == "title" and op == FilterOperator.CONTAINS and val:
+            from sqlalchemy import or_, text
+            from app.api.modules.content.models import Asset
+            asset_query._conditions.append(Asset.title.ilike(f"%{val}%"))
+        elif field.startswith("fragments.") and op == FilterOperator.EQ and val is not None:
+            key = field.split(".", 1)[1]
+            if key.endswith(".value"):
+                frag_key = key.rsplit(".", 1)[0]
+                asset_query.fragments_contain({frag_key: {"value": val}})
+            else:
+                asset_query.fragments_contain({key: val})
+        else:
+            return False
+    return True
+
+
 class FilterService:
     """Service for managing and applying filters across the system."""
-    
+
     def __init__(self):
         self._saved_filters: Dict[str, FilterExpression] = {}
-    
+
     def save_filter(self, name: str, filter_expression: FilterExpression):
         """Save a filter expression for reuse."""
         self._saved_filters[name] = filter_expression
         logger.info(f"Saved filter '{name}'")
-    
+
     def get_filter(self, name: str) -> Optional[FilterExpression]:
         """Get a saved filter by name."""
         return self._saved_filters.get(name)
-    
+
     def list_filters(self) -> List[str]:
         """List all saved filter names."""
         return list(self._saved_filters.keys())
-    
-    def apply_filter(self, filter_expression: FilterExpression, data_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Apply a filter expression to a list of data items."""
+
+    def apply_filter(
+        self,
+        filter_expression: FilterExpression,
+        data_items: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Apply a filter expression to a list of data items (in-memory)."""
         return [item for item in data_items if filter_expression.evaluate(item)]
+
+    def apply_filter_sql(
+        self,
+        session,
+        infospace_id: int,
+        asset_ids: List[int],
+        filter_expression: FilterExpression,
+        annotation_run_ids: Optional[List[int]] = None,
+    ) -> Optional[List[int]]:
+        """
+        Apply filter via AssetQuery SQL pushdown when possible.
+        Returns passed asset IDs, or None if fallback to in-memory needed.
+        """
+        from app.api.modules.content.query import AssetQuery
+        from app.api.modules.content.models import Asset
+
+        if not asset_ids:
+            return []
+
+        q = AssetQuery(session, infospace_id).exclude_superseded()
+        q._conditions.append(Asset.id.in_(asset_ids))
+
+        if not _expression_to_asset_query(filter_expression, q, annotation_run_ids):
+            return None
+
+        return [a.id for a in q.execute()]
     
     def create_from_config(self, config: Dict[str, Any]) -> FilterExpression:
         """Create a filter expression from configuration dictionary."""

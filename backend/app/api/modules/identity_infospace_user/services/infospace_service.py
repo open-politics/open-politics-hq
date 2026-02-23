@@ -22,7 +22,7 @@ from app.models import (
     Infospace,
     User,
     Source,
-    Dataset,    
+    Dataset,
     AnnotationSchema,
     AnnotationRun,
     Asset,
@@ -35,6 +35,7 @@ from app.models import (
     Bundle,
     InfospaceBackup
 )
+from app.api.modules.identity_infospace_user.models import InfospaceCollaborator, CollaboratorRole
 
 # Add import for Infospace schemas from app.schemas
 from app.schemas import (
@@ -114,17 +115,28 @@ class InfospaceService:
         skip: int = 0,
         limit: int = 100
     ) -> Tuple[List[Infospace], int]:
-        """Get all infospaces for a user."""
+        """Get all infospaces for a user (owned or collaborated)."""
         logger.debug(f"Service: Listing infospaces for user {user_id}")
-        statement = select(Infospace).where(
-            Infospace.owner_id == user_id # Use owner_id
-        ).offset(skip).limit(limit).order_by(Infospace.name) # Added ordering
-        
+        # Infospaces where user is owner OR collaborator
+        collab_infospace_ids = select(InfospaceCollaborator.infospace_id).where(
+            InfospaceCollaborator.user_id == user_id
+        )
+        statement = (
+            select(Infospace)
+            .where(
+                (Infospace.owner_id == user_id) | (Infospace.id.in_(collab_infospace_ids))
+            )
+            .offset(skip)
+            .limit(limit)
+            .order_by(Infospace.name)
+        )
         infospaces = list(self.session.exec(statement).all())
 
-        count_statement = select(func.count(Infospace.id)).where(Infospace.owner_id == user_id)
+        count_statement = select(func.count(Infospace.id)).where(
+            (Infospace.owner_id == user_id) | (Infospace.id.in_(collab_infospace_ids))
+        )
         total_count = self.session.exec(count_statement).one_or_none() or 0
-        
+
         logger.debug(f"Service: Found {len(infospaces)} infospaces (total {total_count}) for user {user_id}.")
         return infospaces, total_count
 
@@ -225,10 +237,10 @@ class InfospaceService:
                 for asset in assets_in_bundle:
                     asset.bundle_id = None
                 
-                # Clear root_bundle_id from DatasetIngestionJob records
-                from app.models import DatasetIngestionJob
+                # Clear root_bundle_id from IngestionJob records
+                from app.models import IngestionJob
                 jobs = self.session.exec(
-                    select(DatasetIngestionJob).where(DatasetIngestionJob.root_bundle_id == bundle.id)
+                    select(IngestionJob).where(IngestionJob.root_bundle_id == bundle.id)
                 ).all()
                 for job in jobs:
                     job.root_bundle_id = None
@@ -793,6 +805,115 @@ class InfospaceService:
                     logger.info(f"Cleaned up temporary package file: {temp_package_path}")
                 except OSError as e_remove:
                     logger.error(f"Error removing temporary package file {temp_package_path}: {e_remove}")
+
+    def invite_collaborator(
+        self,
+        infospace_id: int,
+        inviter_user_id: int,
+        invitee_email: str,
+        role: str = "viewer",
+    ) -> InfospaceCollaborator:
+        """Invite a user to collaborate on an infospace. Only owner or editor can invite."""
+        infospace = self.get_infospace(infospace_id, inviter_user_id)
+        if not infospace:
+            raise ValueError("Infospace not found")
+        # Check inviter is owner or editor
+        if infospace.owner_id != inviter_user_id:
+            collab = self.session.exec(
+                select(InfospaceCollaborator).where(
+                    InfospaceCollaborator.infospace_id == infospace_id,
+                    InfospaceCollaborator.user_id == inviter_user_id,
+                )
+            ).first()
+            if not collab or collab.role.value not in ("owner", "editor"):
+                raise ValueError("Only owner or editor can invite collaborators")
+        invitee = self.session.exec(select(User).where(User.email == invitee_email)).first()
+        if not invitee:
+            raise ValueError(f"User with email {invitee_email} not found")
+        if invitee.id == infospace.owner_id:
+            raise ValueError("Owner is already a member")
+        existing = self.session.exec(
+            select(InfospaceCollaborator).where(
+                InfospaceCollaborator.infospace_id == infospace_id,
+                InfospaceCollaborator.user_id == invitee.id,
+            )
+        ).first()
+        if existing:
+            existing.role = CollaboratorRole(role) if role in ("owner", "editor", "viewer") else CollaboratorRole.VIEWER
+            self.session.add(existing)
+            self.session.commit()
+            self.session.refresh(existing)
+            return existing
+        collab = InfospaceCollaborator(
+            infospace_id=infospace_id,
+            user_id=invitee.id,
+            role=CollaboratorRole(role) if role in ("owner", "editor", "viewer") else CollaboratorRole.VIEWER,
+        )
+        self.session.add(collab)
+        self.session.commit()
+        self.session.refresh(collab)
+        return collab
+
+    def list_collaborators(
+        self,
+        infospace_id: int,
+        user_id: int,
+    ) -> List[tuple[Optional[InfospaceCollaborator], User, str]]:
+        """List collaborators for an infospace. Returns (collab_or_none, user, role). Owner has role 'owner'."""
+        infospace = self.get_infospace(infospace_id, user_id)  # validates access
+        result = []
+        # Add owner first
+        owner = self.session.get(User, infospace.owner_id)
+        if owner:
+            result.append((None, owner, "owner"))
+        # Add collaborators from table
+        collabs = list(
+            self.session.exec(
+                select(InfospaceCollaborator).where(
+                    InfospaceCollaborator.infospace_id == infospace_id
+                )
+            ).all()
+        )
+        for c in collabs:
+            u = self.session.get(User, c.user_id)
+            if u:
+                result.append((c, u, c.role.value if hasattr(c.role, "value") else c.role))
+        return result
+
+    def remove_collaborator(
+        self,
+        infospace_id: int,
+        remover_user_id: int,
+        collaborator_user_id: int,
+    ) -> bool:
+        """Remove a collaborator. Owner can remove anyone; editor can remove viewers."""
+        infospace = self.get_infospace(infospace_id, remover_user_id)
+        if not infospace:
+            return False
+        if collaborator_user_id == infospace.owner_id:
+            raise ValueError("Cannot remove the owner")
+        collab = self.session.exec(
+            select(InfospaceCollaborator).where(
+                InfospaceCollaborator.infospace_id == infospace_id,
+                InfospaceCollaborator.user_id == collaborator_user_id,
+            )
+        ).first()
+        if not collab:
+            raise ValueError("User is not a collaborator")
+        if infospace.owner_id != remover_user_id:
+            remover_collab = self.session.exec(
+                select(InfospaceCollaborator).where(
+                    InfospaceCollaborator.infospace_id == infospace_id,
+                    InfospaceCollaborator.user_id == remover_user_id,
+                )
+            ).first()
+            if not remover_collab or remover_collab.role.value != "editor":
+                raise ValueError("Only owner or editor can remove collaborators")
+            if collab.role.value != "viewer":
+                raise ValueError("Editors can only remove viewers")
+        self.session.delete(collab)
+        self.session.commit()
+        return True
 
     def get_infospace_stats(
         self,

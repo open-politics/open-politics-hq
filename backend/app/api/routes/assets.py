@@ -1058,7 +1058,7 @@ def delete_asset(
     """
     Delete an asset and its children (explicitly handled for reliability).
     """
-    validate_infospace_access(session, infospace_id, current_user.id)
+    validate_infospace_access(session, infospace_id, current_user.id, require_editor=True)
     
     asset = session.get(Asset, asset_id)
     if not asset or asset.infospace_id != infospace_id:

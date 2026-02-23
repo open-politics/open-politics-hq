@@ -16,6 +16,7 @@ import {
   Upload,
   File,
   FolderOutput,
+  Loader2,
 } from 'lucide-react';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { toast } from 'sonner';
@@ -78,6 +79,8 @@ const getCompositionStats = (children: any[]) => {
 
 interface BundleDetailViewProps {
   selectedBundleId: number | null;
+  /** When set, shows BundleView (filtered subset) instead of full bundle */
+  selectedBundleViewId?: number | null;
   onLoadIntoRunner?: (runId: number, runName: string) => void;
   selectedAssetId: number | null;
   onAssetSelect: (id: number | null) => void;
@@ -89,6 +92,7 @@ interface BundleDetailViewProps {
 
 export default function BundleDetailView({ 
   selectedBundleId, 
+  selectedBundleViewId,
   onLoadIntoRunner,
   selectedAssetId,
   onAssetSelect,
@@ -102,32 +106,56 @@ export default function BundleDetailView({
     childrenCache,
     fetchChildren,
     getFullBundle,
+    getFullBundleView,
   } = useTreeStore();
 
   const [selectedBundle, setSelectedBundle] = useState<BundleRead | null>(null);
+  const [selectedBundleView, setSelectedBundleView] = useState<import('@/client').BundleViewRead | null>(null);
 
-  // Load bundle details when bundle ID changes
+  const isViewMode = selectedBundleViewId != null && selectedBundleViewId > 0;
+  const effectiveBundleId = isViewMode ? selectedBundleView?.source_bundle_id : selectedBundleId;
+  const effectivePathPrefix = isViewMode ? (selectedBundleView?.path_prefix ?? '') : undefined;
+  const displayName = isViewMode ? selectedBundleView?.name : selectedBundle?.name;
+
+  // Load bundle or bundle view details
   useEffect(() => {
-    if (selectedBundleId) {
+    if (selectedBundleViewId) {
+      getFullBundleView(selectedBundleViewId).then(view => {
+        setSelectedBundleView(view || null);
+        setSelectedBundle(null);
+        if (view) {
+          getFullBundle(view.source_bundle_id).then(bundle => setSelectedBundle(bundle || null));
+        }
+      });
+      const rootNodeId = `bundleview-${selectedBundleViewId}`;
+      if (!childrenCache.has(rootNodeId)) {
+        fetchChildren(rootNodeId);
+      }
+    } else if (selectedBundleId) {
       getFullBundle(selectedBundleId).then(bundle => {
         setSelectedBundle(bundle || null);
+        setSelectedBundleView(null);
       });
-      // Ensure children are loaded for the feed
       const bundleNodeId = `bundle-${selectedBundleId}`;
       if (!childrenCache.has(bundleNodeId)) {
         fetchChildren(bundleNodeId);
       }
     } else {
       setSelectedBundle(null);
+      setSelectedBundleView(null);
     }
-  }, [selectedBundleId, getFullBundle, fetchChildren, childrenCache]);
+  }, [selectedBundleId, selectedBundleViewId, getFullBundle, getFullBundleView, fetchChildren, childrenCache]);
 
-  // Get bundle children from cache for metadata display
+  // Get children from cache for metadata display
   const bundleChildren = useMemo(() => {
-    if (!selectedBundleId) return [];
-    const bundleNodeId = `bundle-${selectedBundleId}`;
-    return childrenCache.get(bundleNodeId) || [];
-  }, [selectedBundleId, childrenCache]);
+    if (selectedBundleViewId) {
+      return childrenCache.get(`bundleview-${selectedBundleViewId}`) || [];
+    }
+    if (selectedBundleId) {
+      return childrenCache.get(`bundle-${selectedBundleId}`) || [];
+    }
+    return [];
+  }, [selectedBundleId, selectedBundleViewId, childrenCache]);
 
   // Get available kinds for filter badges (still used by AssetFeedView)
   const availableKinds = useMemo(() => {
@@ -167,7 +195,7 @@ export default function BundleDetailView({
             </Button>
             <Separator orientation="vertical" className="h-4" />
             <span className="text-xs sm:text-sm text-muted-foreground truncate flex-1 min-w-0">
-              {selectedBundle?.name}
+              {displayName}
             </span>
           </div>
         </div>
@@ -184,14 +212,36 @@ export default function BundleDetailView({
     );
   }
 
-  // If no bundle selected, show empty state
-  if (!selectedBundleId || !selectedBundle) {
+  // If no bundle/view selected, show empty state
+  if (!selectedBundleId && !selectedBundleViewId) {
     return (
       <div className="h-full flex items-center justify-center p-6">
         <div className="text-center">
           <Layers className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
           <h3 className="text-lg font-medium text-muted-foreground mb-2">No Bundle Selected</h3>
           <p className="text-sm text-muted-foreground">Select a bundle to view its contents.</p>
+        </div>
+      </div>
+    );
+  }
+  // When viewing a BundleView, wait for it to load before showing content
+  if (selectedBundleViewId && !selectedBundleView) {
+    return (
+      <div className="h-full flex items-center justify-center p-6">
+        <div className="text-center">
+          <Loader2 className="h-12 w-12 mx-auto text-muted-foreground mb-4 animate-spin" />
+          <p className="text-sm text-muted-foreground">Loading view...</p>
+        </div>
+      </div>
+    );
+  }
+  // When viewing a Bundle, wait for it to load
+  if (selectedBundleId && !selectedBundle) {
+    return (
+      <div className="h-full flex items-center justify-center p-6">
+        <div className="text-center">
+          <Loader2 className="h-12 w-12 mx-auto text-muted-foreground mb-4 animate-spin" />
+          <p className="text-sm text-muted-foreground">Loading bundle...</p>
         </div>
       </div>
     );
@@ -206,7 +256,7 @@ export default function BundleDetailView({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 sm:gap-2">
               <h2 className="text-sm sm:text-lg font-semibold truncate">
-                {selectedBundle.name || `Bundle ${selectedBundle.id}`}
+                {displayName || (selectedBundle ? `Bundle ${selectedBundle.id}` : selectedBundleView ? `View ${selectedBundleView.id}` : '')}
               </h2>
             </div>
             
@@ -214,11 +264,11 @@ export default function BundleDetailView({
             <div className="flex items-center gap-2 sm:gap-4 mt-2 sm:mt-3 text-xs text-muted-foreground flex-wrap">
               <div className="flex items-center gap-1">
                 <Hash className="h-3 w-3" />
-                <span>ID: {selectedBundle.id}</span>
+                <span>ID: {isViewMode ? selectedBundleView?.id : selectedBundle?.id}</span>
               </div>
               <div className="flex items-center gap-1">
                 <Calendar className="h-3 w-3" />
-                <span>Updated {formatDistanceToNowStrict(new Date(selectedBundle.updated_at), { addSuffix: true })}</span>
+                <span>Updated {formatDistanceToNowStrict(new Date((selectedBundleView || selectedBundle)?.updated_at || 0), { addSuffix: true })}</span>
               </div>
               <div className="flex items-center gap-1">
                 <File className="h-3 w-3" />
@@ -267,9 +317,14 @@ export default function BundleDetailView({
               )}
             </div>
             
-            {selectedBundle.description && (
+            {selectedBundle?.description && !isViewMode && (
               <p className="text-sm text-muted-foreground mt-1">
                 "{selectedBundle.description}"
+              </p>
+            )}
+            {isViewMode && effectivePathPrefix && (
+              <p className="text-sm text-muted-foreground mt-1">
+                Path: {effectivePathPrefix}
               </p>
             )}
           </div>
@@ -316,14 +371,15 @@ export default function BundleDetailView({
       <div className="flex-1 min-h-0 overflow-hidden">
         <AssetFeedView
           infospaceId={activeInfospace?.id}
-          filterByBundleId={selectedBundleId}
+          filterByBundleId={effectiveBundleId ?? undefined}
+          pathPrefix={effectivePathPrefix}
           availableKinds={availableKinds}
           onAssetClick={handleAssetClick}
           title={``}
           cardSize="sm"
           columns={2}
           showControls={true}
-          emptyMessage="No items in this bundle yet."
+          emptyMessage="No items in this view yet."
           layout={layout}
         />
       </div>

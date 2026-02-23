@@ -125,6 +125,7 @@ class Source(SQLModel, table=True):
     monitoring_tasks: List["Task"] = Relationship(back_populates="source")
     output_bundle: Optional["Bundle"] = Relationship()
     poll_history: List["SourcePollHistory"] = Relationship(back_populates="source")
+    ingestion_jobs: List["IngestionJob"] = Relationship(back_populates="source")
 
 
 class SourcePollHistory(SQLModel, table=True):
@@ -171,8 +172,29 @@ class Bundle(SQLModel, table=True):
         back_populates="parent_bundle",
         sa_relationship_kwargs=dict(foreign_keys="[Bundle.parent_bundle_id]"),
     )
+    bundle_views: List["BundleView"] = Relationship(back_populates="source_bundle")
 
     __table_args__ = (UniqueConstraint("infospace_id", "name", "version"),)
+
+
+# ─── BundleView (lightweight named subset, no data movement) ───
+
+class BundleView(SQLModel, table=True):
+    """Lightweight named subset of a bundle. Queries resolve to assets in source_bundle where logical_path LIKE path_prefix%.
+    No data duplication. Tree UI shows BundleViews as first-class nodes."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
+    name: str
+    source_bundle_id: int = Field(foreign_key="bundle.id", index=True)
+    path_prefix: str = Field(default="")  # e.g. "politics/eu/" - empty means whole bundle
+    infospace_id: int = Field(foreign_key="infospace.id", index=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
+
+    infospace: Optional[Infospace] = Relationship()
+    user: Optional[User] = Relationship()
+    source_bundle: Optional[Bundle] = Relationship(back_populates="bundle_views")
 
 
 # ─── Assets ───
@@ -188,6 +210,7 @@ class Asset(SQLModel, table=True):
     logical_path: Optional[str] = Field(default=None, index=True)
     source_identifier: Optional[str] = Field(default=None, index=True)
     source_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSONB))
+    discovered_modalities: Optional[List[str]] = Field(default=None, sa_column=Column(JSONB))
     content_hash: Optional[str] = Field(default=None, index=True)
     fragments: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSONB))
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
@@ -203,6 +226,7 @@ class Asset(SQLModel, table=True):
     parent_asset_id: Optional[int] = Field(default=None, foreign_key="asset.id", index=True)
     part_index: Optional[int] = Field(default=None, index=True)
     previous_asset_id: Optional[int] = Field(default=None, foreign_key="asset.id", index=True)
+    is_superseded: bool = Field(default=False, index=True)
 
     parent_asset: Optional["Asset"] = Relationship(
         back_populates="children_assets",
@@ -236,6 +260,7 @@ class Asset(SQLModel, table=True):
     __table_args__ = (
         Index("ix_asset_fragments", "fragments", postgresql_using="gin", postgresql_ops={"fragments": "jsonb_path_ops"}),
         Index("ix_asset_source_metadata", "source_metadata", postgresql_using="gin", postgresql_ops={"source_metadata": "jsonb_path_ops"}),
+        Index("ix_asset_discovered_modalities", "discovered_modalities", postgresql_using="gin"),
     )
 
     @property
@@ -331,15 +356,25 @@ class Dataset(SQLModel, table=True):
     user: Optional[User] = Relationship(back_populates="datasets")
 
 
-# ─── Dataset ingestion jobs ───
+# ─── Ingestion jobs ───
 
-class DatasetIngestionJob(SQLModel, table=True):
+class IngestionJob(SQLModel, table=True):
+    """
+    Tracks content ingestion jobs (local directory import, remote archive, source poll).
+
+    Universal execution log: every import run — whether triggered manually or by a
+    Source poll — creates an IngestionJob. When ``source_id`` is set, the job
+    records one poll cycle of that Source.
+    """
+    __tablename__ = "ingestionjob"
+
     id: Optional[int] = Field(default=None, primary_key=True)
     uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")
     source_locator: str = Field(index=True)
     kind: str = Field(default="archive_zip")
+    source_id: Optional[int] = Field(default=None, foreign_key="source.id", index=True)
     root_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id")
     status: IngestionStatus = Field(default=IngestionStatus.PENDING, index=True)
     total_files: int = Field(default=0)
@@ -359,9 +394,11 @@ class DatasetIngestionJob(SQLModel, table=True):
 
     infospace: Optional[Infospace] = Relationship()
     user: Optional[User] = Relationship()
+    source: Optional[Source] = Relationship(back_populates="ingestion_jobs")
     root_bundle: Optional[Bundle] = Relationship()
 
     __table_args__ = (
-        Index("ix_datasetingestionjob_status_infospace", "status", "infospace_id"),
-        Index("ix_datasetingestionjob_user_status", "user_id", "status"),
+        Index("ix_ingestionjob_status_infospace", "status", "infospace_id"),
+        Index("ix_ingestionjob_user_status", "user_id", "status"),
+        Index("ix_ingestionjob_source", "source_id"),
     )

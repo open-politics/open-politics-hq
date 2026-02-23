@@ -13,8 +13,11 @@ These tasks handle:
 
 import logging
 import asyncio
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from sqlmodel import Session, select, func
+
+from sqlalchemy import update
 
 from app.core.celery_app import celery
 from app.core.db import engine
@@ -41,14 +44,16 @@ def process_content(self, asset_id: int, options: Optional[Dict[str, Any]] = Non
 
     with Session(engine) as session:
         try:
-            from sqlalchemy import update
-
+            now = datetime.now(timezone.utc)
             # Atomic claim: only proceed if we can transition PENDING -> PROCESSING
             result = session.execute(
                 update(Asset)
                 .where(Asset.id == asset_id)
                 .where(Asset.processing_status == ProcessingStatus.PENDING)
-                .values(processing_status=ProcessingStatus.PROCESSING)
+                .values(
+                    processing_status=ProcessingStatus.PROCESSING,
+                    updated_at=now,
+                )
             )
             session.commit()
             if result.rowcount == 0:
@@ -76,7 +81,45 @@ def process_content(self, asset_id: int, options: Optional[Dict[str, Any]] = Non
             
         except Exception as e:
             logger.exception(f"[Content Processing] Error: {e}")
+            try:
+                session.execute(
+                    update(Asset)
+                    .where(Asset.id == asset_id)
+                    .values(processing_status=ProcessingStatus.FAILED)
+                )
+                session.commit()
+            except Exception:
+                pass
             return {"success": False, "error": str(e)}
+
+
+# Stale threshold: align with Celery task_time_limit (3720s) so we only reset assets
+# that have been stuck longer than a worker could possibly be processing them
+STALE_PROCESSING_THRESHOLD_SECONDS = 3720
+
+
+@celery.task(name="reset_stale_processing_assets")
+def reset_stale_processing_assets():
+    """
+    Beat task: reset assets stuck in PROCESSING longer than task_time_limit.
+    Recovers from worker crashes where the asset was claimed but never completed.
+    """
+    from datetime import timedelta
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=STALE_PROCESSING_THRESHOLD_SECONDS)
+    with Session(engine) as session:
+        result = session.execute(
+            update(Asset)
+            .where(Asset.processing_status == ProcessingStatus.PROCESSING)
+            .where(Asset.updated_at < cutoff)
+            .values(processing_status=ProcessingStatus.PENDING)
+        )
+        session.commit()
+        count = result.rowcount
+    if count > 0:
+        logger.info(f"[Content Processing] Reset {count} stale PROCESSING assets to PENDING")
+    return {"reset_count": count}
+
 
 @celery.task(bind=True, name="reprocess_content")
 def reprocess_content(self, asset_id: int, options: Optional[Dict[str, Any]] = None):

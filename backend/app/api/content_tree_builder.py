@@ -9,7 +9,7 @@ No service class needed - just pure functions for formatting data.
 from typing import List, Dict, Set, Optional, Any
 from urllib.parse import quote, unquote
 from sqlmodel import Session, select
-from app.models import Asset, Bundle, AssetKind, Source, Flow, FlowStatus, Task, TaskStatus, DatasetIngestionJob, IngestionStatus
+from app.models import Asset, Bundle, BundleView, AssetKind, Source, Flow, FlowStatus, Task, TaskStatus, IngestionJob, IngestionStatus
 from app.schemas import TreeNode, TreeNodeType
 from collections import Counter
 from datetime import datetime, timezone
@@ -83,11 +83,11 @@ def build_tree_node_from_bundle(bundle: Bundle, session: Optional[Session] = Non
         node.is_pipeline_output = len(matching_output_flows) > 0
         node.pipeline_output_count = len(matching_output_flows)
         
-        # Query active DatasetIngestionJobs populating this bundle
+        # Query active IngestionJobs populating this bundle
         active_jobs = session.exec(
-            select(DatasetIngestionJob)
-            .where(DatasetIngestionJob.root_bundle_id == bundle.id)
-            .where(DatasetIngestionJob.status.in_([
+            select(IngestionJob)
+            .where(IngestionJob.root_bundle_id == bundle.id)
+            .where(IngestionJob.status.in_([
                 IngestionStatus.PENDING,
                 IngestionStatus.DOWNLOADING,
                 IngestionStatus.EXTRACTING,
@@ -273,6 +273,20 @@ def build_tree_node_from_vfolder(
     )
 
 
+def build_tree_node_from_bundle_view(view: BundleView) -> TreeNode:
+    """Build TreeNode for a BundleView (named subset of a bundle)."""
+    return TreeNode(
+        id=f"bundleview-{view.id}",
+        type=TreeNodeType.BUNDLE_VIEW,
+        name=view.name,
+        path_prefix=view.path_prefix or None,
+        has_children=True,  # Children are vfolder-equivalent under path_prefix
+        parent_id=f"bundle-{view.source_bundle_id}",
+        updated_at=view.updated_at,
+        created_at=view.created_at,
+    )
+
+
 def parse_tree_node_id(node_id: str) -> tuple[str, int]:
     """
     Parse a tree node ID string into type and numeric ID.
@@ -291,6 +305,10 @@ def parse_tree_node_id(node_id: str) -> tuple[str, int]:
             rest = node_id[8:]
             numeric_id = int(rest.split("__")[0])
             return "vfolder", numeric_id
+
+        if node_id.startswith("bundleview-"):
+            numeric_id = int(node_id[12:])
+            return "bundleview", numeric_id
 
         type_str, id_str = node_id.split('-', 1)
         numeric_id = int(id_str)
@@ -765,10 +783,10 @@ def delete_bundle(
         asset.bundle_id = None
         session.add(asset)
     
-    # Clear root_bundle_id from DatasetIngestionJob records that reference this bundle
-    from app.models import DatasetIngestionJob
+    # Clear root_bundle_id from IngestionJob records that reference this bundle
+    from app.models import IngestionJob
     jobs = session.exec(
-        select(DatasetIngestionJob).where(DatasetIngestionJob.root_bundle_id == bundle_id)
+        select(IngestionJob).where(IngestionJob.root_bundle_id == bundle_id)
     ).all()
     if jobs:
         for job in jobs:

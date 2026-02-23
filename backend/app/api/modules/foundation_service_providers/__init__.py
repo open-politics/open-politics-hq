@@ -13,11 +13,13 @@ from typing import Any, Dict # Added Any, Dict for dummy providers
 # Base interfaces
 from .base import (
     StorageProvider,
+    FileStat,
     ScrapingProvider,
     WebSearchProvider,
-    GeospatialProvider,
     GeocodingProvider,
     EmbeddingProvider,
+    OcrProvider,
+    OcrResult,
     # New unified language model interfaces
     LanguageModelProvider,
     ModelInfo,
@@ -37,7 +39,6 @@ from .factory import (
     create_scraping_provider,
     create_web_search_provider,
     create_embedding_provider,
-    create_geospatial_provider,
     create_geocoding_provider,
     create_model_registry,  # Unified model registry
 )
@@ -45,11 +46,13 @@ from .factory import (
 __all__ = [
     # Core provider interfaces
     "StorageProvider",
+    "FileStat",
     "ScrapingProvider", 
     "WebSearchProvider",
-    "GeospatialProvider",
     "GeocodingProvider",
     "EmbeddingProvider",
+    "OcrProvider",
+    "OcrResult",
     
     # New unified language model system
     "LanguageModelProvider",
@@ -73,7 +76,6 @@ __all__ = [
     "create_scraping_provider",
     "create_web_search_provider", 
     "create_embedding_provider",
-    "create_geospatial_provider",
     "create_geocoding_provider",
     "create_model_registry",
 ]

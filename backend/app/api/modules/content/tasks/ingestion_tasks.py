@@ -1,8 +1,8 @@
 """
-Dataset Ingestion Tasks
-=======================
+Ingestion Tasks
+===============
 
-Background tasks for large dataset/archive ingestion.
+Background tasks for content ingestion (local directory import, remote archive).
 Handles remote ZIP downloads, extraction, and directory structure mirroring.
 """
 
@@ -32,18 +32,18 @@ def ingest_archive_task(
 ):
     """
     Background task for ingesting large remote archives.
-    
+
     This task:
     1. Downloads archive (streaming for large files)
     2. Extracts to temporary directory
     3. Creates bundle hierarchy mirroring directory structure
     4. Processes contained files
     5. Cleans up temporary files
-    
-    Progress is tracked via DatasetIngestionJob and Celery state updates.
-    
+
+    Progress is tracked via IngestionJob and Celery state updates.
+
     Args:
-        job_id: ID of DatasetIngestionJob for tracking
+        job_id: ID of IngestionJob for tracking
         archive_url: URL of the archive to download
         root_bundle_id: ID of root bundle for this dataset
         infospace_id: Target infospace
@@ -51,7 +51,7 @@ def ingest_archive_task(
         options: Processing options
     """
     logger.info(f"[Archive Ingestion] Starting task for job {job_id}, archive: {archive_url}")
-    
+
     # Helper to update both job cursor_state and celery state (aligned with Source pattern)
     def update_progress(session, job, stage: str, message: str, progress_pct: int = 0, **kwargs):
         """Update job cursor_state and Celery task state."""
@@ -61,12 +61,12 @@ def ingest_archive_task(
             'progress_pct': progress_pct,
             **kwargs
         })
-        
+
         # Update updated_at timestamp (similar to Source updates)
         job.updated_at = datetime.now(timezone.utc)
         session.add(job)
         session.commit()
-        
+
         self.update_state(
             state='PROGRESS',
             meta={
@@ -82,16 +82,16 @@ def ingest_archive_task(
             }
         )
         logger.info(f"[Archive Job {job_id}] {stage}: {message} ({progress_pct}%)")
-    
+
     # Initialize
     with Session(engine) as session:
-        from app.models import DatasetIngestionJob, IngestionStatus
-        job = session.get(DatasetIngestionJob, job_id)
+        from app.models import IngestionJob, IngestionStatus
+        job = session.get(IngestionJob, job_id)
         if not job:
-            raise ValueError(f"DatasetIngestionJob {job_id} not found")
-        
+            raise ValueError(f"IngestionJob {job_id} not found")
+
         update_progress(session, job, 'initializing', 'Starting archive ingestion...', 5)
-    
+
     async def process_archive_async():
         with Session(engine) as session:
             from app.api.modules.foundation_service_providers.factory import create_storage_provider, create_scraping_provider
@@ -99,33 +99,33 @@ def ingest_archive_task(
             from app.api.modules.content.services.bundle_service import BundleService
             from app.api.modules.content.handlers import ArchiveHandler, IngestionContext
             from app.core.config import settings
-            from app.models import DatasetIngestionJob, IngestionStatus
-            
+            from app.models import IngestionJob, IngestionStatus
+
             # Get job
-            job = session.get(DatasetIngestionJob, job_id)
+            job = session.get(IngestionJob, job_id)
             if not job:
-                raise ValueError(f"DatasetIngestionJob {job_id} not found")
-            
+                raise ValueError(f"IngestionJob {job_id} not found")
+
             # Update to downloading
             job.status = IngestionStatus.DOWNLOADING
             update_progress(session, job, 'downloading', 'Downloading archive...', 10)
-            
+
             # Get root bundle
             root_bundle = session.get(Bundle, root_bundle_id)
             if not root_bundle:
                 raise ValueError(f"Root bundle {root_bundle_id} not found")
-            
+
             # Create handler context
             storage_provider = create_storage_provider(settings)
             scraping_provider = create_scraping_provider(settings)
             asset_service = AssetService(session, storage_provider)
             bundle_service = BundleService(session)
-            
+
             # Pass user_agent in options for handler to use
             task_options = options.copy()
             if user_agent:
                 task_options['user_agent'] = user_agent
-            
+
             context = IngestionContext(
                 session=session,
                 storage_provider=storage_provider,
@@ -138,49 +138,49 @@ def ingest_archive_task(
                 settings=settings,
                 options=task_options
             )
-            
+
             # Create handler
             handler = ArchiveHandler(context)
-            
+
             # Update to extracting
             job.status = IngestionStatus.EXTRACTING
             update_progress(session, job, 'extracting', 'Extracting archive...', 30)
-            
+
             # Update to processing
             job.status = IngestionStatus.PROCESSING
             update_progress(session, job, 'processing', 'Processing files...', 50)
-            
+
             # Process archive
             created_assets = await handler._process_archive_sync(
                 archive_url, root_bundle, infospace_id, user_id, options
             )
-            
+
             # Update job to completed
             job.status = IngestionStatus.COMPLETED
             job.processed_files = len(created_assets)
             job.completed_at = datetime.now(timezone.utc)
             update_progress(session, job, 'completed', f'Successfully processed {len(created_assets)} files', 100)
-            
+
             logger.info(f"[Archive Ingestion] Job {job_id} completed: {len(created_assets)} assets created")
-            
+
             return {
                 "job_id": job_id,
                 "root_bundle_id": root_bundle_id,
                 "assets_created": len(created_assets),
                 "status": "completed"
             }
-    
+
     try:
         result = run_async_in_celery(process_archive_async)
         return result
-    
+
     except Exception as e:
         logger.exception(f"[Archive Ingestion] Task failed: {e}")
-        
+
         # Update job status to failed
         with Session(engine) as session:
-            from app.models import DatasetIngestionJob, IngestionStatus
-            job = session.get(DatasetIngestionJob, job_id)
+            from app.models import IngestionJob, IngestionStatus
+            job = session.get(IngestionJob, job_id)
             if job:
                 job.status = IngestionStatus.FAILED
                 job.error_message = str(e)
@@ -194,7 +194,7 @@ def ingest_archive_task(
                 session.add(job)
                 session.commit()
                 logger.error(f"[Archive Job {job_id}] Marked as FAILED: {str(e)[:100]}")
-        
+
         raise
 
 
@@ -236,15 +236,15 @@ def import_directory_task(
     copy_mode = options.get("copy_mode", True)
 
     with Session(engine) as session:
-        from app.models import DatasetIngestionJob, IngestionStatus
+        from app.models import IngestionJob, IngestionStatus
         from app.api.modules.content.services.bundle_service import BundleService
         from app.api.modules.foundation_service_providers.factory import create_storage_provider
         from app.api.modules.content.handlers.directory_import_handler import DirectoryImportHandler
         from app.core.config import settings
 
-        job = session.get(DatasetIngestionJob, job_id)
+        job = session.get(IngestionJob, job_id)
         if not job:
-            raise ValueError(f"DatasetIngestionJob {job_id} not found")
+            raise ValueError(f"IngestionJob {job_id} not found")
 
         update_progress(session, job, "initializing", "Starting directory import...", 5)
 
@@ -282,6 +282,7 @@ def import_directory_task(
                 source_path=source_path,
                 options={**options, "copy_mode": copy_mode},
             )
+            created_assets, root_bundle_id = result
         except Exception as e:
             logger.exception(f"[Directory Import] Handler failed: {e}")
             job.status = IngestionStatus.FAILED
@@ -293,23 +294,23 @@ def import_directory_task(
             raise
 
         job.status = IngestionStatus.COMPLETED
-        job.processed_files = len(result)
-        job.root_bundle_id = result[0].bundle_id if result else None
+        job.processed_files = len(created_assets)
+        job.root_bundle_id = root_bundle_id
         job.completed_at = datetime.now(timezone.utc)
         update_progress(
             session,
             job,
             "completed",
-            f"Imported {len(result)} assets",
+            f"Imported {len(created_assets)} assets",
             100,
         )
 
-        logger.info(f"[Directory Import] Job {job_id} completed: {len(result)} assets created")
+        logger.info(f"[Directory Import] Job {job_id} completed: {len(created_assets)} assets created")
 
     return {
         "job_id": job_id,
-        "root_bundle_id": result[0].bundle_id if result else None,
-        "assets_created": len(result),
+        "root_bundle_id": root_bundle_id,
+        "assets_created": len(created_assets),
         "assets_skipped": 0,
         "status": "completed",
     }

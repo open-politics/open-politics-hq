@@ -2,12 +2,12 @@
 Entity Resolution Utilities
 
 Resolves raw entity mentions to canonical entities using alias matching
-and embedding-based similarity.
+and embedding-based similarity. Uses SQL-level matching for scale.
 """
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from sqlmodel import Session, select
-from sqlalchemy import func
+from sqlalchemy import func, text
 import numpy as np
 
 from app.api.modules.graph.models import EntityCanonical
@@ -38,83 +38,70 @@ def find_by_alias(
     session: Session,
     infospace_id: int,
     raw_name: str,
-    entity_type: str
+    entity_type: str,
+    graph_id: Optional[int] = None,
+    exclude_entity_id: Optional[int] = None,
 ) -> Optional[EntityCanonical]:
     """
     Find canonical entity by exact alias match or substring match.
-    
-    Strategy:
-    1. Exact match on canonical_name or aliases
-    2. Substring match: if raw_name is a substring of canonical_name or vice versa
-       (case-insensitive, normalized)
-    
-    Checks both canonical_name and aliases list.
+    Uses SQL-level matching for scalability (no in-memory scan).
+
+    When graph_id is provided, only matches canonicals in that graph.
+    When graph_id is None, matches canonicals with graph_id IS NULL (infospace default).
     """
     normalized_name = raw_name.strip().lower()
-    
-    # Get all canonicals of this type
-    all_canonicals = session.exec(
-        select(EntityCanonical).where(
-            EntityCanonical.infospace_id == infospace_id,
-            EntityCanonical.entity_type == entity_type
+    if not normalized_name:
+        return None
+
+    # 1. Exact match: canonical_name or any alias (SQL)
+    graph_clause = "AND graph_id = :gid" if graph_id is not None else "AND graph_id IS NULL"
+    exclude_clause = "AND id != :exclude_id" if exclude_entity_id is not None else ""
+    params: Dict[str, Any] = {
+        "iid": infospace_id,
+        "etype": entity_type,
+        "name": normalized_name,
+    }
+    if graph_id is not None:
+        params["gid"] = graph_id
+    if exclude_entity_id is not None:
+        params["exclude_id"] = exclude_entity_id
+    exact_sql = text(f"""
+        SELECT id FROM entitycanonical
+        WHERE infospace_id = :iid AND entity_type = :etype {graph_clause} {exclude_clause}
+        AND (
+            LOWER(TRIM(canonical_name)) = :name
+            OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(COALESCE(aliases::jsonb, '[]'::jsonb)) AS elem
+                WHERE LOWER(TRIM(elem::text)) = :name
+            )
         )
-    ).all()
-    
-    # 1. Exact match on canonical name
-    for canonical in all_canonicals:
-        if canonical.canonical_name.strip().lower() == normalized_name:
-            return canonical
-    
-    # 2. Exact match on aliases
-    for canonical in all_canonicals:
-        if canonical.aliases:
-            normalized_aliases = [alias.strip().lower() for alias in canonical.aliases]
-            if normalized_name in normalized_aliases:
-                return canonical
-    
-    # 3. Substring matching: check if raw_name is substring of canonical_name or vice versa
-    # Prefer longer matches (more specific)
-    best_match = None
-    best_match_length = 0
-    
-    for canonical in all_canonicals:
-        canonical_normalized = canonical.canonical_name.strip().lower()
-        
-        # Check if raw_name is substring of canonical_name
-        if normalized_name in canonical_normalized:
-            if len(canonical_normalized) > best_match_length:
-                best_match = canonical
-                best_match_length = len(canonical_normalized)
-        
-        # Check if canonical_name is substring of raw_name
-        elif canonical_normalized in normalized_name:
-            if len(normalized_name) > best_match_length:
-                best_match = canonical
-                best_match_length = len(normalized_name)
-        
-        # Check aliases for substring matches
-        if canonical.aliases:
-            for alias in canonical.aliases:
-                alias_normalized = alias.strip().lower()
-                
-                if normalized_name in alias_normalized:
-                    if len(alias_normalized) > best_match_length:
-                        best_match = canonical
-                        best_match_length = len(alias_normalized)
-                
-                elif alias_normalized in normalized_name:
-                    if len(normalized_name) > best_match_length:
-                        best_match = canonical
-                        best_match_length = len(normalized_name)
-    
-    # Only return substring match if it's substantial (at least 3 characters overlap)
-    if best_match and best_match_length >= 3:
-        logger.debug(
-            f"Substring match: '{raw_name}' -> '{best_match.canonical_name}' "
-            f"(matched length: {best_match_length})"
+        LIMIT 1
+    """)
+    row = session.execute(exact_sql, params).fetchone()
+    if row:
+        return session.get(EntityCanonical, row[0])
+
+    # 2. Substring match (LIKE) with minimum length guard; prefer longer matches
+    if len(normalized_name) < 3:
+        return None
+    substr_sql = text(f"""
+        SELECT id FROM entitycanonical
+        WHERE infospace_id = :iid AND entity_type = :etype {graph_clause} {exclude_clause}
+        AND (
+            LOWER(TRIM(canonical_name)) LIKE '%' || :name || '%'
+            OR :name LIKE '%' || LOWER(TRIM(canonical_name)) || '%'
+            OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(COALESCE(aliases::jsonb, '[]'::jsonb)) AS elem
+                WHERE LOWER(TRIM(elem::text)) LIKE '%' || :name || '%'
+                   OR :name LIKE '%' || LOWER(TRIM(elem::text)) || '%'
+            )
         )
-        return best_match
-    
+        ORDER BY LENGTH(canonical_name) DESC
+        LIMIT 1
+    """)
+    result = session.execute(substr_sql, params).fetchone()
+    if result:
+        return session.get(EntityCanonical, result[0])
     return None
 
 
@@ -124,67 +111,98 @@ async def find_by_embedding(
     raw_name: str,
     entity_type: str,
     embedding_service: EmbeddingService,
-    similarity_threshold: float = 0.85
+    similarity_threshold: float = 0.85,
+    graph_id: Optional[int] = None,
+    exclude_entity_id: Optional[int] = None,
 ) -> Optional[EntityCanonical]:
     """
     Find canonical entity by embedding similarity.
-    
-    Generates embedding for raw_name and compares against existing
-    canonical entities with embeddings.
+
+    Uses pgvector SQL when embedding_768 is available; otherwise falls back to
+    in-memory cosine similarity over JSON embedding.
     """
-    # Generate embedding for raw name
     try:
-        # Get infospace to determine embedding model
         from app.api.modules.identity_infospace_user.models import Infospace
         infospace = session.get(Infospace, infospace_id)
         if not infospace or not infospace.embedding_model:
             logger.debug(f"No embedding model configured for infospace {infospace_id}")
             return None
-        
-        # Generate embedding
+
         embedding_result = await embedding_service.generate_embeddings_for_chunks(
             chunks=[raw_name],
             model_name=infospace.embedding_model,
-            provider=None  # Auto-detect from model
+            provider=None
         )
-        
+
         if not embedding_result or not embedding_result[0].get('embedding'):
             logger.warning(f"Failed to generate embedding for '{raw_name}'")
             return None
-        
+
         raw_embedding = embedding_result[0]['embedding']
-        
+        if not raw_embedding or len(raw_embedding) != 768:
+            logger.debug(f"Embedding dimension {len(raw_embedding) if raw_embedding else 0} != 768; skipping pgvector path")
     except Exception as e:
         logger.warning(f"Error generating embedding for '{raw_name}': {e}")
         return None
-    
-    # Find all canonicals of same type with embeddings
+
+    # pgvector path: use SQL when dimension is 768
+    vec_str = "[" + ",".join(str(x) for x in raw_embedding) + "]"
+    graph_clause = "AND graph_id = :gid" if graph_id is not None else "AND graph_id IS NULL"
+    exclude_clause = "AND id != :exclude_id" if exclude_entity_id is not None else ""
+    params: Dict[str, Any] = {
+        "iid": infospace_id,
+        "etype": entity_type,
+        "vec": vec_str,
+        "thresh": 1.0 - similarity_threshold,  # cosine distance; similarity 0.85 => distance 0.15
+    }
+    if graph_id is not None:
+        params["gid"] = graph_id
+    if exclude_entity_id is not None:
+        params["exclude_id"] = exclude_entity_id
+
+    sql = text(f"""
+        SELECT id, (embedding_768 <=> :vec::vector) AS dist
+        FROM entitycanonical
+        WHERE infospace_id = :iid AND entity_type = :etype {graph_clause} {exclude_clause}
+          AND embedding_768 IS NOT NULL
+        ORDER BY embedding_768 <=> :vec::vector
+        LIMIT 1
+    """)
+    row = session.execute(sql, params).fetchone()
+    if row and row[1] is not None and row[1] <= (1.0 - similarity_threshold):
+        return session.get(EntityCanonical, row[0])
+
+    # Fallback: JSON embedding column (in-memory)
     stmt = select(EntityCanonical).where(
         EntityCanonical.infospace_id == infospace_id,
         EntityCanonical.entity_type == entity_type,
-        EntityCanonical.embedding.isnot(None)
+        EntityCanonical.embedding.isnot(None),
     )
+    if graph_id is not None:
+        stmt = stmt.where(EntityCanonical.graph_id == graph_id)
+    else:
+        stmt = stmt.where(EntityCanonical.graph_id.is_(None))
+    if exclude_entity_id is not None:
+        stmt = stmt.where(EntityCanonical.id != exclude_entity_id)
     candidates = session.exec(stmt).all()
-    
+
     best_match = None
     best_similarity = 0.0
-    
     for candidate in candidates:
-        if not candidate.embedding:
+        emb = candidate.embedding_768 if (candidate.embedding_768 is not None) else candidate.embedding
+        if not emb:
             continue
-        
-        similarity = cosine_similarity(raw_embedding, candidate.embedding)
+        similarity = cosine_similarity(raw_embedding, emb)
         if similarity > best_similarity:
             best_similarity = similarity
             best_match = candidate
-    
+
     if best_match and best_similarity >= similarity_threshold:
         logger.debug(
             f"Found embedding match: '{raw_name}' -> '{best_match.canonical_name}' "
             f"(similarity: {best_similarity:.3f})"
         )
         return best_match
-    
     return None
 
 
@@ -253,11 +271,11 @@ async def resolve_entities_batch(
     infospace_id: int,
     entities: List[Tuple[str, str]],
     embedding_service: Optional[EmbeddingService] = None,
-    similarity_threshold: float = 0.85
+    similarity_threshold: float = 0.85,
+    graph_id: Optional[int] = None,
 ) -> Dict[Tuple[str, str], EntityCanonical]:
     """
-    Resolve multiple raw entities in a single batch. Uses one embedding query and
-    one alias query, then matches in-memory for scale.
+    Resolve multiple raw entities in a single batch.
 
     Args:
         session: Database session
@@ -265,21 +283,22 @@ async def resolve_entities_batch(
         entities: List of (raw_name, entity_type) tuples
         embedding_service: Optional for embedding-based matching
         similarity_threshold: Min similarity for embedding match
-
-    Returns:
-        Dict mapping (raw_name, entity_type) -> EntityCanonical
+        graph_id: Optional KnowledgeGraph ID; when set, resolve into that graph
     """
     result: Dict[Tuple[str, str], EntityCanonical] = {}
     if not entities:
         return result
 
     entity_types = list({et for _, et in entities})
-    all_canonicals = session.exec(
-        select(EntityCanonical).where(
-            EntityCanonical.infospace_id == infospace_id,
-            EntityCanonical.entity_type.in_(entity_types)
-        )
-    ).all()
+    stmt = select(EntityCanonical).where(
+        EntityCanonical.infospace_id == infospace_id,
+        EntityCanonical.entity_type.in_(entity_types),
+    )
+    if graph_id is not None:
+        stmt = stmt.where(EntityCanonical.graph_id == graph_id)
+    else:
+        stmt = stmt.where(EntityCanonical.graph_id.is_(None))
+    all_canonicals = session.exec(stmt).all()
     canonicals_by_type: Dict[str, List[EntityCanonical]] = {}
     for c in all_canonicals:
         canonicals_by_type.setdefault(c.entity_type, []).append(c)
@@ -302,7 +321,7 @@ async def resolve_entities_batch(
             logger.warning(f"Batch embedding failed: {e}")
 
     for raw_name, entity_type in entities:
-        existing = find_by_alias(session, infospace_id, raw_name, entity_type)
+        existing = find_by_alias(session, infospace_id, raw_name, entity_type, graph_id)
         if existing:
             result[(raw_name, entity_type)] = existing
             continue
@@ -313,9 +332,10 @@ async def resolve_entities_batch(
                 candidates = canonicals_by_type.get(entity_type, [])
                 best_match, best_sim = None, 0.0
                 for c in candidates:
-                    if not c.embedding:
+                    emb = c.embedding_768 if c.embedding_768 is not None else c.embedding
+                    if not emb or len(vec) != len(emb):
                         continue
-                    sim = cosine_similarity(vec, c.embedding)
+                    sim = cosine_similarity(vec, emb)
                     if sim > best_sim:
                         best_sim, best_match = sim, c
                 if best_match and best_sim >= similarity_threshold:
@@ -326,9 +346,10 @@ async def resolve_entities_batch(
                     continue
         canonical = EntityCanonical(
             infospace_id=infospace_id,
+            graph_id=graph_id,
             canonical_name=raw_name,
             entity_type=entity_type,
-            aliases=[raw_name]
+            aliases=[raw_name],
         )
         session.add(canonical)
         session.flush()

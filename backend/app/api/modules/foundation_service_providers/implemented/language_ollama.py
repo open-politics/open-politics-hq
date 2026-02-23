@@ -86,26 +86,10 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
             response.raise_for_status()
             data = response.json()
             
-            # Try to get enhanced capabilities from the utils endpoint
+            # Enhanced capabilities: use /api/show per model as authoritative source (below).
+            # Do not call back to own API (e.g. utils endpoint) - providers run in workers/containers.
             enhanced_capabilities = {}
-            try:
-                utils_response = await self.client.get("http://localhost:8022/api/v1/utils/ollama/available-models?limit=200")
-                if utils_response.status_code == 200:
-                    utils_data = utils_response.json()
-                    for model in utils_data.get("models", []):
-                        model_name = model.get("name", "")
-                        base_name = model.get("base_model", "")
-                        capabilities = model.get("capabilities", [])
-                        
-                        # Store capabilities for both full name and base name
-                        enhanced_capabilities[model_name] = capabilities
-                        if base_name:
-                            enhanced_capabilities[base_name] = capabilities
-                            
-                    logger.info(f"Enhanced capabilities loaded for {len(enhanced_capabilities)} Ollama models")
-            except Exception as e:
-                logger.debug(f"Could not load enhanced capabilities: {e}")
-            
+
             models = []
             for model_data in data.get("models", []):
                 model_name = model_data["name"]

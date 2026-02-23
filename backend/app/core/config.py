@@ -213,7 +213,7 @@ class AppSettings(BaseSettings):
     NOMINATIM_DOMAIN: Optional[str] = Field(default="nominatim.openstreetmap.org", env="NOMINATIM_DOMAIN")
 
     # --- Embedding Provider ---
-    EMBEDDING_PROVIDER_TYPE: Literal["ollama", "jina", "openai"] = Field(default="ollama", env="EMBEDDING_PROVIDER_TYPE")
+    EMBEDDING_PROVIDER_TYPE: Literal["ollama", "jina", "openai", "voyage"] = Field(default="ollama", env="EMBEDDING_PROVIDER_TYPE")
     # Ollama embedding settings
     OLLAMA_EMBEDDING_MODEL: str = Field(default="nomic-embed-text", env="OLLAMA_EMBEDDING_MODEL")
     # Jina AI embedding settings  
@@ -221,6 +221,14 @@ class AppSettings(BaseSettings):
     JINA_EMBEDDING_MODEL: str = Field(default="jina-embeddings-v2-base-en", env="JINA_EMBEDDING_MODEL")
     # OpenAI embedding settings (for future use)
     OPENAI_EMBEDDING_MODEL: str = Field(default="text-embedding-ada-002", env="OPENAI_EMBEDDING_MODEL")
+    VOYAGE_API_KEY: Optional[str] = Field(default=None, env="VOYAGE_API_KEY")
+
+    # --- Scraping Provider ---
+    SCRAPING_PROVIDER_TYPE: Literal["newspaper4k", "playwright"] = Field(default="newspaper4k", env="SCRAPING_PROVIDER_TYPE")
+
+    # --- OCR Provider ---
+    OCR_PROVIDER_TYPE: Literal["tesseract", "ocrmypdf", "ollama"] = Field(default="tesseract", env="OCR_PROVIDER_TYPE")
+    OLLAMA_OCR_MODEL: str = Field(default="llava", env="OLLAMA_OCR_MODEL")
 
     # --- Redis Configuration ---
     REDIS_HOST: str = Field(default="redis", env="REDIS_HOST")

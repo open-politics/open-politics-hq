@@ -108,6 +108,8 @@ class AnnotationRun(SQLModel, table=True):
     trigger_context: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     source_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id", index=True)
     graph_config: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    follow_on_version_change: bool = Field(default=False, index=True)
+    parent_run_id: Optional[int] = Field(default=None, foreign_key="annotationrun.id", index=True)
 
     infospace: Optional[Infospace] = Relationship(back_populates="runs")
     user: Optional[User] = Relationship(back_populates="runs")

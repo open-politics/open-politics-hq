@@ -312,7 +312,7 @@ def delete_source(
     logger.info(f"Route: Attempting to delete Source {source_id} from infospace {infospace_id}")
     try:
         # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
+        validate_infospace_access(session, infospace_id, current_user.id, require_editor=True)
         
         # Get the source
         source = session.get(Source, source_id)

@@ -85,6 +85,7 @@ export function AssetFeedView({
   // Filtering (initial filter, can be overridden by user)
   filterKinds: initialFilterKinds,
   filterByBundleId,
+  pathPrefix,
   
   // Pre-known types from parent (e.g., tree data)
   availableKinds: preKnownKinds,
@@ -135,6 +136,8 @@ export function AssetFeedView({
     kinds: undefined, // Don't filter in hook, we filter locally via badges
     sortBy: sortOption.includes('name') ? 'name' : sortOption.includes('updated_at') ? 'updated_at' : sortOption.includes('created_at') ? 'created_at' : undefined,
     sortOrder: sortOption.includes('desc') ? 'desc' : 'asc',
+    bundleId: filterByBundleId ?? undefined,
+    pathFilter: pathPrefix ?? undefined,
   });
   
   // Determine which raw data to use
@@ -459,6 +462,7 @@ export function AssetFeedView({
                 onItemView={handleSelectorItemView}
                 compact={true}
                 filterByBundleId={filterByBundleId ?? null}
+                pathPrefix={pathPrefix ?? null}
                 sortBy={sortOption.includes('name') ? 'name' : sortOption.includes('updated_at') ? 'updated_at' : sortOption.includes('created_at') ? 'created_at' : undefined}
                 sortOrder={sortOption.includes('desc') ? 'desc' : 'asc'}
               />

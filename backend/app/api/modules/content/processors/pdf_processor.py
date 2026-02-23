@@ -102,13 +102,13 @@ class PDFProcessor(BaseProcessor):
         
         # Per Foundation: "A PDF with scanned pages is still a PDF. Processing discovers
         # that its pages are image-dominant; it does not reclassify the PDF."
-        # We store discovered_modalities in metadata for downstream (e.g. multimodal annotation).
+        # We store discovered_modalities as first-class column for queryable OCR/multimodal routing.
         is_image_only = metadata.get('is_image_only', False)
         asset.source_metadata = asset.source_metadata or {}
         asset.source_metadata.update(metadata)
+        asset.discovered_modalities = ['image'] if is_image_only else ['text']
         if is_image_only:
-            asset.source_metadata['discovered_modalities'] = ['image']
-            logger.info(f"PDF {asset.id} is image-dominant (no extractable text). Kept as PDF, stored discovered_modalities.")
+            logger.info(f"PDF {asset.id} is image-dominant (no extractable text). Kept as PDF, set discovered_modalities=['image'].")
         
         asset.text_content = full_text
         if metadata.get('extracted_title') and (not asset.title or not asset.title.startswith('Uploaded')):
@@ -176,10 +176,11 @@ class PDFProcessor(BaseProcessor):
                     if text:
                         full_text += text + "\n\n"
                         total_chars_extracted += len(text)
-                        page_metadata = {'page_number': page_num + 1, 'char_count': len(text), 'discovered_modalities': ['text']}
+                        page_modalities = ['text']
+                        page_metadata = {'page_number': page_num + 1, 'char_count': len(text)}
                     else:
-                        # Image-dominant page (scanned, no extractable text)
-                        page_metadata = {'page_number': page_num + 1, 'char_count': 0, 'discovered_modalities': ['image']}
+                        page_modalities = ['image']
+                        page_metadata = {'page_number': page_num + 1, 'char_count': 0}
                     
                     child_asset_create = AssetCreate(
                         title=f"Page {page_num + 1}",
@@ -189,7 +190,8 @@ class PDFProcessor(BaseProcessor):
                         parent_asset_id=asset.id,
                         part_index=page_num,
                         text_content=text if text else None,
-                        source_metadata=page_metadata
+                        source_metadata=page_metadata,
+                        discovered_modalities=page_modalities,
                     )
                     child_assets.append(child_asset_create)
                         

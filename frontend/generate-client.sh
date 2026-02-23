@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-echo "Because of with "/" and without "/" compatibilty errors you will see prints of dupliate operationIds. So these logs are expected."
+
 
 
 curl http://localhost:8022/api/v1/openapi.json > openapi.json &&
@@ -25,6 +25,6 @@ sed -i "/readonly errors?: Record<number, string>;/a \\\    readonly responseTyp
 sed -i "/method: options.method,/i \\\    responseType: options.responseType as AxiosRequestConfig['responseType']," ./src/client/core/request.ts
 
 npx biome format --write ./src/client 
-
+echo "WARNING: YOU MAY SEE PRINTS OF DUPLICATE OPERATIONIDS DUE TO '/' COMPATIBILITY ISSUES. THESE LOGS ARE EXPECTED."
 echo "prestart.sh has been run successfully. OpenAPI client generated and corrected."
 

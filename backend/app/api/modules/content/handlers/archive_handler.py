@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 
-from app.models import Asset, AssetKind, Bundle, ProcessingStatus, DatasetIngestionJob, IngestionStatus
+from app.models import Asset, AssetKind, Bundle, ProcessingStatus, IngestionJob, IngestionStatus
 from app.api.modules.content.services.asset_builder import AssetBuilder
 from app.api.modules.content.services.bundle_service import BundleService
 from .base import BaseHandler, IngestionContext
@@ -118,7 +118,7 @@ class ArchiveHandler(BaseHandler):
         
         if use_background:
             # Create ingestion job for tracking (following Source model pattern)
-            job = DatasetIngestionJob(
+            job = IngestionJob(
                 infospace_id=infospace_id,
                 user_id=user_id,
                 source_locator=archive_url,
@@ -137,7 +137,7 @@ class ArchiveHandler(BaseHandler):
             self.session.refresh(job)
             
             # Queue celery task for background processing
-            from app.api.modules.content.tasks.dataset_tasks import ingest_archive_task
+            from app.api.modules.content.tasks.ingestion_tasks import ingest_archive_task
             task = ingest_archive_task.delay(
                 job_id=job.id,
                 archive_url=archive_url,
@@ -237,7 +237,7 @@ class ArchiveHandler(BaseHandler):
             options={"allowed_import_paths": allowed_paths},
         )
         handler = DirectoryImportHandler(dir_context)
-        assets = await handler.handle(
+        assets, _ = await handler.handle(
             source_path=str(extract_dir),
             options={"copy_mode": False, "root_bundle_id": root_bundle.id},
         )

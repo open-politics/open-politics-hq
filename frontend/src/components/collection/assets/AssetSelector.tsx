@@ -30,6 +30,8 @@ import {
   View,
   ArrowDown01,
   RefreshCw,
+  Microscope,
+  Layers,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict } from 'date-fns';
@@ -52,7 +54,7 @@ import { Label } from '@/components/ui/label';
 import { BundleActivityIndicators } from './BundleActivityIndicators';
 import { useSemanticSearch } from '@/hooks/useSemanticSearch';
 import { useTextSearch } from '@/hooks/useTextSearch';
-import { useDatasetIngestionJobs } from '@/hooks/useDatasetIngestionJobs';
+import { useIngestionJobs } from '@/hooks/useIngestionJobs';
 import { 
   getAssetIcon, 
   formatAssetKind, 
@@ -96,6 +98,8 @@ export interface AssetTreeItem {
     is_pipeline_output?: boolean;
     pipeline_output_count?: number;
   };
+  /** For BundleView nodes (type bundle_view) */
+  bundleView?: import('@/client').BundleViewRead;
   children?: AssetTreeItem[];
   level: number;
   isExpanded: boolean;
@@ -108,6 +112,16 @@ export interface AssetTreeItem {
 // Re-export for backwards compatibility with other modules that may import from here
 export { getAssetIcon, formatAssetKind, getAssetBadgeClass } from './assetKindConfig';
 
+/** Parsed virtual folder ID: vfolder-{bundleId}__{urlencodedPath} */
+export function parseVfolderId(id: string): { bundleId: number; pathPrefix: string } | null {
+  if (!id.startsWith('vfolder-')) return null;
+  const parts = id.replace('vfolder-', '').split('__');
+  const bundleId = parseInt(parts[0], 10);
+  if (isNaN(bundleId)) return null;
+  const pathPrefix = parts.length > 1 ? decodeURIComponent(parts[1].replace(/\|/g, '/')) : '';
+  return { bundleId, pathPrefix };
+}
+
 interface AssetSelectorProps {
     selectedItems: Set<string>;
     onSelectionChange: (selectedIds: Set<string>) => void;
@@ -115,6 +129,8 @@ interface AssetSelectorProps {
     // For now, we'll keep it simple and just manage selection
     onItemView?: (item: AssetTreeItem) => void;
     onItemDoubleClick?: (item: AssetTreeItem) => void;
+    /** Called when user clicks "Annotate folder" on a virtual folder. Receives bundleId and pathPrefix for path_filter. */
+    onAnnotateFolder?: (params: { bundleId: number; pathPrefix: string }) => void;
     // Prop to allow parent component to provide actions for the dropdown menu
     renderItemActions?: (item: AssetTreeItem) => React.ReactNode;
     // External search control
@@ -125,6 +141,8 @@ interface AssetSelectorProps {
     compact?: boolean;
     // Filter to show only children of a specific bundle (for bundle detail view)
     filterByBundleId?: number | null;
+    /** Path prefix for BundleView - when set with filterByBundleId, fetches vfolder children */
+    pathPrefix?: string | null;
     sortBy?: 'name' | 'updated_at' | 'created_at';
     sortOrder?: 'asc' | 'desc';
 }
@@ -134,12 +152,14 @@ export default function AssetSelector({
     onSelectionChange,
     onItemView,
     onItemDoubleClick,
+    onAnnotateFolder,
     renderItemActions,
     initialSearchTerm = '',
     onSearchTermChange,
     autoFocusSearch = false,
     compact = false,
     filterByBundleId = null,
+    pathPrefix = null,
     sortBy = 'name',
     sortOrder = 'asc',
 }: AssetSelectorProps) {
@@ -168,13 +188,13 @@ export default function AssetSelector({
     moveBundleToParent,
   } = useBundleStore();
 
-  // Poll for active dataset ingestion jobs
-  const { activeJobs, getJob, refresh: refreshJobs } = useDatasetIngestionJobs({
+  // Poll for active ingestion jobs
+  const { activeJobs, getJob, refresh: refreshJobs } = useIngestionJobs({
     pollInterval: 2000,
     activeOnly: true,
     onJobComplete: async (job) => {
       // Refresh tree when a job completes
-      console.log('[AssetSelector] Dataset ingestion job completed:', job.id);
+      console.log('[AssetSelector] Ingestion job completed:', job.id);
       await useTreeStore.getState().clearCache();
       await fetchRootTree();
       toast.success(`Dataset ingestion completed: ${job.processed_files} files processed`);
@@ -464,10 +484,12 @@ export default function AssetSelector({
       fetchingRef.current = true;
       
       if (filterByBundleId !== null) {
-        // Fetch children of specific bundle
-        const bundleNodeId = `bundle-${filterByBundleId}`;
-        console.log('[AssetSelector] Fetching children for bundle:', bundleNodeId);
-        fetchChildren(bundleNodeId).finally(() => {
+        // Fetch children of bundle or vfolder (when pathPrefix = BundleView)
+        const rootNodeId = pathPrefix != null && pathPrefix !== ''
+          ? `vfolder-${filterByBundleId}__${encodeURIComponent(pathPrefix)}`
+          : `bundle-${filterByBundleId}`;
+        console.log('[AssetSelector] Fetching children for:', rootNodeId);
+        fetchChildren(rootNodeId).finally(() => {
           fetchingRef.current = false;
         });
       } else {
@@ -478,7 +500,7 @@ export default function AssetSelector({
         });
       }
     }
-  }, [activeInfospace?.id, filterByBundleId, fetchRootTree, fetchChildren]);
+  }, [activeInfospace?.id, filterByBundleId, pathPrefix, fetchRootTree, fetchChildren]);
 
   // NEW: Restore expanded state after data loads - fixes issue where bundles appear open but have no children
   // Optimized to only run when necessary
@@ -638,6 +660,32 @@ export default function AssetSelector({
         source_id: null,
         source_metadata: node.source_metadata || null,
       } as AssetRead;
+    } else if (node.type === 'bundle_view') {
+      // BundleView: minimal data for tree; full data fetched when viewing
+      const viewId = parseInt(node.id.replace('bundleview-', ''));
+      const bundleView = {
+        id: viewId,
+        uuid: '',
+        name: node.name,
+        source_bundle_id: node.parent_id ? parseInt(node.parent_id.replace('bundle-', '')) : 0,
+        path_prefix: node.path_prefix || '',
+        infospace_id: activeInfospace?.id || 0,
+        user_id: 0,
+        created_at: node.created_at || node.updated_at,
+        updated_at: node.updated_at,
+      } as import('@/client').BundleViewRead;
+      return {
+        id: node.id,
+        type: 'folder',
+        name: node.name,
+        level,
+        isExpanded,
+        isSelected,
+        parentId: node.parent_id || undefined,
+        isContainer: true,
+        children,
+        bundleView,
+      };
     } else if (node.type === 'bundle') {
       const bundleId = parseInt(node.id.replace('bundle-', ''));
       bundle = {
@@ -672,13 +720,13 @@ export default function AssetSelector({
     
     return {
       id: node.id,
-      type: (node.type === 'bundle' || node.type === 'virtual_folder') ? 'folder' : 'asset',
+      type: (node.type === 'bundle' || node.type === 'virtual_folder' || node.type === 'bundle_view') ? 'folder' : 'asset',
       name: node.name,
       level,
       isExpanded,
       isSelected,
       parentId: node.parent_id || undefined,
-      isContainer: node.type === 'bundle' || node.type === 'virtual_folder' || node.is_container || undefined,
+      isContainer: node.type === 'bundle' || node.type === 'virtual_folder' || node.type === 'bundle_view' || node.is_container || undefined,
       children,
       asset,
       bundle,
@@ -707,8 +755,11 @@ export default function AssetSelector({
   const assetTree = useMemo(() => {
     // Use filtered bundle children if filterByBundleId is set, otherwise use root nodes
     // Keep showing previous data during refresh to prevent empty state
-    const nodesToRender = filterByBundleId !== null 
-      ? (childrenCache.get(`bundle-${filterByBundleId}`) || previousChildrenCacheRef.current.get(`bundle-${filterByBundleId}`) || [])
+    const bundleRootNodeId = filterByBundleId != null && pathPrefix != null && pathPrefix !== ''
+      ? `vfolder-${filterByBundleId}__${encodeURIComponent(pathPrefix)}`
+      : filterByBundleId != null ? `bundle-${filterByBundleId}` : null;
+    const nodesToRender = bundleRootNodeId !== null 
+      ? (childrenCache.get(bundleRootNodeId) || previousChildrenCacheRef.current.get(bundleRootNodeId) || [])
       : (rootNodes.length > 0 ? rootNodes : previousRootNodesRef.current);
     
     // Update refs for next render
@@ -781,7 +832,7 @@ export default function AssetSelector({
         return sortedItems.map(item => ({ ...item, children: item.children ? sortItemsRecursively(item.children) : undefined }));
     };
     return sortItemsRecursively(tree);
-  }, [rootNodes, childrenCache, expandedItems, selectedItems, sortOption, filterByBundleId, convertTreeNodeToTreeItem]);
+  }, [rootNodes, childrenCache, expandedItems, selectedItems, sortOption, filterByBundleId, pathPrefix, convertTreeNodeToTreeItem]);
   
   // Convert semantic results to AssetTreeItems using existing conversion utilities
   // Reuses: AssetRead -> TreeNode -> AssetTreeItem (same pattern as tree store)
@@ -997,6 +1048,12 @@ export default function AssetSelector({
         // Create enhanced tree item with full bundle data
         onItemView({ ...item, bundle: fullBundle });
       }
+    } else if (item.type === 'folder' && item.bundleView) {
+      const viewId = item.bundleView.id;
+      const fullView = await useTreeStore.getState().getFullBundleView(viewId);
+      if (fullView) {
+        onItemView({ ...item, bundleView: fullView });
+      }
     } else {
       onItemView(item);
     }
@@ -1017,6 +1074,12 @@ export default function AssetSelector({
           onItemDoubleClick({ ...item, bundle: fullBundle });
           return;
         }
+      } else if (item.type === 'folder' && item.bundleView) {
+        const fullView = await useTreeStore.getState().getFullBundleView(item.bundleView.id);
+        if (fullView) {
+          onItemDoubleClick({ ...item, bundleView: fullView });
+          return;
+        }
       }
       onItemDoubleClick(item);
     } else if (item.type === 'folder') {
@@ -1028,6 +1091,12 @@ export default function AssetSelector({
         const fullAsset = await useTreeStore.getState().getFullAsset(item.asset.id);
         if (fullAsset) {
           onItemView({ ...item, asset: fullAsset });
+          return;
+        }
+      } else if (item.type === 'folder' && item.bundleView) {
+        const fullView = await useTreeStore.getState().getFullBundleView(item.bundleView.id);
+        if (fullView) {
+          onItemView({ ...item, bundleView: fullView });
           return;
         }
       }
@@ -1472,8 +1541,64 @@ export default function AssetSelector({
       );
     }
 
+    // BundleView (named subset): like bundle, double-click opens detail
+    if (item.type === 'folder' && item.bundleView) {
+      return (
+        <div key={item.id}>
+          <div
+            data-item-index={itemIndex}
+            className={cn("group flex items-center mb-0.5 justify-between gap-2 rounded-md hover:bg-muted cursor-pointer transition-colors border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 w-full overflow-hidden", compact ? "py-1 px-2" : "py-2 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50", isFocused && "ring-1 ring-inset ring-primary")}
+            style={getIndentationStyle(item.level)}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (bundleClickTimeoutRef.current) clearTimeout(bundleClickTimeoutRef.current);
+              bundleClickTimeoutRef.current = setTimeout(() => {
+                toggleExpanded(item.id);
+                bundleClickTimeoutRef.current = null;
+              }, 100);
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              if (bundleClickTimeoutRef.current) clearTimeout(bundleClickTimeoutRef.current);
+              handleItemDoubleClickInternal(item);
+            }}
+          >
+            <div className="ml-1 w-4 h-4 flex items-center justify-center shrink-0">
+              {canExpand && (
+                <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => { e.stopPropagation(); toggleExpanded(item.id); }}>
+                  {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <motion.div animate={{ rotate: item.isExpanded ? 90 : 0 }}><ChevronRight className="h-3 w-3" /></motion.div>}
+                </Button>
+              )}
+            </div>
+            <div className="w-4 h-4 flex items-center justify-center shrink-0">
+              <Layers className="h-4 w-4 text-violet-500" title="Bundle view" />
+            </div>
+            <div className="flex-1 min-w-0 overflow-hidden">
+              <span className="text-sm font-medium truncate">{item.name}</span>
+            </div>
+            {renderItemActions ? renderItemActions(item) : (
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
+            )}
+          </div>
+          <AnimatePresence initial={false}>
+            {item.isExpanded && item.children && (
+              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden max-h-72 overflow-y-auto scrollbar-hide">
+                <div className="ml-0 pl-0 space-y-0.5 pb-2 pt-1">
+                  {item.children.map(child => {
+                    const childIndex = flattenedItemsRef.current.findIndex(fi => fi.id === child.id);
+                    return renderTreeItem(child, childIndex >= 0 ? childIndex : undefined);
+                  })}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      );
+    }
+
     // Virtual folder (directory import path abstraction): folder icon, expandable, no bundle
     if (item.type === 'folder' && !item.bundle) {
+      const vfolderParams = item.id.startsWith('vfolder-') ? parseVfolderId(item.id) : null;
       return (
         <div key={item.id}>
           <div
@@ -1504,6 +1629,23 @@ export default function AssetSelector({
             <div className="flex-1 min-w-0 overflow-hidden">
               <span className="text-sm font-normal truncate text-muted-foreground flex-1">{item.name}</span>
             </div>
+            {vfolderParams && onAnnotateFolder && (
+              <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAnnotateFolder(vfolderParams);
+                  }}
+                  title="Annotate this folder"
+                >
+                  <Microscope className="h-3.5 w-3.5 mr-1" />
+                  Annotate folder
+                </Button>
+              </div>
+            )}
           </div>
           <AnimatePresence initial={false}>
             {item.isExpanded && item.children && (

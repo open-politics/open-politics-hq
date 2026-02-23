@@ -108,7 +108,7 @@ def delete_bundle(
     bundle = db.get(Bundle, bundle_id)
     if not bundle:
         raise HTTPException(status_code=404, detail="Bundle not found")
-    validate_infospace_access(db, bundle.infospace_id, current_user.id)
+    validate_infospace_access(db, bundle.infospace_id, current_user.id, require_editor=True)
     
     success = service.delete_bundle(bundle_id=bundle_id, infospace_id=bundle.infospace_id, user_id=current_user.id)
     if not success:
@@ -144,7 +144,7 @@ def bulk_delete_bundles(
                 failed_count += 1
                 continue
             
-            validate_infospace_access(db, bundle.infospace_id, current_user.id)
+            validate_infospace_access(db, bundle.infospace_id, current_user.id, require_editor=True)
             
             success = service.delete_bundle(
                 bundle_id=bundle_id,

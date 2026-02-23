@@ -58,6 +58,9 @@ def task_context(
     if "geocoding" in providers:
         from app.api.modules.foundation_service_providers.factory import create_geocoding_provider
         prov_dict["geocoding"] = create_geocoding_provider(settings)
+    if "ocr" in providers:
+        from app.api.modules.foundation_service_providers.factory import create_ocr_provider
+        prov_dict["ocr"] = create_ocr_provider(settings)
 
     with Session(engine) as session:
         yield session, prov_dict

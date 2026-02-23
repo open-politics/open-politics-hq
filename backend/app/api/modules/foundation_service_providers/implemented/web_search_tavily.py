@@ -150,4 +150,4 @@ class TavilyWebSearchProvider(WebSearchProvider):
         if date:
             logger.warning(f"Tavily provider does not support the 'date' filter. It will be ignored.")
         
-        return await self.search(query=f'"{entity}"', limit=limit) 
+        return await self.search(query=f'"{entity}"', limit=limit)

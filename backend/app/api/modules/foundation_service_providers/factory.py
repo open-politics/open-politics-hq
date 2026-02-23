@@ -4,10 +4,8 @@ from typing import Optional
 from app.core.config import AppSettings # To inject settings
 from app.api.modules.foundation_service_providers.base import (
     StorageProvider,
-    ClassificationProvider,
     ScrapingProvider,
     WebSearchProvider,
-    GeospatialProvider,
     EmbeddingProvider,
     GeocodingProvider,
 )
@@ -31,7 +29,7 @@ from app.api.modules.foundation_service_providers.implemented.language_mistral i
 
 # from app.api.modules.foundation_service_providers.implemented.scraping_playwright import PlaywrightScrapingProvider # Example
 
-from app.api.modules.foundation_service_providers.implemented.search_tavily import TavilyWebSearchProvider
+from app.api.modules.foundation_service_providers.implemented.web_search_tavily import TavilyWebSearchProvider
 # from app.api.modules.foundation_service_providers.implemented.search_elasticsearch import ElasticsearchSearchProvider # Example
 
 # Embedding provider implementations
@@ -141,8 +139,7 @@ def create_model_registry(settings: AppSettings) -> ModelRegistryService:
     return registry
 
 def create_scraping_provider(settings: AppSettings) -> ScrapingProvider:
-    # Default to newspaper4k
-    provider_type = 'newspaper4k'
+    provider_type = getattr(settings, 'SCRAPING_PROVIDER_TYPE', 'newspaper4k').lower()
     logger.info(f"Factory: Creating scraping provider of type: {provider_type}")
 
     if provider_type == "newspaper4k":
@@ -171,7 +168,7 @@ def create_scraping_provider(settings: AppSettings) -> ScrapingProvider:
         except ImportError as e:
             logger.warning(f"newspaper4k not available: {e}")
     else:
-        raise ValueError(f"Unsupported scraping provider type configured: {settings.SCRAPING_PROVIDER_TYPE}")
+        raise ValueError(f"Unsupported scraping provider type configured: {provider_type}")
 
 def create_web_search_provider(settings: AppSettings) -> WebSearchProvider:
     assert settings.TAVILY_API_KEY is not None, "TAVILY_API_KEY is required for the Tavily web search provider."
@@ -193,19 +190,15 @@ def create_embedding_provider(settings: AppSettings) -> EmbeddingProvider:
         return JinaEmbeddingProvider(api_key=jina_api_key, default_model=default_model)
     
     elif provider_type == "openai":
-        # Placeholder for future OpenAI implementation
-        # if not settings.OPENAI_API_KEY: raise ValueError("OPENAI_API_KEY required for OpenAI embeddings")
-        # return OpenAIEmbeddingProvider(api_key=settings.OPENAI_API_KEY, model_name=settings.DEFAULT_EMBEDDING_MODEL_NAME)
-        raise ValueError("OpenAI embedding provider not yet implemented")
-    
+        api_key = getattr(settings, 'OPENAI_API_KEY', None) or "placeholder"
+        return OpenAIEmbeddingProvider(api_key=api_key)
+
+    elif provider_type == "voyage":
+        api_key = getattr(settings, 'VOYAGE_API_KEY', None) or "placeholder"
+        return VoyageAIEmbeddingProvider(api_key=api_key)
+
     else:
         raise ValueError(f"Unsupported embedding provider type: {provider_type}")
-
-def create_geospatial_provider(settings: AppSettings) -> GeospatialProvider:
-    provider_type = settings.GEOSPATIAL_PROVIDER_TYPE.lower()
-    logger.info(f"Factory: Creating geospatial provider of type: {provider_type}")
-    raise ValueError(f"Unsupported geospatial provider type configured: {provider_type}") 
-
 
 def create_geocoding_provider(settings: AppSettings) -> GeocodingProvider:
     """
@@ -240,6 +233,22 @@ def create_geocoding_provider(settings: AppSettings) -> GeocodingProvider:
     
     else:
         raise ValueError(f"Unsupported geocoding provider type: {provider_type}")
+
+
+def create_ocr_provider(settings: AppSettings):
+    """Create OCR provider for text extraction from images. Default: tesseract."""
+    provider_type = getattr(settings, "OCR_PROVIDER_TYPE", "tesseract").lower()
+    if provider_type == "tesseract":
+        from app.api.modules.foundation_service_providers.implemented.ocr_tesseract import TesseractOcrProvider
+        return TesseractOcrProvider()
+    elif provider_type == "ocrmypdf":
+        raise ValueError("ocrmypdf OCR provider not yet implemented; use tesseract")
+    elif provider_type == "ollama":
+        from app.api.modules.foundation_service_providers.implemented.ocr_ollama import OllamaOcrProvider
+        ollama_base_url = getattr(settings, "OLLAMA_BASE_URL", "http://host.docker.internal:11434")
+        ollama_ocr_model = getattr(settings, "OLLAMA_OCR_MODEL", "llava")
+        return OllamaOcrProvider(base_url=ollama_base_url, model=ollama_ocr_model)
+    raise ValueError(f"Unsupported OCR provider type: {provider_type}")
 
 
 # Global embedding registry instance

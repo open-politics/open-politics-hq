@@ -3,7 +3,7 @@
 import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
-import type { GetRegistrationStatsResponse, ListAnalysisAdaptersResponse, ExecuteAnalysisAdapterData, ExecuteAnalysisAdapterResponse, PromoteFragmentData, PromoteFragmentResponse, DeleteFragmentData, DeleteFragmentResponse2, CreateRunData, CreateRunResponse, ListRunsData, ListRunsResponse, CreateRun1Data, CreateRun1Response, ListRuns1Data, ListRuns1Response, GetRunData, GetRunResponse, UpdateRunData, UpdateRunResponse, DeleteRunData, DeleteRunResponse, RetryFailedAnnotationsData, RetryFailedAnnotationsResponse, CreatePackageFromRunEndpointData, CreatePackageFromRunEndpointResponse, ExportRunAnnotationsCsvData, ExportRunAnnotationsCsvResponse, CreateAnnotationData, CreateAnnotationResponse, CreateAnnotation1Data, CreateAnnotation1Response, ListAnnotationsData, ListAnnotationsResponse, ListAnnotations1Data, ListAnnotations1Response, CreateAnnotation2Data, CreateAnnotation2Response, CreateAnnotation3Data, CreateAnnotation3Response, ListAnnotations2Data, ListAnnotations2Response, ListAnnotations3Data, ListAnnotations3Response, GetAnnotationData, GetAnnotationResponse, GetAnnotation1Data, GetAnnotation1Response, UpdateAnnotationData, UpdateAnnotationResponse, UpdateAnnotation1Data, UpdateAnnotation1Response, DeleteAnnotationData, DeleteAnnotationResponse, DeleteAnnotation1Data, DeleteAnnotation1Response, CreateBatchAnnotationsData, CreateBatchAnnotationsResponse, CreateBatchAnnotations1Data, CreateBatchAnnotations1Response, GetRunResultsData, GetRunResultsResponse, GetRunResults1Data, GetRunResults1Response, RetrySingleAnnotationData, RetrySingleAnnotationResponse, RetrySingleAnnotation1Data, RetrySingleAnnotation1Response, CurateFragmentsData, CurateFragmentsResponse, CurateFragments1Data, CurateFragments1Response, RemoveCurationData, RemoveCurationResponse, RemoveCuration1Data, RemoveCuration1Response, GetCuratedTripletsData, GetCuratedTripletsResponse, GetCuratedTriplets1Data, GetCuratedTriplets1Response, CreateAnnotationSchemaData, CreateAnnotationSchemaResponse, ListAnnotationSchemasData, ListAnnotationSchemasResponse, CreateAnnotationSchema1Data, CreateAnnotationSchema1Response, ListAnnotationSchemas1Data, ListAnnotationSchemas1Response, GetAnnotationSchemaData, GetAnnotationSchemaResponse, UpdateAnnotationSchemaData, UpdateAnnotationSchemaResponse, DeleteAnnotationSchemaData, DeleteAnnotationSchemaResponse, RestoreAnnotationSchemaData, RestoreAnnotationSchemaResponse, ReadyzResponse, LivenessResponse, HealthzResponse, CreateAssetData, CreateAssetResponse, CreateAsset1Data, CreateAsset1Response, ListAssetsData, ListAssetsResponse, ListAssets1Data, ListAssets1Response, CreateAsset2Data, CreateAsset2Response, CreateAsset3Data, CreateAsset3Response, ListAssets2Data, ListAssets2Response, ListAssets3Data, ListAssets3Response, BatchCreateAssetsData, BatchCreateAssetsResponse, BatchCreateAssets1Data, BatchCreateAssets1Response, UploadFileData, UploadFileResponse, UploadFile1Data, UploadFile1Response, IngestUrlData, IngestUrlResponse, IngestUrl1Data, IngestUrl1Response, IngestTextData, IngestTextResponse, IngestText1Data, IngestText1Response, ComposeArticleData, ComposeArticleResponse, ComposeArticle1Data, ComposeArticle1Response, BulkIngestUrlsData, BulkIngestUrlsResponse, BulkIngestUrls1Data, BulkIngestUrls1Response, IngestSearchResultsData, IngestSearchResultsResponse, IngestSearchResults1Data, IngestSearchResults1Response, MaterializeCsvFromRowsData, MaterializeCsvFromRowsResponse, MaterializeCsvFromRows1Data, MaterializeCsvFromRows1Response, ReprocessAssetData, ReprocessAssetResponse, ReprocessAsset1Data, ReprocessAsset1Response, UpdateAssetContentData, UpdateAssetContentResponse, UpdateAssetContent1Data, UpdateAssetContent1Response, DiscoverRssFeedsData, DiscoverRssFeedsResponse, DiscoverRssFeeds1Data, DiscoverRssFeeds1Response, PreviewRssFeedData, PreviewRssFeedResponse, PreviewRssFeed1Data, PreviewRssFeed1Response, IngestSelectedArticlesData, IngestSelectedArticlesResponse, IngestSelectedArticles1Data, IngestSelectedArticles1Response, GetAssetData, GetAssetResponse, GetAsset1Data, GetAsset1Response, UpdateAssetData, UpdateAssetResponse, UpdateAsset1Data, UpdateAsset1Response, DeleteAssetData, DeleteAssetResponse, DeleteAsset1Data, DeleteAsset1Response, GetAssetChildrenData, GetAssetChildrenResponse, GetAssetChildren1Data, GetAssetChildren1Response, BulkDeleteAssetsData, BulkDeleteAssetsResponse, BulkDeleteAssets1Data, BulkDeleteAssets1Response, TransferAssetsData, TransferAssetsResponse, TransferAssets1Data, TransferAssets1Response, GetSupportedContentTypesResponse, GetSupportedContentTypes1Response, CreateAssetsBackgroundBulkData, CreateAssetsBackgroundBulkResponse, CreateAssetsBackgroundBulk1Data, CreateAssetsBackgroundBulk1Response, CreateAssetsBackgroundUrlsData, CreateAssetsBackgroundUrlsResponse, CreateAssetsBackgroundUrls1Data, CreateAssetsBackgroundUrls1Response, AddFilesToBundleBackgroundData, AddFilesToBundleBackgroundResponse, AddFilesToBundleBackground1Data, AddFilesToBundleBackground1Response, GetTaskStatusData, GetTaskStatusResponse, GetTaskStatus1Data, GetTaskStatus1Response, IngestRssFeedsFromAwesomeData, IngestRssFeedsFromAwesomeResponse, IngestRssFeedsFromAwesome1Data, IngestRssFeedsFromAwesome1Response, CreateBackupData, CreateBackupResponse, ListBackupsData, ListBackupsResponse, ListAllUserBackupsData, ListAllUserBackupsResponse, GetBackupData, GetBackupResponse, UpdateBackupData, UpdateBackupResponse, DeleteBackupData, DeleteBackupResponse, RestoreBackupData, RestoreBackupResponse, CreateBackupShareLinkData, CreateBackupShareLinkResponse, DownloadSharedBackupData, DownloadSharedBackupResponse, CleanupExpiredBackupsResponse, GetInfospacesBackupOverviewData, GetInfospacesBackupOverviewResponse, TriggerBackupAllInfospacesData, TriggerBackupAllInfospacesResponse, TriggerBackupSpecificInfospacesData, TriggerBackupSpecificInfospacesResponse, CreateBundleData, CreateBundleResponse, GetBundlesData, GetBundlesResponse, GetBundleData, GetBundleResponse, UpdateBundleData, UpdateBundleResponse, DeleteBundleData, DeleteBundleResponse, BulkDeleteBundlesData, BulkDeleteBundlesResponse, AddAssetToBundleData, AddAssetToBundleResponse, RemoveAssetFromBundleData, RemoveAssetFromBundleResponse, GetAssetsInBundleData, GetAssetsInBundleResponse, TransferBundleData, TransferBundleResponse, MoveBundleToParentData, MoveBundleToParentResponse, GetBundleHierarchyData, GetBundleHierarchyResponse, GetRootBundlesData, GetRootBundlesResponse, GetBulkBundleAssetsData, GetBulkBundleAssetsResponse, ListEntitiesData, ListEntitiesResponse, CreateEntityData, CreateEntityResponse, UpdateEntityData, UpdateEntityResponse, DeleteEntityData, DeleteEntityResponse, MergeEntitiesData, MergeEntitiesResponse, TriggerResolutionData, TriggerResolutionResponse, ListConversationsData, ListConversationsResponse, CreateConversationData, CreateConversationResponse, GetConversationData, GetConversationResponse, UpdateConversationData, UpdateConversationResponse, DeleteConversationData, DeleteConversationResponse, AddMessageToConversationData, AddMessageToConversationResponse, GetConversationMessagesData, GetConversationMessagesResponse, ChunkSingleAssetData, ChunkSingleAssetResponse, ChunkMultipleAssetsData, ChunkMultipleAssetsResponse, GetAssetChunksData, GetAssetChunksResponse, RemoveAssetChunksData, RemoveAssetChunksResponse, GetChunkingStatisticsData, GetChunkingStatisticsResponse, CreateDirectoryImportJobData, CreateDirectoryImportJobResponse, TriggerBatchProcessPendingData, TriggerBatchProcessPendingResponse, TriggerBatchEnrichData, TriggerBatchEnrichResponse, GetProcessingStatusData, GetProcessingStatusResponse, ListDatasetJobsData, ListDatasetJobsResponse, GetDatasetJobStatusData, GetDatasetJobStatusResponse, DeleteDatasetJobData, DeleteDatasetJobResponse, GetDatasetJobByUuidData, GetDatasetJobByUuidResponse, CreateArchiveIngestionJobData, CreateArchiveIngestionJobResponse, CancelDatasetJobData, CancelDatasetJobResponse, CreateDatasetData, CreateDatasetResponse, ListDatasetsData, ListDatasetsResponse, CreateDataset1Data, CreateDataset1Response, ListDatasets1Data, ListDatasets1Response, GetDatasetData, GetDatasetResponse, UpdateDatasetData, UpdateDatasetResponse, DeleteDatasetData, DeleteDatasetResponse, ExportDatasetData, ExportDatasetResponse, ImportDatasetData, ImportDatasetResponse, ImportDatasetFromTokenData, ImportDatasetFromTokenResponse, GenerateInfospaceEmbeddingsData, GenerateInfospaceEmbeddingsResponse, GenerateAssetEmbeddingsData, GenerateAssetEmbeddingsResponse, GetEmbeddingStatsData, GetEmbeddingStatsResponse, SemanticSearchData, SemanticSearchResponse2, ClearInfospaceEmbeddingsData, ClearInfospaceEmbeddingsResponse, DiscoverEmbeddingModelsData, DiscoverEmbeddingModelsResponse, ListAvailableEmbeddingModelsResponse, FileUploadData, FileUploadResponse2, FileDownloadData, FileDownloadResponse, ListFilesData, ListFilesResponse, DeleteFileData, DeleteFileResponse, StreamFileData, StreamFileResponse, SaveFilterData, SaveFilterResponse, ListFiltersResponse, GetFilterData, GetFilterResponse, DeleteFilterData, DeleteFilterResponse, TestFilterData, TestFilterResponse, GetBasicFilterExamplesResponse, GetAdvancedFilterExamplesResponse, CreateThresholdFilterData, CreateThresholdFilterResponse, CreateRangeFilterData, CreateRangeFilterResponse, CreateKeywordFilterData, CreateKeywordFilterResponse, CreateFlowData, CreateFlowResponse, ListFlowsData, ListFlowsResponse, CreateFlow1Data, CreateFlow1Response, ListFlows1Data, ListFlows1Response, GetFlowData, GetFlowResponse, UpdateFlowData, UpdateFlowResponse, DeleteFlowData, DeleteFlowResponse, ActivateFlowData, ActivateFlowResponse, PauseFlowData, PauseFlowResponse, TriggerFlowExecutionData, TriggerFlowExecutionResponse, ListFlowExecutionsData, ListFlowExecutionsResponse, GetFlowExecutionData, GetFlowExecutionResponse, GetPendingAssetsData, GetPendingAssetsResponse, ResetFlowCursorData, ResetFlowCursorResponse, CreateInfospaceData, CreateInfospaceResponse, ListInfospacesData, ListInfospacesResponse, CreateInfospace1Data, CreateInfospace1Response, ListInfospaces1Data, ListInfospaces1Response, GetInfospaceData, GetInfospaceResponse, UpdateInfospaceData, UpdateInfospaceResponse, DeleteInfospaceData, DeleteInfospaceResponse, GetInfospaceStatsData, GetInfospaceStatsResponse, ExportInfospaceData, ExportInfospaceResponse, ImportInfospaceData, ImportInfospaceResponse, IntelligenceChatData, IntelligenceChatResponse, ExecuteToolCallData, ExecuteToolCallResponse, ListAvailableModelsData, ListAvailableModelsResponse, ListUniversalToolsData, ListUniversalToolsResponse, GetInfospaceToolContextData, GetInfospaceToolContextResponse, LoginAccessTokenData, LoginAccessTokenResponse, TestTokenResponse, RecoverPasswordData, RecoverPasswordResponse, ResetPasswordData, ResetPasswordResponse, RecoverPasswordHtmlContentData, RecoverPasswordHtmlContentResponse, SearchContentData, SearchContentResponse, SearchContent1Data, SearchContent1Response, SearchAndIngestData, SearchAndIngestResponse2, CreateAssetsFromUrlsData, CreateAssetsFromUrlsResponse, CreateAssetsFromResultsData, CreateAssetsFromResultsResponse, CreateSearchHistoryData, CreateSearchHistoryResponse, ReadSearchHistoriesData, ReadSearchHistoriesResponse, CreateShareableLinkData, CreateShareableLinkResponse, GetShareableLinksData, GetShareableLinksResponse, GetShareableLinkByTokenData, GetShareableLinkByTokenResponse, UpdateShareableLinkData, UpdateShareableLinkResponse, DeleteShareableLinkData, DeleteShareableLinkResponse, AccessSharedResourceData, AccessSharedResourceResponse, ViewSharedResourceData, ViewSharedResourceResponse, GetSharingStatsData, GetSharingStatsResponse, ExportResourceData, ExportResourceResponse, ImportResourceData, ImportResourceResponse, ExportResourcesBatchData, ExportResourcesBatchResponse, ExportMixedBatchData, ExportMixedBatchResponse, StreamSharedAssetFileData, StreamSharedAssetFileResponse, DownloadSharedBundleData, DownloadSharedBundleResponse, DownloadSharedAssetFileData, DownloadSharedAssetFileResponse, ViewDatasetPackageSummaryData, ViewDatasetPackageSummaryResponse, ImportResourceFromTokenData, ImportResourceFromTokenResponse, CreateSourceData, CreateSourceResponse, ListSourcesData, ListSourcesResponse, CreateSource1Data, CreateSource1Response, ListSources1Data, ListSources1Response, GetSourceData, GetSourceResponse, UpdateSourceData, UpdateSourceResponse, DeleteSourceData, DeleteSourceResponse, TriggerSourceProcessingData, TriggerSourceProcessingResponse, TransferSourcesData, TransferSourcesResponse, CreateRssSourceData, CreateRssSourceResponse, ActivateStreamData, ActivateStreamResponse, PauseStreamData, PauseStreamResponse, PollSourceData, PollSourceResponse, GetStreamStatsData, GetStreamStatsResponse, GetPollHistoryData, GetPollHistoryResponse, InitiateDiscourseLoginResponse, InitiateDiscourseLogin1Response, HandleDiscourseSsoData, HandleDiscourseSsoResponse, HandleDiscourseSso1Data, HandleDiscourseSso1Response, HandleDiscourseLogoutResponse, HandleDiscourseLogout1Response, GetDiscourseSsoInfoResponse, GetDiscourseSsoInfo1Response, SyncUserToDiscourseData, SyncUserToDiscourseResponse, SyncUserToDiscourse1Data, SyncUserToDiscourse1Response, CompleteDiscourseSsoData, CompleteDiscourseSsoResponse, CompleteDiscourseSso1Data, CompleteDiscourseSso1Response, CreateTaskData, CreateTaskResponse, CreateTask1Data, CreateTask1Response, ListTasksData, ListTasksResponse, ListTasks1Data, ListTasks1Response, CreateTask2Data, CreateTask2Response, CreateTask3Data, CreateTask3Response, ListTasks2Data, ListTasks2Response, ListTasks3Data, ListTasks3Response, GetTaskData, GetTaskResponse, GetTask1Data, GetTask1Response, UpdateTaskData, UpdateTaskResponse, UpdateTask1Data, UpdateTask1Response, DeleteTaskData, DeleteTaskResponse, DeleteTask1Data, DeleteTask1Response, ExecuteTaskManuallyData, ExecuteTaskManuallyResponse, ExecuteTaskManually1Data, ExecuteTaskManually1Response, GetInfospaceTreeData, GetInfospaceTreeResponse, GetTreeChildrenData, GetTreeChildrenResponse, DeleteTreeNodesData, DeleteTreeNodesResponse, GetVirtualFolderChildrenData, GetVirtualFolderChildrenResponse, GetFeedAssetsData, GetFeedAssetsResponse, BatchGetAssetsData, BatchGetAssetsResponse, TextSearchAssetsData, TextSearchAssetsResponse, CreateUserBackupData, CreateUserBackupResponse, ListUserBackupsData, ListUserBackupsResponse, GetUserBackupData, GetUserBackupResponse, UpdateUserBackupData, UpdateUserBackupResponse, DeleteUserBackupData, DeleteUserBackupResponse, RestoreUserBackupData, RestoreUserBackupResponse, CreateUserBackupShareLinkData, CreateUserBackupShareLinkResponse, DownloadSharedUserBackupData, DownloadSharedUserBackupResponse, CleanupExpiredUserBackupsResponse, GetUsersBackupOverviewData, GetUsersBackupOverviewResponse, TriggerBackupAllUsersData, TriggerBackupAllUsersResponse, TriggerBackupSpecificUsersData, TriggerBackupSpecificUsersResponse, ReadUsersData, ReadUsersResponse, CreateUserData, CreateUserResponse, ReadUsers1Data, ReadUsers1Response, CreateUser1Data, CreateUser1Response, ReadUserMeResponse, UpdateUserMeData, UpdateUserMeResponse, UpdatePasswordMeData, UpdatePasswordMeResponse, SaveCredentialsData, SaveCredentialsResponse, ListCredentialProvidersResponse, DeleteCredentialData, DeleteCredentialResponse, UploadProfilePictureData, UploadProfilePictureResponse, UploadBackgroundImageData, UploadBackgroundImageResponse, GetUserPublicProfileData, GetUserPublicProfileResponse, GetProfilePictureData, GetProfilePictureResponse, GetBackgroundImageData, GetBackgroundImageResponse, DeleteBackgroundImageResponse, ListUserProfilesData, ListUserProfilesResponse, GetUserProfileStatsData, GetUserProfileStatsResponse, UpdateUserProfileData, UpdateUserProfileResponse, CreateUserOpenData, CreateUserOpenResponse, ReadUserByIdData, ReadUserByIdResponse, UpdateUserData, UpdateUserResponse, DeleteUserData, DeleteUserResponse, VerifyEmailData, VerifyEmailResponse, ResendVerificationData, ResendVerificationResponse, TestEmailData, TestEmailResponse, GetAvailableRssCountriesResponse, DiscoverCuratedRssFeedsData, DiscoverCuratedRssFeedsResponse, ExtractPdfTextData, ExtractPdfTextResponse, ExtractPdfMetadataData, ExtractPdfMetadataResponse, ScrapeArticleData, ScrapeArticleResponse, AnalyzeSourceData, AnalyzeSourceResponse, DiscoverRssFeedsFromSiteData, DiscoverRssFeedsFromSiteResponse, BrowseRssFeedData, BrowseRssFeedResponse, GetUnifiedProvidersResponse, GetProvidersResponse, PullOllamaModelData, PullOllamaModelResponse, GetOllamaAvailableModelsData, GetOllamaAvailableModelsResponse, RemoveOllamaModelData, RemoveOllamaModelResponse, GetGeocodingProvidersResponse, GeocodeLocationData, GeocodeLocationResponse, GeocodeLocationWithProviderData, GeocodeLocationWithProviderResponse, GetCountryDataData, GetCountryDataResponse } from './types.gen';
+import type { GetRegistrationStatsResponse, ListAnalysisAdaptersResponse, ExecuteAnalysisAdapterData, ExecuteAnalysisAdapterResponse, PromoteFragmentData, PromoteFragmentResponse, DeleteFragmentData, DeleteFragmentResponse2, CreateRunData, CreateRunResponse, ListRunsData, ListRunsResponse, CreateRun1Data, CreateRun1Response, ListRuns1Data, ListRuns1Response, GetRunData, GetRunResponse, UpdateRunData, UpdateRunResponse, DeleteRunData, DeleteRunResponse, RetryFailedAnnotationsData, RetryFailedAnnotationsResponse, CreatePackageFromRunEndpointData, CreatePackageFromRunEndpointResponse, ExportRunAnnotationsCsvData, ExportRunAnnotationsCsvResponse, CreateAnnotationData, CreateAnnotationResponse, CreateAnnotation1Data, CreateAnnotation1Response, ListAnnotationsData, ListAnnotationsResponse, ListAnnotations1Data, ListAnnotations1Response, CreateAnnotation2Data, CreateAnnotation2Response, CreateAnnotation3Data, CreateAnnotation3Response, ListAnnotations2Data, ListAnnotations2Response, ListAnnotations3Data, ListAnnotations3Response, GetAnnotationData, GetAnnotationResponse, GetAnnotation1Data, GetAnnotation1Response, UpdateAnnotationData, UpdateAnnotationResponse, UpdateAnnotation1Data, UpdateAnnotation1Response, DeleteAnnotationData, DeleteAnnotationResponse, DeleteAnnotation1Data, DeleteAnnotation1Response, CreateBatchAnnotationsData, CreateBatchAnnotationsResponse, CreateBatchAnnotations1Data, CreateBatchAnnotations1Response, GetRunResultsData, GetRunResultsResponse, GetRunResults1Data, GetRunResults1Response, RetrySingleAnnotationData, RetrySingleAnnotationResponse, RetrySingleAnnotation1Data, RetrySingleAnnotation1Response, CurateFragmentsData, CurateFragmentsResponse, CurateFragments1Data, CurateFragments1Response, RemoveCurationData, RemoveCurationResponse, RemoveCuration1Data, RemoveCuration1Response, GetCuratedTripletsData, GetCuratedTripletsResponse, GetCuratedTriplets1Data, GetCuratedTriplets1Response, CreateAnnotationSchemaData, CreateAnnotationSchemaResponse, ListAnnotationSchemasData, ListAnnotationSchemasResponse, CreateAnnotationSchema1Data, CreateAnnotationSchema1Response, ListAnnotationSchemas1Data, ListAnnotationSchemas1Response, GetAnnotationSchemaData, GetAnnotationSchemaResponse, UpdateAnnotationSchemaData, UpdateAnnotationSchemaResponse, DeleteAnnotationSchemaData, DeleteAnnotationSchemaResponse, RestoreAnnotationSchemaData, RestoreAnnotationSchemaResponse, ReadyzResponse, LivenessResponse, HealthzResponse, CreateAssetData, CreateAssetResponse, CreateAsset1Data, CreateAsset1Response, ListAssetsData, ListAssetsResponse, ListAssets1Data, ListAssets1Response, CreateAsset2Data, CreateAsset2Response, CreateAsset3Data, CreateAsset3Response, ListAssets2Data, ListAssets2Response, ListAssets3Data, ListAssets3Response, BatchCreateAssetsData, BatchCreateAssetsResponse, BatchCreateAssets1Data, BatchCreateAssets1Response, UploadFileData, UploadFileResponse, UploadFile1Data, UploadFile1Response, IngestUrlData, IngestUrlResponse, IngestUrl1Data, IngestUrl1Response, IngestTextData, IngestTextResponse, IngestText1Data, IngestText1Response, ComposeArticleData, ComposeArticleResponse, ComposeArticle1Data, ComposeArticle1Response, BulkIngestUrlsData, BulkIngestUrlsResponse, BulkIngestUrls1Data, BulkIngestUrls1Response, IngestSearchResultsData, IngestSearchResultsResponse, IngestSearchResults1Data, IngestSearchResults1Response, MaterializeCsvFromRowsData, MaterializeCsvFromRowsResponse, MaterializeCsvFromRows1Data, MaterializeCsvFromRows1Response, ReprocessAssetData, ReprocessAssetResponse, ReprocessAsset1Data, ReprocessAsset1Response, UpdateAssetContentData, UpdateAssetContentResponse, UpdateAssetContent1Data, UpdateAssetContent1Response, DiscoverRssFeedsData, DiscoverRssFeedsResponse, DiscoverRssFeeds1Data, DiscoverRssFeeds1Response, PreviewRssFeedData, PreviewRssFeedResponse, PreviewRssFeed1Data, PreviewRssFeed1Response, IngestSelectedArticlesData, IngestSelectedArticlesResponse, IngestSelectedArticles1Data, IngestSelectedArticles1Response, GetAssetData, GetAssetResponse, GetAsset1Data, GetAsset1Response, UpdateAssetData, UpdateAssetResponse, UpdateAsset1Data, UpdateAsset1Response, DeleteAssetData, DeleteAssetResponse, DeleteAsset1Data, DeleteAsset1Response, GetAssetChildrenData, GetAssetChildrenResponse, GetAssetChildren1Data, GetAssetChildren1Response, BulkDeleteAssetsData, BulkDeleteAssetsResponse, BulkDeleteAssets1Data, BulkDeleteAssets1Response, TransferAssetsData, TransferAssetsResponse, TransferAssets1Data, TransferAssets1Response, GetSupportedContentTypesResponse, GetSupportedContentTypes1Response, CreateAssetsBackgroundBulkData, CreateAssetsBackgroundBulkResponse, CreateAssetsBackgroundBulk1Data, CreateAssetsBackgroundBulk1Response, CreateAssetsBackgroundUrlsData, CreateAssetsBackgroundUrlsResponse, CreateAssetsBackgroundUrls1Data, CreateAssetsBackgroundUrls1Response, AddFilesToBundleBackgroundData, AddFilesToBundleBackgroundResponse, AddFilesToBundleBackground1Data, AddFilesToBundleBackground1Response, GetTaskStatusData, GetTaskStatusResponse, GetTaskStatus1Data, GetTaskStatus1Response, IngestRssFeedsFromAwesomeData, IngestRssFeedsFromAwesomeResponse, IngestRssFeedsFromAwesome1Data, IngestRssFeedsFromAwesome1Response, CreateBackupData, CreateBackupResponse, ListBackupsData, ListBackupsResponse, ListAllUserBackupsData, ListAllUserBackupsResponse, GetBackupData, GetBackupResponse, UpdateBackupData, UpdateBackupResponse, DeleteBackupData, DeleteBackupResponse, RestoreBackupData, RestoreBackupResponse, CreateBackupShareLinkData, CreateBackupShareLinkResponse, DownloadSharedBackupData, DownloadSharedBackupResponse, CleanupExpiredBackupsResponse, GetInfospacesBackupOverviewData, GetInfospacesBackupOverviewResponse, TriggerBackupAllInfospacesData, TriggerBackupAllInfospacesResponse, TriggerBackupSpecificInfospacesData, TriggerBackupSpecificInfospacesResponse, CreateBundleData, CreateBundleResponse, GetBundlesData, GetBundlesResponse, GetBundleData, GetBundleResponse, UpdateBundleData, UpdateBundleResponse, DeleteBundleData, DeleteBundleResponse, BulkDeleteBundlesData, BulkDeleteBundlesResponse, AddAssetToBundleData, AddAssetToBundleResponse, RemoveAssetFromBundleData, RemoveAssetFromBundleResponse, GetAssetsInBundleData, GetAssetsInBundleResponse, TransferBundleData, TransferBundleResponse, MoveBundleToParentData, MoveBundleToParentResponse, GetBundleHierarchyData, GetBundleHierarchyResponse, GetRootBundlesData, GetRootBundlesResponse, GetBulkBundleAssetsData, GetBulkBundleAssetsResponse, CreateBundleViewData, CreateBundleViewResponse, ListBundleViewsData, ListBundleViewsResponse, GetBundleViewData, GetBundleViewResponse, UpdateBundleViewData, UpdateBundleViewResponse, DeleteBundleViewData, DeleteBundleViewResponse, ListEntitiesData, ListEntitiesResponse, CreateEntityData, CreateEntityResponse, UpdateEntityData, UpdateEntityResponse, DeleteEntityData, DeleteEntityResponse, MergeEntitiesData, MergeEntitiesResponse, TriggerResolutionData, TriggerResolutionResponse, ListConversationsData, ListConversationsResponse, CreateConversationData, CreateConversationResponse, GetConversationData, GetConversationResponse, UpdateConversationData, UpdateConversationResponse, DeleteConversationData, DeleteConversationResponse, AddMessageToConversationData, AddMessageToConversationResponse, GetConversationMessagesData, GetConversationMessagesResponse, ChunkSingleAssetData, ChunkSingleAssetResponse, ChunkMultipleAssetsData, ChunkMultipleAssetsResponse, GetAssetChunksData, GetAssetChunksResponse, RemoveAssetChunksData, RemoveAssetChunksResponse, GetChunkingStatisticsData, GetChunkingStatisticsResponse, CreateDatasetData, CreateDatasetResponse, ListDatasetsData, ListDatasetsResponse, CreateDataset1Data, CreateDataset1Response, ListDatasets1Data, ListDatasets1Response, GetDatasetData, GetDatasetResponse, UpdateDatasetData, UpdateDatasetResponse, DeleteDatasetData, DeleteDatasetResponse, ExportDatasetData, ExportDatasetResponse, ImportDatasetData, ImportDatasetResponse, ImportDatasetFromTokenData, ImportDatasetFromTokenResponse, GenerateInfospaceEmbeddingsData, GenerateInfospaceEmbeddingsResponse, GenerateAssetEmbeddingsData, GenerateAssetEmbeddingsResponse, GetEmbeddingStatsData, GetEmbeddingStatsResponse, SemanticSearchData, SemanticSearchResponse2, ClearInfospaceEmbeddingsData, ClearInfospaceEmbeddingsResponse, DiscoverEmbeddingModelsData, DiscoverEmbeddingModelsResponse, ListAvailableEmbeddingModelsResponse, FileUploadData, FileUploadResponse2, FileDownloadData, FileDownloadResponse, ListFilesData, ListFilesResponse, DeleteFileData, DeleteFileResponse, StreamFileData, StreamFileResponse, SaveFilterData, SaveFilterResponse, ListFiltersResponse, GetFilterData, GetFilterResponse, DeleteFilterData, DeleteFilterResponse, TestFilterData, TestFilterResponse, GetBasicFilterExamplesResponse, GetAdvancedFilterExamplesResponse, CreateThresholdFilterData, CreateThresholdFilterResponse, CreateRangeFilterData, CreateRangeFilterResponse, CreateKeywordFilterData, CreateKeywordFilterResponse, CreateFlowData, CreateFlowResponse, ListFlowsData, ListFlowsResponse, CreateFlow1Data, CreateFlow1Response, ListFlows1Data, ListFlows1Response, GetFlowData, GetFlowResponse, UpdateFlowData, UpdateFlowResponse, DeleteFlowData, DeleteFlowResponse, ActivateFlowData, ActivateFlowResponse, PauseFlowData, PauseFlowResponse, TriggerFlowExecutionData, TriggerFlowExecutionResponse, ListFlowExecutionsData, ListFlowExecutionsResponse, GetFlowExecutionData, GetFlowExecutionResponse, GetPendingAssetsData, GetPendingAssetsResponse, ResetFlowCursorData, ResetFlowCursorResponse, CreateInfospaceData, CreateInfospaceResponse, ListInfospacesData, ListInfospacesResponse, CreateInfospace1Data, CreateInfospace1Response, ListInfospaces1Data, ListInfospaces1Response, GetInfospaceData, GetInfospaceResponse, UpdateInfospaceData, UpdateInfospaceResponse, DeleteInfospaceData, DeleteInfospaceResponse, InviteCollaboratorData, InviteCollaboratorResponse, ListCollaboratorsData, ListCollaboratorsResponse, RemoveCollaboratorData, RemoveCollaboratorResponse, GetInfospaceStatsData, GetInfospaceStatsResponse, ExportInfospaceData, ExportInfospaceResponse, ImportInfospaceData, ImportInfospaceResponse, CreateDirectoryImportJobData, CreateDirectoryImportJobResponse, TriggerBatchProcessPendingData, TriggerBatchProcessPendingResponse, TriggerBatchEnrichData, TriggerBatchEnrichResponse, GetProcessingStatusData, GetProcessingStatusResponse, ListIngestionJobsData, ListIngestionJobsResponse, GetIngestionJobStatusData, GetIngestionJobStatusResponse, DeleteIngestionJobData, DeleteIngestionJobResponse, GetIngestionJobByUuidData, GetIngestionJobByUuidResponse, CreateArchiveIngestionJobData, CreateArchiveIngestionJobResponse, CancelIngestionJobData, CancelIngestionJobResponse, ReconcileDirectoryData, ReconcileDirectoryResponse, EnableDirectoryWatchData, EnableDirectoryWatchResponse, GetWatchStatusData, GetWatchStatusResponse, IntelligenceChatData, IntelligenceChatResponse, ExecuteToolCallData, ExecuteToolCallResponse, ListAvailableModelsData, ListAvailableModelsResponse, ListUniversalToolsData, ListUniversalToolsResponse, GetInfospaceToolContextData, GetInfospaceToolContextResponse, ListKnowledgeGraphsData, ListKnowledgeGraphsResponse, CreateKnowledgeGraphData, CreateKnowledgeGraphResponse, GetKnowledgeGraphData, GetKnowledgeGraphResponse, UpdateKnowledgeGraphData, UpdateKnowledgeGraphResponse, DeleteKnowledgeGraphData, DeleteKnowledgeGraphResponse, LoginAccessTokenData, LoginAccessTokenResponse, TestTokenResponse, RecoverPasswordData, RecoverPasswordResponse, ResetPasswordData, ResetPasswordResponse, RecoverPasswordHtmlContentData, RecoverPasswordHtmlContentResponse, SearchContentData, SearchContentResponse, SearchContent1Data, SearchContent1Response, SearchAndIngestData, SearchAndIngestResponse2, CreateAssetsFromUrlsData, CreateAssetsFromUrlsResponse, CreateAssetsFromResultsData, CreateAssetsFromResultsResponse, CreateSearchHistoryData, CreateSearchHistoryResponse, ReadSearchHistoriesData, ReadSearchHistoriesResponse, CreateShareableLinkData, CreateShareableLinkResponse, GetShareableLinksData, GetShareableLinksResponse, GetShareableLinkByTokenData, GetShareableLinkByTokenResponse, UpdateShareableLinkData, UpdateShareableLinkResponse, DeleteShareableLinkData, DeleteShareableLinkResponse, AccessSharedResourceData, AccessSharedResourceResponse, ViewSharedResourceData, ViewSharedResourceResponse, GetSharingStatsData, GetSharingStatsResponse, ExportResourceData, ExportResourceResponse, ImportResourceData, ImportResourceResponse, ExportResourcesBatchData, ExportResourcesBatchResponse, ExportMixedBatchData, ExportMixedBatchResponse, StreamSharedAssetFileData, StreamSharedAssetFileResponse, DownloadSharedBundleData, DownloadSharedBundleResponse, DownloadSharedAssetFileData, DownloadSharedAssetFileResponse, ViewDatasetPackageSummaryData, ViewDatasetPackageSummaryResponse, ImportResourceFromTokenData, ImportResourceFromTokenResponse, CreateSourceData, CreateSourceResponse, ListSourcesData, ListSourcesResponse, CreateSource1Data, CreateSource1Response, ListSources1Data, ListSources1Response, GetSourceData, GetSourceResponse, UpdateSourceData, UpdateSourceResponse, DeleteSourceData, DeleteSourceResponse, TriggerSourceProcessingData, TriggerSourceProcessingResponse, TransferSourcesData, TransferSourcesResponse, CreateRssSourceData, CreateRssSourceResponse, ActivateStreamData, ActivateStreamResponse, PauseStreamData, PauseStreamResponse, PollSourceData, PollSourceResponse, GetStreamStatsData, GetStreamStatsResponse, GetPollHistoryData, GetPollHistoryResponse, InitiateDiscourseLoginResponse, InitiateDiscourseLogin1Response, HandleDiscourseSsoData, HandleDiscourseSsoResponse, HandleDiscourseSso1Data, HandleDiscourseSso1Response, HandleDiscourseLogoutResponse, HandleDiscourseLogout1Response, GetDiscourseSsoInfoResponse, GetDiscourseSsoInfo1Response, SyncUserToDiscourseData, SyncUserToDiscourseResponse, SyncUserToDiscourse1Data, SyncUserToDiscourse1Response, CompleteDiscourseSsoData, CompleteDiscourseSsoResponse, CompleteDiscourseSso1Data, CompleteDiscourseSso1Response, BrowseStorageData, BrowseStorageResponse, CreateTaskData, CreateTaskResponse, CreateTask1Data, CreateTask1Response, ListTasksData, ListTasksResponse, ListTasks1Data, ListTasks1Response, CreateTask2Data, CreateTask2Response, CreateTask3Data, CreateTask3Response, ListTasks2Data, ListTasks2Response, ListTasks3Data, ListTasks3Response, GetTaskData, GetTaskResponse, GetTask1Data, GetTask1Response, UpdateTaskData, UpdateTaskResponse, UpdateTask1Data, UpdateTask1Response, DeleteTaskData, DeleteTaskResponse, DeleteTask1Data, DeleteTask1Response, ExecuteTaskManuallyData, ExecuteTaskManuallyResponse, ExecuteTaskManually1Data, ExecuteTaskManually1Response, GetInfospaceTreeData, GetInfospaceTreeResponse, GetTreeChildrenData, GetTreeChildrenResponse, DeleteTreeNodesData, DeleteTreeNodesResponse, GetVirtualFolderChildrenData, GetVirtualFolderChildrenResponse, GetFeedAssetsData, GetFeedAssetsResponse, BatchGetAssetsData, BatchGetAssetsResponse, TextSearchAssetsData, TextSearchAssetsResponse, CreateUserBackupData, CreateUserBackupResponse, ListUserBackupsData, ListUserBackupsResponse, GetUserBackupData, GetUserBackupResponse, UpdateUserBackupData, UpdateUserBackupResponse, DeleteUserBackupData, DeleteUserBackupResponse, RestoreUserBackupData, RestoreUserBackupResponse, CreateUserBackupShareLinkData, CreateUserBackupShareLinkResponse, DownloadSharedUserBackupData, DownloadSharedUserBackupResponse, CleanupExpiredUserBackupsResponse, GetUsersBackupOverviewData, GetUsersBackupOverviewResponse, TriggerBackupAllUsersData, TriggerBackupAllUsersResponse, TriggerBackupSpecificUsersData, TriggerBackupSpecificUsersResponse, ReadUsersData, ReadUsersResponse, CreateUserData, CreateUserResponse, ReadUsers1Data, ReadUsers1Response, CreateUser1Data, CreateUser1Response, ReadUserMeResponse, UpdateUserMeData, UpdateUserMeResponse, UpdatePasswordMeData, UpdatePasswordMeResponse, SaveCredentialsData, SaveCredentialsResponse, ListCredentialProvidersResponse, DeleteCredentialData, DeleteCredentialResponse, UploadProfilePictureData, UploadProfilePictureResponse, UploadBackgroundImageData, UploadBackgroundImageResponse, GetUserPublicProfileData, GetUserPublicProfileResponse, GetProfilePictureData, GetProfilePictureResponse, GetBackgroundImageData, GetBackgroundImageResponse, DeleteBackgroundImageResponse, ListUserProfilesData, ListUserProfilesResponse, GetUserProfileStatsData, GetUserProfileStatsResponse, UpdateUserProfileData, UpdateUserProfileResponse, CreateUserOpenData, CreateUserOpenResponse, ReadUserByIdData, ReadUserByIdResponse, UpdateUserData, UpdateUserResponse, DeleteUserData, DeleteUserResponse, VerifyEmailData, VerifyEmailResponse, ResendVerificationData, ResendVerificationResponse, TestEmailData, TestEmailResponse, GetAvailableRssCountriesResponse, DiscoverCuratedRssFeedsData, DiscoverCuratedRssFeedsResponse, ExtractPdfTextData, ExtractPdfTextResponse, ExtractPdfMetadataData, ExtractPdfMetadataResponse, ScrapeArticleData, ScrapeArticleResponse, AnalyzeSourceData, AnalyzeSourceResponse, DiscoverRssFeedsFromSiteData, DiscoverRssFeedsFromSiteResponse, BrowseRssFeedData, BrowseRssFeedResponse, GetUnifiedProvidersResponse, GetProvidersResponse, PullOllamaModelData, PullOllamaModelResponse, GetOllamaAvailableModelsData, GetOllamaAvailableModelsResponse, RemoveOllamaModelData, RemoveOllamaModelResponse, GetGeocodingProvidersResponse, GeocodeLocationData, GeocodeLocationResponse, GeocodeLocationWithProviderData, GeocodeLocationWithProviderResponse, GetCountryDataData, GetCountryDataResponse } from './types.gen';
 
 export class AdminService {
     /**
@@ -3609,6 +3609,119 @@ export class BundlesService {
     }
 }
 
+export class BundleViewsService {
+    /**
+     * Create Bundle View
+     * Create a BundleView (named subset of a bundle).
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns BundleViewRead Successful Response
+     * @throws ApiError
+     */
+    public static createBundleView(data: CreateBundleViewData): CancelablePromise<CreateBundleViewResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/bundle-views',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * List Bundle Views
+     * List BundleViews in an infospace.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @returns BundleViewRead Successful Response
+     * @throws ApiError
+     */
+    public static listBundleViews(data: ListBundleViewsData): CancelablePromise<ListBundleViewsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/bundle-views',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Bundle View
+     * Get a BundleView by ID.
+     * @param data The data for the request.
+     * @param data.viewId
+     * @returns BundleViewRead Successful Response
+     * @throws ApiError
+     */
+    public static getBundleView(data: GetBundleViewData): CancelablePromise<GetBundleViewResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/bundle-views/{view_id}',
+            path: {
+                view_id: data.viewId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Update Bundle View
+     * Update a BundleView.
+     * @param data The data for the request.
+     * @param data.viewId
+     * @param data.requestBody
+     * @returns BundleViewRead Successful Response
+     * @throws ApiError
+     */
+    public static updateBundleView(data: UpdateBundleViewData): CancelablePromise<UpdateBundleViewResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/v1/bundle-views/{view_id}',
+            path: {
+                view_id: data.viewId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Delete Bundle View
+     * Delete a BundleView.
+     * @param data The data for the request.
+     * @param data.viewId
+     * @returns void Successful Response
+     * @throws ApiError
+     */
+    public static deleteBundleView(data: DeleteBundleViewData): CancelablePromise<DeleteBundleViewResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/bundle-views/{view_id}',
+            path: {
+                view_id: data.viewId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+}
+
 export class CanonicalEntitiesService {
     /**
      * List Entities
@@ -3617,7 +3730,7 @@ export class CanonicalEntitiesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.entityType
-     * @returns unknown Successful Response
+     * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
     public static listEntities(data: ListEntitiesData): CancelablePromise<ListEntitiesResponse> {
@@ -3639,17 +3752,10 @@ export class CanonicalEntitiesService {
     /**
      * Create Entity
      * Create a canonical entity manually.
-     *
-     * Body: {
-     * "canonical_name": str,
-     * "entity_type": str,
-     * "aliases": List[str] (optional),
-     * "properties": dict (optional)
-     * }
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
-     * @returns unknown Successful Response
+     * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
     public static createEntity(data: CreateEntityData): CancelablePromise<CreateEntityResponse> {
@@ -3670,17 +3776,11 @@ export class CanonicalEntitiesService {
     /**
      * Update Entity
      * Update a canonical entity (rename, edit aliases, properties).
-     *
-     * Body: {
-     * "canonical_name": str (optional),
-     * "aliases": List[str] (optional),
-     * "properties": dict (optional)
-     * }
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.entityId
      * @param data.requestBody
-     * @returns unknown Successful Response
+     * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
     public static updateEntity(data: UpdateEntityData): CancelablePromise<UpdateEntityResponse> {
@@ -3725,16 +3825,10 @@ export class CanonicalEntitiesService {
     /**
      * Merge Entities
      * Merge multiple entities into one canonical entity.
-     *
-     * Body: {
-     * "entity_ids": List[int],
-     * "canonical_name": str (optional, uses first entity's name if not provided),
-     * "keep_id": int (optional, which entity ID to keep, defaults to first)
-     * }
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
-     * @returns unknown Successful Response
+     * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
     public static mergeEntities(data: MergeEntitiesData): CancelablePromise<MergeEntitiesResponse> {
@@ -3755,12 +3849,6 @@ export class CanonicalEntitiesService {
     /**
      * Trigger Resolution
      * Trigger automatic entity resolution for raw entity mentions.
-     *
-     * Body: {
-     * "raw_entities": List[{"name": str, "type": str}],
-     * "similarity_threshold": float (optional, default 0.85),
-     * "use_embeddings": bool (optional, default true)
-     * }
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
@@ -4063,267 +4151,6 @@ export class ChunkingService {
             query: {
                 asset_id: data.assetId,
                 infospace_id: data.infospaceId
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-}
-
-export class DatasetJobsService {
-    /**
-     * Create Directory Import Job
-     * Import files from a local directory.
-     *
-     * Copy mode (default): Copies files to storage, processes via FileHandler. Works with MinIO or local_fs.
-     * Reference-only (copy_mode=False): Creates assets with blob_path pointing to source. No copying.
-     *
-     * Source path must be under ALLOWED_IMPORT_PATHS.
-     * Returns job ID for tracking progress via /dataset-jobs/{job_id}.
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.requestBody
-     * @returns DatasetIngestionJobRead Successful Response
-     * @throws ApiError
-     */
-    public static createDirectoryImportJob(data: CreateDirectoryImportJobData): CancelablePromise<CreateDirectoryImportJobResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/infospaces/{infospace_id}/import-directory',
-            path: {
-                infospace_id: data.infospaceId
-            },
-            body: data.requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Trigger Batch Process Pending
-     * Trigger batch processing of PENDING assets in a bundle.
-     *
-     * After directory import (reference mode), assets are created with PENDING status.
-     * This endpoint starts background processing (PDF extraction, CSV row creation).
-     * Processing runs in self-chaining batches until all PENDING assets are done.
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.bundleId
-     * @param data.batchSize
-     * @returns BatchProcessResponse Successful Response
-     * @throws ApiError
-     */
-    public static triggerBatchProcessPending(data: TriggerBatchProcessPendingData): CancelablePromise<TriggerBatchProcessPendingResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/process-pending',
-            path: {
-                infospace_id: data.infospaceId,
-                bundle_id: data.bundleId
-            },
-            query: {
-                batch_size: data.batchSize
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Trigger Batch Enrich
-     * Trigger batch enrichment for assets in a bundle missing a facet.
-     *
-     * Runs enrichers (geocoding, etc.) on assets that don't yet have the target
-     * facet set. Self-chaining until all are enriched.
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.bundleId
-     * @param data.requestBody
-     * @returns BatchEnrichResponse Successful Response
-     * @throws ApiError
-     */
-    public static triggerBatchEnrich(data: TriggerBatchEnrichData): CancelablePromise<TriggerBatchEnrichResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/enrich',
-            path: {
-                infospace_id: data.infospaceId,
-                bundle_id: data.bundleId
-            },
-            body: data.requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Get Processing Status
-     * Get processing status counts for assets in a bundle.
-     *
-     * Returns counts by processing_status (PENDING, PROCESSING, READY, FAILED).
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.bundleId
-     * @returns ProcessingStatusResponse Successful Response
-     * @throws ApiError
-     */
-    public static getProcessingStatus(data: GetProcessingStatusData): CancelablePromise<GetProcessingStatusResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/processing-status',
-            path: {
-                infospace_id: data.infospaceId,
-                bundle_id: data.bundleId
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * List Dataset Jobs
-     * List dataset ingestion jobs for an infospace.
-     *
-     * Useful for showing user their ongoing/completed dataset imports.
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.status Filter by status
-     * @param data.limit
-     * @returns DatasetIngestionJobRead Successful Response
-     * @throws ApiError
-     */
-    public static listDatasetJobs(data: ListDatasetJobsData): CancelablePromise<ListDatasetJobsResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/infospaces/{infospace_id}/dataset-jobs',
-            path: {
-                infospace_id: data.infospaceId
-            },
-            query: {
-                status: data.status,
-                limit: data.limit
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Get Dataset Job Status
-     * Get status of a specific dataset ingestion job.
-     *
-     * Frontend polls this endpoint to show real-time progress.
-     * @param data The data for the request.
-     * @param data.jobId
-     * @returns DatasetIngestionJobRead Successful Response
-     * @throws ApiError
-     */
-    public static getDatasetJobStatus(data: GetDatasetJobStatusData): CancelablePromise<GetDatasetJobStatusResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/dataset-jobs/{job_id}',
-            path: {
-                job_id: data.jobId
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Delete Dataset Job
-     * Delete a dataset ingestion job record.
-     *
-     * Note: This only deletes the job tracking record, not the created assets/bundles.
-     * @param data The data for the request.
-     * @param data.jobId
-     * @returns Message Successful Response
-     * @throws ApiError
-     */
-    public static deleteDatasetJob(data: DeleteDatasetJobData): CancelablePromise<DeleteDatasetJobResponse> {
-        return __request(OpenAPI, {
-            method: 'DELETE',
-            url: '/api/v1/dataset-jobs/{job_id}',
-            path: {
-                job_id: data.jobId
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Get Dataset Job By Uuid
-     * Get job status by UUID (useful when only UUID is known).
-     * @param data The data for the request.
-     * @param data.jobUuid
-     * @returns DatasetIngestionJobRead Successful Response
-     * @throws ApiError
-     */
-    public static getDatasetJobByUuid(data: GetDatasetJobByUuidData): CancelablePromise<GetDatasetJobByUuidResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/dataset-jobs/by-uuid/{job_uuid}',
-            path: {
-                job_uuid: data.jobUuid
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Create Archive Ingestion Job
-     * Create a new archive ingestion job.
-     *
-     * Alternative endpoint to /assets/ingest-url that explicitly creates a job
-     * and returns job details for frontend progress tracking.
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.requestBody
-     * @returns DatasetIngestionJobRead Successful Response
-     * @throws ApiError
-     */
-    public static createArchiveIngestionJob(data: CreateArchiveIngestionJobData): CancelablePromise<CreateArchiveIngestionJobResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/infospaces/{infospace_id}/dataset-jobs/ingest-archive',
-            path: {
-                infospace_id: data.infospaceId
-            },
-            body: data.requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Cancel Dataset Job
-     * Cancel a running dataset ingestion job.
-     * @param data The data for the request.
-     * @param data.jobId
-     * @returns Message Successful Response
-     * @throws ApiError
-     */
-    public static cancelDatasetJob(data: CancelDatasetJobData): CancelablePromise<CancelDatasetJobResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/dataset-jobs/{job_id}/cancel',
-            path: {
-                job_id: data.jobId
             },
             errors: {
                 422: 'Validation Error'
@@ -4774,7 +4601,7 @@ export class EntitiesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.entityType
-     * @returns unknown Successful Response
+     * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
     public static listEntities(data: ListEntitiesData): CancelablePromise<ListEntitiesResponse> {
@@ -4796,17 +4623,10 @@ export class EntitiesService {
     /**
      * Create Entity
      * Create a canonical entity manually.
-     *
-     * Body: {
-     * "canonical_name": str,
-     * "entity_type": str,
-     * "aliases": List[str] (optional),
-     * "properties": dict (optional)
-     * }
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
-     * @returns unknown Successful Response
+     * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
     public static createEntity(data: CreateEntityData): CancelablePromise<CreateEntityResponse> {
@@ -4827,17 +4647,11 @@ export class EntitiesService {
     /**
      * Update Entity
      * Update a canonical entity (rename, edit aliases, properties).
-     *
-     * Body: {
-     * "canonical_name": str (optional),
-     * "aliases": List[str] (optional),
-     * "properties": dict (optional)
-     * }
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.entityId
      * @param data.requestBody
-     * @returns unknown Successful Response
+     * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
     public static updateEntity(data: UpdateEntityData): CancelablePromise<UpdateEntityResponse> {
@@ -4882,16 +4696,10 @@ export class EntitiesService {
     /**
      * Merge Entities
      * Merge multiple entities into one canonical entity.
-     *
-     * Body: {
-     * "entity_ids": List[int],
-     * "canonical_name": str (optional, uses first entity's name if not provided),
-     * "keep_id": int (optional, which entity ID to keep, defaults to first)
-     * }
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
-     * @returns unknown Successful Response
+     * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
     public static mergeEntities(data: MergeEntitiesData): CancelablePromise<MergeEntitiesResponse> {
@@ -4912,12 +4720,6 @@ export class EntitiesService {
     /**
      * Trigger Resolution
      * Trigger automatic entity resolution for raw entity mentions.
-     *
-     * Body: {
-     * "raw_entities": List[{"name": str, "type": str}],
-     * "similarity_threshold": float (optional, default 0.85),
-     * "use_embeddings": bool (optional, default true)
-     * }
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
@@ -5924,6 +5726,77 @@ export class InfospacesService {
     }
     
     /**
+     * Invite Collaborator
+     * Invite a user to collaborate on an infospace. Only owner or editor can invite.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.email Email of user to invite
+     * @param data.role Role: owner, editor, viewer
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static inviteCollaborator(data: InviteCollaboratorData): CancelablePromise<InviteCollaboratorResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/collaborators/invite',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            query: {
+                email: data.email,
+                role: data.role
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * List Collaborators
+     * List collaborators for an infospace.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static listCollaborators(data: ListCollaboratorsData): CancelablePromise<ListCollaboratorsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/collaborators',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Remove Collaborator
+     * Remove a collaborator from an infospace.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.userId
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static removeCollaborator(data: RemoveCollaboratorData): CancelablePromise<RemoveCollaboratorResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/infospaces/{infospace_id}/collaborators/{user_id}',
+            path: {
+                infospace_id: data.infospaceId,
+                user_id: data.userId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
      * Get Infospace Stats
      * Get statistics about an Infospace.
      * @param data The data for the request.
@@ -5998,6 +5871,355 @@ export class InfospacesService {
             url: '/api/v1/infospaces/import',
             formData: data.formData,
             mediaType: 'multipart/form-data',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+}
+
+export class IngestionJobsService {
+    /**
+     * Create Directory Import Job
+     * Import files from a local directory.
+     *
+     * Copy mode (default): Copies files to storage, processes via FileHandler. Works with MinIO or local_fs.
+     * Reference-only (copy_mode=False): Creates assets with blob_path pointing to source. No copying.
+     *
+     * Source path must be under ALLOWED_IMPORT_PATHS.
+     * Returns job ID for tracking progress via /ingestion-jobs/{job_id}.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns IngestionJobRead Successful Response
+     * @throws ApiError
+     */
+    public static createDirectoryImportJob(data: CreateDirectoryImportJobData): CancelablePromise<CreateDirectoryImportJobResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/import-directory',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Trigger Batch Process Pending
+     * Trigger batch processing of PENDING assets in a bundle.
+     *
+     * After directory import (reference mode), assets are created with PENDING status.
+     * This endpoint starts background processing (PDF extraction, CSV row creation).
+     * Processing runs in self-chaining batches until all PENDING assets are done.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.bundleId
+     * @param data.batchSize
+     * @returns BatchProcessResponse Successful Response
+     * @throws ApiError
+     */
+    public static triggerBatchProcessPending(data: TriggerBatchProcessPendingData): CancelablePromise<TriggerBatchProcessPendingResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/process-pending',
+            path: {
+                infospace_id: data.infospaceId,
+                bundle_id: data.bundleId
+            },
+            query: {
+                batch_size: data.batchSize
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Trigger Batch Enrich
+     * Trigger batch enrichment for assets in a bundle missing a facet.
+     *
+     * Runs enrichers (geocoding, etc.) on assets that don't yet have the target
+     * facet set. Self-chaining until all are enriched.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.bundleId
+     * @param data.requestBody
+     * @returns BatchEnrichResponse Successful Response
+     * @throws ApiError
+     */
+    public static triggerBatchEnrich(data: TriggerBatchEnrichData): CancelablePromise<TriggerBatchEnrichResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/enrich',
+            path: {
+                infospace_id: data.infospaceId,
+                bundle_id: data.bundleId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Processing Status
+     * Get processing status counts for assets in a bundle.
+     *
+     * Returns counts by processing_status (PENDING, PROCESSING, READY, FAILED).
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.bundleId
+     * @returns ProcessingStatusResponse Successful Response
+     * @throws ApiError
+     */
+    public static getProcessingStatus(data: GetProcessingStatusData): CancelablePromise<GetProcessingStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/processing-status',
+            path: {
+                infospace_id: data.infospaceId,
+                bundle_id: data.bundleId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * List Ingestion Jobs
+     * List ingestion jobs for an infospace.
+     *
+     * Useful for showing user their ongoing/completed imports (local directory or remote archive).
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.status Filter by status
+     * @param data.kind Filter by job kind (directory_local, zip, tar.gz, etc.)
+     * @param data.sourceId Filter by source ID (jobs created by this source poll)
+     * @param data.limit
+     * @returns IngestionJobRead Successful Response
+     * @throws ApiError
+     */
+    public static listIngestionJobs(data: ListIngestionJobsData): CancelablePromise<ListIngestionJobsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/ingestion-jobs',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            query: {
+                status: data.status,
+                kind: data.kind,
+                source_id: data.sourceId,
+                limit: data.limit
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Ingestion Job Status
+     * Get status of a specific ingestion job.
+     *
+     * Frontend polls this endpoint to show real-time progress.
+     * @param data The data for the request.
+     * @param data.jobId
+     * @returns IngestionJobRead Successful Response
+     * @throws ApiError
+     */
+    public static getIngestionJobStatus(data: GetIngestionJobStatusData): CancelablePromise<GetIngestionJobStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/ingestion-jobs/{job_id}',
+            path: {
+                job_id: data.jobId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Delete Ingestion Job
+     * Delete an ingestion job record.
+     *
+     * Note: This only deletes the job tracking record, not the created assets/bundles.
+     * @param data The data for the request.
+     * @param data.jobId
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static deleteIngestionJob(data: DeleteIngestionJobData): CancelablePromise<DeleteIngestionJobResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/ingestion-jobs/{job_id}',
+            path: {
+                job_id: data.jobId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Ingestion Job By Uuid
+     * Get job status by UUID (useful when only UUID is known).
+     * @param data The data for the request.
+     * @param data.jobUuid
+     * @returns IngestionJobRead Successful Response
+     * @throws ApiError
+     */
+    public static getIngestionJobByUuid(data: GetIngestionJobByUuidData): CancelablePromise<GetIngestionJobByUuidResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/ingestion-jobs/by-uuid/{job_uuid}',
+            path: {
+                job_uuid: data.jobUuid
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Create Archive Ingestion Job
+     * Create a new archive ingestion job.
+     *
+     * Alternative endpoint to /assets/ingest-url that explicitly creates a job
+     * and returns job details for frontend progress tracking.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns IngestionJobRead Successful Response
+     * @throws ApiError
+     */
+    public static createArchiveIngestionJob(data: CreateArchiveIngestionJobData): CancelablePromise<CreateArchiveIngestionJobResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/ingestion-jobs/ingest-archive',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Cancel Ingestion Job
+     * Cancel a running ingestion job.
+     * @param data The data for the request.
+     * @param data.jobId
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static cancelIngestionJob(data: CancelIngestionJobData): CancelablePromise<CancelIngestionJobResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/ingestion-jobs/{job_id}/cancel',
+            path: {
+                job_id: data.jobId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Reconcile Directory
+     * Run on-demand directory reconcile.
+     *
+     * Compares files on disk with existing assets, detects additions, changes, deletions.
+     * Creates new versions for changed files. Does not poll continuously; call this
+     * when you want to sync (e.g. after bulk file updates).
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static reconcileDirectory(data: ReconcileDirectoryData): CancelablePromise<ReconcileDirectoryResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/reconcile-directory',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Enable Directory Watch
+     * Enable watching and/or version inbox for an already-imported directory.
+     *
+     * - ``enable_reconcile``: periodic stat comparison to detect replaced files.
+     * - ``enable_inbox``: creates ``_inbox/`` subdirectory; new files dropped
+     * there are auto-imported with smart version detection.
+     *
+     * Idempotent: calling again with the same source_path updates existing Sources.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns WatchStatusResponse Successful Response
+     * @throws ApiError
+     */
+    public static enableDirectoryWatch(data: EnableDirectoryWatchData): CancelablePromise<EnableDirectoryWatchResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/enable-watch',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Watch Status
+     * Get watch / inbox status for directories in an infospace.
+     * Optionally filter by bundle_id.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.bundleId
+     * @returns WatchStatusResponse Successful Response
+     * @throws ApiError
+     */
+    public static getWatchStatus(data: GetWatchStatusData): CancelablePromise<GetWatchStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/watch-status',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            query: {
+                bundle_id: data.bundleId
+            },
             errors: {
                 422: 'Validation Error'
             }
@@ -6123,6 +6345,125 @@ export class IntelligenceChatService {
             url: '/api/v1/chat/tools/context/{infospace_id}',
             path: {
                 infospace_id: data.infospaceId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+}
+
+export class KnowledgeGraphsService {
+    /**
+     * List Knowledge Graphs
+     * List knowledge graphs for an infospace.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @returns KnowledgeGraphRead Successful Response
+     * @throws ApiError
+     */
+    public static listKnowledgeGraphs(data: ListKnowledgeGraphsData): CancelablePromise<ListKnowledgeGraphsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/knowledge-graphs',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Create Knowledge Graph
+     * Create a named knowledge graph.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns KnowledgeGraphRead Successful Response
+     * @throws ApiError
+     */
+    public static createKnowledgeGraph(data: CreateKnowledgeGraphData): CancelablePromise<CreateKnowledgeGraphResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/knowledge-graphs',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Knowledge Graph
+     * Get a knowledge graph by ID.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.graphId
+     * @returns KnowledgeGraphRead Successful Response
+     * @throws ApiError
+     */
+    public static getKnowledgeGraph(data: GetKnowledgeGraphData): CancelablePromise<GetKnowledgeGraphResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/knowledge-graphs/{graph_id}',
+            path: {
+                infospace_id: data.infospaceId,
+                graph_id: data.graphId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Update Knowledge Graph
+     * Update a knowledge graph.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.graphId
+     * @param data.requestBody
+     * @returns KnowledgeGraphRead Successful Response
+     * @throws ApiError
+     */
+    public static updateKnowledgeGraph(data: UpdateKnowledgeGraphData): CancelablePromise<UpdateKnowledgeGraphResponse> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/api/v1/infospaces/{infospace_id}/knowledge-graphs/{graph_id}',
+            path: {
+                infospace_id: data.infospaceId,
+                graph_id: data.graphId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Delete Knowledge Graph
+     * Delete a knowledge graph. Entities with graph_id set will need handling (cascade or nullify).
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.graphId
+     * @returns void Successful Response
+     * @throws ApiError
+     */
+    public static deleteKnowledgeGraph(data: DeleteKnowledgeGraphData): CancelablePromise<DeleteKnowledgeGraphResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/infospaces/{infospace_id}/knowledge-graphs/{graph_id}',
+            path: {
+                infospace_id: data.infospaceId,
+                graph_id: data.graphId
             },
             errors: {
                 422: 'Validation Error'
@@ -7674,6 +8015,36 @@ export class SsoService {
     }
 }
 
+export class StorageService {
+    /**
+     * Browse Storage
+     * List immediate children of a directory under allowed import paths.
+     *
+     * Used by the Local Storage Import UI to browse available datasets before import.
+     * Path must be under ALLOWED_IMPORT_PATHS (or LOCAL_STORAGE_BASE_PATH).
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.path Directory path to list; defaults to first allowed root
+     * @returns StorageBrowseResponse Successful Response
+     * @throws ApiError
+     */
+    public static browseStorage(data: BrowseStorageData): CancelablePromise<BrowseStorageResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/storage/browse',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            query: {
+                path: data.path
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+}
+
 export class TasksService {
     /**
      * Create Task
@@ -8319,16 +8690,19 @@ export class TreeNavigationService {
      * Features:
      * - Includes assets from all bundles (not just expanded ones)
      * - Filters out child assets (only parent/standalone assets)
-     * - Sorted by date (created_at or updated_at)
+     * - Sorted by date (created_at or updated_at) or name
      * - Supports kind filtering
+     * - Supports bundle_id and path_filter for Bundle/BundleView detail views
      * - Includes source_metadata for image extraction
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.skip
      * @param data.limit
      * @param data.kinds Filter by asset kinds
-     * @param data.sortBy Sort field: created_at, updated_at
+     * @param data.sortBy Sort field: created_at, updated_at, name
      * @param data.sortOrder Sort order: asc, desc
+     * @param data.bundleId Filter to assets in this bundle (for Bundle/BundleView detail)
+     * @param data.pathFilter Filter by logical_path prefix (for BundleView)
      * @returns FeedAssetsResponse Successful Response
      * @throws ApiError
      */
@@ -8344,7 +8718,9 @@ export class TreeNavigationService {
                 limit: data.limit,
                 kinds: data.kinds,
                 sort_by: data.sortBy,
-                sort_order: data.sortOrder
+                sort_order: data.sortOrder,
+                bundle_id: data.bundleId,
+                path_filter: data.pathFilter
             },
             errors: {
                 422: 'Validation Error'

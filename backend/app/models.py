@@ -3,14 +3,15 @@
 Re-export hub: imports from domain models. Alembic and existing code use from app.models import *.
 """
 
-from app.api.modules.identity_infospace_user.models import User, Infospace, UserBase, UserTier
+from app.api.modules.identity_infospace_user.models import User, Infospace, InfospaceCollaborator, UserBase, UserTier
 from app.api.modules.content.models import (
     Asset,
     AssetChunk,
     AssetKind,
     Bundle,
+    BundleView,
     Dataset,
-    DatasetIngestionJob,
+    IngestionJob,
     EmbeddingModel,
     EmbeddingProvider,
     IngestionStatus,
@@ -37,7 +38,12 @@ from app.api.modules.annotation.models import (
 
 # Association table for MCP/raw SQL joins (RunSchemaLink link model)
 annotation_run_schema_association = RunSchemaLink.__table__
-from app.api.modules.graph.models import EntityCanonical, FragmentCuration
+from app.api.modules.graph.models import (
+    KnowledgeGraph,
+    EntityCanonical,
+    EntityEditLog,
+    FragmentCuration,
+)
 from app.api.modules.flow.models import (
     Flow,
     FlowExecution,

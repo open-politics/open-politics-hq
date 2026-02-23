@@ -36,6 +36,7 @@ class FlowTriggerMode(str, enum.Enum):
 
 
 class FlowStepType(str, enum.Enum):
+    INGEST = "INGEST"
     ANNOTATE = "ANNOTATE"
     FILTER = "FILTER"
     CURATE = "CURATE"

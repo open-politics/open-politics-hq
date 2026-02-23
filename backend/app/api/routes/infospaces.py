@@ -168,6 +168,66 @@ def delete_infospace(
         logger.exception(f"Route: Unexpected error deleting infospace {infospace_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during deletion")
 
+@router.post("/{infospace_id}/collaborators/invite")
+def invite_collaborator(
+    *,
+    current_user: CurrentUser,
+    infospace_id: int,
+    email: str = Query(..., description="Email of user to invite"),
+    role: str = Query("viewer", description="Role: owner, editor, viewer"),
+    infospace_service: InfospaceService = Depends(get_infospace_service)
+) -> Any:
+    """Invite a user to collaborate on an infospace. Only owner or editor can invite."""
+    try:
+        collab = infospace_service.invite_collaborator(
+            infospace_id=infospace_id,
+            inviter_user_id=current_user.id,
+            invitee_email=email,
+            role=role,
+        )
+        return {"id": collab.id, "user_id": collab.user_id, "role": collab.role.value if hasattr(collab.role, "value") else collab.role}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+@router.get("/{infospace_id}/collaborators")
+def list_collaborators(
+    *,
+    current_user: CurrentUser,
+    infospace_id: int,
+    infospace_service: InfospaceService = Depends(get_infospace_service)
+) -> Any:
+    """List collaborators for an infospace."""
+    try:
+        collabs = infospace_service.list_collaborators(
+            infospace_id=infospace_id,
+            user_id=current_user.id,
+        )
+        return [
+            {"id": c.id if c else None, "user_id": u.id, "email": u.email, "full_name": u.full_name, "role": role}
+            for c, u, role in collabs
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@router.delete("/{infospace_id}/collaborators/{user_id}")
+def remove_collaborator(
+    *,
+    current_user: CurrentUser,
+    infospace_id: int,
+    user_id: int,
+    infospace_service: InfospaceService = Depends(get_infospace_service)
+) -> Any:
+    """Remove a collaborator from an infospace."""
+    try:
+        infospace_service.remove_collaborator(
+            infospace_id=infospace_id,
+            remover_user_id=current_user.id,
+            collaborator_user_id=user_id,
+        )
+        return {"message": "Collaborator removed"}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
 @router.get("/{infospace_id}/stats", response_model=dict)
 def get_infospace_stats(
     *,

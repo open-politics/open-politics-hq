@@ -12,7 +12,7 @@ class EmbeddingModelsConfig:
     
     def _load_config(self):
         """Load the embedding models configuration from JSON file."""
-        config_path = Path(__file__).parent / "config_embedding_models.json"
+        config_path = Path(__file__).parent / "config" / "embedding_models.json"
         try:
             with open(config_path, 'r') as f:
                 self._config = json.load(f)

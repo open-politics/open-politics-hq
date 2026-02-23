@@ -28,11 +28,16 @@ FACET_TAGS = "tags"  # Optional list
 
 # Processing
 FACET_OCR_USED = "ocr_used"
+FACET_OCR_ENGINE = "ocr_engine"
+FACET_OCR_CONFIDENCE = "ocr_confidence"
 FACET_QUALITY_SCORE = "quality_score"
 
 # File (also in source_metadata.file.*)
 FACET_FILE_SIZE = "file_size"  # bytes
 FACET_MIME_TYPE = "mime_type"
+
+# Content hash (first-class Asset column; used for change detection)
+CONTENT_HASH_FIELD = "content_hash"
 
 
 def get_facet(metadata: Optional[Dict[str, Any]], key: str) -> Any:

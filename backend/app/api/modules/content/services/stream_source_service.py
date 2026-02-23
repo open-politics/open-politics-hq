@@ -4,6 +4,9 @@ Stream Source Service
 
 Service for managing source streaming behavior - polling, state tracking,
 and pipeline triggering for continuous data ingestion.
+
+Polling is dispatched via the PollHandler registry (see poll_handlers/).
+Each Source kind has a registered handler; execute_poll() is generic.
 """
 
 import logging
@@ -15,13 +18,20 @@ from app.models import (
     Source,
     SourceStatus,
     SourcePollHistory,
+    IngestionJob,
+    IngestionStatus,
     Asset,
     Bundle,
 )
 from app.api.global_utils import validate_infospace_access
-from app.api.modules.content.handlers import RSSHandler, SearchHandler, IngestionContext
+from app.api.modules.content.handlers.base import IngestionContext
 from app.api.modules.content.services.bundle_service import BundleService
 from app.api.modules.content.services.asset_service import AssetService
+from app.api.modules.content.services.poll_handlers import (
+    get_poll_handler,
+    registered_poll_kinds,
+    PollResult,
+)
 from app.api.modules.foundation_service_providers.factory import (
     create_storage_provider,
     create_scraping_provider,
@@ -145,32 +155,58 @@ class StreamSourceService:
         logger.info(f"Source {source_id} paused")
         return source
     
-    async def execute_poll(self, source_id: int, user_id: Optional[int] = None, runtime_api_keys: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    async def execute_poll(
+        self,
+        source_id: int,
+        user_id: Optional[int] = None,
+        runtime_api_keys: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         """
         Execute a single poll of a source.
-        
+
+        Routing is handled by the PollHandler registry (poll_handlers/).
+        This method is generic — it never needs to change when new source
+        kinds are added.
+
         Flow:
-        1. Set status = PROCESSING
-        2. Load cursor_state for incremental fetch
-        3. Call appropriate handler with cursor
-        4. Create assets, set asset.source_id and asset.bundle_id
-        5. Update cursor_state
-        6. Record SourcePollHistory
-        7. Set status = ACTIVE or ERROR
-        
+        1. Look up registered PollHandler for source.kind
+        2. Set status = PROCESSING, create IngestionJob as execution log
+        3. Delegate to handler.poll()
+        4. Link returned assets to source and bundle
+        5. Update cursor_state, statistics, IngestionJob
+        6. Record SourcePollHistory (kept for backward compat; IngestionJob
+           is the canonical execution log going forward)
+
         Note: Flow triggering is handled by check_on_arrival_flows Celery task.
-        
-        Args:
-            source_id: Source to poll
-            
-        Returns:
-            Poll result with statistics
         """
         source = self.session.get(Source, source_id)
         if not source:
             raise ValueError(f"Source {source_id} not found")
-        
-        # Create poll history record
+
+        handler_cls = get_poll_handler(source.kind)
+        if handler_cls is None:
+            raise ValueError(
+                f"No poll handler registered for source kind '{source.kind}'. "
+                f"Registered kinds: {registered_poll_kinds()}"
+            )
+
+        # --- execution log (IngestionJob) ---
+        job = IngestionJob(
+            infospace_id=source.infospace_id,
+            user_id=source.user_id,
+            source_locator=source.details.get("feed_url")
+                or source.details.get("search_config", {}).get("query")
+                or source.details.get("inbox_path")
+                or source.details.get("source_path")
+                or str(source.id),
+            kind=f"source_poll:{source.kind}",
+            source_id=source.id,
+            status=IngestionStatus.PROCESSING,
+            started_at=datetime.now(timezone.utc),
+        )
+        self.session.add(job)
+
+        # --- legacy poll history (backward compat) ---
         poll_history = SourcePollHistory(
             source_id=source_id,
             started_at=datetime.now(timezone.utc),
@@ -178,226 +214,118 @@ class StreamSourceService:
             cursor_before=source.cursor_state.copy(),
         )
         self.session.add(poll_history)
-        
-        # Set status to processing
+
         source.status = SourceStatus.PROCESSING
         source.updated_at = datetime.now(timezone.utc)
         self.session.add(source)
         self.session.commit()
-        
-        try:
-            # Prepare options with cursor state
-            options = source.details.get('processing_options', {}).copy()
-            options['cursor_state'] = source.cursor_state
-            
-            # Route to appropriate handler based on source kind
-            assets: List[Asset] = []
-            
-            if source.kind == 'rss':
-                feed_url = source.details.get('feed_url')
-                if not feed_url:
-                    raise ValueError("RSS source missing feed_url")
 
-                context = self._make_ingestion_context(
-                    source.user_id, source.infospace_id, options
-                )
-                handler = RSSHandler(context)
-                assets = await handler.handle(feed_url, None, options)
-                
-                # Update cursor state for RSS (store last seen GUID)
-                if assets:
-                    # Use the last entry's GUID or link as cursor
-                    last_entry = assets[-1]
-                    source.cursor_state['last_guid'] = last_entry.source_metadata.get('guid') or last_entry.source_identifier
-                    source.cursor_state['last_poll_timestamp'] = datetime.now(timezone.utc).isoformat()
-            
-            elif source.kind == 'search':
-                search_config = source.details.get('search_config', {})
-                if not search_config:
-                    raise ValueError("Search source missing search_config")
-                
-                query = search_config.get('query')
-                if not query:
-                    raise ValueError("Search config missing query")
-                
-                provider = search_config.get('provider', 'tavily')
-                max_results = search_config.get('max_results', 10)
-                
-                # For search, use timestamp-based cursor to avoid duplicates
-                cursor_timestamp = source.cursor_state.get('last_query_timestamp')
-                
-                # Import search provider registry
-                from app.api.modules.foundation_service_providers.web_search_registry import WebSearchProviderRegistryService
-                
-                # Create search provider
-                search_registry = WebSearchProviderRegistryService()
-                
-                # Get API key from multiple sources (priority order):
-                # 1. Runtime API keys passed to method (from user credentials)
-                # 2. Source config API key (if stored directly)
-                # 3. Environment variable (fallback)
-                api_key = None
-                if runtime_api_keys:
-                    # Try provider name first (e.g., 'tavily')
-                    api_key = runtime_api_keys.get(provider)
-                    # Try uppercase version (e.g., 'TAVILY_API_KEY')
-                    if not api_key:
-                        api_key = runtime_api_keys.get(f'{provider.upper()}_API_KEY') or runtime_api_keys.get(f'TAVILY_API_KEY')
-                
-                # Fall back to source config
-                if not api_key:
-                    api_key = search_config.get('api_key')
-                
-                # Fall back to environment variable
-                if not api_key and provider == 'tavily':
-                    from app.core.config import settings
-                    api_key = settings.TAVILY_API_KEY
-                
-                search_provider = search_registry.create_provider(provider, api_key)
-                
-                # Execute search query
-                logger.info(f"Executing search query: '{query}' with provider {provider}")
-                search_results_raw = await search_provider.search(
-                    query=query,
-                    limit=max_results,
-                    **search_config.get('provider_params', {})
-                )
-                
-                # Get seen URLs from cursor to avoid duplicates
-                seen_urls = set(source.cursor_state.get('seen_urls', []))
-                
-                # Convert raw search results to SearchResult objects and filter duplicates
-                from app.schemas import SearchResult
-                search_results: List[SearchResult] = []
-                new_urls = []
-                
-                for result_dict in search_results_raw:
-                    url = result_dict.get('url') or result_dict.get('link') or result_dict.get('href')
-                    if not url:
-                        continue
-                    
-                    # Skip if we've already seen this URL
-                    if url in seen_urls:
-                        logger.debug(f"Skipping duplicate URL: {url}")
-                        continue
-                    
-                    # Create SearchResult object
-                    search_result = SearchResult(
-                        title=result_dict.get('title', 'Untitled'),
-                        url=url,
-                        content=result_dict.get('content') or result_dict.get('snippet') or result_dict.get('description') or '',
-                        score=result_dict.get('score') or result_dict.get('relevance_score'),
-                        provider=provider,
-                        raw_data=result_dict
-                    )
-                    search_results.append(search_result)
-                    new_urls.append(url)
-                
-                # Update seen URLs
-                seen_urls.update(new_urls)
-                source.cursor_state['seen_urls'] = list(seen_urls)  # Store as list for JSON serialization
-                
-                # Convert search results to assets using SearchHandler
-                if search_results:
-                    handler_options = {
-                        'scrape_content': search_config.get('scrape_content', True),
-                        'cursor_state': source.cursor_state,
-                    }
-                    context = self._make_ingestion_context(
-                        source.user_id, source.infospace_id, handler_options
-                    )
-                    search_handler = SearchHandler(context)
-                    assets = await search_handler.handle_bulk(
-                        results=search_results,
-                        query=query,
-                        options=handler_options
-                    )
-                else:
-                    assets = []
-                    logger.info(f"No new search results found for query '{query}'")
-                
-                # Update cursor timestamp
-                source.cursor_state['last_query_timestamp'] = datetime.now(timezone.utc).isoformat()
-                source.cursor_state['last_query'] = query
-            
-            else:
-                raise ValueError(f"Source kind '{source.kind}' does not support streaming")
-            
-            # Link assets to source and output bundle
+        try:
+            # Build context and delegate to handler
+            options = source.details.get("processing_options", {}).copy()
+            options["cursor_state"] = source.cursor_state
+            context = self._make_ingestion_context(
+                source.user_id, source.infospace_id, options
+            )
+
+            handler = handler_cls()
+            result: PollResult = await handler.poll(
+                source=source,
+                context=context,
+                runtime_options={"runtime_api_keys": runtime_api_keys or {}},
+            )
+
+            # --- link assets to source & bundle ---
             ingested_count = 0
-            for asset in assets:
+            for asset in result.assets:
                 asset.source_id = source.id
-                
-                # Add to output bundle if configured
                 if source.output_bundle_id:
                     asset.bundle_id = source.output_bundle_id
-                    # Update bundle asset count
                     bundle = self.session.get(Bundle, source.output_bundle_id)
                     if bundle:
                         bundle.asset_count = (bundle.asset_count or 0) + 1
                         bundle.updated_at = datetime.now(timezone.utc)
                         self.session.add(bundle)
-                
                 self.session.add(asset)
                 ingested_count += 1
-            
-            # Update source statistics
-            source.items_last_poll = len(assets)
+
+            # --- update source ---
+            source.cursor_state.update(result.cursor_update)
+            source.items_last_poll = len(result.assets)
             source.total_items_ingested += ingested_count
             source.last_poll_at = datetime.now(timezone.utc)
-            
-            # Calculate next poll time
             if source.poll_interval_seconds:
                 source.next_poll_at = datetime.now(timezone.utc) + timedelta(
                     seconds=source.poll_interval_seconds
                 )
-            
-            # Reset failure count on success
             source.consecutive_failures = 0
-            # Use PENDING status until migration adds ACTIVE to database enum
-            # The is_active flag indicates the stream is actually active
             source.status = SourceStatus.PENDING
-            
-            # Update poll history
+
+            # --- update IngestionJob ---
+            job.status = IngestionStatus.COMPLETED
+            job.processed_files = ingested_count
+            job.completed_at = datetime.now(timezone.utc)
+            job.cursor_state = {
+                "summary": result.summary,
+                "stage": "completed",
+                "progress_pct": 100,
+            }
+
+            # --- update legacy poll history ---
             poll_history.completed_at = datetime.now(timezone.utc)
             poll_history.status = "success"
-            poll_history.items_found = len(assets)
+            poll_history.items_found = len(result.assets)
             poll_history.items_ingested = ingested_count
             poll_history.cursor_after = source.cursor_state.copy()
-            
-            # Note: Flow triggering is handled by check_on_arrival_flows Celery task
-            # which runs every minute and triggers any Flows watching this source's output bundle.
-            
+
             self.session.add(source)
+            self.session.add(job)
             self.session.add(poll_history)
             self.session.commit()
-            
+
+            # Run post-commit actions (e.g. move inbox files to _processed).
+            # These run AFTER the DB commit so that on failure the files remain
+            # in the inbox for rediscovery on the next poll.
+            for action in result.post_commit_actions:
+                try:
+                    action()
+                except Exception as post_err:
+                    logger.warning("Post-commit action failed: %s", post_err)
+
             logger.info(
-                f"Source {source_id} poll completed: {ingested_count} items ingested"
+                "Source %s poll completed: %d items ingested (%s)",
+                source_id,
+                ingested_count,
+                result.summary,
             )
-            
+
             return {
                 "status": "success",
-                "items_found": len(assets),
+                "items_found": len(result.assets),
                 "items_ingested": ingested_count,
+                "job_id": job.id,
             }
-            
+
         except Exception as e:
-            # Handle error - use FAILED since ERROR doesn't exist in DB enum yet
             source.status = SourceStatus.FAILED
             source.consecutive_failures += 1
             source.last_error_at = datetime.now(timezone.utc)
             source.error_message = str(e)
-            
+
+            job.status = IngestionStatus.FAILED
+            job.error_message = str(e)[:500]
+            job.completed_at = datetime.now(timezone.utc)
+
             poll_history.completed_at = datetime.now(timezone.utc)
             poll_history.status = "failed"
             poll_history.error_message = str(e)
-            
+
             self.session.add(source)
+            self.session.add(job)
             self.session.add(poll_history)
             self.session.commit()
-            
-            logger.error(f"Source {source_id} poll failed: {e}")
+
+            logger.error("Source %s poll failed: %s", source_id, e)
             raise
     
     async def _trigger_linked_flows(

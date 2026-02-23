@@ -5948,6 +5948,257 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/bundle-views": {
+      "post": {
+        "tags": [
+          "Bundle Views"
+        ],
+        "summary": "Create Bundle View",
+        "description": "Create a BundleView (named subset of a bundle).",
+        "operationId": "create_bundle_view",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BundleViewCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BundleViewRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Bundle Views"
+        ],
+        "summary": "List Bundle Views",
+        "description": "List BundleViews in an infospace.",
+        "operationId": "list_bundle_views",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BundleViewRead"
+                  },
+                  "title": "Response Bundle Views-List Bundle Views"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/bundle-views/{view_id}": {
+      "get": {
+        "tags": [
+          "Bundle Views"
+        ],
+        "summary": "Get Bundle View",
+        "description": "Get a BundleView by ID.",
+        "operationId": "get_bundle_view",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "View Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BundleViewRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Bundle Views"
+        ],
+        "summary": "Update Bundle View",
+        "description": "Update a BundleView.",
+        "operationId": "update_bundle_view",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "View Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BundleViewUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BundleViewRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Bundle Views"
+        ],
+        "summary": "Delete Bundle View",
+        "description": "Delete a BundleView.",
+        "operationId": "delete_bundle_view",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "view_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "View Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/chat/chat": {
       "post": {
         "tags": [
@@ -6893,10 +7144,10 @@
     "/api/v1/infospaces/{infospace_id}/import-directory": {
       "post": {
         "tags": [
-          "Dataset Jobs"
+          "Ingestion Jobs"
         ],
         "summary": "Create Directory Import Job",
-        "description": "Import files from a local directory.\n\nCopy mode (default): Copies files to storage, processes via FileHandler. Works with MinIO or local_fs.\nReference-only (copy_mode=False): Creates assets with blob_path pointing to source. No copying.\n\nSource path must be under ALLOWED_IMPORT_PATHS.\nReturns job ID for tracking progress via /dataset-jobs/{job_id}.",
+        "description": "Import files from a local directory.\n\nCopy mode (default): Copies files to storage, processes via FileHandler. Works with MinIO or local_fs.\nReference-only (copy_mode=False): Creates assets with blob_path pointing to source. No copying.\n\nSource path must be under ALLOWED_IMPORT_PATHS.\nReturns job ID for tracking progress via /ingestion-jobs/{job_id}.",
         "operationId": "create_directory_import_job",
         "security": [
           {
@@ -6930,7 +7181,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatasetIngestionJobRead"
+                  "$ref": "#/components/schemas/IngestionJobRead"
                 }
               }
             }
@@ -6951,7 +7202,7 @@
     "/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/process-pending": {
       "post": {
         "tags": [
-          "Dataset Jobs"
+          "Ingestion Jobs"
         ],
         "summary": "Trigger Batch Process Pending",
         "description": "Trigger batch processing of PENDING assets in a bundle.\n\nAfter directory import (reference mode), assets are created with PENDING status.\nThis endpoint starts background processing (PDF extraction, CSV row creation).\nProcessing runs in self-chaining batches until all PENDING assets are done.",
@@ -7020,7 +7271,7 @@
     "/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/enrich": {
       "post": {
         "tags": [
-          "Dataset Jobs"
+          "Ingestion Jobs"
         ],
         "summary": "Trigger Batch Enrich",
         "description": "Trigger batch enrichment for assets in a bundle missing a facet.\n\nRuns enrichers (geocoding, etc.) on assets that don't yet have the target\nfacet set. Self-chaining until all are enriched.",
@@ -7087,7 +7338,7 @@
     "/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/processing-status": {
       "get": {
         "tags": [
-          "Dataset Jobs"
+          "Ingestion Jobs"
         ],
         "summary": "Get Processing Status",
         "description": "Get processing status counts for assets in a bundle.\n\nReturns counts by processing_status (PENDING, PROCESSING, READY, FAILED).",
@@ -7141,14 +7392,14 @@
         }
       }
     },
-    "/api/v1/infospaces/{infospace_id}/dataset-jobs": {
+    "/api/v1/infospaces/{infospace_id}/ingestion-jobs": {
       "get": {
         "tags": [
-          "Dataset Jobs"
+          "Ingestion Jobs"
         ],
-        "summary": "List Dataset Jobs",
-        "description": "List dataset ingestion jobs for an infospace.\n\nUseful for showing user their ongoing/completed dataset imports.",
-        "operationId": "list_dataset_jobs",
+        "summary": "List Ingestion Jobs",
+        "description": "List ingestion jobs for an infospace.\n\nUseful for showing user their ongoing/completed imports (local directory or remote archive).",
+        "operationId": "list_ingestion_jobs",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -7183,6 +7434,42 @@
             "description": "Filter by status"
           },
           {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by job kind (directory_local, zip, tar.gz, etc.)",
+              "title": "Kind"
+            },
+            "description": "Filter by job kind (directory_local, zip, tar.gz, etc.)"
+          },
+          {
+            "name": "source_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by source ID (jobs created by this source poll)",
+              "title": "Source Id"
+            },
+            "description": "Filter by source ID (jobs created by this source poll)"
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -7203,9 +7490,9 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/DatasetIngestionJobRead"
+                    "$ref": "#/components/schemas/IngestionJobRead"
                   },
-                  "title": "Response Dataset Jobs-List Dataset Jobs"
+                  "title": "Response Ingestion Jobs-List Ingestion Jobs"
                 }
               }
             }
@@ -7223,14 +7510,14 @@
         }
       }
     },
-    "/api/v1/dataset-jobs/{job_id}": {
+    "/api/v1/ingestion-jobs/{job_id}": {
       "get": {
         "tags": [
-          "Dataset Jobs"
+          "Ingestion Jobs"
         ],
-        "summary": "Get Dataset Job Status",
-        "description": "Get status of a specific dataset ingestion job.\n\nFrontend polls this endpoint to show real-time progress.",
-        "operationId": "get_dataset_job_status",
+        "summary": "Get Ingestion Job Status",
+        "description": "Get status of a specific ingestion job.\n\nFrontend polls this endpoint to show real-time progress.",
+        "operationId": "get_ingestion_job_status",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -7253,7 +7540,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatasetIngestionJobRead"
+                  "$ref": "#/components/schemas/IngestionJobRead"
                 }
               }
             }
@@ -7272,11 +7559,11 @@
       },
       "delete": {
         "tags": [
-          "Dataset Jobs"
+          "Ingestion Jobs"
         ],
-        "summary": "Delete Dataset Job",
-        "description": "Delete a dataset ingestion job record.\n\nNote: This only deletes the job tracking record, not the created assets/bundles.",
-        "operationId": "delete_dataset_job",
+        "summary": "Delete Ingestion Job",
+        "description": "Delete an ingestion job record.\n\nNote: This only deletes the job tracking record, not the created assets/bundles.",
+        "operationId": "delete_ingestion_job",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -7317,14 +7604,14 @@
         }
       }
     },
-    "/api/v1/dataset-jobs/by-uuid/{job_uuid}": {
+    "/api/v1/ingestion-jobs/by-uuid/{job_uuid}": {
       "get": {
         "tags": [
-          "Dataset Jobs"
+          "Ingestion Jobs"
         ],
-        "summary": "Get Dataset Job By Uuid",
+        "summary": "Get Ingestion Job By Uuid",
         "description": "Get job status by UUID (useful when only UUID is known).",
-        "operationId": "get_dataset_job_by_uuid",
+        "operationId": "get_ingestion_job_by_uuid",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -7347,7 +7634,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatasetIngestionJobRead"
+                  "$ref": "#/components/schemas/IngestionJobRead"
                 }
               }
             }
@@ -7365,10 +7652,10 @@
         }
       }
     },
-    "/api/v1/infospaces/{infospace_id}/dataset-jobs/ingest-archive": {
+    "/api/v1/infospaces/{infospace_id}/ingestion-jobs/ingest-archive": {
       "post": {
         "tags": [
-          "Dataset Jobs"
+          "Ingestion Jobs"
         ],
         "summary": "Create Archive Ingestion Job",
         "description": "Create a new archive ingestion job.\n\nAlternative endpoint to /assets/ingest-url that explicitly creates a job\nand returns job details for frontend progress tracking.",
@@ -7394,7 +7681,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DatasetIngestionJobCreate"
+                "$ref": "#/components/schemas/IngestionJobCreate"
               }
             }
           }
@@ -7405,7 +7692,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DatasetIngestionJobRead"
+                  "$ref": "#/components/schemas/IngestionJobRead"
                 }
               }
             }
@@ -7423,14 +7710,14 @@
         }
       }
     },
-    "/api/v1/dataset-jobs/{job_id}/cancel": {
+    "/api/v1/ingestion-jobs/{job_id}/cancel": {
       "post": {
         "tags": [
-          "Dataset Jobs"
+          "Ingestion Jobs"
         ],
-        "summary": "Cancel Dataset Job",
-        "description": "Cancel a running dataset ingestion job.",
-        "operationId": "cancel_dataset_job",
+        "summary": "Cancel Ingestion Job",
+        "description": "Cancel a running ingestion job.",
+        "operationId": "cancel_ingestion_job",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -7454,6 +7741,190 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/reconcile-directory": {
+      "post": {
+        "tags": [
+          "Ingestion Jobs"
+        ],
+        "summary": "Reconcile Directory",
+        "description": "Run on-demand directory reconcile.\n\nCompares files on disk with existing assets, detects additions, changes, deletions.\nCreates new versions for changed files. Does not poll continuously; call this\nwhen you want to sync (e.g. after bulk file updates).",
+        "operationId": "reconcile_directory",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileDirectoryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Ingestion Jobs-Reconcile Directory"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/enable-watch": {
+      "post": {
+        "tags": [
+          "Ingestion Jobs"
+        ],
+        "summary": "Enable Directory Watch",
+        "description": "Enable watching and/or version inbox for an already-imported directory.\n\n- ``enable_reconcile``: periodic stat comparison to detect replaced files.\n- ``enable_inbox``: creates ``_inbox/`` subdirectory; new files dropped\n  there are auto-imported with smart version detection.\n\nIdempotent: calling again with the same source_path updates existing Sources.",
+        "operationId": "enable_directory_watch",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnableWatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/watch-status": {
+      "get": {
+        "tags": [
+          "Ingestion Jobs"
+        ],
+        "summary": "Get Watch Status",
+        "description": "Get watch / inbox status for directories in an infospace.\nOptionally filter by bundle_id.",
+        "operationId": "get_watch_status",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "bundle_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Bundle Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WatchStatusResponse"
+                  },
+                  "title": "Response Ingestion Jobs-Get Watch Status"
                 }
               }
             }
@@ -8552,8 +9023,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "type": "object",
-                    "additionalProperties": true
+                    "$ref": "#/components/schemas/EntityCanonicalRead"
                   },
                   "title": "Response Canonical Entities-List Entities"
                 }
@@ -8578,7 +9048,7 @@
           "Entities"
         ],
         "summary": "Create Entity",
-        "description": "Create a canonical entity manually.\n\nBody: {\n    \"canonical_name\": str,\n    \"entity_type\": str,\n    \"aliases\": List[str] (optional),\n    \"properties\": dict (optional)\n}",
+        "description": "Create a canonical entity manually.",
         "operationId": "create_entity",
         "security": [
           {
@@ -8601,9 +9071,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Entity In"
+                "$ref": "#/components/schemas/EntityCanonicalCreate"
               }
             }
           }
@@ -8614,9 +9082,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Canonical Entities-Create Entity"
+                  "$ref": "#/components/schemas/EntityCanonicalRead"
                 }
               }
             }
@@ -8641,7 +9107,7 @@
           "Entities"
         ],
         "summary": "Update Entity",
-        "description": "Update a canonical entity (rename, edit aliases, properties).\n\nBody: {\n    \"canonical_name\": str (optional),\n    \"aliases\": List[str] (optional),\n    \"properties\": dict (optional)\n}",
+        "description": "Update a canonical entity (rename, edit aliases, properties).",
         "operationId": "update_entity",
         "security": [
           {
@@ -8673,9 +9139,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Entity In"
+                "$ref": "#/components/schemas/EntityCanonicalUpdate"
               }
             }
           }
@@ -8686,9 +9150,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Canonical Entities-Update Entity"
+                  "$ref": "#/components/schemas/EntityCanonicalRead"
                 }
               }
             }
@@ -8762,7 +9224,7 @@
           "Entities"
         ],
         "summary": "Merge Entities",
-        "description": "Merge multiple entities into one canonical entity.\n\nBody: {\n    \"entity_ids\": List[int],\n    \"canonical_name\": str (optional, uses first entity's name if not provided),\n    \"keep_id\": int (optional, which entity ID to keep, defaults to first)\n}",
+        "description": "Merge multiple entities into one canonical entity.",
         "operationId": "merge_entities",
         "security": [
           {
@@ -8785,9 +9247,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Merge Request"
+                "$ref": "#/components/schemas/MergeEntitiesRequest"
               }
             }
           }
@@ -8798,9 +9258,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Canonical Entities-Merge Entities"
+                  "$ref": "#/components/schemas/EntityCanonicalRead"
                 }
               }
             }
@@ -8825,7 +9283,7 @@
           "Entities"
         ],
         "summary": "Trigger Resolution",
-        "description": "Trigger automatic entity resolution for raw entity mentions.\n\nBody: {\n    \"raw_entities\": List[{\"name\": str, \"type\": str}],\n    \"similarity_threshold\": float (optional, default 0.85),\n    \"use_embeddings\": bool (optional, default true)\n}",
+        "description": "Trigger automatic entity resolution for raw entity mentions.",
         "operationId": "trigger_resolution",
         "security": [
           {
@@ -8848,9 +9306,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Resolve Request"
+                "$ref": "#/components/schemas/ResolveEntitiesRequest"
               }
             }
           }
@@ -8861,8 +9317,6 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
                   "title": "Response Canonical Entities-Trigger Resolution"
                 }
               }
@@ -11083,6 +11537,185 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/collaborators/invite": {
+      "post": {
+        "tags": [
+          "Infospaces",
+          "Infospaces"
+        ],
+        "summary": "Invite Collaborator",
+        "description": "Invite a user to collaborate on an infospace. Only owner or editor can invite.",
+        "operationId": "invite_collaborator",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "email",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Email of user to invite",
+              "title": "Email"
+            },
+            "description": "Email of user to invite"
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Role: owner, editor, viewer",
+              "default": "viewer",
+              "title": "Role"
+            },
+            "description": "Role: owner, editor, viewer"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Infospaces-Invite Collaborator"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/collaborators": {
+      "get": {
+        "tags": [
+          "Infospaces",
+          "Infospaces"
+        ],
+        "summary": "List Collaborators",
+        "description": "List collaborators for an infospace.",
+        "operationId": "list_collaborators",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Infospaces-List Collaborators"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/collaborators/{user_id}": {
+      "delete": {
+        "tags": [
+          "Infospaces",
+          "Infospaces"
+        ],
+        "summary": "Remove Collaborator",
+        "description": "Remove a collaborator from an infospace.",
+        "operationId": "remove_collaborator",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Infospaces-Remove Collaborator"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/infospaces/{infospace_id}/stats": {
       "get": {
         "tags": [
@@ -11294,6 +11927,289 @@
             "OAuth2PasswordBearer": []
           }
         ]
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/knowledge-graphs": {
+      "get": {
+        "tags": [
+          "Knowledge Graphs",
+          "Knowledge Graphs"
+        ],
+        "summary": "List Knowledge Graphs",
+        "description": "List knowledge graphs for an infospace.",
+        "operationId": "list_knowledge_graphs",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KnowledgeGraphRead"
+                  },
+                  "title": "Response Knowledge Graphs-List Knowledge Graphs"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Knowledge Graphs",
+          "Knowledge Graphs"
+        ],
+        "summary": "Create Knowledge Graph",
+        "description": "Create a named knowledge graph.",
+        "operationId": "create_knowledge_graph",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeGraphCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeGraphRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/knowledge-graphs/{graph_id}": {
+      "get": {
+        "tags": [
+          "Knowledge Graphs",
+          "Knowledge Graphs"
+        ],
+        "summary": "Get Knowledge Graph",
+        "description": "Get a knowledge graph by ID.",
+        "operationId": "get_knowledge_graph",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "graph_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Graph Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeGraphRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Knowledge Graphs",
+          "Knowledge Graphs"
+        ],
+        "summary": "Update Knowledge Graph",
+        "description": "Update a knowledge graph.",
+        "operationId": "update_knowledge_graph",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "graph_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Graph Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeGraphUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeGraphRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Knowledge Graphs",
+          "Knowledge Graphs"
+        ],
+        "summary": "Delete Knowledge Graph",
+        "description": "Delete a knowledge graph. Entities with graph_id set will need handling (cascade or nullify).",
+        "operationId": "delete_knowledge_graph",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "graph_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Graph Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/login/access-token": {
@@ -11757,6 +12673,72 @@
             "OAuth2PasswordBearer": []
           }
         ]
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/storage/browse": {
+      "get": {
+        "tags": [
+          "Storage"
+        ],
+        "summary": "Browse Storage",
+        "description": "List immediate children of a directory under allowed import paths.\n\nUsed by the Local Storage Import UI to browse available datasets before import.\nPath must be under ALLOWED_IMPORT_PATHS (or LOCAL_STORAGE_BASE_PATH).",
+        "operationId": "browse_storage",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Directory path to list; defaults to first allowed root",
+              "title": "Path"
+            },
+            "description": "Directory path to list; defaults to first allowed root"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageBrowseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/search_history/create": {
@@ -14908,7 +15890,7 @@
           "Tree Navigation"
         ],
         "summary": "Get Feed Assets",
-        "description": "Get a feed of recent assets sorted by date.\n\nUnlike the tree endpoint, this returns ALL displayable assets regardless\nof whether their containing bundle is expanded. Perfect for \"latest\" feeds.\n\nFeatures:\n- Includes assets from all bundles (not just expanded ones)\n- Filters out child assets (only parent/standalone assets)\n- Sorted by date (created_at or updated_at)\n- Supports kind filtering\n- Includes source_metadata for image extraction",
+        "description": "Get a feed of recent assets sorted by date.\n\nUnlike the tree endpoint, this returns ALL displayable assets regardless\nof whether their containing bundle is expanded. Perfect for \"latest\" feeds.\n\nFeatures:\n- Includes assets from all bundles (not just expanded ones)\n- Filters out child assets (only parent/standalone assets)\n- Sorted by date (created_at or updated_at) or name\n- Supports kind filtering\n- Supports bundle_id and path_filter for Bundle/BundleView detail views\n- Includes source_metadata for image extraction",
         "operationId": "get_feed_assets",
         "security": [
           {
@@ -14968,11 +15950,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "description": "Sort field: created_at, updated_at",
+              "description": "Sort field: created_at, updated_at, name",
               "default": "updated_at",
               "title": "Sort By"
             },
-            "description": "Sort field: created_at, updated_at"
+            "description": "Sort field: created_at, updated_at, name"
           },
           {
             "name": "sort_order",
@@ -14985,6 +15967,42 @@
               "title": "Sort Order"
             },
             "description": "Sort order: asc, desc"
+          },
+          {
+            "name": "bundle_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to assets in this bundle (for Bundle/BundleView detail)",
+              "title": "Bundle Id"
+            },
+            "description": "Filter to assets in this bundle (for Bundle/BundleView detail)"
+          },
+          {
+            "name": "path_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by logical_path prefix (for BundleView)",
+              "title": "Path Filter"
+            },
+            "description": "Filter by logical_path prefix (for BundleView)"
           }
         ],
         "responses": {
@@ -18302,6 +19320,18 @@
             ],
             "title": "Source Bundle Id"
           },
+          "follow_on_version_change": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Follow On Version Change",
+            "default": false
+          },
           "run_type": {
             "anyOf": [
               {
@@ -19469,6 +20499,20 @@
               }
             ],
             "title": "Source Metadata"
+          },
+          "discovered_modalities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovered Modalities"
           },
           "event_timestamp": {
             "anyOf": [
@@ -21018,6 +22062,112 @@
         "type": "object",
         "title": "BundleUpdate"
       },
+      "BundleViewCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "source_bundle_id": {
+            "type": "integer",
+            "title": "Source Bundle Id"
+          },
+          "path_prefix": {
+            "type": "string",
+            "title": "Path Prefix",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "source_bundle_id"
+        ],
+        "title": "BundleViewCreate"
+      },
+      "BundleViewRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "uuid": {
+            "type": "string",
+            "title": "Uuid"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "source_bundle_id": {
+            "type": "integer",
+            "title": "Source Bundle Id"
+          },
+          "path_prefix": {
+            "type": "string",
+            "title": "Path Prefix"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "uuid",
+          "name",
+          "source_bundle_id",
+          "path_prefix",
+          "infospace_id",
+          "user_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "BundleViewRead"
+      },
+      "BundleViewUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "path_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path Prefix"
+          }
+        },
+        "type": "object",
+        "title": "BundleViewUpdate"
+      },
       "ChatConversationCreate": {
         "properties": {
           "title": {
@@ -22174,228 +23324,6 @@
         ],
         "title": "DatasetCreate"
       },
-      "DatasetIngestionJobCreate": {
-        "properties": {
-          "source_locator": {
-            "type": "string",
-            "title": "Source Locator"
-          },
-          "title": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Title"
-          },
-          "options": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Options"
-          }
-        },
-        "type": "object",
-        "required": [
-          "source_locator"
-        ],
-        "title": "DatasetIngestionJobCreate",
-        "description": "Request to create a dataset ingestion job."
-      },
-      "DatasetIngestionJobRead": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "uuid": {
-            "type": "string",
-            "title": "Uuid"
-          },
-          "infospace_id": {
-            "type": "integer",
-            "title": "Infospace Id"
-          },
-          "user_id": {
-            "type": "integer",
-            "title": "User Id"
-          },
-          "source_locator": {
-            "type": "string",
-            "title": "Source Locator"
-          },
-          "kind": {
-            "type": "string",
-            "title": "Kind"
-          },
-          "root_bundle_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Root Bundle Id"
-          },
-          "status": {
-            "$ref": "#/components/schemas/IngestionStatus"
-          },
-          "total_files": {
-            "type": "integer",
-            "title": "Total Files"
-          },
-          "processed_files": {
-            "type": "integer",
-            "title": "Processed Files"
-          },
-          "failed_files": {
-            "type": "integer",
-            "title": "Failed Files"
-          },
-          "total_bytes": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Total Bytes"
-          },
-          "downloaded_bytes": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Downloaded Bytes"
-          },
-          "cursor_state": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Cursor State"
-          },
-          "task_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Task Id"
-          },
-          "error_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Message"
-          },
-          "retry_count": {
-            "type": "integer",
-            "title": "Retry Count"
-          },
-          "last_error_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Error At"
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At"
-          },
-          "updated_at": {
-            "type": "string",
-            "title": "Updated At"
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          },
-          "progress_pct": {
-            "type": "number",
-            "title": "Progress Pct",
-            "default": 0.0
-          },
-          "stage_message": {
-            "type": "string",
-            "title": "Stage Message",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "uuid",
-          "infospace_id",
-          "user_id",
-          "source_locator",
-          "kind",
-          "root_bundle_id",
-          "status",
-          "total_files",
-          "processed_files",
-          "failed_files",
-          "total_bytes",
-          "downloaded_bytes",
-          "cursor_state",
-          "task_id",
-          "error_message",
-          "retry_count",
-          "last_error_at",
-          "created_at",
-          "updated_at",
-          "started_at",
-          "completed_at"
-        ],
-        "title": "DatasetIngestionJobRead",
-        "description": "Response model for DatasetIngestionJob."
-      },
       "DatasetPackageEntitySummary": {
         "properties": {
           "entity_uuid": {
@@ -22791,7 +23719,19 @@
               }
             ],
             "title": "Copy Mode",
-            "default": true
+            "default": false
+          },
+          "reconcile_mode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reconcile Mode",
+            "default": false
           },
           "options": {
             "anyOf": [
@@ -22915,6 +23855,244 @@
         ],
         "title": "EmbeddingStatsResponse",
         "description": "Response with embedding statistics."
+      },
+      "EnableWatchRequest": {
+        "properties": {
+          "source_path": {
+            "type": "string",
+            "title": "Source Path"
+          },
+          "bundle_id": {
+            "type": "integer",
+            "title": "Bundle Id"
+          },
+          "enable_reconcile": {
+            "type": "boolean",
+            "title": "Enable Reconcile",
+            "default": false
+          },
+          "reconcile_interval_seconds": {
+            "type": "integer",
+            "title": "Reconcile Interval Seconds",
+            "default": 3600
+          },
+          "enable_inbox": {
+            "type": "boolean",
+            "title": "Enable Inbox",
+            "default": true
+          },
+          "inbox_interval_seconds": {
+            "type": "integer",
+            "title": "Inbox Interval Seconds",
+            "default": 900
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_path",
+          "bundle_id"
+        ],
+        "title": "EnableWatchRequest",
+        "description": "Request to enable watching / inbox for an imported directory."
+      },
+      "EntityCanonicalCreate": {
+        "properties": {
+          "canonical_name": {
+            "type": "string",
+            "title": "Canonical Name"
+          },
+          "entity_type": {
+            "type": "string",
+            "title": "Entity Type"
+          },
+          "aliases": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aliases"
+          },
+          "properties": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Properties"
+          },
+          "graph_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "canonical_name",
+          "entity_type"
+        ],
+        "title": "EntityCanonicalCreate",
+        "description": "Request schema for creating an EntityCanonical."
+      },
+      "EntityCanonicalRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          },
+          "graph_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Id"
+          },
+          "canonical_name": {
+            "type": "string",
+            "title": "Canonical Name"
+          },
+          "entity_type": {
+            "type": "string",
+            "title": "Entity Type"
+          },
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Aliases",
+            "default": []
+          },
+          "embedding": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding"
+          },
+          "embedding_768": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding 768"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Properties",
+            "default": {}
+          },
+          "provenance_type": {
+            "type": "string",
+            "title": "Provenance Type",
+            "default": "method"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "infospace_id",
+          "canonical_name",
+          "entity_type",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "EntityCanonicalRead",
+        "description": "Response schema for EntityCanonical."
+      },
+      "EntityCanonicalUpdate": {
+        "properties": {
+          "canonical_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Name"
+          },
+          "aliases": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aliases"
+          },
+          "properties": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Properties"
+          }
+        },
+        "type": "object",
+        "title": "EntityCanonicalUpdate",
+        "description": "Request schema for updating an EntityCanonical."
       },
       "EvidenceRigor": {
         "type": "string",
@@ -24682,6 +25860,239 @@
         ],
         "title": "InfospacesOut"
       },
+      "IngestionJobCreate": {
+        "properties": {
+          "source_locator": {
+            "type": "string",
+            "title": "Source Locator"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_locator"
+        ],
+        "title": "IngestionJobCreate",
+        "description": "Request to create an ingestion job."
+      },
+      "IngestionJobRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "uuid": {
+            "type": "string",
+            "title": "Uuid"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "source_locator": {
+            "type": "string",
+            "title": "Source Locator"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "root_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Bundle Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IngestionStatus"
+          },
+          "total_files": {
+            "type": "integer",
+            "title": "Total Files"
+          },
+          "processed_files": {
+            "type": "integer",
+            "title": "Processed Files"
+          },
+          "failed_files": {
+            "type": "integer",
+            "title": "Failed Files"
+          },
+          "total_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Bytes"
+          },
+          "downloaded_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Downloaded Bytes"
+          },
+          "cursor_state": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Cursor State"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "retry_count": {
+            "type": "integer",
+            "title": "Retry Count"
+          },
+          "last_error_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error At"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "progress_pct": {
+            "type": "number",
+            "title": "Progress Pct",
+            "default": 0.0
+          },
+          "stage_message": {
+            "type": "string",
+            "title": "Stage Message",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "uuid",
+          "infospace_id",
+          "user_id",
+          "source_locator",
+          "kind",
+          "root_bundle_id",
+          "status",
+          "total_files",
+          "processed_files",
+          "failed_files",
+          "total_bytes",
+          "downloaded_bytes",
+          "cursor_state",
+          "task_id",
+          "error_message",
+          "retry_count",
+          "last_error_at",
+          "created_at",
+          "updated_at",
+          "started_at",
+          "completed_at"
+        ],
+        "title": "IngestionJobRead",
+        "description": "Response model for IngestionJob."
+      },
       "IngestionStatus": {
         "type": "string",
         "enum": [
@@ -24694,6 +26105,202 @@
           "cancelled"
         ],
         "title": "IngestionStatus"
+      },
+      "KnowledgeGraphCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "source_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Config"
+          },
+          "edit_policy": {
+            "type": "string",
+            "title": "Edit Policy",
+            "default": "method_only"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "KnowledgeGraphCreate",
+        "description": "Request schema for creating a KnowledgeGraph."
+      },
+      "KnowledgeGraphRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "uuid": {
+            "type": "string",
+            "title": "Uuid"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "source_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Source Config",
+            "default": {}
+          },
+          "edit_policy": {
+            "type": "string",
+            "title": "Edit Policy",
+            "default": "method_only"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "uuid",
+          "infospace_id",
+          "name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "KnowledgeGraphRead",
+        "description": "Response schema for KnowledgeGraph."
+      },
+      "KnowledgeGraphUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "source_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Config"
+          },
+          "edit_policy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edit Policy"
+          }
+        },
+        "type": "object",
+        "title": "KnowledgeGraphUpdate",
+        "description": "Request schema for updating a KnowledgeGraph."
+      },
+      "MergeEntitiesRequest": {
+        "properties": {
+          "entity_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Entity Ids"
+          },
+          "canonical_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Name"
+          },
+          "keep_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keep Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "entity_ids"
+        ],
+        "title": "MergeEntitiesRequest",
+        "description": "Request schema for merging entities."
       },
       "Message": {
         "properties": {
@@ -25091,6 +26698,44 @@
         ],
         "title": "RSSDiscoveryRequest"
       },
+      "RawEntityItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "RawEntityItem",
+        "description": "Single raw entity for resolution."
+      },
+      "ReconcileDirectoryRequest": {
+        "properties": {
+          "source_path": {
+            "type": "string",
+            "title": "Source Path"
+          },
+          "bundle_id": {
+            "type": "integer",
+            "title": "Bundle Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_path",
+          "bundle_id"
+        ],
+        "title": "ReconcileDirectoryRequest",
+        "description": "Request to run on-demand directory reconcile."
+      },
       "RegistrationStats": {
         "properties": {
           "total_users": {
@@ -25199,6 +26844,33 @@
         },
         "type": "object",
         "title": "ReprocessOptions"
+      },
+      "ResolveEntitiesRequest": {
+        "properties": {
+          "raw_entities": {
+            "items": {
+              "$ref": "#/components/schemas/RawEntityItem"
+            },
+            "type": "array",
+            "title": "Raw Entities"
+          },
+          "similarity_threshold": {
+            "type": "number",
+            "title": "Similarity Threshold",
+            "default": 0.85
+          },
+          "use_embeddings": {
+            "type": "boolean",
+            "title": "Use Embeddings",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "raw_entities"
+        ],
+        "title": "ResolveEntitiesRequest",
+        "description": "Request schema for triggering entity resolution."
       },
       "ResourceType": {
         "type": "string",
@@ -26583,6 +28255,97 @@
         ],
         "title": "SourcesOut"
       },
+      "StorageBrowseEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "is_directory": {
+            "type": "boolean",
+            "title": "Is Directory"
+          },
+          "file_count": {
+            "type": "integer",
+            "title": "File Count",
+            "default": 0
+          },
+          "importable_count": {
+            "type": "integer",
+            "title": "Importable Count",
+            "default": 0
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "is_directory"
+        ],
+        "title": "StorageBrowseEntry",
+        "description": "Single entry in a storage directory listing."
+      },
+      "StorageBrowseResponse": {
+        "properties": {
+          "current_path": {
+            "type": "string",
+            "title": "Current Path"
+          },
+          "parent_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Path"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/StorageBrowseEntry"
+            },
+            "type": "array",
+            "title": "Entries"
+          },
+          "allowed_roots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allowed Roots"
+          },
+          "path_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "current_path",
+          "entries",
+          "allowed_roots"
+        ],
+        "title": "StorageBrowseResponse",
+        "description": "Response for storage browse endpoint."
+      },
       "TaskCreate": {
         "properties": {
           "name": {
@@ -27257,7 +29020,8 @@
         "enum": [
           "bundle",
           "asset",
-          "virtual_folder"
+          "virtual_folder",
+          "bundle_view"
         ],
         "title": "TreeNodeType",
         "description": "Type of node in the file tree."
@@ -28350,6 +30114,84 @@
         ],
         "title": "VirtualFolderChildrenResponse",
         "description": "Response for virtual folder children (path-based tree from blob_path)."
+      },
+      "WatchStatusResponse": {
+        "properties": {
+          "source_path": {
+            "type": "string",
+            "title": "Source Path"
+          },
+          "bundle_id": {
+            "type": "integer",
+            "title": "Bundle Id"
+          },
+          "reconcile_source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reconcile Source Id"
+          },
+          "reconcile_active": {
+            "type": "boolean",
+            "title": "Reconcile Active",
+            "default": false
+          },
+          "reconcile_last_poll": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reconcile Last Poll"
+          },
+          "inbox_source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inbox Source Id"
+          },
+          "inbox_active": {
+            "type": "boolean",
+            "title": "Inbox Active",
+            "default": false
+          },
+          "inbox_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inbox Path"
+          },
+          "inbox_files_pending": {
+            "type": "integer",
+            "title": "Inbox Files Pending",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_path",
+          "bundle_id"
+        ],
+        "title": "WatchStatusResponse",
+        "description": "Current watch/inbox status for a directory."
       }
     },
     "securitySchemes": {

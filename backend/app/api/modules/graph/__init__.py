@@ -1,7 +1,15 @@
-"""Graph domain: EntityCanonical, FragmentCuration. Use graph.resolution for resolve_entity etc., graph.services for GraphService."""
+"""Graph domain: KnowledgeGraph, EntityCanonical, EntityEditLog, FragmentCuration."""
 
-from app.api.modules.graph.models import EntityCanonical, FragmentCuration
+from app.api.modules.graph.models import (
+    KnowledgeGraph,
+    EntityCanonical,
+    EntityEditLog,
+    FragmentCuration,
+)
 
 __all__ = [
-    "EntityCanonical", "FragmentCuration",
+    "KnowledgeGraph",
+    "EntityCanonical",
+    "EntityEditLog",
+    "FragmentCuration",
 ]

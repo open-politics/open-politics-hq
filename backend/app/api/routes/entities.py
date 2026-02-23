@@ -4,7 +4,14 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
-from app.models import EntityCanonical, Infospace, User
+from app.models import EntityCanonical, EntityEditLog, FragmentCuration, Infospace, KnowledgeGraph, User
+from app.api.modules.graph.schemas import (
+    EntityCanonicalRead,
+    EntityCanonicalCreate,
+    EntityCanonicalUpdate,
+    MergeEntitiesRequest,
+    ResolveEntitiesRequest,
+)
 from app.api.dependency_injection import CurrentUser, get_db
 from app.api.modules.graph.resolution import resolve_entity
 from app.api.modules.embedding.services import EmbeddingService
@@ -17,7 +24,7 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=List[dict])
+@router.get("", response_model=List[EntityCanonicalRead])
 def list_entities(
     *,
     current_user: CurrentUser,
@@ -31,7 +38,7 @@ def list_entities(
     """
     # Verify infospace access
     infospace = db.get(Infospace, infospace_id)
-    if not infospace or infospace.user_id != current_user.id:
+    if not infospace or infospace.owner_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
     
     stmt = select(EntityCanonical).where(EntityCanonical.infospace_id == infospace_id)
@@ -39,34 +46,27 @@ def list_entities(
         stmt = stmt.where(EntityCanonical.entity_type == entity_type)
     
     entities = db.exec(stmt).all()
-    return [entity.model_dump() for entity in entities]
+    return list(entities)
 
 
-@router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=EntityCanonicalRead, status_code=status.HTTP_201_CREATED)
 async def create_entity(
     *,
     current_user: CurrentUser,
     infospace_id: int,
-    entity_in: dict,
+    entity_in: EntityCanonicalCreate,
     db: Session = Depends(get_db)
 ) -> Any:
     """
     Create a canonical entity manually.
-    
-    Body: {
-        "canonical_name": str,
-        "entity_type": str,
-        "aliases": List[str] (optional),
-        "properties": dict (optional)
-    }
     """
     # Verify infospace access
     infospace = db.get(Infospace, infospace_id)
-    if not infospace or infospace.user_id != current_user.id:
+    if not infospace or infospace.owner_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
     
-    canonical_name = entity_in.get("canonical_name")
-    entity_type = entity_in.get("entity_type")
+    canonical_name = entity_in.canonical_name
+    entity_type = entity_in.entity_type
     
     if not canonical_name or not entity_type:
         raise HTTPException(
@@ -88,61 +88,94 @@ async def create_entity(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Entity '{canonical_name}' ({entity_type}) already exists"
         )
+
+    graph_id = entity_in.graph_id
+    if graph_id:
+        graph = db.get(KnowledgeGraph, graph_id)
+        if not graph or graph.infospace_id != infospace_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Graph not found")
+        if graph.edit_policy == "method_only":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Graph '{graph.name}' has edit_policy=method_only; manual creation not allowed",
+            )
     
     entity = EntityCanonical(
         infospace_id=infospace_id,
         canonical_name=canonical_name,
         entity_type=entity_type,
-        aliases=entity_in.get("aliases", [canonical_name]),
-        properties=entity_in.get("properties", {})
+        aliases=entity_in.aliases if entity_in.aliases is not None else [canonical_name],
+        properties=entity_in.properties or {},
+        graph_id=graph_id,
+        provenance_type="manual" if graph_id else "method",
     )
-    
+
     db.add(entity)
+    db.flush()  # get entity.id before EntityEditLog
+    if graph_id:
+        log = EntityEditLog(
+            entity_canonical_id=entity.id,
+            action="create",
+            performed_by=f"user:{current_user.id}",
+            previous_state={},
+        )
+        db.add(log)
     db.commit()
     db.refresh(entity)
-    
-    return entity.model_dump()
+    return entity
 
 
-@router.put("/{entity_id}", response_model=dict)
+@router.put("/{entity_id}", response_model=EntityCanonicalRead)
 def update_entity(
     *,
     current_user: CurrentUser,
     infospace_id: int,
     entity_id: int,
-    entity_in: dict,
+    entity_in: EntityCanonicalUpdate,
     db: Session = Depends(get_db)
 ) -> Any:
     """
     Update a canonical entity (rename, edit aliases, properties).
-    
-    Body: {
-        "canonical_name": str (optional),
-        "aliases": List[str] (optional),
-        "properties": dict (optional)
-    }
     """
     # Verify infospace access
     infospace = db.get(Infospace, infospace_id)
-    if not infospace or infospace.user_id != current_user.id:
+    if not infospace or infospace.owner_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
     
     entity = db.get(EntityCanonical, entity_id)
     if not entity or entity.infospace_id != infospace_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
-    
-    if "canonical_name" in entity_in:
-        entity.canonical_name = entity_in["canonical_name"]
-    if "aliases" in entity_in:
-        entity.aliases = entity_in["aliases"]
-    if "properties" in entity_in:
-        entity.properties = entity_in["properties"]
-    
+
+    if entity.graph_id:
+        graph = db.get(KnowledgeGraph, entity.graph_id)
+        if graph and graph.edit_policy == "method_only":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Graph '{graph.name}' has edit_policy=method_only; manual edits not allowed",
+            )
+
+    prev_state = {"canonical_name": entity.canonical_name, "aliases": list(entity.aliases or []), "properties": dict(entity.properties or {})}
+
+    if entity_in.canonical_name is not None:
+        entity.canonical_name = entity_in.canonical_name
+    if entity_in.aliases is not None:
+        entity.aliases = entity_in.aliases
+    if entity_in.properties is not None:
+        entity.properties = entity_in.properties
+
     db.add(entity)
+    if entity.graph_id and (entity_in.canonical_name is not None or entity_in.aliases is not None or entity_in.properties is not None):
+        log = EntityEditLog(
+            entity_canonical_id=entity_id,
+            action="update_properties",
+            performed_by=f"user:{current_user.id}",
+            previous_state=prev_state,
+        )
+        db.add(log)
     db.commit()
     db.refresh(entity)
-    
-    return entity.model_dump()
+
+    return entity
 
 
 @router.delete("/{entity_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -156,40 +189,42 @@ def delete_entity(
     """Delete a canonical entity."""
     # Verify infospace access
     infospace = db.get(Infospace, infospace_id)
-    if not infospace or infospace.user_id != current_user.id:
+    if not infospace or infospace.owner_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
     
     entity = db.get(EntityCanonical, entity_id)
     if not entity or entity.infospace_id != infospace_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
-    
+
+    if entity.graph_id:
+        graph = db.get(KnowledgeGraph, entity.graph_id)
+        if graph and graph.edit_policy == "method_only":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Graph '{graph.name}' has edit_policy=method_only; manual delete not allowed",
+            )
+
     db.delete(entity)
     db.commit()
 
 
-@router.post("/merge", response_model=dict)
+@router.post("/merge", response_model=EntityCanonicalRead)
 async def merge_entities(
     *,
     current_user: CurrentUser,
     infospace_id: int,
-    merge_request: dict,
+    merge_request: MergeEntitiesRequest,
     db: Session = Depends(get_db)
 ) -> Any:
     """
     Merge multiple entities into one canonical entity.
-    
-    Body: {
-        "entity_ids": List[int],
-        "canonical_name": str (optional, uses first entity's name if not provided),
-        "keep_id": int (optional, which entity ID to keep, defaults to first)
-    }
     """
     # Verify infospace access
     infospace = db.get(Infospace, infospace_id)
-    if not infospace or infospace.user_id != current_user.id:
+    if not infospace or infospace.owner_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
     
-    entity_ids = merge_request.get("entity_ids", [])
+    entity_ids = merge_request.entity_ids
     if len(entity_ids) < 2:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -207,10 +242,21 @@ async def merge_entities(
             )
         entities.append(entity)
     
+    # Check edit_policy if entities belong to a graph
+    graph_ids = {e.graph_id for e in entities if e.graph_id is not None}
+    if graph_ids:
+        for gid in graph_ids:
+            graph = db.get(KnowledgeGraph, gid)
+            if graph and graph.edit_policy == "method_only":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Graph '{graph.name}' has edit_policy=method_only; manual merge not allowed",
+                )
+
     # Determine which entity to keep
-    keep_id = merge_request.get("keep_id", entity_ids[0])
+    keep_id = merge_request.keep_id or entity_ids[0]
     keep_entity = next((e for e in entities if e.id == keep_id), entities[0])
-    
+
     # Collect all aliases
     all_aliases = set(keep_entity.aliases or [])
     for entity in entities:
@@ -219,54 +265,73 @@ async def merge_entities(
             all_aliases.update(entity.aliases or [])
     
     # Update keep entity
-    if "canonical_name" in merge_request:
-        keep_entity.canonical_name = merge_request["canonical_name"]
+    if merge_request.canonical_name is not None:
+        keep_entity.canonical_name = merge_request.canonical_name
     keep_entity.aliases = list(all_aliases)
     
     # Merge properties
-    merged_properties = keep_entity.properties.copy()
+    merged_properties = dict(keep_entity.properties or {})
     for entity in entities:
         if entity.id != keep_entity.id:
             merged_properties.update(entity.properties or {})
     keep_entity.properties = merged_properties
-    
+    keep_entity.provenance_type = "manual"
+
+    # Update FragmentCuration.resolved_refs: replace merged (deleted) entity IDs with keep_entity.id
+    merged_ids = {e.id for e in entities if e.id != keep_entity.id}
+    if merged_ids:
+        for fc in db.exec(select(FragmentCuration).where(FragmentCuration.resolved_refs.isnot(None))).all():
+            refs = fc.resolved_refs or {}
+            new_refs = None
+            for key in ("entity_canonical_id", "subject_id", "object_id"):
+                val = refs.get(key)
+                if isinstance(val, int) and val in merged_ids:
+                    if new_refs is None:
+                        new_refs = dict(refs)
+                    new_refs[key] = keep_entity.id
+            if new_refs is not None:
+                fc.resolved_refs = new_refs
+                db.add(fc)
+
     # Delete other entities
     for entity in entities:
         if entity.id != keep_entity.id:
             db.delete(entity)
     
     db.add(keep_entity)
+    if keep_entity.graph_id:
+        prev = {e.id: {"canonical_name": e.canonical_name, "aliases": e.aliases, "properties": e.properties} for e in entities}
+        log = EntityEditLog(
+            entity_canonical_id=keep_entity.id,
+            action="merge",
+            performed_by=f"user:{current_user.id}",
+            previous_state={"merged_entity_ids": entity_ids, "merged_states": prev},
+        )
+        db.add(log)
     db.commit()
     db.refresh(keep_entity)
-    
-    return keep_entity.model_dump()
+    return keep_entity
 
 
-@router.post("/resolve", response_model=dict)
+@router.post("/resolve")
 async def trigger_resolution(
     *,
     current_user: CurrentUser,
     infospace_id: int,
-    resolve_request: dict,
+    resolve_request: ResolveEntitiesRequest,
     db: Session = Depends(get_db)
 ) -> Any:
     """
     Trigger automatic entity resolution for raw entity mentions.
-    
-    Body: {
-        "raw_entities": List[{"name": str, "type": str}],
-        "similarity_threshold": float (optional, default 0.85),
-        "use_embeddings": bool (optional, default true)
-    }
     """
     # Verify infospace access
     infospace = db.get(Infospace, infospace_id)
-    if not infospace or infospace.user_id != current_user.id:
+    if not infospace or infospace.owner_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
     
-    raw_entities = resolve_request.get("raw_entities", [])
-    similarity_threshold = resolve_request.get("similarity_threshold", 0.85)
-    use_embeddings = resolve_request.get("use_embeddings", True)
+    raw_entities = resolve_request.raw_entities
+    similarity_threshold = resolve_request.similarity_threshold
+    use_embeddings = resolve_request.use_embeddings
     
     embedding_service = None
     if use_embeddings:
@@ -277,13 +342,13 @@ async def trigger_resolution(
         canonical = await resolve_entity(
             session=db,
             infospace_id=infospace_id,
-            raw_name=raw_entity["name"],
-            entity_type=raw_entity["type"],
+            raw_name=raw_entity.name,
+            entity_type=raw_entity.type,
             embedding_service=embedding_service,
             similarity_threshold=similarity_threshold
         )
         resolved.append({
-            "raw_name": raw_entity["name"],
+            "raw_name": raw_entity.name,
             "canonical_id": canonical.id,
             "canonical_name": canonical.canonical_name
         })

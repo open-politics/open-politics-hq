@@ -8,17 +8,20 @@ Central registry for content type configuration. Single source of truth for:
 - Processor class per kind
 - Metadata extractors (for Phase 1 pipeline)
 
-All scattered definitions (FILE_EXTENSION_MAP, PROCESSABLE_KINDS, importable_extensions(),
+All scattered definitions (importable_extensions(),
 Asset.is_container, etc.) become derived views from this registry.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import FrozenSet, List, Optional, Set, Tuple, Type, TypeVar
+from typing import Any, FrozenSet, List, Optional, Set, Tuple, Type, TypeVar
 
 from app.api.modules.content.models import Asset, AssetKind, Modality
 
-# Import base only to avoid circular dependency; concrete processors registered lazily
-from app.api.modules.content.processors.base import BaseProcessor, ProcessingContext
+# BaseProcessor/ProcessingContext not imported here to avoid circular dependency:
+# types <- processors.base <- processors/__init__ <- strategy <- types
+# Concrete processors and base are imported lazily in _register_builtin and get_processor.
 
 # Type for metadata extractors (Phase 1 pipeline - defined later)
 MetadataExtractorT = TypeVar("MetadataExtractorT")
@@ -33,7 +36,7 @@ class ContentTypeDescriptor:
     importable: bool = True
     is_container: bool = False
     child_kind: Optional[AssetKind] = None
-    processor_class: Optional[Type[BaseProcessor]] = None
+    processor_class: Optional[Type[Any]] = None
     metadata_extractors: List[Type] = field(default_factory=list)
     category: str = "document"  # document, media, data, email, archive
     # Override importable extensions when only some extensions are importable (e.g. FILE has .json only)
@@ -50,7 +53,7 @@ class ContentTypeRegistry:
     def __init__(self):
         self._by_kind: dict[AssetKind, ContentTypeDescriptor] = {}
         self._extension_to_descriptor: dict[str, ContentTypeDescriptor] = {}
-        self._extension_processor_override: dict[str, Type[BaseProcessor]] = {}
+        self._extension_processor_override: dict[str, Type[Any]] = {}
         self._register_builtin()
 
     def _register(self, descriptor: ContentTypeDescriptor) -> None:
@@ -173,6 +176,7 @@ class ContentTypeRegistry:
                 importable=False,
                 is_container=False,
                 category="media",
+                supported_modalities=(Modality.IMAGE,),
             ),
             ContentTypeDescriptor(
                 kind=AssetKind.VIDEO_SCENE,
@@ -256,7 +260,20 @@ class ContentTypeRegistry:
         desc = self.by_kind(kind)
         return desc.is_container if desc else False
 
-    def get_processor_class(self, asset: Asset) -> Optional[Type[BaseProcessor]]:
+    def kinds_supporting_modality(
+        self, modality: Modality, include_conditional: bool = True
+    ) -> FrozenSet[AssetKind]:
+        """
+        Return kinds that support the given modality.
+        include_conditional: if True, include kinds like PDF_PAGE that can be text or image.
+        """
+        result: Set[AssetKind] = set()
+        for desc in self._by_kind.values():
+            if modality in desc.supported_modalities:
+                result.add(desc.kind)
+        return frozenset(result)
+
+    def get_processor_class(self, asset: Asset) -> Optional[Type[Any]]:
         """
         Get processor class for an asset.
         Priority: extension override (e.g. ExcelProcessor for xlsx/xls) then kind.
@@ -270,7 +287,7 @@ class ContentTypeRegistry:
         desc = self.by_kind(asset.kind)
         return desc.processor_class if desc else None
 
-    def get_processor(self, asset: Asset, context: ProcessingContext) -> Optional[BaseProcessor]:
+    def get_processor(self, asset: Asset, context: Any) -> Optional[Any]:
         """Get instantiated processor for an asset."""
         cls = self.get_processor_class(asset)
         return cls(context) if cls else None
@@ -342,18 +359,3 @@ DEFAULT_MAX_IMAGES = 8
 DEFAULT_TIMEOUT = 30
 
 
-# Backward compatibility: dict/set views matching old FILE_EXTENSION_MAP and PROCESSABLE_KINDS
-FILE_EXTENSION_MAP: dict = {}
-PROCESSABLE_KINDS: set = set()
-
-
-def _init_backward_compat() -> None:
-    """Populate backward-compat views (called after registry init)."""
-    global FILE_EXTENSION_MAP, PROCESSABLE_KINDS
-    FILE_EXTENSION_MAP = {
-        ext: desc.kind for ext, desc in _registry._extension_to_descriptor.items()
-    }
-    PROCESSABLE_KINDS = set(_registry.processable_kinds())
-
-
-_init_backward_compat()

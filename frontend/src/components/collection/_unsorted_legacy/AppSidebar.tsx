@@ -12,6 +12,7 @@ import {
   Home,
   PieChart,
   Microscope,
+  Network,
   Users,
   Settings2,
   SquareTerminal,
@@ -142,6 +143,13 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       icon: Microscope,
       isActive: true,
       colorClass: "sidebar-sky",
+    },
+    {
+      title: "Knowledge Graphs",
+      url: "/hq/infospaces/knowledge-graphs",
+      icon: Network,
+      isActive: true,
+      colorClass: "sidebar-teal",
     }
   ], [])
   

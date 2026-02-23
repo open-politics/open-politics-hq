@@ -1012,6 +1012,7 @@ class AnnotationService:
             triggered_by_source_id=getattr(run_in, 'triggered_by_source_id', None),
             # ═══ NEW: Continuous run support ═══
             source_bundle_id=getattr(run_in, 'source_bundle_id', None),
+            follow_on_version_change=getattr(run_in, 'follow_on_version_change', False) or False,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc)
         )
@@ -1180,12 +1181,26 @@ class AnnotationService:
         logger.info(f"Deleted fragment '{fragment_key}' from asset {asset_id} by user {user_id}")
         return True
 
-    def compute_run_aggregates(self, run_id: int, replace_existing: bool = True) -> List[RunAggregate]:
-        """Compute RunAggregate from all annotations. If replace_existing, delete existing first."""
+    def compute_run_aggregates(
+        self, run_id: int, replace_existing: bool = True, include_followups: bool = False
+    ) -> List[RunAggregate]:
+        """
+        Compute RunAggregate from all annotations.
+        If replace_existing, delete existing first.
+        If include_followups, also include annotations from runs with parent_run_id=run_id.
+        """
         if replace_existing:
             self.session.exec(delete(RunAggregate).where(RunAggregate.run_id == run_id))
             self.session.commit()
-        annotations = self.session.exec(select(Annotation).where(Annotation.run_id == run_id)).all()
+        run_ids = [run_id]
+        if include_followups:
+            followups = self.session.exec(
+                select(AnnotationRun.id).where(AnnotationRun.parent_run_id == run_id)
+            ).all()
+            run_ids.extend(followups)
+        annotations = self.session.exec(
+            select(Annotation).where(Annotation.run_id.in_(run_ids))
+        ).all()
         field_stats: Dict[str, Dict[str, Any]] = {}
 
         for ann in annotations:

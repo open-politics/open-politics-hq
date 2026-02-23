@@ -109,6 +109,7 @@ import {
   ButtonGroupSeparator,
 } from '@/components/ui/button-group';
 import AssetSelector, { AssetTreeItem } from './AssetSelector';
+import AnnotateFolderDialog, { type AnnotateFolderParams } from '../annotation/AnnotateFolderDialog';
 import { useShareableStore } from '@/zustand_stores/storeShareables';
 import ShareItemDialog from './Helper/ShareItemDialog';
 import { ResourceType } from '@/client';
@@ -169,7 +170,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   const debouncedSearchTerm = useDebounce(searchTermFromSelector, 300);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  const [activeDetail, setActiveDetail] = useState<{ type: 'asset' | 'bundle'; id: number } | null>(null);
+  const [activeDetail, setActiveDetail] = useState<{ type: 'asset' | 'bundle' | 'bundleview'; id: number } | null>(null);
   const [selectedAssetInBundle, setSelectedAssetInBundle] = useState<number | null>(null);
   const [highlightAssetId, setHighlightAssetId] = useState<number | null>(null);
   const [assetTypeFilter, setAssetTypeFilter] = useState<AssetKind | 'all'>('all');
@@ -221,6 +222,9 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   const [isArticleComposerOpen, setIsArticleComposerOpen] = useState(false);
   const [articleComposerMode, setArticleComposerMode] = useState<'create' | 'edit'>('create');
   const [editingArticleId, setEditingArticleId] = useState<number | undefined>();
+
+  // Annotate folder dialog (virtual folder -> annotation run with path_filter)
+  const [annotateFolderParams, setAnnotateFolderParams] = useState<AnnotateFolderParams | null>(null);
   
   // Data fetching state - NOW REMOVED! Using tree store instead
   // const [bundleAssets, setBundleAssets] = useState<Map<number, AssetRead[]>>(new Map());
@@ -565,7 +569,10 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   // - Clicking top-level asset -> shows asset detail view
   // - Back button -> returns to feed (sets activeDetail to null)
   const handleItemView = useCallback((item: AssetTreeItem) => {
-    if (item.type === 'folder' && item.bundle) {
+    if (item.type === 'folder' && item.bundleView) {
+        setActiveDetail({ type: 'bundleview', id: item.bundleView.id });
+        setHighlightAssetId(null);
+    } else if (item.type === 'folder' && item.bundle) {
         setActiveDetail({ type: 'bundle', id: item.bundle.id });
         setHighlightAssetId(null);
     } else if (item.asset) {
@@ -627,6 +634,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
       await deleteAsset(asset.id);
       toast.success(`Asset "${asset.title}" deleted.`);
       if (activeDetail?.type === 'asset' && activeDetail.id === asset.id) setActiveDetail(null);
+      if (activeDetail?.type === 'bundleview') setActiveDetail(null);
       
       // Refresh tree
       clearCache();
@@ -645,6 +653,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
       await deleteBundle(bundle.id);
       toast.success(`Bundle "${bundle.name}" deleted.`);
       if (activeDetail?.type === 'bundle' && activeDetail.id === bundle.id) setActiveDetail(null);
+      if (activeDetail?.type === 'bundleview') setActiveDetail(null);
       
       // Refresh tree
       clearCache();
@@ -1139,6 +1148,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                   onSelectionChange={setSelectedItems}
                   onItemView={handleItemView}
                   onItemDoubleClick={handleItemDoubleClick}
+                  onAnnotateFolder={(p) => setAnnotateFolderParams(p)}
                   renderItemActions={renderItemActions}
                   onSearchTermChange={setSearchTermFromSelector}
                 />
@@ -1156,6 +1166,14 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                         onEdit={handleEditAsset}
                         schemas={[]}
                         onLoadIntoRunner={onLoadIntoRunner}
+                      />
+                    ) : activeDetail?.type === 'bundleview' ? (
+                      <BundleDetailView
+                        selectedBundleViewId={activeDetail.id}
+                        onLoadIntoRunner={onLoadIntoRunner}
+                        selectedAssetId={selectedAssetInBundle}
+                        onAssetSelect={setSelectedAssetInBundle}
+                        highlightAssetId={highlightAssetId}
                       />
                     ) : activeDetail?.type === 'bundle' ? (
                       <BundleDetailView
@@ -1200,6 +1218,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                     onSelectionChange={setSelectedItems}
                     onItemView={handleItemView}
                     onItemDoubleClick={handleItemDoubleClick}
+                    onAnnotateFolder={(p) => setAnnotateFolderParams(p)}
                     renderItemActions={renderItemActions}
                     onSearchTermChange={setSearchTermFromSelector}
                   />
@@ -1242,6 +1261,35 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                           onLoadIntoRunner={onLoadIntoRunner}
                         />
                         </ScrollArea>
+                      </div>
+                    </>
+                  ) : activeDetail?.type === 'bundleview' ? (
+                    <>
+                      {/* Back to Feed button */}
+                      <div className="flex-none px-4 py-2 flex items-center gap-2 border-b">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setActiveDetail(null);
+                            setSelectedAssetInBundle(null);
+                            setHighlightAssetId(null);
+                          }}
+                          className="h-7 px-2 text-xs gap-1"
+                          title="Back to Home Feed View"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          <span className="hidden sm:inline">Back to Home Feed</span>
+                        </Button>
+                      </div>
+                      <div className="flex-1 overflow-hidden">
+                        <BundleDetailView
+                          selectedBundleViewId={activeDetail.id}
+                          onLoadIntoRunner={onLoadIntoRunner}
+                          selectedAssetId={selectedAssetInBundle}
+                          onAssetSelect={setSelectedAssetInBundle}
+                          highlightAssetId={highlightAssetId}
+                        />
                       </div>
                     </>
                   ) : activeDetail?.type === 'bundle' ? (
@@ -1309,6 +1357,11 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
           existingAssetId={editingArticleId}
         />
         {sharingItem && <ShareItemDialog item={sharingItem} onClose={() => setSharingItem(null)} />}
+        <AnnotateFolderDialog
+          open={!!annotateFolderParams}
+          onOpenChange={(open) => !open && setAnnotateFolderParams(null)}
+          params={annotateFolderParams}
+        />
         {editingAsset && <EditAssetOverlay open={true} onClose={() => setEditingAsset(null)} asset={editingAsset} onSave={handleSaveAsset} />}
         {editingBundle && <BundleEditDialog open={true} onClose={() => setEditingBundle(null)} bundle={editingBundle} onSave={handleSaveBundle} />}
 

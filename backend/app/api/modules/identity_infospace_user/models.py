@@ -70,6 +70,7 @@ class User(SQLModel, table=True):
     tasks: List["Task"] = Relationship(back_populates="user")
     analysis_adapters_created: List["AnalysisAdapter"] = Relationship(back_populates="creator")
     created_backups: List["InfospaceBackup"] = Relationship(back_populates="user")
+    infospace_collaborations: List["InfospaceCollaborator"] = Relationship(back_populates="user")
     user_backups: List["UserBackup"] = Relationship(
         back_populates="target_user",
         sa_relationship_kwargs={"foreign_keys": "[UserBackup.target_user_id]"}
@@ -77,6 +78,24 @@ class User(SQLModel, table=True):
     created_user_backups: List["UserBackup"] = Relationship(
         sa_relationship_kwargs={"foreign_keys": "[UserBackup.created_by_user_id]"}
     )
+
+
+class CollaboratorRole(str, enum.Enum):
+    OWNER = "owner"
+    EDITOR = "editor"
+    VIEWER = "viewer"
+
+
+class InfospaceCollaborator(SQLModel, table=True):
+    """Many-to-many: users with access to an infospace (owner, editor, viewer)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    infospace_id: int = Field(foreign_key="infospace.id")
+    user_id: int = Field(foreign_key="user.id")
+    role: CollaboratorRole = Field(default=CollaboratorRole.VIEWER)
+    invited_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    infospace: Optional["Infospace"] = Relationship(back_populates="collaborators")
+    user: Optional[User] = Relationship(back_populates="infospace_collaborations")
 
 
 class Infospace(SQLModel, table=True):
@@ -97,6 +116,7 @@ class Infospace(SQLModel, table=True):
 
     owner_id: int = Field(foreign_key="user.id")
     owner: Optional[User] = Relationship(back_populates="infospaces")
+    collaborators: List["InfospaceCollaborator"] = Relationship(back_populates="infospace")
 
     sources: List["Source"] = Relationship(back_populates="infospace")
     bundles: List["Bundle"] = Relationship(back_populates="infospace")

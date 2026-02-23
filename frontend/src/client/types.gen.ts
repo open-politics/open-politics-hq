@@ -93,6 +93,7 @@ export type AnnotationRunCreate = {
     target_asset_ids?: (Array<number> | null);
     target_bundle_id?: (number | null);
     source_bundle_id?: (number | null);
+    follow_on_version_change?: (boolean | null);
     run_type?: (string | null);
     flow_execution_id?: (number | null);
     tags?: (Array<string> | null);
@@ -302,6 +303,7 @@ export type AssetCreate = {
     source_metadata?: ({
     [key: string]: unknown;
 } | null);
+    discovered_modalities?: (Array<string> | null);
     event_timestamp?: (string | null);
     processing_status?: (ProcessingStatus | null);
     content_hash?: (string | null);
@@ -632,6 +634,29 @@ export type BundleUpdate = {
     parent_bundle_id?: (number | null);
 };
 
+export type BundleViewCreate = {
+    name: string;
+    source_bundle_id: number;
+    path_prefix?: string;
+};
+
+export type BundleViewRead = {
+    id: number;
+    uuid: string;
+    name: string;
+    source_bundle_id: number;
+    path_prefix: string;
+    infospace_id: number;
+    user_id: number;
+    created_at: string;
+    updated_at: string;
+};
+
+export type BundleViewUpdate = {
+    name?: (string | null);
+    path_prefix?: (string | null);
+};
+
 /**
  * Schema for creating a new chat conversation.
  */
@@ -867,49 +892,6 @@ export type DatasetCreate = {
     asset_ids?: Array<number>;
 };
 
-/**
- * Request to create a dataset ingestion job.
- */
-export type DatasetIngestionJobCreate = {
-    source_locator: string;
-    title?: (string | null);
-    options?: ({
-    [key: string]: unknown;
-} | null);
-};
-
-/**
- * Response model for DatasetIngestionJob.
- */
-export type DatasetIngestionJobRead = {
-    id: number;
-    uuid: string;
-    infospace_id: number;
-    user_id: number;
-    source_locator: string;
-    kind: string;
-    root_bundle_id: (number | null);
-    status: IngestionStatus;
-    total_files: number;
-    processed_files: number;
-    failed_files: number;
-    total_bytes: (number | null);
-    downloaded_bytes: (number | null);
-    cursor_state: {
-        [key: string]: unknown;
-    };
-    task_id: (string | null);
-    error_message: (string | null);
-    retry_count: number;
-    last_error_at: (string | null);
-    created_at: string;
-    updated_at: string;
-    started_at: (string | null);
-    completed_at: (string | null);
-    progress_pct?: number;
-    stage_message?: string;
-};
-
 export type DatasetPackageEntitySummary = {
     entity_uuid?: (string | null);
     name?: (string | null);
@@ -987,6 +969,7 @@ export type DirectoryImportRequest = {
     file_extensions?: (Array<string> | null);
     preserve_structure?: (boolean | null);
     copy_mode?: (boolean | null);
+    reconcile_mode?: (boolean | null);
     options?: ({
     [key: string]: unknown;
 } | null);
@@ -1026,6 +1009,62 @@ export type EmbeddingStatsResponse = {
     models_used: {
         [key: string]: unknown;
     };
+};
+
+/**
+ * Request to enable watching / inbox for an imported directory.
+ */
+export type EnableWatchRequest = {
+    source_path: string;
+    bundle_id: number;
+    enable_reconcile?: boolean;
+    reconcile_interval_seconds?: number;
+    enable_inbox?: boolean;
+    inbox_interval_seconds?: number;
+};
+
+/**
+ * Request schema for creating an EntityCanonical.
+ */
+export type EntityCanonicalCreate = {
+    canonical_name: string;
+    entity_type: string;
+    aliases?: (Array<string> | null);
+    properties?: ({
+    [key: string]: unknown;
+} | null);
+    graph_id?: (number | null);
+};
+
+/**
+ * Response schema for EntityCanonical.
+ */
+export type EntityCanonicalRead = {
+    id: number;
+    infospace_id: number;
+    graph_id?: (number | null);
+    canonical_name: string;
+    entity_type: string;
+    aliases?: Array<string>;
+    embedding?: (Array<number> | null);
+    embedding_768?: (Array<number> | null);
+    properties?: {
+        [key: string]: unknown;
+    };
+    provenance_type?: string;
+    created_at: string;
+    updated_at: string;
+};
+
+/**
+ * Request schema for updating an EntityCanonical.
+ */
+export type EntityCanonicalUpdate = {
+    canonical_name?: (string | null);
+    aliases?: (Array<string> | null);
+    properties?: ({
+    [key: string]: unknown;
+} | null);
 };
 
 /**
@@ -1354,7 +1393,101 @@ export type InfospaceUpdate = {
     enable_related_assets?: (boolean | null);
 };
 
+/**
+ * Request to create an ingestion job.
+ */
+export type IngestionJobCreate = {
+    source_locator: string;
+    title?: (string | null);
+    options?: ({
+    [key: string]: unknown;
+} | null);
+};
+
+/**
+ * Response model for IngestionJob.
+ */
+export type IngestionJobRead = {
+    id: number;
+    uuid: string;
+    infospace_id: number;
+    user_id: number;
+    source_locator: string;
+    kind: string;
+    source_id?: (number | null);
+    root_bundle_id: (number | null);
+    status: IngestionStatus;
+    total_files: number;
+    processed_files: number;
+    failed_files: number;
+    total_bytes: (number | null);
+    downloaded_bytes: (number | null);
+    cursor_state: {
+        [key: string]: unknown;
+    };
+    task_id: (string | null);
+    error_message: (string | null);
+    retry_count: number;
+    last_error_at: (string | null);
+    created_at: string;
+    updated_at: string;
+    started_at: (string | null);
+    completed_at: (string | null);
+    progress_pct?: number;
+    stage_message?: string;
+};
+
 export type IngestionStatus = 'pending' | 'downloading' | 'extracting' | 'processing' | 'completed' | 'failed' | 'cancelled';
+
+/**
+ * Request schema for creating a KnowledgeGraph.
+ */
+export type KnowledgeGraphCreate = {
+    name: string;
+    description?: (string | null);
+    source_config?: ({
+    [key: string]: unknown;
+} | null);
+    edit_policy?: string;
+};
+
+/**
+ * Response schema for KnowledgeGraph.
+ */
+export type KnowledgeGraphRead = {
+    id: number;
+    uuid: string;
+    infospace_id: number;
+    name: string;
+    description?: (string | null);
+    source_config?: {
+        [key: string]: unknown;
+    };
+    edit_policy?: string;
+    created_at: string;
+    updated_at: string;
+};
+
+/**
+ * Request schema for updating a KnowledgeGraph.
+ */
+export type KnowledgeGraphUpdate = {
+    name?: (string | null);
+    description?: (string | null);
+    source_config?: ({
+    [key: string]: unknown;
+} | null);
+    edit_policy?: (string | null);
+};
+
+/**
+ * Request schema for merging entities.
+ */
+export type MergeEntitiesRequest = {
+    entity_ids: Array<number>;
+    canonical_name?: (string | null);
+    keep_id?: (number | null);
+};
 
 export type Message = {
     message: string;
@@ -1438,6 +1571,22 @@ export type ProviderModel = {
     description?: (string | null);
 };
 
+/**
+ * Single raw entity for resolution.
+ */
+export type RawEntityItem = {
+    name: string;
+    type: string;
+};
+
+/**
+ * Request to run on-demand directory reconcile.
+ */
+export type ReconcileDirectoryRequest = {
+    source_path: string;
+    bundle_id: number;
+};
+
 export type RegistrationStats = {
     total_users: number;
     users_created_today: number;
@@ -1453,6 +1602,15 @@ export type ReprocessOptions = {
     skip_rows?: (number | null);
     max_rows?: (number | null);
     timeout?: (number | null);
+};
+
+/**
+ * Request schema for triggering entity resolution.
+ */
+export type ResolveEntitiesRequest = {
+    raw_entities: Array<RawEntityItem>;
+    similarity_threshold?: number;
+    use_embeddings?: boolean;
 };
 
 export type ResourceType = 'source' | 'bundle' | 'asset' | 'schema' | 'infospace' | 'run' | 'package' | 'dataset' | 'mixed';
@@ -1780,6 +1938,29 @@ export type SourceUpdate = {
     output_bundle_id?: (number | null);
 };
 
+/**
+ * Single entry in a storage directory listing.
+ */
+export type StorageBrowseEntry = {
+    name: string;
+    path: string;
+    is_directory: boolean;
+    file_count?: number;
+    importable_count?: number;
+    size_bytes?: number;
+};
+
+/**
+ * Response for storage browse endpoint.
+ */
+export type StorageBrowseResponse = {
+    current_path: string;
+    parent_path?: (string | null);
+    entries: Array<StorageBrowseEntry>;
+    allowed_roots: Array<string>;
+    path_error?: (string | null);
+};
+
 export type TaskCreate = {
     name: string;
     type: TaskType;
@@ -1927,7 +2108,7 @@ export type TreeNode = {
 /**
  * Type of node in the file tree.
  */
-export type TreeNodeType = 'bundle' | 'asset' | 'virtual_folder';
+export type TreeNodeType = 'bundle' | 'asset' | 'virtual_folder' | 'bundle_view';
 
 /**
  * Response containing tree structure.
@@ -2141,6 +2322,21 @@ export type VirtualFolderChildrenResponse = {
     path_prefix: string;
     total_folders: number;
     total_assets: number;
+};
+
+/**
+ * Current watch/inbox status for a directory.
+ */
+export type WatchStatusResponse = {
+    source_path: string;
+    bundle_id: number;
+    reconcile_source_id?: (number | null);
+    reconcile_active?: boolean;
+    reconcile_last_poll?: (string | null);
+    inbox_source_id?: (number | null);
+    inbox_active?: boolean;
+    inbox_path?: (string | null);
+    inbox_files_pending?: number;
 };
 
 export type GetRegistrationStatsResponse = (RegistrationStats);
@@ -3251,37 +3447,59 @@ export type GetBulkBundleAssetsResponse = ({
     [key: string]: unknown;
 });
 
+export type CreateBundleViewData = {
+    infospaceId: number;
+    requestBody: BundleViewCreate;
+};
+
+export type CreateBundleViewResponse = (BundleViewRead);
+
+export type ListBundleViewsData = {
+    infospaceId: number;
+};
+
+export type ListBundleViewsResponse = (Array<BundleViewRead>);
+
+export type GetBundleViewData = {
+    viewId: number;
+};
+
+export type GetBundleViewResponse = (BundleViewRead);
+
+export type UpdateBundleViewData = {
+    requestBody: BundleViewUpdate;
+    viewId: number;
+};
+
+export type UpdateBundleViewResponse = (BundleViewRead);
+
+export type DeleteBundleViewData = {
+    viewId: number;
+};
+
+export type DeleteBundleViewResponse = (void);
+
 export type ListEntitiesData = {
     entityType?: (string | null);
     infospaceId: number;
 };
 
-export type ListEntitiesResponse = (Array<{
-    [key: string]: unknown;
-}>);
+export type ListEntitiesResponse = (Array<EntityCanonicalRead>);
 
 export type CreateEntityData = {
     infospaceId: number;
-    requestBody: {
-        [key: string]: unknown;
-    };
+    requestBody: EntityCanonicalCreate;
 };
 
-export type CreateEntityResponse = ({
-    [key: string]: unknown;
-});
+export type CreateEntityResponse = (EntityCanonicalRead);
 
 export type UpdateEntityData = {
     entityId: number;
     infospaceId: number;
-    requestBody: {
-        [key: string]: unknown;
-    };
+    requestBody: EntityCanonicalUpdate;
 };
 
-export type UpdateEntityResponse = ({
-    [key: string]: unknown;
-});
+export type UpdateEntityResponse = (EntityCanonicalRead);
 
 export type DeleteEntityData = {
     entityId: number;
@@ -3292,25 +3510,17 @@ export type DeleteEntityResponse = (void);
 
 export type MergeEntitiesData = {
     infospaceId: number;
-    requestBody: {
-        [key: string]: unknown;
-    };
+    requestBody: MergeEntitiesRequest;
 };
 
-export type MergeEntitiesResponse = ({
-    [key: string]: unknown;
-});
+export type MergeEntitiesResponse = (EntityCanonicalRead);
 
 export type TriggerResolutionData = {
     infospaceId: number;
-    requestBody: {
-        [key: string]: unknown;
-    };
+    requestBody: ResolveEntitiesRequest;
 };
 
-export type TriggerResolutionResponse = ({
-    [key: string]: unknown;
-});
+export type TriggerResolutionResponse = (unknown);
 
 export type ListConversationsData = {
     includeArchived?: boolean;
@@ -3401,78 +3611,6 @@ export type GetChunkingStatisticsData = {
 };
 
 export type GetChunkingStatisticsResponse = (ChunkingStatsResponse);
-
-export type CreateDirectoryImportJobData = {
-    infospaceId: number;
-    requestBody: DirectoryImportRequest;
-};
-
-export type CreateDirectoryImportJobResponse = (DatasetIngestionJobRead);
-
-export type TriggerBatchProcessPendingData = {
-    batchSize?: number;
-    bundleId: number;
-    infospaceId: number;
-};
-
-export type TriggerBatchProcessPendingResponse = (BatchProcessResponse);
-
-export type TriggerBatchEnrichData = {
-    bundleId: number;
-    infospaceId: number;
-    requestBody: BatchEnrichRequest;
-};
-
-export type TriggerBatchEnrichResponse = (BatchEnrichResponse);
-
-export type GetProcessingStatusData = {
-    bundleId: number;
-    infospaceId: number;
-};
-
-export type GetProcessingStatusResponse = (ProcessingStatusResponse);
-
-export type ListDatasetJobsData = {
-    infospaceId: number;
-    limit?: number;
-    /**
-     * Filter by status
-     */
-    status?: (IngestionStatus | null);
-};
-
-export type ListDatasetJobsResponse = (Array<DatasetIngestionJobRead>);
-
-export type GetDatasetJobStatusData = {
-    jobId: number;
-};
-
-export type GetDatasetJobStatusResponse = (DatasetIngestionJobRead);
-
-export type DeleteDatasetJobData = {
-    jobId: number;
-};
-
-export type DeleteDatasetJobResponse = (Message);
-
-export type GetDatasetJobByUuidData = {
-    jobUuid: string;
-};
-
-export type GetDatasetJobByUuidResponse = (DatasetIngestionJobRead);
-
-export type CreateArchiveIngestionJobData = {
-    infospaceId: number;
-    requestBody: DatasetIngestionJobCreate;
-};
-
-export type CreateArchiveIngestionJobResponse = (DatasetIngestionJobRead);
-
-export type CancelDatasetJobData = {
-    jobId: number;
-};
-
-export type CancelDatasetJobResponse = (Message);
 
 export type CreateDatasetData = {
     infospaceId: number;
@@ -3899,6 +4037,33 @@ export type DeleteInfospaceData = {
 
 export type DeleteInfospaceResponse = (void);
 
+export type InviteCollaboratorData = {
+    /**
+     * Email of user to invite
+     */
+    email: string;
+    infospaceId: number;
+    /**
+     * Role: owner, editor, viewer
+     */
+    role?: string;
+};
+
+export type InviteCollaboratorResponse = (unknown);
+
+export type ListCollaboratorsData = {
+    infospaceId: number;
+};
+
+export type ListCollaboratorsResponse = (unknown);
+
+export type RemoveCollaboratorData = {
+    infospaceId: number;
+    userId: number;
+};
+
+export type RemoveCollaboratorResponse = (unknown);
+
 export type GetInfospaceStatsData = {
     infospaceId: number;
 };
@@ -3943,6 +4108,107 @@ export type ImportInfospaceData = {
 
 export type ImportInfospaceResponse = (InfospaceRead);
 
+export type CreateDirectoryImportJobData = {
+    infospaceId: number;
+    requestBody: DirectoryImportRequest;
+};
+
+export type CreateDirectoryImportJobResponse = (IngestionJobRead);
+
+export type TriggerBatchProcessPendingData = {
+    batchSize?: number;
+    bundleId: number;
+    infospaceId: number;
+};
+
+export type TriggerBatchProcessPendingResponse = (BatchProcessResponse);
+
+export type TriggerBatchEnrichData = {
+    bundleId: number;
+    infospaceId: number;
+    requestBody: BatchEnrichRequest;
+};
+
+export type TriggerBatchEnrichResponse = (BatchEnrichResponse);
+
+export type GetProcessingStatusData = {
+    bundleId: number;
+    infospaceId: number;
+};
+
+export type GetProcessingStatusResponse = (ProcessingStatusResponse);
+
+export type ListIngestionJobsData = {
+    infospaceId: number;
+    /**
+     * Filter by job kind (directory_local, zip, tar.gz, etc.)
+     */
+    kind?: (string | null);
+    limit?: number;
+    /**
+     * Filter by source ID (jobs created by this source poll)
+     */
+    sourceId?: (number | null);
+    /**
+     * Filter by status
+     */
+    status?: (IngestionStatus | null);
+};
+
+export type ListIngestionJobsResponse = (Array<IngestionJobRead>);
+
+export type GetIngestionJobStatusData = {
+    jobId: number;
+};
+
+export type GetIngestionJobStatusResponse = (IngestionJobRead);
+
+export type DeleteIngestionJobData = {
+    jobId: number;
+};
+
+export type DeleteIngestionJobResponse = (Message);
+
+export type GetIngestionJobByUuidData = {
+    jobUuid: string;
+};
+
+export type GetIngestionJobByUuidResponse = (IngestionJobRead);
+
+export type CreateArchiveIngestionJobData = {
+    infospaceId: number;
+    requestBody: IngestionJobCreate;
+};
+
+export type CreateArchiveIngestionJobResponse = (IngestionJobRead);
+
+export type CancelIngestionJobData = {
+    jobId: number;
+};
+
+export type CancelIngestionJobResponse = (Message);
+
+export type ReconcileDirectoryData = {
+    infospaceId: number;
+    requestBody: ReconcileDirectoryRequest;
+};
+
+export type ReconcileDirectoryResponse = (unknown);
+
+export type EnableDirectoryWatchData = {
+    infospaceId: number;
+    requestBody: EnableWatchRequest;
+};
+
+export type EnableDirectoryWatchResponse = (WatchStatusResponse);
+
+export type GetWatchStatusData = {
+    bundleId?: (number | null);
+    infospaceId: number;
+};
+
+export type GetWatchStatusResponse = (Array<WatchStatusResponse>);
+
 export type IntelligenceChatData = {
     requestBody: ChatRequest;
 };
@@ -3972,6 +4238,41 @@ export type GetInfospaceToolContextData = {
 };
 
 export type GetInfospaceToolContextResponse = (unknown);
+
+export type ListKnowledgeGraphsData = {
+    infospaceId: number;
+};
+
+export type ListKnowledgeGraphsResponse = (Array<KnowledgeGraphRead>);
+
+export type CreateKnowledgeGraphData = {
+    infospaceId: number;
+    requestBody: KnowledgeGraphCreate;
+};
+
+export type CreateKnowledgeGraphResponse = (KnowledgeGraphRead);
+
+export type GetKnowledgeGraphData = {
+    graphId: number;
+    infospaceId: number;
+};
+
+export type GetKnowledgeGraphResponse = (KnowledgeGraphRead);
+
+export type UpdateKnowledgeGraphData = {
+    graphId: number;
+    infospaceId: number;
+    requestBody: KnowledgeGraphUpdate;
+};
+
+export type UpdateKnowledgeGraphResponse = (KnowledgeGraphRead);
+
+export type DeleteKnowledgeGraphData = {
+    graphId: number;
+    infospaceId: number;
+};
+
+export type DeleteKnowledgeGraphResponse = (void);
 
 export type LoginAccessTokenData = {
     formData: Body_login_login_access_token;
@@ -4355,6 +4656,16 @@ export type CompleteDiscourseSso1Response = ({
     [key: string]: string;
 });
 
+export type BrowseStorageData = {
+    infospaceId: number;
+    /**
+     * Directory path to list; defaults to first allowed root
+     */
+    path?: (string | null);
+};
+
+export type BrowseStorageResponse = (StorageBrowseResponse);
+
 export type CreateTaskData = {
     args: unknown;
     infospaceId: number;
@@ -4599,15 +4910,23 @@ export type GetVirtualFolderChildrenData = {
 export type GetVirtualFolderChildrenResponse = (VirtualFolderChildrenResponse);
 
 export type GetFeedAssetsData = {
+    /**
+     * Filter to assets in this bundle (for Bundle/BundleView detail)
+     */
+    bundleId?: (number | null);
     infospaceId: number;
     /**
      * Filter by asset kinds
      */
     kinds?: Array<string>;
     limit?: number;
+    /**
+     * Filter by logical_path prefix (for BundleView)
+     */
+    pathFilter?: (string | null);
     skip?: number;
     /**
-     * Sort field: created_at, updated_at
+     * Sort field: created_at, updated_at, name
      */
     sortBy?: string;
     /**

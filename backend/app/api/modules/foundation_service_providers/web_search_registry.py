@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 from app.api.modules.foundation_service_providers.base import WebSearchProvider
-from app.api.modules.foundation_service_providers.implemented.search_tavily import TavilyWebSearchProvider
+from app.api.modules.foundation_service_providers.implemented.web_search_tavily import TavilyWebSearchProvider
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)

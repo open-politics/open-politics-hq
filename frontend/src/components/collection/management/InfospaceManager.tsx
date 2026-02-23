@@ -1,12 +1,16 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useUserPreferencesStore } from '@/zustand_stores/storeUserPreferences';
 import EditInfospaceOverlay from '@/components/collection/management/EditInfospaceOverlay';
 import EmbeddingManager from '@/components/collection/management/EmbeddingManager';
+import EnrichmentConfig from '@/components/collection/enrichment/EnrichmentConfig';
+import LocalStorageImport from '@/components/collection/storage/LocalStorageImport';
+import EntityManager from '@/components/collection/graph/EntityManager';
 import { InfospaceRowData } from '@/components/collection/tables/columns';
 import InfospacesPage from '@/components/collection/tables/page';
 import { PlusCircle, Upload, Trash2, Loader2, Archive, History, Download, Database } from 'lucide-react';
@@ -406,6 +410,19 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
 
   const selectedCount = Object.values(rowSelection).filter(Boolean).length;
 
+  const pathname = usePathname();
+  useEffect(() => {
+    const hash = typeof window !== 'undefined' ? window.location.hash?.replace('#', '') : '';
+    if (!hash) return;
+    const scroll = () => {
+      const el = document.getElementById(hash);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    scroll();
+    const t = setTimeout(scroll, 300);
+    return () => clearTimeout(t);
+  }, [pathname, activeInfospace?.id]);
+
   return (
     <div className="space-y-4 w-full">
 
@@ -569,13 +586,16 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
       </div>
 
 
-            <div className="p-4">
+            <div className="p-4 space-y-6">
               <EmbeddingManager 
                 infospace={activeInfospace}
                 onInfospaceUpdate={(updated) => {
                   useInfospaceStore.getState().fetchInfospaceById(updated.id);
                 }}
               />
+              <div id="enrichment-section"><EnrichmentConfig /></div>
+              <div id="local-storage-section"><LocalStorageImport /></div>
+              <div id="entities-section"><EntityManager /></div>
             </div>
           </>
         )

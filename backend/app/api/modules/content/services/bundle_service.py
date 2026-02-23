@@ -137,10 +137,10 @@ class BundleService:
         if not db_bundle:
             return False
 
-        # Clear root_bundle_id from DatasetIngestionJob records that reference this bundle
-        from app.models import DatasetIngestionJob
+        # Clear root_bundle_id from IngestionJob records that reference this bundle
+        from app.models import IngestionJob
         jobs = self.session.exec(
-            select(DatasetIngestionJob).where(DatasetIngestionJob.root_bundle_id == bundle_id)
+            select(IngestionJob).where(IngestionJob.root_bundle_id == bundle_id)
         ).all()
         if jobs:
             logger.info(f"Service: Clearing root_bundle_id from {len(jobs)} dataset ingestion jobs")

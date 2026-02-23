@@ -29,6 +29,7 @@ interface TreeState {
   // Full data cache (only loaded when needed)
   fullAssetsCache: Map<number, AssetRead>;  // asset_id -> full asset
   fullBundlesCache: Map<number, BundleRead>;  // bundle_id -> full bundle
+  fullBundleViewsCache: Map<number, import('@/client').BundleViewRead>;  // view_id -> full view
   
   // Metadata
   totalBundles: number;
@@ -41,6 +42,7 @@ interface TreeState {
   fetchChildren: (parentId: string) => Promise<TreeNode[]>;
   getFullAsset: (assetId: number) => Promise<AssetRead>;
   getFullBundle: (bundleId: number) => Promise<BundleRead>;
+  getFullBundleView: (viewId: number) => Promise<import('@/client').BundleViewRead>;
   batchGetAssets: (assetIds: number[]) => Promise<AssetRead[]>;
   clearCache: () => void;
   reset: () => void;
@@ -55,6 +57,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
   pendingChildrenRequests: new Map(),
   fullAssetsCache: new Map(),
   fullBundlesCache: new Map(),
+  fullBundleViewsCache: new Map(),
   totalBundles: 0,
   totalAssets: 0,
   error: null,
@@ -302,6 +305,32 @@ export const useTreeStore = create<TreeState>((set, get) => ({
   },
   
   /**
+   * Get full BundleView data - only when viewing a BundleView node
+   */
+  getFullBundleView: async (viewId: number): Promise<import('@/client').BundleViewRead> => {
+    const state = get();
+    
+    const cached = state.fullBundleViewsCache.get(viewId);
+    if (cached) {
+      return cached;
+    }
+    
+    try {
+      const { BundleViewsService } = await import('@/client');
+      const view = await BundleViewsService.getBundleView({ viewId });
+      set(s => {
+        const newCache = new Map(s.fullBundleViewsCache);
+        newCache.set(viewId, view);
+        return { fullBundleViewsCache: newCache };
+      });
+      return view;
+    } catch (err: any) {
+      console.error('[TreeStore] Failed to fetch BundleView:', err);
+      throw err;
+    }
+  },
+  
+  /**
    * Batch fetch multiple assets efficiently
    * Uses the tree API's batch endpoint for optimal performance
    */
@@ -379,6 +408,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       childrenCache: new Map(),
       fullAssetsCache: new Map(),
       fullBundlesCache: new Map(),
+      fullBundleViewsCache: new Map(),
       lastFetchedInfospaceId: null,
     });
   },
@@ -396,6 +426,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       pendingChildrenRequests: new Map(),
       fullAssetsCache: new Map(),
       fullBundlesCache: new Map(),
+      fullBundleViewsCache: new Map(),
       totalBundles: 0,
       totalAssets: 0,
       error: null,

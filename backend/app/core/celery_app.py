@@ -75,8 +75,17 @@ celery.conf.update(
         'reactive_embed_pending_assets': {'queue': 'embedding'},
         'reactive_curate_annotated': {'queue': 'llm'},
         'enrich_geocoding': {'queue': 'external_api'},
+        'enrich_ocr': {'queue': 'external_api'},
+        'enrich_file_hash': {'queue': 'processing'},
+        'create_followup_annotation_runs': {'queue': 'llm'},
+        're_resolve_entity_singletons': {'queue': 'default'},
+        'flag_superseded_entity_sources': {'queue': 'default'},
+        'reset_stale_processing_assets': {'queue': 'default'},
     },
     task_default_delivery_mode=2,  # persistent
+    # Crash resilience: tasks are re-queued if worker dies before ack (OOM, kill, etc.)
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
     # Task time limits (avoid runaway workers)
     task_soft_time_limit=3600,
     task_time_limit=3720,
@@ -85,12 +94,13 @@ celery.conf.update(
         'app.core.dispatch',
         'app.api.modules.content.watchers',
         'app.api.modules.annotation.watchers',
+        'app.api.modules.graph.watchers',
         'app.api.modules.annotation.tasks.annotate',
         'app.api.modules.graph.tasks',
         'app.api.modules.content.tasks.ingest',
         'app.api.modules.flow.tasks.schedule',
         'app.api.modules.content.tasks.content_tasks',
-        'app.api.modules.content.tasks.dataset_tasks',
+        'app.api.modules.content.tasks.ingestion_tasks',
         'app.api.modules.content.tasks.batch_processing',
         'app.api.modules.content.tasks.enrichment',
         'app.api.modules.sharing.tasks.backup',
@@ -98,24 +108,27 @@ celery.conf.update(
         'app.api.modules.embedding.tasks.embed',
         'app.api.modules.flow.tasks.flow_tasks',
         'app.api.modules.content.tasks.source_monitoring',
+        'app.api.modules.content.services.poll_handlers.rss_poll_handler',
+        'app.api.modules.content.services.poll_handlers.search_poll_handler',
+        'app.api.modules.content.services.poll_handlers.inbox_poll_handler',
     ),
     # Beat schedule
     beat_schedule={
-        'check-recurring-tasks-every-minute': {
+        'check-recurring-tasks-every-5min': {
             'task': 'app.api.modules.flow.tasks.schedule.check_recurring_tasks',
-            'schedule': 60.0,
+            'schedule': 300.0,
         },
-        'check-on-arrival-flows-every-minute': {
+        'check-on-arrival-flows-every-5min': {
             'task': 'app.api.modules.flow.tasks.flow_tasks.check_on_arrival_flows',
-            'schedule': 60.0,
+            'schedule': 300.0,
         },
-        'poll-active-sources-every-minute': {
+        'poll-active-sources-every-5min': {
             'task': 'app.api.modules.content.tasks.source_monitoring.poll_active_sources',
-            'schedule': 60.0,
+            'schedule': 300.0,
         },
-        'dispatch-reactive-work-every-minute': {
+        'dispatch-reactive-work-every-2min': {
             'task': 'dispatch_reactive_work',
-            'schedule': 60.0,
+            'schedule': 120.0,
         },
         'automatic-backup-all-infospaces': {
             'task': 'automatic_backup_all_infospaces',
@@ -134,6 +147,10 @@ celery.conf.update(
             'task': 'backup_all_users',
             'schedule': crontab(day_of_week=0, hour=2, minute=0),
             'kwargs': {'backup_type': 'system', 'admin_user_id': 1},
+        },
+        'reset-stale-processing-assets-hourly': {
+            'task': 'reset_stale_processing_assets',
+            'schedule': 3600.0,
         },
     }
 )

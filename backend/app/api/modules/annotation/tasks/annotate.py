@@ -4,7 +4,7 @@ import logging
 from typing import List, Dict, Any, Type, Optional, TYPE_CHECKING, Tuple
 from datetime import datetime, timezone
 from sqlmodel import Session, select
-from sqlalchemy import func
+from sqlalchemy import func, or_
 import asyncio 
 import traceback
 from app.models import (
@@ -13,6 +13,7 @@ from app.models import (
     Asset,
     AssetKind,
     Bundle,
+    Modality,
     RunStatus,
     AnnotationRun,
     ResultStatus,
@@ -25,6 +26,7 @@ from app.core.celery_app import celery
 from app.api.modules.foundation_service_providers.factory import create_model_registry, create_storage_provider
 from app.core.task_utils import create_pydantic_model_from_json_schema, make_python_identifier, run_async_in_celery
 from app.core.config import settings
+from app.api.modules.content.types import get_content_type_registry
 
 if TYPE_CHECKING:
     from app.api.dependency_injection import StorageProviderDep # Import StorageProviderDep under TYPE_CHECKING
@@ -76,6 +78,15 @@ async def get_cached_provider(provider_type: str, settings_instance):
         logger.debug(f"Task: Using cached {provider_type} provider")
     
     return _provider_cache[cache_key]
+
+def _get_image_asset_kinds(process_pdfs_as_images: bool = True) -> frozenset:
+    """Get asset kinds that support image modality. PDF_PAGE is conditional on process_pdfs_as_images."""
+    registry = get_content_type_registry()
+    all_image = registry.kinds_supporting_modality(Modality.IMAGE)
+    if process_pdfs_as_images:
+        return all_image
+    return all_image - {AssetKind.PDF_PAGE}
+
 
 def clear_provider_cache():
     """Clear the provider cache. Useful for memory management in long-running workers."""
@@ -497,7 +508,7 @@ async def fetch_asset_content(asset: Asset, storage_provider: 'StorageProviderDe
     # Priority 3: Try source_identifier (web URL) for image assets without blob_path
     # This handles RSS images and other web-referenced images
     if asset.source_identifier:
-        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+        image_asset_kinds = _get_image_asset_kinds(process_pdfs_as_images=True)
         if asset.kind in image_asset_kinds and asset.source_identifier.startswith(('http://', 'https://')):
             logger.info(f"Asset {asset.id} has no blob_path but has web URL. Attempting to fetch from: {asset.source_identifier}")
             try:
@@ -643,13 +654,7 @@ async def assemble_multimodal_context(
     process_pdfs_as_images = run_config.get("process_pdfs_as_images", False)
     
     # Determine which asset kinds should be treated as images
-    if process_pdfs_as_images:
-        # Include PDF_PAGE when explicitly processing as images (OCR mode)
-        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
-    else:
-        # Exclude PDF_PAGE - use text content instead (faster, cheaper for text-based PDFs)
-        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION}
-    
+    image_asset_kinds = _get_image_asset_kinds(process_pdfs_as_images)
     parent_is_image = parent_asset.kind in image_asset_kinds
     
     if parent_is_image:
@@ -736,9 +741,7 @@ async def assemble_multimodal_context(
     if include_images_enabled and not parent_is_image:
         # Query for child assets of kind 'image' or 'pdf_page' if it can act as an image etc.
         # The kind should match what the LLM is expected to process as an image.
-        # For now, using a list of common image-like kinds.
-        image_like_kinds = [AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE] 
-        # Convert AssetKind enum members to their string values for the DB query
+        image_like_kinds = list(_get_image_asset_kinds(process_pdfs_as_images=True))
         image_like_kind_values = [kind.value for kind in image_like_kinds]
 
         image_children = db.query(Asset).filter(
@@ -866,11 +869,7 @@ async def demultiplex_results(
     # PDF_PAGE is only treated as image if process_pdfs_as_images flag is enabled
     process_pdfs_as_images = run.configuration.get("process_pdfs_as_images", False) if run.configuration else False
     
-    if process_pdfs_as_images:
-        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
-    else:
-        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION}
-    
+    image_asset_kinds = _get_image_asset_kinds(process_pdfs_as_images)
     parent_is_image = parent_asset.kind in image_asset_kinds
     is_standalone_image = (
         (parent_asset.kind == AssetKind.PDF_PAGE and process_pdfs_as_images) or
@@ -1084,9 +1083,7 @@ async def demultiplex_results(
                     logger.error(f"Invalid modality '{modality}' for Run {run.id}, Asset {parent_asset.id}. Skipping child annotation.")
                     continue
                 
-                # First check if parent asset itself matches (for standalone images)
-                # PDF_PAGE should be treated as an image kind for this matching
-                image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+                image_asset_kinds = _get_image_asset_kinds(process_pdfs_as_images=True)
                 parent_matches_kind = (
                     parent_asset.kind == asset_kind or
                     (parent_asset.kind in image_asset_kinds and asset_kind == AssetKind.IMAGE)
@@ -1214,11 +1211,7 @@ async def process_single_asset_schema(
         process_pdfs_as_images = run_config.get("process_pdfs_as_images", False)
         
         # Determine image asset kinds based on process_pdfs_as_images flag
-        if process_pdfs_as_images:
-            image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
-        else:
-            image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION}
-        
+        image_asset_kinds = _get_image_asset_kinds(process_pdfs_as_images)
         has_per_image_schema = "per_image" in schema_structure.get("per_modality_fields", {})
         target_is_image = asset.kind in image_asset_kinds
         
@@ -1239,8 +1232,7 @@ async def process_single_asset_schema(
         # For standalone image assets, simplify schema to remove per_image field
         # This eliminates ambiguity - the LLM should only use document field for standalone images
         # PDF_PAGE assets are ALWAYS treated as standalone images (even if they have text)
-        # because they're primarily image-based and should use multimodal analysis with document field
-        image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
+        image_asset_kinds = _get_image_asset_kinds(process_pdfs_as_images=True)
         is_standalone_image = (
             asset.kind == AssetKind.PDF_PAGE or  # PDF_PAGE always treated as standalone image
             (asset.kind in {AssetKind.IMAGE, AssetKind.IMAGE_REGION} and 
@@ -1549,11 +1541,7 @@ async def process_assets_sequential(
                 process_pdfs_as_images = run_config.get("process_pdfs_as_images", False)
                 
                 # Determine image asset kinds based on process_pdfs_as_images flag
-                if process_pdfs_as_images:
-                    image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION, AssetKind.PDF_PAGE}
-                else:
-                    image_asset_kinds = {AssetKind.IMAGE, AssetKind.IMAGE_REGION}
-                
+                image_asset_kinds = _get_image_asset_kinds(process_pdfs_as_images)
                 has_per_image_schema = "per_image" in schema_structure.get("per_modality_fields", {})
                 target_is_image = parent_asset.kind in image_asset_kinds
                 
@@ -1801,11 +1789,15 @@ async def _process_annotation_run_async(
                     bundle = session.get(Bundle, bundle_id)
                     if bundle and bundle.infospace_id == run.infospace_id:
                         # Query asset IDs (do NOT use bundle.assets - loads all into memory)
-                        path_filter = run_config.get("path_filter")  # e.g. "data_set_1/politics/%"
+                        path_filter = run_config.get("path_filter")  # e.g. "politics/eu" (matches logical_path from virtual folder tree)
                         stmt = select(Asset.id).where(Asset.bundle_id == bundle_id)
                         if path_filter:
                             like_val = f"{path_filter}%" if not path_filter.endswith("%") else path_filter
-                            stmt = stmt.where(Asset.blob_path.like(like_val))
+                            # Use logical_path (matches virtual folder tree); fallback to blob_path for assets without logical_path
+                            stmt = stmt.where(or_(
+                                Asset.logical_path.like(like_val),
+                                (Asset.logical_path.is_(None)) & (Asset.blob_path.isnot(None)) & (Asset.blob_path.like(like_val)),
+                            ))
                         all_bundle_asset_ids = list(session.exec(stmt).all())
                         logger.info(f"Task: Continuous run {run.id} watching bundle {bundle_id} with {len(all_bundle_asset_ids)} total assets" + (f" (path_filter={path_filter})" if path_filter else ""))
                         
@@ -1859,7 +1851,10 @@ async def _process_annotation_run_async(
                         stmt = select(Asset.id).where(Asset.bundle_id == bundle_id)
                         if path_filter:
                             like_val = f"{path_filter}%" if not path_filter.endswith("%") else path_filter
-                            stmt = stmt.where(Asset.blob_path.like(like_val))
+                            stmt = stmt.where(or_(
+                                Asset.logical_path.like(like_val),
+                                (Asset.logical_path.is_(None)) & (Asset.blob_path.isnot(None)) & (Asset.blob_path.like(like_val)),
+                            ))
                         target_asset_ids_to_process.extend(session.exec(stmt).all())
                     else:
                         logger.error(f"Task: Target Bundle {bundle_id} for Run {run.id} not found or not in infospace.")
@@ -2537,4 +2532,108 @@ def retry_failed_annotations(run_id: int) -> None:
                     session.commit()
             except Exception as db_exc:
                 logger.error(f"Task: Could not even update run {run_id} to FAILED status during retry: {db_exc}")
-        raise  # Re-raise the exception so Celery knows the task failed 
+        raise  # Re-raise the exception so Celery knows the task failed
+
+
+@celery.task(name="create_followup_annotation_runs")
+def create_followup_annotation_runs(asset_ids: List[int]) -> None:
+    """
+    Reactive task: create annotation runs for versioned assets that have no annotations
+    but whose previous version had annotations from runs with follow_on_version_change=True.
+    Dispatched by _VersionGapAnnotationWatcher.
+    """
+    if not asset_ids:
+        return
+    from app.api.modules.annotation.models import RunSchemaLink
+    from app.api.modules.content.types import get_content_type_registry
+    from app.api.modules.content.services.asset_service import AssetService
+    from app.api.modules.annotation.services.annotation_service import AnnotationService
+    from app.api.modules.foundation_service_providers.factory import create_model_registry
+    from app.schemas import AnnotationRunCreate
+
+    with Session(engine) as session:
+        asset_service = AssetService(session)
+        model_registry = create_model_registry(settings)
+        ann_svc = AnnotationService(session, model_registry, asset_service)
+
+        for asset_id in asset_ids:
+            try:
+                asset = session.get(Asset, asset_id)
+                if not asset or not asset.previous_asset_id:
+                    continue
+                prev_id = asset.previous_asset_id
+
+                # Find run IDs that had annotations on prev and have follow_on_version_change
+                run_ids = session.exec(
+                    select(AnnotationRun.id)
+                    .join(Annotation, Annotation.run_id == AnnotationRun.id)
+                    .where(
+                        Annotation.asset_id == prev_id,
+                        AnnotationRun.follow_on_version_change == True,
+                    )
+                    .distinct()
+                ).all()
+
+                if not run_ids:
+                    continue
+
+                # Resolve target asset IDs: if container, use children; else use self
+                registry = get_content_type_registry()
+                is_container = registry.is_container(asset.kind)
+                if is_container:
+                    children = session.exec(
+                        select(Asset.id).where(Asset.parent_asset_id == asset_id)
+                    ).all()
+                    target_ids = list(children) if children else [asset_id]
+                else:
+                    target_ids = [asset_id]
+
+                if not target_ids:
+                    continue
+
+                # Create one follow-up run per source run (distinct schema/config)
+                seen_keys: set = set()
+                for run_id in run_ids:
+                    source_run = session.get(AnnotationRun, run_id)
+                    if not source_run:
+                        continue
+                    schema_ids = session.exec(
+                        select(RunSchemaLink.schema_id).where(RunSchemaLink.run_id == run_id)
+                    ).all()
+                    schema_ids = [s for s in schema_ids if s]
+                    if not schema_ids:
+                        continue
+                    key = (tuple(sorted(schema_ids)), tuple(sorted((source_run.configuration or {}).items())))
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+
+                    run_in = AnnotationRunCreate(
+                        name=f"Version follow-up of run {source_run.id}",
+                        description=f"Re-annotation after content version change (previous_asset_id={prev_id})",
+                        schema_ids=schema_ids,
+                        target_asset_ids=target_ids,
+                        configuration=source_run.configuration or {},
+                        follow_on_version_change=False,
+                        trigger_type="version_followup",
+                        trigger_context={
+                            "previous_asset_id": prev_id,
+                            "source_run_id": source_run.id,
+                            "new_asset_id": asset_id,
+                        },
+                    )
+                    new_run = ann_svc.create_run(
+                        user_id=source_run.user_id,
+                        infospace_id=source_run.infospace_id,
+                        run_in=run_in,
+                        queue_task=True,
+                    )
+                    new_run.parent_run_id = source_run.id
+                    session.add(new_run)
+                    session.commit()
+                    logger.info(
+                        f"Created follow-up run {new_run.id} for versioned asset {asset_id} "
+                        f"(source run {source_run.id})"
+                    )
+            except Exception as e:
+                logger.warning(f"create_followup_annotation_runs: failed for asset {asset_id}: {e}")

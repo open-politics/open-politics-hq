@@ -2,6 +2,8 @@ from fastapi import APIRouter
 from app.api.routes import (
     admin,
     analysis,
+    bundle_views,
+    storage,
     annotation_runs,
     annotation_schemas,
     annotations,
@@ -12,10 +14,11 @@ from app.api.routes import (
     chat_history,  # Chat conversation history routes
     chunking,
     search_history,
-    dataset_jobs,  # Dataset ingestion job tracking
+    ingestion_jobs,  # Content ingestion job tracking
     datasets,
     embeddings,
     entities as canonical_entities,  # Graph canonical entities
+    knowledge_graphs,
     filestorage,
     filters,
     flows,  # Unified Flow architecture (replaces monitors + pipelines)
@@ -44,10 +47,11 @@ api_router.include_router(assets.router, tags=["assets"])
 api_router.include_router(backups.router, tags=["Backups"])
 api_router.include_router(backups.general_router, tags=["Backups"])
 api_router.include_router(bundles.router, tags=["Bundles"])
+api_router.include_router(bundle_views.router, tags=["Bundle Views"])
 api_router.include_router(chat.router, prefix="/chat", tags=["Intelligence Chat"])  # NEW
 api_router.include_router(chat_history.router, prefix="/chat/conversations", tags=["Chat History"])  # NEW
 api_router.include_router(chunking.router, prefix="/chunking", tags=["chunking"])
-api_router.include_router(dataset_jobs.router, tags=["Dataset Jobs"])  # Archive ingestion tracking
+api_router.include_router(ingestion_jobs.router, tags=["Ingestion Jobs"])
 api_router.include_router(datasets.router, tags=["datasets"])
 api_router.include_router(embeddings.router, prefix="/embeddings", tags=["embeddings"])
 api_router.include_router(canonical_entities.router, tags=["Canonical Entities"])
@@ -56,8 +60,10 @@ api_router.include_router(filters.router, prefix="/filters", tags=["filters"])
 api_router.include_router(flows.router, tags=["Flows"])  # NEW: Unified Flow architecture
 api_router.include_router(healthcheck.router, prefix="/healthz", tags=["app"])
 api_router.include_router(infospaces.router, prefix="/infospaces", tags=["Infospaces"])
+api_router.include_router(knowledge_graphs.router, tags=["Knowledge Graphs"])
 api_router.include_router(login.router, tags=["login"])
 api_router.include_router(search.router, prefix="/search", tags=["Search"])
+api_router.include_router(storage.router, tags=["Storage"])
 api_router.include_router(search_history.router, prefix="/search_history", tags=["Search History"])
 api_router.include_router(shareables.router, prefix="/shareables", tags=["sharing"])
 api_router.include_router(sources.router, tags=["Sources"])

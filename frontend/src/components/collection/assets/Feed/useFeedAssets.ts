@@ -30,6 +30,8 @@ export function useFeedAssets(options: UseFeedAssetsOptions): UseFeedAssetsRetur
     kinds,
     sortBy = 'name',
     sortOrder = 'desc',
+    bundleId,
+    pathFilter,
   } = options;
 
   const [items, setItems] = useState<AssetFeedItem[]>([]);
@@ -66,6 +68,8 @@ export function useFeedAssets(options: UseFeedAssetsOptions): UseFeedAssetsRetur
         kinds: kinds as string[] | undefined,
         sortBy: apiSortBy,
         sortOrder,
+        bundleId: bundleId ?? undefined,
+        pathFilter: pathFilter ?? undefined,
       });
       
       const feedItems: AssetFeedItem[] = response.assets.map(asset => ({
@@ -107,7 +111,7 @@ export function useFeedAssets(options: UseFeedAssetsOptions): UseFeedAssetsRetur
     } finally {
       setIsLoading(false);
     }
-  }, [infospaceId, limit, kinds, apiSortBy, sortBy, sortOrder]);
+  }, [infospaceId, limit, kinds, apiSortBy, sortBy, sortOrder, bundleId, pathFilter]);
 
   // Initial load
   useEffect(() => {
@@ -131,7 +135,7 @@ export function useFeedAssets(options: UseFeedAssetsOptions): UseFeedAssetsRetur
       setCurrentOffset(0);
       fetchFeed(0, false);
     }
-  }, [kinds, sortBy, sortOrder, fetchFeed]);
+  }, [kinds, sortBy, sortOrder, bundleId, pathFilter, fetchFeed]);
 
   const loadMore = useCallback(() => {
     if (!isLoading && hasMore) {

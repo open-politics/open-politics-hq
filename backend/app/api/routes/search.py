@@ -6,7 +6,7 @@ from sqlmodel import Session
 
 from app.api.dependency_injection import WebSearchProviderDep, get_current_user, get_db, IngestionContextFactoryDep, get_ingestion_context_factory
 from app.api.modules.foundation_service_providers.base import WebSearchProvider
-from app.api.modules.foundation_service_providers.implemented.search_tavily import TavilyWebSearchProvider
+from app.api.modules.foundation_service_providers.implemented.web_search_tavily import TavilyWebSearchProvider
 from app.api.modules.foundation_service_providers.web_search_registry import WebSearchProviderRegistryService
 from app.api.modules.content.services import ContentIngestionService
 from app.models import User

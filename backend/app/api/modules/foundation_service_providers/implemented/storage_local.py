@@ -13,7 +13,7 @@ from typing import List, Optional, Any
 
 from fastapi import UploadFile
 
-from app.api.modules.foundation_service_providers.base import StorageProvider
+from app.api.modules.foundation_service_providers.base import StorageProvider, FileStat
 
 logger = logging.getLogger(__name__)
 
@@ -80,10 +80,30 @@ class LocalFileSystemStorageProvider(StorageProvider):
         return path
 
     async def get_file(self, object_name: str) -> Any:
+        """Returns an open file handle. Caller must close it. Prefer get_file_path() for zero-copy."""
         path = self._resolve_path(object_name)
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(f"File '{object_name}' not found")
         return open(path, "rb")
+
+    def file_exists(self, object_name: str) -> bool:
+        """Check if the object exists as a file."""
+        try:
+            path = self._resolve_path(object_name)
+            return path.exists() and path.is_file()
+        except ValueError:
+            return False
+
+    def file_stat(self, object_name: str) -> Optional[FileStat]:
+        """Get file metadata (size, mtime) for change detection."""
+        try:
+            path = self._resolve_path(object_name)
+            if not path.exists() or not path.is_file():
+                return None
+            stat = path.stat()
+            return FileStat(size=stat.st_size, mtime=stat.st_mtime, etag=None)
+        except (ValueError, OSError):
+            return None
 
     async def download_file(self, source_object_name: str, destination_local_path: str) -> None:
         path = self._resolve_path(source_object_name)

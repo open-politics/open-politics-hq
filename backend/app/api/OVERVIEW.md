@@ -21,8 +21,8 @@ app/
   api/
     modules/                    # Domain modules (all except routes + standalone files)
       content/                  # Content lifecycle
-        models.py               # Asset, AssetChunk, Bundle, Source, SourcePollHistory,
-                                # EmbeddingModel, Dataset, DatasetIngestionJob
+        models.py               # Asset, AssetChunk, Bundle, BundleView, Source, SourcePollHistory,
+                                # EmbeddingModel, Dataset, IngestionJob
         schemas.py
         handlers/               # File, Web, RSS, Search, Text, Archive, DirectoryImport
                                 # + resolve.py (resolve_handler — single dispatch)
@@ -30,12 +30,12 @@ app/
         services/               # AssetService, BundleService, SourceService,
                                 # ProcessingService, DatasetService, AssetBuilder
         tasks/                  # ingest, content_tasks, batch_processing,
-                                # dataset_tasks, source_monitoring, enrichment
+                                # ingestion_tasks, source_monitoring, enrichment
         types.py                # ContentTypeRegistry, ContentTypeDescriptor
         facets.py               # WELL_KNOWN_FACETS, facet constants + query helpers
         enrichers.py            # Enricher registry + enrichment watchers (content/watchers.py)
         detection.py            # Content kind reclassification
-        query.py                # AssetQuery composable builder
+        query.py                # AssetQuery composable builder (FTS, facets, semantic, cursor pagination)
 
       annotation/               # Annotation lifecycle
         models.py               # AnnotationSchema, AnnotationRun, Annotation,
@@ -47,7 +47,7 @@ app/
         promotion.py            # PromotionRule system
 
       graph/                    # Knowledge graph
-        models.py               # EntityCanonical, FragmentCuration
+        models.py               # KnowledgeGraph, EntityCanonical, EntityEditLog, FragmentCuration
         schemas.py
         services/               # GraphService (query, traversal, curation, merge)
         resolution.py           # Entity resolution (alias + embedding)
@@ -80,13 +80,13 @@ app/
                                 # BackupService, UserBackupService
         tasks/                  # backup, user_backup
 
-      identity/                 # Users & workspaces
+      identity_infospace_user/  # Users & workspaces
         models.py               # User, Infospace + all enums
         schemas.py
         services/               # InfospaceService
 
       analysis/                 # Pluggable adapters (Layer 4)
-      providers/                # Foundation services (storage, LLM, WebSearch, embedding)
+      foundation_service_providers/  # Foundation services (storage, LLM, WebSearch, embedding, OCR)
     routes/                     # HTTP surface (stays at api/)
     deps.py                     # DI wiring
     main.py                     # Router registration
@@ -153,3 +153,5 @@ OUTSIDE:                    routes, deps     (imports: any domain)
 ## Ingestion
 
 See `INGESTION.md` (or `docs/internal/BACKEND_ARCHITECTURE_HANDOVER.md` § Ingestion Pipeline) for the ingestion pipeline: handlers → Asset creation → Phase 1–2 processing → READY. Enrichment (geocoding, embedding) is reactive via watchers.
+
+**Routes:** `ingestion_jobs.py` — import-directory, ingest-archive, job CRUD. `storage.py` — storage browse for Local Storage Import UI. See `docs/internal/FEATURE_STATUS.md` § API Reference (Storage & Ingestion).

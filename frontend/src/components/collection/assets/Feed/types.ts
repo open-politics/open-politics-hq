@@ -31,6 +31,10 @@ export interface UseFeedAssetsOptions {
   limit?: number;
   /** Filter to specific asset kinds */
   kinds?: AssetKind[];
+  /** Filter to bundle (for Bundle/BundleView detail) */
+  bundleId?: number | null;
+  /** Path prefix for BundleView filtering */
+  pathFilter?: string | null;
   /** Sort field - supports compound sorts like 'kind-updated_at' for type then date */
   sortBy?: 'name' | 'created_at' | 'updated_at' | 'kind-updated_at' | 'kind-created_at';
   /** Sort direction */
@@ -93,6 +97,11 @@ export interface AssetFeedViewProps {
    * When provided with infospaceId, AssetSelector will only show bundle contents
    */
   filterByBundleId?: number | null;
+  
+  /** 
+   * Path prefix for BundleView - when set with filterByBundleId, shows vfolder subset
+   */
+  pathPrefix?: string | null;
   
   /** 
    * Pre-known available kinds (e.g., from tree data)

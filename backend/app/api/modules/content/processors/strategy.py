@@ -4,14 +4,22 @@ Processing Strategy
 
 Decides whether to process content immediately or in background.
 Uses smart heuristics based on content type, file size, and user preference.
+
+Lazy import of get_content_type_registry to avoid circular dependency:
+  types._register_builtin -> processors.csv -> processors/__init__ -> strategy -> types
 """
 
 import logging
 from typing import Optional
 from app.api.modules.content.models import Asset, AssetKind
-from app.api.modules.content.types import get_content_type_registry
 
 logger = logging.getLogger(__name__)
+
+
+def _get_registry():
+    """Lazy import to break types <-> strategy circular dependency."""
+    from app.api.modules.content.types import get_content_type_registry
+    return get_content_type_registry()
 
 # Size thresholds (in bytes)
 SMALL_FILE_THRESHOLD = 5 * 1024 * 1024  # 5 MB
@@ -78,7 +86,7 @@ class ProcessingStrategy:
         
         # Medium files with heavy processing → background
         if file_size and file_size > SMALL_FILE_THRESHOLD:
-            desc = get_content_type_registry().by_kind(asset.kind)
+            desc = _get_registry().by_kind(asset.kind)
             if desc and desc.is_heavy_processing:
                 logger.debug(
                     f"Asset {asset.id}: Medium file ({file_size} bytes) "
@@ -97,7 +105,7 @@ class ProcessingStrategy:
             return True
         
         # Heavy processing types without size info → conservative (background)
-        desc = get_content_type_registry().by_kind(asset.kind)
+        desc = _get_registry().by_kind(asset.kind)
         if desc and desc.is_heavy_processing:
             logger.debug(
                 f"Asset {asset.id}: Heavy processing type ({asset.kind}), "
@@ -126,7 +134,7 @@ class ProcessingStrategy:
         if file_size and file_size > LARGE_FILE_THRESHOLD:
             return "several minutes"
         
-        desc = get_content_type_registry().by_kind(asset.kind)
+        desc = _get_registry().by_kind(asset.kind)
         if desc and desc.is_heavy_processing:
             if asset.kind == AssetKind.PDF:
                 if file_size and file_size > SMALL_FILE_THRESHOLD:

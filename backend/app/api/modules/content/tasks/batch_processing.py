@@ -74,7 +74,7 @@ def batch_process_pending(
         else:
             logger.info(f"[Batch Processing] Completed dispatch for bundle {bundle_id}")
 
-        return {"dispatched": len(asset_ids), "remaining": remaining}
+        return {"dispatched": len(assets), "remaining": remaining}
 
 
 @celery.task(bind=True, name="batch_enrich")
@@ -96,12 +96,19 @@ def batch_enrich(
         batch_size: Assets per batch
     """
     from app.api.modules.content.facets import (
+        CONTENT_HASH_FIELD,
         FACET_LOCATION_LAT,
         FACET_LOCATION_LON,
         FACET_SUMMARY,
         FACET_OCR_USED,
     )
-    ALLOWED_FACETS = {FACET_LOCATION_LAT, FACET_LOCATION_LON, FACET_SUMMARY, FACET_OCR_USED}
+    ALLOWED_FACETS = {
+        FACET_LOCATION_LAT,
+        FACET_LOCATION_LON,
+        FACET_SUMMARY,
+        FACET_OCR_USED,
+        CONTENT_HASH_FIELD,
+    }
 
     logger.info(f"[Batch Enrich] Starting enricher={enricher_name}, batch_size={batch_size}")
 
@@ -113,15 +120,25 @@ def batch_enrich(
             logger.warning("[Batch Enrich] filter_criteria must include valid missing_facet")
             return {"status": "error", "message": "missing_facet required and must be allowlisted"}
 
-        # Build query: assets missing the facet (facet name is allowlisted)
-        facet_path = f"source_metadata->'facets'->>'{missing_facet}'"
-        stmt = (
-            select(Asset)
-            .where(text(f"{facet_path} IS NULL"))
-            .where(Asset.parent_asset_id.is_(None))
-            .order_by(Asset.id)
-            .limit(batch_size)
-        )
+        # content_hash is a first-class column; others are in source_metadata.facets
+        facet_path = f"source_metadata->'facets'->>'{missing_facet}'" if missing_facet != CONTENT_HASH_FIELD else None
+        if missing_facet == CONTENT_HASH_FIELD:
+            stmt = (
+                select(Asset)
+                .where(Asset.content_hash.is_(None))
+                .where(Asset.blob_path.isnot(None))
+                .where(Asset.parent_asset_id.is_(None))
+                .order_by(Asset.id)
+                .limit(batch_size)
+            )
+        else:
+            stmt = (
+                select(Asset)
+                .where(text(f"{facet_path} IS NULL"))
+                .where(Asset.parent_asset_id.is_(None))
+                .order_by(Asset.id)
+                .limit(batch_size)
+            )
         if bundle_id is not None:
             stmt = stmt.where(Asset.bundle_id == bundle_id)
         if kind_filter is not None:
@@ -158,11 +175,19 @@ def batch_enrich(
             session.commit()
 
         # Count remaining
-        count_stmt = (
-            select(func.count(Asset.id))
-            .where(text(f"{facet_path} IS NULL"))
-            .where(Asset.parent_asset_id.is_(None))
-        )
+        if missing_facet == CONTENT_HASH_FIELD:
+            count_stmt = (
+                select(func.count(Asset.id))
+                .where(Asset.content_hash.is_(None))
+                .where(Asset.blob_path.isnot(None))
+                .where(Asset.parent_asset_id.is_(None))
+            )
+        else:
+            count_stmt = (
+                select(func.count(Asset.id))
+                .where(text(f"{facet_path} IS NULL"))
+                .where(Asset.parent_asset_id.is_(None))
+            )
         if bundle_id is not None:
             count_stmt = count_stmt.where(Asset.bundle_id == bundle_id)
         if kind_filter is not None:

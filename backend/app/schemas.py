@@ -265,6 +265,7 @@ class AssetCreate(AssetBase):
     cells: Optional[Dict[str, Any]] = None
     source_identifier: Optional[str] = None
     source_metadata: Optional[Dict[str, Any]] = None
+    discovered_modalities: Optional[List[str]] = None
     event_timestamp: Optional[datetime] = None
     processing_status: Optional[ProcessingStatus] = None
     content_hash: Optional[str] = None  # For deduplication
@@ -412,6 +413,7 @@ class AnnotationRunCreate(AnnotationRunBase):
     target_asset_ids: Optional[List[int]] = None
     target_bundle_id: Optional[int] = None
     source_bundle_id: Optional[int] = None  # LEGACY: For continuous runs watching a bundle
+    follow_on_version_change: Optional[bool] = False  # Re-annotate when content version changes
     # ═══ RUN TYPE ═══
     run_type: Optional[str] = "one_off"  # one_off | flow_step
     flow_execution_id: Optional[int] = None  # If created by a Flow
@@ -1219,6 +1221,7 @@ class TreeNodeType(str, enum.Enum):
     BUNDLE = "bundle"
     ASSET = "asset"
     VIRTUAL_FOLDER = "virtual_folder"
+    BUNDLE_VIEW = "bundle_view"
 
 class TreeNode(SQLModel):
     """Minimal representation of a tree node for efficient tree rendering."""

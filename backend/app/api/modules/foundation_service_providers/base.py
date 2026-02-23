@@ -6,7 +6,8 @@ Each provider represents an interface to an external service or library,
 allowing the application to switch between different implementations without
 changing the core business logic.
 """
-from abc import ABC, abstractmethod
+from abc import abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, BinaryIO, Protocol, runtime_checkable, Type, Callable, Awaitable
 from fastapi import UploadFile
@@ -14,10 +15,18 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+@dataclass
+class FileStat:
+    """File metadata for change detection and hashing."""
+    size: int
+    mtime: float
+    etag: Optional[str] = None
+
+
 @runtime_checkable
 class StorageProvider(Protocol):
     """
-    Abstract interface for storage providers (S3, MinIO, etc).
+    Abstract interface for storage providers (S3, MinIO, local_fs, etc).
     """
     async def upload_file(self, file: UploadFile, object_name: str) -> None:
         """Uploads a file to the storage
@@ -32,7 +41,27 @@ class StorageProvider(Protocol):
         Args:
             object_name: The name/path of the object in storage.
         Returns:
-            A file-like object (e.g., stream) or raises error if not found.
+            A file-like object (e.g., open file handle or stream).
+            Caller is responsible for closing the handle. Use as context manager
+            when possible: async with provider.get_file(path) as f: ...
+        """
+        pass
+
+    def file_exists(self, object_name: str) -> bool:
+        """Check if an object exists in storage.
+        Args:
+            object_name: The name/path of the object.
+        Returns:
+            True if the object exists, False otherwise.
+        """
+        pass
+
+    def file_stat(self, object_name: str) -> Optional[FileStat]:
+        """Get file metadata for change detection.
+        Args:
+            object_name: The name/path of the object.
+        Returns:
+            FileStat with size, mtime, optional etag, or None if not found.
         """
         pass
 
@@ -182,16 +211,6 @@ class WebSearchProvider(Protocol):
         pass
 
 
-# DEPRECATED: ClassificationProvider replaced by LanguageModelProvider
-# Kept temporarily for backward compatibility during migration
-class ClassificationProvider(ABC):
-    """
-    DEPRECATED: Use LanguageModelProvider instead.
-    This interface is kept for backward compatibility only.
-    """
-    pass
-
-
 @runtime_checkable
 class EmbeddingProvider(Protocol):
     """
@@ -250,46 +269,6 @@ class EmbeddingProvider(Protocol):
 
 
 @runtime_checkable
-class GeospatialProvider(Protocol):
-    """
-    Abstract interface for geospatial data providers.
-    """
-    async def get_geojson(self, start_date: Optional[str] = None, 
-                         end_date: Optional[str] = None, 
-                         limit: int = 100) -> Dict[str, Any]:
-        """
-        Get GeoJSON data within a specified time range.
-        
-        Args:
-            start_date: Optional start date for filtering
-            end_date: Optional end date for filtering
-            limit: Maximum number of locations to return
-            
-        Returns:
-            GeoJSON formatted data
-        """
-        pass
-    
-    async def get_geojson_by_event(self, event_type: str, 
-                                  start_date: Optional[str] = None,
-                                  end_date: Optional[str] = None, 
-                                  limit: int = 100) -> Dict[str, Any]:
-        """
-        Get GeoJSON data for a specific event type.
-        
-        Args:
-            event_type: The type of event
-            start_date: Optional start date for filtering
-            end_date: Optional end date for filtering
-            limit: Maximum number of locations to return
-            
-        Returns:
-            GeoJSON formatted data
-        """
-        pass
-
-
-@runtime_checkable
 class GeocodingProvider(Protocol):
     """
     Abstract interface for geocoding providers.
@@ -336,6 +315,38 @@ class GeocodingProvider(Protocol):
         """
         pass
 
+
+# ─────────────────────────────────────────── OCR ──── #
+
+class OcrResult:
+    """Result from OCR extraction."""
+    def __init__(self, text: str, confidence: float, engine: str, page_count: int = 1):
+        self.text = text
+        self.confidence = confidence
+        self.engine = engine
+        self.page_count = page_count
+
+
+@runtime_checkable
+class OcrProvider(Protocol):
+    """
+    Abstract interface for OCR providers (ocrmypdf, Ollama multimodal, etc).
+    Extracts text from image content or image-only PDF pages.
+    """
+    async def extract_text(
+        self,
+        file_path_or_bytes: Union[Path, bytes],
+        language_hint: Optional[str] = None,
+    ) -> OcrResult:
+        """
+        Extract text from an image or PDF page.
+        Args:
+            file_path_or_bytes: Local path or raw bytes of the image/PDF page
+            language_hint: Optional language code (e.g. 'eng', 'deu') for better accuracy
+        Returns:
+            OcrResult with text, confidence, engine name, page_count
+        """
+        pass
 
 
 # ─────────────────────────────────────────── Language Models ──── #

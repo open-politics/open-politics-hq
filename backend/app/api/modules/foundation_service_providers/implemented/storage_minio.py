@@ -5,7 +5,7 @@ from minio.error import S3Error
 from fastapi import UploadFile
 import io
 
-from app.api.modules.foundation_service_providers.base import StorageProvider # Protocol
+from app.api.modules.foundation_service_providers.base import StorageProvider, FileStat
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,28 @@ class MinioStorageProvider(StorageProvider):
         """MinIO does not support direct file path access; use get_file() instead."""
         raise NotImplementedError("MinIO does not support direct file path access")
 
-    async def get_file(self, object_name: str) -> Any: # Should return a file-like object (stream)
+    def file_exists(self, object_name: str) -> bool:
+        """Check if the object exists in the bucket."""
+        try:
+            self.client.stat_object(bucket_name=self.bucket_name, object_name=object_name)
+            return True
+        except S3Error as e:
+            if e.code == "NoSuchKey":
+                return False
+            raise
+
+    def file_stat(self, object_name: str) -> Optional[FileStat]:
+        """Get object metadata for change detection (HEAD request)."""
+        try:
+            stat = self.client.stat_object(bucket_name=self.bucket_name, object_name=object_name)
+            mtime = stat.last_modified.timestamp() if stat.last_modified else 0.0
+            return FileStat(size=stat.size or 0, mtime=mtime, etag=stat.etag)
+        except S3Error as e:
+            if e.code == "NoSuchKey":
+                return None
+            raise
+
+    async def get_file(self, object_name: str) -> Any:
         try:
             response = self.client.get_object(bucket_name=self.bucket_name, object_name=object_name)
             logger.debug(f"Retrieved file object '{object_name}' from bucket '{self.bucket_name}'.")
