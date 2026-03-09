@@ -41,23 +41,17 @@ function isGifImage(url: string): boolean {
   return url.toLowerCase().includes('.gif');
 }
 
-// Get image from source_metadata (synchronous, no API call)
+// Get image from file_info (synchronous, no API call)
 function getMetadataImage(asset: AssetRead): FeaturedImageInfo | null {
-  const metadata = asset.source_metadata as Record<string, any> | null;
-  if (!metadata) return null;
+  const fi = asset.file_info as Record<string, unknown> | null;
+  if (!fi) return null;
   
-  if (metadata.featured_image_url && !isGifImage(metadata.featured_image_url)) {
+  const topImage = (fi.top_image ?? fi.featured_image_url ?? fi.og_image) as string | undefined;
+  if (topImage && !isGifImage(topImage)) {
     return {
-      url: metadata.featured_image_url,
+      url: topImage,
       alt: asset.title || 'Article image',
-      credit: metadata.media_credit as string | undefined,
-    };
-  }
-  
-  if (metadata.og_image && !isGifImage(metadata.og_image)) {
-    return {
-      url: metadata.og_image,
-      alt: asset.title || 'Article image',
+      credit: fi.media_credit as string | undefined,
     };
   }
   
@@ -71,8 +65,8 @@ function getChildImage(childAssets: AssetRead[]): FeaturedImageInfo | null {
   // First try to find explicitly marked featured/hero image
   const featuredChild = childAssets.find(child => 
     child.kind === 'image' && 
-    (child.source_metadata?.is_hero_image || 
-     child.source_metadata?.image_role === 'featured' ||
+    (child.file_info?.is_hero_image || 
+     child.file_info?.image_role === 'featured' ||
      child.part_index === 0)
   );
   
@@ -82,7 +76,7 @@ function getChildImage(childAssets: AssetRead[]): FeaturedImageInfo | null {
       return {
         url: imgUrl,
         alt: featuredChild.title || 'Article image',
-        credit: featuredChild.source_metadata?.media_credit as string | undefined,
+        credit: featuredChild.file_info?.media_credit as string | undefined,
       };
     }
   }
@@ -100,7 +94,7 @@ function getChildImage(childAssets: AssetRead[]): FeaturedImageInfo | null {
       return {
         url: imgUrl,
         alt: firstImage.title || 'Article image',
-        credit: firstImage.source_metadata?.media_credit as string | undefined,
+        credit: firstImage.file_info?.media_credit as string | undefined,
       };
     }
   }
@@ -164,9 +158,9 @@ export function ArticleAssetCard({
     }
   }, [childImage, imageSrc, fetchBlobUrl]);
   
-  const metadata = asset.source_metadata as Record<string, any> | null;
-  const author = metadata?.author;
-  const publishedDate = metadata?.publication_date || metadata?.published_date;
+  const meta = { ...(asset.file_info ?? {}), ...(asset.facets ?? {}) };
+  const author = meta.author;
+  const publishedDate = meta.publication_date || meta.published_date;
   const fragmentCount = asset.fragments ? Object.keys(asset.fragments).length : 0;
   
   const titleSizes = {

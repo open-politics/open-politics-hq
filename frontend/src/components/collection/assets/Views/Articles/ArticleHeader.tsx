@@ -6,6 +6,7 @@ import { ExternalLink, Edit2, Globe } from 'lucide-react';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { getArticleSource, getSourceBadgeInfo } from './utils';
 import { ArticleMetadata } from './types';
+import { getAssetMeta } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 
 interface ArticleHeaderProps {
@@ -15,7 +16,7 @@ interface ArticleHeaderProps {
 }
 
 export default function ArticleHeader({ asset, onEdit, className }: ArticleHeaderProps) {
-  const metadata = asset.source_metadata as ArticleMetadata;
+  const metadata = getAssetMeta(asset) as ArticleMetadata;
   const source = getArticleSource(asset);
   const badgeInfo = getSourceBadgeInfo(source);
   

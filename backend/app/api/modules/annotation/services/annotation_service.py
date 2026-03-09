@@ -18,7 +18,6 @@ from app.models import (
 from app.schemas import AnnotationCreate
 from app.api.global_utils import validate_infospace_access
 from app.api.modules.annotation.tasks.annotate import process_annotation_run, retry_failed_annotations
-from app.api.modules.foundation_service_providers.model_registry import ModelRegistryService
 from app.api.modules.content.services.asset_service import AssetService
 from collections import Counter
 from math import sqrt
@@ -64,10 +63,9 @@ logger = logging.getLogger(__name__)
 class AnnotationService:
     """Service for handling annotations."""
     
-    def __init__(self, session: Session, model_registry: ModelRegistryService, asset_service: AssetService):
+    def __init__(self, session: Session, asset_service: AssetService):
         """Initialize the service with a database session and dependencies."""
         self.session = session
-        self.model_registry = model_registry
         self.asset_service = asset_service
     
     def create_annotation(
@@ -660,19 +658,25 @@ class AnnotationService:
             
             # Define the complete async workflow to avoid event loop conflicts
             async def complete_retry_workflow():
-                # Create providers directly (not cached) within the new event loop context
-                from app.api.modules.foundation_service_providers.factory import create_model_registry, create_storage_provider
-                
-                fresh_model_registry = create_model_registry(settings)
-                await fresh_model_registry.initialize_providers()
-                fresh_storage_provider_instance = create_storage_provider(settings)
-                
+                from app.api.modules.foundation_service_providers.registry import (
+                    get_storage_provider, resolve as _resolve, load_credentials,
+                )
+                from app.api.modules.foundation_service_providers.base import LanguageModelProvider
+
+                fresh_storage_provider_instance = get_storage_provider(settings)
+
+                run_cfg = run_config or {}
+                type_key = run_cfg.get("provider") or run_cfg.get("ai_provider")
+                runtime_api_keys = run_cfg.get("api_keys")
+                credentials = runtime_api_keys or {}
+                provider = _resolve(LanguageModelProvider, type_key, settings, credentials) if type_key else None
+
                 return await process_single_asset_schema(
                     asset=asset,
                     schema_info=schema_info,
                     run=retry_run,
                     run_config=run_config,
-                    model_registry=fresh_model_registry,
+                    provider=provider,
                     storage_provider_instance=fresh_storage_provider_instance,
                     session=self.session
                 )

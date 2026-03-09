@@ -72,6 +72,8 @@ kubectl get nodes
 print_header "Configuring Traefik Ingress Controller"
 cp config/traefik-helmchartconfig.yaml /tmp/traefik-helmchartconfig.yaml
 sed -i.bak "s/email: .*/email: $EMAIL/g" /tmp/traefik-helmchartconfig.yaml
+
+
 # Inject Hetzner network ID into Traefik LB annotations when using private IPs
 sed -i.bak "s/load-balancer\.hetzner\.cloud\/network: \".*\"/load-balancer.hetzner.cloud\/network: \"$NETWORK_ID\"/g" /tmp/traefik-helmchartconfig.yaml || true
 echo "   Cleaning up any previous Traefik installation attempts..."

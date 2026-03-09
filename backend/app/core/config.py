@@ -151,7 +151,9 @@ class AppSettings(BaseSettings):
     # Whitelist of paths allowed for directory import (comma-separated)
     # Prevents import endpoint from reading arbitrary filesystem locations
     ALLOWED_IMPORT_PATHS: str = Field(default="/data/import,/dataset_collection", env="ALLOWED_IMPORT_PATHS")
-    
+    # Max files to scan per directory when include_counts=True; 0 = no cap (defense in depth for 400GB+ browse)
+    STORAGE_BROWSE_MAX_COUNT_FILES: int = Field(default=2000, env="STORAGE_BROWSE_MAX_COUNT_FILES")
+
     # Temporary folder for file downloads
     TEMP_FOLDER: str = Field(default="/tmp/osint_temp", env="TEMP_FOLDER")
 
@@ -167,12 +169,44 @@ class AppSettings(BaseSettings):
     MAX_UPLOAD_SIZE_BYTES: int = Field(default=1024 * 1024 * 1024, env="MAX_UPLOAD_SIZE_BYTES")  # 1GB default
     # PDF processing: max pages per document (0 = no limit, for 400GB+ bulk deployments)
     PDF_MAX_PAGES: int = Field(default=0, env="PDF_MAX_PAGES", description="Max pages to process per PDF; 0 = no limit")
+    # process_content Celery rate limit (e.g. "10/s", "100/m"); empty = no limit (prevents Redis queue flooding at import scale)
+    PROCESS_CONTENT_RATE_LIMIT: str = Field(default="10/s", env="PROCESS_CONTENT_RATE_LIMIT")
+    # Re-resolve singleton window: only consider EntityCanonicals created in last N days; 0 = no time limit
+    RESOLVE_SINGLETON_WINDOW_DAYS: int = Field(default=7, env="RESOLVE_SINGLETON_WINDOW_DAYS")
+    # Reactive watchers: comma-separated names. Empty = none run. Content: geocoding,ocr,hash,language_detection,quality_score,embedding. Annotation: version_gap_annotation,annotated_to_curate. Graph: superseded_entity_retire,re_resolve_singletons
+    ENABLED_WATCHERS: str = Field(default="", env="ENABLED_WATCHERS")
+    # Beat interval (seconds) for dispatch_reactive_work. Default 120 (2 min).
+    DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS: int = Field(default=120, env="DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS")
+
+    # === Provider Access Control ===
+    # Per-provider access levels, set via PROVIDER_ACCESS_<CAPABILITY>_<type_key> env vars.
+    # Values: "all" (any user), "superuser" (superuser only), "none" (disabled).
+    # Smart defaults: requires_api_key=False → "all", True → "none".
+    # Examples:
+    #   PROVIDER_ACCESS_LLM_ollama=all          # any user can use system Ollama
+    #   PROVIDER_ACCESS_LLM_openai=superuser    # only superusers can use system OpenAI key
+    #   PROVIDER_ACCESS_EMBEDDING_ollama=all
+    #   PROVIDER_ACCESS_OCR_tesseract=all
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def provider_access(self) -> Dict[str, str]:
+        """Parse PROVIDER_ACCESS_* env vars into {capability_typekey: access_level} dict."""
+        result: Dict[str, str] = {}
+        prefix = "PROVIDER_ACCESS_"
+        for key, value in os.environ.items():
+            if key.startswith(prefix) and value.strip():
+                # PROVIDER_ACCESS_LLM_ollama → "llm_ollama"
+                suffix = key[len(prefix):].lower()
+                if value.strip().lower() in ("all", "superuser", "none"):
+                    result[suffix] = value.strip().lower()
+        return result
 
     # === Provider Configurations ===
 
     # --- GeoCoding Provider ---
     # Default provider for geocoding - can be overridden per-request from frontend
-    GEOCODING_PROVIDER_TYPE: Literal["local", "nominatim_api", "mapbox"] = Field(default="local", env="GEOCODING_PROVIDER_TYPE")
+    GEOCODING_PROVIDER_TYPE: str = Field(default="local", env="GEOCODING_PROVIDER_TYPE")
     NOMINATIM_BASE_URL: str = Field(default="http://nominatim:8080", env="NOMINATIM_BASE_URL")
     # User agent for API requests (Nominatim requires this per usage policy, also used for archive downloads)
     GEOCODING_USER_AGENT: str = Field(
@@ -183,7 +217,7 @@ class AppSettings(BaseSettings):
     MAPBOX_ACCESS_TOKEN: Optional[str] = Field(default=None, env="MAPBOX_ACCESS_TOKEN")
 
     # --- Storage Provider ---
-    STORAGE_PROVIDER_TYPE: Literal["minio", "s3", "local_fs"] = Field(default="minio", env="STORAGE_PROVIDER_TYPE")
+    STORAGE_PROVIDER_TYPE: str = Field(default="minio", env="STORAGE_PROVIDER_TYPE")
 
     # --- Encryption ---
     # Master key for encrypting user provider credentials
@@ -198,7 +232,11 @@ class AppSettings(BaseSettings):
     # Credentials (ensure these environment variables are set for the chosen provider)
     GOOGLE_API_KEY: Optional[str] = Field(default=None, env="GOOGLE_API_KEY")
     OPENAI_API_KEY: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
+    OPENAI_BASE_URL: Optional[str] = Field(default=None, env="OPENAI_BASE_URL")
+    ANTHROPIC_API_KEY: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
+    ANTHROPIC_BASE_URL: Optional[str] = Field(default=None, env="ANTHROPIC_BASE_URL")
     MISTRAL_API_KEY: Optional[str] = Field(default=None, env="MISTRAL_API_KEY")
+    MISTRAL_BASE_URL: Optional[str] = Field(default=None, env="MISTRAL_BASE_URL")
     # OPOL specific config (if OPOL is used as an abstraction layer)
     OPOL_MODE: Optional[Literal["remote", "local", "container"]] = Field(default="remote", env="OPOL_MODE")
     OPOL_API_KEY: Optional[str] = Field(default=None, env="OPOL_API_KEY")
@@ -212,22 +250,22 @@ class AppSettings(BaseSettings):
     GEOSPATIAL_PROVIDER_TYPE: Literal["opol", "nominatim"] = Field(default="opol", env="GEOSPATIAL_PROVIDER_TYPE")
     NOMINATIM_DOMAIN: Optional[str] = Field(default="nominatim.openstreetmap.org", env="NOMINATIM_DOMAIN")
 
-    # --- Embedding Provider ---
-    EMBEDDING_PROVIDER_TYPE: Literal["ollama", "jina", "openai", "voyage"] = Field(default="ollama", env="EMBEDDING_PROVIDER_TYPE")
+    # --- Embedding settings (provider is per-infospace via embedding_selection) ---
     # Ollama embedding settings
     OLLAMA_EMBEDDING_MODEL: str = Field(default="nomic-embed-text", env="OLLAMA_EMBEDDING_MODEL")
     # Jina AI embedding settings  
     JINA_API_KEY: Optional[str] = Field(default=None, env="JINA_API_KEY")
-    JINA_EMBEDDING_MODEL: str = Field(default="jina-embeddings-v2-base-en", env="JINA_EMBEDDING_MODEL")
+    JINA_EMBEDDING_MODEL: str = Field(default="jina-embeddings-v5-text-small", env="JINA_EMBEDDING_MODEL")
     # OpenAI embedding settings (for future use)
-    OPENAI_EMBEDDING_MODEL: str = Field(default="text-embedding-ada-002", env="OPENAI_EMBEDDING_MODEL")
+    OPENAI_EMBEDDING_MODEL: str = Field(default="text-embedding-3-small", env="OPENAI_EMBEDDING_MODEL")
     VOYAGE_API_KEY: Optional[str] = Field(default=None, env="VOYAGE_API_KEY")
+    VOYAGE_BASE_URL: Optional[str] = Field(default=None, env="VOYAGE_BASE_URL")
 
     # --- Scraping Provider ---
-    SCRAPING_PROVIDER_TYPE: Literal["newspaper4k", "playwright"] = Field(default="newspaper4k", env="SCRAPING_PROVIDER_TYPE")
+    SCRAPING_PROVIDER_TYPE: str = Field(default="newspaper4k", env="SCRAPING_PROVIDER_TYPE")
 
     # --- OCR Provider ---
-    OCR_PROVIDER_TYPE: Literal["tesseract", "ocrmypdf", "ollama"] = Field(default="tesseract", env="OCR_PROVIDER_TYPE")
+    OCR_PROVIDER_TYPE: str = Field(default="tesseract", env="OCR_PROVIDER_TYPE")
     OLLAMA_OCR_MODEL: str = Field(default="llava", env="OLLAMA_OCR_MODEL")
 
     # --- Redis Configuration ---
@@ -282,8 +320,6 @@ class AppSettings(BaseSettings):
     # Chunk size for per-chunk commits in large runs (50K-asset run avoids single tx)
     ANNOTATION_CHUNK_SIZE: int = Field(default=50, env="ANNOTATION_CHUNK_SIZE")
     
-    # --- Development & Testing ---
-    INSPECT_PROMPTS_ON_STARTUP: bool = Field(default=False, env="INSPECT_PROMPTS_ON_STARTUP")
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":

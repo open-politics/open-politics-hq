@@ -1,5 +1,7 @@
 """
-Embedding Service - Coordinates embedding generation and storage
+Embedding Service - Coordinates embedding generation and storage.
+
+All provider access goes through registry.resolve(). No legacy fallbacks.
 """
 import logging
 from datetime import datetime
@@ -7,11 +9,9 @@ from typing import List, Dict, Any, Optional
 from sqlmodel import Session, select
 from sqlalchemy import func
 
-from app.models import Asset, AssetChunk, Infospace, EmbeddingModel, EmbeddingProvider as EmbeddingProviderEnum, AssetKind, User
+from app.models import Asset, AssetChunk, Infospace, EmbeddingModel, AssetKind, User
 from app.api.modules.content.models import get_embedding_column_for_dimension, EMBEDDING_SUPPORTED_DIMS
 from app.api.modules.embedding.services.chunking_service import ChunkingService
-from app.api.modules.foundation_service_providers.implemented.embedding_ollama import OllamaEmbeddingProvider
-from app.core.security import merge_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -29,66 +29,29 @@ class EmbeddingService:
         self.user_id = user_id
         self.chunking_service = ChunkingService(session)
         self.runtime_api_keys = runtime_api_keys or {}
-
-        # Legacy providers for backward compatibility
-        self.providers = {
-            "ollama": OllamaEmbeddingProvider()
-        }
-
-    def _get_all_api_keys(self) -> Dict[str, str]:
-        """
-        Get all API keys (runtime + stored), with runtime taking precedence.
-
-        This enables dual-mode:
-        - Immediate operations: Use runtime keys from frontend
-        - Background tasks: Use stored encrypted keys
-        - Runtime keys always override stored (user intent)
-        """
-        if not self.user_id:
-            return self.runtime_api_keys
-
-        user = self.session.get(User, self.user_id)
-        if not user:
-            return self.runtime_api_keys
-
-        # Merge: stored + runtime (runtime takes precedence)
-        return merge_credentials(user.encrypted_credentials, self.runtime_api_keys)
+        self._provider_cache: Dict[str, Any] = {}
 
     async def _get_provider(self, provider_name: str, model_name: Optional[str] = None):
+        """Get embedding provider via registry resolve.
+
+        Args:
+            provider_name: The provider type_key (e.g. "ollama", "openai").
+            model_name: Optional model name (unused for resolution, kept for error messages).
         """
-        Get embedding provider instance with automatic credential resolution.
+        from app.api.modules.foundation_service_providers.base import EmbeddingProvider
+        from app.api.modules.foundation_service_providers.registry import resolve, load_credentials
+        from app.core.config import settings
 
-        Uses merged credentials (stored + runtime) for provider creation.
-        """
-        # Get all available API keys (merged stored + runtime)
-        api_keys = self._get_all_api_keys()
+        credentials = load_credentials(self.session, self.user_id, self.runtime_api_keys) if self.user_id else self.runtime_api_keys
+        provider = resolve(EmbeddingProvider, provider_name, settings, credentials)
+        if provider:
+            return provider
 
-        # Try registry-based provider resolution
-        if api_keys or provider_name.lower() != "ollama":
-            try:
-                from app.api.modules.foundation_service_providers.factory import get_embedding_registry
-                registry = get_embedding_registry()
-
-                # If we have a model name, use it to find the right provider
-                if model_name:
-                    provider, resolved_provider_name = await registry.get_provider_for_model(
-                        model_name,
-                        runtime_api_keys=api_keys
-                    )
-                    if provider:
-                        return provider
-
-                # Otherwise, try to create provider by name
-                return registry.create_provider(provider_name, api_keys.get(provider_name))
-
-            except Exception as e:
-                logger.warning(f"Failed to get provider from registry: {e}, falling back to legacy")
-
-        # Fall back to legacy provider lookup
-        provider = self.providers.get(provider_name.lower())
-        if not provider:
-            raise ValueError(f"Unknown embedding provider: {provider_name}")
-        return provider
+        raise ValueError(
+            f"No embedding provider available for '{provider_name}'. "
+            f"Check that the relevant API key is configured or that the system "
+            f"embedding provider is set up."
+        )
 
     async def ensure_embedding_model_registered(
         self,
@@ -104,7 +67,7 @@ class EmbeddingService:
         existing = self.session.exec(
             select(EmbeddingModel)
             .where(EmbeddingModel.name == model_name)
-            .where(EmbeddingModel.provider == EmbeddingProviderEnum(provider.lower()))
+            .where(EmbeddingModel.provider == provider.lower())
         ).first()
 
         if existing:
@@ -112,16 +75,33 @@ class EmbeddingService:
 
         # Auto-detect dimension if not provided
         if dimension is None:
-            provider_instance = await self._get_provider(provider, model_name)
-            dimension = provider_instance.get_model_dimension(model_name)
+            # Try to get dimension from the descriptor's model catalog
+            from app.api.modules.foundation_service_providers.registry import get_descriptor
+            from app.api.modules.foundation_service_providers.base import EmbeddingProvider, EmbeddingModelSpec
+            desc = get_descriptor(EmbeddingProvider, provider)
+            if desc:
+                spec = desc.get_model(model_name)
+                if isinstance(spec, EmbeddingModelSpec):
+                    dimension = spec.dimension
+
+            # If still unknown, ask the provider (async-safe)
+            if dimension is None:
+                provider_instance = await self._get_provider(provider, model_name)
+                # Prefer async probe if available (e.g. Ollama's _probe_model),
+                # otherwise detect dimension from a test embedding.
+                if hasattr(provider_instance, '_probe_model'):
+                    info = await provider_instance._probe_model(model_name)
+                    dimension = info.get("dimension") or 0
+                if not dimension:
+                    test_embedding = await provider_instance.embed_single(" ", model_name)
+                    dimension = len(test_embedding)
 
         # Create new model record
         embedding_model = EmbeddingModel(
             name=model_name,
-            provider=EmbeddingProviderEnum(provider.lower()),
+            provider=provider.lower(),
             dimension=dimension,
-            description=f"{provider} {model_name}",
-            is_active=True
+            is_active=True,
         )
 
         self.session.add(embedding_model)
@@ -221,7 +201,7 @@ class EmbeddingService:
             )
         from app.api.modules.embedding.services.vector_search_service import VectorSearchService
 
-        search_svc = VectorSearchService(self.session, runtime_api_keys=self.runtime_api_keys)
+        search_svc = VectorSearchService(self.session, runtime_api_keys=self.runtime_api_keys, user_id=self.user_id)
         results = await search_svc.semantic_search(
             query_text=query_text,
             infospace_id=infospace_id,
@@ -237,205 +217,20 @@ class EmbeddingService:
         )
         return [r.to_dict() for r in results]
 
-    async def generate_embeddings_for_asset(
-        self,
-        asset_id: int,
-        infospace_id: int,
-        overwrite: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Generate embeddings for a single asset using infospace configuration.
-
-        Strategy:
-        - If asset is a container with children, embed each child
-        - If asset is a container without children, embed parent
-        - Always chunk first if chunks don't exist
-
-        Returns:
-            Dict with statistics (chunks_created, embeddings_generated)
-        """
-        # Fetch asset
-        asset = self.session.get(Asset, asset_id)
-        if not asset:
-            raise ValueError(f"Asset {asset_id} not found")
-
-        # Fetch infospace for configuration
-        infospace = self.session.get(Infospace, infospace_id)
-        if not infospace:
-            raise ValueError(f"Infospace {infospace_id} not found")
-
-        if not infospace.embedding_model:
-            raise ValueError(f"Infospace {infospace_id} has no embedding model configured")
-
-        # Determine the correct provider for this model
-        try:
-            from app.api.modules.foundation_service_providers.factory import get_embedding_registry
-            registry = get_embedding_registry()
-            _, provider_name = await registry.get_provider_for_model(
-                infospace.embedding_model,
-                runtime_api_keys=self.runtime_api_keys
-            )
-            logger.info(f"Using provider '{provider_name}' for embedding asset {asset_id} with model '{infospace.embedding_model}'")
-        except Exception as e:
-            logger.warning(f"Failed to determine provider for model {infospace.embedding_model}, defaulting to ollama: {e}")
-            provider_name = "ollama"
-
-        # Determine which assets to embed
-        assets_to_embed = []
-
-        if asset.is_container and asset.children_assets:
-            # Container with children: embed children
-            assets_to_embed = [child for child in asset.children_assets if child.text_content]
-            logger.debug(f"Asset {asset_id} is container with {len(assets_to_embed)} children to embed")
-        else:
-            # Leaf asset or container without children: embed self
-            if asset.text_content:
-                assets_to_embed = [asset]
-            else:
-                logger.warning(f"Asset {asset_id} has no text content to embed")
-                return {"chunks_created": 0, "embeddings_generated": 0}
-
-        total_chunks_created = 0
-        total_embeddings_generated = 0
-
-        # Process each asset
-        for target_asset in assets_to_embed:
-            # Step 1: Ensure chunks exist
-            existing_chunks = self.session.exec(
-                select(AssetChunk).where(AssetChunk.asset_id == target_asset.id)
-            ).all()
-
-            if not existing_chunks:
-                # Create chunks
-                chunks = self.chunking_service.chunk_asset(
-                    asset=target_asset,
-                    strategy=infospace.chunk_strategy or "token",
-                    chunk_size=infospace.chunk_size or 512,
-                    chunk_overlap=infospace.chunk_overlap or 50,
-                    overwrite_existing=False
-                )
-                total_chunks_created += len(chunks)
-            else:
-                chunks = existing_chunks
-
-            # Step 2: Generate embeddings for chunks that don't have them
-            embedding_model = await self.ensure_embedding_model_registered(
-                provider_name, infospace.embedding_model
-            )
-            col_name = get_embedding_column_for_dimension(embedding_model.dimension)
-            chunks_to_embed = []
-            for chunk in chunks:
-                has_embedding = (
-                    chunk.embedding_model_id == embedding_model.id
-                    and col_name
-                    and getattr(chunk, col_name, None) is not None
-                )
-                if overwrite or not has_embedding:
-                    chunks_to_embed.append(chunk.id)
-
-            if chunks_to_embed:
-                embedded_count = await self.generate_embeddings_for_chunks(
-                    chunk_ids=chunks_to_embed,
-                    model_name=infospace.embedding_model,
-                    provider=provider_name
-                )
-                total_embeddings_generated += embedded_count
-
-        logger.info(
-            f"Asset {asset_id} embedding complete: "
-            f"{total_chunks_created} chunks created, {total_embeddings_generated} embeddings generated"
-        )
-
-        return {
-            "chunks_created": total_chunks_created,
-            "embeddings_generated": total_embeddings_generated
-        }
-
-    async def generate_embeddings_for_infospace(
-        self,
-        infospace_id: int,
-        overwrite: bool = False,
-        asset_kinds: Optional[List[AssetKind]] = None
-    ) -> Dict[str, Any]:
-        """
-        Generate embeddings for all assets in an infospace.
-
-        Args:
-            infospace_id: Infospace ID
-            overwrite: Whether to regenerate existing embeddings
-            asset_kinds: Optional filter for specific asset types
-
-        Returns:
-            Dict with statistics
-        """
-        # Fetch infospace
-        infospace = self.session.get(Infospace, infospace_id)
-        if not infospace:
-            raise ValueError(f"Infospace {infospace_id} not found")
-
-        if not infospace.embedding_model:
-            raise ValueError(f"Infospace {infospace_id} has no embedding model configured")
-
-        # Build query for assets
-        query = select(Asset).where(Asset.infospace_id == infospace_id)
-        query = query.where(Asset.text_content.isnot(None))
-
-        # Filter for root assets only (we'll handle children in generate_embeddings_for_asset)
-        query = query.where(Asset.parent_asset_id.is_(None))
-
-        if asset_kinds:
-            query = query.where(Asset.kind.in_(asset_kinds))
-
-        assets = self.session.exec(query).all()
-
-        logger.info(f"Starting embedding generation for {len(assets)} assets in infospace {infospace_id}")
-
-        total_chunks_created = 0
-        total_embeddings_generated = 0
-        failed_assets = []
-
-        for asset in assets:
-            try:
-                result = await self.generate_embeddings_for_asset(
-                    asset_id=asset.id,
-                    infospace_id=infospace_id,
-                    overwrite=overwrite
-                )
-                total_chunks_created += result["chunks_created"]
-                total_embeddings_generated += result["embeddings_generated"]
-
-            except Exception as e:
-                logger.error(f"Failed to embed asset {asset.id}: {e}")
-                failed_assets.append(asset.id)
-                continue
-
-        return {
-            "infospace_id": infospace_id,
-            "assets_processed": len(assets),
-            "chunks_created": total_chunks_created,
-            "embeddings_generated": total_embeddings_generated,
-            "failed_assets": failed_assets
-        }
-
     def get_embedding_stats(self, infospace_id: int) -> Dict[str, Any]:
-        """
-        Get statistics about embedding coverage in an infospace.
-        """
-        # Total assets with text content
+        """Get statistics about embedding coverage in an infospace."""
         total_assets = self.session.exec(
             select(func.count(Asset.id))
             .where(Asset.infospace_id == infospace_id)
             .where(Asset.text_content.isnot(None))
         ).one()
 
-        # Total chunks
         total_chunks = self.session.exec(
             select(func.count(AssetChunk.id))
             .join(Asset)
             .where(Asset.infospace_id == infospace_id)
         ).one()
 
-        # Embedded chunks: has embedding in any dimension column or legacy/json
         from sqlalchemy import or_
         dim_conditions = [getattr(AssetChunk, f"embedding_{d}").isnot(None) for d in EMBEDDING_SUPPORTED_DIMS]
         embedded_chunks = self.session.exec(
@@ -445,7 +240,6 @@ class EmbeddingService:
             .where(or_(*dim_conditions))
         ).one()
 
-        # Embedding models used
         models_used = self.session.exec(
             select(EmbeddingModel.name, func.count(AssetChunk.id))
             .join(AssetChunk)

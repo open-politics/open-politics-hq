@@ -18,31 +18,27 @@ from app.schemas import TokenPayload
 # --- Provider Protocols ---
 from app.api.modules.foundation_service_providers.base import (
     StorageProvider,
-    ScrapingProvider, 
+    ScrapingProvider,
     WebSearchProvider,
     GeocodingProvider,
-    EmbeddingProvider
 )
-from app.api.modules.foundation_service_providers.model_registry import ModelRegistryService
-from app.api.modules.foundation_service_providers.factory import (
-    create_storage_provider,
-    create_scraping_provider,
-    create_web_search_provider,
-    create_embedding_provider,
-    create_geocoding_provider,
-    create_model_registry,
+from app.api.modules.foundation_service_providers.registry import (
+    get_storage_provider,
+    get_scraping_provider,
+    get_web_search_provider,
+    get_geocoding_provider,
 )
 # --- Service Class Imports (direct paths to avoid circular import) ---
 from app.api.modules.annotation.services import AnnotationService
 from app.api.modules.identity_infospace_user.services import InfospaceService
 from app.api.modules.sharing.services import ShareableService, PackageService, BackupService, UserBackupService
 from app.api.modules.content.services import (
-    AssetService, BundleService, SourceService, ContentIngestionService,
-    DatasetService,
+    AssetService, BundleService, SourceService,
+    ProcessingService, DatasetService,
 )
 from app.api.modules.analysis.services import AnalysisService
 from app.api.modules.flow.services import TaskService
-from app.api.modules.embedding.services import ChunkingService, EmbeddingService
+from app.api.modules.embedding.services import EmbeddingService
 from app.api.modules.conversational_intelligence.services.conversation_service import (
     IntelligenceConversationService,
 )
@@ -133,35 +129,24 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
         )
     return current_user
 
-# --- Provider Dependencies (using factories that take settings) ---
+# --- Provider Dependencies (registry lookup, no if/elif) ---
 def get_storage_provider_dependency(settings: SettingsDep) -> StorageProvider:
-    return create_storage_provider(settings)
+    return get_storage_provider(settings)
 
 def get_scraping_provider_dependency(settings: SettingsDep) -> ScrapingProvider:
-    return create_scraping_provider(settings)
+    return get_scraping_provider(settings)
 
 def get_web_search_provider_dependency(settings: SettingsDep) -> WebSearchProvider:
-    return create_web_search_provider(settings)
+    return get_web_search_provider(settings)
 
 def get_geocoding_provider_dependency(settings: SettingsDep) -> GeocodingProvider:
-    return create_geocoding_provider(settings)
-
-def get_embedding_provider_dependency(settings: SettingsDep) -> EmbeddingProvider:
-    return create_embedding_provider(settings)
-
-async def get_model_registry_dependency(settings: SettingsDep):
-    """Create and initialize model registry"""
-    from app.api.modules.foundation_service_providers.model_registry import ModelRegistryService
-    registry = create_model_registry(settings)
-    await registry.initialize_providers()
-    return registry
+    return get_geocoding_provider(settings)
 
 StorageProviderDep = Annotated[StorageProvider, Depends(get_storage_provider_dependency)]
 ScrapingProviderDep = Annotated[ScrapingProvider, Depends(get_scraping_provider_dependency)]
 WebSearchProviderDep = Annotated[WebSearchProvider, Depends(get_web_search_provider_dependency)]
 GeocodingProviderDep = Annotated[GeocodingProvider, Depends(get_geocoding_provider_dependency)]
-EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provider_dependency)]
-ModelRegistryDep = Annotated['ModelRegistryService', Depends(get_model_registry_dependency)]
+
 
 
 # --- Service Dependencies (Per-Request with Request State Caching) ---
@@ -191,27 +176,45 @@ def get_bundle_service(request: Request, session: SessionDep) -> BundleService:
     return instance
 BundleServiceDep = Annotated[BundleService, Depends(get_bundle_service)]
 
-async def get_annotation_service(
-    request: Request, session: SessionDep, model_registry: ModelRegistryDep, 
-    asset_service: AssetServiceDep
+def get_source_service(request: Request, session: SessionDep) -> SourceService:
+    service_name = "source_service"
+    if hasattr(request.state, service_name): return getattr(request.state, service_name)
+    instance = SourceService(session=session)
+    setattr(request.state, service_name, instance)
+    return instance
+SourceServiceDep = Annotated[SourceService, Depends(get_source_service)]
+
+def get_processing_service(
+    request: Request,
+    session: SessionDep,
+    storage_provider: StorageProviderDep,
+    scraping_provider: ScrapingProviderDep,
+    asset_service: AssetServiceDep,
+) -> ProcessingService:
+    service_name = "processing_service"
+    if hasattr(request.state, service_name):
+        return getattr(request.state, service_name)
+    instance = ProcessingService(
+        session=session,
+        storage_provider=storage_provider,
+        scraping_provider=scraping_provider,
+        asset_service=asset_service,
+    )
+    setattr(request.state, service_name, instance)
+    return instance
+
+ProcessingServiceDep = Annotated[ProcessingService, Depends(get_processing_service)]
+
+def get_annotation_service(
+    request: Request, session: SessionDep,
+    asset_service: AssetServiceDep,
 ) -> AnnotationService:
     service_name = "annotation_service"
     if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = AnnotationService(session=session, model_registry=model_registry, asset_service=asset_service)
+    instance = AnnotationService(session=session, asset_service=asset_service)
     setattr(request.state, service_name, instance)
     return instance
 AnnotationServiceDep = Annotated[AnnotationService, Depends(get_annotation_service)]
-
-def get_content_ingestion_service(
-    request: Request, session: SessionDep
-) -> ContentIngestionService:
-    service_name = "content_ingestion_service"
-    if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = ContentIngestionService(session=session)
-    setattr(request.state, service_name, instance)
-    return instance
-
-ContentIngestionServiceDep = Annotated[ContentIngestionService, Depends(get_content_ingestion_service)]
 
 
 def get_ingestion_context_factory(
@@ -270,22 +273,21 @@ DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
 
 def get_package_service(
     request: Request, session: SessionDep, storage_provider: StorageProviderDep,
-    annotation_service: AnnotationServiceDep, content_ingestion_service: ContentIngestionServiceDep, 
-    asset_service: AssetServiceDep, bundle_service: BundleServiceDep, 
+    annotation_service: AnnotationServiceDep,
+    asset_service: AssetServiceDep, bundle_service: BundleServiceDep,
     dataset_service: DatasetServiceDep,
-    settings: SettingsDep 
+    settings: SettingsDep
 ) -> PackageService:
     service_name = "package_service"
     if hasattr(request.state, service_name): return getattr(request.state, service_name)
     instance = PackageService(
-        session=session, 
-        storage_provider=storage_provider, 
-        asset_service=asset_service, 
-        annotation_service=annotation_service, 
-        ingestion_service=content_ingestion_service, 
-        bundle_service=bundle_service, 
+        session=session,
+        storage_provider=storage_provider,
+        asset_service=asset_service,
+        annotation_service=annotation_service,
+        bundle_service=bundle_service,
         dataset_service=dataset_service,
-        settings=settings 
+        settings=settings
     )
     setattr(request.state, service_name, instance)
     return instance
@@ -325,14 +327,14 @@ def get_shareable_service(
     return instance
 ShareableServiceDep = Annotated[ShareableService, Depends(get_shareable_service)]
 
-async def get_analysis_service(
-    request: Request, session: SessionDep, model_registry: ModelRegistryDep,
+def get_analysis_service(
+    request: Request, session: SessionDep,
     annotation_service: AnnotationServiceDep, asset_service: AssetServiceDep,
-    current_user: CurrentUser, settings: SettingsDep 
+    current_user: CurrentUser, settings: SettingsDep,
 ) -> AnalysisService:
     service_name = "analysis_service"
     if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = AnalysisService(session=session, model_registry=model_registry, 
+    instance = AnalysisService(session=session,
                              annotation_service=annotation_service, asset_service=asset_service,
                              current_user=current_user, settings=settings)
     setattr(request.state, service_name, instance)
@@ -383,19 +385,18 @@ def get_embedding_service(
 
 EmbeddingServiceDep = Annotated[EmbeddingService, Depends(get_embedding_service)]
 
-async def get_conversation_service(
-    request: Request, session: SessionDep, model_registry: ModelRegistryDep,
+def get_conversation_service(
+    request: Request, session: SessionDep,
     asset_service: AssetServiceDep, annotation_service: AnnotationServiceDep,
-    content_ingestion_service: ContentIngestionServiceDep
+    settings: SettingsDep,
 ) -> IntelligenceConversationService:
     service_name = "conversation_service"
     if hasattr(request.state, service_name): return getattr(request.state, service_name)
     instance = IntelligenceConversationService(
         session=session,
-        model_registry=model_registry,
         asset_service=asset_service,
         annotation_service=annotation_service,
-        content_ingestion_service=content_ingestion_service
+        settings=settings,
     )
     setattr(request.state, service_name, instance)
     return instance

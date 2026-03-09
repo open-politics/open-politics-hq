@@ -2,32 +2,40 @@
 Source monitoring and polling tasks.
 
 This module provides Celery tasks for monitoring sources (RSS, search, etc.)
-using the StreamSourceService for actual polling operations.
+using SourceService.execute_poll() for actual polling operations.
 """
 
 import logging
-import asyncio
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.core.celery_app import celery_app
 from app.core.db import engine
+from app.core.task_utils import run_async_in_celery
 from app.models import Source, SourceStatus
-from app.api.modules.content.services.stream_source_service import StreamSourceService
+from app.api.modules.content.services.source_service import SourceService
 
 logger = logging.getLogger(__name__)
 
+# Circuit breaker: skip sources with this many consecutive failures to prevent retry storms
+POLL_CIRCUIT_BREAKER_THRESHOLD = 5
 
-def run_async(coro):
-    """Run an async coroutine in a sync context."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
+
+async def _execute_poll_async(source_id: int, runtime_api_keys: Optional[Dict[str, str]] = None):
+    """Async helper that creates its own session for execute_poll."""
+    with Session(engine) as session:
+        source = session.get(Source, source_id)
+        if not source:
+            raise ValueError(f"Source {source_id} not found")
+        source_service = SourceService(session)
+        return await source_service.execute_poll(
+            source_id=source_id,
+            user_id=source.user_id,
+            runtime_api_keys=runtime_api_keys,
+        )
 
 
 @celery_app.task(bind=True, max_retries=3)
@@ -36,7 +44,7 @@ def execute_source_poll(self, source_id: int, runtime_api_keys: Optional[Dict[st
     Execute a poll for a source.
     
     This is the primary task for polling sources. It delegates to
-    StreamSourceService.execute_poll() which handles:
+    SourceService.execute_poll() which handles:
     - RSS feeds
     - Search queries
     - Cursor state management
@@ -59,18 +67,16 @@ def execute_source_poll(self, source_id: int, runtime_api_keys: Optional[Dict[st
             if not source.is_active:
                 logger.info(f"Source {source_id} is not active, skipping poll")
                 return {"status": "skipped", "reason": "source_inactive"}
+
+            result = run_async_in_celery(_execute_poll_async, source_id, runtime_api_keys)
             
-            # Use StreamSourceService for polling
-            stream_service = StreamSourceService(session)
-            
-            # Execute poll (async method, run synchronously)
-            result = run_async(
-                stream_service.execute_poll(
-                    source_id=source_id,
-                    user_id=source.user_id,
-                    runtime_api_keys=runtime_api_keys
-                )
-            )
+            # Event bus: source.polled for on-arrival flow triggers
+            if isinstance(result, dict) and result.get("status") == "success":
+                from app.core.events import emit
+                emit("source.polled", {
+                    "source_id": source_id,
+                    "new_asset_ids": result.get("new_asset_ids", []),
+                })
             
             logger.info(f"Poll completed for source {source_id}: {result}")
             return result
@@ -114,9 +120,14 @@ def poll_active_sources():
         now = datetime.now(timezone.utc)
         
         # Find active sources where next_poll_at <= now
+        # Circuit breaker: skip sources with too many consecutive failures
         stmt = select(Source).where(
             Source.is_active == True,
-            Source.next_poll_at <= now
+            Source.next_poll_at <= now,
+            or_(
+                Source.consecutive_failures.is_(None),
+                Source.consecutive_failures <= POLL_CIRCUIT_BREAKER_THRESHOLD,
+            ),
         )
         sources = session.exec(stmt).all()
         

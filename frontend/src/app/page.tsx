@@ -11,6 +11,10 @@ import announcements from './announcements.json';
 
 import useAuth from '@/hooks/useAuth';
 
+const announcementsEnabled = /^(true|1|yes)$/i.test(
+  (process.env.NEXT_PUBLIC_ANNOUNCEMENTS_ENABLED || '').trim()
+);
+
 
 
 const sleep = (time: number) => new Promise((resolve) => setTimeout(resolve, time));
@@ -97,9 +101,9 @@ const HomePage: React.FC<HiProps> = () => {
     CCC: <span className="ml-1 text-lg font-bold">C</span>,
   };
 
-  // Separate announcements by position
-  const topAnnouncements = announcements.filter(a => a.position === 'top');
-  const regularAnnouncements = announcements.filter(a => a.position !== 'top');
+  // Separate announcements by position (only when enabled; landing page only)
+  const topAnnouncements = announcementsEnabled ? announcements.filter(a => a.position === 'top') : [];
+  const regularAnnouncements = announcementsEnabled ? announcements.filter(a => a.position !== 'top') : [];
   return (
     <LandingLayout>
       <div className="flex flex-col mt-16 md:min-h-screen justify-between">
@@ -179,7 +183,8 @@ const HomePage: React.FC<HiProps> = () => {
         </section>
 
         {/* Announcements Section */}
-        <section className="p-8 bg-transparent max-w-screen-md mx-auto">
+        {regularAnnouncements.length > 0 && (
+          <section className="p-8 bg-transparent max-w-screen-md mx-auto">
             <span className="text-xl font-bold mb-4 block">Updates</span>
             <div className="grid grid-cols-1 gap-4">
               {regularAnnouncements.map((announcement) => (
@@ -197,7 +202,8 @@ const HomePage: React.FC<HiProps> = () => {
                 </div>
               ))}
             </div>
-        </section>
+          </section>
+        )}
       </div>
 
       <style jsx>{`

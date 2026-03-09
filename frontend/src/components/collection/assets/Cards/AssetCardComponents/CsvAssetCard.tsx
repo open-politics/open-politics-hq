@@ -51,13 +51,13 @@ export function CsvAssetCard({
   showMeta = true,
   className,
 }: CsvAssetCardProps) {
-  const metadata = asset.source_metadata as CsvMetadata | null;
+  const fi = asset.file_info as CsvMetadata | null;
   const fragmentCount = asset.fragments ? Object.keys(asset.fragments).length : 0;
   
-  // Extract CSV metadata
-  const columnNames = metadata?.column_names || [];
-  const rowCount = metadata?.row_count || 0;
-  const previewRows = metadata?.preview_rows || [];
+  // Extract CSV metadata from file_info
+  const columnNames = (fi?.column_names ?? fi?.columns) || [];
+  const rowCount = fi?.row_count || 0;
+  const previewRows = (fi?.preview_rows ?? fi?.sample_rows) || [];
   
   // Check if we have actual data to display
   const hasTableData = columnNames.length > 0 || previewRows.length > 0;

@@ -15,10 +15,10 @@ from datetime import datetime, timezone, timedelta
 from fastmcp import Client, FastMCP
 from fastmcp.client.auth import BearerAuth
 
-from app.api.modules.content.services import AssetService, ContentIngestionService, BundleService
+from app.api.modules.content.services import AssetService, BundleService
 from app.api.modules.annotation.services import AnnotationService
 from app.core.config import settings
-from app.api.modules.foundation_service_providers.factory import create_storage_provider, create_model_registry
+from app.api.modules.foundation_service_providers.registry import get_storage_provider
 from app.core import security
 from jose import jwt
 import os
@@ -285,12 +285,9 @@ class IntelligenceMCPClient:
 
 @asynccontextmanager
 async def get_mcp_client(
-    # These services are no longer needed for the client, but we keep them
-    # to avoid changing the call sites in conversation_service.py for now.
     session: Session,
     asset_service: AssetService,
     annotation_service: AnnotationService,
-    content_ingestion_service: ContentIngestionService,
     user_id: int,
     infospace_id: int,
     api_keys: Optional[Dict[str, str]] = None,

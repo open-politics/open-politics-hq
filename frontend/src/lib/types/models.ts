@@ -7,32 +7,38 @@ export interface Model {
 
 export const models: Model[] = [
   {
-    id: 'gpt-4o',
-    name: 'GPT-4o',
+    id: 'gpt-5.2',
+    name: 'GPT-5.2',
     provider: 'OpenAI',
     providerId: 'openai'
   },
   {
-    id: 'gpt-4o-mini',
-    name: 'GPT-4o mini',
+    id: 'gpt-5-mini',
+    name: 'GPT-5 mini',
     provider: 'OpenAI',
     providerId: 'openai'
   },
   {
-    id: 'claude-3-5-sonnet-latest',
-    name: 'Claude 3.5 Sonnet',
+    id: 'claude-sonnet-4-6',
+    name: 'Claude Sonnet 4.6',
     provider: 'Anthropic',
     providerId: 'anthropic'
   },
   {
-    id: 'claude-3-5-haiku-20241022',
-    name: 'Claude 3.5 Haiku',
+    id: 'claude-haiku-4-5',
+    name: 'Claude Haiku 4.5',
     provider: 'Anthropic',
     providerId: 'anthropic'
   },
   {
-    id: 'gemini-1.5-pro-002',
-    name: 'Gemini 1.5 Pro',
+    id: 'gemini-3-flash',
+    name: 'Gemini 3 Flash',
+    provider: 'Google Generative AI',
+    providerId: 'google'
+  },
+  {
+    id: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro',
     provider: 'Google Generative AI',
     providerId: 'google'
   },
@@ -49,8 +55,8 @@ export const models: Model[] = [
     providerId: 'ollama'
   },
   {
-    id: 'gpt-4o',
-    name: 'GPT-4o',
+    id: 'gpt-5.2',
+    name: 'GPT-5.2',
     provider: 'Azure',
     providerId: 'azure'
   },

@@ -203,7 +203,7 @@ const AssetContentPanel: React.FC<AssetContentPanelProps> = ({
       return renderTextContent();
     }
 
-    const summary = asset.source_metadata?.summary as string | undefined;
+    const summary = (asset.facets?.summary ?? asset.file_info?.summary) as string | undefined;
     
     return (
       <div className="p-3">

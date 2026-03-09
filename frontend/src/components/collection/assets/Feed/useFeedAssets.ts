@@ -16,7 +16,7 @@ import { TreeNavigationService } from '@/client';
  * 1. Returns ALL displayable assets regardless of bundle expansion
  * 2. Supports sorting by date (created_at, updated_at)
  * 3. Supports filtering by asset kinds
- * 4. Includes source_metadata for image extraction
+ * 4. Includes facets and file_info for image extraction (top_image, image_role)
  * 
  * This solves the problem of assets in unexpanded bundles not appearing.
  */
@@ -74,7 +74,7 @@ export function useFeedAssets(options: UseFeedAssetsOptions): UseFeedAssetsRetur
       
       const feedItems: AssetFeedItem[] = response.assets.map(asset => ({
         asset,
-        childAssets: undefined, // Images come from source_metadata
+        childAssets: undefined, // Images come from file_info (top_image) or child assets
       }));
       
       // If compound sorting by kind, sort client-side

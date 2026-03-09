@@ -1,8 +1,9 @@
 import { AssetRead } from '@/client';
 import { ArticleFormat, ArticleSource, ArticleMetadata } from './types';
+import { getAssetMeta } from '@/lib/utils';
 
 export function detectArticleFormat(asset: AssetRead): ArticleFormat {
-  const metadata = asset.source_metadata as ArticleMetadata;
+  const metadata = getAssetMeta(asset) as ArticleMetadata;
   
   // 1. Explicit format hint from backend
   if (metadata?.content_format) {
@@ -33,7 +34,7 @@ export function detectArticleFormat(asset: AssetRead): ArticleFormat {
 }
 
 export function getArticleSource(asset: AssetRead): ArticleSource | null {
-  const metadata = asset.source_metadata as ArticleMetadata;
+  const metadata = getAssetMeta(asset) as ArticleMetadata;
   return metadata?.content_source || null;
 }
 
@@ -53,16 +54,16 @@ export function getSourceBadgeInfo(source: ArticleSource | null) {
 }
 
 export function getFeaturedImage(asset: AssetRead, childAssets?: AssetRead[]): string | null {
-  const metadata = asset.source_metadata as ArticleMetadata;
+  const metadata = getAssetMeta(asset) as ArticleMetadata;
   
-  // 1. Check for top_image in metadata
+  // 1. Check for top_image in file_info
   if (metadata?.top_image) {
     return metadata.top_image;
   }
   
   // 2. Find first child with is_hero_image
   const heroImage = childAssets?.find(
-    child => child.kind === 'image' && child.source_metadata?.is_hero_image
+    child => child.kind === 'image' && child.file_info?.is_hero_image
   );
   if (heroImage?.source_identifier) {
     return heroImage.source_identifier;

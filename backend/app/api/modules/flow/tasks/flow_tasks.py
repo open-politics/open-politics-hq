@@ -11,10 +11,39 @@ from celery import shared_task
 from sqlmodel import Session, select
 
 from app.core.celery_app import celery
+from app.core.events import subscribe
+
+# Event bus: flow subscribes to annotation_run.completed (no import from annotation)
+subscribe("annotation_run.completed", "app.api.modules.flow.tasks.flow_tasks.resume_flow_execution", args_key="flow_execution_id")
 from app.core.db import engine
 from app.api.modules.flow.services.flow_service import FlowService
+from app.models import FlowExecution, AnnotationRun, RunStatus
 
 logger = logging.getLogger(__name__)
+
+
+@shared_task
+def resume_flow_execution(execution_id: int) -> None:
+    """
+    Resume a flow execution after an async step (e.g. ANNOTATE) completes.
+    Called by process_annotation_run when the run has flow_execution_id.
+    """
+    if not execution_id:
+        return  # standalone annotation run, no flow to resume
+    with Session(engine) as session:
+        execution = session.get(FlowExecution, execution_id)
+        if not execution or execution.status != RunStatus.WAITING:
+            return
+        pending_run_id = (execution.execution_state or {}).get("pending_run_id")
+        if pending_run_id:
+            run = session.get(AnnotationRun, pending_run_id)
+            if run and run.status not in (RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_ERRORS):
+                return
+        execution.status = RunStatus.RUNNING
+        session.add(execution)
+        session.commit()
+        flow_service = FlowService(session)
+        flow_service.run_execution(execution_id)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)

@@ -2,7 +2,6 @@ import logging
 import httpx
 from typing import Any, Dict, List, Optional
 from app.api.modules.foundation_service_providers.base import EmbeddingProvider
-from app.api.modules.foundation_service_providers.embedding_config import embedding_models_config
 
 logger = logging.getLogger(__name__)
 
@@ -11,25 +10,23 @@ class JinaEmbeddingProvider(EmbeddingProvider):
     Jina AI embedding provider implementation.
     """
     
-    def __init__(self, api_key: Optional[str] = None, default_model: str = "jina-embeddings-v2-base-en"):
+    def __init__(self, api_key: Optional[str] = None, default_model: str = "jina-embeddings-v5-text-small", models: dict = None):
         """
         Initialize Jina AI embedding provider.
-        
+
         Args:
             api_key: Jina AI API key
             default_model: Default embedding model to use
+            models: Dictionary of available models
         """
         self.api_key = api_key
         self.default_model = default_model
-        
-        # Load configuration from embedding_models_config
-        provider_config = embedding_models_config.get_provider_config("jina")
-        self.base_url = provider_config.get("base_url", "https://api.jina.ai/v1/embeddings")
-        self.available_models = embedding_models_config.get_provider_models("jina")
-        
+        self.base_url = "https://api.jina.ai/v1/embeddings"
+        self.available_models = models or {}
+
         if not self.api_key:
             logger.warning("No Jina AI API key provided. Some features may not work.")
-        
+
         logger.info(f"JinaEmbeddingProvider initialized with default_model: {self.default_model}")
         logger.info(f"Loaded {len(self.available_models)} models from configuration")
 
@@ -100,11 +97,8 @@ class JinaEmbeddingProvider(EmbeddingProvider):
 
     def get_model_dimension(self, model_name: str) -> int:
         """Get embedding dimension for a specific model."""
-        dimension = embedding_models_config.get_model_dimension("jina", model_name)
-        if dimension:
-            return dimension
-        
-        # Default dimension if model not found in our registry
+        if model_name in self.available_models:
+            return self.available_models[model_name].get("dimension", 768)
         logger.warning(f"Unknown Jina AI model '{model_name}', defaulting to 768 dimensions")
         return 768
 

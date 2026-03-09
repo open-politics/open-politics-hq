@@ -12,26 +12,28 @@ from app.models import (
     Source,
     SourceStatus,
     Infospace,
+    ProcessingStatus,
 )
 from app.schemas import AssetRead, AssetCreate, AssetUpdate, AssetsOut, Message
 from app.api.dependency_injection import (
     SessionDep,
     CurrentUser,
     StorageProviderDep,
-    ContentIngestionServiceDep,
     BundleServiceDep,
     IngestionContextFactoryDep,
     AssetServiceDep,
+    ProcessingServiceDep,
     CheckUploadSizeDep,
 )
 from app.api.global_utils import validate_infospace_access
-from app.api.modules.foundation_service_providers.factory import create_scraping_provider, create_storage_provider
+from app.api.modules.foundation_service_providers.registry import get_scraping_provider, get_storage_provider
 from app.core.config import settings
 from sqlalchemy import func
 from sqlmodel import select, delete
 from app.api.modules.content.tasks.content_tasks import process_content, ingest_bulk_urls
 from app.core.celery_app import celery
-from app.api.modules.content.services import ContentIngestionService, BundleService
+from app.api.modules.content.services import BundleService
+from app.api.modules.content.ingest import ingest
 from app.core.db import engine
 from sqlmodel import Session
 
@@ -81,7 +83,8 @@ class SearchResultItem(BaseModel):
     content: str
     score: Optional[float] = None
     provider: Optional[str] = None
-    source_metadata: Optional[Dict[str, Any]] = None
+    facets: Optional[Dict[str, Any]] = None
+    file_info: Optional[Dict[str, Any]] = None
 
 class BulkSearchResultIngestion(BaseModel):
     """Bulk ingestion of search results with their pre-fetched content"""
@@ -102,7 +105,8 @@ async def create_asset(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentIngestionServiceDep,
+    ingestion_context_factory: IngestionContextFactoryDep,
+    processing_service: ProcessingServiceDep,
     infospace_id: int,
     asset_in: AssetCreate
 ) -> Any:
@@ -132,58 +136,45 @@ async def create_asset(
             options['event_timestamp'] = asset_in.event_timestamp
         
         if locator:
-            assets = await content_service.ingest_content(
-                locator=locator,
-                infospace_id=infospace_id,
+            context = ingestion_context_factory(
                 user_id=current_user.id,
+                infospace_id=infospace_id,
+                options=options,
+            )
+            assets = await ingest(
+                context,
+                locator,
                 title=asset_in.title,
-                options=options
+                options=options,
             )
             asset = assets[0] if assets else None
         else:
-            # No locator - create asset record
-            from app.api.modules.content.services import AssetService
             from app.api.modules.content.processors import detect_asset_kind_from_extension, needs_processing
-            storage_provider = create_storage_provider(settings)
-            asset_service = AssetService(session, storage_provider)
-            
+
+            context = ingestion_context_factory(current_user.id, infospace_id, {})
             asset_in.user_id = current_user.id
             asset_in.infospace_id = infospace_id
-            
-            # Detect kind from blob_path if provided (fixes frontend upload issue)
+
             if asset_in.blob_path:
                 import os
                 file_ext = os.path.splitext(asset_in.blob_path)[1].lower()
                 detected_kind = detect_asset_kind_from_extension(file_ext)
                 if detected_kind != AssetKind.FILE:
-                    # Override with detected kind (unless it's generic FILE)
                     asset_in.kind = detected_kind
                     logger.info(f"Detected asset kind '{detected_kind.value}' from blob_path: {asset_in.blob_path}")
-            
-            # Create the asset
-            asset = asset_service.create_asset(asset_in)
+
+            asset = context.asset_service.create_asset(asset_in)
             
             # Process if needed (using centralized detection)
             if asset.blob_path and needs_processing(asset.kind):
                 try:
-                    await content_service._process_content(asset, options)
+                    await processing_service.process_content(asset, options)
                 except Exception as e:
                     logger.error(f"Processing failed for asset {asset.id}: {e}")
                     # Don't fail the request, asset is already created
 
         if not asset:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create asset from provided data.")
-
-        # Auto-embed if infospace has embedding enabled
-        infospace = session.get(Infospace, infospace_id)
-        if infospace and infospace.embedding_model and asset.text_content:
-            from app.api.modules.embedding.tasks.embed import embed_asset_task
-            embed_asset_task.delay(
-                asset_id=asset.id,
-                infospace_id=infospace_id,
-                user_id=current_user.id
-            )
-            logger.debug(f"Triggered auto-embedding for asset {asset.id}")
 
         return AssetRead.model_validate(asset)
         
@@ -231,7 +222,7 @@ async def upload_file(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    storage_provider: StorageProviderDep,
+    make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     _: CheckUploadSizeDep,
     file: UploadFile = File(...),
@@ -240,33 +231,14 @@ async def upload_file(
 ) -> Any:
     """
     Upload a file and create an asset.
-    
-    Uses FileHandler directly for clean, testable file ingestion.
     """
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
-        
-        # Use FileHandler directly (new pattern)
-        from app.api.modules.content.handlers import FileHandler, IngestionContext
-        from app.api.modules.content.services import AssetService, BundleService
-        
-        scraping_provider = create_scraping_provider(settings)
-        asset_service = AssetService(session, storage_provider)
-        bundle_service = BundleService(session)
-        
-        context = IngestionContext(
-            session=session,
-            storage_provider=storage_provider,
-            scraping_provider=scraping_provider,
-            search_provider=None,
-            asset_service=asset_service,
-            bundle_service=bundle_service,
-            user_id=current_user.id,
-            infospace_id=infospace_id,
-            settings=settings,
-            options={"process_immediately": process_immediately}
+        from app.api.modules.content.handlers import FileHandler
+
+        context = make_ingestion_context(
+            current_user.id, infospace_id, {"process_immediately": process_immediately}
         )
-        
         handler = FileHandler(context)
         assets = await handler.handle(file, title, {"process_immediately": process_immediately})
         
@@ -364,7 +336,6 @@ async def compose_article(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentIngestionServiceDep,
     infospace_id: int,
     composition: ArticleComposition
 ) -> Any:
@@ -372,18 +343,21 @@ async def compose_article(
     Compose a free-form article with embedded assets and bundle references.
     """
     try:
+        from app.api.modules.content.services.asset_builder import AssetBuilder
+
         validate_infospace_access(session, infospace_id, current_user.id)
-        
-        article = await content_service.compose_article(
+
+        article = await AssetBuilder.compose_article(
+            session=session,
+            user_id=current_user.id,
+            infospace_id=infospace_id,
             title=composition.title,
             content=composition.content,
-            infospace_id=infospace_id,
-            user_id=current_user.id,
             summary=composition.summary,
             embedded_assets=composition.embedded_assets,
             referenced_bundles=composition.referenced_bundles,
             metadata=composition.metadata,
-            event_timestamp=composition.event_timestamp
+            event_timestamp=composition.event_timestamp,
         )
         
         return AssetRead.model_validate(article)
@@ -400,7 +374,7 @@ async def bulk_ingest_urls(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentIngestionServiceDep,
+    ingestion_context_factory: IngestionContextFactoryDep,
     infospace_id: int,
     bulk_request: BulkUrlIngestion
 ) -> Any:
@@ -409,7 +383,7 @@ async def bulk_ingest_urls(
     """
     try:
         validate_infospace_access(session, infospace_id, current_user.id)
-        
+
         if len(bulk_request.urls) > 100:
             # For large batches, use background task
             from app.api.modules.content.tasks.content_tasks import ingest_bulk_urls
@@ -421,16 +395,23 @@ async def bulk_ingest_urls(
                 scrape_immediately=bulk_request.scrape_immediately
             )
             return {"message": f"Bulk ingestion of {len(bulk_request.urls)} URLs started in background"}
-        
+
         # For smaller batches, process immediately
-        assets = await content_service.ingest_content(
-            locator=bulk_request.urls,
-            infospace_id=infospace_id,
+        context = ingestion_context_factory(
             user_id=current_user.id,
+            infospace_id=infospace_id,
             options={
                 "base_title": bulk_request.base_title,
-                "scrape_immediately": bulk_request.scrape_immediately
-            }
+                "scrape_immediately": bulk_request.scrape_immediately,
+            },
+        )
+        assets = await ingest(
+            context,
+            bulk_request.urls,
+            options={
+                "base_title": bulk_request.base_title,
+                "scrape_immediately": bulk_request.scrape_immediately,
+            },
         )
         
         return [AssetRead.model_validate(asset) for asset in assets]
@@ -447,7 +428,6 @@ async def ingest_search_results(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentIngestionServiceDep,
     bundle_service: BundleServiceDep,
     infospace_id: int,
     bulk_request: BulkSearchResultIngestion
@@ -479,7 +459,8 @@ async def ingest_search_results(
                     provider=result.provider or "unknown",
                     raw_data={
                         "raw_content": result.content,  # Use full content as markdown
-                        **(result.source_metadata or {})
+                        **(result.file_info or {}),
+                        **(result.facets or {})
                     }
                 )
                 
@@ -541,103 +522,38 @@ async def materialize_csv_from_rows(
 ) -> Any:
     """
     Materialize a chat-generated CSV container into a real CSV file.
-    
+
+    Uses registry-driven materializer from ContentTypeDescriptor.
     Generates a CSV file from the row assets and uploads it to storage,
     then updates the parent asset with the blob_path.
     """
-    # Validate infospace access
     validate_infospace_access(session, infospace_id, current_user.id)
-    
-    # Get the CSV container asset
+
     asset = session.get(Asset, asset_id)
     if not asset or asset.infospace_id != infospace_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Asset {asset_id} not found"
+            detail=f"Asset {asset_id} not found",
         )
-    
-    if asset.kind != AssetKind.CSV:
+
+    from app.api.modules.content.types import get_content_type_registry
+
+    registry = get_content_type_registry()
+    descriptor = registry.by_kind(asset.kind)
+    if not descriptor or not descriptor.materializer_class:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Asset is not a CSV container (kind: {asset.kind.value})"
+            detail=f"Asset type does not support materialization (kind: {asset.kind.value})",
         )
-    
-    # Get columns from metadata
-    columns = asset.source_metadata.get("columns", [])
-    if not columns:
+
+    materializer = descriptor.materializer_class()
+    try:
+        return await materializer.materialize(asset, session, storage_provider)
+    except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="CSV container has no column schema defined"
+            detail=str(e),
         )
-    
-    # Stream child rows in batches to avoid unbounded memory
-    import csv
-    from io import StringIO
-
-    csv_buffer = StringIO()
-    writer = csv.DictWriter(csv_buffer, fieldnames=columns)
-    writer.writeheader()
-
-    batch_size = 500
-    offset = 0
-    total_rows = 0
-    while True:
-        child_rows = session.exec(
-            select(Asset)
-            .where(Asset.parent_asset_id == asset_id)
-            .where(Asset.kind == AssetKind.CSV_ROW)
-            .order_by(Asset.part_index)
-            .offset(offset)
-            .limit(batch_size)
-        ).all()
-        if not child_rows:
-            break
-        for row_asset in child_rows:
-            row_data = row_asset.source_metadata.get("original_row_data", {})
-            row_dict = {col: row_data.get(col, "") for col in columns}
-            writer.writerow(row_dict)
-            total_rows += 1
-        offset += batch_size
-
-    if total_rows == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="CSV container has no rows to materialize"
-        )
-    
-    csv_content = csv_buffer.getvalue()
-    csv_buffer.close()
-    
-    # Upload to blob storage
-    filename = f"{asset.title.replace(' ', '_')}.csv"
-    csv_bytes = csv_content.encode('utf-8')
-    
-    # Generate object name (storage path)
-    import uuid
-    object_name = f"infospaces/{infospace_id}/csv_materialized/{uuid.uuid4().hex[:10]}_{filename}"
-    
-    await storage_provider.upload_from_bytes(
-        file_bytes=csv_bytes,
-        object_name=object_name,
-        filename=filename,
-        content_type='text/csv'
-    )
-    
-    blob_path = object_name
-    
-    # Update the asset with the blob_path
-    asset.blob_path = blob_path
-    if asset.source_metadata is None:
-        asset.source_metadata = {}
-    asset.source_metadata['materialized_at'] = datetime.now(timezone.utc).isoformat()
-    asset.source_metadata['materialized_row_count'] = len(child_rows)
-    session.add(asset)
-    session.commit()
-    session.refresh(asset)
-    
-    logger.info(f"Materialized CSV {asset_id}: {total_rows} rows -> {blob_path}")
-    
-    return asset
 
 
 
@@ -646,7 +562,7 @@ async def reprocess_asset(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentIngestionServiceDep,
+    processing_service: ProcessingServiceDep,
     infospace_id: int,
     asset_id: int,
     options: ReprocessOptions
@@ -669,7 +585,7 @@ async def reprocess_asset(
         reprocess_options = options.model_dump(exclude_none=True)
         
         # Reprocess the asset
-        await content_service.reprocess_content(asset, reprocess_options)
+        await processing_service.reprocess_content(asset, reprocess_options)
         
         return Message(message=f"Asset {asset_id} reprocessed successfully")
         
@@ -689,7 +605,7 @@ async def update_asset_content(
     session: SessionDep,
     current_user: CurrentUser,
     storage_provider: StorageProviderDep,
-    content_service: ContentIngestionServiceDep,
+    processing_service: ProcessingServiceDep,
     infospace_id: int,
     asset_id: int,
     file: UploadFile = File(...),
@@ -754,8 +670,8 @@ async def update_asset_content(
         
         # Reprocess the asset with existing options
         # This will update child row assets in-place (preserving their IDs and relationships)
-        reprocess_options = asset.source_metadata.get('processing_options', {}) if asset.source_metadata else {}
-        await content_service.reprocess_content(asset, reprocess_options)
+        reprocess_options = (asset.file_info or {}).get('processing_options', {})
+        await processing_service.reprocess_content(asset, reprocess_options)
         
         logger.info(f"Asset {asset_id} content updated and row assets updated in-place")
         
@@ -784,42 +700,28 @@ def list_assets(
     Retrieve assets for an infospace.
     """
     validate_infospace_access(session, infospace_id, current_user.id)
-    
-    # Build query
-    query = select(Asset).where(
-        Asset.infospace_id == infospace_id
-    )
-    
-    # For child assets, we need to be more permissive with user filtering
-    # since child assets might be created by system processes
+
     if parent_asset_id is not None:
-        # Verify the parent asset belongs to the user
         parent_asset = session.get(Asset, parent_asset_id)
         if not parent_asset or parent_asset.infospace_id != infospace_id or parent_asset.user_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Parent asset not found"
             )
-        query = query.where(Asset.parent_asset_id == parent_asset_id)
-    else:
-        # For top-level assets, filter by user
-        query = query.where(Asset.user_id == current_user.id)
-    
-    # Get total count (DB-side, scalable for large infospaces)
-    count_query = select(func.count(Asset.id)).where(
-        Asset.infospace_id == infospace_id
+
+    from app.api.modules.content.query import AssetQuery
+
+    q = (
+        AssetQuery(session, infospace_id)
+        .parent_asset(parent_asset_id)
+        .user_id(current_user.id if parent_asset_id is None else None)
+        .sort("created_at_desc")
+        .offset(skip)
+        .paginate(cursor=None, limit=limit)
     )
-    if parent_asset_id is not None:
-        count_query = count_query.where(Asset.parent_asset_id == parent_asset_id)
-    else:
-        count_query = count_query.where(Asset.user_id == current_user.id)
-    
-    total_count = session.exec(count_query).one() or 0
-    
-    # Get assets with pagination
-    query = query.offset(skip).limit(limit).order_by(Asset.created_at.desc())
-    assets = session.exec(query).all()
-    
+    total_count = q.count()
+    assets = q.execute()
+
     return AssetsOut(
         data=[AssetRead.model_validate(asset) for asset in assets],
         count=total_count
@@ -900,7 +802,7 @@ async def ingest_selected_articles(
     *,
     session: SessionDep,
     current_user: CurrentUser,
-    content_service: ContentIngestionServiceDep,
+    ingestion_context_factory: IngestionContextFactoryDep,
     infospace_id: int,
     feed_url: str,
     selected_articles: List[Dict[str, Any]],
@@ -933,18 +835,23 @@ async def ingest_selected_articles(
             )
         
         # Ingest articles using bulk URL processing
-        assets = await content_service.ingest_content(
-            locator=article_urls,
-            infospace_id=infospace_id,
+        opts = {
+            "scrape_immediately": True,
+            "use_bulk_scraping": True,
+            "max_threads": 4,
+            "source_type": "rss_selective_ingestion",
+            "feed_url": feed_url,
+        }
+        context = ingestion_context_factory(
             user_id=current_user.id,
+            infospace_id=infospace_id,
+            options=opts,
+        )
+        assets = await ingest(
+            context,
+            article_urls,
             bundle_id=bundle_id,
-            options={
-                "scrape_immediately": True,
-                "use_bulk_scraping": True,
-                "max_threads": 4,
-                "source_type": "rss_selective_ingestion",
-                "feed_url": feed_url
-            }
+            options=opts,
         )
         
         return {
@@ -1185,10 +1092,10 @@ def transfer_assets(
     
     # Get asset service
     from app.api.modules.content.services import AssetService
-    from app.api.modules.foundation_service_providers.factory import create_storage_provider
+    from app.api.modules.foundation_service_providers.registry import get_storage_provider
     from app.core.config import settings
     
-    storage_provider = create_storage_provider(settings)
+    storage_provider = get_storage_provider(settings)
     asset_service = AssetService(session, storage_provider)
     
     # Transfer assets
@@ -1209,13 +1116,12 @@ def transfer_assets(
     return [AssetRead.model_validate(asset) for asset in transferred_assets]
 
 @router.get("/supported-types", response_model=Dict[str, List[str]])
-def get_supported_content_types(
-    content_service: ContentIngestionServiceDep
-) -> Any:
+def get_supported_content_types() -> Any:
     """
     Get list of supported content types.
     """
-    return content_service.get_supported_content_types()
+    from app.api.modules.content.types import get_supported_content_types as get_types
+    return get_types()
 
 @router.post("/bulk-upload-background", response_model=dict)
 async def create_assets_background_bulk(
@@ -1224,44 +1130,53 @@ async def create_assets_background_bulk(
     files: List[UploadFile] = File(...),
     options: str = Form("{}"),
     current_user: CurrentUser,
-    content_service: ContentIngestionServiceDep
 ):
     """
     Upload multiple files as individual assets using background processing.
     Returns task IDs for progress tracking.
     """
     logger.info(f"Background bulk upload: {len(files)} files for infospace {infospace_id}")
-    
+
     # Parse options
     try:
         upload_options = json.loads(options) if options else {}
     except json.JSONDecodeError:
         upload_options = {}
-    
-    # Create content service
+
     with Session(engine) as session:
-        storage_provider = create_storage_provider(settings)
-        scraping_provider = create_scraping_provider(settings)
-        content_service_instance = ContentIngestionService(session=session)
-        
-        # Upload files and create assets
+        from app.api.modules.content.handlers import IngestionContext
+        from app.api.modules.content.ingest import ingest
+        from app.api.modules.content.tasks.task_services import create_task_services
+
+        services = create_task_services(session)
+        opts = {"process_immediately": False, **upload_options}
+        context = IngestionContext(
+            session=session,
+            storage_provider=services.storage,
+            scraping_provider=services.scraping,
+            search_provider=services.search,
+            asset_service=services.asset,
+            bundle_service=services.bundle,
+            user_id=current_user.id,
+            infospace_id=infospace_id,
+            settings=settings,
+            options=opts,
+        )
+
         task_ids = []
         asset_ids = []
-        
+
         for file in files:
             try:
-                # Create asset and queue background processing
-                # ContentIngestionService handles processing logic internally
-                assets = await content_service_instance.ingest_content(
-                    locator=file,
-                    infospace_id=infospace_id,
-                    user_id=current_user.id,
-                    options={"process_immediately": False, **upload_options}
+                assets = await ingest(
+                    context,
+                    file,
+                    options=opts,
                 )
                 asset = assets[0]
                 asset_ids.append(asset.id)
-                
-                # Track task info (note: actual task_id is managed internally by ContentIngestionService)
+
+                # Track task info
                 task_ids.append({
                     "asset_id": asset.id,
                     "filename": file.filename,
@@ -1321,53 +1236,57 @@ async def add_files_to_bundle_background(
     files: List[UploadFile] = File(...),
     options: str = Form("{}"),
     current_user: CurrentUser,
-    content_service: ContentIngestionServiceDep
 ):
     """
     Add files to existing bundle using background processing.
     """
     logger.info(f"Background bundle upload: {len(files)} files to bundle {bundle_id}")
-    
+
     # Parse options
     try:
         upload_options = json.loads(options) if options else {}
     except json.JSONDecodeError:
         upload_options = {}
-    
-    # Verify bundle exists
+
     with Session(engine) as session:
+        from app.api.modules.content.handlers import IngestionContext
+        from app.api.modules.content.ingest import ingest
+        from app.api.modules.content.tasks.task_services import create_task_services
+
         bundle_service = BundleService(session)
         bundle = bundle_service.get_bundle(bundle_id, infospace_id, current_user.id)
         if not bundle:
             raise HTTPException(status_code=404, detail="Bundle not found")
-        
-        # Create content service
-        content_service_instance = ContentIngestionService(session=session)
-        
-        # Upload files and add to bundle
+
+        services = create_task_services(session)
+        opts = {"process_immediately": False, **upload_options}
+        context = IngestionContext(
+            session=session,
+            storage_provider=services.storage,
+            scraping_provider=services.scraping,
+            search_provider=services.search,
+            asset_service=services.asset,
+            bundle_service=services.bundle,
+            user_id=current_user.id,
+            infospace_id=infospace_id,
+            settings=settings,
+            options=opts,
+        )
+
         task_ids = []
-        
+
         for file in files:
             try:
-                # Create asset and queue background processing
-                # ContentIngestionService handles processing logic internally
-                assets = await content_service_instance.ingest_content(
-                    locator=file,
-                    infospace_id=infospace_id,
-                    user_id=current_user.id,
-                    options={"process_immediately": False, **upload_options}
+                assets = await ingest(
+                    context,
+                    file,
+                    bundle_id=bundle_id,
+                    options=opts,
                 )
                 asset = assets[0]
-                
-                # Add to bundle
-                bundle_service.add_asset_to_bundle(
-                    bundle_id=bundle_id,
-                    asset_id=asset.id,
-                    infospace_id=infospace_id,
-                    user_id=current_user.id
-                )
-                
-                # Track task info (note: actual task_id is managed internally by ContentIngestionService)
+                # ingest() with bundle_id already added to bundle
+
+                # Track task info
                 task_ids.append({
                     "asset_id": asset.id,
                     "filename": file.filename,

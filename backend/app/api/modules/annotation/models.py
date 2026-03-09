@@ -18,6 +18,7 @@ from app.api.modules.content.models import Asset, Bundle
 class RunStatus(str, enum.Enum):
     PENDING = "pending"
     RUNNING = "running"
+    WAITING = "waiting"  # Paused at async checkpoint (e.g. flow waiting for annotation)
     COMPLETED = "completed"
     FAILED = "failed"
     COMPLETED_WITH_ERRORS = "completed_with_errors"
@@ -31,6 +32,8 @@ class ResultStatus(str, enum.Enum):
 class RunType(str, enum.Enum):
     ONE_OFF = "one_off"
     FLOW_STEP = "flow_step"
+    RETRY = "retry"  # Retrying failed assets from a parent run
+    BACKFILL = "backfill"  # Filling annotation gaps (version changes, new schemas)
 
 
 class AnnotationRunTrigger(str, enum.Enum):

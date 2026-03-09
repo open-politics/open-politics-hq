@@ -4,7 +4,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
-from app.models import EntityCanonical, EntityEditLog, FragmentCuration, Infospace, KnowledgeGraph, User
+from app.models import EntityCanonical, EntityEditLog, FragmentCuration, KnowledgeGraph, User
 from app.api.modules.graph.schemas import (
     EntityCanonicalRead,
     EntityCanonicalCreate,
@@ -13,6 +13,7 @@ from app.api.modules.graph.schemas import (
     ResolveEntitiesRequest,
 )
 from app.api.dependency_injection import CurrentUser, get_db
+from app.api.global_utils import validate_infospace_access
 from app.api.modules.graph.resolution import resolve_entity
 from app.api.modules.embedding.services import EmbeddingService
 
@@ -36,11 +37,7 @@ def list_entities(
     List canonical entities for an infospace.
     Optionally filter by entity_type.
     """
-    # Verify infospace access
-    infospace = db.get(Infospace, infospace_id)
-    if not infospace or infospace.owner_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
-    
+    validate_infospace_access(db, infospace_id, current_user.id)
     stmt = select(EntityCanonical).where(EntityCanonical.infospace_id == infospace_id)
     if entity_type:
         stmt = stmt.where(EntityCanonical.entity_type == entity_type)
@@ -60,11 +57,7 @@ async def create_entity(
     """
     Create a canonical entity manually.
     """
-    # Verify infospace access
-    infospace = db.get(Infospace, infospace_id)
-    if not infospace or infospace.owner_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
-    
+    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
     canonical_name = entity_in.canonical_name
     entity_type = entity_in.entity_type
     
@@ -137,11 +130,7 @@ def update_entity(
     """
     Update a canonical entity (rename, edit aliases, properties).
     """
-    # Verify infospace access
-    infospace = db.get(Infospace, infospace_id)
-    if not infospace or infospace.owner_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
-    
+    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
     entity = db.get(EntityCanonical, entity_id)
     if not entity or entity.infospace_id != infospace_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
@@ -187,11 +176,7 @@ def delete_entity(
     db: Session = Depends(get_db)
 ) -> None:
     """Delete a canonical entity."""
-    # Verify infospace access
-    infospace = db.get(Infospace, infospace_id)
-    if not infospace or infospace.owner_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
-    
+    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
     entity = db.get(EntityCanonical, entity_id)
     if not entity or entity.infospace_id != infospace_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
@@ -219,11 +204,7 @@ async def merge_entities(
     """
     Merge multiple entities into one canonical entity.
     """
-    # Verify infospace access
-    infospace = db.get(Infospace, infospace_id)
-    if not infospace or infospace.owner_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
-    
+    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
     entity_ids = merge_request.entity_ids
     if len(entity_ids) < 2:
         raise HTTPException(
@@ -277,20 +258,30 @@ async def merge_entities(
     keep_entity.properties = merged_properties
     keep_entity.provenance_type = "manual"
 
-    # Update FragmentCuration.resolved_refs: replace merged (deleted) entity IDs with keep_entity.id
+    # Update FragmentCuration FK columns: replace merged (deleted) entity IDs with keep_entity.id
     merged_ids = {e.id for e in entities if e.id != keep_entity.id}
     if merged_ids:
-        for fc in db.exec(select(FragmentCuration).where(FragmentCuration.resolved_refs.isnot(None))).all():
-            refs = fc.resolved_refs or {}
-            new_refs = None
-            for key in ("entity_canonical_id", "subject_id", "object_id"):
-                val = refs.get(key)
-                if isinstance(val, int) and val in merged_ids:
-                    if new_refs is None:
-                        new_refs = dict(refs)
-                    new_refs[key] = keep_entity.id
-            if new_refs is not None:
-                fc.resolved_refs = new_refs
+        from sqlalchemy import or_
+        for fc in db.exec(
+            select(FragmentCuration).where(
+                or_(
+                    FragmentCuration.subject_entity_id.in_(merged_ids),
+                    FragmentCuration.object_entity_id.in_(merged_ids),
+                    FragmentCuration.entity_canonical_id.in_(merged_ids),
+                )
+            )
+        ).all():
+            updated = False
+            if fc.subject_entity_id in merged_ids:
+                fc.subject_entity_id = keep_entity.id
+                updated = True
+            if fc.object_entity_id in merged_ids:
+                fc.object_entity_id = keep_entity.id
+                updated = True
+            if fc.entity_canonical_id in merged_ids:
+                fc.entity_canonical_id = keep_entity.id
+                updated = True
+            if updated:
                 db.add(fc)
 
     # Delete other entities
@@ -324,11 +315,7 @@ async def trigger_resolution(
     """
     Trigger automatic entity resolution for raw entity mentions.
     """
-    # Verify infospace access
-    infospace = db.get(Infospace, infospace_id)
-    if not infospace or infospace.owner_id != current_user.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
-    
+    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
     raw_entities = resolve_request.raw_entities
     similarity_threshold = resolve_request.similarity_threshold
     use_embeddings = resolve_request.use_embeddings

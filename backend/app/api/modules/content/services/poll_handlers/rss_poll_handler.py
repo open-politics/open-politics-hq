@@ -39,7 +39,7 @@ class RSSPollHandler:
         if assets:
             last_entry = assets[-1]
             cursor_update["last_guid"] = (
-                last_entry.source_metadata.get("guid")
+                (last_entry.file_info or {}).get("guid")
                 or last_entry.source_identifier
             )
         cursor_update["last_poll_timestamp"] = datetime.now(timezone.utc).isoformat()

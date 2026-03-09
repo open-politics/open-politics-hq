@@ -154,9 +154,10 @@ const RunAssetList: React.FC<RunAssetListProps> = ({ assets, onAssetView }) => {
                 {asset.updated_at && asset.updated_at !== asset.created_at && (
                   <span>Updated: {format(new Date(asset.updated_at), 'MMM d, yyyy')}</span>
                 )}
-                {asset.source_metadata?.filename && typeof asset.source_metadata.filename === 'string' ? (
-                  <span>File: {asset.source_metadata.filename}</span>
-                ) : null}
+                {(() => {
+                  const fn = asset.file_info?.filename ?? asset.file_info?.original_filename;
+                  return typeof fn === 'string' ? <span>File: {fn}</span> : null;
+                })()}
               </div>
             </div>
             

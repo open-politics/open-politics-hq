@@ -17,6 +17,7 @@ import {
   Eye
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getAssetMeta } from '@/lib/utils';
 import { AssetRead, BundleRead } from '@/client';
 import { format, formatDistanceToNowStrict } from 'date-fns';
 import AssetEmbed from './AssetEmbed';
@@ -37,8 +38,8 @@ export default function ComposedArticleView({
 }: ComposedArticleViewProps) {
   const { bundles } = useBundleStore();
 
-  // Parse composition metadata
-  const compositionMetadata = asset.source_metadata || {};
+  // Parse composition metadata from facets + file_info
+  const compositionMetadata = getAssetMeta(asset);
   const isComposedArticle = compositionMetadata.composition_type === 'free_form_article';
   const embeddedAssets = compositionMetadata.embedded_assets || [];
   const referencedBundles = compositionMetadata.referenced_bundles || [];

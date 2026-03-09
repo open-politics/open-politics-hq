@@ -30,6 +30,7 @@ from app.schemas import (
 from app.api.global_utils import validate_infospace_access
 from app.api.modules.sharing.services.package_service import PackageBuilder, PackageImporter, DataPackage, PackageMetadata
 from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
+from app.api.modules.sharing.services.package_service import PackageService
 from app.api.modules.foundation_service_providers.base import StorageProvider
 from app.core.config import AppSettings
 
@@ -185,25 +186,38 @@ class UserBackupService:
                 total_annotations = 0
                 total_datasets = 0
                 
-                # Create PackageBuilder for each infospace
-                infospace_service = InfospaceService(self.session, self.settings, self.storage_provider)
                 infospaces_dir = os.path.join(user_backup_dir, "infospaces")
                 os.makedirs(infospaces_dir, exist_ok=True)
                 
+                from app.api.modules.content.services import AssetService, BundleService, DatasetService
+                from app.api.modules.annotation.services import AnnotationService
+
+                asset_service = AssetService(session=self.session, storage_provider=self.storage_provider)
+                bundle_service = BundleService(db=self.session)
+                dataset_service = DatasetService(session=self.session, storage_provider=self.storage_provider, source_instance_id=self.source_instance_id)
+                annotation_service = AnnotationService(session=self.session, asset_service=asset_service)
+                package_service = PackageService(
+                    session=self.session,
+                    storage_provider=self.storage_provider,
+                    asset_service=asset_service,
+                    annotation_service=annotation_service,
+                    bundle_service=bundle_service,
+                    dataset_service=dataset_service,
+                    settings=self.settings,
+                )
+
                 for infospace in infospaces:
                     logger.info(f"Backing up infospace {infospace.id}: {infospace.name}")
-                    
                     try:
-                        # Export infospace to a package
-                        package = await infospace_service.export_infospace(
-                            infospace_id=infospace.id,
+                        package = await package_service.export_infospace(
+                            infospace=infospace,
                             user_id=backup.created_by_user_id,
                             include_sources=True,
                             include_schemas=True,
                             include_runs=backup_options.get("include_runs", True),
                             include_datasets=backup_options.get("include_datasets", True),
                             include_assets_for_sources=backup_options.get("include_files", True),
-                            include_annotations_for_runs=backup_options.get("include_annotations", True)
+                            include_annotations_for_runs=backup_options.get("include_annotations", True),
                         )
                         
                         # Serialize package to ZIP file in infospaces directory
@@ -416,20 +430,31 @@ class UserBackupService:
                 infospaces_dir = os.path.join(extract_dir, "infospaces")
                 if os.path.exists(infospaces_dir):
                     infospace_service = InfospaceService(self.session, self.settings, self.storage_provider)
-                    
+                    from app.api.modules.content.services import AssetService, BundleService, DatasetService
+                    from app.api.modules.annotation.services import AnnotationService
+
+                    asset_service = AssetService(session=self.session, storage_provider=self.storage_provider)
+                    bundle_service = BundleService(db=self.session)
+                    dataset_service = DatasetService(session=self.session, storage_provider=self.storage_provider, source_instance_id=self.source_instance_id)
+                    annotation_service = AnnotationService(session=self.session, asset_service=asset_service)
+                    package_service = PackageService(
+                        session=self.session,
+                        storage_provider=self.storage_provider,
+                        asset_service=asset_service,
+                        annotation_service=annotation_service,
+                        bundle_service=bundle_service,
+                        dataset_service=dataset_service,
+                        settings=self.settings,
+                    )
+
                     for infospace_file in os.listdir(infospaces_dir):
                         if infospace_file.endswith('.zip'):
                             infospace_path = os.path.join(infospaces_dir, infospace_file)
-                            
                             try:
-                                # Import infospace for the restored user
-                                await infospace_service.import_infospace(
-                                    package_path=infospace_path,
+                                await package_service.import_infospace(
                                     user_id=restored_user.id,
-                                    import_options={
-                                        "conflict_strategy": restore_request.conflict_strategy,
-                                        "preserve_uuids": False  # Generate new UUIDs
-                                    }
+                                    filepath=infospace_path,
+                                    infospace_service=infospace_service,
                                 )
                                 logger.info(f"Restored infospace from {infospace_file}")
                                 

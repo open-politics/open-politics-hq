@@ -9,7 +9,7 @@ No service class needed - just pure functions for formatting data.
 from typing import List, Dict, Set, Optional, Any
 from urllib.parse import quote, unquote
 from sqlmodel import Session, select
-from app.models import Asset, Bundle, BundleView, AssetKind, Source, Flow, FlowStatus, Task, TaskStatus, IngestionJob, IngestionStatus
+from app.models import Asset, Bundle, AssetKind, Source, Flow, FlowStatus, Task, TaskStatus, IngestionJob, IngestionStatus
 from app.schemas import TreeNode, TreeNodeType
 from collections import Counter
 from datetime import datetime, timezone
@@ -125,10 +125,12 @@ def build_tree_node_from_asset(asset: Asset, parent_type: str = None, parent_id:
     if parent_type and parent_id:
         parent_id_str = f"{parent_type}-{parent_id}"
     
-    # Include source_metadata for CSV rows (needed for table rendering)
-    source_metadata = None
+    # Include facets and file_info for CSV rows (needed for table rendering)
+    facets = None
+    file_info = None
     if asset.kind and asset.kind.value == 'csv_row':
-        source_metadata = asset.source_metadata
+        facets = asset.facets
+        file_info = asset.file_info
     
     return TreeNode(
         id=f"asset-{asset.id}",
@@ -142,7 +144,8 @@ def build_tree_node_from_asset(asset: Asset, parent_type: str = None, parent_id:
         parent_id=parent_id_str,
         updated_at=asset.updated_at,
         created_at=asset.created_at,
-        source_metadata=source_metadata,
+        facets=facets,
+        file_info=file_info,
     )
 
 
@@ -261,7 +264,7 @@ def build_tree_node_from_vfolder(
     path_prefix: str,
     folder_name: str,
 ) -> TreeNode:
-    """Build TreeNode for a virtual folder (derived from blob_path)."""
+    """Build TreeNode for a virtual folder (derived from logical_path)."""
     new_prefix = f"{path_prefix}/{folder_name}" if path_prefix else folder_name
     return TreeNode(
         id=make_vfolder_node_id(bundle_id, new_prefix),
@@ -270,20 +273,6 @@ def build_tree_node_from_vfolder(
         path_prefix=new_prefix,
         has_children=True,
         updated_at=datetime.now(timezone.utc),
-    )
-
-
-def build_tree_node_from_bundle_view(view: BundleView) -> TreeNode:
-    """Build TreeNode for a BundleView (named subset of a bundle)."""
-    return TreeNode(
-        id=f"bundleview-{view.id}",
-        type=TreeNodeType.BUNDLE_VIEW,
-        name=view.name,
-        path_prefix=view.path_prefix or None,
-        has_children=True,  # Children are vfolder-equivalent under path_prefix
-        parent_id=f"bundle-{view.source_bundle_id}",
-        updated_at=view.updated_at,
-        created_at=view.created_at,
     )
 
 
@@ -305,10 +294,6 @@ def parse_tree_node_id(node_id: str) -> tuple[str, int]:
             rest = node_id[8:]
             numeric_id = int(rest.split("__")[0])
             return "vfolder", numeric_id
-
-        if node_id.startswith("bundleview-"):
-            numeric_id = int(node_id[12:])
-            return "bundleview", numeric_id
 
         type_str, id_str = node_id.split('-', 1)
         numeric_id = int(id_str)
@@ -403,17 +388,17 @@ def build_csv_preview(asset: Asset, child_assets: Optional[List[Asset]] = None) 
     """
     preview = {}
     
-    # Extract column headers from source_metadata
-    columns = asset.source_metadata.get('columns', [])
+    # Extract column headers from file_info
+    columns = (asset.file_info or {}).get('columns', [])
     
     # Fallback: extract from first child row if parent doesn't have columns
     if not columns and child_assets and len(child_assets) > 0:
         first_child = child_assets[0]
         # Try column_headers field (from for_csv_row builder)
-        columns = first_child.source_metadata.get('column_headers', [])
+        columns = (first_child.file_info or {}).get('column_headers', [])
         # Or extract from original_row_data keys
         if not columns:
-            row_data = first_child.source_metadata.get('original_row_data', {})
+            row_data = (first_child.file_info or {}).get('original_row_data', {})
             if row_data:
                 columns = list(row_data.keys())
     
@@ -422,7 +407,7 @@ def build_csv_preview(asset: Asset, child_assets: Optional[List[Asset]] = None) 
         preview['column_count'] = len(columns)
     
     # Row count - always use the actual total from parent asset metadata
-    total_rows = asset.source_metadata.get('row_count', 0)
+    total_rows = (asset.file_info or {}).get('row_count', 0)
     if total_rows:
         preview['row_count'] = total_rows
     elif child_assets is not None:
@@ -433,7 +418,7 @@ def build_csv_preview(asset: Asset, child_assets: Optional[List[Asset]] = None) 
     if child_assets and len(child_assets) > 0:
         sample_rows = []
         for child in child_assets[:5]:  # Increased from 3 to 5 for better preview
-            row_data = child.source_metadata.get('original_row_data', {})
+            row_data = (child.file_info or {}).get('original_row_data', {})
             if row_data:
                 sample_rows.append(row_data)
         
@@ -461,7 +446,7 @@ def build_pdf_preview(asset: Asset, child_assets: Optional[List[Asset]] = None) 
     if child_assets is not None:
         preview['page_count'] = len(child_assets)
     else:
-        preview['page_count'] = asset.source_metadata.get('page_count', 0)
+        preview['page_count'] = (asset.file_info or {}).get('page_count', 0)
     
     # First page text excerpt (if available)
     if asset.text_content:
@@ -471,8 +456,8 @@ def build_pdf_preview(asset: Asset, child_assets: Optional[List[Asset]] = None) 
         preview['excerpt'] = excerpt
     
     # File size
-    if asset.source_metadata.get('file_size'):
-        preview['file_size'] = asset.source_metadata['file_size']
+    if (asset.file_info or {}).get('file_size'):
+        preview['file_size'] = asset.file_info['file_size']
     
     return preview
 
@@ -489,8 +474,8 @@ def build_article_preview(asset: Asset) -> Dict[str, Any]:
         preview['excerpt'] = excerpt
         preview['word_count'] = len(asset.text_content.split())
     
-    # URL for web assets
-    if asset.kind == AssetKind.WEB and asset.source_identifier:
+    # URL when source_identifier is present (typically WEB assets)
+    if asset.source_identifier and str(asset.source_identifier).startswith(("http://", "https://")):
         preview['url'] = asset.source_identifier
     
     # Published date if available
@@ -553,247 +538,18 @@ def enrich_node_with_preview(
         node.preview = build_bundle_preview(entity, child_assets)
     
     elif isinstance(entity, Asset):
-        # Asset preview based on kind
-        if entity.kind == AssetKind.CSV:
-            child_assets = [e for e in (child_entities or []) if isinstance(e, Asset)]
-            node.preview = build_csv_preview(entity, child_assets)
-        
-        elif entity.kind == AssetKind.PDF:
-            child_assets = [e for e in (child_entities or []) if isinstance(e, Asset)]
-            node.preview = build_pdf_preview(entity, child_assets)
-        
-        elif entity.kind in [AssetKind.ARTICLE, AssetKind.WEB, AssetKind.TEXT]:
-            node.preview = build_article_preview(entity)
+        # Asset preview from registry (descriptor.preview_builder_name)
+        from app.api.modules.content.types import get_content_type_registry
+        registry = get_content_type_registry()
+        desc = registry.by_kind(entity.kind)
+        builder = registry.get_preview_builder(entity.kind) if desc else None
+        if builder:
+            # "article" builder takes asset only; "csv"/"pdf" take (asset, child_assets)
+            if desc and desc.preview_builder_name == "article":
+                node.preview = builder(entity)
+            else:
+                child_assets = [e for e in (child_entities or []) if isinstance(e, Asset)]
+                node.preview = builder(entity, child_assets)
     
     return node
 
-
-# ============================================================================
-# BUNDLE CRUD OPERATIONS
-# ============================================================================
-
-def create_bundle(
-    session,
-    user_id: int,
-    infospace_id: int,
-    name: str,
-    description: Optional[str] = None,
-    parent_bundle_id: Optional[int] = None
-) -> Bundle:
-    """
-    Create a new bundle (collection).
-    
-    Args:
-        session: Database session
-        user_id: User creating the bundle
-        infospace_id: Infospace ID
-        name: Bundle name
-        description: Optional description
-        parent_bundle_id: Optional parent bundle for nesting
-    
-    Returns:
-        Created Bundle object
-    """
-    bundle = Bundle(
-        name=name,
-        description=description,
-        infospace_id=infospace_id,
-        user_id=user_id,
-        parent_bundle_id=parent_bundle_id,
-        asset_count=0,
-        child_bundle_count=0
-    )
-    
-    session.add(bundle)
-    session.flush()  # Get the ID
-    
-    return bundle
-
-
-def add_assets_to_bundle(
-    session,
-    bundle_id: int,
-    asset_ids: List[int],
-    infospace_id: int,
-    include_children: bool = True
-) -> tuple[int, int]:
-    """
-    Add assets to a bundle.
-    
-    Args:
-        session: Database session
-        bundle_id: Bundle to add to
-        asset_ids: List of asset IDs to add
-        infospace_id: Infospace ID for validation
-        include_children: Whether to include child assets automatically
-    
-    Returns:
-        Tuple of (assets_added_count, children_added_count)
-    """
-    from sqlmodel import select
-    
-    bundle = session.get(Bundle, bundle_id)
-    if not bundle or bundle.infospace_id != infospace_id:
-        raise ValueError(f"Bundle {bundle_id} not found")
-    
-    assets_added = 0
-    children_added = 0
-    
-    for asset_id in asset_ids:
-        asset = session.get(Asset, asset_id)
-        if not asset or asset.infospace_id != infospace_id:
-            continue
-        
-        # Set bundle_id on asset
-        if asset.bundle_id != bundle_id:
-            asset.bundle_id = bundle_id
-            session.add(asset)
-            assets_added += 1
-        
-        # Optionally include child assets
-        if include_children and asset.is_container:
-            children = session.exec(
-                select(Asset).where(Asset.parent_asset_id == asset_id)
-            ).all()
-            
-            for child in children:
-                if child.bundle_id != bundle_id:
-                    child.bundle_id = bundle_id
-                    session.add(child)
-                    children_added += 1
-    
-    # Update bundle asset count
-    total_assets = session.exec(
-        select(Asset).where(Asset.bundle_id == bundle_id)
-    ).all()
-    bundle.asset_count = len(total_assets)
-    session.add(bundle)
-    
-    return assets_added, children_added
-
-
-def remove_assets_from_bundle(
-    session,
-    bundle_id: int,
-    asset_ids: List[int],
-    infospace_id: int
-) -> int:
-    """
-    Remove assets from a bundle.
-    
-    Args:
-        session: Database session
-        bundle_id: Bundle to remove from
-        asset_ids: List of asset IDs to remove
-        infospace_id: Infospace ID for validation
-    
-    Returns:
-        Number of assets removed
-    """
-    from sqlmodel import select
-    
-    bundle = session.get(Bundle, bundle_id)
-    if not bundle or bundle.infospace_id != infospace_id:
-        raise ValueError(f"Bundle {bundle_id} not found")
-    
-    removed_count = 0
-    
-    for asset_id in asset_ids:
-        asset = session.get(Asset, asset_id)
-        if not asset or asset.infospace_id != infospace_id:
-            continue
-        
-        if asset.bundle_id == bundle_id:
-            asset.bundle_id = None
-            session.add(asset)
-            removed_count += 1
-    
-    # Update bundle asset count
-    total_assets = session.exec(
-        select(Asset).where(Asset.bundle_id == bundle_id)
-    ).all()
-    bundle.asset_count = len(total_assets)
-    session.add(bundle)
-    
-    return removed_count
-
-
-def update_bundle(
-    session,
-    bundle_id: int,
-    infospace_id: int,
-    name: Optional[str] = None,
-    description: Optional[str] = None
-) -> Bundle:
-    """
-    Update bundle metadata.
-    
-    Args:
-        session: Database session
-        bundle_id: Bundle to update
-        infospace_id: Infospace ID for validation
-        name: New name (optional)
-        description: New description (optional)
-    
-    Returns:
-        Updated Bundle object
-    """
-    bundle = session.get(Bundle, bundle_id)
-    if not bundle or bundle.infospace_id != infospace_id:
-        raise ValueError(f"Bundle {bundle_id} not found")
-    
-    if name is not None:
-        bundle.name = name
-    if description is not None:
-        bundle.description = description
-    
-    session.add(bundle)
-    
-    return bundle
-
-
-def delete_bundle(
-    session,
-    bundle_id: int,
-    infospace_id: int
-) -> str:
-    """
-    Delete a bundle (keeps assets, just removes the collection).
-    
-    Args:
-        session: Database session
-        bundle_id: Bundle to delete
-        infospace_id: Infospace ID for validation
-    
-    Returns:
-        Bundle name that was deleted
-    """
-    from sqlmodel import select
-    
-    bundle = session.get(Bundle, bundle_id)
-    if not bundle or bundle.infospace_id != infospace_id:
-        raise ValueError(f"Bundle {bundle_id} not found")
-    
-    # Clear bundle_id from all assets
-    assets = session.exec(
-        select(Asset).where(Asset.bundle_id == bundle_id)
-    ).all()
-    
-    for asset in assets:
-        asset.bundle_id = None
-        session.add(asset)
-    
-    # Clear root_bundle_id from IngestionJob records that reference this bundle
-    from app.models import IngestionJob
-    jobs = session.exec(
-        select(IngestionJob).where(IngestionJob.root_bundle_id == bundle_id)
-    ).all()
-    if jobs:
-        for job in jobs:
-            job.root_bundle_id = None
-            session.add(job)
-    
-    bundle_name = bundle.name
-    session.delete(bundle)
-    
-    return bundle_name

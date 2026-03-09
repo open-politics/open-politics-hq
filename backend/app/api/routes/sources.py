@@ -14,8 +14,8 @@ from app.api.dependency_injection import (
     SessionDep,
     CurrentUser,
     BundleServiceDep,
+    SourceServiceDep,
 )
-from app.api.modules.content.services import SourceService
 from app.api.global_utils import validate_infospace_access
 from app.schemas import (
     SourceCreate,
@@ -57,6 +57,7 @@ def create_source(
     source_in: SourceCreateRequest,
     session: SessionDep,
     bundle_service: BundleServiceDep,
+    source_service: SourceServiceDep,
 ) -> SourceRead:
     """
     Create a new source with optional streaming configuration.
@@ -65,7 +66,6 @@ def create_source(
     for new content at the specified interval. Content will be routed to the
     output_bundle_id or a newly created bundle.
     """
-    source_service = SourceService(session)
     # Use output_bundle_id (streaming) or target_bundle_id (legacy monitoring) or create new
     bundle_id_to_use = source_in.output_bundle_id or source_in.target_bundle_id
 
@@ -360,6 +360,7 @@ def trigger_source_processing(
     infospace_id: int,
     source_id: int,
     session: SessionDep,
+    source_service: SourceServiceDep,
 ) -> Dict[str, Any]:
     """
     Trigger processing for a specific source.
@@ -392,7 +393,6 @@ def trigger_source_processing(
             )
         
         # Use SourceService to trigger processing
-        source_service = SourceService(session)
         success = source_service.trigger_source_processing(
             source_id=source_id,
             user_id=current_user.id,
@@ -602,11 +602,10 @@ def activate_stream(
     infospace_id: int,
     source_id: int,
     session: SessionDep,
+    source_service: SourceServiceDep,
 ) -> SourceRead:
     """Activate a source stream - enable polling."""
     validate_infospace_access(session, infospace_id, current_user.id)
-
-    source_service = SourceService(session)
     source = source_service.activate_stream(source_id, current_user.id)
 
     return SourceRead.model_validate(source)
@@ -619,11 +618,10 @@ def pause_stream(
     infospace_id: int,
     source_id: int,
     session: SessionDep,
+    source_service: SourceServiceDep,
 ) -> SourceRead:
     """Pause a source stream - disable polling."""
     validate_infospace_access(session, infospace_id, current_user.id)
-
-    source_service = SourceService(session)
     source = source_service.pause_stream(source_id, current_user.id)
 
     return SourceRead.model_validate(source)
@@ -636,6 +634,7 @@ async def poll_source(
     infospace_id: int,
     source_id: int,
     session: SessionDep,
+    source_service: SourceServiceDep,
 ) -> Dict[str, Any]:
     """Manually trigger a poll of a source."""
     from app.core.security import decrypt_credentials
@@ -646,8 +645,6 @@ async def poll_source(
     api_keys = {}
     if current_user.encrypted_credentials:
         api_keys = decrypt_credentials(current_user.encrypted_credentials)
-    
-    source_service = SourceService(session)
     result = await source_service.execute_poll(source_id, user_id=current_user.id, runtime_api_keys=api_keys)
     
     return result
@@ -660,11 +657,10 @@ def get_stream_stats(
     infospace_id: int,
     source_id: int,
     session: SessionDep,
+    source_service: SourceServiceDep,
 ) -> Dict[str, Any]:
     """Get stream statistics for a source."""
     validate_infospace_access(session, infospace_id, current_user.id)
-    
-    source_service = SourceService(session)
     stats = source_service.get_stream_stats(source_id, current_user.id, infospace_id)
     
     return stats

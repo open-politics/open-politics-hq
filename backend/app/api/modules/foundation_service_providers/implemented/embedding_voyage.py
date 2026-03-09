@@ -11,23 +11,47 @@ from app.api.modules.foundation_service_providers.base import EmbeddingProvider
 logger = logging.getLogger(__name__)
 
 
-# Voyage AI model configurations
+# Voyage AI model configurations (March 2026)
 VOYAGE_MODELS = {
-    "voyage-3": {
-        "name": "voyage-3",
+    "voyage-4-large": {
+        "name": "voyage-4-large",
         "dimension": 1024,
-        "description": "Latest general-purpose embedding model from Voyage AI",
+        "description": "Best general-purpose and multilingual retrieval quality",
         "max_sequence_length": 32000,
         "recommended": True,
         "tags": ["general", "latest", "high-quality"]
     },
-    "voyage-3-lite": {
-        "name": "voyage-3-lite",
-        "dimension": 512,
-        "description": "Lightweight version of Voyage 3 for faster inference",
+    "voyage-4": {
+        "name": "voyage-4",
+        "dimension": 1024,
+        "description": "Balanced performance for general-purpose retrieval",
+        "max_sequence_length": 32000,
+        "recommended": False,
+        "tags": ["general", "balanced"]
+    },
+    "voyage-4-lite": {
+        "name": "voyage-4-lite",
+        "dimension": 1024,
+        "description": "Optimized for latency and cost",
         "max_sequence_length": 32000,
         "recommended": False,
         "tags": ["fast", "lightweight"]
+    },
+    "voyage-4-nano": {
+        "name": "voyage-4-nano",
+        "dimension": 1024,
+        "description": "Open-weight model for Hugging Face deployment",
+        "max_sequence_length": 32000,
+        "recommended": False,
+        "tags": ["open-weight", "huggingface"]
+    },
+    "voyage-code-3": {
+        "name": "voyage-code-3",
+        "dimension": 1024,
+        "description": "Optimized for code retrieval",
+        "max_sequence_length": 32000,
+        "recommended": False,
+        "tags": ["code", "specialized"]
     },
     "voyage-finance-2": {
         "name": "voyage-finance-2",
@@ -48,19 +72,11 @@ VOYAGE_MODELS = {
     "voyage-code-2": {
         "name": "voyage-code-2",
         "dimension": 1536,
-        "description": "Specialized model for code and technical content",
+        "description": "Previous generation code embeddings",
         "max_sequence_length": 16000,
         "recommended": False,
         "tags": ["code", "specialized"]
     },
-    "voyage-3.5": {
-        "name": "voyage-3.5",
-        "dimension": 1024,
-        "description": "Enhanced version of Voyage 3 with improved performance",
-        "max_sequence_length": 32000,
-        "recommended": True,
-        "tags": ["general", "enhanced", "high-performance"]
-    }
 }
 
 
@@ -84,7 +100,7 @@ class VoyageAIEmbeddingProvider(EmbeddingProvider):
         
         Args:
             texts: List of text strings to embed
-            model_name: Voyage AI model name (e.g., "voyage-3", "voyage-3.5")
+            model_name: Voyage AI model name (e.g., "voyage-4-large", "voyage-4")
         
         Returns:
             List of embedding vectors
@@ -205,7 +221,7 @@ class VoyageAIEmbeddingProvider(EmbeddingProvider):
         
         try:
             # Test with a simple embedding request
-            test_embedding = await self.embed_single("test", "voyage-3")
+            test_embedding = await self.embed_single("test", "voyage-4-large")
             return len(test_embedding) > 0
         except Exception as e:
             logger.error(f"Error checking Voyage AI API key: {e}")

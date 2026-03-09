@@ -3,7 +3,8 @@ import time
 
 from sqlmodel import Session
 
-from app.core.db import engine, init_db
+from app.core.db import engine
+from app.core.seed import init_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

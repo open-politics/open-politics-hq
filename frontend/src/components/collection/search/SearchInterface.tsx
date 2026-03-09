@@ -345,7 +345,7 @@ export default function SearchInterface({ className }: SearchInterfaceProps) {
       parent_asset_id: null,
       part_index: null,
       is_container: false,
-      source_metadata: {
+      file_info: {
         search_query: session?.query,
         search_provider: session?.provider,
         search_score: result.score,

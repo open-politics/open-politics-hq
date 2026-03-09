@@ -51,8 +51,11 @@ class EntityCanonicalRead(BaseModel):
     canonical_name: str
     entity_type: str
     aliases: List[str] = []
-    embedding: Optional[List[float]] = None
+    embedding_384: Optional[List[float]] = None
+    embedding_512: Optional[List[float]] = None
     embedding_768: Optional[List[float]] = None
+    embedding_1024: Optional[List[float]] = None
+    embedding_1536: Optional[List[float]] = None
     properties: Dict[str, Any] = {}
     provenance_type: str = "method"
     created_at: datetime
@@ -99,7 +102,11 @@ class FragmentCurationRead(BaseModel):
     annotation_id: int
     fragment_path: str
     status: str = "curated"
-    resolved_refs: Optional[Dict[str, Any]] = None
+    subject_entity_id: Optional[int] = None
+    object_entity_id: Optional[int] = None
+    entity_canonical_id: Optional[int] = None
+    source_asset_superseded: bool = False
+    source_run_id: Optional[int] = None
     curated_by: Optional[int] = None
     curated_at: datetime
 

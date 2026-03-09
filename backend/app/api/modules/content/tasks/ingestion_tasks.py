@@ -94,7 +94,7 @@ def ingest_archive_task(
 
     async def process_archive_async():
         with Session(engine) as session:
-            from app.api.modules.foundation_service_providers.factory import create_storage_provider, create_scraping_provider
+            from app.api.modules.foundation_service_providers.registry import get_storage_provider, get_scraping_provider
             from app.api.modules.content.services.asset_service import AssetService
             from app.api.modules.content.services.bundle_service import BundleService
             from app.api.modules.content.handlers import ArchiveHandler, IngestionContext
@@ -116,8 +116,8 @@ def ingest_archive_task(
                 raise ValueError(f"Root bundle {root_bundle_id} not found")
 
             # Create handler context
-            storage_provider = create_storage_provider(settings)
-            scraping_provider = create_scraping_provider(settings)
+            storage_provider = get_storage_provider(settings)
+            scraping_provider = get_scraping_provider(settings)
             asset_service = AssetService(session, storage_provider)
             bundle_service = BundleService(session)
 
@@ -162,6 +162,12 @@ def ingest_archive_task(
             update_progress(session, job, 'completed', f'Successfully processed {len(created_assets)} files', 100)
 
             logger.info(f"[Archive Ingestion] Job {job_id} completed: {len(created_assets)} assets created")
+
+            # Auto-trigger content processing when assets were created
+            if created_assets:
+                from app.api.modules.content.tasks.batch_processing import batch_process_pending
+                batch_process_pending.delay(bundle_id=root_bundle_id, batch_size=100)
+                logger.info(f"[Archive Ingestion] Triggered batch_process_pending for bundle {root_bundle_id}")
 
             return {
                 "job_id": job_id,
@@ -238,7 +244,7 @@ def import_directory_task(
     with Session(engine) as session:
         from app.models import IngestionJob, IngestionStatus
         from app.api.modules.content.services.bundle_service import BundleService
-        from app.api.modules.foundation_service_providers.factory import create_storage_provider
+        from app.api.modules.foundation_service_providers.registry import get_storage_provider
         from app.api.modules.content.handlers.directory_import_handler import DirectoryImportHandler
         from app.core.config import settings
 
@@ -259,11 +265,44 @@ def import_directory_task(
             from app.api.modules.content.handlers.base import IngestionContext
             from app.api.modules.content.services.asset_service import AssetService
             from app.api.modules.content.services.bundle_service import BundleService
-            from app.api.modules.foundation_service_providers.factory import create_storage_provider, create_scraping_provider
+            from app.api.modules.foundation_service_providers.registry import get_storage_provider, get_scraping_provider
+            from app.models import IngestionJob
+
             bundle_service = BundleService(session)
-            storage_provider = create_storage_provider(settings) if copy_mode else None
-            asset_service = AssetService(session, storage_provider or create_storage_provider(settings))
-            scraping_provider = create_scraping_provider(settings)
+            storage_provider = get_storage_provider(settings) if copy_mode else None
+            asset_service = AssetService(session, storage_provider or get_storage_provider(settings))
+            scraping_provider = get_scraping_provider(settings)
+
+            # Cursor-based resume: pass last_processed_path from job for retry
+            cursor_state = job.cursor_state or {}
+            resume_from_path = cursor_state.get("last_processed_path")
+
+            def on_batch_complete(last_path: str, total_processed: int):
+                """Update job cursor_state after each batch for resumability."""
+                with Session(engine) as batch_session:
+                    batch_job = batch_session.get(IngestionJob, job_id)
+                    if batch_job:
+                        batch_job.cursor_state = batch_job.cursor_state or {}
+                        batch_job.cursor_state["last_processed_path"] = last_path
+                        batch_job.processed_files = total_processed
+                        total = batch_job.total_files or 0
+                        progress = (
+                            min(95, 20 + int(70 * total_processed / total))
+                            if total > 0
+                            else min(95, 20 + total_processed // 500)
+                        )
+                        batch_job.cursor_state["progress_pct"] = progress
+                        batch_job.cursor_state["message"] = f"Imported {total_processed} files"
+                        batch_session.add(batch_job)
+                        batch_session.commit()
+
+            handler_options = {
+                **options,
+                "copy_mode": copy_mode,
+                "allowed_import_paths": allowed_paths,
+                "resume_from_path": resume_from_path,
+                "on_batch_complete": on_batch_complete,
+            }
             ctx = IngestionContext(
                 session=session,
                 storage_provider=storage_provider,
@@ -274,13 +313,13 @@ def import_directory_task(
                 user_id=user_id,
                 infospace_id=infospace_id,
                 settings=settings,
-                options={"allowed_import_paths": allowed_paths},
+                options=handler_options,
             )
             handler = DirectoryImportHandler(ctx)
             result = run_async_in_celery(
                 handler.handle,
                 source_path=source_path,
-                options={**options, "copy_mode": copy_mode},
+                options=handler_options,
             )
             created_assets, root_bundle_id = result
         except Exception as e:
@@ -306,6 +345,12 @@ def import_directory_task(
         )
 
         logger.info(f"[Directory Import] Job {job_id} completed: {len(created_assets)} assets created")
+
+        # Auto-trigger content processing (PDF extraction, etc.) when assets were created
+        if created_assets:
+            from app.api.modules.content.tasks.batch_processing import batch_process_pending
+            batch_process_pending.delay(bundle_id=root_bundle_id, batch_size=100)
+            logger.info(f"[Directory Import] Triggered batch_process_pending for bundle {root_bundle_id}")
 
     return {
         "job_id": job_id,

@@ -10,10 +10,30 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Default OpenAI model configurations
+# Default OpenAI model configurations (March 2026)
 DEFAULT_OPENAI_MODELS = {
+    "gpt-5.2": {
+        "description": "GPT-5.2 - Best for coding and agentic tasks",
+        "supports_thinking": False,
+    },
+    "gpt-5-mini": {
+        "description": "GPT-5 Mini - Faster, cost-efficient for well-defined tasks",
+        "supports_thinking": False,
+    },
     "gpt-5-nano": {
-        "description": "GPT-5 Nano - Efficient reasoning model optimized for intelligence analysis",
+        "description": "GPT-5 Nano - Fastest, most cost-efficient",
+        "supports_thinking": False,
+    },
+    "gpt-4.1": {
+        "description": "GPT-4.1 - Smartest non-reasoning model",
+        "supports_thinking": False,
+    },
+    "o3": {
+        "description": "o3 - Reasoning model for complex tasks",
+        "supports_thinking": True,
+    },
+    "o4-mini": {
+        "description": "o4-mini - Fast, cost-efficient reasoning model",
         "supports_thinking": True,
     },
 }

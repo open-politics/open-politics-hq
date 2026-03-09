@@ -22,7 +22,7 @@ export interface AssetFeedItem {
  * Options for the useFeedAssets hook
  * 
  * Note: This hook now uses tree store data instead of making separate API calls.
- * Images are extracted from source_metadata (og_image, featured_image_url).
+ * Images are extracted from file_info (top_image, og_image, featured_image_url).
  */
 export interface UseFeedAssetsOptions {
   /** Infospace ID (used to ensure tree is loaded) */
@@ -31,9 +31,9 @@ export interface UseFeedAssetsOptions {
   limit?: number;
   /** Filter to specific asset kinds */
   kinds?: AssetKind[];
-  /** Filter to bundle (for Bundle/BundleView detail) */
+  /** Filter to bundle (for Bundle detail) */
   bundleId?: number | null;
-  /** Path prefix for BundleView filtering */
+  /** Path prefix for virtual folder filtering */
   pathFilter?: string | null;
   /** Sort field - supports compound sorts like 'kind-updated_at' for type then date */
   sortBy?: 'name' | 'created_at' | 'updated_at' | 'kind-updated_at' | 'kind-created_at';
@@ -99,7 +99,7 @@ export interface AssetFeedViewProps {
   filterByBundleId?: number | null;
   
   /** 
-   * Path prefix for BundleView - when set with filterByBundleId, shows vfolder subset
+   * Path prefix for virtual folder - when set with filterByBundleId, shows vfolder subset
    */
   pathPrefix?: string | null;
   

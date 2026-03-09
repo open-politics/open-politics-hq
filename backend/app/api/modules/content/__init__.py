@@ -8,7 +8,6 @@ from app.api.modules.content.models import (
     Dataset,
     IngestionJob,
     EmbeddingModel,
-    EmbeddingProvider,
     IngestionStatus,
     Modality,
     ProcessingStatus,
@@ -21,6 +20,6 @@ from app.api.modules.content.models import (
 __all__ = [
     # Models
     "Asset", "AssetChunk", "AssetKind", "Bundle", "Dataset", "IngestionJob",
-    "EmbeddingModel", "EmbeddingProvider", "IngestionStatus", "Modality",
+    "EmbeddingModel", "IngestionStatus", "Modality",
     "ProcessingStatus", "Source", "SourcePollHistory", "SourceStatus", "SourceType",
 ]

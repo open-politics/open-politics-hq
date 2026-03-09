@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Loader2, Sparkles, Database, RefreshCw, Play, Info, Trash2, Settings, Key, Eye, EyeOff, ExternalLink } from "lucide-react";
 import { InfospaceRead, InfospacesService, EmbeddingsService } from '@/client';
 import { toast } from 'sonner';
-import { useProvidersStore } from '@/zustand_stores/storeProviders';
+import { useProvidersStore, ProviderMetadata } from '@/zustand_stores/storeProviders';
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
   Tooltip,
@@ -57,9 +57,9 @@ interface EmbeddingManagerProps {
 }
 
 export default function EmbeddingManager({ infospace, onInfospaceUpdate }: EmbeddingManagerProps) {
-  const { apiKeys, setApiKey } = useProvidersStore();
+  const { apiKeys, setApiKey, providers: storeProviders } = useProvidersStore();
   const [availableModels, setAvailableModels] = useState<EmbeddingModel[]>([]);
-  const [selectedModel, setSelectedModel] = useState<string>(infospace.embedding_model || '');
+  const [selectedModel, setSelectedModel] = useState<string>(infospace.embedding_selection?.model_name || '');
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isEnabling, setIsEnabling] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -71,12 +71,10 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
   const [newModel, setNewModel] = useState<string>('');
   const [isUpdatingRelatedAssets, setIsUpdatingRelatedAssets] = useState(false);
   
-  // API key visibility toggles
-  const [showOpenAIKey, setShowOpenAIKey] = useState(false);
-  const [showVoyageKey, setShowVoyageKey] = useState(false);
-  const [showJinaKey, setShowJinaKey] = useState(false);
+  // API key visibility toggles (generic per-provider)
+  const [keyVisibility, setKeyVisibility] = useState<Record<string, boolean>>({});
   
-  const isEnabled = !!infospace.embedding_model;
+  const isEnabled = !!infospace.embedding_selection?.model_name;
   
   // Group models by provider
   const modelsByProvider = availableModels.reduce((acc, model) => {
@@ -97,13 +95,8 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
   const loadAvailableModels = async (forceRefresh = false) => {
     setIsLoadingModels(true);
     try {
-      // Use the new discovery endpoint with API keys
-      // Filter out undefined/empty API keys
-      const validApiKeys: Record<string, string> = {};
-      if (apiKeys.openai) validApiKeys.openai = apiKeys.openai;
-      if (apiKeys.voyage) validApiKeys.voyage = apiKeys.voyage;
-      if (apiKeys.jina) validApiKeys.jina = apiKeys.jina;
-      
+      const validApiKeys = buildValidApiKeys();
+
       const response = await EmbeddingsService.discoverEmbeddingModels({
         requestBody: {
           api_keys: Object.keys(validApiKeys).length > 0 ? validApiKeys : undefined
@@ -162,15 +155,43 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
     }
   };
   
-  // Helper to get provider info
+  // Derive cloud embedding providers that need API keys from the store
+  const FALLBACK_PROVIDERS: { id: string; name: string; api_key_url?: string }[] = [
+    { id: 'openai', name: 'OpenAI', api_key_url: 'https://platform.openai.com/api-keys' },
+    { id: 'voyage', name: 'Voyage AI', api_key_url: 'https://dash.voyageai.com/' },
+    { id: 'jina', name: 'Jina AI', api_key_url: 'https://jina.ai/embeddings/#apiform' },
+  ];
+
+  const cloudEmbeddingProviders: ProviderMetadata[] = storeProviders.embedding.length > 0
+    ? storeProviders.embedding.filter(p => p.requires_api_key)
+    : FALLBACK_PROVIDERS.map(f => ({
+        id: f.id, name: f.name, description: '', requires_api_key: true,
+        api_key_name: `${f.name} API Key`, api_key_url: f.api_key_url,
+        is_local: false, is_oss: false, is_free: false, has_env_fallback: false, features: [],
+      }));
+
+  // Helper to get provider info — pulls from store first, falls back to basic info
   const getProviderInfo = (provider: string) => {
-    const info: Record<string, { name: string; requiresKey: boolean; docUrl?: string; badge?: string }> = {
-      ollama: { name: 'Ollama', requiresKey: false, badge: 'Local' },
-      openai: { name: 'OpenAI', requiresKey: true, docUrl: 'https://platform.openai.com/api-keys', badge: 'Cloud' },
-      voyage: { name: 'Voyage AI', requiresKey: true, docUrl: 'https://dash.voyageai.com/', badge: 'Anthropic' },
-      jina: { name: 'Jina AI', requiresKey: true, docUrl: 'https://jina.ai/', badge: 'Cloud' },
-    };
-    return info[provider] || { name: provider, requiresKey: false };
+    const storeEntry = storeProviders.embedding.find(p => p.id === provider);
+    if (storeEntry) {
+      return {
+        name: storeEntry.name,
+        requiresKey: storeEntry.requires_api_key,
+        docUrl: storeEntry.api_key_url,
+        badge: storeEntry.is_local ? 'Local' : 'Cloud',
+      };
+    }
+    return { name: provider, requiresKey: false };
+  };
+
+  // Build valid API keys from all cloud embedding providers in the store
+  const buildValidApiKeys = (): Record<string, string> => {
+    const keys: Record<string, string> = {};
+    for (const p of cloudEmbeddingProviders) {
+      const k = apiKeys[p.id];
+      if (k) keys[p.id] = k;
+    }
+    return keys;
   };
 
   const handleEnableEmbeddings = async () => {
@@ -181,29 +202,26 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
 
     setIsEnabling(true);
     try {
-      // Update infospace with embedding model
+      // Find the selected model to get its provider
+      const model = availableModels.find(m => m.name === selectedModel);
+      // Update infospace with embedding model + typed provider selection
       await InfospacesService.updateInfospace({
         infospaceId: infospace.id,
         requestBody: {
-          embedding_model: selectedModel,
+          embedding_selection: model ? { type_key: model.provider, model_name: selectedModel } : undefined,
         },
       });
 
       toast.success('Embeddings enabled! New assets will be automatically embedded.');
-      
-      // Filter out undefined/empty API keys
-      const validApiKeys: Record<string, string> = {};
-      if (apiKeys.openai) validApiKeys.openai = apiKeys.openai;
-      if (apiKeys.voyage) validApiKeys.voyage = apiKeys.voyage;
-      if (apiKeys.jina) validApiKeys.jina = apiKeys.jina;
-      
+
+      const validApiKeys = buildValidApiKeys();
+
       // Trigger initial embedding generation for existing assets
       toast.info('Generating embeddings for existing assets...');
       await EmbeddingsService.generateInfospaceEmbeddings({
         infospaceId: infospace.id,
         requestBody: {
           overwrite: false,
-          async_processing: true,
           api_keys: Object.keys(validApiKeys).length > 0 ? validApiKeys : undefined,
         },
       });
@@ -238,7 +256,7 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
       await InfospacesService.updateInfospace({
         infospaceId: infospace.id,
         requestBody: {
-          embedding_model: null as any,
+          embedding_selection: null,
         },
       });
 
@@ -259,17 +277,12 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
   const handleRegenerateEmbeddings = async () => {
     setIsGenerating(true);
     try {
-      // Filter out undefined/empty API keys
-      const validApiKeys: Record<string, string> = {};
-      if (apiKeys.openai) validApiKeys.openai = apiKeys.openai;
-      if (apiKeys.voyage) validApiKeys.voyage = apiKeys.voyage;
-      if (apiKeys.jina) validApiKeys.jina = apiKeys.jina;
-      
+      const validApiKeys = buildValidApiKeys();
+
       await EmbeddingsService.generateInfospaceEmbeddings({
         infospaceId: infospace.id,
         requestBody: {
           overwrite: true,
-          async_processing: true,
           api_keys: Object.keys(validApiKeys).length > 0 ? validApiKeys : undefined,
         },
       });
@@ -335,12 +348,11 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
         return;
       }
 
-      // Update infospace with new model
+      // Update infospace with new model + typed provider selection
       await InfospacesService.updateInfospace({
         infospaceId: infospace.id,
         requestBody: {
-          embedding_model: newModel,
-          embedding_dim: model.dimension,
+          embedding_selection: { type_key: model.provider, model_name: newModel },
         },
       });
 
@@ -444,101 +456,42 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
                         Enter API keys to use cloud embedding providers for this immediate operation. For background tasks, save keys in <a href="/accounts/settings" className="underline text-blue-600 dark:text-blue-400">Settings</a> or the Provider Hub.
                       </p>
                       
-                      {/* OpenAI */}
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <Label htmlFor="openai-key" className="text-xs font-medium">OpenAI API Key</Label>
-                          <a 
-                            href="https://platform.openai.com/api-keys" 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-500 hover:underline flex items-center gap-1"
-                          >
-                            Get Key <ExternalLink className="h-3 w-3" />
-                          </a>
+                      {cloudEmbeddingProviders.map((p) => (
+                        <div key={p.id} className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <Label htmlFor={`${p.id}-key`} className="text-xs font-medium">
+                              {p.api_key_name || `${p.name} API Key`}
+                            </Label>
+                            {p.api_key_url && (
+                              <a
+                                href={p.api_key_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-500 hover:underline flex items-center gap-1"
+                              >
+                                Get Key <ExternalLink className="h-3 w-3" />
+                              </a>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <Input
+                              id={`${p.id}-key`}
+                              type={keyVisibility[p.id] ? "text" : "password"}
+                              placeholder="Enter API key"
+                              value={apiKeys[p.id] || ''}
+                              onChange={(e) => setApiKey(p.id, e.target.value)}
+                              className="text-xs"
+                            />
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setKeyVisibility(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
+                            >
+                              {keyVisibility[p.id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            </Button>
+                          </div>
                         </div>
-                        <div className="flex gap-2">
-                          <Input
-                            id="openai-key"
-                            type={showOpenAIKey ? "text" : "password"}
-                            placeholder="sk-..."
-                            value={apiKeys.openai || ''}
-                            onChange={(e) => setApiKey('openai', e.target.value)}
-                            className="text-xs"
-                          />
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setShowOpenAIKey(!showOpenAIKey)}
-                          >
-                            {showOpenAIKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                          </Button>
-                        </div>
-                      </div>
-                      
-                      {/* Voyage AI */}
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <Label htmlFor="voyage-key" className="text-xs font-medium">Voyage AI API Key (Anthropic)</Label>
-                          <a 
-                            href="https://dash.voyageai.com/" 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-500 hover:underline flex items-center gap-1"
-                          >
-                            Get Key <ExternalLink className="h-3 w-3" />
-                          </a>
-                        </div>
-                        <div className="flex gap-2">
-                          <Input
-                            id="voyage-key"
-                            type={showVoyageKey ? "text" : "password"}
-                            placeholder="pa-..."
-                            value={apiKeys.voyage || ''}
-                            onChange={(e) => setApiKey('voyage', e.target.value)}
-                            className="text-xs"
-                          />
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setShowVoyageKey(!showVoyageKey)}
-                          >
-                            {showVoyageKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                          </Button>
-                        </div>
-                      </div>
-                      
-                      {/* Jina AI */}
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <Label htmlFor="jina-key" className="text-xs font-medium">Jina AI API Key</Label>
-                          <a 
-                            href="https://jina.ai/" 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-500 hover:underline flex items-center gap-1"
-                          >
-                            Get Key <ExternalLink className="h-3 w-3" />
-                          </a>
-                        </div>
-                        <div className="flex gap-2">
-                          <Input
-                            id="jina-key"
-                            type={showJinaKey ? "text" : "password"}
-                            placeholder="jina_..."
-                            value={apiKeys.jina || ''}
-                            onChange={(e) => setApiKey('jina', e.target.value)}
-                            className="text-xs"
-                          />
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setShowJinaKey(!showJinaKey)}
-                          >
-                            {showJinaKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                          </Button>
-                        </div>
-                      </div>
+                      ))}
                       
                       <div className="flex justify-end">
                         <Button
@@ -760,7 +713,7 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
           <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
             <div>
               <div className="text-sm font-medium">Current Model</div>
-              <div className="text-xs text-muted-foreground">{infospace.embedding_model}</div>
+              <div className="text-xs text-muted-foreground">{infospace.embedding_selection?.model_name}</div>
             </div>
             <Badge variant="default">Active</Badge>
           </div>
@@ -859,27 +812,28 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
             </div>
           </DialogHeader>
           
-          {apiKeys.openai || apiKeys.voyage || apiKeys.jina ? (
-            <Alert>
-              <Key className="h-4 w-4" />
-              <AlertTitle>Runtime API Keys Detected</AlertTitle>
-              <AlertDescription>
-                Using runtime keys for: 
-                {apiKeys.openai && ' OpenAI'}
-                {apiKeys.voyage && ' Voyage AI'}
-                {apiKeys.jina && ' Jina AI'}
-                . These are for this session only. For background tasks, save keys in <a href="/accounts/settings" className="underline text-blue-600 dark:text-blue-400">Settings</a>.
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <Alert>
-              <Info className="h-4 w-4" />
-              <AlertTitle>Add API Keys for Cloud Providers</AlertTitle>
-              <AlertDescription>
-                To access OpenAI, Voyage AI, or Jina AI models, add runtime keys in the Provider Hub, or save them permanently in <a href="/accounts/settings" className="underline text-blue-600 dark:text-blue-400">Settings</a> for background tasks.
-              </AlertDescription>
-            </Alert>
-          )}
+          {(() => {
+            const activeKeyNames = cloudEmbeddingProviders
+              .filter(p => apiKeys[p.id])
+              .map(p => p.name);
+            return activeKeyNames.length > 0 ? (
+              <Alert>
+                <Key className="h-4 w-4" />
+                <AlertTitle>Runtime API Keys Detected</AlertTitle>
+                <AlertDescription>
+                  Using runtime keys for: {activeKeyNames.join(', ')}. These are for this session only. For background tasks, save keys in <a href="/accounts/settings" className="underline text-blue-600 dark:text-blue-400">Settings</a>.
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertTitle>Add API Keys for Cloud Providers</AlertTitle>
+                <AlertDescription>
+                  To access cloud embedding models, add runtime keys in the Provider Hub, or save them permanently in <a href="/accounts/settings" className="underline text-blue-600 dark:text-blue-400">Settings</a> for background tasks.
+                </AlertDescription>
+              </Alert>
+            );
+          })()}
           
           <Alert>
             <Info className="h-4 w-4" />
@@ -893,9 +847,9 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
             <div className="space-y-2">
               <Label>Current Model</Label>
               <div className="flex items-center gap-2 p-3 bg-muted rounded-md">
-                <span className="font-medium">{infospace.embedding_model}</span>
-                {infospace.embedding_dim && (
-                  <Badge variant="secondary">{infospace.embedding_dim}d</Badge>
+                <span className="font-medium">{infospace.embedding_selection?.model_name}</span>
+                {infospace.embedding_selection?.type_key && (
+                  <Badge variant="secondary">{infospace.embedding_selection.type_key}</Badge>
                 )}
               </div>
             </div>

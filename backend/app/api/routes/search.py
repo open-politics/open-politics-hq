@@ -6,9 +6,8 @@ from sqlmodel import Session
 
 from app.api.dependency_injection import WebSearchProviderDep, get_current_user, get_db, IngestionContextFactoryDep, get_ingestion_context_factory
 from app.api.modules.foundation_service_providers.base import WebSearchProvider
-from app.api.modules.foundation_service_providers.implemented.web_search_tavily import TavilyWebSearchProvider
-from app.api.modules.foundation_service_providers.web_search_registry import WebSearchProviderRegistryService
-from app.api.modules.content.services import ContentIngestionService
+from app.api.modules.foundation_service_providers.registry import get_provider
+from app.api.modules.content.ingest import ingest
 from app.models import User
 from app.schemas import SearchResultsOut, SearchRequest
 from app.core.config import settings
@@ -17,17 +16,6 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-def create_web_search_provider_by_name(provider_name: str) -> WebSearchProvider:
-    """Create a web search provider instance based on the provider name."""
-    provider_name = provider_name.lower()
-
-    if provider_name == "tavily":
-        if not settings.TAVILY_API_KEY:
-            raise ValueError("TAVILY_API_KEY is required for the Tavily web search provider.")
-        return TavilyWebSearchProvider(api_key=settings.TAVILY_API_KEY)
-    else:
-        raise ValueError(f"Unsupported web search provider: {provider_name}")
 
 # Request models for the new search and ingest endpoint
 class ExternalSearchRequest(BaseModel):
@@ -38,18 +26,8 @@ class ExternalSearchRequest(BaseModel):
     scrape_content: bool = True
     create_assets: bool = True  # Whether to create assets or just return search results
     bundle_id: Optional[int] = None
-    include_domains: Optional[List[str]] = None
-    exclude_domains: Optional[List[str]] = None
     api_key: Optional[str] = None  # Runtime API key for the search provider
-    # Tavily-specific parameters
-    search_depth: Optional[str] = "basic"
-    include_images: Optional[bool] = True
-    include_answer: Optional[bool] = True
-    topic: Optional[str] = "general"
-    chunks_per_source: Optional[int] = 3
-    days: Optional[int] = 7
-    time_range: Optional[str] = None
-    country: Optional[str] = None
+    provider_params: Optional[Dict[str, Any]] = None  # Provider-specific (include_domains, search_depth, etc.)
 
 class SelectiveAssetCreationRequest(BaseModel):
     """Request for creating assets from specific search result URLs"""
@@ -147,55 +125,29 @@ async def search_and_ingest(
     logger.info(f"External search and ingest request: query='{request.query}', provider={request.provider}")
     
     try:
-        # Create the requested search provider using the registry
+        # Create the requested search provider using the descriptor registry
         try:
-            web_search_registry = WebSearchProviderRegistryService()
-            web_search_provider = web_search_registry.create_provider(request.provider, request.api_key)
+            web_search_provider = get_provider(
+                WebSearchProvider, request.provider, settings,
+                api_key_override=request.api_key,
+            )
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
             )
         
-        # Configure search options
+        provider_params = request.provider_params or {}
         search_options = {
-            'limit': request.limit,
-            'scrape_content': request.scrape_content,
-            'provider_params': {}
+            "limit": request.limit,
+            "scrape_content": request.scrape_content,
         }
-        
-        # Add domain filtering
-        if request.include_domains:
-            search_options['provider_params']['include_domains'] = request.include_domains
-        if request.exclude_domains:
-            search_options['provider_params']['exclude_domains'] = request.exclude_domains
-            
-        # Add Tavily-specific parameters
-        if request.provider == 'tavily':
-            if request.search_depth:
-                search_options['provider_params']['search_depth'] = request.search_depth
-            if request.include_images is not None:
-                search_options['provider_params']['include_images'] = request.include_images
-            if request.include_answer is not None:
-                search_options['provider_params']['include_answer'] = request.include_answer
-            if request.topic:
-                search_options['provider_params']['topic'] = request.topic
-            if request.chunks_per_source:
-                search_options['provider_params']['chunks_per_source'] = request.chunks_per_source
-            if request.days:
-                search_options['provider_params']['days'] = request.days
-            if request.time_range:
-                search_options['provider_params']['time_range'] = request.time_range
-            if request.country:
-                search_options['provider_params']['country'] = request.country
-        
+
         if request.create_assets:
             # Use SearchHandler to create assets from search results
             from app.api.modules.content.handlers import SearchHandler
             from app.schemas import SearchResult
             
-            # First, perform the search using the provider directly
-            provider_params = search_options.get('provider_params', {})
             raw_results = await web_search_provider.search(
                 query=request.query,
                 limit=request.limit,
@@ -228,25 +180,12 @@ async def search_and_ingest(
                 options=search_options
             )
             
-            # Add to bundle if specified
             if request.bundle_id and assets:
-                # Only add top-level assets (not children)
                 asset_ids = [asset.id for asset in assets if asset.parent_asset_id is None]
-                
                 if asset_ids:
-                    from app.models import Bundle, Asset
-                    bundle = db.get(Bundle, request.bundle_id)
-                    if bundle:
-                        for asset_id in asset_ids:
-                            asset = db.get(Asset, asset_id)
-                            if asset:
-                                asset.bundle_id = request.bundle_id
-                                db.add(asset)
-                        
-                        bundle.asset_count = (bundle.asset_count or 0) + len(asset_ids)
-                        db.add(bundle)
-                        db.commit()
-                        logger.info(f"Added {len(asset_ids)} assets to bundle {request.bundle_id}")
+                    context.bundle_service.add_assets_to_bundle(asset_ids, request.bundle_id)
+                    db.commit()
+                    logger.info(f"Added {len(asset_ids)} assets to bundle {request.bundle_id}")
             
             logger.info(f"Created {len(assets)} assets from search query '{request.query}'")
             
@@ -260,8 +199,6 @@ async def search_and_ingest(
                 message=f"Successfully created {len(assets)} assets from search query '{request.query}'"
             )
         else:
-            # Just search without creating assets - use the provider directly
-            provider_params = search_options.get('provider_params', {})
             raw_results = await web_search_provider.search(
                 query=request.query,
                 limit=request.limit,
@@ -315,6 +252,7 @@ async def search_and_ingest(
 @router.post("/create-assets-from-urls", response_model=SearchAndIngestResponse)
 async def create_assets_from_urls(
     request: SelectiveAssetCreationRequest,
+    make_ingestion_context: IngestionContextFactoryDep,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SearchAndIngestResponse:
@@ -327,25 +265,22 @@ async def create_assets_from_urls(
     logger.info(f"Creating assets from {len(request.urls)} URLs for user {current_user.id}")
     
     try:
-        # Initialize content ingestion service
-        content_ingestion_service = ContentIngestionService(session=db)
-        
+        opts = {
+            'scrape_immediately': request.scrape_content,
+            'search_metadata': request.search_metadata,
+        }
+        context = make_ingestion_context(current_user.id, request.infospace_id, opts)
+
         created_assets = []
         failed_urls = []
-        
-        # Process each URL individually
+
         for url in request.urls:
             try:
-                # Create asset from URL
-                assets = await content_ingestion_service.ingest_content(
-                    locator=url,
-                    infospace_id=request.infospace_id,
-                    user_id=current_user.id,
+                assets = await ingest(
+                    context,
+                    url,
                     bundle_id=request.bundle_id,
-                    options={
-                        'scrape_immediately': request.scrape_content,
-                        'search_metadata': request.search_metadata
-                    }
+                    options=opts,
                 )
                 created_assets.extend(assets)
                 
@@ -420,6 +355,10 @@ async def create_assets_from_results(
             query=query,
             options={}
         )
+        if request.bundle_id and created_assets:
+            asset_ids = [a.id for a in created_assets if a.parent_asset_id is None]
+            if asset_ids:
+                context.bundle_service.add_assets_to_bundle(asset_ids, request.bundle_id)
         db.commit()
         failed_count = len(request.search_results) - len(created_assets)
         

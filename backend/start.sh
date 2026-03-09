@@ -11,4 +11,4 @@ bash prestart.sh
 
 # bash tests-start.sh
 
-fastapi run --workers 4 --host 0.0.0.0 --port $BACKEND_PORT
+uvicorn app.main:app --workers 4 --host 0.0.0.0 --port ${BACKEND_PORT:-8022}

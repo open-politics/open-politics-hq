@@ -50,8 +50,11 @@ from mcp.types import TextContent
 
 from app.api.global_utils import validate_infospace_access
 from app.core.config import settings
-from app.api.modules.foundation_service_providers.factory import create_storage_provider, create_model_registry
-from app.api.modules.content.services import AssetService, ContentIngestionService
+from app.api.modules.foundation_service_providers.registry import get_storage_provider
+from app.api.modules.content.services import AssetService
+from app.api.modules.content.handlers import IngestionContext
+from app.api.modules.content.ingest import ingest
+from app.api.modules.content.tasks.task_services import create_task_services
 from app.api.modules.annotation.services import AnnotationService
 from app.models import Asset, AssetKind, Infospace
 from app.schemas import (
@@ -117,18 +120,29 @@ def get_services():
     
     try:
         # Initialize core services
-        storage_provider = create_storage_provider(settings)
-        asset_service = AssetService(session, storage_provider)
-        model_registry = create_model_registry(settings)
-        annotation_service = AnnotationService(session, model_registry, asset_service)
-        content_ingestion_service = ContentIngestionService(session)
-        
+        task_services = create_task_services(session)
+        asset_service = task_services.asset
+        annotation_service = AnnotationService(session=session, asset_service=asset_service)
+
+        ingestion_context = IngestionContext(
+            session=session,
+            storage_provider=task_services.storage,
+            scraping_provider=task_services.scraping,
+            search_provider=task_services.search,
+            asset_service=task_services.asset,
+            bundle_service=task_services.bundle,
+            user_id=user_id,
+            infospace_id=infospace_id,
+            settings=settings,
+            options={},
+        )
+
         # Retrieve user's stored API keys (no runtime keys in JWT anymore)
         user = session.get(User, user_id)
         api_keys = {}
         if user and user.encrypted_credentials:
             api_keys = security.decrypt_credentials(user.encrypted_credentials)
-                
+
         yield {
             "session": session,
             "user_id": user_id,
@@ -138,7 +152,7 @@ def get_services():
             "runtime_api_keys": api_keys,  # Use stored API keys from database
             "asset_service": asset_service,
             "annotation_service": annotation_service,
-            "content_ingestion_service": content_ingestion_service,
+            "ingestion_context": ingestion_context,
         }
     finally:
         session.close()
@@ -871,7 +885,7 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
     
     # For CSV assets, show structure PROMINENTLY at top with ASCII table
     if node_type == "asset" and parent_entity and parent_entity.kind and parent_entity.kind.value == 'csv':
-        columns = parent_entity.source_metadata.get('columns', [])
+        columns = (parent_entity.file_info or {}).get('columns', [])
         total_row_count = parent_preview.get('row_count') if parent_preview else None
         
         if columns and parent_preview and parent_preview.get('sample_rows'):
@@ -1143,7 +1157,8 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
                 
                 item["text_content"] = asset.text_content
             
-            item["source_metadata"] = asset.source_metadata
+            item["facets"] = asset.facets
+            item["file_info"] = asset.file_info
         
         asset_data.append(item)
     
@@ -1257,11 +1272,15 @@ async def web_research(
                 elif provider_normalized == 'opol':
                     api_key = services["runtime_api_keys"].get('opol') or services["runtime_api_keys"].get('OPOL_API_KEY')
             
-            from app.api.modules.foundation_service_providers.web_search_registry import WebSearchProviderRegistryService
-            web_search_registry = WebSearchProviderRegistryService()
+            from app.api.modules.foundation_service_providers.base import WebSearchProvider
+            from app.api.modules.foundation_service_providers.registry import get_provider
+            from app.core.config import settings as app_settings
 
             try:
-                web_search_provider = web_search_registry.create_provider(provider_normalized, api_key)
+                web_search_provider = get_provider(
+                    WebSearchProvider, provider_normalized, app_settings,
+                    api_key_override=api_key,
+                )
             except Exception as e:
                 return ToolResult(
                     content=[TextContent(type="text", text=f"Error: Could not initialize {provider} web search provider: {str(e)}")],
@@ -1320,7 +1339,7 @@ async def web_research(
                     "text_content": result.get("raw_content"),
                     "score": result.get("score"),
                     "provider": provider,
-                    "source_metadata": {
+                    "file_info": {
                         "search_query": query,
                         "search_provider": provider,
                         "search_score": result.get("score"),
@@ -1398,16 +1417,16 @@ async def _ingest_urls_with_services(
     created_assets = []
     failed_urls = []
     
+    context = services["ingestion_context"]
+    opts = {"scrape_immediately": scrape_content}
+
     for url in urls:
         try:
-            assets = await services["content_ingestion_service"].ingest_content(
-                locator=url,
-                infospace_id=services["infospace_id"],
-                user_id=services["user_id"],
+            assets = await ingest(
+                context,
+                url,
                 bundle_id=bundle_id,
-                options={
-                    'scrape_immediately': scrape_content
-                }
+                options=opts,
             )
             created_assets.extend(assets)
             await ctx.info(f"✓ Ingested: {url}")
@@ -1442,68 +1461,6 @@ async def _ingest_urls_with_services(
     }
     
     return "\n".join(summary_lines), structured
-
-
-# @mcp.tool
-# async def ingest_rss_feeds(
-#     country: Annotated[str, "Country name (e.g., 'Australia', 'United States')"],
-#     ctx: Context,
-#     category_filter: Annotated[Optional[str], "Category filter (e.g., 'News', 'Technology')"] = None,
-#     max_feeds: Annotated[int, "Maximum number of feeds to ingest"] = 5,
-#     max_items_per_feed: Annotated[int, "Maximum items per feed"] = 10,
-#     bundle_id: Annotated[Optional[int], "Bundle to add ingested assets to"] = None,
-# ) -> ToolResult:
-#     """
-#     Discover and ingest RSS feeds from the awesome-rss-feeds repository.
-#     
-#     Provides access to curated RSS feeds organized by country and category.
-#     Automatically creates assets from feed items.
-#     """
-#     with get_services() as services:
-#         validate_infospace_access(
-#             services["session"], 
-#             services["infospace_id"], 
-#             services["user_id"]
-#         )
-#         
-#         await ctx.info(f"Discovering RSS feeds for {country}")
-#         
-#         try:
-#             # Use content ingestion service
-#             assets = await services["content_ingestion_service"].ingest_rss_feeds_from_awesome_repo(
-#                 country=country,
-#                 infospace_id=services["infospace_id"],
-#                 user_id=services["user_id"],
-#                 category_filter=category_filter,
-#                 max_feeds=max_feeds,
-#                 max_items_per_feed=max_items_per_feed,
-#                 bundle_id=bundle_id,
-#                 options={'scrape_full_content': True, 'use_bulk_scraping': True}
-#             )
-#             
-#             summary = f"Successfully ingested {len(assets)} assets from {max_feeds} RSS feeds in {country}"
-#             if category_filter:
-#                 summary += f" (category: {category_filter})"
-#             
-#             return ToolResult(
-#                 content=[TextContent(type="text", text=summary)],
-#                 structured_content={
-#                     "assets_created": len(assets),
-#                     "asset_ids": [a.id for a in assets],
-#                     "country": country,
-#                     "category": category_filter,
-#                     "feeds_processed": max_feeds,
-#                     "bundle_id": bundle_id,
-#                     "status": "success"
-#                 }
-#             )
-#             
-#         except Exception as e:
-#             logger.error(f"RSS ingestion failed: {e}", exc_info=True)
-#             return ToolResult(
-#                 content=[TextContent(type="text", text=f"RSS feed ingestion failed: {str(e)}")],
-#                 structured_content={"error": str(e), "status": "failed"}
-#             )
 
 
 # ============================================================================
@@ -1640,33 +1597,28 @@ async def _organize_create(services: Dict, ctx: Context, name: Optional[str],
             }
         )
     
-    from app.api.content_tree_builder import create_bundle, add_assets_to_bundle
-    
-    # Create bundle using tree_builder
-    bundle = create_bundle(
-        session=services["session"],
-        user_id=services["user_id"],
+    from app.schemas import BundleCreate
+
+    bundle_service = services["bundle_service"]
+    bundle_in = BundleCreate(name=name, description=description)
+    bundle = bundle_service.create_bundle(
+        bundle_in=bundle_in,
         infospace_id=services["infospace_id"],
-        name=name,
-        description=description
+        user_id=services["user_id"],
     )
-    
-    # Add initial assets if provided
+
     assets_added = 0
     children_added = 0
     if asset_ids:
         try:
-            assets_added, children_added = add_assets_to_bundle(
-                session=services["session"],
+            assets_added, children_added = bundle_service.add_assets_to_bundle_validated(
                 bundle_id=bundle.id,
                 asset_ids=asset_ids,
                 infospace_id=services["infospace_id"],
-                include_children=True
+                include_children=True,
             )
         except Exception as e:
             logger.warning(f"Failed to add assets: {e}")
-    
-    services["session"].commit()
     
     total_added = assets_added + children_added
     await ctx.info(f"Created bundle #{bundle.id} with {total_added} assets")
@@ -1713,18 +1665,14 @@ async def _organize_add(services: Dict, ctx: Context, bundle_id: Optional[int],
             }
         )
     
-    from app.api.content_tree_builder import add_assets_to_bundle
-    
+    bundle_service = services["bundle_service"]
     try:
-        assets_added, children_added = add_assets_to_bundle(
-            session=services["session"],
+        assets_added, children_added = bundle_service.add_assets_to_bundle_validated(
             bundle_id=bundle_id,
             asset_ids=asset_ids,
             infospace_id=services["infospace_id"],
-            include_children=True
+            include_children=True,
         )
-        
-        services["session"].commit()
         
         total_added = assets_added + children_added
         await ctx.info(f"Added {total_added} assets to bundle #{bundle_id}")
@@ -1765,17 +1713,13 @@ async def _organize_remove(services: Dict, ctx: Context, bundle_id: Optional[int
             structured_content={"error": "bundle_id and asset_ids required"}
         )
     
-    from app.api.content_tree_builder import remove_assets_from_bundle
-    
+    bundle_service = services["bundle_service"]
     try:
-        removed_count = remove_assets_from_bundle(
-            session=services["session"],
+        removed_count = bundle_service.remove_assets_from_bundle_validated(
             bundle_id=bundle_id,
             asset_ids=asset_ids,
-            infospace_id=services["infospace_id"]
+            infospace_id=services["infospace_id"],
         )
-        
-        services["session"].commit()
         
         await ctx.info(f"Removed {removed_count} assets from bundle #{bundle_id}")
         
@@ -1812,18 +1756,19 @@ async def _organize_rename(services: Dict, ctx: Context, bundle_id: Optional[int
             structured_content={"error": "bundle_id is required"}
         )
     
-    from app.api.content_tree_builder import update_bundle
-    
+    from app.schemas import BundleUpdate
+
+    bundle_service = services["bundle_service"]
     try:
-        bundle = update_bundle(
-            session=services["session"],
+        bundle_in = BundleUpdate(name=name, description=description)
+        bundle = bundle_service.update_bundle(
             bundle_id=bundle_id,
+            bundle_in=bundle_in,
             infospace_id=services["infospace_id"],
-            name=name,
-            description=description
+            user_id=services["user_id"],
         )
-        
-        services["session"].commit()
+        if not bundle:
+            raise ValueError(f"Bundle {bundle_id} not found")
         
         await ctx.info(f"Updated bundle #{bundle_id}")
         
@@ -1864,16 +1809,13 @@ async def _organize_delete(services: Dict, ctx: Context, bundle_id: Optional[int
             structured_content={"error": "bundle_id is required"}
         )
     
-    from app.api.content_tree_builder import delete_bundle
-    
+    bundle_service = services["bundle_service"]
     try:
-        bundle_name = delete_bundle(
-            session=services["session"],
+        bundle_name = bundle_service.delete_bundle_returning_name(
             bundle_id=bundle_id,
-            infospace_id=services["infospace_id"]
+            infospace_id=services["infospace_id"],
+            user_id=services["user_id"],
         )
-        
-        services["session"].commit()
         
         await ctx.info(f"Deleted bundle #{bundle_id}")
         
@@ -2151,19 +2093,25 @@ async def _analysis_start_run(
         stored_keys = services.get("runtime_api_keys", {})
         model_name = services.get("model_name")
         
+        provider_name = services.get("provider_name")
         if not model_name:
             # Fallback: pick based on available stored credentials
             if stored_keys.get("anthropic"):
-                model_name = "claude-sonnet-4-20250514"
+                model_name = "claude-sonnet-4-6"
+                provider_name = provider_name or "anthropic"
             elif stored_keys.get("openai"):
-                model_name = "gpt-4o"
+                model_name = "gpt-5.2"
+                provider_name = provider_name or "openai"
             elif stored_keys.get("gemini") or stored_keys.get("GOOGLE_API_KEY"):
-                model_name = "gemini-2.5-flash-preview-05-20"
+                model_name = "gemini-3-flash"
+                provider_name = provider_name or "gemini"
             else:
                 model_name = "qwen3:14b"  # Local Ollama fallback
-        
+                provider_name = provider_name or "ollama"
+
         configuration = {
-            "ai_model": model_name,
+            "model": model_name,
+            "provider": provider_name,
             "api_keys": stored_keys if stored_keys else None
         }
         if custom_instructions:
@@ -3088,17 +3036,17 @@ async def _asset_create_csv_row(services: Dict, ctx: Context, builder, data: Dic
         ).one()
         next_part_index = existing_rows_count
         
-        # Update parent's row_count in source_metadata
-        if parent_asset.source_metadata is None:
-            parent_asset.source_metadata = {}
-        parent_asset.source_metadata['row_count'] = existing_rows_count + 1
+        # Update parent's row_count in file_info
+        file_info = parent_asset.file_info or {}
+        file_info['row_count'] = existing_rows_count + 1
+        parent_asset.file_info = file_info
         services["session"].add(parent_asset)
         services["session"].commit()
 
     # Get column headers from parent if available
     column_headers = None
-    if parent_asset and parent_asset.source_metadata.get("columns"):
-        column_headers = parent_asset.source_metadata["columns"]
+    if parent_asset and (parent_asset.file_info or {}).get("columns"):
+        column_headers = parent_asset.file_info["columns"]
 
     # Build and create the CSV row with proper part_index
     if parent_asset_id:
@@ -3276,12 +3224,14 @@ async def _asset_update_content(services: Dict, ctx: Context, asset, data: Dict[
     elif "content" in updates:
         # Map "content" to "text_content" for database
         update_dict["text_content"] = updates["content"]
-    if "source_metadata" in updates:
-        update_dict["source_metadata"] = updates["source_metadata"]
+    if "file_info" in updates:
+        update_dict["file_info"] = updates["file_info"]
+    if "facets" in updates:
+        update_dict["facets"] = updates["facets"]
     
     if not update_dict:
         return ToolResult(
-            content=[TextContent(type="text", text="❌ No valid update fields provided. Supported: 'title', 'text_content' (or 'content'), 'source_metadata'")],
+            content=[TextContent(type="text", text="❌ No valid update fields provided. Supported: 'title', 'text_content' (or 'content'), 'file_info', 'facets'")],
             structured_content={"error": "no valid updates"}
         )
     
@@ -3560,7 +3510,7 @@ async def _workspace_semantic_search(
     infospace_id = services["infospace_id"]
     
     infospace = session.get(Infospace, infospace_id)
-    if not infospace or not infospace.embedding_model:
+    if not infospace or not infospace.embedding_configured:
         return ToolResult(
             content=[
                 TextContent(
@@ -3605,7 +3555,7 @@ async def _workspace_semantic_search(
             )
     
     from app.api.modules.embedding.services import VectorSearchService
-    search_service = VectorSearchService(session, runtime_api_keys=services["runtime_api_keys"])
+    search_service = VectorSearchService(session, runtime_api_keys=services["runtime_api_keys"], user_id=services["user_id"])
     
     try:
         all_results = []
@@ -3804,7 +3754,8 @@ async def get_asset_details(asset_id: int, ctx: Context) -> dict:
             "kind": asset.kind.value,
             "text_content": asset.text_content,  # Full content (no truncation)
             "source_identifier": asset.source_identifier,
-            "source_metadata": asset.source_metadata,
+            "facets": asset.facets,
+            "file_info": asset.file_info,
             "created_at": asset.created_at.isoformat() if asset.created_at else None,
             "event_timestamp": asset.event_timestamp.isoformat() if asset.event_timestamp else None,
             "processing_status": asset.processing_status.value if asset.processing_status else None,

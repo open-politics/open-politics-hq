@@ -300,7 +300,10 @@ export type AssetCreate = {
     [key: string]: unknown;
 } | null);
     source_identifier?: (string | null);
-    source_metadata?: ({
+    facets?: ({
+    [key: string]: unknown;
+} | null);
+    file_info?: ({
     [key: string]: unknown;
 } | null);
     discovered_modalities?: (Array<string> | null);
@@ -322,7 +325,10 @@ export type AssetPreview = {
     updated_at: string;
     text_content?: (string | null);
     blob_path?: (string | null);
-    source_metadata?: ({
+    facets?: ({
+    [key: string]: unknown;
+} | null);
+    file_info?: ({
     [key: string]: unknown;
 } | null);
     children?: Array<AssetPreview>;
@@ -347,7 +353,10 @@ export type AssetRead = {
     blob_path?: (string | null);
     logical_path?: (string | null);
     source_identifier?: (string | null);
-    source_metadata?: ({
+    facets?: ({
+    [key: string]: unknown;
+} | null);
+    file_info?: ({
     [key: string]: unknown;
 } | null);
     content_hash?: (string | null);
@@ -384,7 +393,10 @@ export type AssetUpdate = {
     text_content?: (string | null);
     blob_path?: (string | null);
     source_identifier?: (string | null);
-    source_metadata?: ({
+    facets?: ({
+    [key: string]: unknown;
+} | null);
+    file_info?: ({
     [key: string]: unknown;
 } | null);
     event_timestamp?: (string | null);
@@ -455,21 +467,21 @@ export type BatchProcessResponse = {
 };
 
 export type Body_assets_add_files_to_bundle_background = {
-    files: Array<Blob | File>;
+    files: Array<string>;
     options?: string;
 };
 
 export type Body_assets_create_assets_background_bulk = {
-    files: Array<Blob | File>;
+    files: Array<string>;
     options?: string;
 };
 
 export type Body_assets_update_asset_content = {
-    file: Blob | File;
+    file: string;
 };
 
 export type Body_assets_upload_file = {
-    file: Blob | File;
+    file: string;
     title?: (string | null);
     process_immediately?: boolean;
 };
@@ -478,14 +490,14 @@ export type Body_datasets_import_dataset = {
     /**
      * Dataset Package file (.zip)
      */
-    file: Blob | File;
+    file: string;
 };
 
 export type Body_filestorage_file_upload = {
     /**
      * File to upload
      */
-    file: Blob | File;
+    file: string;
 };
 
 export type Body_filters_test_filter = {
@@ -501,7 +513,7 @@ export type Body_Infospaces_import_infospace = {
     /**
      * Infospace package file (.zip)
      */
-    file: Blob | File;
+    file: string;
 };
 
 export type Body_login_login_access_token = {
@@ -519,7 +531,7 @@ export type Body_sharing_export_resource = {
 };
 
 export type Body_sharing_import_resource = {
-    file: Blob | File;
+    file: string;
 };
 
 export type Body_sso_complete_discourse_sso = {
@@ -528,19 +540,19 @@ export type Body_sso_complete_discourse_sso = {
 };
 
 export type Body_users_upload_background_image = {
-    file: Blob | File;
+    file: string;
 };
 
 export type Body_users_upload_profile_picture = {
-    file: Blob | File;
+    file: string;
 };
 
 export type Body_utils_extract_pdf_metadata = {
-    file: Blob | File;
+    file: string;
 };
 
 export type Body_utils_extract_pdf_text = {
-    file: Blob | File;
+    file: string;
 };
 
 export type BulkDeleteBundlesRequest = {
@@ -632,29 +644,6 @@ export type BundleUpdate = {
     [key: string]: unknown;
 } | null);
     parent_bundle_id?: (number | null);
-};
-
-export type BundleViewCreate = {
-    name: string;
-    source_bundle_id: number;
-    path_prefix?: string;
-};
-
-export type BundleViewRead = {
-    id: number;
-    uuid: string;
-    name: string;
-    source_bundle_id: number;
-    path_prefix: string;
-    infospace_id: number;
-    user_id: number;
-    created_at: string;
-    updated_at: string;
-};
-
-export type BundleViewUpdate = {
-    name?: (string | null);
-    path_prefix?: (string | null);
 };
 
 /**
@@ -803,6 +792,7 @@ export type ChatMessage = {
 export type ChatRequest = {
     messages: Array<ChatMessage>;
     model_name: string;
+    provider_name?: (string | null);
     infospace_id: number;
     stream?: boolean;
     temperature?: (number | null);
@@ -1046,8 +1036,11 @@ export type EntityCanonicalRead = {
     canonical_name: string;
     entity_type: string;
     aliases?: Array<string>;
-    embedding?: (Array<number> | null);
+    embedding_384?: (Array<number> | null);
+    embedding_512?: (Array<number> | null);
     embedding_768?: (Array<number> | null);
+    embedding_1024?: (Array<number> | null);
+    embedding_1536?: (Array<number> | null);
     properties?: {
         [key: string]: unknown;
     };
@@ -1090,17 +1083,10 @@ export type ExternalSearchRequest = {
     scrape_content?: boolean;
     create_assets?: boolean;
     bundle_id?: (number | null);
-    include_domains?: (Array<string> | null);
-    exclude_domains?: (Array<string> | null);
     api_key?: (string | null);
-    search_depth?: (string | null);
-    include_images?: (boolean | null);
-    include_answer?: (boolean | null);
-    topic?: (string | null);
-    chunks_per_source?: (number | null);
-    days?: (number | null);
-    time_range?: (string | null);
-    country?: (string | null);
+    provider_params?: ({
+    [key: string]: unknown;
+} | null);
 };
 
 /**
@@ -1241,10 +1227,6 @@ export type GenerateAssetEmbeddingsRequest = {
      */
     overwrite?: boolean;
     /**
-     * Process in background
-     */
-    async_processing?: boolean;
-    /**
      * Runtime API keys for cloud providers
      */
     api_keys?: ({
@@ -1264,10 +1246,6 @@ export type GenerateEmbeddingsRequest = {
      * Filter by asset types
      */
     asset_kinds?: (Array<string> | null);
-    /**
-     * Process in background
-     */
-    async_processing?: boolean;
     /**
      * Runtime API keys for cloud providers
      */
@@ -1351,9 +1329,7 @@ export type InfospaceCreate = {
     icon?: (string | null);
     enable_related_assets?: (boolean | null);
     owner_id: number;
-    vector_backend?: (string | null);
-    embedding_model?: (string | null);
-    embedding_dim?: (number | null);
+    embedding_selection?: (ProviderSelection | null);
     chunk_size?: (number | null);
     chunk_overlap?: (number | null);
     chunk_strategy?: (string | null);
@@ -1367,9 +1343,7 @@ export type InfospaceRead = {
     id: number;
     owner_id: number;
     created_at: string;
-    vector_backend?: (string | null);
-    embedding_model?: (string | null);
-    embedding_dim?: (number | null);
+    embedding_selection?: (ProviderSelection | null);
     chunk_size?: (number | null);
     chunk_overlap?: (number | null);
     chunk_strategy?: (string | null);
@@ -1383,9 +1357,7 @@ export type InfospacesOut = {
 export type InfospaceUpdate = {
     name?: (string | null);
     description?: (string | null);
-    vector_backend?: (string | null);
-    embedding_model?: (string | null);
-    embedding_dim?: (number | null);
+    embedding_selection?: (ProviderSelection | null);
     chunk_size?: (number | null);
     chunk_overlap?: (number | null);
     chunk_strategy?: (string | null);
@@ -1481,6 +1453,28 @@ export type KnowledgeGraphUpdate = {
 };
 
 /**
+ * Language capability defaults with context-specific overrides.
+ *
+ * ``default`` is the base language provider. ``chat`` and ``annotation``
+ * override it for those specific contexts.  ``resolve()`` checks the
+ * context override first and falls back to ``default``.
+ */
+export type LanguageDefaults = {
+    default?: (ProviderSelection | null);
+    chat?: (ProviderSelection | null);
+    annotation?: (ProviderSelection | null);
+};
+
+/**
+ * Request body for materializing a virtual folder as a real bundle.
+ */
+export type MaterializeVfolderRequest = {
+    source_bundle_id: number;
+    path_prefix?: string;
+    name: string;
+};
+
+/**
  * Request schema for merging entities.
  */
 export type MergeEntitiesRequest = {
@@ -1557,6 +1551,36 @@ export type PromoteFragmentRequest = {
     source_run_id?: (number | null);
 };
 
+/**
+ * User's per-capability provider preferences.
+ *
+ * Core capabilities are named fields — enforced by the model schema.
+ * Language uses ``LanguageDefaults`` for context-specific overrides;
+ * all other capabilities are plain ``ProviderSelection``.
+ */
+export type ProviderDefaults_Input = {
+    language?: (LanguageDefaults | null);
+    embedding?: (ProviderSelection | null);
+    search?: (ProviderSelection | null);
+    ocr?: (ProviderSelection | null);
+    geocoding?: (ProviderSelection | null);
+};
+
+/**
+ * User's per-capability provider preferences.
+ *
+ * Core capabilities are named fields — enforced by the model schema.
+ * Language uses ``LanguageDefaults`` for context-specific overrides;
+ * all other capabilities are plain ``ProviderSelection``.
+ */
+export type ProviderDefaults_Output = {
+    language?: (LanguageDefaults | null);
+    embedding?: (ProviderSelection | null);
+    search?: (ProviderSelection | null);
+    ocr?: (ProviderSelection | null);
+    geocoding?: (ProviderSelection | null);
+};
+
 export type ProviderInfo = {
     provider_name: string;
     models: Array<ProviderModel>;
@@ -1569,6 +1593,14 @@ export type ProviderListResponse = {
 export type ProviderModel = {
     name: string;
     description?: (string | null);
+};
+
+/**
+ * A typed provider+model choice.
+ */
+export type ProviderSelection = {
+    type_key: string;
+    model_name?: (string | null);
 };
 
 /**
@@ -1637,7 +1669,7 @@ export type RssSourceCreateRequest = {
     target_bundle_name?: (string | null);
 };
 
-export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'completed_with_errors';
+export type RunStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'completed_with_errors';
 
 /**
  * Request to save encrypted provider credentials.
@@ -1704,7 +1736,10 @@ export type SearchResultItem = {
     content: string;
     score?: (number | null);
     provider?: (string | null);
-    source_metadata?: ({
+    facets?: ({
+    [key: string]: unknown;
+} | null);
+    file_info?: ({
     [key: string]: unknown;
 } | null);
 };
@@ -1948,6 +1983,7 @@ export type StorageBrowseEntry = {
     file_count?: number;
     importable_count?: number;
     size_bytes?: number;
+    counts_capped?: boolean;
 };
 
 /**
@@ -2084,7 +2120,10 @@ export type TreeNode = {
     child_bundle_count?: (number | null);
     processing_status?: (ProcessingStatus | null);
     stub?: (boolean | null);
-    source_metadata?: ({
+    facets?: ({
+    [key: string]: unknown;
+} | null);
+    file_info?: ({
     [key: string]: unknown;
 } | null);
     preview?: ({
@@ -2108,7 +2147,7 @@ export type TreeNode = {
 /**
  * Type of node in the file tree.
  */
-export type TreeNodeType = 'bundle' | 'asset' | 'virtual_folder' | 'bundle_view';
+export type TreeNodeType = 'bundle' | 'asset' | 'virtual_folder';
 
 /**
  * Response containing tree structure.
@@ -2222,6 +2261,7 @@ export type UserOut = {
     ui_preferences?: ({
     [key: string]: unknown;
 } | null);
+    provider_defaults?: (ProviderDefaults_Output | null);
     created_at: string;
     updated_at: string;
 };
@@ -2301,6 +2341,7 @@ export type UserUpdateMe = {
     ui_preferences?: ({
     [key: string]: unknown;
 } | null);
+    provider_defaults?: (ProviderDefaults_Input | null);
 };
 
 export type ValidationError = {
@@ -2311,17 +2352,6 @@ export type ValidationError = {
     ctx?: {
         [key: string]: unknown;
     };
-};
-
-/**
- * Response for virtual folder children (path-based tree from blob_path).
- */
-export type VirtualFolderChildrenResponse = {
-    folders: Array<string>;
-    assets: Array<AssetRead>;
-    path_prefix: string;
-    total_folders: number;
-    total_assets: number;
 };
 
 /**
@@ -3342,6 +3372,13 @@ export type TriggerBackupSpecificInfospacesData = {
 
 export type TriggerBackupSpecificInfospacesResponse = (Message);
 
+export type MaterializeVirtualFolderData = {
+    infospaceId: number;
+    requestBody: MaterializeVfolderRequest;
+};
+
+export type MaterializeVirtualFolderResponse = (BundleRead);
+
 export type CreateBundleData = {
     infospaceId: number;
     requestBody: BundleCreate;
@@ -3446,38 +3483,6 @@ export type GetBulkBundleAssetsData = {
 export type GetBulkBundleAssetsResponse = ({
     [key: string]: unknown;
 });
-
-export type CreateBundleViewData = {
-    infospaceId: number;
-    requestBody: BundleViewCreate;
-};
-
-export type CreateBundleViewResponse = (BundleViewRead);
-
-export type ListBundleViewsData = {
-    infospaceId: number;
-};
-
-export type ListBundleViewsResponse = (Array<BundleViewRead>);
-
-export type GetBundleViewData = {
-    viewId: number;
-};
-
-export type GetBundleViewResponse = (BundleViewRead);
-
-export type UpdateBundleViewData = {
-    requestBody: BundleViewUpdate;
-    viewId: number;
-};
-
-export type UpdateBundleViewResponse = (BundleViewRead);
-
-export type DeleteBundleViewData = {
-    viewId: number;
-};
-
-export type DeleteBundleViewResponse = (void);
 
 export type ListEntitiesData = {
     entityType?: (string | null);
@@ -3755,8 +3760,6 @@ export type DiscoverEmbeddingModelsData = {
 
 export type DiscoverEmbeddingModelsResponse = (AvailableModelsResponse);
 
-export type ListAvailableEmbeddingModelsResponse = (AvailableModelsResponse);
-
 export type FileUploadData = {
     formData: Body_filestorage_file_upload;
 };
@@ -3787,31 +3790,6 @@ export type StreamFileData = {
 };
 
 export type StreamFileResponse = (unknown);
-
-export type SaveFilterData = {
-    filterName: string;
-    requestBody: {
-        [key: string]: unknown;
-    };
-};
-
-export type SaveFilterResponse = (Message);
-
-export type ListFiltersResponse = (Array<string>);
-
-export type GetFilterData = {
-    filterName: string;
-};
-
-export type GetFilterResponse = ({
-    [key: string]: unknown;
-});
-
-export type DeleteFilterData = {
-    filterName: string;
-};
-
-export type DeleteFilterResponse = (Message);
 
 export type TestFilterData = {
     requestBody: Body_filters_test_filter;
@@ -4300,6 +4278,21 @@ export type RecoverPasswordHtmlContentData = {
 
 export type RecoverPasswordHtmlContentResponse = (string);
 
+export type DiscoverModelsData = {
+    /**
+     * Capability type: 'llm', 'embedding'
+     */
+    capability: string;
+};
+
+export type DiscoverModelsResponse = ({
+    [key: string]: unknown;
+});
+
+export type SystemCapabilitiesResponse = ({
+    [key: string]: unknown;
+});
+
 export type SearchContentData = {
     args: unknown;
     kwargs: unknown;
@@ -4657,6 +4650,10 @@ export type CompleteDiscourseSso1Response = ({
 });
 
 export type BrowseStorageData = {
+    /**
+     * Include file_count, importable_count, size_bytes for directories (expensive on large trees)
+     */
+    includeCounts?: boolean;
     infospaceId: number;
     /**
      * Directory path to list; defaults to first allowed root
@@ -4893,25 +4890,9 @@ export type DeleteTreeNodesData = {
 
 export type DeleteTreeNodesResponse = (Message);
 
-export type GetVirtualFolderChildrenData = {
-    /**
-     * Bundle ID (root bundle for dataset)
-     */
-    bundleId: number;
-    infospaceId: number;
-    limit?: number;
-    /**
-     * Path prefix for filtering (e.g. data_set_1/politics)
-     */
-    pathPrefix?: string;
-    skip?: number;
-};
-
-export type GetVirtualFolderChildrenResponse = (VirtualFolderChildrenResponse);
-
 export type GetFeedAssetsData = {
     /**
-     * Filter to assets in this bundle (for Bundle/BundleView detail)
+     * Filter to assets in this bundle (for Bundle detail)
      */
     bundleId?: (number | null);
     infospaceId: number;
@@ -4921,7 +4902,7 @@ export type GetFeedAssetsData = {
     kinds?: Array<string>;
     limit?: number;
     /**
-     * Filter by logical_path prefix (for BundleView)
+     * Filter by logical_path prefix (for virtual folder)
      */
     pathFilter?: (string | null);
     skip?: number;

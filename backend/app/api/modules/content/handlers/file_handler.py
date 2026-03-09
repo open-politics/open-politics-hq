@@ -66,7 +66,7 @@ class FileHandler(BaseHandler):
         logger.info(f"Uploaded file to {storage_path}")
         
         # Prepare metadata
-        source_metadata = {
+        file_info = {
             "original_filename": file.filename,
             "file_size": getattr(file, 'size', None),
             "mime_type": getattr(file, 'content_type', None),
@@ -80,7 +80,7 @@ class FileHandler(BaseHandler):
         builder = (AssetBuilder(self.session, self.user_id, self.infospace_id)
             .as_kind(content_kind)
             .with_title(asset_title)
-            .with_metadata(**source_metadata))
+            .with_metadata(**file_info))
         
         # Set blob path directly (file already uploaded)
         builder.blueprint.blob_path = storage_path

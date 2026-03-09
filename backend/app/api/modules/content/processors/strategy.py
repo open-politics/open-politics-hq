@@ -11,7 +11,7 @@ Lazy import of get_content_type_registry to avoid circular dependency:
 
 import logging
 from typing import Optional
-from app.api.modules.content.models import Asset, AssetKind
+from app.api.modules.content.models import Asset
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ def _get_registry():
 
 # Size thresholds (in bytes)
 SMALL_FILE_THRESHOLD = 5 * 1024 * 1024  # 5 MB
-LARGE_FILE_THRESHOLD = 10 * 1024 * 1024  # 10 MB
+LARGE_FILE_THRESHOLD = 20 * 1024 * 1024  # 10 MB
 
 
 class ProcessingStrategy:
@@ -99,9 +99,10 @@ class ProcessingStrategy:
             logger.debug(f"Asset {asset.id}: Small file ({file_size} bytes) → immediate")
             return True
         
-        # Web scraping typically fast → immediate
-        if asset.kind == AssetKind.WEB:
-            logger.debug(f"Asset {asset.id}: Web scraping → immediate")
+        # Typically fast types (e.g. web scraping) → immediate
+        desc = _get_registry().by_kind(asset.kind)
+        if desc and desc.is_typically_fast:
+            logger.debug(f"Asset {asset.id}: Typically fast type → immediate")
             return True
         
         # Heavy processing types without size info → conservative (background)
@@ -136,16 +137,16 @@ class ProcessingStrategy:
         
         desc = _get_registry().by_kind(asset.kind)
         if desc and desc.is_heavy_processing:
-            if asset.kind == AssetKind.PDF:
+            if desc.preview_builder_name == "pdf":
                 if file_size and file_size > SMALL_FILE_THRESHOLD:
                     return "~1-2 minutes"
                 return "~30 seconds"
-            if asset.kind == AssetKind.CSV:
+            if desc.preview_builder_name == "csv":
                 if file_size and file_size > SMALL_FILE_THRESHOLD:
                     return "~2-5 minutes"
                 return "~10-30 seconds"
         
-        if asset.kind == AssetKind.WEB:
+        if desc and desc.is_typically_fast:
             return "< 5 seconds"
         
         return "< 1 minute"

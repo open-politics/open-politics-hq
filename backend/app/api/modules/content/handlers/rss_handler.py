@@ -90,9 +90,10 @@ class RSSHandler(BaseHandler):
                         .build()
                     )
 
-                    if article.source_metadata:
-                        article.source_metadata.update(feed_metadata)
-                        self.session.add(article)
+                    file_info = article.file_info or {}
+                    file_info.update(feed_metadata)
+                    article.file_info = file_info
+                    self.session.add(article)
 
                     articles.append(article)
                     logger.debug(f"Created article: {article.title}")
@@ -298,8 +299,6 @@ class RSSHandler(BaseHandler):
         """
         Discover and ingest RSS feeds from awesome-rss-feeds repository.
         """
-        from app.api.content_tree_builder import add_assets_to_bundle
-
         try:
             discovered_feeds = await cls.discover_rss_feeds_from_awesome_repo(
                 country=country,
@@ -333,25 +332,25 @@ class RSSHandler(BaseHandler):
                     feed_assets = await handler.handle(feed_url, None, feed_options)
 
                     for asset in feed_assets:
-                        if asset.source_metadata:
-                            asset.source_metadata.update({
+                        file_info = asset.file_info or {}
+                        file_info.update({
                                 "discovery_source": "awesome-rss-feeds",
                                 "discovery_country": country,
                                 "discovery_category": category_filter,
                                 "feed_description": feed_info.get("description", ""),
                                 "feed_text": feed_info.get("text", ""),
                             })
+                        asset.file_info = file_info
 
                     all_assets.extend(feed_assets)
 
                     if bundle_id and feed_assets:
                         root_ids = [a.id for a in feed_assets if a.parent_asset_id is None]
                         if root_ids:
-                            add_assets_to_bundle(
-                                context.session,
-                                bundle_id,
-                                root_ids,
-                                context.infospace_id,
+                            context.bundle_service.add_assets_to_bundle_validated(
+                                bundle_id=bundle_id,
+                                asset_ids=root_ids,
+                                infospace_id=context.infospace_id,
                                 include_children=True,
                             )
 

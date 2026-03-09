@@ -28,15 +28,35 @@ from app.models import (
 )
 from app.api.modules.foundation_service_providers.base import StorageProvider
 from app.core.config import AppSettings
-from app.schemas import AssetRead, SourceRead 
+from app.schemas import AssetRead, SourceRead, InfospaceCreate, InfospaceRead
 
 from app.api.modules.content.services.asset_service import AssetService
 from app.api.modules.annotation.services.annotation_service import AnnotationService
-from app.api.modules.content.services.content_ingestion_service import ContentIngestionService
 from app.api.modules.content.services.bundle_service import BundleService
 from app.api.modules.content.services.dataset_service import DatasetService
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_facets_from_asset_data(asset_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Extract facets from asset data (supports old source_metadata format)."""
+    if "facets" in asset_data:
+        return asset_data["facets"]
+    sm = asset_data.get("source_metadata") or {}
+    facets = sm.get("facets")
+    return facets if facets else None
+
+
+def _extract_file_info_from_asset_data(asset_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Extract file_info from asset data (supports old source_metadata format)."""
+    if "file_info" in asset_data:
+        return asset_data["file_info"]
+    sm = asset_data.get("source_metadata") or {}
+    file_info = {k: v for k, v in sm.items() if k != "facets"}
+    if "file" in sm and isinstance(sm["file"], dict):
+        file_info.update(sm["file"])
+    return file_info if file_info else None
+
 
 class PackageMetadata:
     """Metadata for a data package."""
@@ -370,7 +390,7 @@ class PackageBuilder:
         if asset.blob_path:
             file_bytes = await self._fetch_file_content_from_storage(asset.blob_path)
             if file_bytes:
-                original_filename = (asset.source_metadata or {}).get("filename") or asset.title or Path(asset.blob_path).name
+                original_filename = (asset.file_info or {}).get("original_filename") or (asset.file_info or {}).get("filename") or asset.title or Path(asset.blob_path).name
                 file_reference_in_zip = self._add_file_to_package(original_filename, file_bytes)
                 asset_content["blob_file_reference"] = file_reference_in_zip
             else:
@@ -454,7 +474,7 @@ class PackageBuilder:
                     if asset_item.blob_path:
                         asset_file_bytes = await self._fetch_file_content_from_storage(asset_item.blob_path)
                         if asset_file_bytes:
-                            original_filename = (asset_item.source_metadata or {}).get("filename") or asset_item.title or Path(asset_item.blob_path).name
+                            original_filename = (asset_item.file_info or {}).get("original_filename") or (asset_item.file_info or {}).get("filename") or asset_item.title or Path(asset_item.blob_path).name
                             asset_data["blob_file_reference"] = self._add_file_to_package(original_filename, asset_file_bytes)
                         else:
                             asset_data["blob_path_fetch_failed"] = True
@@ -573,7 +593,7 @@ class PackageBuilder:
                 if asset.blob_path:
                     file_bytes = await self._fetch_file_content_from_storage(asset.blob_path)
                     if file_bytes:
-                        original_filename = (asset.source_metadata or {}).get("filename") or asset.title or Path(asset.blob_path).name
+                        original_filename = (asset.file_info or {}).get("original_filename") or (asset.file_info or {}).get("filename") or asset.title or Path(asset.blob_path).name
                         blob_file_ref = self._add_file_to_package(original_filename, file_bytes)
                         asset_data["blob_file_reference"] = blob_file_ref
                 
@@ -633,7 +653,7 @@ class PackageBuilder:
                 if asset_item_in_bundle.blob_path:
                     file_bytes = await self._fetch_file_content_from_storage(asset_item_in_bundle.blob_path)
                     if file_bytes:
-                        original_filename = (asset_item_in_bundle.source_metadata or {}).get("filename") or asset_item_in_bundle.title or Path(asset_item_in_bundle.blob_path).name
+                        original_filename = (asset_item_in_bundle.file_info or {}).get("original_filename") or (asset_item_in_bundle.file_info or {}).get("filename") or asset_item_in_bundle.title or Path(asset_item_in_bundle.blob_path).name
                         file_ref = self._add_file_to_package(original_filename, file_bytes)
                         asset_data["blob_file_reference"] = file_ref
                 asset_ref["full_content"] = asset_data
@@ -683,7 +703,7 @@ class PackageBuilder:
                 if asset_item_in_ds.blob_path:
                     file_bytes = await self._fetch_file_content_from_storage(asset_item_in_ds.blob_path)
                     if file_bytes:
-                        original_filename = (asset_item_in_ds.source_metadata or {}).get("filename") or asset_item_in_ds.title or Path(asset_item_in_ds.blob_path).name
+                        original_filename = (asset_item_in_ds.file_info or {}).get("original_filename") or (asset_item_in_ds.file_info or {}).get("filename") or asset_item_in_ds.title or Path(asset_item_in_ds.blob_path).name
                         blob_file_ref = self._add_file_to_package(original_filename, file_bytes)
                         asset_data["blob_file_reference"] = blob_file_ref
                 
@@ -747,7 +767,7 @@ class PackageBuilder:
             if asset.blob_path:
                 file_bytes = await self._fetch_file_content_from_storage(asset.blob_path)
                 if file_bytes:
-                    original_filename = (asset.source_metadata or {}).get("filename") or asset.title or Path(asset.blob_path).name
+                    original_filename = (asset.file_info or {}).get("original_filename") or (asset.file_info or {}).get("filename") or asset.title or Path(asset.blob_path).name
                     asset_data["blob_file_reference"] = self._add_file_to_package(original_filename, file_bytes)
             
             # Fetch and include child assets for hierarchical assets
@@ -778,7 +798,7 @@ class PackageBuilder:
                         if child_asset.blob_path:
                             child_file_bytes = await self._fetch_file_content_from_storage(child_asset.blob_path)
                             if child_file_bytes:
-                                child_filename = (child_asset.source_metadata or {}).get("filename") or child_asset.title or Path(child_asset.blob_path).name
+                                child_filename = (child_asset.file_info or {}).get("original_filename") or (child_asset.file_info or {}).get("filename") or child_asset.title or Path(child_asset.blob_path).name
                                 child_data["blob_file_reference"] = self._add_file_to_package(child_filename, child_file_bytes)
                         children_data.append(child_data)
                     
@@ -799,7 +819,7 @@ class PackageBuilder:
                     if asset_item.blob_path:
                         file_bytes = await self._fetch_file_content_from_storage(asset_item.blob_path)
                         if file_bytes:
-                            original_filename = (asset_item.source_metadata or {}).get("filename") or asset_item.title or Path(asset_item.blob_path).name
+                            original_filename = (asset_item.file_info or {}).get("original_filename") or (asset_item.file_info or {}).get("filename") or asset_item.title or Path(asset_item.blob_path).name
                             asset_data["blob_file_reference"] = self._add_file_to_package(original_filename, file_bytes)
                     
                     # Include child assets for hierarchical assets in bundles too
@@ -830,7 +850,7 @@ class PackageBuilder:
                                 if child_asset.blob_path:
                                     child_file_bytes = await self._fetch_file_content_from_storage(child_asset.blob_path)
                                     if child_file_bytes:
-                                        child_filename = (child_asset.source_metadata or {}).get("filename") or child_asset.title or Path(child_asset.blob_path).name
+                                        child_filename = (child_asset.file_info or {}).get("original_filename") or (child_asset.file_info or {}).get("filename") or child_asset.title or Path(child_asset.blob_path).name
                                         child_data["blob_file_reference"] = self._add_file_to_package(child_filename, child_file_bytes)
                                 children_data.append(child_data)
                             
@@ -1109,7 +1129,8 @@ class PackageImporter:
             text_content=text_content,
             blob_path=new_blob_path,
             source_identifier=asset_data_in_pkg.get("source_identifier"),
-            source_metadata=asset_data_in_pkg.get("source_metadata", {}),
+            facets=_extract_facets_from_asset_data(asset_data_in_pkg),
+            file_info=_extract_file_info_from_asset_data(asset_data_in_pkg),
             content_hash=asset_data_in_pkg.get("content_hash"),
             event_timestamp=parsed_event_timestamp
             # uuid will be auto-generated
@@ -1649,7 +1670,6 @@ class PackageService:
         storage_provider: StorageProvider,
         asset_service: AssetService,
         annotation_service: AnnotationService,
-        ingestion_service: ContentIngestionService,
         bundle_service: BundleService,
         dataset_service: DatasetService,
         settings: AppSettings
@@ -1658,7 +1678,6 @@ class PackageService:
         self.storage_provider = storage_provider
         self.asset_service = asset_service
         self.annotation_service = annotation_service
-        self.ingestion_service = ingestion_service
         self.bundle_service = bundle_service
         self.dataset_service = dataset_service
         self.settings = settings
@@ -1780,4 +1799,247 @@ class PackageService:
             return imported_entity
         else:
             self.session.rollback()
-            raise ValueError(f"Failed to import {pt.value} from package, operation rolled back.") 
+            raise ValueError(f"Failed to import {pt.value} from package, operation rolled back.")
+
+    async def export_infospace(
+        self,
+        infospace: Infospace,
+        user_id: int,
+        include_sources: bool = True,
+        include_schemas: bool = True,
+        include_runs: bool = True,
+        include_datasets: bool = True,
+        include_assets_for_sources: bool = True,
+        include_annotations_for_runs: bool = True,
+        include_chunks: bool = False,
+        include_embeddings: bool = False,
+    ) -> "DataPackage":
+        """Export an infospace configuration and its contents as a DataPackage."""
+        if not self.storage_provider:
+            raise RuntimeError("Infospace export requires a configured storage provider.")
+
+        builder = PackageBuilder(
+            session=self.session,
+            storage_provider=self.storage_provider,
+            source_instance_id=self.source_instance_id,
+            settings=self.settings,
+        )
+
+        package_metadata = PackageMetadata(
+            package_type=ResourceType.INFOSPACE,
+            source_entity_uuid=str(infospace.uuid),
+            source_instance_id=self.source_instance_id,
+            description=f"Export of Infospace: {infospace.name} (ID: {infospace.id})",
+            created_by=str(user_id),
+        )
+
+        infospace_package_content: Dict[str, Any] = {
+            "infospace_details": InfospaceRead.model_validate(infospace).model_dump(exclude_none=True),
+            "bundles_content": [],
+            "sources_content": [],
+            "annotation_schemas_content": [],
+            "annotation_runs_content": [],
+            "datasets_content": [],
+        }
+
+        if infospace.bundles:
+            for bundle_item in infospace.bundles:
+                try:
+                    bundle_package = await builder.build_bundle_package(
+                        bundle_item,
+                        include_assets_content=False,
+                        include_asset_annotations=False,
+                    )
+                    infospace_package_content["bundles_content"].append(bundle_package.content)
+                except Exception as e:
+                    logger.error(f"Failed to package Bundle {bundle_item.id}: {e}", exc_info=True)
+
+        if include_sources and infospace.sources:
+            for ds in infospace.sources:
+                try:
+                    ds_package = await builder.build_source_package(
+                        ds,
+                        include_assets=include_assets_for_sources,
+                        include_chunks=include_chunks,
+                        include_embeddings=include_embeddings,
+                    )
+                    infospace_package_content["sources_content"].append(ds_package.content)
+                except Exception as e:
+                    logger.error(f"Failed to package Source {ds.id}: {e}", exc_info=True)
+
+        if include_schemas and infospace.schemas:
+            for schema_item in infospace.schemas:
+                try:
+                    schema_package = await builder.build_annotation_schema_package(schema_item)
+                    infospace_package_content["annotation_schemas_content"].append(schema_package.content)
+                except Exception as e:
+                    logger.error(f"Failed to package AnnotationSchema {schema_item.id}: {e}", exc_info=True)
+
+        if include_runs and infospace.runs:
+            for run_item in infospace.runs:
+                try:
+                    run_package = await builder.build_annotation_run_package(
+                        run_item,
+                        include_annotations=include_annotations_for_runs,
+                        include_chunks=include_chunks,
+                        include_embeddings=include_embeddings,
+                    )
+                    infospace_package_content["annotation_runs_content"].append(run_package.content)
+                except Exception as e:
+                    logger.error(f"Failed to package AnnotationRun {run_item.id}: {e}", exc_info=True)
+
+        if include_datasets and infospace.datasets:
+            for dataset_item in infospace.datasets:
+                try:
+                    dataset_package = await builder.build_dataset_package(
+                        dataset_item,
+                        include_assets=True,
+                        include_annotations=True,
+                        include_chunks=include_chunks,
+                        include_embeddings=include_embeddings,
+                    )
+                    infospace_package_content["datasets_content"].append(dataset_package.content)
+                except Exception as e:
+                    logger.error(f"Failed to package Dataset {dataset_item.id}: {e}", exc_info=True)
+
+        return DataPackage(metadata=package_metadata, content=infospace_package_content, files=builder.files)
+
+    async def import_infospace(
+        self,
+        user_id: int,
+        filepath: str,
+        infospace_service: Any,
+    ) -> Infospace:
+        """Import an infospace from a comprehensive ZIP package."""
+        if not self.storage_provider:
+            raise RuntimeError("Infospace import requires a configured storage provider.")
+
+        logger.info(f"Starting import of infospace from package file: {filepath} for user {user_id}")
+
+        try:
+            main_package = DataPackage.from_zip(filepath)
+            if main_package.metadata.package_type != ResourceType.INFOSPACE:
+                raise ValueError(f"Invalid package type. Expected '{ResourceType.INFOSPACE.value}', got '{main_package.metadata.package_type}'")
+
+            ws_details = main_package.content.get("infospace_details")
+            if not ws_details:
+                raise ValueError("Infospace package content is missing 'infospace_details'.")
+
+            new_infospace_name = ws_details.get("name", "Imported Infospace") + f" (Imported {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')})"
+
+            # Reconstruct embedding_selection from legacy or new format
+            embedding_selection = ws_details.get("embedding_selection")
+            if not embedding_selection and ws_details.get("embedding_model"):
+                embedding_selection = {
+                    "type_key": "ollama",
+                    "model_name": ws_details["embedding_model"],
+                }
+
+            infospace_create_data = InfospaceCreate(
+                name=new_infospace_name,
+                description=ws_details.get("description", "Imported infospace"),
+                owner_id=user_id,
+                icon=ws_details.get("icon"),
+                embedding_selection=embedding_selection,
+                chunk_size=ws_details.get("chunk_size"),
+                chunk_overlap=ws_details.get("chunk_overlap"),
+                chunk_strategy=ws_details.get("chunk_strategy"),
+            )
+            created_infospace = infospace_service.create_infospace(user_id=user_id, infospace_in=infospace_create_data)
+            logger.info(f"Created new infospace '{created_infospace.name}' (ID: {created_infospace.id}) for import.")
+
+            asset_service = AssetService(session=self.session, storage_provider=self.storage_provider)
+            importer = PackageImporter(
+                session=self.session,
+                storage_provider=self.storage_provider,
+                target_infospace_id=created_infospace.id,
+                target_user_id=user_id,
+                settings=self.settings,
+                asset_service=asset_service,
+            )
+
+            bundle_contents_for_linking = []
+            for bundle_content in main_package.content.get("bundles_content", []):
+                try:
+                    bundle_meta = PackageMetadata(package_type=ResourceType.BUNDLE, source_entity_uuid=bundle_content.get("bundle", {}).get("uuid", str(uuid.uuid4())))
+                    temp_bundle_package = DataPackage(metadata=bundle_meta, content=bundle_content, files={})
+                    await importer.import_bundle_package(temp_bundle_package)
+                    bundle_contents_for_linking.append(bundle_content)
+                except Exception as e:
+                    logger.error(f"Failed to import Bundle structure: {e}", exc_info=True)
+
+            for ds_content in main_package.content.get("sources_content", []):
+                try:
+                    ds_meta = PackageMetadata(package_type=ResourceType.SOURCE, source_entity_uuid=ds_content.get("source", {}).get("uuid", str(uuid.uuid4())))
+                    temp_ds_package = DataPackage(metadata=ds_meta, content=ds_content, files=main_package.files)
+                    await importer.import_source_package(temp_ds_package)
+                except Exception as e:
+                    logger.error(f"Failed to import a Source: {e}", exc_info=True)
+
+            for schema_content in main_package.content.get("annotation_schemas_content", []):
+                try:
+                    schema_meta = PackageMetadata(package_type=ResourceType.SCHEMA, source_entity_uuid=schema_content.get("annotation_schema", {}).get("uuid", str(uuid.uuid4())))
+                    temp_schema_package = DataPackage(metadata=schema_meta, content=schema_content, files={})
+                    await importer.import_annotation_schema_package(temp_schema_package)
+                except Exception as e:
+                    logger.error(f"Failed to import AnnotationSchema: {e}", exc_info=True)
+
+            for run_content in main_package.content.get("annotation_runs_content", []):
+                try:
+                    run_meta = PackageMetadata(package_type=ResourceType.RUN, source_entity_uuid=run_content.get("annotation_run", {}).get("uuid", str(uuid.uuid4())))
+                    temp_run_package = DataPackage(metadata=run_meta, content=run_content, files={})
+                    await importer.import_annotation_run_package(temp_run_package)
+                except Exception as e:
+                    logger.error(f"Failed to import AnnotationRun: {e}", exc_info=True)
+
+            for dataset_content in main_package.content.get("datasets_content", []):
+                try:
+                    dataset_meta = PackageMetadata(package_type=ResourceType.DATASET, source_entity_uuid=dataset_content.get("dataset", {}).get("uuid", str(uuid.uuid4())))
+                    temp_dataset_package = DataPackage(metadata=dataset_meta, content=dataset_content, files=main_package.files)
+                    await importer.import_dataset_package(temp_dataset_package)
+                except Exception as e:
+                    logger.error(f"Failed to import Dataset: {e}", exc_info=True)
+
+            for bundle_content in bundle_contents_for_linking:
+                try:
+                    bundle_data = bundle_content.get("bundle", {})
+                    bundle_uuid = str(bundle_data.get("uuid"))
+                    local_bundle_id = importer._get_local_id_from_source_uuid(ResourceType.BUNDLE.value, bundle_uuid)
+                    if not local_bundle_id:
+                        continue
+                    bundle = self.session.get(Bundle, local_bundle_id)
+                    if not bundle:
+                        continue
+                    asset_refs = bundle_data.get("asset_references", [])
+                    linked_asset_ids = []
+                    for asset_ref in asset_refs:
+                        asset_uuid = str(asset_ref.get("uuid"))
+                        if asset_uuid:
+                            local_asset_id = importer._get_local_id_from_source_uuid(ResourceType.ASSET.value, asset_uuid)
+                            if local_asset_id:
+                                linked_asset_ids.append(local_asset_id)
+                    if linked_asset_ids:
+                        assets_to_link = list(self.session.exec(select(Asset).where(Asset.id.in_(linked_asset_ids))).all())
+                        bundle.assets = assets_to_link
+                        bundle.asset_count = len(assets_to_link)
+                        self.session.add(bundle)
+                except Exception as e:
+                    logger.error(f"Failed to link assets to bundle: {e}", exc_info=True)
+
+            self.session.commit()
+            self.session.refresh(created_infospace)
+            return created_infospace
+
+        except ValueError:
+            self.session.rollback()
+            raise
+        except Exception as e:
+            self.session.rollback()
+            logger.error(f"Critical error during infospace import: {e}", exc_info=True)
+            raise RuntimeError(f"Infospace import failed: {str(e)}")
+        finally:
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except OSError:
+                    pass

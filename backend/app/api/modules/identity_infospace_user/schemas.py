@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from sqlmodel import SQLModel, Field
 
 from app.api.modules.identity_infospace_user.models import UserBase, UserTier
+from app.api.modules.foundation_service_providers.base import ProviderDefaults, ProviderSelection
 
 
 # ─── User schemas ───
@@ -17,6 +18,7 @@ class UserOut(UserBase):
     is_active: bool = True
     is_superuser: bool = False
     ui_preferences: Optional[Dict[str, Any]] = None
+    provider_defaults: Optional[ProviderDefaults] = None
     created_at: datetime
     updated_at: datetime
 
@@ -71,6 +73,7 @@ class UserUpdateMe(SQLModel):
     bio: Optional[str] = Field(None, max_length=500, description="Short bio (max 500 characters)")
     description: Optional[str] = Field(None, max_length=2000, description="Longer description (max 2000 characters)")
     ui_preferences: Optional[Dict[str, Any]] = None
+    provider_defaults: Optional[ProviderDefaults] = None
 
 
 class UserProfileUpdate(SQLModel):
@@ -110,9 +113,7 @@ class InfospaceBase(SQLModel):
 
 class InfospaceCreate(InfospaceBase):
     owner_id: int
-    vector_backend: Optional[str] = None
-    embedding_model: Optional[str] = None
-    embedding_dim: Optional[int] = None
+    embedding_selection: Optional[ProviderSelection] = None
     chunk_size: Optional[int] = None
     chunk_overlap: Optional[int] = None
     chunk_strategy: Optional[str] = None
@@ -123,9 +124,7 @@ class InfospaceRead(InfospaceBase):
     id: int
     owner_id: int
     created_at: datetime
-    vector_backend: Optional[str] = None
-    embedding_model: Optional[str] = None
-    embedding_dim: Optional[int] = None
+    embedding_selection: Optional[ProviderSelection] = None
     chunk_size: Optional[int] = None
     chunk_overlap: Optional[int] = None
     chunk_strategy: Optional[str] = None
@@ -134,9 +133,7 @@ class InfospaceRead(InfospaceBase):
 class InfospaceUpdate(SQLModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    vector_backend: Optional[str] = None
-    embedding_model: Optional[str] = None
-    embedding_dim: Optional[int] = None
+    embedding_selection: Optional[ProviderSelection] = None
     chunk_size: Optional[int] = None
     chunk_overlap: Optional[int] = None
     chunk_strategy: Optional[str] = None

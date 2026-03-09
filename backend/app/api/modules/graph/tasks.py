@@ -9,10 +9,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.celery_app import celery
 from app.core.task_utils import run_async_in_celery
 from sqlmodel import Session, select
+from sqlalchemy import or_
 
 from app.core.db import engine
-from app.api.modules.graph.models import EntityCanonical, FragmentCuration
-from app.api.modules.graph.resolution import resolve_entities_batch
+from app.api.modules.graph.models import EntityCanonical, FragmentCuration, GraphEdge
+from app.api.modules.graph.resolution import find_by_alias, resolve_entities_batch
 from app.models import Annotation
 from app.api.modules.annotation.models import AnnotationRun
 
@@ -146,13 +147,20 @@ async def _curate_annotation_batch(session: Session, annotation_ids: List[int]) 
                     annotation_id=ann_id,
                     fragment_path=fragment_path,
                     status="curated",
-                    resolved_refs={
-                        "subject_id": sub_entity.id,
-                        "object_id": obj_entity.id,
-                    },
+                    subject_entity_id=sub_entity.id,
+                    object_entity_id=obj_entity.id,
                     curated_by=ann.user_id,
                 )
                 session.add(fc)
+                edge = GraphEdge(
+                    subject_entity_id=sub_entity.id,
+                    object_entity_id=obj_entity.id,
+                    predicate=triplet.get("predicate"),
+                    annotation_id=ann_id,
+                    infospace_id=ann.infospace_id,
+                    graph_id=graph_id,
+                )
+                session.add(edge)
                 curated += 1
 
             session.commit()
@@ -188,8 +196,8 @@ def reactive_curate_annotated(annotation_ids: List[int]) -> dict:
 def flag_superseded_entity_sources(fragment_curation_ids: List[int]) -> dict:
     """
     Flag FragmentCuration entries whose source asset is superseded.
-    Sets resolved_refs['source_asset_superseded'] = True so entity resolution
-    can treat them as candidates for merging with entities from the preferred version.
+    Sets source_asset_superseded = True so entity resolution can treat them
+    as candidates for merging with entities from the preferred version.
     Dispatched by _SupersededEntityRetireWatcher.
     """
     if not fragment_curation_ids:
@@ -202,11 +210,9 @@ def flag_superseded_entity_sources(fragment_curation_ids: List[int]) -> dict:
                 fc = session.get(FragmentCuration, fc_id)
                 if not fc:
                     continue
-                refs = dict(fc.resolved_refs or {})
-                if refs.get("source_asset_superseded"):
+                if fc.source_asset_superseded:
                     continue
-                refs["source_asset_superseded"] = True
-                fc.resolved_refs = refs
+                fc.source_asset_superseded = True
                 session.add(fc)
                 flagged += 1
             except Exception as e:
@@ -252,22 +258,27 @@ def re_resolve_entity_singletons(entity_ids: List[int]) -> None:
                 merged_props = dict(other.properties or {})
                 merged_props.update(entity.properties or {})
 
-                # Update FragmentCuration.resolved_refs pointing to entity -> other
-                from app.models import FragmentCuration
+                # Update FragmentCuration FK columns pointing to entity -> other
                 for fc in session.exec(
-                    select(FragmentCuration).where(FragmentCuration.resolved_refs.isnot(None))
+                    select(FragmentCuration).where(
+                        or_(
+                            FragmentCuration.subject_entity_id == entity.id,
+                            FragmentCuration.object_entity_id == entity.id,
+                            FragmentCuration.entity_canonical_id == entity.id,
+                        )
+                    )
                 ).all():
-                    refs = fc.resolved_refs or {}
-                    if entity.id not in (refs.get("entity_canonical_id"), refs.get("subject_id"), refs.get("object_id")):
-                        continue
-                    new_refs = None
-                    for key in ("entity_canonical_id", "subject_id", "object_id"):
-                        if refs.get(key) == entity.id:
-                            if new_refs is None:
-                                new_refs = dict(refs)
-                            new_refs[key] = other.id
-                    if new_refs is not None:
-                        fc.resolved_refs = new_refs
+                    updated = False
+                    if fc.subject_entity_id == entity.id:
+                        fc.subject_entity_id = other.id
+                        updated = True
+                    if fc.object_entity_id == entity.id:
+                        fc.object_entity_id = other.id
+                        updated = True
+                    if fc.entity_canonical_id == entity.id:
+                        fc.entity_canonical_id = other.id
+                        updated = True
+                    if updated:
                         session.add(fc)
 
                 session.delete(entity)

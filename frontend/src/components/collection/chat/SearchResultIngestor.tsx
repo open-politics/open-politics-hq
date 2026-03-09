@@ -144,13 +144,14 @@ export function SearchResultIngestor({
       const createdAssets = await AssetsService.ingestSearchResults({
         infospaceId: activeInfospace.id,
         requestBody: {
-          results: results.map(r => ({
+            results: results.map(r => ({
             title: r.title,
             url: r.url,
             content: r.text_content || r.content || '',
             score: r.score,
             provider: r.provider,
-            source_metadata: r.source_metadata
+            file_info: r.source_metadata ?? undefined,
+            facets: undefined,
           })),
           bundle_id: bundleId
         }

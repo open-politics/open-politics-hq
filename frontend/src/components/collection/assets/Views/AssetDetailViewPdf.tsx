@@ -13,7 +13,8 @@ interface AssetRecord {
   id: number;
   title: string;
   text_content: string | null;
-  source_metadata?: Record<string, any>;
+  file_info?: Record<string, unknown> | null;
+  facets?: Record<string, unknown> | null;
   event_timestamp?: string;
 }
 
@@ -45,11 +46,11 @@ const AssetDetailViewPdf: React.FC<AssetDetailViewPdfProps> = ({
   const [isFetchingPdfForView, setIsFetchingPdfForView] = useState(false);
   const [currentlyViewedRecordId, setCurrentlyViewedRecordId] = useState<number | null>(null);
 
-  const isBulkPdf = asset.source_metadata && typeof asset.source_metadata.file_count === 'number' && asset.source_metadata.file_count > 1;
-  const fileCount = asset.source_metadata?.file_count as number | undefined;
-  const pageCount = asset.source_metadata?.page_count as number | undefined;
-  const processedPages = asset.source_metadata?.processed_page_count as number | undefined;
-  const filenameFromDetails = asset.source_metadata?.filename as string | undefined;
+  const isBulkPdf = asset.file_info && typeof asset.file_info.file_count === 'number' && asset.file_info.file_count > 1;
+  const fileCount = asset.file_info?.file_count as number | undefined;
+  const pageCount = asset.file_info?.page_count as number | undefined;
+  const processedPages = asset.file_info?.processed_page_count as number | undefined;
+  const filenameFromDetails = (asset.file_info?.filename ?? asset.file_info?.original_filename) as string | undefined;
   const displayFilename = isBulkPdf ? asset.title : (filenameFromDetails || asset.title || `Asset ${asset.id}`);
 
   // For now, assume assets don't have a status field like DataSources did
@@ -209,7 +210,7 @@ const AssetDetailViewPdf: React.FC<AssetDetailViewPdfProps> = ({
                 const recordForTextDisplay = isBulkPdf ? selectedIndividualRecord : (associatedRecords.length > 0 ? associatedRecords[0] : null);
                 if (recordForTextDisplay) {
                     const textTitle = isBulkPdf
-                        ? `Text Content for: ${(recordForTextDisplay.source_metadata as any)?.original_filename || `Record ${recordForTextDisplay.id}`}`
+                        ? `Text Content for: ${(recordForTextDisplay.file_info as Record<string, unknown>)?.original_filename || `Record ${recordForTextDisplay.id}`}`
                         : 'Extracted Text Content';
                     return (
                         <div className="mt-3 pt-3 border-t">
@@ -238,7 +239,7 @@ const AssetDetailViewPdf: React.FC<AssetDetailViewPdfProps> = ({
                           <ScrollArea className="h-full overflow-y-auto pr-2">
                               <ul className="space-y-1 text-xs">
                                   {associatedRecords.map(record => {
-                                      const originalFilename = (record.source_metadata as any)?.original_filename;
+                                      const originalFilename = (record.file_info as Record<string, unknown>)?.original_filename as string | undefined;
                                       const isSelected = selectedIndividualRecord?.id === record.id;
                                       return (
                                           <li key={record.id}
@@ -325,7 +326,7 @@ const AssetDetailViewPdf: React.FC<AssetDetailViewPdfProps> = ({
         <div className="mt-0 mb-4 border rounded-lg overflow-hidden shadow-md flex-grow min-h-[400px] h-[60vh]">
             <iframe
                 src={pdfBlobUrl}
-                title={selectedIndividualRecord ? (selectedIndividualRecord.source_metadata as any)?.original_filename || `Record ${selectedIndividualRecord.id}` : asset?.title || 'PDF Viewer'}
+                title={selectedIndividualRecord ? (selectedIndividualRecord.file_info as Record<string, unknown>)?.original_filename as string || `Record ${selectedIndividualRecord.id}` : asset?.title || 'PDF Viewer'}
                 width="100%"
                 height="100%"
                 style={{ border: 'none' }}

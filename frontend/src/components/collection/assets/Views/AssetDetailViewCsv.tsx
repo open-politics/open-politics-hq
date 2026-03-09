@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { toast } from 'sonner';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { FragmentDisplay, FragmentSectionHeader, FragmentCountBadge } from './Fragments';
+import { getAssetMeta } from '@/lib/utils';
 
 interface AssetDetailViewCsvProps {
   asset: AssetRead;
@@ -49,7 +50,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
         child.title?.toLowerCase().includes(term) ||
         child.text_content?.toLowerCase().includes(term) ||
         child.id.toString().includes(term) ||
-        JSON.stringify(child.source_metadata || {}).toLowerCase().includes(term)
+        JSON.stringify(getAssetMeta(child)).toLowerCase().includes(term)
       );
     }
 
@@ -190,7 +191,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
   }, [highlightedAssetId, isHighlightedInView, searchTerm]);
 
   const handleCopyRowData = (childAsset: AssetRead) => {
-    const rowData = childAsset.source_metadata?.original_row_data;
+    const rowData = childAsset.file_info?.original_row_data as Record<string, unknown> | undefined;
     if (rowData) {
       const csvString = Object.values(rowData).join(',');
       navigator.clipboard.writeText(csvString);
@@ -259,7 +260,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
                     <div className="w-full overflow-hidden">
                       <div className="truncate" title={childAsset.text_content || 'No content'}>
                         {childAsset.text_content || 
-                         (childAsset.source_metadata ? JSON.stringify(childAsset.source_metadata).substring(0, 150) + '...' : 'No content')}
+                         (Object.keys(getAssetMeta(childAsset)).length > 0 ? JSON.stringify(getAssetMeta(childAsset)).substring(0, 150) + '...' : 'No content')}
                       </div>
                     </div>
                   </td>
@@ -337,15 +338,18 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
                           </p>
                         </div>
                       )}
-                      {childAsset.source_metadata && Object.keys(childAsset.source_metadata).length > 0 && (
+                      {(() => {
+                        const meta = getAssetMeta(childAsset);
+                        return Object.keys(meta).length > 0 && (
                         <div className="mt-2 min-w-0">
                           <ScrollArea className="max-h-20 w-full">
                             <pre className="text-xs bg-muted/50 p-2 rounded overflow-auto break-all">
-                              {JSON.stringify(childAsset.source_metadata, null, 2)}
+                              {JSON.stringify(meta, null, 2)}
                             </pre>
                           </ScrollArea>
                         </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   </div>
                 </CardContent>
@@ -364,7 +368,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
   const renderSelectedRowDetail = () => {
     if (!selectedChildAsset) return null;
 
-    const rowData = selectedChildAsset.source_metadata?.original_row_data || {};
+    const rowData = (selectedChildAsset.file_info?.original_row_data as Record<string, unknown>) || {};
     const columnNames = Object.keys(rowData);
 
     return (
@@ -527,16 +531,19 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
           </div>
 
           {/* Raw Metadata */}
-          {selectedChildAsset.source_metadata && Object.keys(selectedChildAsset.source_metadata).length > 0 && (
+          {(() => {
+            const meta = getAssetMeta(selectedChildAsset);
+            return Object.keys(meta).length > 0 && (
             <div>
               <h4 className="text-sm font-semibold mb-2 text-muted-foreground">Raw Metadata</h4>
               <ScrollArea className="h-24 p-3 bg-muted/30 rounded">
                 <pre className="text-xs">
-                  {JSON.stringify(selectedChildAsset.source_metadata, null, 2)}
+                  {JSON.stringify(meta, null, 2)}
                 </pre>
               </ScrollArea>
             </div>
-          )}
+            );
+          })()}
         </CardContent>
       </Card>
     );

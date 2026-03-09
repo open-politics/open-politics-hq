@@ -2748,7 +2748,7 @@
           "Assets"
         ],
         "summary": "Upload File",
-        "description": "Upload a file and create an asset.\n\nUses FileHandler directly for clean, testable file ingestion.",
+        "description": "Upload a file and create an asset.",
         "operationId": "upload_file",
         "security": [
           {
@@ -3167,7 +3167,7 @@
           "Assets"
         ],
         "summary": "Materialize Csv From Rows",
-        "description": "Materialize a chat-generated CSV container into a real CSV file.\n\nGenerates a CSV file from the row assets and uploads it to storage,\nthen updates the parent asset with the blob_path.",
+        "description": "Materialize a chat-generated CSV container into a real CSV file.\n\nUses registry-driven materializer from ContentTypeDescriptor.\nGenerates a CSV file from the row assets and uploads it to storage,\nthen updates the parent asset with the blob_path.",
         "operationId": "materialize_csv_from_rows",
         "security": [
           {
@@ -5062,6 +5062,64 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/bundles/from-vfolder": {
+      "post": {
+        "tags": [
+          "Bundles"
+        ],
+        "summary": "Materialize Virtual Folder",
+        "description": "Create a real bundle from a virtual folder (path prefix within a source bundle).",
+        "operationId": "materialize_virtual_folder",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterializeVfolderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BundleRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/infospaces/{infospace_id}/bundles": {
       "post": {
         "tags": [
@@ -5934,257 +5992,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/infospaces/{infospace_id}/bundle-views": {
-      "post": {
-        "tags": [
-          "Bundle Views"
-        ],
-        "summary": "Create Bundle View",
-        "description": "Create a BundleView (named subset of a bundle).",
-        "operationId": "create_bundle_view",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "infospace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Infospace Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BundleViewCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BundleViewRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "Bundle Views"
-        ],
-        "summary": "List Bundle Views",
-        "description": "List BundleViews in an infospace.",
-        "operationId": "list_bundle_views",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "infospace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Infospace Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/BundleViewRead"
-                  },
-                  "title": "Response Bundle Views-List Bundle Views"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/bundle-views/{view_id}": {
-      "get": {
-        "tags": [
-          "Bundle Views"
-        ],
-        "summary": "Get Bundle View",
-        "description": "Get a BundleView by ID.",
-        "operationId": "get_bundle_view",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "view_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "View Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BundleViewRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Bundle Views"
-        ],
-        "summary": "Update Bundle View",
-        "description": "Update a BundleView.",
-        "operationId": "update_bundle_view",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "view_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "View Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/BundleViewUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BundleViewRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Bundle Views"
-        ],
-        "summary": "Delete Bundle View",
-        "description": "Delete a BundleView.",
-        "operationId": "delete_bundle_view",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "view_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "View Id"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -7822,7 +7629,7 @@
           "Ingestion Jobs"
         ],
         "summary": "Enable Directory Watch",
-        "description": "Enable watching and/or version inbox for an already-imported directory.\n\n- ``enable_reconcile``: periodic stat comparison to detect replaced files.\n- ``enable_inbox``: creates ``_inbox/`` subdirectory; new files dropped\n  there are auto-imported with smart version detection.\n\nIdempotent: calling again with the same source_path updates existing Sources.",
+        "description": "Enable watching and/or version inbox for an already-imported directory.\n\n- ``enable_reconcile``: deprecated; reconcile is on-demand only.\n- ``enable_inbox``: creates ``_inbox/`` subdirectory; new files dropped\n  there are auto-imported with smart version detection.\n\nIdempotent: calling again with the same source_path updates existing Sources.",
         "operationId": "enable_directory_watch",
         "security": [
           {
@@ -8636,7 +8443,7 @@
           "embeddings"
         ],
         "summary": "Generate Infospace Embeddings",
-        "description": "Generate embeddings for all assets in an infospace.\nUses the infospace's configured embedding model.\n\nFor cloud providers (OpenAI, Voyage AI, Jina AI), API keys must be provided\nin the request. Background processing is supported for all providers by passing\nAPI keys to the Celery worker.",
+        "description": "Generate embeddings for all assets in an infospace.\nDispatches background tasks using the infospace's embedding_selection.",
         "operationId": "generate_infospace_embeddings",
         "security": [
           {
@@ -8935,33 +8742,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/embeddings/embeddings/models": {
-      "get": {
-        "tags": [
-          "embeddings"
-        ],
-        "summary": "List Available Embedding Models",
-        "description": "List available embedding models from Ollama (legacy endpoint).\n\nNote: This endpoint only returns Ollama models. Use POST /embeddings/models/discover\nwith runtime API keys to get models from all providers.",
-        "operationId": "list_available_embedding_models",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AvailableModelsResponse"
                 }
               }
             }
@@ -9589,191 +9369,6 @@
           },
           "500": {
             "description": "Internal Server Error"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/filters/filters": {
-      "post": {
-        "tags": [
-          "filters"
-        ],
-        "summary": "Save Filter",
-        "description": "Save a reusable filter definition.",
-        "operationId": "save_filter",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "filter_name",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Filter Name"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Filter Config"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Message"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "get": {
-        "tags": [
-          "filters"
-        ],
-        "summary": "List Filters",
-        "description": "List all saved filter names.",
-        "operationId": "list_filters",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "title": "Response Filters-List Filters"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/filters/filters/{filter_name}": {
-      "get": {
-        "tags": [
-          "filters"
-        ],
-        "summary": "Get Filter",
-        "description": "Get a saved filter definition.",
-        "operationId": "get_filter",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "filter_name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Filter Name"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Filters-Get Filter"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "filters"
-        ],
-        "summary": "Delete Filter",
-        "description": "Delete a saved filter.",
-        "operationId": "delete_filter",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "filter_name",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Filter Name"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Message"
-                }
-              }
-            }
           },
           "422": {
             "description": "Validation Error",
@@ -11128,6 +10723,7 @@
           "app"
         ],
         "summary": "Readyz",
+        "description": "Verify DB and Redis connectivity. Returns 503 if dependencies are unhealthy.",
         "operationId": "readyz",
         "responses": {
           "200": {
@@ -11147,6 +10743,7 @@
           "app"
         ],
         "summary": "Liveness",
+        "description": "Process is alive. No dependency checks.",
         "operationId": "liveness",
         "responses": {
           "200": {
@@ -11166,6 +10763,7 @@
           "app"
         ],
         "summary": "Healthz",
+        "description": "Legacy health endpoint. Same as readiness.",
         "operationId": "healthz",
         "responses": {
           "200": {
@@ -12414,6 +12012,88 @@
         }
       }
     },
+    "/api/v1/providers/models": {
+      "get": {
+        "tags": [
+          "Providers",
+          "Providers"
+        ],
+        "summary": "Discover Models",
+        "description": "Discover available models for a given capability.\n\nReturns combined list of models from all available providers\n(system + user-keyed). Frontend uses this for model selection dropdowns\nin annotation, embedding, OCR config.",
+        "operationId": "discover_models",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "capability",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Capability type: 'llm', 'embedding'",
+              "examples": [
+                "llm",
+                "embedding"
+              ],
+              "title": "Capability"
+            },
+            "description": "Capability type: 'llm', 'embedding'"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Providers-Discover Models"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/capabilities": {
+      "get": {
+        "tags": [
+          "Providers",
+          "Providers"
+        ],
+        "summary": "System Capabilities",
+        "description": "Return what capabilities this deployment provides.\n\nFrontend uses this to show/hide UI elements based on what's available\n(e.g., hide OCR settings if no OCR provider, hide embedding if not configured).",
+        "operationId": "system_capabilities",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Providers-System Capabilities"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/search/": {
       "get": {
         "tags": [
@@ -12715,6 +12395,18 @@
               "title": "Path"
             },
             "description": "Directory path to list; defaults to first allowed root"
+          },
+          {
+            "name": "include_counts",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Include file_count, importable_count, size_bytes for directories (expensive on large trees)",
+              "default": true,
+              "title": "Include Counts"
+            },
+            "description": "Include file_count, importable_count, size_bytes for directories (expensive on large trees)"
           }
         ],
         "responses": {
@@ -15738,7 +15430,7 @@
           "Tree Navigation"
         ],
         "summary": "Delete Tree Nodes",
-        "description": "Delete tree nodes (bundles and/or assets).\n\nHandles cascading deletion intelligently:\n- Deleting a bundle deletes all assets inside it\n- Deleting an asset deletes all child assets\n- Much cleaner than separate bundle/asset endpoints",
+        "description": "Delete tree nodes (bundles and/or assets).\nCascades: bundle delete includes assets; asset delete includes children.",
         "operationId": "delete_tree_nodes",
         "security": [
           {
@@ -15790,107 +15482,13 @@
         }
       }
     },
-    "/api/v1/infospaces/{infospace_id}/tree/virtual-children": {
-      "get": {
-        "tags": [
-          "Tree Navigation"
-        ],
-        "summary": "Get Virtual Folder Children",
-        "description": "Get virtual folder structure from blob_path for path-based bundles.\nParses blob_path to extract immediate subfolders and files under path_prefix.\nUsed for lightweight directory-imported bundles (one root Bundle, virtual folders).",
-        "operationId": "get_virtual_folder_children",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "infospace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Infospace Id"
-            }
-          },
-          {
-            "name": "bundle_id",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "description": "Bundle ID (root bundle for dataset)",
-              "title": "Bundle Id"
-            },
-            "description": "Bundle ID (root bundle for dataset)"
-          },
-          {
-            "name": "path_prefix",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "description": "Path prefix for filtering (e.g. data_set_1/politics)",
-              "default": "",
-              "title": "Path Prefix"
-            },
-            "description": "Path prefix for filtering (e.g. data_set_1/politics)"
-          },
-          {
-            "name": "skip",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Skip"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 500,
-              "minimum": 1,
-              "default": 100,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VirtualFolderChildrenResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/infospaces/{infospace_id}/tree/feed": {
       "get": {
         "tags": [
           "Tree Navigation"
         ],
         "summary": "Get Feed Assets",
-        "description": "Get a feed of recent assets sorted by date.\n\nUnlike the tree endpoint, this returns ALL displayable assets regardless\nof whether their containing bundle is expanded. Perfect for \"latest\" feeds.\n\nFeatures:\n- Includes assets from all bundles (not just expanded ones)\n- Filters out child assets (only parent/standalone assets)\n- Sorted by date (created_at or updated_at) or name\n- Supports kind filtering\n- Supports bundle_id and path_filter for Bundle/BundleView detail views\n- Includes source_metadata for image extraction",
+        "description": "Get a feed of recent assets sorted by date.\n\nUnlike the tree endpoint, this returns ALL displayable assets regardless\nof whether their containing bundle is expanded. Perfect for \"latest\" feeds.\n\nFeatures:\n- Includes assets from all bundles (not just expanded ones)\n- Filters out child assets (only parent/standalone assets)\n- Sorted by date (created_at or updated_at) or name\n- Supports kind filtering\n- Supports bundle_id and path_filter for Bundle/virtual folder detail views\n- Includes source_metadata for image extraction",
         "operationId": "get_feed_assets",
         "security": [
           {
@@ -15981,10 +15579,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter to assets in this bundle (for Bundle/BundleView detail)",
+              "description": "Filter to assets in this bundle (for Bundle detail)",
               "title": "Bundle Id"
             },
-            "description": "Filter to assets in this bundle (for Bundle/BundleView detail)"
+            "description": "Filter to assets in this bundle (for Bundle detail)"
           },
           {
             "name": "path_filter",
@@ -15999,10 +15597,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Filter by logical_path prefix (for BundleView)",
+              "description": "Filter by logical_path prefix (for virtual folder)",
               "title": "Path Filter"
             },
-            "description": "Filter by logical_path prefix (for BundleView)"
+            "description": "Filter by logical_path prefix (for virtual folder)"
           }
         ],
         "responses": {
@@ -16097,7 +15695,7 @@
           "Tree Navigation"
         ],
         "summary": "Text Search Assets",
-        "description": "Comprehensive text search across all assets in an infospace.\n\nSearch strategy (prioritized):\n1. **Title matches** - Exact and partial matches in asset titles (highest priority)\n2. **Bundle members** - Assets in bundles with matching names\n3. **Fulltext content** - Searches text_content field (fallback)\n\nThis searches ALL assets regardless of bundle membership or tree visibility,\nmaking it much more useful than the client-side filtering.\n\nReturns assets with relevance scores based on match quality.",
+        "description": "Comprehensive text search across all assets in an infospace.\nSearch strategy: title → bundle name → content. Returns assets with relevance scores.",
         "operationId": "text_search_assets",
         "security": [
           {
@@ -18525,7 +18123,7 @@
           "Utilities"
         ],
         "summary": "Get Providers",
-        "description": "Returns a dynamic list of available classification providers and their models.\nDiscovers models from all configured providers (Ollama, OpenAI, Gemini).\n\nLEGACY: Use /providers/unified for a better structured response.",
+        "description": "Returns a dynamic list of available LLM providers and their models,\ngrouped by provider type_key.\n\nFor providers with static model catalogs (OpenAI, Anthropic, Gemini, Mistral)\nthe catalog is returned directly. For dynamic-catalog providers (Ollama) the\nrunning instance is queried via ``discover_models()``.",
         "operationId": "get_providers",
         "responses": {
           "200": {
@@ -18703,7 +18301,7 @@
           "Utilities"
         ],
         "summary": "Get Geocoding Providers",
-        "description": "Get available geocoding providers and their configuration requirements.\nHelps frontend display provider options and understand what credentials are needed.\nUses registry service to dynamically discover providers.",
+        "description": "Get available geocoding providers and their configuration requirements.\nHelps frontend display provider options and understand what credentials are needed.\nUses descriptor registry to dynamically discover providers.",
         "operationId": "get_geocoding_providers",
         "responses": {
           "200": {
@@ -20488,7 +20086,7 @@
             ],
             "title": "Source Identifier"
           },
-          "source_metadata": {
+          "facets": {
             "anyOf": [
               {
                 "additionalProperties": true,
@@ -20498,7 +20096,19 @@
                 "type": "null"
               }
             ],
-            "title": "Source Metadata"
+            "title": "Facets"
+          },
+          "file_info": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Info"
           },
           "discovered_modalities": {
             "anyOf": [
@@ -20623,7 +20233,7 @@
             ],
             "title": "Blob Path"
           },
-          "source_metadata": {
+          "facets": {
             "anyOf": [
               {
                 "additionalProperties": true,
@@ -20633,7 +20243,19 @@
                 "type": "null"
               }
             ],
-            "title": "Source Metadata"
+            "title": "Facets"
+          },
+          "file_info": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Info"
           },
           "children": {
             "items": {
@@ -20770,7 +20392,7 @@
             ],
             "title": "Source Identifier"
           },
-          "source_metadata": {
+          "facets": {
             "anyOf": [
               {
                 "additionalProperties": true,
@@ -20780,7 +20402,19 @@
                 "type": "null"
               }
             ],
-            "title": "Source Metadata"
+            "title": "Facets"
+          },
+          "file_info": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Info"
           },
           "content_hash": {
             "anyOf": [
@@ -20969,7 +20603,7 @@
             ],
             "title": "Source Identifier"
           },
-          "source_metadata": {
+          "facets": {
             "anyOf": [
               {
                 "additionalProperties": true,
@@ -20979,7 +20613,19 @@
                 "type": "null"
               }
             ],
-            "title": "Source Metadata"
+            "title": "Facets"
+          },
+          "file_info": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Info"
           },
           "event_timestamp": {
             "anyOf": [
@@ -21230,7 +20876,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File",
             "description": "Infospace package file (.zip)"
           }
@@ -21246,7 +20892,7 @@
           "files": {
             "items": {
               "type": "string",
-              "format": "binary"
+              "contentMediaType": "application/octet-stream"
             },
             "type": "array",
             "title": "Files"
@@ -21268,7 +20914,7 @@
           "files": {
             "items": {
               "type": "string",
-              "format": "binary"
+              "contentMediaType": "application/octet-stream"
             },
             "type": "array",
             "title": "Files"
@@ -21289,7 +20935,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File"
           }
         },
@@ -21303,7 +20949,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File"
           },
           "title": {
@@ -21333,7 +20979,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File",
             "description": "Dataset Package file (.zip)"
           }
@@ -21348,7 +20994,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File",
             "description": "File to upload"
           }
@@ -21462,7 +21108,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File"
           }
         },
@@ -21494,7 +21140,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File"
           }
         },
@@ -21508,7 +21154,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File"
           }
         },
@@ -21522,7 +21168,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File"
           }
         },
@@ -21536,7 +21182,7 @@
         "properties": {
           "file": {
             "type": "string",
-            "format": "binary",
+            "contentMediaType": "application/octet-stream",
             "title": "File"
           }
         },
@@ -22061,112 +21707,6 @@
         },
         "type": "object",
         "title": "BundleUpdate"
-      },
-      "BundleViewCreate": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "source_bundle_id": {
-            "type": "integer",
-            "title": "Source Bundle Id"
-          },
-          "path_prefix": {
-            "type": "string",
-            "title": "Path Prefix",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "source_bundle_id"
-        ],
-        "title": "BundleViewCreate"
-      },
-      "BundleViewRead": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "uuid": {
-            "type": "string",
-            "title": "Uuid"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "source_bundle_id": {
-            "type": "integer",
-            "title": "Source Bundle Id"
-          },
-          "path_prefix": {
-            "type": "string",
-            "title": "Path Prefix"
-          },
-          "infospace_id": {
-            "type": "integer",
-            "title": "Infospace Id"
-          },
-          "user_id": {
-            "type": "integer",
-            "title": "User Id"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Updated At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "uuid",
-          "name",
-          "source_bundle_id",
-          "path_prefix",
-          "infospace_id",
-          "user_id",
-          "created_at",
-          "updated_at"
-        ],
-        "title": "BundleViewRead"
-      },
-      "BundleViewUpdate": {
-        "properties": {
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "path_prefix": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Path Prefix"
-          }
-        },
-        "type": "object",
-        "title": "BundleViewUpdate"
       },
       "ChatConversationCreate": {
         "properties": {
@@ -22848,6 +22388,17 @@
           "model_name": {
             "type": "string",
             "title": "Model Name"
+          },
+          "provider_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Name"
           },
           "infospace_id": {
             "type": "integer",
@@ -23988,7 +23539,7 @@
             "title": "Aliases",
             "default": []
           },
-          "embedding": {
+          "embedding_384": {
             "anyOf": [
               {
                 "items": {
@@ -24000,7 +23551,21 @@
                 "type": "null"
               }
             ],
-            "title": "Embedding"
+            "title": "Embedding 384"
+          },
+          "embedding_512": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding 512"
           },
           "embedding_768": {
             "anyOf": [
@@ -24015,6 +23580,34 @@
               }
             ],
             "title": "Embedding 768"
+          },
+          "embedding_1024": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding 1024"
+          },
+          "embedding_1536": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding 1536"
           },
           "properties": {
             "additionalProperties": true,
@@ -24188,34 +23781,6 @@
             ],
             "title": "Bundle Id"
           },
-          "include_domains": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Include Domains"
-          },
-          "exclude_domains": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Exclude Domains"
-          },
           "api_key": {
             "anyOf": [
               {
@@ -24227,99 +23792,17 @@
             ],
             "title": "Api Key"
           },
-          "search_depth": {
+          "provider_params": {
             "anyOf": [
               {
-                "type": "string"
+                "additionalProperties": true,
+                "type": "object"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Search Depth",
-            "default": "basic"
-          },
-          "include_images": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Include Images",
-            "default": true
-          },
-          "include_answer": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Include Answer",
-            "default": true
-          },
-          "topic": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Topic",
-            "default": "general"
-          },
-          "chunks_per_source": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Chunks Per Source",
-            "default": 3
-          },
-          "days": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Days",
-            "default": 7
-          },
-          "time_range": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Time Range"
-          },
-          "country": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Country"
+            "title": "Provider Params"
           }
         },
         "type": "object",
@@ -25039,12 +24522,6 @@
             "description": "Regenerate existing embeddings",
             "default": false
           },
-          "async_processing": {
-            "type": "boolean",
-            "title": "Async Processing",
-            "description": "Process in background",
-            "default": true
-          },
           "api_keys": {
             "anyOf": [
               {
@@ -25087,12 +24564,6 @@
             ],
             "title": "Asset Kinds",
             "description": "Filter by asset types"
-          },
-          "async_processing": {
-            "type": "boolean",
-            "title": "Async Processing",
-            "description": "Process in background",
-            "default": true
           },
           "api_keys": {
             "anyOf": [
@@ -25520,38 +24991,15 @@
             "type": "integer",
             "title": "Owner Id"
           },
-          "vector_backend": {
+          "embedding_selection": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/ProviderSelection"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Vector Backend"
-          },
-          "embedding_model": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Embedding Model"
-          },
-          "embedding_dim": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Embedding Dim"
+            ]
           },
           "chunk_size": {
             "anyOf": [
@@ -25647,38 +25095,15 @@
             "format": "date-time",
             "title": "Created At"
           },
-          "vector_backend": {
+          "embedding_selection": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/ProviderSelection"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Vector Backend"
-          },
-          "embedding_model": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Embedding Model"
-          },
-          "embedding_dim": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Embedding Dim"
+            ]
           },
           "chunk_size": {
             "anyOf": [
@@ -25747,38 +25172,15 @@
             ],
             "title": "Description"
           },
-          "vector_backend": {
+          "embedding_selection": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/ProviderSelection"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Vector Backend"
-          },
-          "embedding_model": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Embedding Model"
-          },
-          "embedding_dim": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Embedding Dim"
+            ]
           },
           "chunk_size": {
             "anyOf": [
@@ -26263,6 +25665,67 @@
         "title": "KnowledgeGraphUpdate",
         "description": "Request schema for updating a KnowledgeGraph."
       },
+      "LanguageDefaults": {
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "chat": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "annotation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "LanguageDefaults",
+        "description": "Language capability defaults with context-specific overrides.\n\n``default`` is the base language provider. ``chat`` and ``annotation``\noverride it for those specific contexts.  ``resolve()`` checks the\ncontext override first and falls back to ``default``."
+      },
+      "MaterializeVfolderRequest": {
+        "properties": {
+          "source_bundle_id": {
+            "type": "integer",
+            "title": "Source Bundle Id"
+          },
+          "path_prefix": {
+            "type": "string",
+            "title": "Path Prefix",
+            "default": ""
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_bundle_id",
+          "name"
+        ],
+        "title": "MaterializeVfolderRequest",
+        "description": "Request body for materializing a virtual folder as a real bundle."
+      },
       "MergeEntitiesRequest": {
         "properties": {
           "entity_ids": {
@@ -26580,6 +26043,120 @@
         ],
         "title": "PromoteFragmentRequest"
       },
+      "ProviderDefaults-Input": {
+        "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LanguageDefaults"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "embedding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "search": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ocr": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "geocoding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ProviderDefaults",
+        "description": "User's per-capability provider preferences.\n\nCore capabilities are named fields — enforced by the model schema.\nLanguage uses ``LanguageDefaults`` for context-specific overrides;\nall other capabilities are plain ``ProviderSelection``."
+      },
+      "ProviderDefaults-Output": {
+        "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LanguageDefaults"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "embedding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "search": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ocr": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "geocoding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ProviderDefaults",
+        "description": "User's per-capability provider preferences.\n\nCore capabilities are named fields — enforced by the model schema.\nLanguage uses ``LanguageDefaults`` for context-specific overrides;\nall other capabilities are plain ``ProviderSelection``."
+      },
       "ProviderInfo": {
         "properties": {
           "provider_name": {
@@ -26640,6 +26217,31 @@
           "name"
         ],
         "title": "ProviderModel"
+      },
+      "ProviderSelection": {
+        "properties": {
+          "type_key": {
+            "type": "string",
+            "title": "Type Key"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type_key"
+        ],
+        "title": "ProviderSelection",
+        "description": "A typed provider+model choice."
       },
       "RSSDiscoveryRequest": {
         "properties": {
@@ -26962,6 +26564,7 @@
         "enum": [
           "pending",
           "running",
+          "waiting",
           "completed",
           "failed",
           "completed_with_errors"
@@ -27228,7 +26831,7 @@
             ],
             "title": "Provider"
           },
-          "source_metadata": {
+          "facets": {
             "anyOf": [
               {
                 "additionalProperties": true,
@@ -27238,7 +26841,19 @@
                 "type": "null"
               }
             ],
-            "title": "Source Metadata"
+            "title": "Facets"
+          },
+          "file_info": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Info"
           }
         },
         "type": "object",
@@ -28283,6 +27898,11 @@
             "type": "integer",
             "title": "Size Bytes",
             "default": 0
+          },
+          "counts_capped": {
+            "type": "boolean",
+            "title": "Counts Capped",
+            "default": false
           }
         },
         "type": "object",
@@ -28858,7 +28478,7 @@
             ],
             "title": "Stub"
           },
-          "source_metadata": {
+          "facets": {
             "anyOf": [
               {
                 "additionalProperties": true,
@@ -28868,7 +28488,19 @@
                 "type": "null"
               }
             ],
-            "title": "Source Metadata"
+            "title": "Facets"
+          },
+          "file_info": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Info"
           },
           "preview": {
             "anyOf": [
@@ -29020,8 +28652,7 @@
         "enum": [
           "bundle",
           "asset",
-          "virtual_folder",
-          "bundle_view"
+          "virtual_folder"
         ],
         "title": "TreeNodeType",
         "description": "Type of node in the file tree."
@@ -29643,6 +29274,16 @@
             ],
             "title": "Ui Preferences"
           },
+          "provider_defaults": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderDefaults-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -30009,6 +29650,16 @@
               }
             ],
             "title": "Ui Preferences"
+          },
+          "provider_defaults": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderDefaults-Input"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -30074,46 +29725,6 @@
           "type"
         ],
         "title": "ValidationError"
-      },
-      "VirtualFolderChildrenResponse": {
-        "properties": {
-          "folders": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Folders"
-          },
-          "assets": {
-            "items": {
-              "$ref": "#/components/schemas/AssetRead"
-            },
-            "type": "array",
-            "title": "Assets"
-          },
-          "path_prefix": {
-            "type": "string",
-            "title": "Path Prefix"
-          },
-          "total_folders": {
-            "type": "integer",
-            "title": "Total Folders"
-          },
-          "total_assets": {
-            "type": "integer",
-            "title": "Total Assets"
-          }
-        },
-        "type": "object",
-        "required": [
-          "folders",
-          "assets",
-          "path_prefix",
-          "total_folders",
-          "total_assets"
-        ],
-        "title": "VirtualFolderChildrenResponse",
-        "description": "Response for virtual folder children (path-based tree from blob_path)."
       },
       "WatchStatusResponse": {
         "properties": {

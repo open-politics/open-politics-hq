@@ -17,10 +17,10 @@ export default function ArticleFeaturedImage({ asset, childAssets, className }: 
   // Find the child asset for credit info
   const imageAsset = childAssets?.find(
     child => child.kind === 'image' && 
-    (child.source_metadata?.is_hero_image || child.source_identifier === imageUrl)
+    (child.file_info?.is_hero_image || child.source_identifier === imageUrl)
   );
   
-  const mediaCredit = imageAsset?.source_metadata?.media_credit as string | undefined;
+  const mediaCredit = imageAsset?.file_info?.media_credit as string | undefined;
 
   return (
     <div className={cn("w-full mb-8", className)}>

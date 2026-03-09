@@ -116,7 +116,7 @@ export const useAssetStore = create<AssetState>((set, get) => ({
             title: files.length === 1 ? title : file.name.replace(/\.[^/.]+$/, ""), // Use actual filename without extension
             kind: actualKind, // Use detected file type, not the dominant kind
             blob_path: uploadResponse.object_name,
-            source_metadata: { filename: uploadResponse.filename },
+            file_info: { filename: uploadResponse.filename },
           };
           const newAsset = await AssetsService.createAsset({ infospaceId: activeInfospace.id, requestBody: assetCreate });
           createdAssets.push(newAsset);

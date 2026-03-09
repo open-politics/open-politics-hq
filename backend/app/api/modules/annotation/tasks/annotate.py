@@ -23,7 +23,7 @@ from app.models import (
 from app.schemas import AnnotationCreate
 from app.core.db import engine
 from app.core.celery_app import celery
-from app.api.modules.foundation_service_providers.factory import create_model_registry, create_storage_provider
+from app.api.modules.foundation_service_providers.registry import get_storage_provider, resolve, load_credentials
 from app.core.task_utils import create_pydantic_model_from_json_schema, make_python_identifier, run_async_in_celery
 from app.core.config import settings
 from app.api.modules.content.types import get_content_type_registry
@@ -33,9 +33,6 @@ if TYPE_CHECKING:
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
-# Module-level provider cache to avoid recreating providers in the same worker process
-_provider_cache = {}
 
 # Configuration for parallel processing
 # These will be overridden by settings values
@@ -60,24 +57,11 @@ def get_annotation_processing_config():
         }
 
 async def get_cached_provider(provider_type: str, settings_instance):
-    """Get a cached provider instance or create a new one."""
-    cache_key = f"{provider_type}_{id(settings_instance)}"
-    
-    if cache_key not in _provider_cache:
-        if provider_type == "storage":
-            _provider_cache[cache_key] = create_storage_provider(settings_instance)
-        elif provider_type == "model_registry":
-            model_registry = create_model_registry(settings_instance)
-            await model_registry.initialize_providers()
-            _provider_cache[cache_key] = model_registry
-        else:
-            raise ValueError(f"Unknown provider type: {provider_type}")
-        
-        logger.info(f"Task: Created and cached {provider_type} provider")
-    else:
-        logger.debug(f"Task: Using cached {provider_type} provider")
-    
-    return _provider_cache[cache_key]
+    """Get a cached provider instance."""
+    from app.core.task_primitives import _get_cached_provider as _shared_get_cached_provider
+    if provider_type == "storage":
+        return _shared_get_cached_provider("storage", lambda: get_storage_provider(settings_instance))
+    raise ValueError(f"Unknown provider type: {provider_type}")
 
 def _get_image_asset_kinds(process_pdfs_as_images: bool = True) -> frozenset:
     """Get asset kinds that support image modality. PDF_PAGE is conditional on process_pdfs_as_images."""
@@ -87,20 +71,6 @@ def _get_image_asset_kinds(process_pdfs_as_images: bool = True) -> frozenset:
         return all_image
     return all_image - {AssetKind.PDF_PAGE}
 
-
-def clear_provider_cache():
-    """Clear the provider cache. Useful for memory management in long-running workers."""
-    global _provider_cache
-    cache_size = len(_provider_cache)
-    _provider_cache.clear()
-    logger.info(f"Task: Cleared provider cache ({cache_size} providers removed)")
-
-def get_cache_status():
-    """Get information about the current provider cache."""
-    return {
-        "cache_size": len(_provider_cache),
-        "cached_providers": list(_provider_cache.keys())
-    }
 
 def validate_hierarchical_schema(output_contract: dict) -> bool:
     """Validate that hierarchical schema follows conventions"""
@@ -675,7 +645,7 @@ async def assemble_multimodal_context(
             # Detect actual MIME type from image bytes
             detected_mime_type = detect_image_mime_type(
                 image_content_bytes,
-                fallback=parent_asset.source_metadata.get("mime_type", "image/png") if parent_asset.source_metadata else "image/png"
+                fallback=(parent_asset.file_info or {}).get("mime_type", "image/png")
             )
             
             # Validate image size (Anthropic limit: 5MB)
@@ -763,7 +733,7 @@ async def assemble_multimodal_context(
                 # Detect actual MIME type from image bytes
                 detected_mime_type = detect_image_mime_type(
                     image_content_bytes,
-                    fallback=img_asset.source_metadata.get("mime_type", "image/png") if img_asset.source_metadata else "image/png"
+                    fallback=(img_asset.file_info or {}).get("mime_type", "image/png")
                 )
                 
                 # Validate image size and log token estimates
@@ -831,7 +801,7 @@ async def assemble_multimodal_context(
                     "uuid": str(audio_asset.uuid),
                     "type": "audio",
                     "content": audio_content_bytes,
-                    "mime_type": audio_asset.source_metadata.get("mime_type", "audio/mpeg"),
+                    "mime_type": (audio_asset.file_info or {}).get("mime_type", "audio/mpeg"),
                     "metadata": {
                         "title": audio_asset.title,
                         "original_kind": str(audio_asset.kind.value)
@@ -1137,55 +1107,75 @@ def process_annotation_run(self, run_id: int, cursor: int = 0) -> None:
     """
     Process an annotation run. For large runs (> ANNOTATION_CHUNK_SIZE), self-chains
     to process in batches and avoid long-running tasks.
+    Uses Redis lock to prevent duplicate concurrent execution.
     """
-    logger.info(f"Task: Processing annotation run {run_id} (cursor={cursor})")
-    chunk_size = settings.ANNOTATION_CHUNK_SIZE
+    from app.core.redis_lock import annotation_run_lock
 
-    try:
-        next_cursor = run_async_in_celery(_process_annotation_run_async, run_id, cursor, chunk_size)
-        if isinstance(next_cursor, int):
-            process_annotation_run.delay(run_id, cursor=next_cursor)
-            logger.info(f"Task: Chained annotation run {run_id} from cursor {cursor} to {next_cursor}")
-    except Exception as e:
-        logger.exception(f"Task: Critical unhandled error in async processing for run {run_id}: {e}")
-        # If the async task fails with an unhandled exception, mark the run as FAILED.
-        with Session(engine) as session:
-            try:
-                run = session.get(AnnotationRun, run_id)
-                if run:
-                    run.status = RunStatus.FAILED
-                    run.error_message = f"Critical task execution error: {str(e)}"
-                    run.completed_at = datetime.now(timezone.utc)
-                    run.updated_at = datetime.now(timezone.utc)
-                    session.add(run)
-                    session.commit()
-            except Exception as db_exc:
-                logger.error(f"Task: Could not even update run {run_id} to FAILED status: {db_exc}")
-        raise  # Re-raise the exception so Celery knows the task failed
+    with annotation_run_lock(run_id) as acquired:
+        if not acquired:
+            logger.info(f"Annotation run {run_id} already in progress, skipping")
+            return
+
+        logger.info(f"Task: Processing annotation run {run_id} (cursor={cursor})")
+        chunk_size = settings.ANNOTATION_CHUNK_SIZE
+
+        try:
+            next_cursor = run_async_in_celery(_process_annotation_run_async, run_id, cursor, chunk_size)
+            if isinstance(next_cursor, int):
+                process_annotation_run.delay(run_id, cursor=next_cursor)
+                logger.info(f"Task: Chained annotation run {run_id} from cursor {cursor} to {next_cursor}")
+            else:
+                # Run fully completed - emit event for flow resumption (no import from flow)
+                with Session(engine) as session:
+                    run = session.get(AnnotationRun, run_id)
+                    if run:
+                        from app.core.events import emit
+                        emit("annotation_run.completed", {
+                            "run_id": run_id,
+                            "flow_execution_id": run.flow_execution_id,  # None for standalone runs
+                            "infospace_id": run.infospace_id,
+                        })
+                        logger.info(f"Task: Emitted annotation_run.completed for run {run_id}")
+        except Exception as e:
+            logger.exception(f"Task: Critical unhandled error in async processing for run {run_id}: {e}")
+            # If the async task fails with an unhandled exception, mark the run as FAILED.
+            with Session(engine) as session:
+                try:
+                    run = session.get(AnnotationRun, run_id)
+                    if run:
+                        run.status = RunStatus.FAILED
+                        run.error_message = f"Critical task execution error: {str(e)}"
+                        run.completed_at = datetime.now(timezone.utc)
+                        run.updated_at = datetime.now(timezone.utc)
+                        session.add(run)
+                        session.commit()
+                except Exception as db_exc:
+                    logger.error(f"Task: Could not even update run {run_id} to FAILED status: {db_exc}")
+            raise  # Re-raise the exception so Celery knows the task failed
 
 async def process_single_asset_schema(
     asset: Asset,
     schema_info: Dict[str, Any],
     run: AnnotationRun,
     run_config: Dict[str, Any],
-    model_registry,
+    provider,
     storage_provider_instance,
     session: Session,
     semaphore: Optional[asyncio.Semaphore] = None
 ) -> Dict[str, Any]:
     """
     Process a single asset with a single schema.
-    
+
     Args:
         asset: The asset to process
         schema_info: Schema information dict containing schema, structure, etc.
         run: The annotation run
         run_config: Run configuration
-        model_registry: The model registry service instance
+        provider: The LanguageModelProvider instance (rate-limited)
         storage_provider_instance: Storage provider instance
         session: Database session
         semaphore: Optional semaphore for concurrency control
-    
+
     Returns:
         Dict with processing results including success status, annotations, justifications, and errors
     """
@@ -1266,34 +1256,31 @@ async def process_single_asset_schema(
 
         logger.debug(f"Task: Calling provider for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
 
-        # Call the model registry for structured classification
-        # Get the model name and provider from run config (frontend sends as ai_model and ai_provider)
-        model_name = run_config.get("ai_model") or run_config.get("model_name", "gemini-2.5-flash-preview-05-20")
-        provider_name = run_config.get("ai_provider")  # Optional: if specified, use this provider directly
+        # Call the provider for structured classification
+        # Get the model name from run config (frontend sends as ai_model and ai_provider)
+        model_name = run_config.get("ai_model") or run_config.get("model_name")
         thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
-        
-        # Extract runtime API keys from run configuration (passed from frontend)
-        runtime_api_keys = run_config.get("api_keys")
-        
-        logger.info(f"Task: Using model '{model_name}' from provider '{provider_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}, Has API keys: {runtime_api_keys is not None}")
-        
+
+        logger.info(f"Task: Using model '{model_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}")
+
         # Acquire semaphore ONLY for the actual API call to limit concurrent external requests.
         # Critical optimization: We hold the semaphore ONLY during the API call, not during
         # pre-processing (context assembly) or post-processing (result parsing, DB operations).
         # This allows many tasks to prep/process simultaneously while rate-limiting actual API calls.
         if semaphore:
             await semaphore.acquire()
-        
+
         try:
-            provider_response = await model_registry.classify(
-                text_content=text_content_for_provider,
-                schema=schema_to_use,
+            _messages = []
+            if final_schema_instructions:
+                _messages.append({"role": "system", "content": final_schema_instructions})
+            _messages.append({"role": "user", "content": text_content_for_provider})
+            provider_response = await provider.generate(
+                messages=_messages,
                 model_name=model_name,
-                provider_name=provider_name,  # Pass provider name if specified
-                instructions=final_schema_instructions,
+                response_format=schema_to_use,
                 thinking_enabled=thinking_enabled,
-                runtime_api_keys=runtime_api_keys,
-                **{k: v for k, v in full_provider_config_for_classify.items() 
+                **{k: v for k, v in full_provider_config_for_classify.items()
                    if k not in ['thinking_config', 'model_name', 'api_keys']}
             )
         finally:
@@ -1432,22 +1419,22 @@ async def process_assets_parallel(
     validated_schemas: List[Dict[str, Any]],
     run: AnnotationRun,
     run_config: Dict[str, Any],
-    model_registry,
+    provider,
     storage_provider_instance,
     session: Session,
     concurrency_limit: int = DEFAULT_ANNOTATION_CONCURRENCY
 ) -> Tuple[List[Annotation], List[Justification], List[str]]:
     """
     Process assets and schemas in parallel with controlled concurrency.
-    
+
     Returns:
         Tuple of (all_annotations, all_justifications, errors)
     """
     import asyncio
-    
+
     # Create semaphore for concurrency control
     semaphore = asyncio.Semaphore(concurrency_limit)
-    
+
     # Create tasks for all asset-schema combinations
     tasks = []
     for schema_info in validated_schemas:
@@ -1457,7 +1444,7 @@ async def process_assets_parallel(
                 schema_info=schema_info,
                 run=run,
                 run_config=run_config,
-                model_registry=model_registry,
+                provider=provider,
                 storage_provider_instance=storage_provider_instance,
                 session=session,
                 semaphore=semaphore
@@ -1510,13 +1497,13 @@ async def process_assets_sequential(
     validated_schemas: List[Dict[str, Any]],
     run: AnnotationRun,
     run_config: Dict[str, Any],
-    model_registry,
+    provider,
     storage_provider_instance,
     session: Session
 ) -> Tuple[List[Annotation], List[Justification], List[str]]:
     """
     Process assets and schemas sequentially (fallback for when parallel processing is disabled).
-    
+
     Returns:
         Tuple of (all_annotations, all_justifications, errors)
     """
@@ -1566,26 +1553,23 @@ async def process_assets_sequential(
 
                 logger.debug(f"Task: Calling provider for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
 
-                # Call the model registry for structured classification
-                # Get the model name and provider from run config (frontend sends as ai_model and ai_provider)
-                model_name = run_config.get("ai_model") or run_config.get("model_name", "gemini-2.5-flash-preview-05-20")
-                provider_name = run_config.get("ai_provider")  # Optional: if specified, use this provider directly
+                # Call the provider for structured classification
+                # Get the model name from run config (frontend sends as ai_model)
+                model_name = run_config.get("ai_model") or run_config.get("model_name")
                 thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
-                
-                # Extract runtime API keys from run configuration (passed from frontend)
-                runtime_api_keys = run_config.get("api_keys")
-                
-                logger.info(f"Task: Using model '{model_name}' from provider '{provider_name}' for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}, Has API keys: {runtime_api_keys is not None}")
-                
-                provider_response = await model_registry.classify(
-                    text_content=text_content_for_provider,
-                    schema=OutputModelClass.model_json_schema(),
+
+                logger.info(f"Task: Using model '{model_name}' for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}")
+
+                _messages = []
+                if final_schema_instructions:
+                    _messages.append({"role": "system", "content": final_schema_instructions})
+                _messages.append({"role": "user", "content": text_content_for_provider})
+                provider_response = await provider.generate(
+                    messages=_messages,
                     model_name=model_name,
-                    provider_name=provider_name,  # Pass provider name if specified
-                    instructions=final_schema_instructions,
+                    response_format=OutputModelClass.model_json_schema(),
                     thinking_enabled=thinking_enabled,
-                    runtime_api_keys=runtime_api_keys,
-                    **{k: v for k, v in full_provider_config_for_classify.items() 
+                    **{k: v for k, v in full_provider_config_for_classify.items()
                        if k not in ['thinking_config', 'model_name', 'api_keys']}
                 )
                 
@@ -1767,7 +1751,15 @@ async def _process_annotation_run_async(
             provider_start_time = time.time()
             app_settings = settings
             try:
-                model_registry = await get_cached_provider("model_registry", app_settings)
+                from app.api.modules.foundation_service_providers.base import LanguageModelProvider
+                run_config_for_provider = run.configuration or {}
+                model_name_for_resolve = run_config_for_provider.get("model") or run_config_for_provider.get("ai_model") or run_config_for_provider.get("model_name")
+                runtime_api_keys = run_config_for_provider.get("api_keys")
+                type_key = run_config_for_provider.get("provider") or run_config_for_provider.get("ai_provider")
+                credentials = load_credentials(session, run.user_id, runtime_api_keys) if run.user_id else (runtime_api_keys or {})
+                provider = resolve(LanguageModelProvider, type_key, app_settings, credentials)
+                if not provider:
+                    raise ValueError(f"No LLM provider available for model '{model_name_for_resolve}'")
                 storage_provider_instance = await get_cached_provider("storage", app_settings)
                 provider_creation_time = time.time() - provider_start_time
                 logger.info(f"Task: Provider creation/retrieval took {provider_creation_time:.3f}s for Run {run.id}")
@@ -1954,7 +1946,12 @@ async def _process_annotation_run_async(
                     .where(Asset.infospace_id == run.infospace_id)
                 ).all()
                 assets_by_id = {a.id: a for a in target_assets}
-                pdf_parent_ids = [a.id for a in target_assets if a.kind == AssetKind.PDF]
+                registry = get_content_type_registry()
+                pdf_parent_ids = [
+                    a.id for a in target_assets
+                    if registry.by_kind(a.kind) and registry.by_kind(a.kind).is_container
+                    and registry.by_kind(a.kind).child_kind == AssetKind.PDF_PAGE
+                ]
                 # Batch fetch PDF_PAGE children for all PDF parents
                 pdf_children_by_parent: Dict[int, List[Asset]] = {}
                 if pdf_parent_ids:
@@ -1971,7 +1968,7 @@ async def _process_annotation_run_async(
                 for asset_id in target_asset_ids_to_process:
                     asset = assets_by_id.get(asset_id)
                     logger.debug(f"Task: Checking asset {asset_id} for PDF expansion - Kind: {asset.kind if asset else 'NOT_FOUND'}, Infospace: {asset.infospace_id if asset else 'N/A'}")
-                    if asset and asset.kind == AssetKind.PDF:
+                    if asset and registry.by_kind(asset.kind) and registry.by_kind(asset.kind).is_container and registry.by_kind(asset.kind).child_kind == AssetKind.PDF_PAGE:
                         pdf_page_children = pdf_children_by_parent.get(asset.id, [])
                         logger.info(f"Task: Found {len(pdf_page_children)} PDF_PAGE children for PDF asset {asset.id}")
                         if pdf_page_children:
@@ -2029,7 +2026,7 @@ async def _process_annotation_run_async(
                     continue
                 
                 # Get model name from run config to determine if we need schema simplification
-                model_name = run_config.get("ai_model") or run_config.get("model_name", "gemini-2.5-flash-preview-05-20")
+                model_name = run_config.get("ai_model") or run_config.get("model_name")
                 
                 # Simplify schema for less capable models
                 optimized_contract = simplify_schema_for_model(schema.output_contract, model_name)
@@ -2208,7 +2205,7 @@ async def _process_annotation_run_async(
                         validated_schemas=validated_schemas,
                         run=run,
                         run_config=run_config,
-                        model_registry=model_registry,
+                        provider=provider,
                         storage_provider_instance=storage_provider_instance,
                         session=session,
                         concurrency_limit=concurrency_limit
@@ -2219,7 +2216,7 @@ async def _process_annotation_run_async(
                         validated_schemas=validated_schemas,
                         run=run,
                         run_config=run_config,
-                        model_registry=model_registry,
+                        provider=provider,
                         storage_provider_instance=storage_provider_instance,
                         session=session
                     )
@@ -2273,7 +2270,7 @@ async def _process_annotation_run_async(
                 from app.api.modules.annotation.services.annotation_service import AnnotationService
                 from app.api.modules.content.services.asset_service import AssetService
                 asset_service = AssetService(session, storage_provider_instance)
-                annotation_service = AnnotationService(session, model_registry, asset_service)
+                annotation_service = AnnotationService(session=session, asset_service=asset_service)
                 annotation_service.compute_run_aggregates(run_id=run.id)
                 # Check for monitor_id attribute safely (may not exist on all AnnotationRun instances)
                 monitor_id = getattr(run, 'monitor_id', None)
@@ -2287,15 +2284,19 @@ async def _process_annotation_run_async(
             
         except Exception as e_task_critical:
             logger.exception(f"Task: Critical unexpected error processing AnnotationRun {run_id}: {e_task_critical}")
-            # Ensure run object is fetched again if it was lost due to session issues before the main try block
-            run_to_fail = session.get(AnnotationRun, run_id) # Re-fetch or use run if available
-            if run_to_fail:
-                run_to_fail.status = RunStatus.FAILED
-                run_to_fail.error_message = f"Critical task error: {str(e_task_critical)}"
-                run_to_fail.updated_at = datetime.now(timezone.utc)
-                run_to_fail.completed_at = datetime.now(timezone.utc) # Mark as completed even if failed
-                session.add(run_to_fail)
-                session.commit()
+            # Use a fresh session for the FAILED update; the outer session may be in failed state (e.g. InFailedSqlTransaction)
+            try:
+                with Session(engine) as fail_session:
+                    run_to_fail = fail_session.get(AnnotationRun, run_id)
+                    if run_to_fail:
+                        run_to_fail.status = RunStatus.FAILED
+                        run_to_fail.error_message = f"Critical task error: {str(e_task_critical)}"
+                        run_to_fail.updated_at = datetime.now(timezone.utc)
+                        run_to_fail.completed_at = datetime.now(timezone.utc)
+                        fail_session.add(run_to_fail)
+                        fail_session.commit()
+            except Exception as db_exc:
+                logger.error(f"Task: Could not update run {run_id} to FAILED status: {db_exc}", exc_info=True)
 
 async def _retry_failed_annotations_async(run_id: int) -> None:
     """
@@ -2345,7 +2346,15 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
             # Set up providers (reuse from original processing)
             app_settings = settings
             try:
-                model_registry = await get_cached_provider("model_registry", app_settings)
+                from app.api.modules.foundation_service_providers.base import LanguageModelProvider
+                run_config_for_provider = run.configuration or {}
+                model_name_for_resolve = run_config_for_provider.get("model") or run_config_for_provider.get("ai_model") or run_config_for_provider.get("model_name")
+                runtime_api_keys = run_config_for_provider.get("api_keys")
+                type_key = run_config_for_provider.get("provider") or run_config_for_provider.get("ai_provider")
+                credentials = load_credentials(session, run.user_id, runtime_api_keys) if run.user_id else (runtime_api_keys or {})
+                provider = resolve(LanguageModelProvider, type_key, app_settings, credentials)
+                if not provider:
+                    raise ValueError(f"No LLM provider available for model '{model_name_for_resolve}'")
                 storage_provider_instance = await get_cached_provider("storage", app_settings)
                 logger.info(f"Task: Providers initialized for retry of Run {run.id}")
             except Exception as e_provider:
@@ -2438,7 +2447,7 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
                         schema_info=schema_info,
                         run=run,
                         run_config=run_config,
-                        model_registry=model_registry,
+                        provider=provider,
                         storage_provider_instance=storage_provider_instance,
                         session=session
                     )
@@ -2548,13 +2557,11 @@ def create_followup_annotation_runs(asset_ids: List[int]) -> None:
     from app.api.modules.content.types import get_content_type_registry
     from app.api.modules.content.services.asset_service import AssetService
     from app.api.modules.annotation.services.annotation_service import AnnotationService
-    from app.api.modules.foundation_service_providers.factory import create_model_registry
     from app.schemas import AnnotationRunCreate
 
     with Session(engine) as session:
         asset_service = AssetService(session)
-        model_registry = create_model_registry(settings)
-        ann_svc = AnnotationService(session, model_registry, asset_service)
+        ann_svc = AnnotationService(session=session, asset_service=asset_service)
 
         for asset_id in asset_ids:
             try:

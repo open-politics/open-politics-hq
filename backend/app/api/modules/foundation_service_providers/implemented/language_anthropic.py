@@ -55,23 +55,22 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
         Returns a curated list of Claude models with their capabilities.
         """
         try:
-            # Hardcoded list of supported Claude models
-            # These are the main production models from Anthropic
+            # Hardcoded list of supported Claude models (March 2026)
             claude_models = [
                 {
-                    "name": "claude-sonnet-3.5",
-                    "description": "Claude 3.5 Sonnet - Balanced performance and intelligence",
-                    "supports_thinking": False,
-                },
-                {
-                    "name": "claude-sonnet-4-20250514",
-                    "description": "Claude Sonnet 4 - Enhanced reasoning and analysis",
+                    "name": "claude-sonnet-4-6",
+                    "description": "Claude Sonnet 4.6 - Latest Sonnet with enhanced reasoning",
                     "supports_thinking": True,
                 },
                 {
-                    "name": "claude-sonnet-4-5",
-                    "description": "Claude Sonnet 4.5 - Latest model with best performance",
-                    "supports_thinking": True,  # Supports extended thinking
+                    "name": "claude-opus-4-6",
+                    "description": "Claude Opus 4.6 - Most capable model for complex tasks",
+                    "supports_thinking": True,
+                },
+                {
+                    "name": "claude-haiku-4-5",
+                    "description": "Claude Haiku 4.5 - Fast, affordable",
+                    "supports_thinking": False,
                 },
             ]
             

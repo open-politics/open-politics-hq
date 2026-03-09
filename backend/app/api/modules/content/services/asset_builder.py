@@ -41,7 +41,7 @@ from sqlmodel import Session, select
 from app.models import Asset, AssetKind, ProcessingStatus
 from app.schemas import AssetCreate, SearchResult
 from app.api.modules.foundation_service_providers.base import WebSearchProvider, ScrapingProvider, StorageProvider
-from app.api.modules.foundation_service_providers.factory import create_web_search_provider, create_scraping_provider, create_storage_provider
+from app.api.modules.foundation_service_providers.registry import get_web_search_provider, get_scraping_provider, get_storage_provider
 from app.api.modules.content.services.asset_service import AssetService
 from app.api.modules.content.processors import detect_asset_kind_from_extension
 from app.core.config import settings
@@ -76,8 +76,9 @@ class AssetBlueprint:
     parent_asset_id: Optional[int] = None
     part_index: Optional[int] = None
     
-    # Metadata
-    source_metadata: Dict[str, Any] = field(default_factory=dict)
+    # Metadata (file_info for ingestion/processing; facets for enrichment-discovered)
+    file_info: Dict[str, Any] = field(default_factory=dict)
+    facets: Dict[str, Any] = field(default_factory=dict)
     event_timestamp: Optional[datetime] = None
     processing_status: Optional[ProcessingStatus] = None
     
@@ -130,19 +131,19 @@ class AssetBuilder:
     @property
     def storage_provider(self) -> StorageProvider:
         if self._storage_provider is None:
-            self._storage_provider = create_storage_provider(settings)
+            self._storage_provider = get_storage_provider(settings)
         return self._storage_provider
     
     @property
     def scraping_provider(self) -> ScrapingProvider:
         if self._scraping_provider is None:
-            self._scraping_provider = create_scraping_provider(settings)
+            self._scraping_provider = get_scraping_provider(settings)
         return self._scraping_provider
     
     @property
     def search_provider(self) -> WebSearchProvider:
         if self._search_provider is None:
-            self._search_provider = create_web_search_provider(settings)
+            self._search_provider = get_web_search_provider(settings)
         return self._search_provider
     
     @property
@@ -176,7 +177,7 @@ class AssetBuilder:
         self.blueprint.source_identifier = result.url
         
         # Enrich with search context
-        self.blueprint.source_metadata.update({
+        self.blueprint.file_info.update({
             "content_format": "markdown",  # Search results are markdown
             "content_source": "search_result",
             "search_query": query,
@@ -188,11 +189,11 @@ class AssetBuilder:
         # Add provider enrichment
         if result.raw_data:
             if "favicon" in result.raw_data:
-                self.blueprint.source_metadata["favicon"] = result.raw_data["favicon"]
+                self.blueprint.file_info["favicon"] = result.raw_data["favicon"]
             if "tavily_answer" in result.raw_data:
-                self.blueprint.source_metadata["ai_summary"] = result.raw_data["tavily_answer"]
+                self.blueprint.file_info["ai_summary"] = result.raw_data["tavily_answer"]
             if "published_date" in result.raw_data:
-                self.blueprint.source_metadata["published_date"] = result.raw_data["published_date"]
+                self.blueprint.file_info["published_date"] = result.raw_data["published_date"]
                 # Parse to event_timestamp
                 try:
                     self.blueprint.event_timestamp = dateutil.parser.parse(result.raw_data["published_date"])
@@ -214,7 +215,7 @@ class AssetBuilder:
         self.blueprint.stub = False
         self.blueprint.title = title or f"Web: {url}"
         self.blueprint.source_identifier = url
-        self.blueprint.source_metadata["ingestion_method"] = "url_scraping"
+        self.blueprint.file_info["ingestion_method"] = "url_scraping"
         
         # Add scraping enricher
         self.blueprint._enrichers.append(self._enrich_scrape_url)
@@ -231,7 +232,7 @@ class AssetBuilder:
         self.blueprint.stub = True  # Just a reference!
         self.blueprint.title = title or url
         self.blueprint.source_identifier = url
-        self.blueprint.source_metadata["ingestion_method"] = "url_bookmark"
+        self.blueprint.file_info["ingestion_method"] = "url_bookmark"
         self.blueprint.processing_status = ProcessingStatus.READY
         
         return self
@@ -247,7 +248,7 @@ class AssetBuilder:
         self.blueprint.stub = False
         self.blueprint.title = title or file.filename or f"Uploaded {self.blueprint.kind.value}"
         
-        self.blueprint.source_metadata.update({
+        self.blueprint.file_info.update({
             "original_filename": file.filename,
             "file_size": getattr(file, 'size', None),
             "mime_type": getattr(file, 'content_type', None),
@@ -267,7 +268,7 @@ class AssetBuilder:
         self.blueprint.stub = False
         self.blueprint.title = title or f"Text: {text[:30]}..."
         self.blueprint.text_content = text
-        self.blueprint.source_metadata["ingestion_method"] = "direct_text"
+        self.blueprint.file_info["ingestion_method"] = "direct_text"
         self.blueprint.processing_status = ProcessingStatus.READY
         
         return self
@@ -293,7 +294,7 @@ class AssetBuilder:
         self.blueprint.title = title
         self.blueprint.text_content = content
         
-        self.blueprint.source_metadata.update({
+        self.blueprint.file_info.update({
             "content_format": "markdown",  # Composed articles use markdown with embeds
             "content_source": "user",
             "composition_type": "free_form_article",  # Mark as composed article
@@ -301,10 +302,10 @@ class AssetBuilder:
         })
         
         if summary:
-            self.blueprint.source_metadata["summary"] = summary
+            self.blueprint.facets["summary"] = summary
         
         if embedded_assets:
-            self.blueprint.source_metadata["embedded_assets"] = embedded_assets
+            self.blueprint.file_info["embedded_assets"] = embedded_assets
             # Add enricher to create child assets for embeds
             self.blueprint._enrichers.append(
                 lambda: self._enrich_embedded_assets(embedded_assets)
@@ -332,8 +333,8 @@ class AssetBuilder:
         self.blueprint.title = title
         self.blueprint.stub = False
         
-        # Store column schema in source_metadata
-        self.blueprint.source_metadata = {
+        # Store column schema in file_info
+        self.blueprint.file_info = {
             'columns': columns,
             'column_count': len(columns),
             'row_count': 0,  # Will be updated as rows are added
@@ -341,7 +342,7 @@ class AssetBuilder:
         }
         
         if description:
-            self.blueprint.source_metadata['description'] = description
+            self.blueprint.file_info['description'] = description
         
         # Initialize empty text_content (will be built from rows)
         self.blueprint.text_content = ",".join(columns)  # Just the header
@@ -396,8 +397,8 @@ class AssetBuilder:
                 str(row_data.get(key, "")) for key in sorted_keys
             )
 
-        # Store original structured data in source_metadata
-        self.blueprint.source_metadata.update({
+        # Store original structured data in file_info
+        self.blueprint.file_info.update({
             "original_row_data": row_data,
             "column_headers": column_headers or list(row_data.keys()),
             "ingestion_method": "csv_row_construction",
@@ -431,7 +432,7 @@ class AssetBuilder:
         self.blueprint.stub = False
 
         # Mark this as an update operation
-        self.blueprint.source_metadata.update({
+        self.blueprint.file_info.update({
             "update_operation": True,
             "existing_asset_id": existing_asset_id,
             "merge_strategy": merge_strategy,
@@ -537,10 +538,11 @@ class AssetBuilder:
                     })
         
         # Build comprehensive metadata
-        self.blueprint.source_metadata = {
+        self.blueprint.file_info = {
             'content_format': 'html',  # RSS content is HTML
             'content_source': 'rss_feed',
             'ingestion_method': 'rss_content_extraction',
+            'guid': entry.get('id', ''),  # For RSS poll cursor
             'author': entry.get('author', ''),  # Canonical author field
             'publication_date': entry.get('published', ''),  # Canonical date field
             'summary': entry.get('summary', ''),  # Canonical summary field
@@ -613,13 +615,55 @@ class AssetBuilder:
 
     def with_metadata(self, **kwargs) -> 'AssetBuilder':
         """Add arbitrary metadata."""
-        self.blueprint.source_metadata.update(kwargs)
+        self.blueprint.file_info.update(kwargs)
         return self
     
     def with_timestamp(self, timestamp: datetime) -> 'AssetBuilder':
         """Set event timestamp."""
         self.blueprint.event_timestamp = timestamp
         return self
+
+    @classmethod
+    async def compose_article(
+        cls,
+        session: Session,
+        user_id: int,
+        infospace_id: int,
+        title: str,
+        content: str,
+        summary: Optional[str] = None,
+        embedded_assets: Optional[List[Dict[str, Any]]] = None,
+        referenced_bundles: Optional[List[int]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        event_timestamp: Optional[datetime] = None,
+    ) -> Asset:
+        """
+        Compose article with embedded assets.
+        Used by POST /assets/compose-article route.
+        """
+        from app.api.global_utils import validate_infospace_access
+
+        validate_infospace_access(session, infospace_id, user_id)
+
+        builder = cls(session, user_id, infospace_id).from_article(
+            title, content, summary, embedded_assets
+        )
+
+        if referenced_bundles:
+            builder.with_metadata(
+                referenced_bundles=referenced_bundles,
+                bundle_references=len(referenced_bundles),
+            )
+
+        if metadata:
+            builder.with_metadata(**metadata)
+
+        if event_timestamp:
+            builder.with_timestamp(event_timestamp)
+
+        article = await builder.build()
+        logger.info(f"Composed article {article.id}")
+        return article
     
     def with_processing_status(self, status: ProcessingStatus) -> 'AssetBuilder':
         """Manually set processing status."""
@@ -648,13 +692,13 @@ class AssetBuilder:
             await enricher()
         
         # 3. Add ingestion timestamp
-        self.blueprint.source_metadata["ingested_at"] = datetime.now(timezone.utc).isoformat()
+        self.blueprint.file_info["ingested_at"] = datetime.now(timezone.utc).isoformat()
         
         # 4. Handle CSV row updates vs creation
-        if self.blueprint.source_metadata.get("update_operation"):
+        if self.blueprint.file_info.get("update_operation"):
             # For CSV row updates, we need to return the updated asset directly
             # The enricher already handled the update
-            existing_asset_id = self.blueprint.source_metadata.get("existing_asset_id")
+            existing_asset_id = self.blueprint.file_info.get("existing_asset_id")
             asset = self.session.get(Asset, existing_asset_id)
             if not asset:
                 raise ValueError(f"Failed to find updated asset {existing_asset_id}")
@@ -709,7 +753,8 @@ class AssetBuilder:
             text_content=self.blueprint.text_content,
             blob_path=self.blueprint.blob_path,
             source_identifier=self.blueprint.source_identifier,
-            source_metadata=self.blueprint.source_metadata,
+            facets=self.blueprint.facets or None,
+            file_info=self.blueprint.file_info or None,
             event_timestamp=self.blueprint.event_timestamp,
             parent_asset_id=self.blueprint.parent_asset_id,
             part_index=self.blueprint.part_index,
@@ -751,7 +796,8 @@ class AssetBuilder:
         # Copy blueprint fields (shallow copy)
         import copy
         new_builder.blueprint = copy.copy(self.blueprint)
-        new_builder.blueprint.source_metadata = self.blueprint.source_metadata.copy()
+        new_builder.blueprint.file_info = self.blueprint.file_info.copy()
+        new_builder.blueprint.facets = self.blueprint.facets.copy()
         new_builder.blueprint._enrichers = self.blueprint._enrichers.copy()
         new_builder.blueprint._child_builders = []
         return new_builder
@@ -778,7 +824,7 @@ class AssetBuilder:
                 if scraped.get('title') and not self.blueprint.title.startswith("Web:"):
                     self.blueprint.title = scraped['title']
                 
-                self.blueprint.source_metadata.update({
+                self.blueprint.file_info.update({
                     "content_format": "markdown",  # Web scraping produces markdown
                     "content_source": "web_scrape",
                     "scraped_at": datetime.now(timezone.utc).isoformat(),
@@ -803,7 +849,7 @@ class AssetBuilder:
         except Exception as e:
             logger.error(f"Error scraping URL {url}: {e}")
             # Don't fail the build, just mark it
-            self.blueprint.source_metadata["scraping_error"] = str(e)
+            self.blueprint.file_info["scraping_error"] = str(e)
     
     async def _enrich_store_file(self, file: UploadFile):
         """Enricher: Upload file to storage."""
@@ -866,7 +912,7 @@ class AssetBuilder:
             raise ValueError(f"CSV row asset {existing_asset_id} does not belong to this infospace")
 
         # Get existing row data
-        existing_row_data = existing_asset.source_metadata.get("original_row_data", {})
+        existing_row_data = (existing_asset.file_info or {}).get("original_row_data", {})
 
         # Apply merge strategy
         if merge_strategy == "merge":
@@ -879,7 +925,7 @@ class AssetBuilder:
             raise ValueError(f"Unknown merge strategy: {merge_strategy}")
 
         # Update the asset
-        column_headers = existing_asset.source_metadata.get("column_headers", list(merged_data.keys()))
+        column_headers = (existing_asset.file_info or {}).get("column_headers", list(merged_data.keys()))
 
         # Generate new title from first few columns
         title_parts = []
@@ -895,13 +941,15 @@ class AssetBuilder:
 
         # Update metadata
         existing_asset.title = new_title
-        existing_asset.source_metadata.update({
+        file_info = existing_asset.file_info or {}
+        file_info.update({
             "original_row_data": merged_data,
             "column_headers": column_headers,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "merge_strategy": merge_strategy,
             "updated_fields": list(updates.keys())
         })
+        existing_asset.file_info = file_info
 
         # Update timestamp
         existing_asset.updated_at = datetime.now(timezone.utc)

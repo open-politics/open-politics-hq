@@ -347,7 +347,8 @@ class ShareableService:
             updated_at=asset.updated_at,
             text_content=asset.text_content,
             blob_path=asset.blob_path,
-            source_metadata=asset.source_metadata,
+            facets=asset.facets,
+            file_info=asset.file_info,
             children=children_previews
         )
 
@@ -515,7 +516,11 @@ class ShareableService:
             if pt == ResourceType.INFOSPACE:
                 if not is_zip: 
                     raise ValueError("Infospace package import requires a ZIP file.")
-                imported_entity = await self.infospace_service.import_infospace(user_id=user_id, filepath=outer_temp_path)
+                imported_entity = await self.package_service.import_infospace(
+                    user_id=user_id,
+                    filepath=outer_temp_path,
+                    infospace_service=self.infospace_service,
+                )
             else:
                 imported_entity = await self.package_service.import_resource_package(
                     package=package_to_import,
@@ -685,7 +690,7 @@ class ShareableService:
             if hasattr(file_obj, 'close'):
                 await asyncio.to_thread(file_obj.close)
 
-            original_filename = (requested_asset.source_metadata or {}).get("filename") or Path(requested_asset.blob_path).name
+            original_filename = (requested_asset.file_info or {}).get("original_filename") or (requested_asset.file_info or {}).get("filename") or Path(requested_asset.blob_path).name
             
             temp_path, _ = self._create_temp_file(prefix=f"shared_{asset_id}_", suffix=Path(original_filename).suffix)
             with open(temp_path, 'wb') as f:
@@ -766,7 +771,7 @@ class ShareableService:
 
         try:
             file_obj = await self.storage_provider.get_file(requested_asset.blob_path)
-            original_filename = (requested_asset.source_metadata or {}).get("filename") or Path(requested_asset.blob_path).name
+            original_filename = (requested_asset.file_info or {}).get("original_filename") or (requested_asset.file_info or {}).get("filename") or Path(requested_asset.blob_path).name
             return file_obj, original_filename
         except Exception as e:
             logger.error(f"Failed to get shared file stream from storage. Asset: {asset_id}, Path: {requested_asset.blob_path}, Error: {e}", exc_info=True)

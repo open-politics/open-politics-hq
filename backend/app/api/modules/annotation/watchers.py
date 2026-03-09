@@ -4,12 +4,12 @@ Reactive watchers for annotation domain.
 Watchers find entities that need post-annotation work (e.g. graph curation, version follow-ups).
 """
 
+from sqlalchemy import table, column
 from sqlalchemy.sql import exists
 from sqlmodel import select
 
-from app.core.dispatch import register_watcher
+from app.core.dispatch import _get_enabled_watchers, register_watcher
 from app.api.modules.annotation.models import Annotation, AnnotationRun
-from app.api.modules.graph.models import FragmentCuration
 from app.models import Asset, ResultStatus
 from app.api.modules.content.models import ProcessingStatus
 from app.api.modules.content.utils.watcher_filters import non_superseded_filter
@@ -64,9 +64,10 @@ class _AnnotatedToCurateWatcher:
 
     def build_query(self, session):
         # Annotations with SUCCESS, from runs that have graph_config,
-        # with no FragmentCuration record.
+        # with no FragmentCuration record (raw SQL to avoid L3->L4 import).
         # Exclude annotations on superseded assets or children of superseded parents.
-        has_curation = exists().where(FragmentCuration.annotation_id == Annotation.id)
+        fc = table("fragmentcuration", column("annotation_id"))
+        has_curation = exists().select_from(fc).where(fc.c.annotation_id == Annotation.id)
         q = (
             select(Annotation.id)
             .join(AnnotationRun, Annotation.run_id == AnnotationRun.id)
@@ -83,6 +84,9 @@ class _AnnotatedToCurateWatcher:
         return q.limit(100)
 
 
-# Register at module import
-register_watcher(_VersionGapAnnotationWatcher())
-register_watcher(_AnnotatedToCurateWatcher())
+# Register only when enabled via ENABLED_WATCHERS
+enabled = _get_enabled_watchers()
+if "version_gap_annotation" in enabled:
+    register_watcher(_VersionGapAnnotationWatcher())
+if "annotated_to_curate" in enabled:
+    register_watcher(_AnnotatedToCurateWatcher())

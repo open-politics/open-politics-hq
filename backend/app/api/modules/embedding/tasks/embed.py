@@ -1,193 +1,213 @@
 """
-Celery tasks for embedding generation
+Embedding enricher task — single entry point for all embedding generation.
+
+Follows the three-phase enricher pattern (load → compute → write) used by
+geocoding, OCR, and hash enrichers.  Replaces the four legacy tasks.
+
+Credentials:
+  user_id/api_keys present  → user-triggered  → resolve() with merged credentials
+  both absent               → reactive watcher → system credentials only
 """
+
 import logging
-from typing import List, Optional, Dict
-from sqlmodel import Session
+from typing import Dict, List, Optional
+
+from sqlmodel import Session, select
 
 from app.core.celery_app import celery
 from app.core.db import engine
-from app.api.modules.embedding.services.embedding_service import EmbeddingService
-from app.core.task_utils import update_task_status, run_async_in_celery
-from app.models import AssetKind
+from app.core.task_utils import run_async_in_celery
 
 logger = logging.getLogger(__name__)
 
 
-@celery.task(name="embed_asset")
-def embed_asset_task(
-    asset_id: int,
-    infospace_id: int,
-    user_id: int,
-    overwrite: bool = False,
-    api_keys: Optional[Dict[str, str]] = None
-):
-    """
-    Celery task to generate embeddings for a single asset.
-
-    Uses runtime API keys if provided, otherwise falls back to user's stored encrypted credentials.
-
-    Args:
-        asset_id: Asset ID to embed
-        infospace_id: Infospace ID (for configuration)
-        user_id: User ID (for credential lookup)
-        overwrite: Whether to regenerate existing embeddings
-        api_keys: Optional runtime API keys for cloud providers (openai, voyage, jina)
-    """
-    logger.info(f"Starting embedding task for asset {asset_id} (user {user_id})")
-    if api_keys:
-        logger.info(f"Using runtime API keys for providers: {list(api_keys.keys())}")
-
-    async def _embed_asset():
-        with Session(engine) as session:
-            # Service uses runtime API keys if provided, otherwise falls back to stored credentials
-            service = EmbeddingService(session, user_id=user_id, runtime_api_keys=api_keys)
-            result = await service.generate_embeddings_for_asset(
-                asset_id=asset_id,
-                infospace_id=infospace_id,
-                overwrite=overwrite
-            )
-            return result
-
-    try:
-        result = run_async_in_celery(_embed_asset)
-        logger.info(
-            f"Asset {asset_id} embedded successfully: "
-            f"{result['chunks_created']} chunks created, "
-            f"{result['embeddings_generated']} embeddings generated"
-        )
-        return result
-    except Exception as e:
-        logger.error(f"Failed to embed asset {asset_id}: {e}", exc_info=True)
-        raise
-
-
-EMBED_PARALLEL_BATCH_SIZE = 20
-EMBED_PARALLEL_THRESHOLD = 50
-
-
-@celery.task(name="embed_infospace")
-def embed_infospace_task(
-    infospace_id: int,
-    user_id: int,
-    overwrite: bool = False,
-    asset_kinds: Optional[List[str]] = None,
-    task_id: Optional[int] = None,
-    api_keys: Optional[Dict[str, str]] = None,
-    use_parallel_dispatch: bool = True,
-):
-    """
-    Celery task to generate embeddings for all assets in an infospace.
-    For large infospaces (>= EMBED_PARALLEL_THRESHOLD), dispatches batches to multiple workers.
-    """
-    logger.info(f"Starting infospace embedding task for infospace {infospace_id} (user {user_id})")
-    if api_keys:
-        logger.info(f"Using runtime API keys for providers: {list(api_keys.keys())}")
-
-    if task_id:
-        update_task_status(task_id, "running", "Generating embeddings for infospace")
-
-    with Session(engine) as session:
-        from app.models import Asset
-        from sqlmodel import select
-        query = select(Asset.id).where(Asset.infospace_id == infospace_id)
-        if asset_kinds:
-            query = query.where(Asset.kind.in_([AssetKind(k) for k in asset_kinds]))
-        all_ids = [r for r in session.exec(query).all()]
-
-    if use_parallel_dispatch and len(all_ids) >= EMBED_PARALLEL_THRESHOLD:
-        batches = [
-            all_ids[i : i + EMBED_PARALLEL_BATCH_SIZE]
-            for i in range(0, len(all_ids), EMBED_PARALLEL_BATCH_SIZE)
-        ]
-        logger.info(f"Dispatching {len(batches)} embed batches to parallel workers")
-        from celery import group
-        job = group(
-            embed_batch_assets_task.s(ids, infospace_id, overwrite, user_id, api_keys)
-            for ids in batches
-        )
-        group_result = job.apply_async()
-        group_result.get()
-        total_ok = sum(r.get("successful", 0) for r in (group_result.results or []) if isinstance(r, dict))
-        total_fail = sum(r.get("failed", 0) for r in (group_result.results or []) if isinstance(r, dict))
-        result = {
-            "assets_processed": len(all_ids),
-            "chunks_created": 0,
-            "embeddings_generated": 0,
-            "failed_assets": total_fail,
-        }
-        message = f"Infospace {infospace_id}: {total_ok} embedded, {total_fail} failed (parallel)"
-    else:
-        async def _embed_infospace():
-            with Session(engine) as session:
-                service = EmbeddingService(session, user_id=user_id, runtime_api_keys=api_keys)
-                kinds = [AssetKind(k) for k in asset_kinds] if asset_kinds else None
-                return await service.generate_embeddings_for_infospace(
-                    infospace_id=infospace_id,
-                    overwrite=overwrite,
-                    asset_kinds=kinds
-                )
-        result = run_async_in_celery(_embed_infospace)
-        message = (
-            f"Infospace {infospace_id} embedding complete: "
-            f"{result['assets_processed']} assets processed, "
-            f"{result['chunks_created']} chunks created, "
-            f"{result['embeddings_generated']} embeddings generated"
-        )
-
-    if result.get("failed_assets"):
-        message += f", {result['failed_assets']} assets failed"
-    logger.info(message)
-    if task_id:
-        status = "success" if not result.get("failed_assets") else "completed_with_errors"
-        update_task_status(task_id, status, message)
-    return result
-
-
-@celery.task(name="reactive_embed_pending_assets")
-def reactive_embed_pending_assets_task(asset_ids: List[int]):
-    """
-    Reactive watcher task: embeds assets that are READY but not yet embedded.
-    Accepts only asset_ids; looks up infospace_id from the first asset.
-    Uses user_id=1 (system) for credential fallback.
-    """
-    if not asset_ids:
-        return {"total_assets": 0, "successful": 0, "failed": 0}
-    with Session(engine) as session:
-        from app.models import Asset
-        first = session.get(Asset, asset_ids[0])
-        if not first:
-            logger.warning(f"reactive_embed_pending: asset {asset_ids[0]} not found")
-            return {"total_assets": len(asset_ids), "successful": 0, "failed": len(asset_ids)}
-        infospace_id = first.infospace_id
-    return embed_batch_assets_task(
-        asset_ids, infospace_id, overwrite=False, user_id=1, api_keys=None
-    )
-
-
-@celery.task(name="embed_batch_assets")
-def embed_batch_assets_task(
-    asset_ids: List[int],
-    infospace_id: int,
-    overwrite: bool = False,
+@celery.task(name="enrich_embedding")
+def enrich_embedding_task(
+    asset_ids: List[int] | int,
     user_id: Optional[int] = None,
     api_keys: Optional[Dict[str, str]] = None,
+    overwrite: bool = False,
 ):
     """
-    Celery task to embed a batch of assets. Useful for bulk and parallel dispatch.
+    Generate embeddings for a batch of assets.
+
+    Phase 1 — Load + Chunk (DB session open)
+    Phase 2 — Generate embeddings (no DB session)
+    Phase 3 — Store vectors + emit events (fresh DB session)
     """
+    if isinstance(asset_ids, int):
+        asset_ids = [asset_ids]
     if not asset_ids:
-        return {"total_assets": 0, "successful": 0, "failed": 0, "failed_asset_ids": []}
-    logger.info(f"Starting batch embedding for {len(asset_ids)} assets")
-    user_id = user_id or 1
-    results = {"total_assets": len(asset_ids), "successful": 0, "failed": 0, "failed_asset_ids": []}
-    for asset_id in asset_ids:
+        return {"total": 0, "enriched": 0, "failed": 0}
+
+    async def _run():
+        return await _three_phase(asset_ids, user_id, api_keys, overwrite)
+
+    return run_async_in_celery(_run)
+
+
+# ── internals ────────────────────────────────────────────────────────────────
+
+
+async def _three_phase(
+    asset_ids: List[int],
+    user_id: Optional[int],
+    api_keys: Optional[Dict[str, str]],
+    overwrite: bool,
+) -> dict:
+    from app.models import Asset, AssetChunk, Infospace, EmbeddingModel
+    from app.api.modules.content.models import get_embedding_column_for_dimension
+    from app.api.modules.embedding.services.chunking_service import ChunkingService
+    from app.api.modules.foundation_service_providers.base import (
+        EmbeddingProvider as EmbeddingProviderProtocol,
+        ProviderSelection,
+    )
+    from app.api.modules.foundation_service_providers.registry import resolve, load_credentials
+    from app.core.config import settings as app_settings
+    from app.api.modules.embedding.services.embedding_service import EmbeddingService
+
+    # ── Phase 1: Load + Chunk ────────────────────────────────────────────
+    # One session block.  Collects work items grouped by infospace.
+    # Provider instances (plain HTTP clients) survive session closure.
+
+    groups: Dict[int, dict] = {}  # infospace_id → group info
+
+    with Session(engine) as session:
+        credentials = load_credentials(session, user_id, api_keys) if user_id else (api_keys or {})
+        chunking = ChunkingService(session)
+        embedding_svc = EmbeddingService(session, user_id=user_id, runtime_api_keys=api_keys)
+
+        assets = session.exec(
+            select(Asset).where(Asset.id.in_(asset_ids))
+        ).all()
+
+        for asset in assets:
+            iid = asset.infospace_id
+            if iid not in groups:
+                infospace = session.get(Infospace, iid)
+                if not infospace or not infospace.embedding_configured:
+                    continue
+
+                sel = infospace.embedding_selection
+                if isinstance(sel, dict):
+                    sel = ProviderSelection(**sel)
+
+                # Resolve provider
+                provider_instance = resolve(
+                    EmbeddingProviderProtocol,
+                    sel.type_key,
+                    app_settings,
+                    credentials,
+                )
+                if not provider_instance:
+                    logger.warning(f"No embedding provider for infospace {iid} ({sel.type_key})")
+                    continue
+
+                # Ensure dimension cache entry exists
+                em = await embedding_svc.ensure_embedding_model_registered(
+                    provider=sel.type_key,
+                    model_name=sel.model_name,
+                )
+                col_name = get_embedding_column_for_dimension(em.dimension)
+                if not col_name:
+                    logger.error(f"Unsupported dimension {em.dimension} for {sel.model_name}")
+                    continue
+
+                groups[iid] = {
+                    "provider": provider_instance,
+                    "model_name": sel.model_name,
+                    "em_id": em.id,
+                    "col_name": col_name,
+                    "dimension": em.dimension,
+                    "chunk_strategy": infospace.chunk_strategy or "token",
+                    "chunk_size": infospace.chunk_size or 512,
+                    "chunk_overlap": infospace.chunk_overlap or 50,
+                    "work": [],  # [(chunk_id, text)]
+                    "asset_ids": set(),
+                }
+
+            grp = groups.get(iid)
+            if not grp:
+                continue
+
+            # Chunk if needed
+            existing = session.exec(
+                select(AssetChunk).where(AssetChunk.asset_id == asset.id)
+            ).all()
+
+            if not existing:
+                if not asset.text_content:
+                    continue
+                existing = chunking.chunk_asset(
+                    asset=asset,
+                    strategy=grp["chunk_strategy"],
+                    chunk_size=grp["chunk_size"],
+                    chunk_overlap=grp["chunk_overlap"],
+                    overwrite_existing=False,
+                )
+
+            for chunk in existing:
+                has_embedding = (
+                    chunk.embedding_model_id == grp["em_id"]
+                    and getattr(chunk, grp["col_name"], None) is not None
+                )
+                if overwrite or not has_embedding:
+                    grp["work"].append((chunk.id, chunk.text_content or ""))
+                    grp["asset_ids"].add(asset.id)
+
+        session.commit()  # persist any new chunks
+
+    # ── Phase 2: Generate embeddings (no DB session) ─────────────────────
+
+    results: Dict[int, list] = {}  # infospace_id → [(chunk_id, vector)]
+
+    for iid, grp in groups.items():
+        if not grp["work"]:
+            continue
+        chunk_ids = [w[0] for w in grp["work"]]
+        texts = [w[1] for w in grp["work"]]
         try:
-            embed_asset_task(asset_id, infospace_id, user_id, overwrite, api_keys)
-            results["successful"] += 1
+            vectors = await grp["provider"].embed_texts(texts, grp["model_name"])
+            if len(vectors) != len(chunk_ids):
+                logger.error(f"Infospace {iid}: vector count mismatch ({len(vectors)} vs {len(chunk_ids)})")
+                continue
+            # Validate dimension
+            if vectors and len(vectors[0]) != grp["dimension"]:
+                logger.error(
+                    f"Infospace {iid}: model {grp['model_name']} returned "
+                    f"{len(vectors[0])}d, expected {grp['dimension']}d"
+                )
+                continue
+            results[iid] = list(zip(chunk_ids, vectors))
         except Exception as e:
-            logger.error(f"Failed to embed asset {asset_id}: {e}")
-            results["failed"] += 1
-            results["failed_asset_ids"].append(asset_id)
-    logger.info(f"Batch embedding dispatched: {results['successful']} queued, {results['failed']} failed")
-    return results
+            logger.error(f"Embedding failed for infospace {iid}: {e}", exc_info=True)
+
+    # ── Phase 3: Store + emit events ─────────────────────────────────────
+
+    from app.core.events import emit
+
+    total_stored = 0
+    enriched_assets: set = set()
+
+    with Session(engine) as session:
+        for iid, pairs in results.items():
+            grp = groups[iid]
+            for chunk_id, vector in pairs:
+                chunk = session.get(AssetChunk, chunk_id)
+                if not chunk:
+                    continue
+                setattr(chunk, grp["col_name"], vector)
+                chunk.embedding_model_id = grp["em_id"]
+                session.add(chunk)
+                total_stored += 1
+                enriched_assets.add(chunk.asset_id)
+        session.commit()
+
+    for aid in enriched_assets:
+        emit("asset.enriched", {"asset_id": aid, "enricher_name": "embedding"})
+
+    total = sum(len(grp["work"]) for grp in groups.values())
+    failed = total - total_stored
+    logger.info(f"enrich_embedding: {total_stored}/{total} chunks embedded, {len(enriched_assets)} assets enriched")
+
+    return {"total": total, "enriched": total_stored, "failed": failed}

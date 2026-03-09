@@ -1,63 +1,11 @@
 from typing import List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session
+from fastapi import APIRouter, HTTPException
 
-from app.api import dependency_injection
 from app.api.dependency_injection import CurrentUser
-from app.schemas import Message
-from app.api.modules.flow.services import FilterService, FilterExpression, FilterFactory
+from app.api.modules.flow.services import FilterService, FilterFactory
 
 router = APIRouter()
-
-# Use a global filter service instance
 filter_service = FilterService()
-
-@router.post("/filters", response_model=Message)
-def save_filter(
-    *,
-    filter_name: str,
-    filter_config: Dict[str, Any],
-    current_user: CurrentUser
-):
-    """Save a reusable filter definition."""
-    try:
-        filter_expression = filter_service.create_from_config(filter_config)
-        filter_service.save_filter(filter_name, filter_expression)
-        return Message(message=f"Filter '{filter_name}' saved successfully")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to save filter: {str(e)}")
-
-@router.get("/filters", response_model=List[str])
-def list_filters(current_user: CurrentUser):
-    """List all saved filter names."""
-    return filter_service.list_filters()
-
-@router.get("/filters/{filter_name}", response_model=Dict[str, Any])
-def get_filter(
-    *,
-    filter_name: str,
-    current_user: CurrentUser
-):
-    """Get a saved filter definition."""
-    filter_expression = filter_service.get_filter(filter_name)
-    if not filter_expression:
-        raise HTTPException(status_code=404, detail=f"Filter '{filter_name}' not found")
-    
-    return filter_expression.to_dict()
-
-@router.delete("/filters/{filter_name}", response_model=Message)
-def delete_filter(
-    *,
-    filter_name: str,
-    current_user: CurrentUser
-):
-    """Delete a saved filter."""
-    if filter_name not in filter_service.list_filters():
-        raise HTTPException(status_code=404, detail=f"Filter '{filter_name}' not found")
-    
-    # Remove from saved filters
-    del filter_service._saved_filters[filter_name]
-    return Message(message=f"Filter '{filter_name}' deleted successfully")
 
 @router.post("/filters/test", response_model=Dict[str, Any])
 def test_filter(

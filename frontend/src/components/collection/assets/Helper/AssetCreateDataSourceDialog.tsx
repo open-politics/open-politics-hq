@@ -492,8 +492,8 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
             urlItems.forEach((item, index) => {
               if (bulkUrlAssets[index]) {
                 const asset = bulkUrlAssets[index];
-                const contentLength = asset.source_metadata?.content_length || 0;
-                const imageCount = Array.isArray(asset.source_metadata?.images) ? asset.source_metadata.images.length : 0;
+                const contentLength = asset.file_info?.content_length || 0;
+                const imageCount = Array.isArray(asset.file_info?.images) ? asset.file_info.images.length : 0;
                 
                 updateItemStatus(
                   item.id, 
@@ -559,7 +559,7 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
               title: item.title,
               kind: item.kind,
               blob_path: uploadResponse.object_name,
-              source_metadata: { filename: uploadResponse.filename },
+              file_info: { filename: uploadResponse.filename },
             };
             
 

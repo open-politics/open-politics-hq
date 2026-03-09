@@ -52,6 +52,7 @@ import {
   AssetKind,
   BundleRead,
   AssetUpdate,
+  BundlesService,
 } from '@/client';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
@@ -108,7 +109,7 @@ import {
   ButtonGroup,
   ButtonGroupSeparator,
 } from '@/components/ui/button-group';
-import AssetSelector, { AssetTreeItem } from './AssetSelector';
+import AssetSelector, { AssetTreeItem, parseVfolderId } from './AssetSelector';
 import AnnotateFolderDialog, { type AnnotateFolderParams } from '../annotation/AnnotateFolderDialog';
 import { useShareableStore } from '@/zustand_stores/storeShareables';
 import ShareItemDialog from './Helper/ShareItemDialog';
@@ -170,7 +171,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   const debouncedSearchTerm = useDebounce(searchTermFromSelector, 300);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  const [activeDetail, setActiveDetail] = useState<{ type: 'asset' | 'bundle' | 'bundleview'; id: number } | null>(null);
+  const [activeDetail, setActiveDetail] = useState<{ type: 'asset' | 'bundle'; id: number } | null>(null);
   const [selectedAssetInBundle, setSelectedAssetInBundle] = useState<number | null>(null);
   const [highlightAssetId, setHighlightAssetId] = useState<number | null>(null);
   const [assetTypeFilter, setAssetTypeFilter] = useState<AssetKind | 'all'>('all');
@@ -183,7 +184,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   });
   
   // Semantic search for feed
-  const semanticSearchEnabled = useSemanticMode && !!activeInfospace?.embedding_model && debouncedSearchTerm.trim().length > 0;
+  const semanticSearchEnabled = useSemanticMode && !!activeInfospace?.embedding_selection?.model_name && debouncedSearchTerm.trim().length > 0;
   const { results: semanticResults } = useSemanticSearch({
     query: debouncedSearchTerm,
     enabled: semanticSearchEnabled,
@@ -223,8 +224,29 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   const [articleComposerMode, setArticleComposerMode] = useState<'create' | 'edit'>('create');
   const [editingArticleId, setEditingArticleId] = useState<number | undefined>();
 
-  // Annotate folder dialog (virtual folder -> annotation run with path_filter)
+  // Annotate folder dialog (virtual folder -> annotation run with path_filter) — kept for future use from AnnotationRunner
   const [annotateFolderParams, setAnnotateFolderParams] = useState<AnnotateFolderParams | null>(null);
+
+  const handleMaterializeVfolder = useCallback(async (params: { bundleId: number; pathPrefix: string; name: string }) => {
+    if (!activeInfospace?.id) return;
+    try {
+      const bundle = await BundlesService.materializeVirtualFolder({
+        infospaceId: activeInfospace.id,
+        requestBody: {
+          source_bundle_id: params.bundleId,
+          path_prefix: params.pathPrefix || undefined,
+          name: params.name,
+        },
+      });
+      clearCache();
+      await fetchRootTree();
+      toast.success(`Created bundle "${bundle.name}"`);
+      setActiveDetail({ type: 'bundle', id: bundle.id });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to materialize folder';
+      toast.error(msg);
+    }
+  }, [activeInfospace?.id, clearCache, fetchRootTree]);
   
   // Data fetching state - NOW REMOVED! Using tree store instead
   // const [bundleAssets, setBundleAssets] = useState<Map<number, AssetRead[]>>(new Map());
@@ -569,10 +591,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   // - Clicking top-level asset -> shows asset detail view
   // - Back button -> returns to feed (sets activeDetail to null)
   const handleItemView = useCallback((item: AssetTreeItem) => {
-    if (item.type === 'folder' && item.bundleView) {
-        setActiveDetail({ type: 'bundleview', id: item.bundleView.id });
-        setHighlightAssetId(null);
-    } else if (item.type === 'folder' && item.bundle) {
+    if (item.type === 'folder' && item.bundle) {
         setActiveDetail({ type: 'bundle', id: item.bundle.id });
         setHighlightAssetId(null);
     } else if (item.asset) {
@@ -634,7 +653,6 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
       await deleteAsset(asset.id);
       toast.success(`Asset "${asset.title}" deleted.`);
       if (activeDetail?.type === 'asset' && activeDetail.id === asset.id) setActiveDetail(null);
-      if (activeDetail?.type === 'bundleview') setActiveDetail(null);
       
       // Refresh tree
       clearCache();
@@ -653,7 +671,6 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
       await deleteBundle(bundle.id);
       toast.success(`Bundle "${bundle.name}" deleted.`);
       if (activeDetail?.type === 'bundle' && activeDetail.id === bundle.id) setActiveDetail(null);
-      if (activeDetail?.type === 'bundleview') setActiveDetail(null);
       
       // Refresh tree
       clearCache();
@@ -850,6 +867,14 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
       <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
         <DropdownMenuLabel>{item.type === 'folder' ? 'Folder' : 'Asset'} Actions</DropdownMenuLabel>
         <DropdownMenuItem onClick={() => handleItemView(item)}><Eye className="mr-2 h-4 w-4" /> View Details</DropdownMenuItem>
+        {item.type === 'folder' && !item.bundle && (() => {
+          const vp = item.id.startsWith('vfolder-') ? parseVfolderId(item.id) : null;
+          return vp ? (
+            <DropdownMenuItem key="materialize" onClick={() => handleMaterializeVfolder({ bundleId: vp.bundleId, pathPrefix: vp.pathPrefix, name: item.name })}>
+              <FolderPlus className="mr-2 h-4 w-4" /> Materialize as bundle
+            </DropdownMenuItem>
+          ) : null;
+        })()}
         {item.type === 'folder' && item.bundle && (
           <>
             {/* redundant */}
@@ -1148,7 +1173,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                   onSelectionChange={setSelectedItems}
                   onItemView={handleItemView}
                   onItemDoubleClick={handleItemDoubleClick}
-                  onAnnotateFolder={(p) => setAnnotateFolderParams(p)}
+                  onMaterializeVfolder={handleMaterializeVfolder}
                   renderItemActions={renderItemActions}
                   onSearchTermChange={setSearchTermFromSelector}
                 />
@@ -1166,14 +1191,6 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                         onEdit={handleEditAsset}
                         schemas={[]}
                         onLoadIntoRunner={onLoadIntoRunner}
-                      />
-                    ) : activeDetail?.type === 'bundleview' ? (
-                      <BundleDetailView
-                        selectedBundleViewId={activeDetail.id}
-                        onLoadIntoRunner={onLoadIntoRunner}
-                        selectedAssetId={selectedAssetInBundle}
-                        onAssetSelect={setSelectedAssetInBundle}
-                        highlightAssetId={highlightAssetId}
                       />
                     ) : activeDetail?.type === 'bundle' ? (
                       <BundleDetailView
@@ -1218,7 +1235,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                     onSelectionChange={setSelectedItems}
                     onItemView={handleItemView}
                     onItemDoubleClick={handleItemDoubleClick}
-                    onAnnotateFolder={(p) => setAnnotateFolderParams(p)}
+                    onMaterializeVfolder={handleMaterializeVfolder}
                     renderItemActions={renderItemActions}
                     onSearchTermChange={setSearchTermFromSelector}
                   />
@@ -1261,35 +1278,6 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                           onLoadIntoRunner={onLoadIntoRunner}
                         />
                         </ScrollArea>
-                      </div>
-                    </>
-                  ) : activeDetail?.type === 'bundleview' ? (
-                    <>
-                      {/* Back to Feed button */}
-                      <div className="flex-none px-4 py-2 flex items-center gap-2 border-b">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setActiveDetail(null);
-                            setSelectedAssetInBundle(null);
-                            setHighlightAssetId(null);
-                          }}
-                          className="h-7 px-2 text-xs gap-1"
-                          title="Back to Home Feed View"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                          <span className="hidden sm:inline">Back to Home Feed</span>
-                        </Button>
-                      </div>
-                      <div className="flex-1 overflow-hidden">
-                        <BundleDetailView
-                          selectedBundleViewId={activeDetail.id}
-                          onLoadIntoRunner={onLoadIntoRunner}
-                          selectedAssetId={selectedAssetInBundle}
-                          onAssetSelect={setSelectedAssetInBundle}
-                          highlightAssetId={highlightAssetId}
-                        />
                       </div>
                     </>
                   ) : activeDetail?.type === 'bundle' ? (

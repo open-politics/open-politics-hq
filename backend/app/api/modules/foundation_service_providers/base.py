@@ -15,6 +15,89 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+# ─────────────────────────────────────────── Model Specs ──── #
+
+@dataclass
+class ModelSpec:
+    """Base model specification for any provider type."""
+    name: str
+    description: str = ""
+
+
+@dataclass
+class LLMModelSpec(ModelSpec):
+    """Model spec for language model providers."""
+    supports_tools: bool = False
+    supports_streaming: bool = True
+    supports_thinking: bool = False
+    supports_multimodal: bool = False
+    supports_structured_output: bool = False
+    max_tokens: Optional[int] = None
+    context_length: Optional[int] = None
+
+
+@dataclass
+class EmbeddingModelSpec(ModelSpec):
+    """Model spec for embedding providers."""
+    dimension: int = 0
+    max_sequence_length: int = 0
+
+
+# ────────────────────────────────── Provider Selection ──── #
+
+
+class ProviderSelection(BaseModel):
+    """A typed provider+model choice."""
+    type_key: str
+    model_name: Optional[str] = None
+
+
+class LanguageDefaults(BaseModel):
+    """Language capability defaults with context-specific overrides.
+
+    ``default`` is the base language provider. ``chat`` and ``annotation``
+    override it for those specific contexts.  ``resolve()`` checks the
+    context override first and falls back to ``default``.
+    """
+    default: Optional[ProviderSelection] = None
+    chat: Optional[ProviderSelection] = None
+    annotation: Optional[ProviderSelection] = None
+
+    def resolve(self, context: Optional[str] = None) -> Optional[ProviderSelection]:
+        if context:
+            override = getattr(self, context, None)
+            if override:
+                return override
+        return self.default
+
+
+class ProviderDefaults(BaseModel):
+    """User's per-capability provider preferences.
+
+    Core capabilities are named fields — enforced by the model schema.
+    Language uses ``LanguageDefaults`` for context-specific overrides;
+    all other capabilities are plain ``ProviderSelection``.
+    """
+    language: Optional[LanguageDefaults] = None
+    embedding: Optional[ProviderSelection] = None
+    search: Optional[ProviderSelection] = None
+    ocr: Optional[ProviderSelection] = None
+    geocoding: Optional[ProviderSelection] = None
+
+    def get(
+        self, capability: str, context: Optional[str] = None
+    ) -> Optional[ProviderSelection]:
+        """Get provider selection for a capability, with optional context override."""
+        cap = getattr(self, capability, None)
+        if cap is None:
+            return None
+        if isinstance(cap, LanguageDefaults):
+            return cap.resolve(context)
+        return cap
+
+
+# ─────────────────────────────────────────── File Stat ──── #
+
 @dataclass
 class FileStat:
     """File metadata for change detection and hashing."""
@@ -431,11 +514,11 @@ class LanguageModelProvider(Protocol):
     def get_model_info(self, model_name: str) -> Optional[ModelInfo]:
         """
         Get information about a specific model.
-        
+
         Args:
             model_name: Name of the model
-            
+
         Returns:
             ModelInfo object if model exists, None otherwise
         """
-        pass 
+        pass

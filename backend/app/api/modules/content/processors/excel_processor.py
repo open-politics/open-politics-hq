@@ -64,13 +64,15 @@ class ExcelProcessor(BaseProcessor):
         
         # Update parent asset summary
         asset.text_content = f"Excel workbook with {len(sheets_data)} sheet(s)"
-        asset.source_metadata.update({
+        file_info = asset.file_info or {}
+        file_info.update({
             'sheet_count': len(sheets_data),
             'sheet_names': [sheet['name'] for sheet in sheets_data],
             'total_rows': sum(sheet['row_count'] for sheet in sheets_data),
             'is_multisheet_excel': True,
             'processing_options': self.context.options
         })
+        asset.file_info = file_info
         
         # Create sheet assets
         sheet_assets = []
@@ -193,7 +195,7 @@ class ExcelProcessor(BaseProcessor):
             parent_asset_id=parent_asset.id,
             part_index=sheet_index,
             text_content="",  # Will be filled with row summaries
-            source_metadata={
+            file_info={
                 'sheet_name': sheet_name,
                 'sheet_index': sheet_index,
                 'parent_excel_file': parent_asset.title,
@@ -218,8 +220,8 @@ class ExcelProcessor(BaseProcessor):
             return self.context.asset_service.create_asset(sheet_asset_create)
         
         # Update metadata with detected header position
-        sheet_asset_create.source_metadata['header_row_index'] = header_row_idx
-        sheet_asset_create.source_metadata['data_starts_at_row'] = header_row_idx + 1
+        sheet_asset_create.file_info['header_row_index'] = header_row_idx
+        sheet_asset_create.file_info['data_starts_at_row'] = header_row_idx + 1
         
         # Process rows (skip rows before and including header)
         child_assets = []
@@ -279,7 +281,7 @@ class ExcelProcessor(BaseProcessor):
         
         # Update sheet asset with content summary
         sheet_asset_create.text_content = "\n".join(full_text_parts)
-        sheet_asset_create.source_metadata.update({
+        sheet_asset_create.file_info.update({
             'columns': header,
             'column_count': len(header),
             'rows_processed': rows_processed
@@ -298,7 +300,7 @@ class ExcelProcessor(BaseProcessor):
                 parent_asset_id=sheet_asset.id,  # Set sheet as parent
                 part_index=row_metadata['part_index'],
                 text_content=row_metadata['text_content'],
-                source_metadata={
+                file_info={
                     'sheet_name': sheet_name,
                     'sheet_index': sheet_index,
                     'row_number': row_metadata['part_index'] + 1,

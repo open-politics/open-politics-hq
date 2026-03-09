@@ -26,3 +26,6 @@ export function getDefaultModelId(models: Model[]): string {
   }
   return createModelId(models[0])
 }
+
+export { getAssetMeta } from './assetMetadata'
+export type { AssetMetaSource } from './assetMetadata'

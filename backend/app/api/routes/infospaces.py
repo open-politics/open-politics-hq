@@ -19,7 +19,8 @@ from app.schemas import (
 )
 from app.api.dependency_injection import (
     CurrentUser,
-    get_infospace_service
+    get_infospace_service,
+    PackageServiceDep,
 )
 from app.api.modules.identity_infospace_user.services import InfospaceService
 
@@ -262,7 +263,8 @@ async def export_infospace(
     include_datasets: bool = Query(True, description="Include datasets"),
     include_chunks: bool = Query(False, description="Include asset chunks (text segments)"),
     include_embeddings: bool = Query(False, description="Include vector embeddings (can be large)"),
-    infospace_service: InfospaceService = Depends(get_infospace_service)
+    infospace_service: InfospaceService = Depends(get_infospace_service),
+    package_service: PackageServiceDep,
 ) -> Any:
     """
     Export an infospace as a self-contained ZIP package.
@@ -273,9 +275,12 @@ async def export_infospace(
     logger.info(f"Route: Exporting infospace {infospace_id} for user {current_user.id}")
     
     try:
-        # Export the infospace to a package
-        package = await infospace_service.export_infospace(
-            infospace_id=infospace_id,
+        infospace = infospace_service.get_infospace(infospace_id, current_user.id)
+        if not infospace:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
+
+        package = await package_service.export_infospace(
+            infospace=infospace,
             user_id=current_user.id,
             include_sources=include_sources,
             include_schemas=include_schemas,
@@ -284,11 +289,9 @@ async def export_infospace(
             include_assets_for_sources=include_sources,
             include_annotations_for_runs=include_runs,
             include_chunks=include_chunks,
-            include_embeddings=include_embeddings
+            include_embeddings=include_embeddings,
         )
         
-        # Get infospace name for filename
-        infospace = infospace_service.get_infospace(infospace_id, current_user.id)
         safe_name = "".join(c for c in infospace.name if c.isalnum() or c in (' ', '-', '_')).rstrip()
         safe_name = safe_name.replace(' ', '_')
         
@@ -347,7 +350,8 @@ async def import_infospace(
     *,
     current_user: CurrentUser,
     file: UploadFile = File(..., description="Infospace package file (.zip)"),
-    infospace_service: InfospaceService = Depends(get_infospace_service)
+    infospace_service: InfospaceService = Depends(get_infospace_service),
+    package_service: PackageServiceDep,
 ) -> Any:
     """
     Import an Infospace from a ZIP package file.
@@ -356,17 +360,16 @@ async def import_infospace(
     """
     logger.info(f"Route: Importing infospace for user {current_user.id} from file {file.filename}")
     
-    # Create a temporary file to store the upload
     with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as temp_file:
         temp_path = temp_file.name
         content = await file.read()
         temp_file.write(content)
     
     try:
-        # Import the infospace
-        infospace = await infospace_service.import_infospace(
+        infospace = await package_service.import_infospace(
             user_id=current_user.id,
-            filepath=temp_path
+            filepath=temp_path,
+            infospace_service=infospace_service,
         )
         
         logger.info(f"Route: Successfully imported infospace {infospace.id} for user {current_user.id}")

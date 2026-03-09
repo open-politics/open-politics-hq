@@ -6,7 +6,7 @@ Defines the PollHandler protocol and handler registry for Source polling.
 Each Source kind (rss, search, directory_inbox, etc.) registers a handler
 that knows how to poll that source type and return new assets.
 
-The registry replaces the elif chain in StreamSourceService.execute_poll().
+The registry replaces the elif chain in SourceService.execute_poll().
 New source kinds are added by defining a handler class and decorating it
 with @register_poll_handler("kind_name").
 """

@@ -3,7 +3,7 @@
 import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
-import type { GetRegistrationStatsResponse, ListAnalysisAdaptersResponse, ExecuteAnalysisAdapterData, ExecuteAnalysisAdapterResponse, PromoteFragmentData, PromoteFragmentResponse, DeleteFragmentData, DeleteFragmentResponse2, CreateRunData, CreateRunResponse, ListRunsData, ListRunsResponse, CreateRun1Data, CreateRun1Response, ListRuns1Data, ListRuns1Response, GetRunData, GetRunResponse, UpdateRunData, UpdateRunResponse, DeleteRunData, DeleteRunResponse, RetryFailedAnnotationsData, RetryFailedAnnotationsResponse, CreatePackageFromRunEndpointData, CreatePackageFromRunEndpointResponse, ExportRunAnnotationsCsvData, ExportRunAnnotationsCsvResponse, CreateAnnotationData, CreateAnnotationResponse, CreateAnnotation1Data, CreateAnnotation1Response, ListAnnotationsData, ListAnnotationsResponse, ListAnnotations1Data, ListAnnotations1Response, CreateAnnotation2Data, CreateAnnotation2Response, CreateAnnotation3Data, CreateAnnotation3Response, ListAnnotations2Data, ListAnnotations2Response, ListAnnotations3Data, ListAnnotations3Response, GetAnnotationData, GetAnnotationResponse, GetAnnotation1Data, GetAnnotation1Response, UpdateAnnotationData, UpdateAnnotationResponse, UpdateAnnotation1Data, UpdateAnnotation1Response, DeleteAnnotationData, DeleteAnnotationResponse, DeleteAnnotation1Data, DeleteAnnotation1Response, CreateBatchAnnotationsData, CreateBatchAnnotationsResponse, CreateBatchAnnotations1Data, CreateBatchAnnotations1Response, GetRunResultsData, GetRunResultsResponse, GetRunResults1Data, GetRunResults1Response, RetrySingleAnnotationData, RetrySingleAnnotationResponse, RetrySingleAnnotation1Data, RetrySingleAnnotation1Response, CurateFragmentsData, CurateFragmentsResponse, CurateFragments1Data, CurateFragments1Response, RemoveCurationData, RemoveCurationResponse, RemoveCuration1Data, RemoveCuration1Response, GetCuratedTripletsData, GetCuratedTripletsResponse, GetCuratedTriplets1Data, GetCuratedTriplets1Response, CreateAnnotationSchemaData, CreateAnnotationSchemaResponse, ListAnnotationSchemasData, ListAnnotationSchemasResponse, CreateAnnotationSchema1Data, CreateAnnotationSchema1Response, ListAnnotationSchemas1Data, ListAnnotationSchemas1Response, GetAnnotationSchemaData, GetAnnotationSchemaResponse, UpdateAnnotationSchemaData, UpdateAnnotationSchemaResponse, DeleteAnnotationSchemaData, DeleteAnnotationSchemaResponse, RestoreAnnotationSchemaData, RestoreAnnotationSchemaResponse, ReadyzResponse, LivenessResponse, HealthzResponse, CreateAssetData, CreateAssetResponse, CreateAsset1Data, CreateAsset1Response, ListAssetsData, ListAssetsResponse, ListAssets1Data, ListAssets1Response, CreateAsset2Data, CreateAsset2Response, CreateAsset3Data, CreateAsset3Response, ListAssets2Data, ListAssets2Response, ListAssets3Data, ListAssets3Response, BatchCreateAssetsData, BatchCreateAssetsResponse, BatchCreateAssets1Data, BatchCreateAssets1Response, UploadFileData, UploadFileResponse, UploadFile1Data, UploadFile1Response, IngestUrlData, IngestUrlResponse, IngestUrl1Data, IngestUrl1Response, IngestTextData, IngestTextResponse, IngestText1Data, IngestText1Response, ComposeArticleData, ComposeArticleResponse, ComposeArticle1Data, ComposeArticle1Response, BulkIngestUrlsData, BulkIngestUrlsResponse, BulkIngestUrls1Data, BulkIngestUrls1Response, IngestSearchResultsData, IngestSearchResultsResponse, IngestSearchResults1Data, IngestSearchResults1Response, MaterializeCsvFromRowsData, MaterializeCsvFromRowsResponse, MaterializeCsvFromRows1Data, MaterializeCsvFromRows1Response, ReprocessAssetData, ReprocessAssetResponse, ReprocessAsset1Data, ReprocessAsset1Response, UpdateAssetContentData, UpdateAssetContentResponse, UpdateAssetContent1Data, UpdateAssetContent1Response, DiscoverRssFeedsData, DiscoverRssFeedsResponse, DiscoverRssFeeds1Data, DiscoverRssFeeds1Response, PreviewRssFeedData, PreviewRssFeedResponse, PreviewRssFeed1Data, PreviewRssFeed1Response, IngestSelectedArticlesData, IngestSelectedArticlesResponse, IngestSelectedArticles1Data, IngestSelectedArticles1Response, GetAssetData, GetAssetResponse, GetAsset1Data, GetAsset1Response, UpdateAssetData, UpdateAssetResponse, UpdateAsset1Data, UpdateAsset1Response, DeleteAssetData, DeleteAssetResponse, DeleteAsset1Data, DeleteAsset1Response, GetAssetChildrenData, GetAssetChildrenResponse, GetAssetChildren1Data, GetAssetChildren1Response, BulkDeleteAssetsData, BulkDeleteAssetsResponse, BulkDeleteAssets1Data, BulkDeleteAssets1Response, TransferAssetsData, TransferAssetsResponse, TransferAssets1Data, TransferAssets1Response, GetSupportedContentTypesResponse, GetSupportedContentTypes1Response, CreateAssetsBackgroundBulkData, CreateAssetsBackgroundBulkResponse, CreateAssetsBackgroundBulk1Data, CreateAssetsBackgroundBulk1Response, CreateAssetsBackgroundUrlsData, CreateAssetsBackgroundUrlsResponse, CreateAssetsBackgroundUrls1Data, CreateAssetsBackgroundUrls1Response, AddFilesToBundleBackgroundData, AddFilesToBundleBackgroundResponse, AddFilesToBundleBackground1Data, AddFilesToBundleBackground1Response, GetTaskStatusData, GetTaskStatusResponse, GetTaskStatus1Data, GetTaskStatus1Response, IngestRssFeedsFromAwesomeData, IngestRssFeedsFromAwesomeResponse, IngestRssFeedsFromAwesome1Data, IngestRssFeedsFromAwesome1Response, CreateBackupData, CreateBackupResponse, ListBackupsData, ListBackupsResponse, ListAllUserBackupsData, ListAllUserBackupsResponse, GetBackupData, GetBackupResponse, UpdateBackupData, UpdateBackupResponse, DeleteBackupData, DeleteBackupResponse, RestoreBackupData, RestoreBackupResponse, CreateBackupShareLinkData, CreateBackupShareLinkResponse, DownloadSharedBackupData, DownloadSharedBackupResponse, CleanupExpiredBackupsResponse, GetInfospacesBackupOverviewData, GetInfospacesBackupOverviewResponse, TriggerBackupAllInfospacesData, TriggerBackupAllInfospacesResponse, TriggerBackupSpecificInfospacesData, TriggerBackupSpecificInfospacesResponse, CreateBundleData, CreateBundleResponse, GetBundlesData, GetBundlesResponse, GetBundleData, GetBundleResponse, UpdateBundleData, UpdateBundleResponse, DeleteBundleData, DeleteBundleResponse, BulkDeleteBundlesData, BulkDeleteBundlesResponse, AddAssetToBundleData, AddAssetToBundleResponse, RemoveAssetFromBundleData, RemoveAssetFromBundleResponse, GetAssetsInBundleData, GetAssetsInBundleResponse, TransferBundleData, TransferBundleResponse, MoveBundleToParentData, MoveBundleToParentResponse, GetBundleHierarchyData, GetBundleHierarchyResponse, GetRootBundlesData, GetRootBundlesResponse, GetBulkBundleAssetsData, GetBulkBundleAssetsResponse, CreateBundleViewData, CreateBundleViewResponse, ListBundleViewsData, ListBundleViewsResponse, GetBundleViewData, GetBundleViewResponse, UpdateBundleViewData, UpdateBundleViewResponse, DeleteBundleViewData, DeleteBundleViewResponse, ListEntitiesData, ListEntitiesResponse, CreateEntityData, CreateEntityResponse, UpdateEntityData, UpdateEntityResponse, DeleteEntityData, DeleteEntityResponse, MergeEntitiesData, MergeEntitiesResponse, TriggerResolutionData, TriggerResolutionResponse, ListConversationsData, ListConversationsResponse, CreateConversationData, CreateConversationResponse, GetConversationData, GetConversationResponse, UpdateConversationData, UpdateConversationResponse, DeleteConversationData, DeleteConversationResponse, AddMessageToConversationData, AddMessageToConversationResponse, GetConversationMessagesData, GetConversationMessagesResponse, ChunkSingleAssetData, ChunkSingleAssetResponse, ChunkMultipleAssetsData, ChunkMultipleAssetsResponse, GetAssetChunksData, GetAssetChunksResponse, RemoveAssetChunksData, RemoveAssetChunksResponse, GetChunkingStatisticsData, GetChunkingStatisticsResponse, CreateDatasetData, CreateDatasetResponse, ListDatasetsData, ListDatasetsResponse, CreateDataset1Data, CreateDataset1Response, ListDatasets1Data, ListDatasets1Response, GetDatasetData, GetDatasetResponse, UpdateDatasetData, UpdateDatasetResponse, DeleteDatasetData, DeleteDatasetResponse, ExportDatasetData, ExportDatasetResponse, ImportDatasetData, ImportDatasetResponse, ImportDatasetFromTokenData, ImportDatasetFromTokenResponse, GenerateInfospaceEmbeddingsData, GenerateInfospaceEmbeddingsResponse, GenerateAssetEmbeddingsData, GenerateAssetEmbeddingsResponse, GetEmbeddingStatsData, GetEmbeddingStatsResponse, SemanticSearchData, SemanticSearchResponse2, ClearInfospaceEmbeddingsData, ClearInfospaceEmbeddingsResponse, DiscoverEmbeddingModelsData, DiscoverEmbeddingModelsResponse, ListAvailableEmbeddingModelsResponse, FileUploadData, FileUploadResponse2, FileDownloadData, FileDownloadResponse, ListFilesData, ListFilesResponse, DeleteFileData, DeleteFileResponse, StreamFileData, StreamFileResponse, SaveFilterData, SaveFilterResponse, ListFiltersResponse, GetFilterData, GetFilterResponse, DeleteFilterData, DeleteFilterResponse, TestFilterData, TestFilterResponse, GetBasicFilterExamplesResponse, GetAdvancedFilterExamplesResponse, CreateThresholdFilterData, CreateThresholdFilterResponse, CreateRangeFilterData, CreateRangeFilterResponse, CreateKeywordFilterData, CreateKeywordFilterResponse, CreateFlowData, CreateFlowResponse, ListFlowsData, ListFlowsResponse, CreateFlow1Data, CreateFlow1Response, ListFlows1Data, ListFlows1Response, GetFlowData, GetFlowResponse, UpdateFlowData, UpdateFlowResponse, DeleteFlowData, DeleteFlowResponse, ActivateFlowData, ActivateFlowResponse, PauseFlowData, PauseFlowResponse, TriggerFlowExecutionData, TriggerFlowExecutionResponse, ListFlowExecutionsData, ListFlowExecutionsResponse, GetFlowExecutionData, GetFlowExecutionResponse, GetPendingAssetsData, GetPendingAssetsResponse, ResetFlowCursorData, ResetFlowCursorResponse, CreateInfospaceData, CreateInfospaceResponse, ListInfospacesData, ListInfospacesResponse, CreateInfospace1Data, CreateInfospace1Response, ListInfospaces1Data, ListInfospaces1Response, GetInfospaceData, GetInfospaceResponse, UpdateInfospaceData, UpdateInfospaceResponse, DeleteInfospaceData, DeleteInfospaceResponse, InviteCollaboratorData, InviteCollaboratorResponse, ListCollaboratorsData, ListCollaboratorsResponse, RemoveCollaboratorData, RemoveCollaboratorResponse, GetInfospaceStatsData, GetInfospaceStatsResponse, ExportInfospaceData, ExportInfospaceResponse, ImportInfospaceData, ImportInfospaceResponse, CreateDirectoryImportJobData, CreateDirectoryImportJobResponse, TriggerBatchProcessPendingData, TriggerBatchProcessPendingResponse, TriggerBatchEnrichData, TriggerBatchEnrichResponse, GetProcessingStatusData, GetProcessingStatusResponse, ListIngestionJobsData, ListIngestionJobsResponse, GetIngestionJobStatusData, GetIngestionJobStatusResponse, DeleteIngestionJobData, DeleteIngestionJobResponse, GetIngestionJobByUuidData, GetIngestionJobByUuidResponse, CreateArchiveIngestionJobData, CreateArchiveIngestionJobResponse, CancelIngestionJobData, CancelIngestionJobResponse, ReconcileDirectoryData, ReconcileDirectoryResponse, EnableDirectoryWatchData, EnableDirectoryWatchResponse, GetWatchStatusData, GetWatchStatusResponse, IntelligenceChatData, IntelligenceChatResponse, ExecuteToolCallData, ExecuteToolCallResponse, ListAvailableModelsData, ListAvailableModelsResponse, ListUniversalToolsData, ListUniversalToolsResponse, GetInfospaceToolContextData, GetInfospaceToolContextResponse, ListKnowledgeGraphsData, ListKnowledgeGraphsResponse, CreateKnowledgeGraphData, CreateKnowledgeGraphResponse, GetKnowledgeGraphData, GetKnowledgeGraphResponse, UpdateKnowledgeGraphData, UpdateKnowledgeGraphResponse, DeleteKnowledgeGraphData, DeleteKnowledgeGraphResponse, LoginAccessTokenData, LoginAccessTokenResponse, TestTokenResponse, RecoverPasswordData, RecoverPasswordResponse, ResetPasswordData, ResetPasswordResponse, RecoverPasswordHtmlContentData, RecoverPasswordHtmlContentResponse, SearchContentData, SearchContentResponse, SearchContent1Data, SearchContent1Response, SearchAndIngestData, SearchAndIngestResponse2, CreateAssetsFromUrlsData, CreateAssetsFromUrlsResponse, CreateAssetsFromResultsData, CreateAssetsFromResultsResponse, CreateSearchHistoryData, CreateSearchHistoryResponse, ReadSearchHistoriesData, ReadSearchHistoriesResponse, CreateShareableLinkData, CreateShareableLinkResponse, GetShareableLinksData, GetShareableLinksResponse, GetShareableLinkByTokenData, GetShareableLinkByTokenResponse, UpdateShareableLinkData, UpdateShareableLinkResponse, DeleteShareableLinkData, DeleteShareableLinkResponse, AccessSharedResourceData, AccessSharedResourceResponse, ViewSharedResourceData, ViewSharedResourceResponse, GetSharingStatsData, GetSharingStatsResponse, ExportResourceData, ExportResourceResponse, ImportResourceData, ImportResourceResponse, ExportResourcesBatchData, ExportResourcesBatchResponse, ExportMixedBatchData, ExportMixedBatchResponse, StreamSharedAssetFileData, StreamSharedAssetFileResponse, DownloadSharedBundleData, DownloadSharedBundleResponse, DownloadSharedAssetFileData, DownloadSharedAssetFileResponse, ViewDatasetPackageSummaryData, ViewDatasetPackageSummaryResponse, ImportResourceFromTokenData, ImportResourceFromTokenResponse, CreateSourceData, CreateSourceResponse, ListSourcesData, ListSourcesResponse, CreateSource1Data, CreateSource1Response, ListSources1Data, ListSources1Response, GetSourceData, GetSourceResponse, UpdateSourceData, UpdateSourceResponse, DeleteSourceData, DeleteSourceResponse, TriggerSourceProcessingData, TriggerSourceProcessingResponse, TransferSourcesData, TransferSourcesResponse, CreateRssSourceData, CreateRssSourceResponse, ActivateStreamData, ActivateStreamResponse, PauseStreamData, PauseStreamResponse, PollSourceData, PollSourceResponse, GetStreamStatsData, GetStreamStatsResponse, GetPollHistoryData, GetPollHistoryResponse, InitiateDiscourseLoginResponse, InitiateDiscourseLogin1Response, HandleDiscourseSsoData, HandleDiscourseSsoResponse, HandleDiscourseSso1Data, HandleDiscourseSso1Response, HandleDiscourseLogoutResponse, HandleDiscourseLogout1Response, GetDiscourseSsoInfoResponse, GetDiscourseSsoInfo1Response, SyncUserToDiscourseData, SyncUserToDiscourseResponse, SyncUserToDiscourse1Data, SyncUserToDiscourse1Response, CompleteDiscourseSsoData, CompleteDiscourseSsoResponse, CompleteDiscourseSso1Data, CompleteDiscourseSso1Response, BrowseStorageData, BrowseStorageResponse, CreateTaskData, CreateTaskResponse, CreateTask1Data, CreateTask1Response, ListTasksData, ListTasksResponse, ListTasks1Data, ListTasks1Response, CreateTask2Data, CreateTask2Response, CreateTask3Data, CreateTask3Response, ListTasks2Data, ListTasks2Response, ListTasks3Data, ListTasks3Response, GetTaskData, GetTaskResponse, GetTask1Data, GetTask1Response, UpdateTaskData, UpdateTaskResponse, UpdateTask1Data, UpdateTask1Response, DeleteTaskData, DeleteTaskResponse, DeleteTask1Data, DeleteTask1Response, ExecuteTaskManuallyData, ExecuteTaskManuallyResponse, ExecuteTaskManually1Data, ExecuteTaskManually1Response, GetInfospaceTreeData, GetInfospaceTreeResponse, GetTreeChildrenData, GetTreeChildrenResponse, DeleteTreeNodesData, DeleteTreeNodesResponse, GetVirtualFolderChildrenData, GetVirtualFolderChildrenResponse, GetFeedAssetsData, GetFeedAssetsResponse, BatchGetAssetsData, BatchGetAssetsResponse, TextSearchAssetsData, TextSearchAssetsResponse, CreateUserBackupData, CreateUserBackupResponse, ListUserBackupsData, ListUserBackupsResponse, GetUserBackupData, GetUserBackupResponse, UpdateUserBackupData, UpdateUserBackupResponse, DeleteUserBackupData, DeleteUserBackupResponse, RestoreUserBackupData, RestoreUserBackupResponse, CreateUserBackupShareLinkData, CreateUserBackupShareLinkResponse, DownloadSharedUserBackupData, DownloadSharedUserBackupResponse, CleanupExpiredUserBackupsResponse, GetUsersBackupOverviewData, GetUsersBackupOverviewResponse, TriggerBackupAllUsersData, TriggerBackupAllUsersResponse, TriggerBackupSpecificUsersData, TriggerBackupSpecificUsersResponse, ReadUsersData, ReadUsersResponse, CreateUserData, CreateUserResponse, ReadUsers1Data, ReadUsers1Response, CreateUser1Data, CreateUser1Response, ReadUserMeResponse, UpdateUserMeData, UpdateUserMeResponse, UpdatePasswordMeData, UpdatePasswordMeResponse, SaveCredentialsData, SaveCredentialsResponse, ListCredentialProvidersResponse, DeleteCredentialData, DeleteCredentialResponse, UploadProfilePictureData, UploadProfilePictureResponse, UploadBackgroundImageData, UploadBackgroundImageResponse, GetUserPublicProfileData, GetUserPublicProfileResponse, GetProfilePictureData, GetProfilePictureResponse, GetBackgroundImageData, GetBackgroundImageResponse, DeleteBackgroundImageResponse, ListUserProfilesData, ListUserProfilesResponse, GetUserProfileStatsData, GetUserProfileStatsResponse, UpdateUserProfileData, UpdateUserProfileResponse, CreateUserOpenData, CreateUserOpenResponse, ReadUserByIdData, ReadUserByIdResponse, UpdateUserData, UpdateUserResponse, DeleteUserData, DeleteUserResponse, VerifyEmailData, VerifyEmailResponse, ResendVerificationData, ResendVerificationResponse, TestEmailData, TestEmailResponse, GetAvailableRssCountriesResponse, DiscoverCuratedRssFeedsData, DiscoverCuratedRssFeedsResponse, ExtractPdfTextData, ExtractPdfTextResponse, ExtractPdfMetadataData, ExtractPdfMetadataResponse, ScrapeArticleData, ScrapeArticleResponse, AnalyzeSourceData, AnalyzeSourceResponse, DiscoverRssFeedsFromSiteData, DiscoverRssFeedsFromSiteResponse, BrowseRssFeedData, BrowseRssFeedResponse, GetUnifiedProvidersResponse, GetProvidersResponse, PullOllamaModelData, PullOllamaModelResponse, GetOllamaAvailableModelsData, GetOllamaAvailableModelsResponse, RemoveOllamaModelData, RemoveOllamaModelResponse, GetGeocodingProvidersResponse, GeocodeLocationData, GeocodeLocationResponse, GeocodeLocationWithProviderData, GeocodeLocationWithProviderResponse, GetCountryDataData, GetCountryDataResponse } from './types.gen';
+import type { GetRegistrationStatsResponse, ListAnalysisAdaptersResponse, ExecuteAnalysisAdapterData, ExecuteAnalysisAdapterResponse, PromoteFragmentData, PromoteFragmentResponse, DeleteFragmentData, DeleteFragmentResponse2, CreateRunData, CreateRunResponse, ListRunsData, ListRunsResponse, CreateRun1Data, CreateRun1Response, ListRuns1Data, ListRuns1Response, GetRunData, GetRunResponse, UpdateRunData, UpdateRunResponse, DeleteRunData, DeleteRunResponse, RetryFailedAnnotationsData, RetryFailedAnnotationsResponse, CreatePackageFromRunEndpointData, CreatePackageFromRunEndpointResponse, ExportRunAnnotationsCsvData, ExportRunAnnotationsCsvResponse, CreateAnnotationData, CreateAnnotationResponse, CreateAnnotation1Data, CreateAnnotation1Response, ListAnnotationsData, ListAnnotationsResponse, ListAnnotations1Data, ListAnnotations1Response, CreateAnnotation2Data, CreateAnnotation2Response, CreateAnnotation3Data, CreateAnnotation3Response, ListAnnotations2Data, ListAnnotations2Response, ListAnnotations3Data, ListAnnotations3Response, GetAnnotationData, GetAnnotationResponse, GetAnnotation1Data, GetAnnotation1Response, UpdateAnnotationData, UpdateAnnotationResponse, UpdateAnnotation1Data, UpdateAnnotation1Response, DeleteAnnotationData, DeleteAnnotationResponse, DeleteAnnotation1Data, DeleteAnnotation1Response, CreateBatchAnnotationsData, CreateBatchAnnotationsResponse, CreateBatchAnnotations1Data, CreateBatchAnnotations1Response, GetRunResultsData, GetRunResultsResponse, GetRunResults1Data, GetRunResults1Response, RetrySingleAnnotationData, RetrySingleAnnotationResponse, RetrySingleAnnotation1Data, RetrySingleAnnotation1Response, CurateFragmentsData, CurateFragmentsResponse, CurateFragments1Data, CurateFragments1Response, RemoveCurationData, RemoveCurationResponse, RemoveCuration1Data, RemoveCuration1Response, GetCuratedTripletsData, GetCuratedTripletsResponse, GetCuratedTriplets1Data, GetCuratedTriplets1Response, CreateAnnotationSchemaData, CreateAnnotationSchemaResponse, ListAnnotationSchemasData, ListAnnotationSchemasResponse, CreateAnnotationSchema1Data, CreateAnnotationSchema1Response, ListAnnotationSchemas1Data, ListAnnotationSchemas1Response, GetAnnotationSchemaData, GetAnnotationSchemaResponse, UpdateAnnotationSchemaData, UpdateAnnotationSchemaResponse, DeleteAnnotationSchemaData, DeleteAnnotationSchemaResponse, RestoreAnnotationSchemaData, RestoreAnnotationSchemaResponse, ReadyzResponse, LivenessResponse, HealthzResponse, CreateAssetData, CreateAssetResponse, CreateAsset1Data, CreateAsset1Response, ListAssetsData, ListAssetsResponse, ListAssets1Data, ListAssets1Response, CreateAsset2Data, CreateAsset2Response, CreateAsset3Data, CreateAsset3Response, ListAssets2Data, ListAssets2Response, ListAssets3Data, ListAssets3Response, BatchCreateAssetsData, BatchCreateAssetsResponse, BatchCreateAssets1Data, BatchCreateAssets1Response, UploadFileData, UploadFileResponse, UploadFile1Data, UploadFile1Response, IngestUrlData, IngestUrlResponse, IngestUrl1Data, IngestUrl1Response, IngestTextData, IngestTextResponse, IngestText1Data, IngestText1Response, ComposeArticleData, ComposeArticleResponse, ComposeArticle1Data, ComposeArticle1Response, BulkIngestUrlsData, BulkIngestUrlsResponse, BulkIngestUrls1Data, BulkIngestUrls1Response, IngestSearchResultsData, IngestSearchResultsResponse, IngestSearchResults1Data, IngestSearchResults1Response, MaterializeCsvFromRowsData, MaterializeCsvFromRowsResponse, MaterializeCsvFromRows1Data, MaterializeCsvFromRows1Response, ReprocessAssetData, ReprocessAssetResponse, ReprocessAsset1Data, ReprocessAsset1Response, UpdateAssetContentData, UpdateAssetContentResponse, UpdateAssetContent1Data, UpdateAssetContent1Response, DiscoverRssFeedsData, DiscoverRssFeedsResponse, DiscoverRssFeeds1Data, DiscoverRssFeeds1Response, PreviewRssFeedData, PreviewRssFeedResponse, PreviewRssFeed1Data, PreviewRssFeed1Response, IngestSelectedArticlesData, IngestSelectedArticlesResponse, IngestSelectedArticles1Data, IngestSelectedArticles1Response, GetAssetData, GetAssetResponse, GetAsset1Data, GetAsset1Response, UpdateAssetData, UpdateAssetResponse, UpdateAsset1Data, UpdateAsset1Response, DeleteAssetData, DeleteAssetResponse, DeleteAsset1Data, DeleteAsset1Response, GetAssetChildrenData, GetAssetChildrenResponse, GetAssetChildren1Data, GetAssetChildren1Response, BulkDeleteAssetsData, BulkDeleteAssetsResponse, BulkDeleteAssets1Data, BulkDeleteAssets1Response, TransferAssetsData, TransferAssetsResponse, TransferAssets1Data, TransferAssets1Response, GetSupportedContentTypesResponse, GetSupportedContentTypes1Response, CreateAssetsBackgroundBulkData, CreateAssetsBackgroundBulkResponse, CreateAssetsBackgroundBulk1Data, CreateAssetsBackgroundBulk1Response, CreateAssetsBackgroundUrlsData, CreateAssetsBackgroundUrlsResponse, CreateAssetsBackgroundUrls1Data, CreateAssetsBackgroundUrls1Response, AddFilesToBundleBackgroundData, AddFilesToBundleBackgroundResponse, AddFilesToBundleBackground1Data, AddFilesToBundleBackground1Response, GetTaskStatusData, GetTaskStatusResponse, GetTaskStatus1Data, GetTaskStatus1Response, IngestRssFeedsFromAwesomeData, IngestRssFeedsFromAwesomeResponse, IngestRssFeedsFromAwesome1Data, IngestRssFeedsFromAwesome1Response, CreateBackupData, CreateBackupResponse, ListBackupsData, ListBackupsResponse, ListAllUserBackupsData, ListAllUserBackupsResponse, GetBackupData, GetBackupResponse, UpdateBackupData, UpdateBackupResponse, DeleteBackupData, DeleteBackupResponse, RestoreBackupData, RestoreBackupResponse, CreateBackupShareLinkData, CreateBackupShareLinkResponse, DownloadSharedBackupData, DownloadSharedBackupResponse, CleanupExpiredBackupsResponse, GetInfospacesBackupOverviewData, GetInfospacesBackupOverviewResponse, TriggerBackupAllInfospacesData, TriggerBackupAllInfospacesResponse, TriggerBackupSpecificInfospacesData, TriggerBackupSpecificInfospacesResponse, MaterializeVirtualFolderData, MaterializeVirtualFolderResponse, CreateBundleData, CreateBundleResponse, GetBundlesData, GetBundlesResponse, GetBundleData, GetBundleResponse, UpdateBundleData, UpdateBundleResponse, DeleteBundleData, DeleteBundleResponse, BulkDeleteBundlesData, BulkDeleteBundlesResponse, AddAssetToBundleData, AddAssetToBundleResponse, RemoveAssetFromBundleData, RemoveAssetFromBundleResponse, GetAssetsInBundleData, GetAssetsInBundleResponse, TransferBundleData, TransferBundleResponse, MoveBundleToParentData, MoveBundleToParentResponse, GetBundleHierarchyData, GetBundleHierarchyResponse, GetRootBundlesData, GetRootBundlesResponse, GetBulkBundleAssetsData, GetBulkBundleAssetsResponse, ListEntitiesData, ListEntitiesResponse, CreateEntityData, CreateEntityResponse, UpdateEntityData, UpdateEntityResponse, DeleteEntityData, DeleteEntityResponse, MergeEntitiesData, MergeEntitiesResponse, TriggerResolutionData, TriggerResolutionResponse, ListConversationsData, ListConversationsResponse, CreateConversationData, CreateConversationResponse, GetConversationData, GetConversationResponse, UpdateConversationData, UpdateConversationResponse, DeleteConversationData, DeleteConversationResponse, AddMessageToConversationData, AddMessageToConversationResponse, GetConversationMessagesData, GetConversationMessagesResponse, ChunkSingleAssetData, ChunkSingleAssetResponse, ChunkMultipleAssetsData, ChunkMultipleAssetsResponse, GetAssetChunksData, GetAssetChunksResponse, RemoveAssetChunksData, RemoveAssetChunksResponse, GetChunkingStatisticsData, GetChunkingStatisticsResponse, CreateDatasetData, CreateDatasetResponse, ListDatasetsData, ListDatasetsResponse, CreateDataset1Data, CreateDataset1Response, ListDatasets1Data, ListDatasets1Response, GetDatasetData, GetDatasetResponse, UpdateDatasetData, UpdateDatasetResponse, DeleteDatasetData, DeleteDatasetResponse, ExportDatasetData, ExportDatasetResponse, ImportDatasetData, ImportDatasetResponse, ImportDatasetFromTokenData, ImportDatasetFromTokenResponse, GenerateInfospaceEmbeddingsData, GenerateInfospaceEmbeddingsResponse, GenerateAssetEmbeddingsData, GenerateAssetEmbeddingsResponse, GetEmbeddingStatsData, GetEmbeddingStatsResponse, SemanticSearchData, SemanticSearchResponse2, ClearInfospaceEmbeddingsData, ClearInfospaceEmbeddingsResponse, DiscoverEmbeddingModelsData, DiscoverEmbeddingModelsResponse, FileUploadData, FileUploadResponse2, FileDownloadData, FileDownloadResponse, ListFilesData, ListFilesResponse, DeleteFileData, DeleteFileResponse, StreamFileData, StreamFileResponse, TestFilterData, TestFilterResponse, GetBasicFilterExamplesResponse, GetAdvancedFilterExamplesResponse, CreateThresholdFilterData, CreateThresholdFilterResponse, CreateRangeFilterData, CreateRangeFilterResponse, CreateKeywordFilterData, CreateKeywordFilterResponse, CreateFlowData, CreateFlowResponse, ListFlowsData, ListFlowsResponse, CreateFlow1Data, CreateFlow1Response, ListFlows1Data, ListFlows1Response, GetFlowData, GetFlowResponse, UpdateFlowData, UpdateFlowResponse, DeleteFlowData, DeleteFlowResponse, ActivateFlowData, ActivateFlowResponse, PauseFlowData, PauseFlowResponse, TriggerFlowExecutionData, TriggerFlowExecutionResponse, ListFlowExecutionsData, ListFlowExecutionsResponse, GetFlowExecutionData, GetFlowExecutionResponse, GetPendingAssetsData, GetPendingAssetsResponse, ResetFlowCursorData, ResetFlowCursorResponse, CreateInfospaceData, CreateInfospaceResponse, ListInfospacesData, ListInfospacesResponse, CreateInfospace1Data, CreateInfospace1Response, ListInfospaces1Data, ListInfospaces1Response, GetInfospaceData, GetInfospaceResponse, UpdateInfospaceData, UpdateInfospaceResponse, DeleteInfospaceData, DeleteInfospaceResponse, InviteCollaboratorData, InviteCollaboratorResponse, ListCollaboratorsData, ListCollaboratorsResponse, RemoveCollaboratorData, RemoveCollaboratorResponse, GetInfospaceStatsData, GetInfospaceStatsResponse, ExportInfospaceData, ExportInfospaceResponse, ImportInfospaceData, ImportInfospaceResponse, CreateDirectoryImportJobData, CreateDirectoryImportJobResponse, TriggerBatchProcessPendingData, TriggerBatchProcessPendingResponse, TriggerBatchEnrichData, TriggerBatchEnrichResponse, GetProcessingStatusData, GetProcessingStatusResponse, ListIngestionJobsData, ListIngestionJobsResponse, GetIngestionJobStatusData, GetIngestionJobStatusResponse, DeleteIngestionJobData, DeleteIngestionJobResponse, GetIngestionJobByUuidData, GetIngestionJobByUuidResponse, CreateArchiveIngestionJobData, CreateArchiveIngestionJobResponse, CancelIngestionJobData, CancelIngestionJobResponse, ReconcileDirectoryData, ReconcileDirectoryResponse, EnableDirectoryWatchData, EnableDirectoryWatchResponse, GetWatchStatusData, GetWatchStatusResponse, IntelligenceChatData, IntelligenceChatResponse, ExecuteToolCallData, ExecuteToolCallResponse, ListAvailableModelsData, ListAvailableModelsResponse, ListUniversalToolsData, ListUniversalToolsResponse, GetInfospaceToolContextData, GetInfospaceToolContextResponse, ListKnowledgeGraphsData, ListKnowledgeGraphsResponse, CreateKnowledgeGraphData, CreateKnowledgeGraphResponse, GetKnowledgeGraphData, GetKnowledgeGraphResponse, UpdateKnowledgeGraphData, UpdateKnowledgeGraphResponse, DeleteKnowledgeGraphData, DeleteKnowledgeGraphResponse, LoginAccessTokenData, LoginAccessTokenResponse, TestTokenResponse, RecoverPasswordData, RecoverPasswordResponse, ResetPasswordData, ResetPasswordResponse, RecoverPasswordHtmlContentData, RecoverPasswordHtmlContentResponse, DiscoverModelsData, DiscoverModelsResponse, SystemCapabilitiesResponse, SearchContentData, SearchContentResponse, SearchContent1Data, SearchContent1Response, SearchAndIngestData, SearchAndIngestResponse2, CreateAssetsFromUrlsData, CreateAssetsFromUrlsResponse, CreateAssetsFromResultsData, CreateAssetsFromResultsResponse, CreateSearchHistoryData, CreateSearchHistoryResponse, ReadSearchHistoriesData, ReadSearchHistoriesResponse, CreateShareableLinkData, CreateShareableLinkResponse, GetShareableLinksData, GetShareableLinksResponse, GetShareableLinkByTokenData, GetShareableLinkByTokenResponse, UpdateShareableLinkData, UpdateShareableLinkResponse, DeleteShareableLinkData, DeleteShareableLinkResponse, AccessSharedResourceData, AccessSharedResourceResponse, ViewSharedResourceData, ViewSharedResourceResponse, GetSharingStatsData, GetSharingStatsResponse, ExportResourceData, ExportResourceResponse, ImportResourceData, ImportResourceResponse, ExportResourcesBatchData, ExportResourcesBatchResponse, ExportMixedBatchData, ExportMixedBatchResponse, StreamSharedAssetFileData, StreamSharedAssetFileResponse, DownloadSharedBundleData, DownloadSharedBundleResponse, DownloadSharedAssetFileData, DownloadSharedAssetFileResponse, ViewDatasetPackageSummaryData, ViewDatasetPackageSummaryResponse, ImportResourceFromTokenData, ImportResourceFromTokenResponse, CreateSourceData, CreateSourceResponse, ListSourcesData, ListSourcesResponse, CreateSource1Data, CreateSource1Response, ListSources1Data, ListSources1Response, GetSourceData, GetSourceResponse, UpdateSourceData, UpdateSourceResponse, DeleteSourceData, DeleteSourceResponse, TriggerSourceProcessingData, TriggerSourceProcessingResponse, TransferSourcesData, TransferSourcesResponse, CreateRssSourceData, CreateRssSourceResponse, ActivateStreamData, ActivateStreamResponse, PauseStreamData, PauseStreamResponse, PollSourceData, PollSourceResponse, GetStreamStatsData, GetStreamStatsResponse, GetPollHistoryData, GetPollHistoryResponse, InitiateDiscourseLoginResponse, InitiateDiscourseLogin1Response, HandleDiscourseSsoData, HandleDiscourseSsoResponse, HandleDiscourseSso1Data, HandleDiscourseSso1Response, HandleDiscourseLogoutResponse, HandleDiscourseLogout1Response, GetDiscourseSsoInfoResponse, GetDiscourseSsoInfo1Response, SyncUserToDiscourseData, SyncUserToDiscourseResponse, SyncUserToDiscourse1Data, SyncUserToDiscourse1Response, CompleteDiscourseSsoData, CompleteDiscourseSsoResponse, CompleteDiscourseSso1Data, CompleteDiscourseSso1Response, BrowseStorageData, BrowseStorageResponse, CreateTaskData, CreateTaskResponse, CreateTask1Data, CreateTask1Response, ListTasksData, ListTasksResponse, ListTasks1Data, ListTasks1Response, CreateTask2Data, CreateTask2Response, CreateTask3Data, CreateTask3Response, ListTasks2Data, ListTasks2Response, ListTasks3Data, ListTasks3Response, GetTaskData, GetTaskResponse, GetTask1Data, GetTask1Response, UpdateTaskData, UpdateTaskResponse, UpdateTask1Data, UpdateTask1Response, DeleteTaskData, DeleteTaskResponse, DeleteTask1Data, DeleteTask1Response, ExecuteTaskManuallyData, ExecuteTaskManuallyResponse, ExecuteTaskManually1Data, ExecuteTaskManually1Response, GetInfospaceTreeData, GetInfospaceTreeResponse, GetTreeChildrenData, GetTreeChildrenResponse, DeleteTreeNodesData, DeleteTreeNodesResponse, GetFeedAssetsData, GetFeedAssetsResponse, BatchGetAssetsData, BatchGetAssetsResponse, TextSearchAssetsData, TextSearchAssetsResponse, CreateUserBackupData, CreateUserBackupResponse, ListUserBackupsData, ListUserBackupsResponse, GetUserBackupData, GetUserBackupResponse, UpdateUserBackupData, UpdateUserBackupResponse, DeleteUserBackupData, DeleteUserBackupResponse, RestoreUserBackupData, RestoreUserBackupResponse, CreateUserBackupShareLinkData, CreateUserBackupShareLinkResponse, DownloadSharedUserBackupData, DownloadSharedUserBackupResponse, CleanupExpiredUserBackupsResponse, GetUsersBackupOverviewData, GetUsersBackupOverviewResponse, TriggerBackupAllUsersData, TriggerBackupAllUsersResponse, TriggerBackupSpecificUsersData, TriggerBackupSpecificUsersResponse, ReadUsersData, ReadUsersResponse, CreateUserData, CreateUserResponse, ReadUsers1Data, ReadUsers1Response, CreateUser1Data, CreateUser1Response, ReadUserMeResponse, UpdateUserMeData, UpdateUserMeResponse, UpdatePasswordMeData, UpdatePasswordMeResponse, SaveCredentialsData, SaveCredentialsResponse, ListCredentialProvidersResponse, DeleteCredentialData, DeleteCredentialResponse, UploadProfilePictureData, UploadProfilePictureResponse, UploadBackgroundImageData, UploadBackgroundImageResponse, GetUserPublicProfileData, GetUserPublicProfileResponse, GetProfilePictureData, GetProfilePictureResponse, GetBackgroundImageData, GetBackgroundImageResponse, DeleteBackgroundImageResponse, ListUserProfilesData, ListUserProfilesResponse, GetUserProfileStatsData, GetUserProfileStatsResponse, UpdateUserProfileData, UpdateUserProfileResponse, CreateUserOpenData, CreateUserOpenResponse, ReadUserByIdData, ReadUserByIdResponse, UpdateUserData, UpdateUserResponse, DeleteUserData, DeleteUserResponse, VerifyEmailData, VerifyEmailResponse, ResendVerificationData, ResendVerificationResponse, TestEmailData, TestEmailResponse, GetAvailableRssCountriesResponse, DiscoverCuratedRssFeedsData, DiscoverCuratedRssFeedsResponse, ExtractPdfTextData, ExtractPdfTextResponse, ExtractPdfMetadataData, ExtractPdfMetadataResponse, ScrapeArticleData, ScrapeArticleResponse, AnalyzeSourceData, AnalyzeSourceResponse, DiscoverRssFeedsFromSiteData, DiscoverRssFeedsFromSiteResponse, BrowseRssFeedData, BrowseRssFeedResponse, GetUnifiedProvidersResponse, GetProvidersResponse, PullOllamaModelData, PullOllamaModelResponse, GetOllamaAvailableModelsData, GetOllamaAvailableModelsResponse, RemoveOllamaModelData, RemoveOllamaModelResponse, GetGeocodingProvidersResponse, GeocodeLocationData, GeocodeLocationResponse, GeocodeLocationWithProviderData, GeocodeLocationWithProviderResponse, GetCountryDataData, GetCountryDataResponse } from './types.gen';
 
 export class AdminService {
     /**
@@ -1319,6 +1319,7 @@ export class AnnotationSchemasService {
 export class AppService {
     /**
      * Readyz
+     * Verify DB and Redis connectivity. Returns 503 if dependencies are unhealthy.
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -1331,6 +1332,7 @@ export class AppService {
     
     /**
      * Liveness
+     * Process is alive. No dependency checks.
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -1343,6 +1345,7 @@ export class AppService {
     
     /**
      * Healthz
+     * Legacy health endpoint. Same as readiness.
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -1644,8 +1647,6 @@ export class AssetsService {
     /**
      * Upload File
      * Upload a file and create an asset.
-     *
-     * Uses FileHandler directly for clean, testable file ingestion.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.formData
@@ -1670,8 +1671,6 @@ export class AssetsService {
     /**
      * Upload File
      * Upload a file and create an asset.
-     *
-     * Uses FileHandler directly for clean, testable file ingestion.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.formData
@@ -1973,6 +1972,7 @@ export class AssetsService {
      * Materialize Csv From Rows
      * Materialize a chat-generated CSV container into a real CSV file.
      *
+     * Uses registry-driven materializer from ContentTypeDescriptor.
      * Generates a CSV file from the row assets and uploads it to storage,
      * then updates the parent asset with the blob_path.
      * @param data The data for the request.
@@ -1999,6 +1999,7 @@ export class AssetsService {
      * Materialize Csv From Rows
      * Materialize a chat-generated CSV container into a real CSV file.
      *
+     * Uses registry-driven materializer from ContentTypeDescriptor.
      * Generates a CSV file from the row assets and uploads it to storage,
      * then updates the parent asset with the blob_path.
      * @param data The data for the request.
@@ -3238,6 +3239,30 @@ export class BackupsService {
 
 export class BundlesService {
     /**
+     * Materialize Virtual Folder
+     * Create a real bundle from a virtual folder (path prefix within a source bundle).
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns BundleRead Successful Response
+     * @throws ApiError
+     */
+    public static materializeVirtualFolder(data: MaterializeVirtualFolderData): CancelablePromise<MaterializeVirtualFolderResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/from-vfolder',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
      * Create Bundle
      * Create a new bundle in an infospace.
      * @param data The data for the request.
@@ -3601,119 +3626,6 @@ export class BundlesService {
                 bundle_ids: data.bundleIds,
                 skip: data.skip,
                 limit: data.limit
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-}
-
-export class BundleViewsService {
-    /**
-     * Create Bundle View
-     * Create a BundleView (named subset of a bundle).
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.requestBody
-     * @returns BundleViewRead Successful Response
-     * @throws ApiError
-     */
-    public static createBundleView(data: CreateBundleViewData): CancelablePromise<CreateBundleViewResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/infospaces/{infospace_id}/bundle-views',
-            path: {
-                infospace_id: data.infospaceId
-            },
-            body: data.requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * List Bundle Views
-     * List BundleViews in an infospace.
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @returns BundleViewRead Successful Response
-     * @throws ApiError
-     */
-    public static listBundleViews(data: ListBundleViewsData): CancelablePromise<ListBundleViewsResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/infospaces/{infospace_id}/bundle-views',
-            path: {
-                infospace_id: data.infospaceId
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Get Bundle View
-     * Get a BundleView by ID.
-     * @param data The data for the request.
-     * @param data.viewId
-     * @returns BundleViewRead Successful Response
-     * @throws ApiError
-     */
-    public static getBundleView(data: GetBundleViewData): CancelablePromise<GetBundleViewResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/bundle-views/{view_id}',
-            path: {
-                view_id: data.viewId
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Update Bundle View
-     * Update a BundleView.
-     * @param data The data for the request.
-     * @param data.viewId
-     * @param data.requestBody
-     * @returns BundleViewRead Successful Response
-     * @throws ApiError
-     */
-    public static updateBundleView(data: UpdateBundleViewData): CancelablePromise<UpdateBundleViewResponse> {
-        return __request(OpenAPI, {
-            method: 'PUT',
-            url: '/api/v1/bundle-views/{view_id}',
-            path: {
-                view_id: data.viewId
-            },
-            body: data.requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Delete Bundle View
-     * Delete a BundleView.
-     * @param data The data for the request.
-     * @param data.viewId
-     * @returns void Successful Response
-     * @throws ApiError
-     */
-    public static deleteBundleView(data: DeleteBundleViewData): CancelablePromise<DeleteBundleViewResponse> {
-        return __request(OpenAPI, {
-            method: 'DELETE',
-            url: '/api/v1/bundle-views/{view_id}',
-            path: {
-                view_id: data.viewId
             },
             errors: {
                 422: 'Validation Error'
@@ -4430,11 +4342,7 @@ export class EmbeddingsService {
     /**
      * Generate Infospace Embeddings
      * Generate embeddings for all assets in an infospace.
-     * Uses the infospace's configured embedding model.
-     *
-     * For cloud providers (OpenAI, Voyage AI, Jina AI), API keys must be provided
-     * in the request. Background processing is supported for all providers by passing
-     * API keys to the Celery worker.
+     * Dispatches background tasks using the infospace's embedding_selection.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
@@ -4573,22 +4481,6 @@ export class EmbeddingsService {
             errors: {
                 422: 'Validation Error'
             }
-        });
-    }
-    
-    /**
-     * List Available Embedding Models
-     * List available embedding models from Ollama (legacy endpoint).
-     *
-     * Note: This endpoint only returns Ollama models. Use POST /embeddings/models/discover
-     * with runtime API keys to get models from all providers.
-     * @returns AvailableModelsResponse Successful Response
-     * @throws ApiError
-     */
-    public static listAvailableEmbeddingModels(): CancelablePromise<ListAvailableEmbeddingModelsResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/embeddings/embeddings/models'
         });
     }
 }
@@ -4989,85 +4881,6 @@ export class FilestorageService {
 }
 
 export class FiltersService {
-    /**
-     * Save Filter
-     * Save a reusable filter definition.
-     * @param data The data for the request.
-     * @param data.filterName
-     * @param data.requestBody
-     * @returns Message Successful Response
-     * @throws ApiError
-     */
-    public static saveFilter(data: SaveFilterData): CancelablePromise<SaveFilterResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/filters/filters',
-            query: {
-                filter_name: data.filterName
-            },
-            body: data.requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * List Filters
-     * List all saved filter names.
-     * @returns string Successful Response
-     * @throws ApiError
-     */
-    public static listFilters(): CancelablePromise<ListFiltersResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/filters/filters'
-        });
-    }
-    
-    /**
-     * Get Filter
-     * Get a saved filter definition.
-     * @param data The data for the request.
-     * @param data.filterName
-     * @returns unknown Successful Response
-     * @throws ApiError
-     */
-    public static getFilter(data: GetFilterData): CancelablePromise<GetFilterResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/filters/filters/{filter_name}',
-            path: {
-                filter_name: data.filterName
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Delete Filter
-     * Delete a saved filter.
-     * @param data The data for the request.
-     * @param data.filterName
-     * @returns Message Successful Response
-     * @throws ApiError
-     */
-    public static deleteFilter(data: DeleteFilterData): CancelablePromise<DeleteFilterResponse> {
-        return __request(OpenAPI, {
-            method: 'DELETE',
-            url: '/api/v1/filters/filters/{filter_name}',
-            path: {
-                filter_name: data.filterName
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
     /**
      * Test Filter
      * Test a filter against sample data.
@@ -6174,7 +5987,7 @@ export class IngestionJobsService {
      * Enable Directory Watch
      * Enable watching and/or version inbox for an already-imported directory.
      *
-     * - ``enable_reconcile``: periodic stat comparison to detect replaced files.
+     * - ``enable_reconcile``: deprecated; reconcile is on-demand only.
      * - ``enable_inbox``: creates ``_inbox/`` subdirectory; new files dropped
      * there are auto-imported with smart version detection.
      *
@@ -6565,6 +6378,49 @@ export class LoginService {
             errors: {
                 422: 'Validation Error'
             }
+        });
+    }
+}
+
+export class ProvidersService {
+    /**
+     * Discover Models
+     * Discover available models for a given capability.
+     *
+     * Returns combined list of models from all available providers
+     * (system + user-keyed). Frontend uses this for model selection dropdowns
+     * in annotation, embedding, OCR config.
+     * @param data The data for the request.
+     * @param data.capability Capability type: 'llm', 'embedding'
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static discoverModels(data: DiscoverModelsData): CancelablePromise<DiscoverModelsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/providers/models',
+            query: {
+                capability: data.capability
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * System Capabilities
+     * Return what capabilities this deployment provides.
+     *
+     * Frontend uses this to show/hide UI elements based on what's available
+     * (e.g., hide OCR settings if no OCR provider, hide embedding if not configured).
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static systemCapabilities(): CancelablePromise<SystemCapabilitiesResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/providers/capabilities'
         });
     }
 }
@@ -8025,6 +7881,7 @@ export class StorageService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.path Directory path to list; defaults to first allowed root
+     * @param data.includeCounts Include file_count, importable_count, size_bytes for directories (expensive on large trees)
      * @returns StorageBrowseResponse Successful Response
      * @throws ApiError
      */
@@ -8036,7 +7893,8 @@ export class StorageService {
                 infospace_id: data.infospaceId
             },
             query: {
-                path: data.path
+                path: data.path,
+                include_counts: data.includeCounts
             },
             errors: {
                 422: 'Validation Error'
@@ -8621,11 +8479,7 @@ export class TreeNavigationService {
     /**
      * Delete Tree Nodes
      * Delete tree nodes (bundles and/or assets).
-     *
-     * Handles cascading deletion intelligently:
-     * - Deleting a bundle deletes all assets inside it
-     * - Deleting an asset deletes all child assets
-     * - Much cleaner than separate bundle/asset endpoints
+     * Cascades: bundle delete includes assets; asset delete includes children.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
@@ -8648,39 +8502,6 @@ export class TreeNavigationService {
     }
     
     /**
-     * Get Virtual Folder Children
-     * Get virtual folder structure from blob_path for path-based bundles.
-     * Parses blob_path to extract immediate subfolders and files under path_prefix.
-     * Used for lightweight directory-imported bundles (one root Bundle, virtual folders).
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.bundleId Bundle ID (root bundle for dataset)
-     * @param data.pathPrefix Path prefix for filtering (e.g. data_set_1/politics)
-     * @param data.skip
-     * @param data.limit
-     * @returns VirtualFolderChildrenResponse Successful Response
-     * @throws ApiError
-     */
-    public static getVirtualFolderChildren(data: GetVirtualFolderChildrenData): CancelablePromise<GetVirtualFolderChildrenResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/infospaces/{infospace_id}/tree/virtual-children',
-            path: {
-                infospace_id: data.infospaceId
-            },
-            query: {
-                bundle_id: data.bundleId,
-                path_prefix: data.pathPrefix,
-                skip: data.skip,
-                limit: data.limit
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
      * Get Feed Assets
      * Get a feed of recent assets sorted by date.
      *
@@ -8692,7 +8513,7 @@ export class TreeNavigationService {
      * - Filters out child assets (only parent/standalone assets)
      * - Sorted by date (created_at or updated_at) or name
      * - Supports kind filtering
-     * - Supports bundle_id and path_filter for Bundle/BundleView detail views
+     * - Supports bundle_id and path_filter for Bundle/virtual folder detail views
      * - Includes source_metadata for image extraction
      * @param data The data for the request.
      * @param data.infospaceId
@@ -8701,8 +8522,8 @@ export class TreeNavigationService {
      * @param data.kinds Filter by asset kinds
      * @param data.sortBy Sort field: created_at, updated_at, name
      * @param data.sortOrder Sort order: asc, desc
-     * @param data.bundleId Filter to assets in this bundle (for Bundle/BundleView detail)
-     * @param data.pathFilter Filter by logical_path prefix (for BundleView)
+     * @param data.bundleId Filter to assets in this bundle (for Bundle detail)
+     * @param data.pathFilter Filter by logical_path prefix (for virtual folder)
      * @returns FeedAssetsResponse Successful Response
      * @throws ApiError
      */
@@ -8760,16 +8581,7 @@ export class TreeNavigationService {
     /**
      * Text Search Assets
      * Comprehensive text search across all assets in an infospace.
-     *
-     * Search strategy (prioritized):
-     * 1. **Title matches** - Exact and partial matches in asset titles (highest priority)
-     * 2. **Bundle members** - Assets in bundles with matching names
-     * 3. **Fulltext content** - Searches text_content field (fallback)
-     *
-     * This searches ALL assets regardless of bundle membership or tree visibility,
-     * making it much more useful than the client-side filtering.
-     *
-     * Returns assets with relevance scores based on match quality.
+     * Search strategy: title → bundle name → content. Returns assets with relevance scores.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.query Search query
@@ -9853,10 +9665,12 @@ export class UtilitiesService {
     
     /**
      * Get Providers
-     * Returns a dynamic list of available classification providers and their models.
-     * Discovers models from all configured providers (Ollama, OpenAI, Gemini).
+     * Returns a dynamic list of available LLM providers and their models,
+     * grouped by provider type_key.
      *
-     * LEGACY: Use /providers/unified for a better structured response.
+     * For providers with static model catalogs (OpenAI, Anthropic, Gemini, Mistral)
+     * the catalog is returned directly. For dynamic-catalog providers (Ollama) the
+     * running instance is queried via ``discover_models()``.
      * @returns ProviderListResponse Successful Response
      * @throws ApiError
      */
@@ -9939,7 +9753,7 @@ export class UtilitiesService {
      * Get Geocoding Providers
      * Get available geocoding providers and their configuration requirements.
      * Helps frontend display provider options and understand what credentials are needed.
-     * Uses registry service to dynamically discover providers.
+     * Uses descriptor registry to dynamically discover providers.
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -10313,10 +10127,12 @@ export class UtilsService {
     
     /**
      * Get Providers
-     * Returns a dynamic list of available classification providers and their models.
-     * Discovers models from all configured providers (Ollama, OpenAI, Gemini).
+     * Returns a dynamic list of available LLM providers and their models,
+     * grouped by provider type_key.
      *
-     * LEGACY: Use /providers/unified for a better structured response.
+     * For providers with static model catalogs (OpenAI, Anthropic, Gemini, Mistral)
+     * the catalog is returned directly. For dynamic-catalog providers (Ollama) the
+     * running instance is queried via ``discover_models()``.
      * @returns ProviderListResponse Successful Response
      * @throws ApiError
      */
@@ -10399,7 +10215,7 @@ export class UtilsService {
      * Get Geocoding Providers
      * Get available geocoding providers and their configuration requirements.
      * Helps frontend display provider options and understand what credentials are needed.
-     * Uses registry service to dynamically discover providers.
+     * Uses descriptor registry to dynamically discover providers.
      * @returns unknown Successful Response
      * @throws ApiError
      */

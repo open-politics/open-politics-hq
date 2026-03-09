@@ -25,13 +25,9 @@ type BookmarkState = {
 // Helper to find Asset by URL (or other identifier)
 const findAssetByIdentifier = (identifier: string, assets: any[]): number | null => {
   const found = assets.find(asset => {
-    // Check for URL match in source_identifier or source_metadata
-    if (asset.source_identifier === identifier) {
-      return true;
-    }
-    if (asset.source_metadata?.url === identifier) {
-      return true;
-    }
+    // Check for URL match in source_identifier or file_info
+    if (asset.source_identifier === identifier) return true;
+    if (asset.file_info?.url === identifier) return true;
     // Add more robust checks if necessary
     return false;
   });

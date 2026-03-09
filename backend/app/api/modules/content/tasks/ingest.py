@@ -39,11 +39,14 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
     Asynchronous core logic for processing a source using the unified discovery service.
     """
     with Session(engine) as session:
+        from app.core.config import settings
+        from app.api.modules.content.handlers import IngestionContext
+        from app.api.modules.content.ingest import ingest
         from app.api.modules.content.services.source_service import SourceService
-        from app.api.modules.content.services.content_ingestion_service import ContentIngestionService
+        from app.api.modules.content.tasks.task_services import create_task_services
 
         source_service = SourceService(session)
-        content_ingestion_service = ContentIngestionService(session)
+        services = create_task_services(session)
 
         # Get source directly without user validation for system task
         source = session.get(Source, source_id)
@@ -110,11 +113,23 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
                     session.commit()
             
             logger.info(f"Ingesting content for source {source_id} into bundle {bundle_id}")
-            
-            assets = await content_ingestion_service.ingest_content(
-                locator=locator,
-                infospace_id=source.infospace_id,
+
+            context = IngestionContext(
+                session=session,
+                storage_provider=services.storage,
+                scraping_provider=services.scraping,
+                search_provider=services.search,
+                asset_service=services.asset,
+                bundle_service=services.bundle,
                 user_id=source.user_id,
+                infospace_id=source.infospace_id,
+                settings=settings,
+                options={**(source.details or {}), **(task_origin_details_override or {})},
+            )
+
+            assets = await ingest(
+                context,
+                locator,
                 bundle_id=bundle_id,
                 options={**(source.details or {}), **(task_origin_details_override or {})}
             )

@@ -8,6 +8,7 @@ remote archive ingestion). Provides status streaming for UI progress bars and jo
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlmodel import Session, select
@@ -484,24 +485,38 @@ async def create_archive_ingestion_job(
             detail="URL does not appear to be an archive file (.zip, .tar, etc.)"
         )
     
-    # Use ContentIngestionService to trigger ingestion
-    from app.api.modules.content.services import ContentIngestionService
-    content_service = ContentIngestionService(db)
-    
+    from app.core.config import settings
+    from app.api.modules.content.handlers import IngestionContext
+    from app.api.modules.content.ingest import ingest
+    from app.api.modules.content.tasks.task_services import create_task_services
+
     options = request.options or {}
     options['use_background'] = True  # Always use background for explicit job creation
-    
-    assets = await content_service.ingest_content(
-        locator=request.source_locator,
-        infospace_id=infospace_id,
+
+    services = create_task_services(db)
+    context = IngestionContext(
+        session=db,
+        storage_provider=services.storage,
+        scraping_provider=services.scraping,
+        search_provider=services.search,
+        asset_service=services.asset,
+        bundle_service=services.bundle,
         user_id=current_user.id,
+        infospace_id=infospace_id,
+        settings=settings,
+        options=options,
+    )
+
+    assets = await ingest(
+        context,
+        request.source_locator,
         title=request.title,
-        options=options
+        options=options,
     )
     
     # Get the created job from the asset's metadata
-    if assets and assets[0].source_metadata:
-        job_id = assets[0].source_metadata.get('job_id')
+    if assets and assets[0].file_info:
+        job_id = assets[0].file_info.get('job_id')
         if job_id:
             job = db.get(IngestionJob, job_id)
             if job:
@@ -622,7 +637,7 @@ async def reconcile_directory(
         _get_dataset_name_from_path,
     )
     from app.api.modules.content.handlers.base import IngestionContext
-    from app.api.modules.foundation_service_providers.factory import create_storage_provider, create_scraping_provider
+    from app.api.modules.foundation_service_providers.registry import get_storage_provider, get_scraping_provider
     from app.api.modules.content.services.asset_service import AssetService
     from app.api.modules.content.services.bundle_service import BundleService
 
@@ -651,8 +666,8 @@ async def reconcile_directory(
             detail=f"Bundle {request.bundle_id} not found",
         )
 
-    storage_provider = create_storage_provider(settings)
-    scraping_provider = create_scraping_provider(settings)
+    storage_provider = get_storage_provider(settings)
+    scraping_provider = get_scraping_provider(settings)
     asset_service = AssetService(db, storage_provider)
     bundle_service = BundleService(db)
     dataset_name = _get_dataset_name_from_path(str(source), settings.LOCAL_STORAGE_BASE_PATH)
@@ -686,32 +701,6 @@ async def reconcile_directory(
 
 
 # ─── Watch / Inbox configuration ───────────────────────────────────────────── #
-
-_INBOX_README = """\
-# Version Inbox
-
-Drop files here to add them to the dataset.
-
-**Automatic version detection:**
-- Files with the same name as an existing asset are treated as new versions.
-- Add a `{filename}.meta.json` sidecar to explicitly declare what a file supersedes:
-
-```json
-{{
-  "supersedes": "relative/path/to/old_document.pdf",
-  "reason": "Less redacted version",
-  "version_label": "v2"
-}}
-```
-
-- Duplicate files (same content hash) are automatically skipped.
-- Files with a version-like suffix (e.g. `report_v2.pdf`) are flagged as
-  potential versions of `report.pdf` for confirmation in the UI.
-
-**Processing:**
-- Files are checked every 15 minutes (configurable via inbox_interval_seconds).
-- After import, files are moved to `_processed/{date}/`.
-"""
 
 
 class EnableWatchRequest(BaseModel):
@@ -747,20 +736,17 @@ def enable_directory_watch(
     request: EnableWatchRequest,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
     current_user=dependency_injection.Depends(dependency_injection.get_current_user),
+    source_service: dependency_injection.SourceServiceDep,
 ) -> Any:
     """
     Enable watching and/or version inbox for an already-imported directory.
 
-    - ``enable_reconcile``: periodic stat comparison to detect replaced files.
+    - ``enable_reconcile``: deprecated; reconcile is on-demand only.
     - ``enable_inbox``: creates ``_inbox/`` subdirectory; new files dropped
       there are auto-imported with smart version detection.
 
     Idempotent: calling again with the same source_path updates existing Sources.
     """
-    from pathlib import Path
-    from app.core.config import settings
-    from app.api.modules.content.handlers.directory_import_handler import _get_dataset_name_from_path
-
     validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
 
     bundle = db.get(Bundle, request.bundle_id)
@@ -770,80 +756,24 @@ def enable_directory_watch(
             detail=f"Bundle {request.bundle_id} not found",
         )
 
-    source_path = Path(request.source_path).resolve()
-    dataset_name = _get_dataset_name_from_path(str(source_path), settings.LOCAL_STORAGE_BASE_PATH)
-    reconcile_source = None
+    source_path = str(Path(request.source_path).resolve())
+    reconcile_source = None  # Reconcile is on-demand only
+
     inbox_source = None
-
-    # Reconcile is on-demand only (no continuous poll). enable_reconcile is ignored.
-    # Use POST /infospaces/{id}/reconcile-directory to run reconcile manually.
-    reconcile_source = None
-
-    # --- Inbox Source ---
     inbox_path_str = None
     inbox_files_pending = 0
+
     if request.enable_inbox:
-        inbox_dir = source_path / "_inbox"
-        inbox_dir.mkdir(parents=True, exist_ok=True)
-
-        readme_path = inbox_dir / "README.md"
-        if not readme_path.exists():
-            readme_path.write_text(_INBOX_README)
-
-        inbox_path_str = str(inbox_dir)
-
-        inbox_source = db.exec(
-            select(Source).where(
-                Source.infospace_id == infospace_id,
-                Source.kind == "directory_inbox",
-                Source.output_bundle_id == request.bundle_id,
-            )
-        ).first()
-        if not inbox_source:
-            from datetime import timedelta
-            inbox_source = Source(
-                name=f"Inbox: {dataset_name}",
-                kind="directory_inbox",
-                details={
-                    "inbox_path": str(inbox_dir),
-                    "dataset_name": dataset_name,
-                    "source_path": str(source_path),
-                },
-                infospace_id=infospace_id,
-                user_id=current_user.id,
-                is_active=True,
-                poll_interval_seconds=request.inbox_interval_seconds,
-                output_bundle_id=request.bundle_id,
-                next_poll_at=datetime.now(timezone.utc) + timedelta(
-                    seconds=request.inbox_interval_seconds
-                ),
-            )
-            db.add(inbox_source)
-        else:
-            inbox_source.is_active = True
-            inbox_source.poll_interval_seconds = request.inbox_interval_seconds
-            db.add(inbox_source)
-
-        # Count pending files
-        try:
-            from app.api.modules.content.types import importable_extensions
-            exts = importable_extensions()
-            inbox_files_pending = sum(
-                1
-                for f in inbox_dir.iterdir()
-                if f.is_file() and f.suffix.lower() in exts and not f.name.endswith(".meta.json")
-            )
-        except OSError:
-            pass
-
-    db.commit()
-    if reconcile_source:
-        db.refresh(reconcile_source)
-    if inbox_source:
-        db.refresh(inbox_source)
+        inbox_source, inbox_path_str, inbox_files_pending = source_service.ensure_inbox_source(
+            infospace_id=infospace_id,
+            user_id=current_user.id,
+            bundle_id=request.bundle_id,
+            source_path=source_path,
+            interval_seconds=request.inbox_interval_seconds,
+        )
 
     return WatchStatusResponse(
-        source_path=str(source_path),
+        source_path=source_path,
         bundle_id=request.bundle_id,
         reconcile_source_id=reconcile_source.id if reconcile_source else None,
         reconcile_active=reconcile_source.is_active if reconcile_source else False,
@@ -885,10 +815,12 @@ def get_watch_status(
 
     sources = db.exec(query).all()
 
-    # Group by output_bundle_id
+    # Group by output_bundle_id (skip sources whose bundle was deleted)
     by_bundle: dict[int, dict] = {}
     for src in sources:
         bid = src.output_bundle_id
+        if bid is None:
+            continue
         if bid not in by_bundle:
             by_bundle[bid] = {
                 "source_path": src.details.get("source_path", ""),

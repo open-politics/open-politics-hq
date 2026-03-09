@@ -7,7 +7,7 @@ Processes web pages by scraping content and extracting images.
 
 import logging
 import dateutil.parser
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import List
 from app.api.modules.content.models import Asset, AssetKind
 from app.schemas import AssetCreate
@@ -80,9 +80,10 @@ class WebProcessor(BaseProcessor):
             except Exception as e:
                 logger.warning(f"Could not parse publication date: {e}")
         
-        # Update metadata
-        asset.source_metadata.update({
-            'scraped_at': dateutil.parser.isoparse('now').isoformat(),
+        # Update file_info (scraped metadata)
+        file_info = asset.file_info or {}
+        file_info.update({
+            'scraped_at': datetime.now(timezone.utc).isoformat(),
             'scraped_title': scraped_data.get('title'),
             'top_image': scraped_data.get('top_image'),
             'summary': scraped_data.get('summary'),
@@ -90,6 +91,7 @@ class WebProcessor(BaseProcessor):
             'content_length': len(text_content),
             'processing_options': self.context.options
         })
+        asset.file_info = file_info
         
         # Create image assets
         child_assets = []
@@ -104,7 +106,7 @@ class WebProcessor(BaseProcessor):
                 parent_asset_id=asset.id,
                 source_identifier=scraped_data['top_image'],
                 part_index=0,
-                source_metadata={
+                file_info={
                     'image_role': 'featured',
                     'image_url': scraped_data['top_image'],
                     'parent_article': {
@@ -112,7 +114,7 @@ class WebProcessor(BaseProcessor):
                         'url': asset.source_identifier,
                         'asset_id': asset.id
                     },
-                    'scraped_at': asset.source_metadata['scraped_at'],
+                    'scraped_at': asset.file_info.get('scraped_at', ''),
                     'is_hero_image': True
                 }
             )
@@ -136,7 +138,7 @@ class WebProcessor(BaseProcessor):
                     parent_asset_id=asset.id,
                     source_identifier=img_url,
                     part_index=start_index + idx,
-                    source_metadata={
+                    file_info={
                         'image_role': 'content',
                         'image_url': img_url,
                         'parent_article': {
@@ -145,7 +147,7 @@ class WebProcessor(BaseProcessor):
                             'asset_id': asset.id
                         },
                         'content_index': idx,
-                        'scraped_at': asset.source_metadata['scraped_at']
+                        'scraped_at': asset.file_info.get('scraped_at', '')
                     }
                 )
                 child_assets.append(content_asset)

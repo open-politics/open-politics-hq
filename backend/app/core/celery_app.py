@@ -1,8 +1,9 @@
 """
 Celery app configuration.
 """
-import os
 import logging
+import time
+
 from celery import Celery
 from celery.schedules import crontab
 from kombu import Queue
@@ -10,6 +11,13 @@ from kombu import Queue
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Build task annotations for rate limiting (only if configured)
+def _process_content_annotations():
+    limit = getattr(settings, "PROCESS_CONTENT_RATE_LIMIT", None) or ""
+    if limit and limit.strip():
+        return {"rate_limit": limit.strip()}
+    return {}
 
 redis_url = settings.redis_url
 
@@ -69,20 +77,22 @@ celery.conf.update(
         'batch_enrich': {'queue': 'processing'},
         'ingest_archive_task': {'queue': 'processing'},
         'import_directory_task': {'queue': 'processing'},
-        'embed_asset': {'queue': 'embedding'},
-        'embed_infospace': {'queue': 'embedding'},
-        'embed_batch_assets': {'queue': 'embedding'},
-        'reactive_embed_pending_assets': {'queue': 'embedding'},
+        'enrich_embedding': {'queue': 'embedding'},
         'reactive_curate_annotated': {'queue': 'llm'},
         'enrich_geocoding': {'queue': 'external_api'},
         'enrich_ocr': {'queue': 'external_api'},
         'enrich_file_hash': {'queue': 'processing'},
+        'enrich_language': {'queue': 'processing'},
+        'enrich_quality_score': {'queue': 'processing'},
         'create_followup_annotation_runs': {'queue': 'llm'},
         're_resolve_entity_singletons': {'queue': 'default'},
         'flag_superseded_entity_sources': {'queue': 'default'},
         'reset_stale_processing_assets': {'queue': 'default'},
     },
     task_default_delivery_mode=2,  # persistent
+    task_annotations={
+        "process_content": _process_content_annotations(),
+    },
     # Crash resilience: tasks are re-queued if worker dies before ack (OOM, kill, etc.)
     task_acks_late=True,
     task_reject_on_worker_lost=True,
@@ -91,6 +101,7 @@ celery.conf.update(
     task_time_limit=3720,
     # Task imports - only load when worker starts
     imports=(
+        'app.core.events',
         'app.core.dispatch',
         'app.api.modules.content.watchers',
         'app.api.modules.annotation.watchers',
@@ -115,7 +126,7 @@ celery.conf.update(
     # Beat schedule
     beat_schedule={
         'check-recurring-tasks-every-5min': {
-            'task': 'app.api.modules.flow.tasks.schedule.check_recurring_tasks',
+            'task': 'check_recurring_tasks',
             'schedule': 300.0,
         },
         'check-on-arrival-flows-every-5min': {
@@ -126,9 +137,9 @@ celery.conf.update(
             'task': 'app.api.modules.content.tasks.source_monitoring.poll_active_sources',
             'schedule': 300.0,
         },
-        'dispatch-reactive-work-every-2min': {
+        'dispatch-reactive-work': {
             'task': 'dispatch_reactive_work',
-            'schedule': 120.0,
+            'schedule': settings.DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS,
         },
         'automatic-backup-all-infospaces': {
             'task': 'automatic_backup_all_infospaces',
@@ -154,6 +165,75 @@ celery.conf.update(
         },
     }
 )
+
+# Fork safety: prefork workers inherit parent's connection pool; dispose in each child
+from celery.signals import worker_process_init
+
+
+@worker_process_init.connect
+def reset_db_pool_on_fork(**kwargs):
+    from app.core.db import engine
+
+    engine.dispose()
+    logger.info("DB connection pool disposed after worker fork")
+
+    # Fail fast if FragmentCuration schema is mismatched (e.g. old code vs migrated DB)
+    try:
+        from sqlmodel import Session, select
+        from app.api.modules.graph.models import FragmentCuration
+
+        with Session(engine) as session:
+            # Explicitly use source_asset_superseded to detect old code (resolved_refs) or missing migration
+            session.exec(
+                select(FragmentCuration.id).where(FragmentCuration.source_asset_superseded == False).limit(1)
+            ).first()
+    except Exception as e:
+        logger.critical(
+            "FragmentCuration schema mismatch: %s. "
+            "Ensure migration b3c4d5e6f7g8 is applied and workers run latest code (restart after deploy).",
+            e,
+        )
+        raise
+
+    # Log enabled reactive watchers (helps verify ENABLED_WATCHERS config)
+    try:
+        from app.core.dispatch import get_watchers
+
+        watchers = get_watchers()
+        names = sorted(w.name for w in watchers)
+        if names:
+            logger.info("Reactive watchers enabled: %s", ", ".join(names))
+        else:
+            logger.info("Reactive watchers enabled: (none — set ENABLED_WATCHERS to opt in)")
+    except Exception as e:
+        logger.warning("Could not log enabled watchers: %s", e)
+
+
+# Task duration logging for observability
+_task_start_times: dict[str, float] = {}
+
+
+@celery.on_after_configure.connect
+def _setup_task_duration_logging(sender, **kwargs):
+    from celery.signals import task_prerun, task_postrun
+
+    @task_prerun.connect
+    def _on_prerun(sender, task_id, **kw):
+        _task_start_times[task_id] = time.perf_counter()
+
+    @task_postrun.connect
+    def _on_postrun(sender, task_id, retval, state, **kw):
+        start = _task_start_times.pop(task_id, None)
+        if start is not None:
+            duration_ms = (time.perf_counter() - start) * 1000
+            task_name = getattr(sender, "name", str(sender))
+            logger.info(
+                "task_duration task=%s task_id=%s duration_ms=%.0f state=%s",
+                task_name,
+                task_id,
+                duration_ms,
+                state,
+            )
 
 
 # Alias for imports that use celery_app

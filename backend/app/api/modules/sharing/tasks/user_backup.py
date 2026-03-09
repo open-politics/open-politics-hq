@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from app.core.celery_app import celery
 from app.core.db import engine
 from sqlmodel import Session
-from app.api.modules.foundation_service_providers.factory import create_storage_provider
+from app.api.modules.foundation_service_providers.registry import get_storage_provider
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def process_user_backup(self, backup_id: int, backup_options: Dict[str, Any]) ->
             from app.api.modules.sharing.services.user_backup_service import UserBackupService
             
             # Create service dependencies
-            storage_provider = create_storage_provider(settings)
+            storage_provider = get_storage_provider(settings)
             user_backup_service = UserBackupService(session, storage_provider, settings)
             
             # Execute backup
@@ -98,7 +98,7 @@ def cleanup_expired_user_backups(self) -> Dict[str, Any]:
             from app.api.modules.sharing.services.user_backup_service import UserBackupService
             
             # Create service dependencies
-            storage_provider = create_storage_provider(settings)
+            storage_provider = get_storage_provider(settings)
             user_backup_service = UserBackupService(session, storage_provider, settings)
             
             # Execute cleanup
@@ -151,7 +151,7 @@ def backup_all_users(self, backup_type: str = "system", admin_user_id: int = 1) 
             from sqlmodel import select
             
             # Create service dependencies
-            storage_provider = create_storage_provider(settings)
+            storage_provider = get_storage_provider(settings)
             user_backup_service = UserBackupService(session, storage_provider, settings)
             
             # Get all users
@@ -229,7 +229,7 @@ def backup_specific_users(
             from sqlmodel import select
             
             # Create service dependencies
-            storage_provider = create_storage_provider(settings)
+            storage_provider = get_storage_provider(settings)
             user_backup_service = UserBackupService(session, storage_provider, settings)
             
             successful_backups = 0

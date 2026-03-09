@@ -11,8 +11,6 @@ from app.api.dependency_injection import CurrentUser, SessionDep
 from app.models import User, Infospace, Asset, AssetKind
 from app.schemas import Message
 from app.api.modules.embedding.services import EmbeddingService, VectorSearchService
-from app.api.modules.embedding.tasks.embed import embed_asset_task, embed_infospace_task
-from app.api.modules.foundation_service_providers.implemented.embedding_ollama import OllamaEmbeddingProvider
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -26,14 +24,12 @@ class GenerateEmbeddingsRequest(BaseModel):
     """Request to generate embeddings for an infospace."""
     overwrite: bool = Field(default=False, description="Regenerate existing embeddings")
     asset_kinds: Optional[List[str]] = Field(default=None, description="Filter by asset types")
-    async_processing: bool = Field(default=True, description="Process in background")
     api_keys: Optional[Dict[str, str]] = Field(default=None, description="Runtime API keys for cloud providers")
 
 
 class GenerateAssetEmbeddingsRequest(BaseModel):
     """Request to generate embeddings for a single asset."""
     overwrite: bool = Field(default=False, description="Regenerate existing embeddings")
-    async_processing: bool = Field(default=True, description="Process in background")
     api_keys: Optional[Dict[str, str]] = Field(default=None, description="Runtime API keys for cloud providers")
 
 
@@ -92,62 +88,46 @@ async def generate_infospace_embeddings(
 ):
     """
     Generate embeddings for all assets in an infospace.
-    Uses the infospace's configured embedding model.
-    
-    For cloud providers (OpenAI, Voyage AI, Jina AI), API keys must be provided
-    in the request. Background processing is supported for all providers by passing
-    API keys to the Celery worker.
+    Dispatches background tasks using the infospace's embedding_selection.
     """
-    # Verify infospace exists and user has access
+    from app.api.modules.embedding.tasks.embed import enrich_embedding_task
+
     infospace = session.get(Infospace, infospace_id)
     if not infospace:
         raise HTTPException(status_code=404, detail="Infospace not found")
-    
+
     if infospace.owner_id != current_user.id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized to access this infospace")
-    
-    if not infospace.embedding_model:
-        raise HTTPException(
-            status_code=400,
-            detail="Infospace has no embedding model configured. Set embedding_model in infospace settings."
-        )
-    
-    if request.async_processing:
-        # Start background task (supports runtime + stored credentials)
-        embed_infospace_task.delay(
-            infospace_id=infospace_id,
+
+    if not infospace.embedding_configured:
+        raise HTTPException(status_code=400, detail="Infospace has no embedding configured. Select a model in settings.")
+
+    # Query embeddable asset IDs
+    from sqlmodel import select
+    query = select(Asset.id).where(
+        Asset.infospace_id == infospace_id,
+        Asset.text_content.isnot(None),
+        Asset.parent_asset_id.is_(None),
+    )
+    if request.asset_kinds:
+        query = query.where(Asset.kind.in_([AssetKind(k) for k in request.asset_kinds]))
+    asset_ids = [row for row in session.exec(query).all()]
+
+    if not asset_ids:
+        return Message(message="No embeddable assets found")
+
+    # Dispatch in batches of 50
+    batch_size = 50
+    for i in range(0, len(asset_ids), batch_size):
+        batch = asset_ids[i : i + batch_size]
+        enrich_embedding_task.delay(
+            asset_ids=batch,
             user_id=current_user.id,
+            api_keys=request.api_keys,
             overwrite=request.overwrite,
-            asset_kinds=request.asset_kinds,
-            api_keys=request.api_keys
         )
-        return Message(message=f"Embedding generation started in background for infospace {infospace_id}")
-    else:
-        # Synchronous processing (supports runtime + stored credentials)
-        service = EmbeddingService(
-            session,
-            user_id=current_user.id,
-            runtime_api_keys=request.api_keys
-        )
-        
-        # Convert asset_kinds strings to enum
-        kinds = None
-        if request.asset_kinds:
-            kinds = [AssetKind(kind) for kind in request.asset_kinds]
-        
-        result = await service.generate_embeddings_for_infospace(
-            infospace_id=infospace_id,
-            overwrite=request.overwrite,
-            asset_kinds=kinds
-        )
-        
-        return Message(
-            message=(
-                f"Generated embeddings for {result['assets_processed']} assets: "
-                f"{result['chunks_created']} chunks created, "
-                f"{result['embeddings_generated']} embeddings generated"
-            )
-        )
+
+    return Message(message=f"Embedding generation dispatched for {len(asset_ids)} assets")
 
 
 @router.post("/assets/{asset_id}/embeddings/generate", response_model=Message)
@@ -157,57 +137,30 @@ async def generate_asset_embeddings(
     session: SessionDep,
     current_user: CurrentUser
 ):
-    """
-    Generate embeddings for a single asset.
-    """
-    # Verify asset exists and user has access
+    """Generate embeddings for a single asset."""
+    from app.api.modules.embedding.tasks.embed import enrich_embedding_task
+
     asset = session.get(Asset, asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    
+
     infospace = session.get(Infospace, asset.infospace_id)
     if not infospace:
         raise HTTPException(status_code=404, detail="Infospace not found")
-    
+
     if infospace.owner_id != current_user.id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
-    if not infospace.embedding_model:
-        raise HTTPException(
-            status_code=400,
-            detail="Infospace has no embedding model configured"
-        )
-    
-    if request.async_processing:
-        # Start background task (supports runtime + stored credentials)
-        embed_asset_task.delay(
-            asset_id=asset_id,
-            infospace_id=infospace.id,
-            user_id=current_user.id,
-            overwrite=request.overwrite,
-            api_keys=request.api_keys
-        )
-        return Message(message=f"Embedding generation started for asset {asset_id}")
-    else:
-        # Synchronous processing (supports runtime + stored credentials)
-        service = EmbeddingService(
-            session,
-            user_id=current_user.id,
-            runtime_api_keys=request.api_keys
-        )
-        result = await service.generate_embeddings_for_asset(
-            asset_id=asset_id,
-            infospace_id=infospace.id,
-            overwrite=request.overwrite
-        )
-        
-        return Message(
-            message=(
-                f"Generated embeddings for asset {asset_id}: "
-                f"{result['chunks_created']} chunks created, "
-                f"{result['embeddings_generated']} embeddings generated"
-            )
-        )
+
+    if not infospace.embedding_configured:
+        raise HTTPException(status_code=400, detail="Infospace has no embedding configured")
+
+    enrich_embedding_task.delay(
+        asset_ids=[asset_id],
+        user_id=current_user.id,
+        api_keys=request.api_keys,
+        overwrite=request.overwrite,
+    )
+    return Message(message=f"Embedding generation dispatched for asset {asset_id}")
 
 
 @router.get("/infospaces/{infospace_id}/embeddings/stats", response_model=EmbeddingStatsResponse)
@@ -254,11 +207,8 @@ async def semantic_search(
     if infospace.owner_id != current_user.id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized")
     
-    if not infospace.embedding_model:
-        raise HTTPException(
-            status_code=400,
-            detail="Infospace has no embedding model configured. Cannot perform semantic search."
-        )
+    if not infospace.embedding_configured:
+        raise HTTPException(status_code=400, detail="Infospace has no embedding configured")
     
     # Convert asset_kinds strings to enum
     kinds = None
@@ -269,7 +219,7 @@ async def semantic_search(
             raise HTTPException(status_code=400, detail=f"Invalid asset kind: {e}")
     
     # Perform search
-    service = VectorSearchService(session, runtime_api_keys=request.api_keys)
+    service = VectorSearchService(session, runtime_api_keys=request.api_keys, user_id=current_user.id)
     results = await service.semantic_search(
         query_text=request.query,
         infospace_id=infospace_id,
@@ -363,66 +313,81 @@ async def discover_embedding_models(
     - Ollama: no API key needed
     """
     try:
-        from app.api.modules.foundation_service_providers.factory import get_embedding_registry
-        
-        registry = get_embedding_registry()
-        
-        # Discover models from all providers
-        provider_models = await registry.discover_all_models(
-            runtime_api_keys=request.api_keys,
-            force_refresh=False
+        from app.api.modules.foundation_service_providers.base import (
+            EmbeddingProvider as EmbeddingProviderProtocol,
+            EmbeddingModelSpec,
         )
-        
-        # Flatten to single list
-        all_models = []
-        for provider_name, models in provider_models.items():
-            all_models.extend(models)
-        
-        model_infos = [
-            EmbeddingModelInfo(
-                name=m["name"],
-                provider=m["provider"],
-                dimension=m["dimension"],
-                description=m.get("description"),
-                max_sequence_length=m.get("max_sequence_length")
-            )
-            for m in all_models
-        ]
-        
+        from app.api.modules.foundation_service_providers.registry import list_providers, get_provider
+        from app.core.config import settings
+
+        descriptors = list_providers(EmbeddingProviderProtocol)
+
+        model_infos = []
+        for type_key, desc in descriptors:
+            # Check reachability: local providers always reachable;
+            # cloud providers need runtime keys, or env-configured keys
+            reachable = False
+            if not desc.requires_api_key:
+                reachable = True
+            elif request.api_keys and desc.credential_key and desc.credential_key in request.api_keys:
+                reachable = True
+            elif desc.api_key_setting and getattr(settings, desc.api_key_setting, None):
+                reachable = True
+
+            if not reachable:
+                continue
+
+            if desc.models:
+                # Static model list from descriptor (OpenAI, Voyage, Jina)
+                for spec in desc.models:
+                    if isinstance(spec, EmbeddingModelSpec):
+                        model_infos.append(EmbeddingModelInfo(
+                            name=spec.name,
+                            provider=type_key,
+                            dimension=spec.dimension,
+                            description=spec.description or None,
+                            max_sequence_length=spec.max_sequence_length,
+                        ))
+                    else:
+                        model_infos.append(EmbeddingModelInfo(
+                            name=spec.name,
+                            provider=type_key,
+                            dimension=0,
+                            description=spec.description or None,
+                        ))
+            else:
+                # Runtime discovery for providers without static model lists (e.g. Ollama)
+                try:
+                    api_key_override = None
+                    if request.api_keys and desc.credential_key:
+                        api_key_override = request.api_keys.get(desc.credential_key)
+                    provider = get_provider(
+                        EmbeddingProviderProtocol, type_key, settings,
+                        api_key_override=api_key_override,
+                    )
+                    # Prefer async discover_models() which actually queries the
+                    # provider (e.g. Ollama /api/tags); fall back to the sync
+                    # cache accessor only if no async method exists.
+                    raw_models = []
+                    if hasattr(provider, "discover_models"):
+                        raw_models = await provider.discover_models()
+                    elif hasattr(provider, "get_available_models"):
+                        raw_models = provider.get_available_models()
+                    for m in raw_models:
+                        model_infos.append(EmbeddingModelInfo(
+                            name=m["name"],
+                            provider=type_key,
+                            dimension=m.get("dimension", 0),
+                            description=m.get("description"),
+                            max_sequence_length=m.get("max_sequence_length"),
+                        ))
+                except Exception as disc_err:
+                    logger.warning(f"Runtime model discovery failed for {type_key}: {disc_err}")
+
         return AvailableModelsResponse(models=model_infos)
-        
+
     except Exception as e:
         logger.error(f"Failed to discover embedding models: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to discover models: {str(e)}")
 
 
-@router.get("/embeddings/models", response_model=AvailableModelsResponse)
-async def list_available_embedding_models(
-    current_user: CurrentUser
-):
-    """
-    List available embedding models from Ollama (legacy endpoint).
-    
-    Note: This endpoint only returns Ollama models. Use POST /embeddings/models/discover
-    with runtime API keys to get models from all providers.
-    """
-    try:
-        provider = OllamaEmbeddingProvider()
-        models = await provider.discover_models()
-        
-        model_infos = [
-            EmbeddingModelInfo(
-                name=m["name"],
-                provider=m["provider"],
-                dimension=m["dimension"],
-                description=m.get("description"),
-                max_sequence_length=m.get("max_sequence_length")
-            )
-            for m in models
-        ]
-        
-        return AvailableModelsResponse(models=model_infos)
-        
-    except Exception as e:
-        logger.error(f"Failed to discover embedding models: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to discover models: {str(e)}")

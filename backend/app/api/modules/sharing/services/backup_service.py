@@ -21,7 +21,9 @@ from app.schemas import (
     BackupRestoreRequest
 )
 from app.api.global_utils import validate_infospace_access
-from app.api.modules.sharing.services.package_service import PackageBuilder, PackageImporter, DataPackage, PackageMetadata
+from app.api.modules.sharing.services.package_service import (
+    PackageBuilder, PackageImporter, DataPackage, PackageMetadata, PackageService,
+)
 from app.api.modules.foundation_service_providers.base import StorageProvider
 from app.core.config import AppSettings
 
@@ -118,24 +120,38 @@ class BackupService:
         try:
             logger.info(f"Executing backup {backup_id} for infospace {backup.infospace_id}")
             
-            # Use InfospaceService to create the backup package
             from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
-            infospace_service = InfospaceService(
+            from app.api.modules.content.services import AssetService, BundleService, DatasetService
+            from app.api.modules.annotation.services import AnnotationService
+
+            infospace = self.session.get(Infospace, backup.infospace_id)
+            if not infospace:
+                raise ValueError(f"Infospace {backup.infospace_id} not found")
+            validate_infospace_access(self.session, backup.infospace_id, backup.user_id)
+
+            asset_service = AssetService(session=self.session, storage_provider=self.storage_provider)
+            bundle_service = BundleService(db=self.session)
+            dataset_service = DatasetService(session=self.session, storage_provider=self.storage_provider, source_instance_id=self.settings.INSTANCE_ID if hasattr(self.settings, 'INSTANCE_ID') else None)
+            annotation_service = AnnotationService(session=self.session, asset_service=asset_service)
+            package_service = PackageService(
                 session=self.session,
+                storage_provider=self.storage_provider,
+                asset_service=asset_service,
+                annotation_service=annotation_service,
+                bundle_service=bundle_service,
+                dataset_service=dataset_service,
                 settings=self.settings,
-                storage_provider=self.storage_provider
             )
-            
-            # Create infospace package with specified options
-            package = await infospace_service.export_infospace(
-                infospace_id=backup.infospace_id,
+
+            package = await package_service.export_infospace(
+                infospace=infospace,
                 user_id=backup.user_id,
                 include_sources=backup_options.get("include_sources", True),
-                include_schemas=backup_options.get("include_schemas", True), 
+                include_schemas=backup_options.get("include_schemas", True),
                 include_runs=backup_options.get("include_runs", True),
                 include_datasets=backup_options.get("include_datasets", True),
                 include_assets_for_sources=True,
-                include_annotations_for_runs=backup_options.get("include_annotations", True)
+                include_annotations_for_runs=backup_options.get("include_annotations", True),
             )
             
             # Create temporary file for the package
@@ -369,24 +385,36 @@ class BackupService:
             original_name = package.content.get("infospace_details", {}).get("name", "Restored Infospace")
             new_name = restore_request.target_infospace_name or f"{original_name} (Restored {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')})"
             
-            # Use InfospaceService to import the backup
             from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
+            from app.api.modules.content.services import AssetService, BundleService, DatasetService
+            from app.api.modules.annotation.services import AnnotationService
+
             infospace_service = InfospaceService(
                 session=self.session,
                 settings=self.settings,
-                storage_provider=self.storage_provider
+                storage_provider=self.storage_provider,
             )
-            
-            # Modify the package content to use the new name
+            asset_service = AssetService(session=self.session, storage_provider=self.storage_provider)
+            bundle_service = BundleService(db=self.session)
+            dataset_service = DatasetService(session=self.session, storage_provider=self.storage_provider, source_instance_id=self.source_instance_id)
+            annotation_service = AnnotationService(session=self.session, asset_service=asset_service)
+            package_service = PackageService(
+                session=self.session,
+                storage_provider=self.storage_provider,
+                asset_service=asset_service,
+                annotation_service=annotation_service,
+                bundle_service=bundle_service,
+                dataset_service=dataset_service,
+                settings=self.settings,
+            )
+
             package.content["infospace_details"]["name"] = new_name
-            
-            # Save modified package to temporary file
             package.to_zip(temp_path)
-            
-            # Import the infospace (import_infospace handles cleanup)
-            restored_infospace = await infospace_service.import_infospace(
+
+            restored_infospace = await package_service.import_infospace(
                 user_id=user_id,
-                filepath=temp_path
+                filepath=temp_path,
+                infospace_service=infospace_service,
             )
             
             # No need to cleanup - import_infospace already handles this

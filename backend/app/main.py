@@ -25,14 +25,7 @@ mcp_asgi_app = intelligence_mcp_server.http_app(stateless_http=True)
 # As per FastMCP documentation for combining lifespans
 @asynccontextmanager
 async def combined_lifespan(app: FastAPI):
-    
-    # Optional: Inspect prompts on startup (for development/testing)
-    if settings.INSPECT_PROMPTS_ON_STARTUP:
-        try:
-            from app.tests.prompt_inspector import print_all
-            print_all()
-        except Exception as e:
-            print(f"⚠️  Prompt inspection failed: {e}")
+
     
     # Run the lifespans together
     async with mcp_asgi_app.lifespan(app):

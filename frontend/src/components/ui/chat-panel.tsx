@@ -38,7 +38,7 @@ export function ChatPanel({ messages, query, onModelChange }: ChatPanelProps) {
 
   const [selectedModelId, setSelectedModelId] = useLocalStorage<string>(
     'selectedModel',
-    'gemini-2.5-flash-preview-05-20' // Default to Gemini which supports tools
+    'gemini-3-flash' // Default to Gemini which supports tools
   )
   
   const { activeInfospace } = useInfospaceStore()
@@ -46,7 +46,7 @@ export function ChatPanel({ messages, query, onModelChange }: ChatPanelProps) {
   // Load default model from backend if none selected
   useEffect(() => {
     async function loadDefaultModel() {
-      if (!activeInfospace?.id || selectedModelId !== 'gemini-2.5-flash-preview-05-20') return
+      if (!activeInfospace?.id || selectedModelId !== 'gemini-3-flash') return
       
       try {
         const response = await IntelligenceChatService.listAvailableModels()

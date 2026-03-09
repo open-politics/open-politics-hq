@@ -74,13 +74,6 @@ class SourceStatus(str, enum.Enum):
     ERROR = "error"
 
 
-class EmbeddingProvider(str, enum.Enum):
-    OLLAMA = "ollama"
-    JINA = "jina"
-    OPENAI = "openai"
-    HUGGINGFACE = "huggingface"
-
-
 class IngestionStatus(str, enum.Enum):
     PENDING = "pending"
     DOWNLOADING = "downloading"
@@ -172,29 +165,7 @@ class Bundle(SQLModel, table=True):
         back_populates="parent_bundle",
         sa_relationship_kwargs=dict(foreign_keys="[Bundle.parent_bundle_id]"),
     )
-    bundle_views: List["BundleView"] = Relationship(back_populates="source_bundle")
-
     __table_args__ = (UniqueConstraint("infospace_id", "name", "version"),)
-
-
-# ─── BundleView (lightweight named subset, no data movement) ───
-
-class BundleView(SQLModel, table=True):
-    """Lightweight named subset of a bundle. Queries resolve to assets in source_bundle where logical_path LIKE path_prefix%.
-    No data duplication. Tree UI shows BundleViews as first-class nodes."""
-    id: Optional[int] = Field(default=None, primary_key=True)
-    uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
-    name: str
-    source_bundle_id: int = Field(foreign_key="bundle.id", index=True)
-    path_prefix: str = Field(default="")  # e.g. "politics/eu/" - empty means whole bundle
-    infospace_id: int = Field(foreign_key="infospace.id", index=True)
-    user_id: int = Field(foreign_key="user.id", index=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
-
-    infospace: Optional[Infospace] = Relationship()
-    user: Optional[User] = Relationship()
-    source_bundle: Optional[Bundle] = Relationship(back_populates="bundle_views")
 
 
 # ─── Assets ───
@@ -209,7 +180,10 @@ class Asset(SQLModel, table=True):
     blob_path: Optional[str] = None
     logical_path: Optional[str] = Field(default=None, index=True)
     source_identifier: Optional[str] = Field(default=None, index=True)
-    source_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSONB))
+    # Enrichment-discovered facets (language, location, ocr_used, quality_score, etc.)
+    facets: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column("metadata", JSONB))
+    # Intrinsic file properties (size, mime_type, page_count, columns, etc.)
+    file_info: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
     discovered_modalities: Optional[List[str]] = Field(default=None, sa_column=Column(JSONB))
     content_hash: Optional[str] = Field(default=None, index=True)
     fragments: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSONB))
@@ -227,6 +201,7 @@ class Asset(SQLModel, table=True):
     part_index: Optional[int] = Field(default=None, index=True)
     previous_asset_id: Optional[int] = Field(default=None, foreign_key="asset.id", index=True)
     is_superseded: bool = Field(default=False, index=True)
+    parent_is_superseded: bool = Field(default=False, index=True)
 
     parent_asset: Optional["Asset"] = Relationship(
         back_populates="children_assets",
@@ -259,8 +234,8 @@ class Asset(SQLModel, table=True):
 
     __table_args__ = (
         Index("ix_asset_fragments", "fragments", postgresql_using="gin", postgresql_ops={"fragments": "jsonb_path_ops"}),
-        Index("ix_asset_source_metadata", "source_metadata", postgresql_using="gin", postgresql_ops={"source_metadata": "jsonb_path_ops"}),
         Index("ix_asset_discovered_modalities", "discovered_modalities", postgresql_using="gin"),
+        Index("ix_asset_metadata", "metadata", postgresql_using="gin", postgresql_ops={"metadata": "jsonb_path_ops"}),
     )
 
     @property
@@ -273,17 +248,16 @@ class Asset(SQLModel, table=True):
 # ─── Embedding models ───
 
 class EmbeddingModel(SQLModel, table=True):
+    """Dimension cache: maps (provider type_key, model name) → vector dimension.
+
+    Probed once at first use and kept for search-time column selection.
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
-    provider: EmbeddingProvider
+    provider: str
     dimension: int
-    description: Optional[str] = None
-    config: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
-    max_sequence_length: Optional[int] = None
-    embedding_time_ms: Optional[float] = None
     chunks: List["AssetChunk"] = Relationship(back_populates="embedding_model")
 
     __table_args__ = (

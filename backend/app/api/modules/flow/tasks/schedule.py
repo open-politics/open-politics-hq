@@ -118,39 +118,46 @@ def _dispatch_source_poll_task(task: Task):
 
 def _dispatch_embed_task(task: Task):
     """Dispatch an EMBED task to generate embeddings."""
-    from app.api.modules.embedding.tasks.embed import embed_infospace_task
-    
+    from app.api.modules.embedding.tasks.embed import enrich_embedding_task
+
     infospace_id = task.configuration.get("infospace_id") or task.infospace_id
-    if infospace_id:
-        embed_infospace_task.delay(
-            infospace_id=infospace_id,
-            user_id=task.user_id,
-            overwrite=task.configuration.get("overwrite", False),
-            task_id=task.id
-        )
-        logger.info(f"Dispatched EMBED task {task.id} for infospace {infospace_id}")
-        _update_task_status(task.id, "running", "Task dispatched to embed_infospace_task")
-    else:
+    if not infospace_id:
         logger.error(f"EMBED task {task.id} missing infospace_id")
         _update_task_status(task.id, "error", "Missing infospace_id in configuration")
+        return
+
+    from app.models import Asset
+    with Session(engine) as session:
+        asset_ids = list(session.exec(
+            select(Asset.id).where(
+                Asset.infospace_id == infospace_id,
+                Asset.text_content.isnot(None),
+                Asset.parent_asset_id.is_(None),
+            )
+        ).all())
+
+    batch_size = 50
+    for i in range(0, len(asset_ids), batch_size):
+        enrich_embedding_task.delay(
+            asset_ids=asset_ids[i : i + batch_size],
+            user_id=task.user_id,
+            overwrite=task.configuration.get("overwrite", False),
+        )
+    logger.info(f"Dispatched EMBED task {task.id}: {len(asset_ids)} assets for infospace {infospace_id}")
+    _update_task_status(task.id, "running", f"Dispatched {len(asset_ids)} assets")
 
 def _dispatch_annotate_task(task: Task):
     """Dispatch an ANNOTATE task to annotation processing"""
     try:
         from app.api.modules.annotation.services.annotation_service import AnnotationService
-        from app.api.modules.content.services.asset_service import AssetService
-        from app.api.modules.foundation_service_providers.factory import create_model_registry, create_storage_provider
-        from app.core.config import settings
+        from app.api.modules.content.tasks.task_services import create_task_services
         from app.schemas import AnnotationRunCreate
         import asyncio
-        
+
         async def run_annotation_task():
             with Session(engine) as session:
-                storage_provider = create_storage_provider(settings)
-                asset_service = AssetService(session, storage_provider)
-                model_registry = create_model_registry(settings)
-                await model_registry.initialize_providers()
-                annotation_service = AnnotationService(session, model_registry, asset_service)
+                services = create_task_services(session)
+                annotation_service = AnnotationService(session=session, asset_service=services.asset)
                 
                 run_config = task.configuration or {}
                 

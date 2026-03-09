@@ -189,26 +189,26 @@ INITIAL_ASSETS: List[AssetCreate] = [
         title="Healthcare and Climate Policy Announcement",
         kind=AssetKind.TEXT,
         text_content=SAMPLE_ARTICLE_TEXT_1,
-        source_metadata={"origin": "db_init", "description": "A sample political article covering healthcare and environmental policy for testing political categories."}
+        file_info={"origin": "db_init", "description": "A sample political article covering healthcare and environmental policy for testing political categories."}
     ),
     AssetCreate(
         title="Education Funding Reform Proposal",
         kind=AssetKind.TEXT,
         text_content=SAMPLE_ARTICLE_TEXT_2,
-        source_metadata={"origin": "db_init", "description": "A sample political article covering education policy for testing political categories."}
+        file_info={"origin": "db_init", "description": "A sample political article covering education policy for testing political categories."}
     ),
     AssetCreate(
         title="Immigration Reform Legislation Debate",
         kind=AssetKind.TEXT,
         text_content=SAMPLE_ARTICLE_TEXT_3,
-        source_metadata={"origin": "db_init", "description": "A sample political article covering immigration and civil rights for testing political categories."}
+        file_info={"origin": "db_init", "description": "A sample political article covering immigration and civil rights for testing political categories."}
     ),
     AssetCreate(
         title="Placeholder Image Asset",
         kind=AssetKind.IMAGE,
         text_content="This is a placeholder for an image asset. Its actual binary content would be in a blob store.",
         blob_path="placeholders/generic_image.png", # Conceptual path
-        source_metadata={"origin": "db_init", "description": "A generic placeholder for image assets."}
+        file_info={"origin": "db_init", "description": "A generic placeholder for image assets."}
     )
     # Add other general-purpose, pre-configured assets here
 ] 
@@ -250,7 +250,7 @@ SCENARIO_PDF_ASSET = AssetCreate(
     Their recent focus on AI ethics and transparent machine learning algorithms sets them apart.
     We project significant growth in their enterprise solutions sector.
     """,
-    source_metadata={"origin": "scenario_upload", "filename": "Innovatech_Report.pdf"}
+    file_info={"origin": "scenario_upload", "filename": "Innovatech_Report.pdf"}
 )
 
 # --- Scenario Sources, Bundles, and Tasks ---

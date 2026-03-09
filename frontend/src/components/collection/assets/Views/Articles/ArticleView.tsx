@@ -1,5 +1,6 @@
 import React from 'react';
 import { ArticleViewProps, ArticleMetadata } from './types';
+import { getAssetMeta } from '@/lib/utils';
 import { detectArticleFormat } from './utils';
 import ArticleFeaturedImage from './ArticleFeaturedImage';
 import ComposedArticleRenderer from './ComposedArticleRenderer';
@@ -23,7 +24,7 @@ export default function ArticleView({
   enableHighlighting = false
 }: ArticleViewProps) {
   const format = detectArticleFormat(asset);
-  const metadata = asset.source_metadata as ArticleMetadata;
+  const metadata = getAssetMeta(asset) as ArticleMetadata;
   const content = asset.text_content || '';
 
   // Text span highlighting - safe hook returns null when no provider is available
@@ -110,7 +111,7 @@ export default function ArticleView({
                 {childAssets
                   .filter(child => 
                     child.kind === 'image' && 
-                    !child.source_metadata?.is_hero_image
+                    !child.file_info?.is_hero_image
                   )
                   .map(child => (
                     <div 
@@ -126,9 +127,9 @@ export default function ArticleView({
                           loading="lazy"
                         />
                       )}
-                      {typeof child.source_metadata?.media_credit === "string" && (
+                      {typeof child.file_info?.media_credit === "string" && (
                         <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-1">
-                          {child.source_metadata.media_credit}
+                          {child.file_info.media_credit}
                         </div>
                       )}
                     </div>

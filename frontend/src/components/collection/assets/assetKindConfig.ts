@@ -95,6 +95,10 @@ export interface AssetKindConfig {
   canHaveChildren: boolean;
   /** Group for categorization */
   group: AssetGroup;
+  /** Which component to render in the children tab: 'csv' (table), 'pdf' (pages), or 'default' (list) */
+  childrenComponent?: 'csv' | 'pdf' | 'default';
+  /** Whether to show the Related Assets (semantic search) section */
+  showRelatedAssets?: boolean;
 }
 
 /**
@@ -139,6 +143,8 @@ export const ASSET_KIND_CONFIG: Record<AssetKind, AssetKindConfig> = {
     isInternal: false,
     canHaveChildren: true,
     group: 'text',
+    childrenComponent: 'default',
+    showRelatedAssets: true,
   },
   text: {
     icon: Type,
@@ -165,6 +171,8 @@ export const ASSET_KIND_CONFIG: Record<AssetKind, AssetKindConfig> = {
     isInternal: false,
     canHaveChildren: true,
     group: 'file',
+    childrenComponent: 'pdf',
+    showRelatedAssets: false,
   },
   
   // DATA — emerald tones (spreadsheet/data feel)
@@ -179,6 +187,8 @@ export const ASSET_KIND_CONFIG: Record<AssetKind, AssetKindConfig> = {
     isInternal: false,
     canHaveChildren: true,
     group: 'file',
+    childrenComponent: 'csv',
+    showRelatedAssets: false,
   },
   
   // WEB — sky tones (internet/digital feel)
@@ -193,6 +203,8 @@ export const ASSET_KIND_CONFIG: Record<AssetKind, AssetKindConfig> = {
     isInternal: false,
     canHaveChildren: true,
     group: 'web',
+    childrenComponent: 'default',
+    showRelatedAssets: true,
   },
   
   // VISUAL MEDIA — violet tones (creative/visual)
@@ -247,6 +259,8 @@ export const ASSET_KIND_CONFIG: Record<AssetKind, AssetKindConfig> = {
     isInternal: false,
     canHaveChildren: true,
     group: 'file',
+    childrenComponent: 'default',
+    showRelatedAssets: false,
   },
   email: {
     icon: Mail,
@@ -273,6 +287,8 @@ export const ASSET_KIND_CONFIG: Record<AssetKind, AssetKindConfig> = {
     isInternal: false,
     canHaveChildren: true,
     group: 'web',
+    childrenComponent: 'default',
+    showRelatedAssets: false,
   },
   
   // GENERIC — slate tones (neutral fallback)

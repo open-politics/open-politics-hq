@@ -21,18 +21,31 @@ logger = logging.getLogger(__name__)
 class LocalFileSystemStorageProvider(StorageProvider):
     """Storage provider that uses local filesystem as a drop-in for MinIO."""
 
-    def __init__(self, base_path: str):
+    def __init__(self, base_path: str, allowed_import_paths: Optional[List[str]] = None):
         """
         Args:
             base_path: Root directory for all storage operations. Object names
                        map to paths under this directory.
+            allowed_import_paths: Whitelist of directories users can import from.
+                                  Paths outside this list are rejected by is_allowed_import_path().
         """
         self.base_path = Path(base_path).resolve()
+        self.allowed_import_paths = [
+            Path(p).resolve() for p in (allowed_import_paths or [])
+        ]
         if not self.base_path.exists():
             self.base_path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Created storage base_path: {self.base_path}")
 
         logger.info(f"LocalFileSystemStorageProvider initialized: base_path={self.base_path}")
+
+    def is_allowed_import_path(self, source_path: str) -> bool:
+        """Check if source_path is under one of the allowed import paths."""
+        try:
+            resolved = Path(source_path).resolve()
+            return any(resolved.is_relative_to(a) for a in self.allowed_import_paths)
+        except (OSError, RuntimeError):
+            return False
 
     def _resolve_path(self, object_name: str) -> Path:
         """Resolve and validate path under base_path (prevents path traversal)."""

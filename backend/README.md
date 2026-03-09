@@ -100,7 +100,7 @@ Any operation taking more than a few seconds goes through Celery:
 - **process_content**: Extracts children from parent assets
 - **process_annotation_run**: Applies schemas to assets in batch
 - **process_source**: Polls RSS feeds or scheduled ingestion
-- **embed_asset_task**: Generates vector embeddings
+- **enrich_embedding**: Generates vector embeddings
 
 Tasks are defined in `app/api/tasks/` and registered with Celery. They create their own database session and provider instances. Pattern: lightweight task function delegates to service for actual work.
 
@@ -139,6 +139,8 @@ alembic upgrade head
 ```
 
 Migrations are in `app/alembic/versions/`. Review generated migrations before applying.
+
+**Deployment verification:** After deploying, ensure critical schema migrations are applied. If you see errors referencing `source_metadata` (on Asset) or `resolved_refs` (on FragmentCuration), the DB may be behind. Verify with `alembic current` and ensure these revisions are in the applied chain: `b3c4d5e6f7g8` (drops resolved_refs), `d5e6f7g8h9i0` (drops asset.source_metadata).
 
 ### Testing
 

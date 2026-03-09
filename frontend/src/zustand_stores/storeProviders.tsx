@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { UsersService } from '@/client';
+import type { ProviderDefaults_Output, ProviderSelection as BackendProviderSelection } from '@/client';
 
 // Provider types match backend capabilities
-export type ProviderCapability = 'llm' | 'embedding' | 'search' | 'geocoding';
+export type ProviderCapability = 'llm' | 'embedding' | 'search' | 'geocoding' | 'ocr' | 'annotation';
 
 export interface ProviderMetadata {
   id: string;
@@ -41,7 +43,9 @@ interface ProvidersState {
   removeApiKey: (providerId: string) => void;
   setSelection: (capability: ProviderCapability, selection: ProviderSelection) => void;
   clearAllKeys: () => void;
-  
+  syncToBackend: () => void;
+  hydrateFromProfile: (providerDefaults: ProviderDefaults_Output | null | undefined) => void;
+
   // Helpers
   getProvider: (providerId: string) => ProviderMetadata | undefined;
   getApiKey: (providerId: string) => string | undefined;
@@ -57,15 +61,19 @@ export const useProvidersStore = create<ProvidersState>()(
         embedding: [],
         search: [],
         geocoding: [],
+        ocr: [],
+        annotation: [],
       },
-      
+
       apiKeys: {},
-      
+
       selections: {
         llm: { providerId: 'gemini' },
         embedding: { providerId: 'ollama_embeddings' },
         search: { providerId: 'tavily' },
         geocoding: { providerId: 'nominatim_local' },
+        ocr: { providerId: 'tesseract' },
+        annotation: { providerId: 'gemini' },
       },
       
       setProviders: (capability, providers) =>
@@ -99,7 +107,55 @@ export const useProvidersStore = create<ProvidersState>()(
         set({
           apiKeys: {},
         }),
-      
+
+      syncToBackend: () => {
+        const { selections } = get();
+        const toSel = (s: ProviderSelection | undefined) =>
+          s?.providerId ? { type_key: s.providerId, model_name: s.modelId || null } : null;
+        const defaults = {
+          language: {
+            default: toSel(selections.llm),
+            chat: toSel(selections.llm),
+            annotation: toSel(selections.annotation),
+          },
+          embedding: toSel(selections.embedding),
+          search: toSel(selections.search),
+          ocr: toSel(selections.ocr),
+          geocoding: toSel(selections.geocoding),
+        };
+        UsersService.updateUserMe({ requestBody: { provider_defaults: defaults } })
+          .catch((e) => console.warn('Failed to sync provider defaults:', e));
+      },
+
+      hydrateFromProfile: (providerDefaults: ProviderDefaults_Output | null | undefined) => {
+        if (!providerDefaults) return;
+        const fromSel = (sel: BackendProviderSelection | null | undefined): ProviderSelection | undefined =>
+          sel?.type_key ? { providerId: sel.type_key, modelId: sel.model_name || undefined } : undefined;
+
+        set((state) => {
+          const next = { ...state.selections };
+          if (providerDefaults.language?.default) {
+            next.llm = fromSel(providerDefaults.language.default) || next.llm;
+          }
+          if (providerDefaults.language?.annotation) {
+            next.annotation = fromSel(providerDefaults.language.annotation) || next.annotation;
+          }
+          if (providerDefaults.embedding) {
+            next.embedding = fromSel(providerDefaults.embedding) || next.embedding;
+          }
+          if (providerDefaults.search) {
+            next.search = fromSel(providerDefaults.search) || next.search;
+          }
+          if (providerDefaults.ocr) {
+            next.ocr = fromSel(providerDefaults.ocr) || next.ocr;
+          }
+          if (providerDefaults.geocoding) {
+            next.geocoding = fromSel(providerDefaults.geocoding) || next.geocoding;
+          }
+          return { selections: next };
+        });
+      },
+
       // Helpers
       getProvider: (providerId) => {
         const state = get();

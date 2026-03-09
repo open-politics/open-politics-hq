@@ -10,7 +10,8 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
 from sqlmodel import select
 
-from app.core.dispatch import register_watcher
+from app.core.config import settings
+from app.core.dispatch import _get_enabled_watchers, register_watcher
 from app.api.modules.graph.models import EntityCanonical, FragmentCuration
 from app.models import Annotation, Asset
 
@@ -28,18 +29,13 @@ class _SupersededEntityRetireWatcher:
 
     def build_query(self, session):
         # FragmentCuration -> Annotation -> Asset where Asset.is_superseded
-        # Exclude already-flagged (resolved_refs->>'source_asset_superseded' = 'true')
+        # Exclude already-flagged (source_asset_superseded = true)
         stmt = (
             select(FragmentCuration.id)
             .join(Annotation, FragmentCuration.annotation_id == Annotation.id)
             .join(Asset, Annotation.asset_id == Asset.id)
             .where(Asset.is_superseded == True)
-            .where(
-                text(
-                    "fragmentcuration.resolved_refs IS NULL OR "
-                    "(fragmentcuration.resolved_refs->>'source_asset_superseded') IS NULL"
-                )
-            )
+            .where(FragmentCuration.source_asset_superseded == False)
             .limit(100)
         )
         return stmt
@@ -56,16 +52,22 @@ class _ReResolveSingletonWatcher:
 
     def build_query(self, session):
         # Singletons: aliases is null, empty, or only [canonical_name]
-        # Created in last 7 days
-        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        # Optional time window: only consider entities created in last N days (0 = no limit)
+        window_days = getattr(settings, "RESOLVE_SINGLETON_WINDOW_DAYS", 7) or 0
         stmt = (
             select(EntityCanonical.id)
-            .where(EntityCanonical.created_at >= cutoff)
-            .where(text("aliases IS NULL OR jsonb_array_length(COALESCE(aliases::jsonb, '[]'::jsonb)) <= 1"))
+            .where(text("(aliases IS NULL OR jsonb_array_length(COALESCE(aliases::jsonb, '[]'::jsonb)) <= 1)"))
             .limit(100)
         )
+        if window_days > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+            stmt = stmt.where(EntityCanonical.created_at >= cutoff)
         return stmt
 
 
-register_watcher(_SupersededEntityRetireWatcher())
-register_watcher(_ReResolveSingletonWatcher())
+# Register only when enabled via ENABLED_WATCHERS
+enabled = _get_enabled_watchers()
+if "superseded_entity_retire" in enabled:
+    register_watcher(_SupersededEntityRetireWatcher())
+if "re_resolve_singletons" in enabled:
+    register_watcher(_ReResolveSingletonWatcher())

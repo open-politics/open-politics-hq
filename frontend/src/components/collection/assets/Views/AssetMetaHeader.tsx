@@ -74,9 +74,11 @@ export interface AssetMetaHeaderProps {
  */
 function getKindSpecificMeta(asset: AssetRead): { label: string; value: string }[] {
   const meta: { label: string; value: string }[] = [];
-  const sm = asset.source_metadata as Record<string, any> | null;
+  const fi = asset.file_info as Record<string, unknown> | null;
+  const facets = asset.facets as Record<string, unknown> | null;
+  const sm = { ...(fi ?? {}), ...(facets ?? {}) };
   
-  if (!sm) return meta;
+  if (Object.keys(sm).length === 0) return meta;
   
   switch (asset.kind) {
     case 'pdf':
@@ -85,11 +87,11 @@ function getKindSpecificMeta(asset: AssetRead): { label: string; value: string }
       break;
     case 'csv':
       if (sm.row_count) meta.push({ label: 'Rows', value: String(sm.row_count) });
-      if (sm.column_count) meta.push({ label: 'Columns', value: String(sm.column_count) });
+      if (sm.column_count != null || (Array.isArray(sm.columns) && sm.columns.length > 0)) meta.push({ label: 'Columns', value: String(sm.column_count ?? (Array.isArray(sm.columns) ? sm.columns.length : 0)) });
       break;
     case 'image':
       if (sm.width && sm.height) meta.push({ label: 'Size', value: `${sm.width}×${sm.height}` });
-      if (sm.file_size) meta.push({ label: 'File', value: formatFileSize(sm.file_size) });
+      if (sm.file_size) meta.push({ label: 'File', value: formatFileSize(sm.file_size as number) });
       break;
     case 'text':
     case 'text_chunk':
@@ -100,7 +102,7 @@ function getKindSpecificMeta(asset: AssetRead): { label: string; value: string }
       if (sm.author) meta.push({ label: 'Author', value: String(sm.author) });
       if (sm.publication_date) {
         try {
-          meta.push({ label: 'Published', value: format(new Date(sm.publication_date), 'PP') });
+          meta.push({ label: 'Published', value: format(new Date(sm.publication_date as string), 'PP') });
         } catch {}
       }
       break;

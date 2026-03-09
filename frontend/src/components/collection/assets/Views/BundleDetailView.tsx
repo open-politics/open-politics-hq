@@ -59,10 +59,10 @@ const getCompositionStats = (children: any[]) => {
       
       // Count potential child items (rows, pages, etc.)
       let childCount = 0;
-      if (node.kind === 'csv' && node.source_metadata?.row_count) {
-        childCount = node.source_metadata.row_count as number;
-      } else if (node.kind === 'pdf' && node.source_metadata?.page_count) {
-        childCount = node.source_metadata.page_count as number;
+      if (node.kind === 'csv' && node.file_info?.row_count) {
+        childCount = node.file_info.row_count as number;
+      } else if (node.kind === 'pdf' && node.file_info?.page_count) {
+        childCount = node.file_info.page_count as number;
       }
       current.totalChildren += childCount;
       totalChildAssets += childCount;
@@ -79,8 +79,6 @@ const getCompositionStats = (children: any[]) => {
 
 interface BundleDetailViewProps {
   selectedBundleId: number | null;
-  /** When set, shows BundleView (filtered subset) instead of full bundle */
-  selectedBundleViewId?: number | null;
   onLoadIntoRunner?: (runId: number, runName: string) => void;
   selectedAssetId: number | null;
   onAssetSelect: (id: number | null) => void;
@@ -92,7 +90,6 @@ interface BundleDetailViewProps {
 
 export default function BundleDetailView({ 
   selectedBundleId, 
-  selectedBundleViewId,
   onLoadIntoRunner,
   selectedAssetId,
   onAssetSelect,
@@ -106,56 +103,32 @@ export default function BundleDetailView({
     childrenCache,
     fetchChildren,
     getFullBundle,
-    getFullBundleView,
   } = useTreeStore();
 
   const [selectedBundle, setSelectedBundle] = useState<BundleRead | null>(null);
-  const [selectedBundleView, setSelectedBundleView] = useState<import('@/client').BundleViewRead | null>(null);
+  const effectiveBundleId = selectedBundleId;
+  const displayName = selectedBundle?.name;
 
-  const isViewMode = selectedBundleViewId != null && selectedBundleViewId > 0;
-  const effectiveBundleId = isViewMode ? selectedBundleView?.source_bundle_id : selectedBundleId;
-  const effectivePathPrefix = isViewMode ? (selectedBundleView?.path_prefix ?? '') : undefined;
-  const displayName = isViewMode ? selectedBundleView?.name : selectedBundle?.name;
-
-  // Load bundle or bundle view details
+  // Load bundle details
   useEffect(() => {
-    if (selectedBundleViewId) {
-      getFullBundleView(selectedBundleViewId).then(view => {
-        setSelectedBundleView(view || null);
-        setSelectedBundle(null);
-        if (view) {
-          getFullBundle(view.source_bundle_id).then(bundle => setSelectedBundle(bundle || null));
-        }
-      });
-      const rootNodeId = `bundleview-${selectedBundleViewId}`;
-      if (!childrenCache.has(rootNodeId)) {
-        fetchChildren(rootNodeId);
-      }
-    } else if (selectedBundleId) {
-      getFullBundle(selectedBundleId).then(bundle => {
-        setSelectedBundle(bundle || null);
-        setSelectedBundleView(null);
-      });
+    if (selectedBundleId) {
+      getFullBundle(selectedBundleId).then(bundle => setSelectedBundle(bundle || null));
       const bundleNodeId = `bundle-${selectedBundleId}`;
       if (!childrenCache.has(bundleNodeId)) {
         fetchChildren(bundleNodeId);
       }
     } else {
       setSelectedBundle(null);
-      setSelectedBundleView(null);
     }
-  }, [selectedBundleId, selectedBundleViewId, getFullBundle, getFullBundleView, fetchChildren, childrenCache]);
+  }, [selectedBundleId, getFullBundle, fetchChildren, childrenCache]);
 
   // Get children from cache for metadata display
   const bundleChildren = useMemo(() => {
-    if (selectedBundleViewId) {
-      return childrenCache.get(`bundleview-${selectedBundleViewId}`) || [];
-    }
     if (selectedBundleId) {
       return childrenCache.get(`bundle-${selectedBundleId}`) || [];
     }
     return [];
-  }, [selectedBundleId, selectedBundleViewId, childrenCache]);
+  }, [selectedBundleId, childrenCache]);
 
   // Get available kinds for filter badges (still used by AssetFeedView)
   const availableKinds = useMemo(() => {
@@ -212,25 +185,14 @@ export default function BundleDetailView({
     );
   }
 
-  // If no bundle/view selected, show empty state
-  if (!selectedBundleId && !selectedBundleViewId) {
+  // If no bundle selected, show empty state
+  if (!selectedBundleId) {
     return (
       <div className="h-full flex items-center justify-center p-6">
         <div className="text-center">
           <Layers className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
           <h3 className="text-lg font-medium text-muted-foreground mb-2">No Bundle Selected</h3>
           <p className="text-sm text-muted-foreground">Select a bundle to view its contents.</p>
-        </div>
-      </div>
-    );
-  }
-  // When viewing a BundleView, wait for it to load before showing content
-  if (selectedBundleViewId && !selectedBundleView) {
-    return (
-      <div className="h-full flex items-center justify-center p-6">
-        <div className="text-center">
-          <Loader2 className="h-12 w-12 mx-auto text-muted-foreground mb-4 animate-spin" />
-          <p className="text-sm text-muted-foreground">Loading view...</p>
         </div>
       </div>
     );
@@ -256,7 +218,7 @@ export default function BundleDetailView({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 sm:gap-2">
               <h2 className="text-sm sm:text-lg font-semibold truncate">
-                {displayName || (selectedBundle ? `Bundle ${selectedBundle.id}` : selectedBundleView ? `View ${selectedBundleView.id}` : '')}
+                {displayName || (selectedBundle ? `Bundle ${selectedBundle.id}` : '')}
               </h2>
             </div>
             
@@ -264,11 +226,11 @@ export default function BundleDetailView({
             <div className="flex items-center gap-2 sm:gap-4 mt-2 sm:mt-3 text-xs text-muted-foreground flex-wrap">
               <div className="flex items-center gap-1">
                 <Hash className="h-3 w-3" />
-                <span>ID: {isViewMode ? selectedBundleView?.id : selectedBundle?.id}</span>
+                <span>ID: {selectedBundle?.id}</span>
               </div>
               <div className="flex items-center gap-1">
                 <Calendar className="h-3 w-3" />
-                <span>Updated {formatDistanceToNowStrict(new Date((selectedBundleView || selectedBundle)?.updated_at || 0), { addSuffix: true })}</span>
+                <span>Updated {formatDistanceToNowStrict(new Date(selectedBundle?.updated_at || 0), { addSuffix: true })}</span>
               </div>
               <div className="flex items-center gap-1">
                 <File className="h-3 w-3" />
@@ -317,14 +279,9 @@ export default function BundleDetailView({
               )}
             </div>
             
-            {selectedBundle?.description && !isViewMode && (
+            {selectedBundle?.description && (
               <p className="text-sm text-muted-foreground mt-1">
                 "{selectedBundle.description}"
-              </p>
-            )}
-            {isViewMode && effectivePathPrefix && (
-              <p className="text-sm text-muted-foreground mt-1">
-                Path: {effectivePathPrefix}
               </p>
             )}
           </div>
@@ -372,7 +329,6 @@ export default function BundleDetailView({
         <AssetFeedView
           infospaceId={activeInfospace?.id}
           filterByBundleId={effectiveBundleId ?? undefined}
-          pathPrefix={effectivePathPrefix}
           availableKinds={availableKinds}
           onAssetClick={handleAssetClick}
           title={``}

@@ -6,7 +6,6 @@ import httpx
 from typing import List, Dict, Any, Optional
 
 from app.api.modules.foundation_service_providers.base import EmbeddingProvider
-from app.api.modules.foundation_service_providers.embedding_config import embedding_models_config
 
 logger = logging.getLogger(__name__)
 
@@ -17,16 +16,13 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     Uses OpenAI's /v1/embeddings endpoint for generating embeddings.
     """
     
-    def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1"):
+    def __init__(self, api_key: str, base_url: str = "https://api.openai.com/v1", models: dict = None):
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self.client = httpx.AsyncClient(timeout=120.0)
         self._model_cache = {}
-        
-        # Load configuration from embedding_models_config
-        provider_config = embedding_models_config.get_provider_config("openai")
-        self.available_models = embedding_models_config.get_provider_models("openai")
-        
+        self.available_models = models or {}
+
         logger.info(f"OpenAI embedding provider initialized with base_url: {self.base_url}")
         logger.info(f"Loaded {len(self.available_models)} models from configuration")
     
@@ -36,7 +32,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         
         Args:
             texts: List of text strings to embed
-            model_name: OpenAI embedding model name (e.g., "text-embedding-ada-002", "text-embedding-3-small")
+            model_name: OpenAI embedding model name (e.g., "text-embedding-3-small", "text-embedding-3-large")
         
         Returns:
             List of embedding vectors
@@ -142,20 +138,8 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         """
         if model_name in self._model_cache:
             return self._model_cache[model_name]["dimension"]
-        
-        # Get from configuration
-        dimension = embedding_models_config.get_model_dimension("openai", model_name)
-        if dimension:
-            return dimension
-        
-        # Default fallback for common models
-        if "ada-002" in model_name.lower():
-            return 1536
-        elif "3-small" in model_name.lower():
-            return 1536
-        elif "3-large" in model_name.lower():
-            return 3072
-        
+        if model_name in self.available_models:
+            return self.available_models[model_name].get("dimension", 1536)
         logger.warning(f"Unknown OpenAI model '{model_name}', defaulting to 1536 dimensions")
         return 1536
     
@@ -166,7 +150,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         
         try:
             # Test with a simple embedding request
-            test_embedding = await self.embed_single("test", "text-embedding-ada-002")
+            test_embedding = await self.embed_single("test", "text-embedding-3-small")
             return len(test_embedding) > 0
         except Exception as e:
             logger.error(f"Error checking OpenAI API key: {e}")

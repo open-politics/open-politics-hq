@@ -23,7 +23,7 @@ Available Handlers:
 """
 
 from .base import BaseHandler, IngestionContext, IngestionError
-from .resolve import resolve_handler, ResolvedHandler
+from .registry import resolve_handler, ResolvedHandler
 from .file_handler import FileHandler
 from .web_handler import WebHandler
 from .search_handler import SearchHandler

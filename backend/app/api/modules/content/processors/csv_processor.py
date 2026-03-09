@@ -84,7 +84,8 @@ class CSVProcessor(BaseProcessor):
 
         # Update parent asset
         asset.text_content = "\n".join(full_text_parts)
-        asset.source_metadata.update({
+        file_info = asset.file_info or {}
+        file_info.update({
             'columns': header,
             'delimiter_used': delimiter,
             'encoding_used': encoding,
@@ -92,6 +93,7 @@ class CSVProcessor(BaseProcessor):
             'column_count': len(header),
             'processing_options': self.context.options
         })
+        asset.file_info = file_info
         
         # Save child assets in batches
         saved_children = []
@@ -229,7 +231,7 @@ class CSVProcessor(BaseProcessor):
                     parent_asset_id=asset.id,
                     part_index=rows_processed,
                     text_content=row_text,
-                    source_metadata={
+                    file_info={
                         "row_number": skip_rows + rows_processed + 2,
                         "data_row_index": rows_processed,
                         "original_row_data": row_data,

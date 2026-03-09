@@ -71,19 +71,19 @@ services:
     networks:
       - default
 
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: ollama
-  #   ports:
-  #     - "11434:11434" 
-  #   volumes:
-  #     - ollama_data:/root/.ollama
-  #   environment:
-  #     - OLLAMA_NUM_PARALLEL=2
-  #     - OLLAMA_MAX_LOADED_MODELS=2
-  #   restart: unless-stopped
-  #   networks:
-  #     - default
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434" 
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_MAX_LOADED_MODELS=2
+    restart: unless-stopped
+    networks:
+      - default
 
 networks:
   default:

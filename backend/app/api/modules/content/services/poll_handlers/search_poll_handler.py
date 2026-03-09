@@ -48,12 +48,14 @@ class SearchPollHandler:
             api_key = settings.TAVILY_API_KEY
 
         # --- execute search ---
-        from app.api.modules.foundation_service_providers.web_search_registry import (
-            WebSearchProviderRegistryService,
-        )
+        from app.api.modules.foundation_service_providers.base import WebSearchProvider
+        from app.api.modules.foundation_service_providers.registry import get_provider
+        from app.core.config import settings as app_settings
 
-        registry = WebSearchProviderRegistryService()
-        search_provider = registry.create_provider(provider, api_key)
+        search_provider = get_provider(
+            WebSearchProvider, provider, app_settings,
+            api_key_override=api_key,
+        )
 
         logger.info("Executing search query: '%s' with provider %s", query, provider)
         search_results_raw = await search_provider.search(

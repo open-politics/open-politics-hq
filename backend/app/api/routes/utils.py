@@ -197,8 +197,8 @@ async def scrape_article(url: str):
         The scraped article content
     """
     try:
-        from app.api.modules.foundation_service_providers.factory import create_scraping_provider
-        scraping_provider = create_scraping_provider(settings)
+        from app.api.modules.foundation_service_providers.registry import get_scraping_provider
+        scraping_provider = get_scraping_provider(settings)
         
         article_data = await scraping_provider.scrape_url(url)
         
@@ -222,8 +222,8 @@ async def analyze_source(base_url: str):
         Source analysis results including RSS feeds, categories, and articles
     """
     try:
-        from app.api.modules.foundation_service_providers.factory import create_scraping_provider
-        scraping_provider = create_scraping_provider(settings)
+        from app.api.modules.foundation_service_providers.registry import get_scraping_provider
+        scraping_provider = get_scraping_provider(settings)
         
         analysis_result = await scraping_provider.analyze_source(base_url)
         
@@ -247,8 +247,8 @@ async def discover_rss_feeds_from_site(base_url: str):
         List of discovered RSS feed URLs
     """
     try:
-        from app.api.modules.foundation_service_providers.factory import create_scraping_provider
-        scraping_provider = create_scraping_provider(settings)
+        from app.api.modules.foundation_service_providers.registry import get_scraping_provider
+        scraping_provider = get_scraping_provider(settings)
         
         rss_feeds = await scraping_provider.discover_rss_feeds(base_url)
         
@@ -329,38 +329,129 @@ async def get_unified_providers():
     This provides metadata about requirements (API keys, local, etc.) and capabilities.
     """
     try:
-        from app.api.modules.foundation_service_providers.unified_registry import get_unified_registry
-        
-        registry = get_unified_registry()
-        
-        # Get providers grouped by capability
-        grouped = registry.get_providers_grouped_by_capability()
-        
-        # Convert to JSON-serializable format
+        from app.api.modules.foundation_service_providers.registry import list_providers
+        from app.api.modules.foundation_service_providers.base import (
+            StorageProvider, EmbeddingProvider, OcrProvider, LanguageModelProvider,
+            GeocodingProvider, WebSearchProvider, ScrapingProvider,
+        )
+
+        # Map protocol classes to capability names matching the old unified_registry format
+        _CAPABILITY_MAP = {
+            LanguageModelProvider: "llm",
+            EmbeddingProvider: "embedding",
+            WebSearchProvider: "search",
+            GeocodingProvider: "geocoding",
+            OcrProvider: "ocr",
+        }
+
+        # Human-readable display metadata per provider type_key
+        _PROVIDER_DISPLAY = {
+            "ollama": {
+                "name": "Ollama",
+                "description": "Run open-source models locally via Ollama. Supports language, embedding, and OCR capabilities.",
+            },
+            "openai": {
+                "name": "OpenAI",
+                "description": "GPT models and text embeddings from OpenAI.",
+                "api_key_name": "OpenAI API Key",
+                "api_key_url": "https://platform.openai.com/api-keys",
+            },
+            "anthropic": {
+                "name": "Anthropic",
+                "description": "Claude language models from Anthropic.",
+                "api_key_name": "Anthropic API Key",
+                "api_key_url": "https://console.anthropic.com/settings/keys",
+            },
+            "gemini": {
+                "name": "Google Gemini",
+                "description": "Gemini language models from Google.",
+                "api_key_name": "Google API Key",
+                "api_key_url": "https://aistudio.google.com/apikey",
+            },
+            "mistral": {
+                "name": "Mistral AI",
+                "description": "Mistral and Codestral language models.",
+                "api_key_name": "Mistral API Key",
+                "api_key_url": "https://console.mistral.ai/api-keys/",
+            },
+            "jina": {
+                "name": "Jina AI",
+                "description": "High-quality multilingual text embeddings.",
+                "api_key_name": "Jina API Key",
+                "api_key_url": "https://jina.ai/embeddings/#apiform",
+            },
+            "voyage": {
+                "name": "Voyage AI",
+                "description": "Specialized embeddings for code, law, and finance (Anthropic partner).",
+                "api_key_name": "Voyage API Key",
+                "api_key_url": "https://dash.voyageai.com/",
+            },
+            "tesseract": {
+                "name": "Tesseract OCR",
+                "description": "Open-source OCR engine running locally via ocrmypdf.",
+            },
+            "local": {
+                "name": "Local Nominatim",
+                "description": "Self-hosted Nominatim geocoding instance.",
+            },
+            "nominatim_api": {
+                "name": "Nominatim Public API",
+                "description": "OpenStreetMap's free public geocoding API (rate-limited).",
+            },
+            "mapbox": {
+                "name": "Mapbox Geocoding",
+                "description": "Commercial geocoding API from Mapbox.",
+                "api_key_name": "Mapbox Access Token",
+                "api_key_url": "https://account.mapbox.com/access-tokens/",
+            },
+            "tavily": {
+                "name": "Tavily",
+                "description": "AI-optimised web search API.",
+                "api_key_name": "Tavily API Key",
+                "api_key_url": "https://tavily.com/#api",
+            },
+            "minio": {
+                "name": "MinIO",
+                "description": "S3-compatible object storage (self-hosted).",
+            },
+            "local_fs": {
+                "name": "Local Filesystem",
+                "description": "Store files directly on the local filesystem.",
+            },
+            "newspaper4k": {
+                "name": "Newspaper4k",
+                "description": "Local article scraping and extraction library.",
+            },
+        }
+
         result = {}
         capabilities_list = []
-        
-        for capability, providers in grouped.items():
-            capabilities_list.append(capability)
-            result[capability] = [
-                {
-                    "id": p.id,
-                    "name": p.name,
-                    "description": p.description,
-                    "requires_api_key": p.requires_api_key,
-                    "api_key_name": p.api_key_name,
-                    "api_key_url": p.api_key_url,
-                    "is_local": p.is_local,
-                    "is_oss": p.is_oss,
-                    "is_free": p.is_free,
-                    "has_env_fallback": p.has_env_fallback,
-                    "features": p.features or [],
-                    "rate_limited": p.rate_limited,
-                    "rate_limit_info": p.rate_limit_info,
-                }
-                for p in providers
-            ]
-        
+
+        for protocol, capability_name in _CAPABILITY_MAP.items():
+            descriptors = list_providers(protocol)
+            capabilities_list.append(capability_name)
+            result[capability_name] = []
+            for type_key, desc in descriptors:
+                display = _PROVIDER_DISPLAY.get(type_key, {})
+                has_env = False
+                if desc.api_key_setting:
+                    has_env = bool(getattr(settings, desc.api_key_setting, None))
+                result[capability_name].append({
+                    "id": type_key,
+                    "name": display.get("name", type_key),
+                    "description": display.get("description", ""),
+                    "requires_api_key": desc.requires_api_key,
+                    "api_key_name": display.get("api_key_name"),
+                    "api_key_url": display.get("api_key_url"),
+                    "is_local": desc.is_local,
+                    "is_oss": desc.is_local,
+                    "is_free": not desc.requires_api_key,
+                    "has_env_fallback": has_env,
+                    "features": sorted(desc.contexts),
+                    "rate_limited": None,
+                    "rate_limit_info": None,
+                })
+
         return {
             "providers": result,
             "capabilities": capabilities_list,
@@ -376,67 +467,57 @@ async def get_unified_providers():
 @router.get("/providers", response_model=ProviderListResponse, status_code=status.HTTP_200_OK)
 async def get_providers() -> ProviderListResponse:
     """
-    Returns a dynamic list of available classification providers and their models.
-    Discovers models from all configured providers (Ollama, OpenAI, Gemini).
-    
-    LEGACY: Use /providers/unified for a better structured response.
+    Returns a dynamic list of available LLM providers and their models,
+    grouped by provider type_key.
+
+    For providers with static model catalogs (OpenAI, Anthropic, Gemini, Mistral)
+    the catalog is returned directly. For dynamic-catalog providers (Ollama) the
+    running instance is queried via ``discover_models()``.
     """
-    logger.info("Route: Discovering classification providers and models.")
-    
+    logger.info("Route: Discovering LLM providers and models.")
+
     try:
-        # Import the model registry from the factory
-        from app.api.modules.foundation_service_providers.factory import create_model_registry
-        from app.core.config import settings
-        
-        # Create and initialize the model registry
-        model_registry = create_model_registry(settings)
-        await model_registry.initialize_providers()
-        
-        # Discover all models
-        all_models = await model_registry.discover_all_models(force_refresh=True)
-        
-        # Convert to the expected response format
+        from app.api.modules.foundation_service_providers.base import LanguageModelProvider
+        from app.api.modules.foundation_service_providers.registry import list_providers, get_provider
+
+        descriptors = list_providers(LanguageModelProvider)
         providers_list: List[ProviderInfo] = []
-        
-        for provider_name, models in all_models.items():
-            provider_models = [
-                ProviderModel(
-                    name=model.name,
-                    description=model.description or f"{provider_name} {model.name}"
-                )
-                for model in models
-            ]
-            
-            # Always add configured providers, even if they have no models
-            # This allows users to pull models for providers like Ollama
-            providers_list.append(ProviderInfo(
-                provider_name=provider_name,
-                models=provider_models
-            ))
-        
-        logger.info(f"Discovered {len(providers_list)} providers with models")
+
+        for type_key, desc in descriptors:
+            models: List[ProviderModel] = []
+
+            if desc.models:
+                # Static catalog (OpenAI, Anthropic, Gemini, Mistral)
+                for spec in desc.models:
+                    models.append(ProviderModel(
+                        name=spec.name,
+                        description=spec.description or spec.name,
+                    ))
+            else:
+                # Runtime discovery (Ollama) — await the async method directly
+                try:
+                    provider = get_provider(LanguageModelProvider, type_key, settings)
+                    discovered = await provider.discover_models()
+                    for m in discovered:
+                        name = m.name if hasattr(m, "name") else str(m)
+                        desc_str = (m.description if hasattr(m, "description") and m.description else name)
+                        models.append(ProviderModel(name=name, description=desc_str))
+                except Exception as e:
+                    logger.warning(f"Runtime LLM model discovery failed for {type_key}: {e}")
+
+            if models:
+                providers_list.append(ProviderInfo(
+                    provider_name=type_key,
+                    models=models,
+                ))
+
+        total = sum(len(p.models) for p in providers_list)
+        logger.info(f"Discovered {total} LLM models across {len(providers_list)} providers")
         return ProviderListResponse(providers=providers_list)
-        
+
     except Exception as e:
         logger.error(f"Failed to discover providers: {e}")
-        # Fallback to hardcoded list if discovery fails
-        hardcoded_providers: List[ProviderInfo] = [
-            ProviderInfo(
-                provider_name="gemini",
-                models=[
-                    ProviderModel(name="gemini-2.5-flash", description="Google's most capable model."),
-                    ProviderModel(name="gemini-2.5-flash-lite-preview-06-17", description="A smaller, faster model."),
-                ]
-            ),
-            ProviderInfo(
-                provider_name="ollama",
-                models=[
-                    ProviderModel(name="llama3.2", description="Meta's Llama 3.2 model."),
-                ]
-            )
-        ]
-        
-        return ProviderListResponse(providers=hardcoded_providers)
+        return ProviderListResponse(providers=[])
 
 
 @router.post("/ollama/pull-model")
@@ -704,58 +785,51 @@ async def get_geocoding_providers():
     """
     Get available geocoding providers and their configuration requirements.
     Helps frontend display provider options and understand what credentials are needed.
-    Uses registry service to dynamically discover providers.
+    Uses descriptor registry to dynamically discover providers.
     """
-    from app.api.modules.foundation_service_providers.geocoding_registry import GeocodingProviderRegistryService
-    
-    registry = GeocodingProviderRegistryService()
-    available_providers = registry.get_available_providers()
-    
-    # Build detailed provider information
+    from app.api.modules.foundation_service_providers.registry import list_providers
+    from app.api.modules.foundation_service_providers.base import GeocodingProvider
+
+    descriptors = list_providers(GeocodingProvider)
+
+    # Static metadata keyed by type_key, preserving the same response shape
+    _GEOCODING_META = {
+        "local": {
+            "name": "Local Nominatim",
+            "description": "Self-hosted Nominatim instance (compose/kubernetes)",
+            "rate_limited": False,
+            "supports_polygons": True,
+        },
+        "nominatim_api": {
+            "name": "Nominatim Public API",
+            "description": "OpenStreetMap's free public geocoding API",
+            "rate_limited": True,
+            "rate_limit": "1 request/second",
+            "supports_polygons": True,
+        },
+        "mapbox": {
+            "name": "Mapbox Geocoding",
+            "description": "Mapbox commercial geocoding API",
+            "api_key_name": "Mapbox Access Token",
+            "rate_limited": True,
+            "rate_limit": "600 requests/minute (free tier)",
+            "supports_polygons": False,
+            "docs_url": "https://docs.mapbox.com/api/search/geocoding/",
+            "env_configured": bool(settings.MAPBOX_ACCESS_TOKEN),
+        },
+    }
+
     providers_info = []
-    
-    for provider_name in available_providers:
-        config = registry.get_provider_info(provider_name)
-        if not config:
-            continue
-        
-        # Provider-specific metadata
+    for type_key, desc in descriptors:
         provider_meta = {
-            "id": provider_name,
-            "requires_api_key": config.requires_api_key,
-            "enabled": config.enabled
+            "id": type_key,
+            "requires_api_key": desc.requires_api_key,
+            "enabled": True,
         }
-        
-        # Add specific metadata per provider
-        if provider_name == "local":
-            provider_meta.update({
-                "name": "Local Nominatim",
-                "description": "Self-hosted Nominatim instance (compose/kubernetes)",
-                "rate_limited": False,
-                "supports_polygons": True,
-            })
-        elif provider_name == "nominatim_api":
-            provider_meta.update({
-                "name": "Nominatim Public API",
-                "description": "OpenStreetMap's free public geocoding API",
-                "rate_limited": True,
-                "rate_limit": "1 request/second",
-                "supports_polygons": True,
-            })
-        elif provider_name == "mapbox":
-            provider_meta.update({
-                "name": "Mapbox Geocoding",
-                "description": "Mapbox commercial geocoding API",
-                "api_key_name": "Mapbox Access Token",
-                "rate_limited": True,
-                "rate_limit": "600 requests/minute (free tier)",
-                "supports_polygons": False,
-                "docs_url": "https://docs.mapbox.com/api/search/geocoding/",
-                "env_configured": bool(settings.MAPBOX_ACCESS_TOKEN)
-            })
-        
+        extra = _GEOCODING_META.get(type_key, {})
+        provider_meta.update(extra)
         providers_info.append(provider_meta)
-    
+
     return {
         "providers": providers_info,
         "default_strategy": "local with fallback to nominatim_api"
@@ -781,25 +855,30 @@ async def geocode_location(
         location: Location name or address to geocode
         language: Language code for results (default: 'en')
     """
-    from app.api.modules.foundation_service_providers.geocoding_registry import GeocodingProviderRegistryService
-    
+    from app.api.modules.foundation_service_providers.registry import get_provider
+    from app.api.modules.foundation_service_providers.base import GeocodingProvider
+
     logger.info(f"Geocoding location (public): {location}")
-    
-    # Use registry service for automatic fallback
-    registry = GeocodingProviderRegistryService()
-    result = await registry.geocode_with_fallback(location, language=language)
-    
-    if result:
-        return {
-            "coordinates": result['coordinates'],
-            "location_type": result['location_type'],
-            "bbox": result.get('bbox'),
-            "area": result.get('area'),
-            "display_name": result.get('display_name'),
-            "geometry": result.get('geometry'),
-            "provider": result.get('provider')
-        }
-    
+
+    # Try providers in order: local Nominatim -> public Nominatim API (automatic fallback)
+    for provider_type_key in ["local", "nominatim_api"]:
+        try:
+            provider = get_provider(GeocodingProvider, provider_type_key, settings)
+            result = await provider.geocode(location, language=language)
+            if result:
+                result['provider'] = provider_type_key
+                return {
+                    "coordinates": result['coordinates'],
+                    "location_type": result['location_type'],
+                    "bbox": result.get('bbox'),
+                    "area": result.get('area'),
+                    "display_name": result.get('display_name'),
+                    "geometry": result.get('geometry'),
+                    "provider": result.get('provider')
+                }
+        except Exception as e:
+            logger.warning(f"Geocoding provider '{provider_type_key}' failed for '{location}': {e}")
+
     # All providers failed
     logger.warning(f"Unable to geocode location: {location}")
     raise HTTPException(
@@ -832,23 +911,24 @@ async def geocode_location_with_provider(
         language: Language code for results (default: 'en')
         current_user: Authenticated user (injected)
     """
-    from app.api.modules.foundation_service_providers.geocoding_registry import GeocodingProviderRegistryService
-    
+    from app.api.modules.foundation_service_providers.registry import get_provider
+    from app.api.modules.foundation_service_providers.base import GeocodingProvider
+
     logger.info(f"Geocoding location (authenticated): {location} with provider: {provider_type} for user: {current_user.email}")
-    
-    # Create provider using registry service
-    registry = GeocodingProviderRegistryService()
-    
+
     try:
-        provider = registry.create_provider(provider_type, api_key=api_key)
+        provider = get_provider(
+            GeocodingProvider, provider_type, settings,
+            api_key_override=api_key,
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
-    
+
     result = await provider.geocode(location, language=language)
-    
+
     if result:
         logger.info(f"Geocoded '{location}' using {provider_type}")
         return {

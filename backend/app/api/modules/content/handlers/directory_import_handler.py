@@ -275,25 +275,40 @@ class DirectoryImportHandler(BaseHandler):
         copy_mode: bool,
         file_extensions: Set[str],
         batch_size: int,
-    ) -> List[Asset]:
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[List[Asset], int]:
         """
         Reconcile re-import: compare stat (file_size, mtime) for existing blob_paths,
         detect additions, changes, deletions. Version changed files via previous_asset_id.
+        Uses chunked commits and cursor-based resume to support large directories.
         """
+        opts = options or {}
+        resume_from_path = opts.get("resume_from_path")
+        on_batch_complete = opts.get("on_batch_complete")
+
+        all_file_paths = sorted(
+            (
+                p
+                for p in source.rglob("*")
+                if p.is_file() and p.suffix.lower() in file_extensions
+            ),
+            key=lambda p: str(p),
+        )
+
         existing_by_blob = self._load_existing_for_reconcile(root_bundle.id)
         initial_blob_paths = set(existing_by_blob.keys())
         seen_on_disk: Set[str] = set()
         created_assets: List[Asset] = []
         errors: List[str] = []
-        to_exclude: List[str] = []
+        batch: List[Asset] = []
+        last_processed_path: Optional[str] = None
+        total_processed = 0
 
-        for file_path in source.rglob("*"):
-            if not file_path.is_file():
+        for file_path in all_file_paths:
+            if resume_from_path is not None and str(file_path) <= resume_from_path:
                 continue
+
             ext = file_path.suffix.lower()
-            if ext not in file_extensions:
-                continue
-
             rel_path = file_path.relative_to(source)
             logical_path = str(rel_path).replace("\\", "/")
 
@@ -321,13 +336,13 @@ class DirectoryImportHandler(BaseHandler):
                 # New file
                 kind = detect_asset_kind_from_extension(ext)
                 title = file_path.name
-                source_metadata = {
+                file_info = {
                     "ingestion_method": "directory_import",
                     "source_path": str(file_path),
                     "copy_mode": copy_mode,
                 }
                 if file_meta:
-                    source_metadata["file"] = file_meta
+                    file_info.update(file_meta)
 
                 if copy_mode and self.storage_provider:
                     try:
@@ -351,89 +366,112 @@ class DirectoryImportHandler(BaseHandler):
                     blob_path=blob_path,
                     logical_path=logical_path,
                     processing_status=ProcessingStatus.PENDING,
-                    source_metadata=source_metadata,
+                    file_info=file_info,
                 )
                 self.session.add(asset)
                 created_assets.append(asset)
+                batch.append(asset)
                 existing_by_blob[blob_path] = asset
-                continue
+                last_processed_path = str(file_path)
+                total_processed += 1
+            else:
+                # Existing file - check for change
+                stored = existing.file_info or {}
+                stored_size = stored.get("file_size")
+                stored_mtime = stored.get("file_mtime")
 
-            # Existing file - check for change
-            stored = (existing.source_metadata or {}).get("file") or {}
-            stored_size = stored.get("file_size")
-            stored_mtime = stored.get("file_mtime")
+                if file_size is not None and file_mtime is not None and stored_size == file_size and stored_mtime == file_mtime:
+                    continue  # Unchanged
 
-            if file_size is not None and file_mtime is not None and stored_size == file_size and stored_mtime == file_mtime:
-                continue  # Unchanged
+                # Stat differs - verify with hash; always use file_path (source on disk) for current content
+                current_hash = await self._compute_file_hash(blob_path, file_path)
 
-            # Stat differs - verify with hash; always use file_path (source on disk) for current content
-            current_hash = await self._compute_file_hash(blob_path, file_path)
-
-            existing_hash = existing.content_hash
-            if current_hash and existing_hash and current_hash == existing_hash:
-                # Hash matches - likely mtime-only change, update stored stat
-                meta = dict(existing.source_metadata or {})
-                meta["file"] = file_meta
-                existing.source_metadata = meta
-                self.session.add(existing)
-                continue
-
-            # Content changed or no hash yet - create new version
-            kind = detect_asset_kind_from_extension(ext)
-            title = file_path.name
-            source_metadata = {
-                "ingestion_method": "directory_import",
-                "source_path": str(file_path),
-                "copy_mode": copy_mode,
-                "reconcile_version_of": str(existing.id),
-            }
-            if file_meta:
-                source_metadata["file"] = file_meta
-
-            if copy_mode and self.storage_provider:
-                try:
-                    content = file_path.read_bytes()
-                    await self.storage_provider.upload_from_bytes(
-                        content,
-                        blob_path,
-                        filename=file_path.name,
-                        content_type=mimetypes.guess_type(file_path.name)[0],
-                    )
-                except Exception as e:
-                    errors.append(f"Failed to upload {file_path}: {e}")
+                existing_hash = existing.content_hash
+                if current_hash and existing_hash and current_hash == existing_hash:
+                    # Hash matches - likely mtime-only change, update stored stat
+                    file_info = dict(existing.file_info or {})
+                    file_info.update(file_meta)
+                    existing.file_info = file_info
+                    self.session.add(existing)
                     continue
 
-            # Archive old content before superseding (preserves provenance)
-            archive_path = self._archive_old_content(existing)
-            if archive_path:
-                existing.blob_path = archive_path
+                # Content changed or no hash yet - create new version
+                kind = detect_asset_kind_from_extension(ext)
+                title = file_path.name
+                file_info = {
+                    "ingestion_method": "directory_import",
+                    "source_path": str(file_path),
+                    "copy_mode": copy_mode,
+                    "reconcile_version_of": str(existing.id),
+                }
+                if file_meta:
+                    file_info.update(file_meta)
 
-            existing.is_superseded = True
-            self.session.add(existing)
+                if copy_mode and self.storage_provider:
+                    try:
+                        content = file_path.read_bytes()
+                        await self.storage_provider.upload_from_bytes(
+                            content,
+                            blob_path,
+                            filename=file_path.name,
+                            content_type=mimetypes.guess_type(file_path.name)[0],
+                        )
+                    except Exception as e:
+                        errors.append(f"Failed to upload {file_path}: {e}")
+                        continue
 
-            new_asset = Asset(
-                title=title,
-                kind=kind,
-                infospace_id=self.infospace_id,
-                user_id=self.user_id,
-                bundle_id=root_bundle.id,
-                blob_path=blob_path,
-                logical_path=logical_path,
-                processing_status=ProcessingStatus.PENDING,
-                source_metadata=source_metadata,
-                previous_asset_id=existing.id,
-            )
-            self.session.add(new_asset)
-            created_assets.append(new_asset)
-            existing_by_blob[blob_path] = new_asset
+                # Archive old content before superseding (preserves provenance)
+                archive_path = self._archive_old_content(existing)
+                if archive_path:
+                    existing.blob_path = archive_path
+
+                existing.is_superseded = True
+                self.session.add(existing)
+                # Cascade: mark children as having a superseded parent
+                from sqlalchemy import update as sql_update
+
+                self.session.execute(
+                    sql_update(Asset)
+                    .where(Asset.parent_asset_id == existing.id)
+                    .values(parent_is_superseded=True)
+                )
+
+                new_asset = Asset(
+                    title=title,
+                    kind=kind,
+                    infospace_id=self.infospace_id,
+                    user_id=self.user_id,
+                    bundle_id=root_bundle.id,
+                    blob_path=blob_path,
+                    logical_path=logical_path,
+                    processing_status=ProcessingStatus.PENDING,
+                    file_info=file_info,
+                    previous_asset_id=existing.id,
+                )
+                self.session.add(new_asset)
+                created_assets.append(new_asset)
+                batch.append(new_asset)
+                existing_by_blob[blob_path] = new_asset
+                last_processed_path = str(file_path)
+                total_processed += 1
+
+            if len(batch) >= batch_size:
+                self.session.commit()
+                batch = []
+                if on_batch_complete and last_processed_path:
+                    on_batch_complete(last_processed_path, total_processed)
+                logger.info(f"Reconcile: committed batch of {batch_size} assets (total={total_processed})")
+
+        if batch:
+            self.session.commit()
+            if on_batch_complete and last_processed_path:
+                on_batch_complete(last_processed_path, total_processed)
 
         # Deleted files: existed before but not seen on disk
         excluded = list(initial_blob_paths - seen_on_disk)
         if excluded:
             self._update_excluded_blob_paths(root_bundle, excluded)
             self.session.add(root_bundle)
-
-        if created_assets or excluded:
             self.session.commit()
 
         # Update bundle asset count
@@ -516,23 +554,39 @@ class DirectoryImportHandler(BaseHandler):
                 copy_mode=copy_mode,
                 file_extensions=file_extensions,
                 batch_size=batch_size,
+                options=options,
             )
 
         existing_paths = self._existing_blob_paths(root_bundle.id)
+
+        # Cursor-based resume: sort paths for determinism, skip already-processed on retry
+        resume_from_path: Optional[str] = options.get("resume_from_path")
+        on_batch_complete = options.get("on_batch_complete")  # callback(last_path, total_processed)
+
+        # Collect and sort file paths for deterministic resume
+        all_file_paths: List[Path] = []
+        for file_path in source.rglob("*"):
+            if not file_path.is_file():
+                continue
+            ext = file_path.suffix.lower()
+            if ext not in file_extensions:
+                continue
+            all_file_paths.append(file_path)
+        all_file_paths.sort(key=lambda p: str(p))
 
         assets_skipped = 0
         errors: List[str] = []
         batch: List[Asset] = []
         created_assets: List[Asset] = []
+        total_processed = 0
+        last_processed_path: Optional[str] = None
 
-        for file_path in source.rglob("*"):
-            if not file_path.is_file():
+        for file_path in all_file_paths:
+            # Skip files before resume cursor (for retry/resume)
+            if resume_from_path is not None and str(file_path) <= resume_from_path:
                 continue
 
             ext = file_path.suffix.lower()
-            if ext not in file_extensions:
-                continue
-
             rel_path = file_path.relative_to(source)
             logical_path = str(rel_path).replace("\\", "/")
 
@@ -568,13 +622,13 @@ class DirectoryImportHandler(BaseHandler):
                     errors.append(f"Failed to upload {file_path}: {e}")
                     continue
 
-            source_metadata = {
+            file_info = {
                 "ingestion_method": "directory_import",
                 "source_path": str(file_path),
                 "copy_mode": copy_mode,
             }
             if file_meta:
-                source_metadata["file"] = file_meta
+                file_info.update(file_meta)
 
             asset = Asset(
                 title=title,
@@ -585,22 +639,30 @@ class DirectoryImportHandler(BaseHandler):
                 blob_path=blob_path,
                 logical_path=logical_path,
                 processing_status=ProcessingStatus.PENDING,
-                source_metadata=source_metadata,
+                file_info=file_info,
             )
             batch.append(asset)
             existing_paths.add(blob_path)
 
+            last_processed_path = str(file_path)
+
             if len(batch) >= batch_size:
                 self.session.add_all(batch)
                 self.session.commit()
+                total_processed += len(batch)
                 created_assets.extend(batch)
                 batch = []
-                logger.info(f"Directory import: committed batch of {batch_size} assets")
+                if on_batch_complete:
+                    on_batch_complete(last_processed_path, total_processed)
+                logger.info(f"Directory import: committed batch of {batch_size} assets (total={total_processed})")
 
         if batch:
             self.session.add_all(batch)
             self.session.commit()
+            total_processed += len(batch)
             created_assets.extend(batch)
+            if on_batch_complete and last_processed_path:
+                on_batch_complete(last_processed_path, total_processed)
 
         # Update root bundle asset count
         from sqlalchemy import func

@@ -52,7 +52,7 @@ class Newspaper4kScrapingProvider(ScrapingProvider):
         # Apply custom configuration
         config.browser_user_agent = self.config.get(
             'user_agent', 
-            'Mozilla/5.0 (compatible; OpenPoliticsBot/1.0; +https://openpolitics.com/)'
+            'Mozilla/5.0 (compatible; OpenPoliticsBot/1.0; +https://ope-politics.org/)'
         )
         config.request_timeout = self.config.get('timeout', 30)
         config.number_threads = self.config.get('threads', 4)

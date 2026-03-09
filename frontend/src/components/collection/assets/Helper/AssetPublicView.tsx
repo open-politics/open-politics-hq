@@ -87,7 +87,7 @@ const AssetItem: React.FC<{ asset: AssetPreview; level: number; token: string }>
 
 const AssetPublicView: React.FC<AssetPublicViewProps> = ({ asset, token }) => {
   const hasChildren = asset.children && asset.children.length > 0;
-  const originalFileName = asset.source_metadata?.filename;
+  const originalFileName = asset.file_info?.filename ?? asset.file_info?.original_filename;
   const [activeTab, setActiveTab] = useState<'content' | 'children'>('content');
 
   const renderContent = () => {

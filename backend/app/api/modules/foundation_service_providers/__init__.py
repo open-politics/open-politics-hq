@@ -1,17 +1,17 @@
 """
-Provider interfaces and implementations.
+Provider interfaces, registry, and resolution.
 
-This package contains the interface definitions and concrete implementations
-for various external services used by the application. This abstraction layer
-allows the application to swap different implementations (like switching from
-another search engine) without changing the core business logic.
+Three files form the provider system:
+- base.py:      Protocol classes + ModelSpec types + ProviderSelection
+- registry.py:  Framework (@provider, ProviderDescriptor) + registry + resolve()
+- providers.py: All provider declarations + convenience getters
 """
-
-# Imports base interfaces
-from typing import Any, Dict # Added Any, Dict for dummy providers
 
 # Base interfaces
 from .base import (
+    ModelSpec,
+    LLMModelSpec,
+    EmbeddingModelSpec,
     StorageProvider,
     FileStat,
     ScrapingProvider,
@@ -20,62 +20,71 @@ from .base import (
     EmbeddingProvider,
     OcrProvider,
     OcrResult,
-    # New unified language model interfaces
     LanguageModelProvider,
     ModelInfo,
-    GenerationResponse
+    GenerationResponse,
+    ProviderSelection,
+    LanguageDefaults,
+    ProviderDefaults,
 )
 
-# Registry services
-from .model_registry import ModelRegistryService
-from .web_search_registry import WebSearchProviderRegistryService
-from .embedding_registry import EmbeddingProviderRegistryService
-from .geocoding_registry import GeocodingProviderRegistryService
-from .unified_registry import UnifiedProviderRegistry, ProviderCapability, ProviderMetadata, get_unified_registry
-
-# Factory functions
-from .factory import (
-    create_storage_provider,
-    create_scraping_provider,
-    create_web_search_provider,
-    create_embedding_provider,
-    create_geocoding_provider,
-    create_model_registry,  # Unified model registry
+# Registry + resolution
+from .registry import (
+    resolve,
+    is_accessible,
+    is_capability_available,
+    discover_models,
+    load_credentials,
+    probe_providers,
+    system_default_type_key,
+    get_descriptor,
+    list_providers,
+    get_provider,
+    get_storage_provider,
+    get_scraping_provider,
+    get_web_search_provider,
+    get_embedding_provider,
+    get_geocoding_provider,
+    get_ocr_provider,
 )
 
 __all__ = [
-    # Core provider interfaces
+    # Model specs
+    "ModelSpec",
+    "LLMModelSpec",
+    "EmbeddingModelSpec",
+    # Provider selection
+    "ProviderSelection",
+    "LanguageDefaults",
+    "ProviderDefaults",
+    # Provider protocols
     "StorageProvider",
     "FileStat",
-    "ScrapingProvider", 
+    "ScrapingProvider",
     "WebSearchProvider",
     "GeocodingProvider",
     "EmbeddingProvider",
     "OcrProvider",
     "OcrResult",
-    
-    # New unified language model system
     "LanguageModelProvider",
-    "ModelInfo", 
+    "ModelInfo",
     "GenerationResponse",
-    
-    # Registry services
-    "ModelRegistryService",
-    "WebSearchProviderRegistryService",
-    "EmbeddingProviderRegistryService",
-    "GeocodingProviderRegistryService",
-    
-    # Unified registry
-    "UnifiedProviderRegistry",
-    "ProviderCapability",
-    "ProviderMetadata",
-    "get_unified_registry",
-    
-    # Factory functions
-    "create_storage_provider",
-    "create_scraping_provider",
-    "create_web_search_provider", 
-    "create_embedding_provider",
-    "create_geocoding_provider",
-    "create_model_registry",
+    # Resolution
+    "resolve",
+    "is_accessible",
+    "is_capability_available",
+    "discover_models",
+    "load_credentials",
+    "probe_providers",
+    "system_default_type_key",
+    "get_descriptor",
+    "list_providers",
+    "get_provider",
+    # Convenience getters
+    "get_storage_provider",
+    "get_scraping_provider",
+    "get_web_search_provider",
+    "get_embedding_provider",
+    "get_geocoding_provider",
+    "get_ocr_provider",
 ]

@@ -459,7 +459,8 @@ async def curate_fragments(
                 # Extract fragment from annotation value
                 fragment = get_fragment_by_path(annotation.value, path)
                 
-                resolved_refs = None
+                subject_entity_id = None
+                object_entity_id = None
                 if should_resolve and is_triplet(fragment):
                     # Resolve entities
                     subject = await resolve_entity(
@@ -472,7 +473,8 @@ async def curate_fragments(
                         fragment["object_name"], fragment.get("object_type", "UNKNOWN"),
                         embedding_service=embedding_service
                     )
-                    resolved_refs = {"subject_id": subject.id, "object_id": object_entity.id}
+                    subject_entity_id = subject.id
+                    object_entity_id = object_entity.id
                 
                 # Check if curation already exists
                 existing = session.exec(
@@ -485,7 +487,8 @@ async def curate_fragments(
                 if existing:
                     # Update existing curation
                     existing.status = curation_status
-                    existing.resolved_refs = resolved_refs
+                    existing.subject_entity_id = subject_entity_id
+                    existing.object_entity_id = object_entity_id
                     existing.curated_by = current_user.id
                     session.add(existing)
                     created_curations.append(existing.id)
@@ -495,7 +498,8 @@ async def curate_fragments(
                         annotation_id=annotation_id,
                         fragment_path=path,
                         status=curation_status,
-                        resolved_refs=resolved_refs,
+                        subject_entity_id=subject_entity_id,
+                        object_entity_id=object_entity_id,
                         curated_by=current_user.id
                     )
                     session.add(curation)
@@ -580,13 +584,17 @@ def get_curated_triplets(
     """
     try:
         # Get all curated fragments that are triplets
+        from sqlalchemy import or_
         curations = session.exec(
             select(FragmentCuration, Annotation)
             .join(Annotation, FragmentCuration.annotation_id == Annotation.id)
             .where(
                 Annotation.infospace_id == infospace_id,
                 FragmentCuration.status == "curated",
-                FragmentCuration.resolved_refs.isnot(None)
+                or_(
+                    FragmentCuration.subject_entity_id.isnot(None),
+                    FragmentCuration.object_entity_id.isnot(None),
+                )
             )
         ).all()
         
@@ -606,9 +614,8 @@ def get_curated_triplets(
                 if not is_triplet(fragment):
                     continue
                 
-                resolved_refs = curation.resolved_refs or {}
-                subject_id = resolved_refs.get("subject_id")
-                object_id = resolved_refs.get("object_id")
+                subject_id = curation.subject_entity_id
+                object_id = curation.object_entity_id
                 
                 # Build triplet with resolved entities
                 triplet_data = {

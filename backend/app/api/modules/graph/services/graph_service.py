@@ -3,10 +3,10 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from sqlmodel import Session, select
+from sqlmodel import Session
+from sqlalchemy import text
 
-from app.api.modules.graph.models import EntityCanonical, FragmentCuration
-from app.models import Annotation
+from app.api.modules.graph.models import EntityCanonical
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,9 @@ class GraphService:
                 break
             next_frontier: List[int] = []
             for eid in frontier:
-                connected = self._get_connected_entity_ids(eid, entity.infospace_id)
+                e = nodes.get(eid) or self.session.get(EntityCanonical, eid)
+                graph_id = e.graph_id if e else None
+                connected = self._get_connected_entity_ids(eid, entity.infospace_id, graph_id)
                 for conn_id, pred in connected:
                     if conn_id not in seen:
                         seen.add(conn_id)
@@ -87,57 +89,29 @@ class GraphService:
         }
 
     def _get_connected_entity_ids(
-        self, entity_id: int, infospace_id: int
+        self, entity_id: int, infospace_id: int, graph_id: Optional[int] = None
     ) -> List[tuple[int, Optional[str]]]:
-        """Find entity IDs connected via annotation triplets."""
-        entity = self.session.get(EntityCanonical, entity_id)
-        if not entity:
-            return []
-        name_lower = entity.canonical_name.lower()
-        aliases_lower = [a.lower() for a in (entity.aliases or [])]
-        all_names = {name_lower} | set(aliases_lower)
-        result: List[tuple[int, Optional[str]]] = []
-
-        all_canonicals = self.session.exec(
-            select(EntityCanonical).where(EntityCanonical.infospace_id == infospace_id)
-        ).all()
-        canonicals: Dict[str, int] = {}
-        for c in all_canonicals:
-            canonicals[c.canonical_name.lower()] = c.id
-            for a in c.aliases or []:
-                canonicals[a.strip().lower()] = c.id
-
-        annotations = self.session.exec(
-            select(Annotation)
-            .where(Annotation.infospace_id == infospace_id)
-            .where(Annotation.value.isnot(None))
-        ).all()
-
-        for ann in annotations:
-            triplets = self._extract_triplets(ann.value or {})
-            for t in triplets:
-                sub_name = (t.get("subject_name") or "").strip().lower()
-                obj_name = (t.get("object_name") or "").strip().lower()
-                pred = t.get("predicate")
-                sub_matches = sub_name in all_names
-                obj_matches = obj_name in all_names
-                if sub_matches and obj_matches:
-                    continue
-                if sub_matches:
-                    other_id = canonicals.get(obj_name)
-                    if other_id and other_id != entity_id:
-                        result.append((other_id, pred))
-                elif obj_matches:
-                    other_id = canonicals.get(sub_name)
-                    if other_id and other_id != entity_id:
-                        result.append((other_id, pred))
-
-        return list(dict.fromkeys(result))
-
-    def _extract_triplets(self, data: Any) -> List[Dict]:
-        """Extract triplets from annotation value structure."""
-        if isinstance(data, dict) and "triplets" in data and isinstance(data["triplets"], list):
-            return [t for t in data["triplets"] if isinstance(t, dict)]
-        if isinstance(data, dict) and "document" in data:
-            return self._extract_triplets(data["document"])
-        return []
+        """Find entity IDs connected via materialized GraphEdge table (O(1) indexed lookup)."""
+        if graph_id is not None:
+            sql = text("""
+                SELECT object_entity_id AS other_id, predicate
+                FROM graphedge
+                WHERE subject_entity_id = :eid AND infospace_id = :iid AND graph_id = :gid
+                UNION ALL
+                SELECT subject_entity_id AS other_id, predicate
+                FROM graphedge
+                WHERE object_entity_id = :eid AND infospace_id = :iid AND graph_id = :gid
+            """)
+            rows = self.session.execute(sql, {"eid": entity_id, "iid": infospace_id, "gid": graph_id}).fetchall()
+        else:
+            sql = text("""
+                SELECT object_entity_id AS other_id, predicate
+                FROM graphedge
+                WHERE subject_entity_id = :eid AND infospace_id = :iid AND graph_id IS NULL
+                UNION ALL
+                SELECT subject_entity_id AS other_id, predicate
+                FROM graphedge
+                WHERE object_entity_id = :eid AND infospace_id = :iid AND graph_id IS NULL
+            """)
+            rows = self.session.execute(sql, {"eid": entity_id, "iid": infospace_id}).fetchall()
+        return [(r[0], r[1]) for r in rows if r[0] != entity_id]

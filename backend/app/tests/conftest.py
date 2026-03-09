@@ -9,7 +9,8 @@ from celery.contrib.testing.worker import start_worker
 from celery.contrib.testing.app import TestApp
 
 from app.core.config import settings
-from app.core.db import engine, init_db
+from app.core.db import engine
+from app.core.seed import init_db
 from app.core.celery_app import celery
 from app.main import app
 from app.models import (

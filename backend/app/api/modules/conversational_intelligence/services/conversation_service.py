@@ -9,15 +9,14 @@ from sqlmodel import Session, select, and_, or_
 import asyncio
 from jose import jwt
 
-from app.api.modules.foundation_service_providers.model_registry import ModelRegistryService
-from app.api.modules.foundation_service_providers.web_search_registry import WebSearchProviderRegistryService
-from app.api.modules.foundation_service_providers.base import GenerationResponse
+from app.api.modules.foundation_service_providers.registry import resolve, load_credentials, is_accessible, list_providers, get_provider, get_descriptor
+from app.api.modules.foundation_service_providers.base import GenerationResponse, LanguageModelProvider
 from app.api.global_utils import validate_infospace_access
-from app.models import Asset, User, Infospace, Bundle, AnnotationSchema, Annotation
-from app.api.modules.content.services import AssetService, ContentIngestionService
+from app.models import Asset, User, Infospace, Bundle, AnnotationSchema, Annotation, AssetKind
+from app.api.modules.content.services import AssetService
 from app.api.modules.annotation.services import AnnotationService
 from app.api.modules.search.services import SearchService
-from app.schemas import AnnotationRunCreate
+from app.schemas import AnnotationRunCreate, AssetCreate
 from app.api.modules.conversational_intelligence.mcp_server.client import (
     IntelligenceMCPClient,
     get_mcp_client,
@@ -62,17 +61,14 @@ class IntelligenceConversationService:
     def __init__(
         self,
         session: Session,
-        model_registry: ModelRegistryService,
         asset_service: AssetService,
         annotation_service: AnnotationService,
-        content_ingestion_service: ContentIngestionService,
+        settings: Any = None,
     ):
         self.session = session
-        self.model_registry = model_registry
         self.asset_service = asset_service
         self.annotation_service = annotation_service
-        self.content_ingestion_service = content_ingestion_service
-        self.web_search_registry = WebSearchProviderRegistryService()
+        self._settings = settings
         logger.info("IntelligenceConversationService initialized")
 
     async def get_universal_tools(
@@ -92,7 +88,6 @@ class IntelligenceConversationService:
                 session=self.session,
                 asset_service=self.asset_service,
                 annotation_service=self.annotation_service,
-                content_ingestion_service=self.content_ingestion_service,
                 user_id=user_id,
                 infospace_id=infospace_id,
                 api_keys=api_keys,
@@ -188,6 +183,7 @@ class IntelligenceConversationService:
         conversation_id: Optional[int] = None,
         tools_enabled: bool = True,
         tools: Optional[List[Dict[str, Any]]] = None,
+        provider_name: Optional[str] = None,
         **kwargs,
     ) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
@@ -201,16 +197,20 @@ class IntelligenceConversationService:
             user_id, infospace_id, api_keys or {}, conversation_id, model_name
         )
 
-        model_info = await self.model_registry.get_model_info(model_name)
-        if not model_info:
-            await self.model_registry.discover_all_models()
-            model_info = await self.model_registry.get_model_info(model_name)
-        if not model_info:
+        credentials = load_credentials(self.session, user_id, api_keys) if user_id else (api_keys or {})
+        provider_instance = resolve(
+            LanguageModelProvider,
+            provider_name,
+            self._settings,
+            credentials,
+        )
+        if not provider_instance:
             raise ValueError(
-                f"Model '{model_name}' not found. Please check available models at /api/v1/chat/models"
+                f"No LLM provider available for model '{model_name}'. Please check available models at /api/v1/chat/models"
             )
 
-        supports_tools = bool(getattr(model_info, "supports_tools", False))
+        model_info = provider_instance.get_model_info(model_name)
+        supports_tools = bool(getattr(model_info, "supports_tools", False)) if model_info else False
 
         if supports_tools and tools_enabled:
             if tools is not None and len(tools) > 0:
@@ -231,13 +231,12 @@ class IntelligenceConversationService:
         )
 
         try:
-            return await self.model_registry.generate(
+            return await provider_instance.generate(
                 messages=context_messages,
                 model_name=model_name,
                 tools=tools,
                 stream=stream,
                 thinking_enabled=thinking_enabled,
-                runtime_api_keys=api_keys,
                 mcp_headers={"Authorization": f"Bearer {context_token}"},
                 tool_executor=lambda name, args: self.execute_tool_call(
                     name, args, user_id, infospace_id, api_keys, conversation_id
@@ -259,12 +258,11 @@ class IntelligenceConversationService:
                 ] + messages
 
                 try:
-                    return await self.model_registry.generate(
+                    return await provider_instance.generate(
                         messages=fallback_messages,
                         model_name=model_name,
                         tools=None,
                         stream=stream,
-                        runtime_api_keys=api_keys,
                         mcp_headers={"Authorization": f"Bearer {context_token}"},
                         tool_executor=lambda name, args: self.execute_tool_call(
                             name,
@@ -297,12 +295,11 @@ class IntelligenceConversationService:
                 }
 
                 try:
-                    return await self.model_registry.generate(
+                    return await provider_instance.generate(
                         messages=context_messages,
                         model_name=model_name,
                         tools=tools,
                         stream=stream,
-                        runtime_api_keys=api_keys,
                         mcp_headers={"Authorization": f"Bearer {context_token}"},
                         **clean_kwargs,
                     )
@@ -338,7 +335,6 @@ class IntelligenceConversationService:
                 session=self.session,
                 asset_service=self.asset_service,
                 annotation_service=self.annotation_service,
-                content_ingestion_service=self.content_ingestion_service,
                 user_id=user_id,
                 infospace_id=infospace_id,
                 api_keys=api_keys,
@@ -382,7 +378,8 @@ class IntelligenceConversationService:
                     "title": a.title,
                     "kind": a.kind.value if getattr(a, "kind", None) else None,
                     "text_content": getattr(a, "text_content", None),
-                    "source_metadata": getattr(a, "source_metadata", None),
+                    "facets": getattr(a, "facets", None),
+                    "file_info": getattr(a, "file_info", None),
                     "created_at": a.created_at.isoformat()
                     if getattr(a, "created_at", None)
                     else None,
@@ -475,7 +472,8 @@ class IntelligenceConversationService:
                     "title": asset.title,
                     "kind": asset.kind.value,
                     "text_content": asset.text_content,
-                    "source_metadata": asset.source_metadata,
+                    "facets": asset.facets,
+                    "file_info": asset.file_info,
                     "created_at": asset.created_at.isoformat(),
                     "event_timestamp": asset.event_timestamp.isoformat()
                     if asset.event_timestamp
@@ -619,15 +617,23 @@ class IntelligenceConversationService:
             return {"error": "Title and content are required for a report"}
 
         try:
-            report_asset = self.content_ingestion_service.create_report(
-                user_id,
-                infospace_id,
-                title,
-                content,
-                source_asset_ids=source_asset_ids,
-                source_bundle_ids=source_bundle_ids,
-                source_run_ids=source_run_ids,
+            validate_infospace_access(self.session, infospace_id, user_id)
+            file_info = {
+                "composition_type": "report",
+                "created_by": "user_action",
+                "source_asset_ids": source_asset_ids or [],
+                "source_bundle_ids": source_bundle_ids or [],
+                "source_run_ids": source_run_ids or [],
+            }
+            report_create = AssetCreate(
+                title=title,
+                kind=AssetKind.ARTICLE,
+                text_content=content,
+                user_id=user_id,
+                infospace_id=infospace_id,
+                file_info=file_info,
             )
+            report_asset = self.asset_service.create_asset(report_create)
 
             return {
                 "report_id": report_asset.id,
@@ -753,37 +759,25 @@ General principles:
         return context
 
     async def get_available_models(
-        self, user_id: int, capability: Optional[str] = None
+        self, user_id: int, capability: Optional[str] = None,
+        api_keys: Optional[Dict[str, str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get available models for intelligence analysis.
+
+        Uses discover_models() from registry which handles access checks
+        and credential resolution uniformly.
         """
         logger.info(f"Model discovery request: user={user_id}, capability={capability}")
 
         try:
-            all_models = await self.model_registry.discover_all_models()
+            from app.api.modules.foundation_service_providers.registry import discover_models as _discover
 
-            models = []
-            for provider_name, provider_models in all_models.items():
-                for model_info in provider_models:
-                    if capability:
-                        if not getattr(model_info, f"supports_{capability}", False):
-                            continue
+            credentials = load_credentials(self.session, user_id, api_keys) if user_id else (api_keys or {})
+            models = _discover(LanguageModelProvider, self._settings, credentials)
 
-                    models.append(
-                        {
-                            "name": model_info.name,
-                            "provider": model_info.provider,
-                            "description": model_info.description,
-                            "supports_structured_output": model_info.supports_structured_output,
-                            "supports_tools": model_info.supports_tools,
-                            "supports_streaming": model_info.supports_streaming,
-                            "supports_thinking": model_info.supports_thinking,
-                            "supports_multimodal": model_info.supports_multimodal,
-                            "max_tokens": model_info.max_tokens,
-                            "context_length": model_info.context_length,
-                        }
-                    )
+            if capability:
+                models = [m for m in models if m.get(f"supports_{capability}", False)]
 
             logger.info(f"Discovered {len(models)} models for user {user_id}")
             return models

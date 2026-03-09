@@ -28,8 +28,8 @@ def inspect_chat_prompt(infospace_name: str = "Example Workspace",
     
     # Create service (only needs infospace for prompt building)
     service = IntelligenceConversationService(
-        session=None, model_registry=None, asset_service=None,
-        annotation_service=None, content_ingestion_service=None
+        session=None, asset_service=None,
+        annotation_service=None, settings=None
     )
     
     return service._build_infospace_context(mock_infospace)

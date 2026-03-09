@@ -9,11 +9,9 @@ from app.api.modules.content.models import (
     AssetChunk,
     AssetKind,
     Bundle,
-    BundleView,
     Dataset,
     IngestionJob,
     EmbeddingModel,
-    EmbeddingProvider,
     IngestionStatus,
     Modality,
     ProcessingStatus,
@@ -42,6 +40,7 @@ from app.api.modules.graph.models import (
     KnowledgeGraph,
     EntityCanonical,
     EntityEditLog,
+    GraphEdge,
     FragmentCuration,
 )
 from app.api.modules.flow.models import (

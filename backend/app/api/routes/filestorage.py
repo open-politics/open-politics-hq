@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.api.dependency_injection import CurrentUser, SessionDep, StorageProviderDep, CheckUploadSizeDep
-from app.api.modules.foundation_service_providers.factory import create_storage_provider
+from app.api.modules.foundation_service_providers.registry import get_storage_provider
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

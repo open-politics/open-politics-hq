@@ -1,0 +1,153 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    network_mode: "host"
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-p", "${POSTGRES_PORT}"]
+    extra_hosts:
+      - "host.docker.internal:127.0.0.1"
+      - "db:127.0.0.1"
+      - "redis:127.0.0.1"
+      - "backend:127.0.0.1"
+      - "frontend:127.0.0.1"
+      - "celery_worker:127.0.0.1"
+    volumes:
+      - app-db-data:/var/lib/postgresql/data/pgdata
+    env_file:
+      - .env
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
+      - POSTGRES_DB=${POSTGRES_DB?Variable not set}
+      - PGPORT=${POSTGRES_PORT}
+      - PGHOST=127.0.0.1
+
+  backend:
+    image: openpoliticsproject/backend:420017
+    restart: unless-stopped
+    network_mode: "host"
+    extra_hosts:
+      - "host.docker.internal:127.0.0.1"
+      - "db:127.0.0.1"
+      - "redis:127.0.0.1"
+      - "backend:127.0.0.1"
+      - "frontend:127.0.0.1"
+      - "celery_worker:127.0.0.1"
+    depends_on:
+      - db
+    env_file:
+      - .env
+    command: ["sh", "-c", ". /app/prestart.sh && exec uvicorn app.main:app --workers 4 --host 127.0.0.1 --port ${BACKEND_PORT}"]
+    volumes:
+      - /datasets:/datasets  
+
+  redis:
+    image: redis:alpine
+    network_mode: "host"
+    extra_hosts:
+      - "host.docker.internal:127.0.0.1"
+      - "db:127.0.0.1"
+      - "redis:127.0.0.1"
+      - "backend:127.0.0.1"
+      - "frontend:127.0.0.1"
+      - "celery_worker:127.0.0.1"
+    volumes:
+      - redis_data:/data
+      - ./.config/redis.conf:/usr/local/etc/redis/redis.conf
+    command: >
+      redis-server /usr/local/etc/redis/redis.conf
+      --port ${REDIS_PORT:-6379}
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD}
+      --rename-command REPLICAOF ""
+      --rename-command SLAVEOF ""
+
+  frontend:
+    image: openpoliticsproject/frontend:420017
+    network_mode: "host"
+    extra_hosts:
+      - "host.docker.internal:127.0.0.1"
+      - "db:127.0.0.1"
+      - "redis:127.0.0.1"
+      - "backend:127.0.0.1"
+      - "frontend:127.0.0.1"
+      - "celery_worker:127.0.0.1"
+    
+  
+
+  celery_worker:
+    image: openpoliticsproject/backend:420017
+    network_mode: "host"
+    extra_hosts:
+      - "host.docker.internal:127.0.0.1"
+      - "db:127.0.0.1"
+      - "redis:127.0.0.1"
+      - "backend:127.0.0.1"
+      - "frontend:127.0.0.1"
+      - "celery_worker:127.0.0.1"
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+      - backend
+    env_file:
+      - .env
+    command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info", "-P", "prefork", "--concurrency=4", "-n", "worker@%h"]
+    volumes:
+      - /datasets:/datasets  
+
+
+  celery_worker_2:
+    image: openpoliticsproject/backend:420017
+    network_mode: "host"
+    extra_hosts:
+      - "host.docker.internal:127.0.0.1"
+      - "db:127.0.0.1"
+      - "redis:127.0.0.1"
+      - "backend:127.0.0.1"
+      - "frontend:127.0.0.1"
+      - "celery_worker:127.0.0.1"
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+      - backend
+    env_file:
+      - .env
+    command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info", "-P", "prefork", "--concurrency=4", "-n", "worker@%h"]
+    volumes:
+      - /datasets:/datasets  
+
+  celery_beat:
+    image: openpoliticsproject/backend:420017
+    network_mode: "host"
+    extra_hosts:
+      - "host.docker.internal:127.0.0.1"
+      - "db:127.0.0.1"
+      - "redis:127.0.0.1"
+      - "backend:127.0.0.1"
+      - "frontend:127.0.0.1"
+      - "celery_worker:127.0.0.1"
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+      - backend
+    env_file:
+      - .env
+    command: >
+      celery -A app.core.celery_app.celery beat
+      --loglevel=info
+      --pidfile=/tmp/celerybeat.pid
+      --schedule=/tmp/celerybeat-schedule
+
+volumes:
+  app-db-data:
+  redis_data:
+
+networks:
+  default:
+    external: false
+
+

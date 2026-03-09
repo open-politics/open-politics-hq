@@ -8,12 +8,39 @@ Processes PDF files into page assets.
 import asyncio
 import logging
 import fitz  # PyMuPDF
-from typing import List
+from typing import Any, Dict, List, Optional
 from app.api.modules.content.models import Asset, AssetKind
+from app.api.modules.foundation_service_providers.base import StorageProvider
 from app.schemas import AssetCreate
 from .base import BaseProcessor, ProcessingError
 
 logger = logging.getLogger(__name__)
+
+
+class PdfMetadataExtractor:
+    """Metadata extractor for PDF assets. Registered on ContentTypeDescriptor."""
+
+    async def extract(
+        self, asset: Asset, storage: StorageProvider
+    ) -> Optional[Dict[str, Any]]:
+        if not asset.blob_path:
+            return None
+        try:
+            if hasattr(storage, "get_file_path"):
+                try:
+                    file_path = storage.get_file_path(asset.blob_path)
+                    return await asyncio.to_thread(
+                        extract_pdf_metadata, file_path=str(file_path)
+                    )
+                except Exception:
+                    pass
+            file_stream = await storage.get_file(asset.blob_path)
+            pdf_bytes = await asyncio.to_thread(file_stream.read)
+            return await asyncio.to_thread(
+                extract_pdf_metadata, pdf_bytes=pdf_bytes
+            )
+        except Exception:
+            return None
 
 
 def extract_pdf_metadata(
@@ -104,8 +131,8 @@ class PDFProcessor(BaseProcessor):
         # that its pages are image-dominant; it does not reclassify the PDF."
         # We store discovered_modalities as first-class column for queryable OCR/multimodal routing.
         is_image_only = metadata.get('is_image_only', False)
-        asset.source_metadata = asset.source_metadata or {}
-        asset.source_metadata.update(metadata)
+        asset.file_info = asset.file_info or {}
+        asset.file_info.update(metadata)
         asset.discovered_modalities = ['image'] if is_image_only else ['text']
         if is_image_only:
             logger.info(f"PDF {asset.id} is image-dominant (no extractable text). Kept as PDF, set discovered_modalities=['image'].")
@@ -190,7 +217,7 @@ class PDFProcessor(BaseProcessor):
                         parent_asset_id=asset.id,
                         part_index=page_num,
                         text_content=text if text else None,
-                        source_metadata=page_metadata,
+                        file_info=page_metadata,
                         discovered_modalities=page_modalities,
                     )
                     child_assets.append(child_asset_create)

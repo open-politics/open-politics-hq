@@ -176,6 +176,7 @@ function update_cloud_init_from_template() {
     # Replace worker public key placeholder (master only)
     if [[ "$template_type" == "master" ]]; then
         sed -i.tmp "s|__WORKER_PUBLIC_KEY__|$worker_pubkey|g" "$output_file"
+        
     fi
     
     # Replace worker private key content (worker only)

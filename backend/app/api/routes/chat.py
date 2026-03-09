@@ -172,7 +172,7 @@ async def intelligence_chat(
                             continue
                         
                         # Determine MIME type
-                        mime_type = asset.source_metadata.get("mime_type") if asset.source_metadata else None
+                        mime_type = (asset.file_info or {}).get("mime_type")
                         if not mime_type:
                             # Try to infer from blob_path extension
                             if asset.blob_path.lower().endswith(('.jpg', '.jpeg')):
@@ -261,6 +261,7 @@ async def intelligence_chat(
                     tools=request.tools,
                     api_keys=request.api_keys,
                     conversation_id=request.conversation_id,
+                    provider_name=request.provider_name,
                     **kwargs
                 ):
                     # Store for later saving
@@ -324,6 +325,7 @@ async def intelligence_chat(
                 tools_enabled=request.tools_enabled,
                 api_keys=request.api_keys,
                 conversation_id=request.conversation_id,
+                provider_name=request.provider_name,
                 **kwargs
             )
             

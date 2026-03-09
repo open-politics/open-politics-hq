@@ -64,7 +64,8 @@ import EditableCsvViewer from './EditableCsvViewer';
 import { FragmentInlineList } from './Fragments';
 import AssetMetaHeader from './AssetMetaHeader';
 import { useFragmentCuration } from '@/hooks/useFragmentCuration';
-import { getAssetIcon } from '@/components/collection/assets/assetKindConfig';
+import { getAssetIcon, getAssetKindConfig } from '@/components/collection/assets/assetKindConfig';
+import { getAssetMeta } from '@/lib/utils';
 import { AssetFeedView } from '../Feed/AssetFeedView';
 import { useSemanticSearch } from '@/hooks/useSemanticSearch';
 import type { AssetFeedItem } from '../Feed/types';
@@ -145,13 +146,14 @@ const AssetDetailView = ({
     return `${asset.title || ''} ${asset.text_content?.slice(0, 500) || ''}`.trim();
   }, [asset?.id, asset?.title, asset?.text_content]);
   
+  const kindConfig = asset ? getAssetKindConfig(asset.kind) : null;
   const { results: relatedAssetsResults } = useSemanticSearch({
     query: relatedAssetsQuery,
     enabled:
       !!asset &&
       !!activeInfospace?.enable_related_assets &&
-      (asset.kind === 'article' || asset.kind === 'web') &&
-      !!activeInfospace?.embedding_model &&
+      !!kindConfig?.showRelatedAssets &&
+      !!activeInfospace?.embedding_selection?.model_name &&
       relatedAssetsQuery.length > 0,
     limit: 6,
     parentAssetId: asset?.parent_asset_id || undefined,
@@ -191,7 +193,8 @@ const AssetDetailView = ({
         currentAssetIdRef.current = selectedAssetId;
         
         // Fetch child assets if this asset is a container or hierarchical type
-        if (fetchedAsset.kind === 'csv' || fetchedAsset.kind === 'pdf' || fetchedAsset.kind === 'mbox' || fetchedAsset.kind === 'web' || fetchedAsset.is_container) {
+        const fc = getAssetKindConfig(fetchedAsset.kind);
+        if (fc?.canHaveChildren || fetchedAsset.is_container) {
           await fetchChildren(fetchedAsset.id, fetchedAsset);
         }
       } else {
@@ -265,10 +268,11 @@ const AssetDetailView = ({
   }, [childAssets, childSearchTerm, refreshTrigger]);
 
   const hasChildren = useMemo(() => childAssets.length > 0, [childAssets, refreshTrigger]);
-  const isHierarchicalAsset = useMemo(() => 
-    asset && (asset.kind === 'csv' || asset.kind === 'pdf' || asset.kind === 'mbox' || asset.kind === 'article' || asset.kind === 'web' || asset.is_container),
-    [asset, refreshTrigger]
-  );
+  const isHierarchicalAsset = useMemo(() => {
+    if (!asset) return false;
+    const config = getAssetKindConfig(asset.kind);
+    return (config?.canHaveChildren ?? false) || !!asset.is_container;
+  }, [asset, refreshTrigger]);
 
   // --- Effects ---
   useEffect(() => {
@@ -716,21 +720,27 @@ const AssetDetailView = ({
           </div>
               </div>
             )}
-      {asset.source_metadata && Object.keys(asset.source_metadata).length > 0 && (
-        <div className="mt-3 pt-3 border-t">
-          <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">Article Metadata</h4>
-          <pre className="text-xs bg-background p-2 rounded overflow-auto max-h-32">{JSON.stringify(asset.source_metadata, null, 2)}</pre>
+      {(() => {
+        const meta = getAssetMeta(asset);
+        return Object.keys(meta).length > 0 && (
+          <div className="mt-3 pt-3 border-t">
+            <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">Article Metadata</h4>
+            <pre className="text-xs bg-background p-2 rounded overflow-auto max-h-32">{JSON.stringify(meta, null, 2)}</pre>
           </div>
-      )}
+        );
+      })()}
       {/* Summary if available */}
-      {asset.source_metadata?.summary && typeof asset.source_metadata.summary === 'string' ? (
-        <div className="mt-4 p-3 bg-muted/30 rounded-lg border-l-4 border-primary">
-          <p className="text-sm text-muted-foreground italic">
-            Summary:
-            {asset.source_metadata.summary}
-          </p>
-        </div>
-      ) : null}
+      {(() => {
+        const summary = asset.facets?.summary ?? asset.file_info?.summary;
+        return summary && typeof summary === 'string' ? (
+          <div className="mt-4 p-3 bg-muted/30 rounded-lg border-l-4 border-primary">
+            <p className="text-sm text-muted-foreground italic">
+              Summary:
+              {summary}
+            </p>
+          </div>
+        ) : null;
+      })()}
       </div>
     );
 
@@ -838,7 +848,7 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
   const originalFeaturedImage = nonGifChildAssets.find(child => 
     child.kind === 'image' && 
     child.part_index === 0 && 
-    child.source_metadata?.image_role === 'featured'
+    child.file_info?.image_role === 'featured'
   );
   
   // Use current featured image or fall back to original
@@ -846,7 +856,7 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
   
   const contentImages = nonGifChildAssets.filter(child => 
     child.kind === 'image' && 
-    child.source_metadata?.image_role === 'content' &&
+    child.file_info?.image_role === 'content' &&
     child.id !== featuredImage?.id // Exclude the currently featured image
   ).sort((a, b) => (a.part_index || 0) - (b.part_index || 0));
 
@@ -866,14 +876,17 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
           </h1>
           
           {/* Summary if available */}
-          {asset.source_metadata?.summary && typeof asset.source_metadata.summary === 'string' ? (
-            <div className="mb-6 p-3 bg-muted/30 rounded-lg border-l-4 border-primary">
-              <p className="text-sm text-muted-foreground italic">
-                Summary:
-                {asset.source_metadata.summary}
-              </p>
-            </div>
-          ) : null}
+          {(() => {
+            const summary = asset.facets?.summary ?? asset.file_info?.summary;
+            return summary && typeof summary === 'string' ? (
+              <div className="mb-6 p-3 bg-muted/30 rounded-lg border-l-4 border-primary">
+                <p className="text-sm text-muted-foreground italic">
+                  Summary:
+                  {summary}
+                </p>
+              </div>
+            ) : null;
+          })()}
           
           {/* Featured Image - Large and Prominent */}
           {featuredImage && (
@@ -1009,16 +1022,16 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
                     <strong className="w-20 shrink-0">ID:</strong>
                     <span className="font-mono text-xs">{asset.id}</span>
                   </div>
-                  {asset.source_metadata?.content_length && typeof asset.source_metadata.content_length === 'number' ? (
+                  {asset.file_info?.content_length && typeof asset.file_info.content_length === 'number' ? (
                     <div className="flex items-center gap-2">
                       <strong className="w-20 shrink-0">Length:</strong>
-                      <span>{asset.source_metadata.content_length.toLocaleString()} characters</span>
+                      <span>{asset.file_info.content_length.toLocaleString()} characters</span>
                     </div>
                   ) : null}
-                  {asset.source_metadata?.scraped_at && typeof asset.source_metadata.scraped_at === 'string' ? (
+                  {asset.file_info?.scraped_at && typeof asset.file_info.scraped_at === 'string' ? (
                     <div className="flex items-center gap-2">
                       <strong className="w-20 shrink-0">Scraped:</strong>
-                      <span>{formatDistanceToNowStrict(new Date(asset.source_metadata.scraped_at), { addSuffix: true })}</span>
+                      <span>{formatDistanceToNowStrict(new Date(asset.file_info.scraped_at), { addSuffix: true })}</span>
                     </div>
                   ) : null}
                 </div>
@@ -1052,21 +1065,24 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
             </div>
 
             {/* Advanced Metadata (Collapsible) */}
-            {asset.source_metadata && Object.keys(asset.source_metadata).length > 0 && (
-              <Collapsible className="mt-4 min-w-0 max-w-full overflow-hidden">
-                <CollapsibleTrigger asChild>
-                  <Button variant="ghost" size="sm" className="w-full justify-between p-0">
-                    <span className="text-xs font-semibold text-muted-foreground">Advanced Metadata</span>
-                    <ChevronDown className="h-4 w-4" />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
-                  <pre className="text-xs bg-muted/50 p-3 rounded overflow-auto max-h-40 mt-2 break-all whitespace-pre-wrap max-w-full">
-                    {JSON.stringify(asset.source_metadata, null, 2)}
-                  </pre>
-                </CollapsibleContent>
-              </Collapsible>
-            )}
+            {(() => {
+              const meta = getAssetMeta(asset);
+              return Object.keys(meta).length > 0 && (
+                <Collapsible className="mt-4 min-w-0 max-w-full overflow-hidden">
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" size="sm" className="w-full justify-between p-0">
+                      <span className="text-xs font-semibold text-muted-foreground">Advanced Metadata</span>
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="min-w-0 max-w-full overflow-hidden">
+                    <pre className="text-xs bg-muted/50 p-3 rounded overflow-auto max-h-40 mt-2 break-all whitespace-pre-wrap max-w-full">
+                      {JSON.stringify(meta, null, 2)}
+                    </pre>
+                  </CollapsibleContent>
+                </Collapsible>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -1151,7 +1167,7 @@ const CsvOverviewContent = React.memo(({ asset, renderEditableField, hasChildren
               </div>
           )}
 
-          {!hasChildren && asset.kind === 'csv' && (
+          {!hasChildren && kindConfig?.childrenComponent === 'csv' && (
             <div className="mt-4 p-3 bg-yellow-50 border-yellow-200 rounded w-full max-w-full">
               <div className="flex items-center gap-2 mb-2">
                 <AlertCircle className="h-4 w-4 text-yellow-600 flex-shrink-0" />
@@ -1177,7 +1193,7 @@ const CsvOverviewContent = React.memo(({ asset, renderEditableField, hasChildren
 
 // CSV Row Content - displays structured column data for CSV row assets
 const CsvRowContent = ({ asset, renderEditableField }: { asset: AssetRead, renderEditableField: any }) => {
-  const rowData = (asset.source_metadata as any)?.original_row_data || {};
+  const rowData = (asset.file_info as Record<string, unknown>)?.original_row_data as Record<string, unknown> || {};
   const columnNames = Object.keys(rowData);
 
   return (
@@ -1252,12 +1268,15 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                     {renderTextDisplay(asset.text_content, asset.id, asset.uuid)}
                 </div>
             )}
-            {asset.source_metadata && Object.keys(asset.source_metadata).length > 0 && (
+            {(() => {
+                const meta = getAssetMeta(asset);
+                return Object.keys(meta).length > 0 && (
                 <div className="w-full min-w-0 max-w-full overflow-hidden">
-                    <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">Source Metadata</h4>
-                    <pre className="text-xs bg-muted/30 p-2 rounded overflow-auto max-h-32 break-all whitespace-pre-wrap w-full max-w-full">{JSON.stringify(asset.source_metadata, null, 2)}</pre>
+                    <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">Metadata</h4>
+                    <pre className="text-xs bg-muted/30 p-2 rounded overflow-auto max-h-32 break-all whitespace-pre-wrap w-full max-w-full">{JSON.stringify(meta, null, 2)}</pre>
                 </div>
-            )}
+                );
+            })()}
         </div>
     </div>
 );
@@ -1491,14 +1510,17 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                       <strong>Event Time:</strong> {format(new Date(selectedChildAsset.event_timestamp), "PPp")}
                     </div>
                   )}
-                  {selectedChildAsset.source_metadata && Object.keys(selectedChildAsset.source_metadata).length > 0 && (
+                  {(() => {
+                    const meta = getAssetMeta(selectedChildAsset);
+                    return Object.keys(meta).length > 0 && (
                     <div className="md:col-span-2">
                       <strong>Metadata:</strong>
                       <pre className="text-xs bg-muted/50 p-2 rounded mt-1 overflow-auto max-h-32">
-                        {JSON.stringify(selectedChildAsset.source_metadata, null, 2)}
+                        {JSON.stringify(meta, null, 2)}
                       </pre>
                     </div>
-                  )}
+                    );
+                  })()}
                 </div>
               </CardContent>
             </Card>
@@ -1626,14 +1648,17 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                       </div>
                     )}
                     
-                    {childAsset.source_metadata && Object.keys(childAsset.source_metadata).length > 0 && (
+                    {(() => {
+                      const meta = getAssetMeta(childAsset);
+                      return Object.keys(meta).length > 0 && (
                       <div className="mt-2">
                         <strong className="text-xs">Metadata:</strong>
                         <pre className="text-xs bg-muted/50 p-2 rounded overflow-auto max-h-20 mt-1 break-words max-w-full">
-                          {JSON.stringify(childAsset.source_metadata, null, 2)}
+                          {JSON.stringify(meta, null, 2)}
                         </pre>
                       </div>
-                    )}
+                      );
+                    })()}
                   </div>
                 )}
               </CardContent>
@@ -1695,7 +1720,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
         </div>
 
         {/* PDF Pages Grid - Compact thumbnails */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        <div className="grid gap-3 max-h-96 overflow-y-auto p-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
           {sortedPages.map((pageAsset, index) => (
             <Card
               key={pageAsset.id}
@@ -1706,45 +1731,27 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
               onClick={() => handleChildAssetClick(pageAsset)}
             >
               <CardContent className="p-0">
-                {/* Page Preview Placeholder */}
-                <div className="aspect-[4/3] rounded-t-lg overflow-hidden bg-muted/20 flex flex-col items-center justify-center relative">
-                  {/* PDF Page Preview - Show blob content if available */}
-                  {pageAsset.blob_path ? (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
-                      <FileText className="h-6 w-6 mb-1" />
-                      <span className="text-xs font-medium">Page {(pageAsset.part_index !== null ? pageAsset.part_index + 1 : index + 1)}</span>
-                    </div>
+                {/* Text preview in place of icon - main card content */}
+                <div className="aspect-[4/3] rounded-t-lg overflow-hidden bg-muted/20 flex flex-col relative p-2">
+                  {pageAsset.text_content ? (
+                    <p className="text-xs text-muted-foreground line-clamp-4 overflow-hidden flex-1">
+                      {pageAsset.text_content}
+                    </p>
                   ) : (
                     <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground">
                       <FileText className="h-6 w-6 mb-1 opacity-50" />
                       <span className="text-xs">Page {(pageAsset.part_index !== null ? pageAsset.part_index + 1 : index + 1)}</span>
                     </div>
                   )}
-                  
+                  {/* Page label overlay */}
+                  <Badge variant="secondary" className="text-xs w-fit mt-auto shrink-0">
+                    Page {(pageAsset.part_index !== null ? pageAsset.part_index + 1 : index + 1)}
+                  </Badge>
                   {/* Selection indicator */}
                   {selectedChildAsset?.id === pageAsset.id && (
                     <div className="absolute top-2 right-2 bg-primary text-primary-foreground rounded-full p-1">
                       <Eye className="h-3 w-3" />
                     </div>
-                  )}
-                </div>
-                
-                {/* Page Info */}
-                <div className="p-2">
-                  <div className="flex items-center justify-between mb-1">
-                    <Badge variant="secondary" className="text-xs">
-                      Page {(pageAsset.part_index !== null ? pageAsset.part_index + 1 : index + 1)}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">
-                      ID: {pageAsset.id}
-                    </span>
-                  </div>
-                  
-                  {/* Text preview - truncated */}
-                  {pageAsset.text_content && (
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                      {pageAsset.text_content.substring(0, 60)}...
-                    </p>
                   )}
                 </div>
               </CardContent>
@@ -1820,15 +1827,18 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                   </div>
                 </div>
                 
-                {/* Source Metadata */}
-                {selectedChildAsset.source_metadata && Object.keys(selectedChildAsset.source_metadata).length > 0 && (
+                {/* Page Metadata */}
+                {(() => {
+                  const meta = getAssetMeta(selectedChildAsset);
+                  return Object.keys(meta).length > 0 && (
                   <div className="mt-4">
                     <strong className="text-sm">Page Metadata:</strong>
                     <pre className="text-xs bg-muted/50 p-3 rounded mt-2 overflow-auto max-h-32">
-                      {JSON.stringify(selectedChildAsset.source_metadata, null, 2)}
+                      {JSON.stringify(meta, null, 2)}
                     </pre>
                   </div>
-                )}
+                  );
+                })()}
               </div>
             </CardContent>
           </Card>
@@ -1928,8 +1938,8 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                   {/* Related Assets - Semantic Search */}
                   {asset &&
                     activeInfospace?.enable_related_assets &&
-                    (asset.kind === 'article' || asset.kind === 'web') &&
-                    activeInfospace?.embedding_model && (
+                    kindConfig?.showRelatedAssets &&
+                    activeInfospace?.embedding_selection?.model_name && (
                     <div className="mt-8 pt-8 border-t">
                       <AssetFeedView
                         title="Related Articles"
@@ -1951,7 +1961,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                 </TabsContent>
 
                 <TabsContent value="children" className="flex-1 min-h-0 overflow-y-auto p-4 min-w-0 max-w-full overflow-x-hidden">
-                  {asset.kind === 'csv' ? (
+                  {kindConfig?.childrenComponent === 'csv' ? (
                     <AssetDetailViewCsv
                       asset={asset}
                       childAssets={childAssets}
@@ -1961,7 +1971,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                       selectedChildAsset={selectedChildAsset}
                       highlightedAssetId={highlightAssetIdOnOpen}
                     />
-                  ) : asset.kind === 'pdf' ? (
+                  ) : kindConfig?.childrenComponent === 'pdf' ? (
                     renderPdfChildAssets()
                   ) : (
                     renderChildAssets()

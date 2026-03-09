@@ -33,13 +33,11 @@ const gapClasses = {
  */
 function assetHasImage(asset?: AssetRead): boolean {
   if (!asset) return false;
-  const metadata = asset.source_metadata as Record<string, any> | null;
-  if (!metadata) return false;
+  const fi = asset.file_info as Record<string, unknown> | null;
+  if (!fi) return false;
   
-  const hasOgImage = metadata.og_image && !metadata.og_image.toLowerCase().includes('.gif');
-  const hasFeaturedImage = metadata.featured_image_url && !metadata.featured_image_url.toLowerCase().includes('.gif');
-  
-  return !!(hasOgImage || hasFeaturedImage);
+  const topImage = (fi.top_image ?? fi.og_image ?? fi.featured_image_url) as string | undefined;
+  return !!(topImage && !topImage.toLowerCase().includes('.gif'));
 }
 
 /**

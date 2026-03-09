@@ -7,6 +7,7 @@ Used by the Local Storage Import UI to discover directories before import.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -30,6 +31,7 @@ class StorageBrowseEntry(BaseModel):
     file_count: int = 0
     importable_count: int = 0
     size_bytes: int = 0
+    counts_capped: bool = False  # True when STORAGE_BROWSE_MAX_COUNT_FILES was hit
 
 
 class StorageBrowseResponse(BaseModel):
@@ -58,6 +60,10 @@ def browse_storage(
     *,
     infospace_id: int,
     path: Optional[str] = Query(None, description="Directory path to list; defaults to first allowed root"),
+    include_counts: bool = Query(
+        True,
+        description="Include file_count, importable_count, size_bytes for directories (expensive on large trees)",
+    ),
     db=dependency_injection.Depends(dependency_injection.get_db),
     current_user=dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> StorageBrowseResponse:
@@ -150,19 +156,32 @@ def browse_storage(
                 file_count = 0
                 importable_count = 0
                 size_bytes = 0
-                try:
-                    for f in item.iterdir():
-                        if f.is_file():
-                            file_count += 1
-                            suf = (f.suffix or "").lower()
-                            if suf in exts_lower:
-                                importable_count += 1
-                            try:
-                                size_bytes += f.stat().st_size
-                            except OSError:
-                                pass
-                except OSError:
-                    pass
+                counts_capped = False
+                if include_counts:
+                    max_files = getattr(
+                        settings, "STORAGE_BROWSE_MAX_COUNT_FILES", 2000
+                    ) or 0
+                    try:
+                        with os.scandir(item) as it:
+                            for entry in it:
+                                if entry.is_file(follow_symlinks=False):
+                                    file_count += 1
+                                    if max_files and file_count >= max_files:
+                                        counts_capped = True
+                                        break
+                                    suf = (Path(entry.name).suffix or "").lower()
+                                    if suf in exts_lower:
+                                        importable_count += 1
+                                    try:
+                                        size_bytes += entry.stat(
+                                            follow_symlinks=False
+                                        ).st_size
+                                    except OSError:
+                                        pass
+                    except OSError:
+                        pass
+                    if counts_capped:
+                        file_count = max_files
                 entries.append(
                     StorageBrowseEntry(
                         name=item.name,
@@ -171,6 +190,7 @@ def browse_storage(
                         file_count=file_count,
                         importable_count=importable_count,
                         size_bytes=size_bytes,
+                        counts_capped=counts_capped,
                     )
                 )
             else:

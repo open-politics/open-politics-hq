@@ -119,10 +119,10 @@ export default function ArticleComposer({ open, onClose, existingAssetId, mode }
       if (asset) {
         setTitle(asset.title);
         setContent(asset.text_content || '');
-        setSummary((asset.source_metadata?.summary as string) || '');
+        setSummary((asset.facets?.summary ?? asset.file_info?.summary as string) || '');
         
-        // Parse embedded assets from metadata
-        const embeddedFromMetadata = (asset.source_metadata?.embedded_assets as any[]) || [];
+        // Parse embedded assets from file_info
+        const embeddedFromMetadata = (asset.file_info?.embedded_assets as any[]) || [];
         
         // Load full asset data for embedded assets
         const convertedEmbeds: EmbeddedAsset[] = [];
@@ -166,12 +166,12 @@ export default function ArticleComposer({ open, onClose, existingAssetId, mode }
         }
         setEmbeddedAssets(convertedEmbeds);
         
-        // Parse referenced bundles
-        const referencedFromMetadata = (asset.source_metadata?.referenced_bundles as number[]) || [];
+        // Parse referenced bundles from file_info
+        const referencedFromMetadata = (asset.file_info?.referenced_bundles as number[]) || [];
         setReferencedBundles(referencedFromMetadata);
         
-        // Parse metadata
-        const articleMetadata = (asset.source_metadata?.metadata as any) || {};
+        // Parse metadata from file_info
+        const articleMetadata = (asset.file_info?.metadata as any) || {};
         setMetadata({
           author: articleMetadata.author || '',
           category: articleMetadata.category || '',
@@ -283,28 +283,31 @@ export default function ArticleComposer({ open, onClose, existingAssetId, mode }
     setIsLoading(true);
 
     try {
+      const articleFileInfo = {
+        composition_type: 'free_form_article',
+        summary: summary || undefined,
+        embedded_assets: embeddedAssets.map(embed => ({
+          asset_id: embed.assetId,
+          mode: embed.mode,
+          size: embed.size,
+          caption: embed.caption,
+          position: embed.position
+        })),
+        referenced_bundles: referencedBundles,
+        metadata: {
+          ...metadata,
+          composed_at: new Date().toISOString(),
+          embed_count: embeddedAssets.length,
+          bundle_references: referencedBundles.length
+        }
+      };
+
       const articleData = {
         title: title.trim(),
         kind: 'article' as AssetKind,
         text_content: content,
-        source_metadata: {
-          composition_type: 'free_form_article',
-          summary: summary || undefined,
-          embedded_assets: embeddedAssets.map(embed => ({
-            asset_id: embed.assetId,
-            mode: embed.mode,
-            size: embed.size,
-            caption: embed.caption,
-            position: embed.position
-          })),
-          referenced_bundles: referencedBundles,
-          metadata: {
-            ...metadata,
-            composed_at: new Date().toISOString(),
-            embed_count: embeddedAssets.length,
-            bundle_references: referencedBundles.length
-          }
-        }
+        file_info: articleFileInfo,
+        facets: summary ? { summary } : undefined,
       };
 
       if (mode === 'create') {
@@ -356,7 +359,8 @@ export default function ArticleComposer({ open, onClose, existingAssetId, mode }
         const updateData = {
           title: articleData.title,
           text_content: articleData.text_content,
-          source_metadata: articleData.source_metadata
+          file_info: articleData.file_info,
+          facets: articleData.facets,
         };
         
         const updatedAsset = await updateAsset(existingAssetId, updateData);

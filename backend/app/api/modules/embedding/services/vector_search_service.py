@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlmodel import Session, select
 from sqlalchemy import text
 
-from app.models import Asset, AssetChunk, Infospace, EmbeddingModel, AssetKind, EmbeddingProvider as EmbeddingProviderEnum
+from app.models import Asset, AssetChunk, Infospace, EmbeddingModel, AssetKind
 from app.api.modules.content.models import get_embedding_column_for_dimension
 
 logger = logging.getLogger(__name__)
@@ -56,9 +56,15 @@ class SearchResult:
 class VectorSearchService:
     """Service for semantic search using vector embeddings."""
 
-    def __init__(self, session: Session, runtime_api_keys: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        session: Session,
+        runtime_api_keys: Optional[Dict[str, str]] = None,
+        user_id: Optional[int] = None,
+    ):
         self.session = session
         self.runtime_api_keys = runtime_api_keys or {}
+        self.user_id = user_id
 
     async def semantic_search(
         self,
@@ -93,39 +99,41 @@ class VectorSearchService:
         Returns:
             List of SearchResult objects
         """
-        # Resolve embedding model: explicit id or from infospace
+        # Load infospace (always needed for embedding_selection)
+        infospace = self.session.get(Infospace, infospace_id)
+        if not infospace:
+            raise ValueError(f"Infospace {infospace_id} not found")
+
+        # Resolve embedding model: explicit id or from infospace's embedding_selection
         if embedding_model_id is not None:
             embedding_model = self.session.get(EmbeddingModel, embedding_model_id)
             if not embedding_model:
                 raise ValueError(f"Embedding model {embedding_model_id} not found")
             model_name = embedding_model.name
+            type_key = embedding_model.provider
         else:
-            infospace = self.session.get(Infospace, infospace_id)
-            if not infospace:
-                raise ValueError(f"Infospace {infospace_id} not found")
-            if not infospace.embedding_model:
-                raise ValueError(f"Infospace {infospace_id} has no embedding model configured")
-            model_name = infospace.embedding_model
+            sel = infospace.embedding_selection
+            if isinstance(sel, dict):
+                from app.api.modules.foundation_service_providers.base import ProviderSelection
+                sel = ProviderSelection(**sel)
+            if not sel or not sel.model_name:
+                raise ValueError(f"Infospace {infospace_id} has no embedding configured")
+            model_name = sel.model_name
+            type_key = sel.type_key
             embedding_model = None
 
-        # Get the appropriate embedding provider for this model
-        try:
-            from app.api.modules.foundation_service_providers.factory import get_embedding_registry
-            registry = get_embedding_registry()
+        # Resolve provider via registry
+        from app.api.modules.foundation_service_providers.base import EmbeddingProvider as EmbeddingProviderProtocol
+        from app.api.modules.foundation_service_providers.registry import resolve, load_credentials
+        from app.core.config import settings as app_settings
 
-            provider, provider_name = await registry.get_provider_for_model(
-                model_name,
-                runtime_api_keys=self.runtime_api_keys
-            )
+        credentials = load_credentials(self.session, self.user_id, self.runtime_api_keys) if self.user_id else (self.runtime_api_keys or {})
+        provider = resolve(EmbeddingProviderProtocol, type_key, app_settings, credentials)
+        if not provider:
+            raise ValueError(f"No embedding provider available for '{type_key}'")
 
-            if not provider:
-                raise ValueError(f"No provider found for model: {model_name}")
-
-            logger.info(f"Using provider '{provider_name}' for query embedding with model '{model_name}'")
-
-        except Exception as e:
-            logger.error(f"Failed to get provider for model {model_name}: {e}")
-            raise RuntimeError(f"Failed to get embedding provider: {str(e)}")
+        provider_name = type_key
+        logger.info(f"Using provider '{provider_name}' for query embedding with model '{model_name}'")
 
         # Generate query embedding
         try:
@@ -136,20 +144,15 @@ class VectorSearchService:
 
         # Get embedding model for filtering (if not already resolved)
         if embedding_model is None:
-            infospace = self.session.get(Infospace, infospace_id)
             embedding_model = self.session.exec(
                 select(EmbeddingModel)
-                .where(EmbeddingModel.name == infospace.embedding_model)
-                .where(EmbeddingModel.provider == EmbeddingProviderEnum(provider_name.lower()))
+                .where(EmbeddingModel.name == model_name)
+                .where(EmbeddingModel.provider == provider_name.lower())
             ).first()
 
         if not embedding_model:
-            # Auto-register the model if it doesn't exist (e.g., after clearing embeddings)
-            # This allows semantic search to work even if no assets have been embedded yet
-            logger.info(
-                f"Embedding model '{infospace.embedding_model}' with provider '{provider_name}' "
-                f"not found in database. Auto-registering..."
-            )
+            # Auto-register if missing (e.g., after clearing embeddings)
+            logger.info(f"Embedding model '{model_name}' ({provider_name}) not in DB. Auto-registering...")
             try:
                 from app.api.modules.embedding.services.embedding_service import EmbeddingService
                 embedding_service = EmbeddingService(
@@ -158,15 +161,12 @@ class VectorSearchService:
                 )
                 embedding_model = await embedding_service.ensure_embedding_model_registered(
                     provider=provider_name,
-                    model_name=infospace.embedding_model,
-                    dimension=infospace.embedding_dim
+                    model_name=model_name,
                 )
-                logger.info(f"Auto-registered embedding model '{infospace.embedding_model}'")
             except Exception as e:
-                logger.error(f"Failed to auto-register embedding model: {e}")
                 raise ValueError(
-                    f"Embedding model {infospace.embedding_model} (provider: {provider_name}) not found in database "
-                    f"and could not be auto-registered: {str(e)}. Please run embedding generation for this infospace first."
+                    f"Embedding model {model_name} ({provider_name}) not found and could not be "
+                    f"auto-registered: {e}. Run embedding generation first."
                 )
 
         # Use indexed pgvector column for search (HNSW)

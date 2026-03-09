@@ -29,7 +29,7 @@ const AssetDetailViewTextBlock: React.FC<AssetDetailViewTextBlockProps> = ({
   renderEditableField,
   renderTextDisplay,
 }) => {
-  const charCount = asset.source_metadata?.character_count as number | undefined;
+  const charCount = (asset.file_info?.character_count ?? asset.facets?.character_count) as number | undefined;
   // Use associatedRecords which should be populated for text blocks by the parent
   const textRecord = associatedRecords.length > 0 ? associatedRecords[0] : null;
 

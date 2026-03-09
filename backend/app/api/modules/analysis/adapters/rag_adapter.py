@@ -4,9 +4,8 @@ from sqlmodel import Session, select
 from app.models import User, EmbeddingModel, AssetChunk, Asset, AnnotationRun, AnnotationSchema
 from app.api.modules.analysis.protocols import AnalysisAdapterProtocol
 from app.api.modules.embedding.services import EmbeddingService
-from app.api.modules.foundation_service_providers.factory import create_classification_provider, create_embedding_provider
-from app.api.modules.foundation_service_providers.llm_config import llm_models_config
-from app.core.config import settings
+from app.api.modules.foundation_service_providers.base import LanguageModelProvider
+from app.api.modules.foundation_service_providers.registry import resolve as resolve_provider, load_credentials
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -37,14 +36,13 @@ class RagAdapter(AnalysisAdapterProtocol):
         self.infospace_id = infospace_id
         
         # Initialize providers
-        self.embedding_provider = create_embedding_provider(settings)
-        self.embedding_service = EmbeddingService(session, self.embedding_provider)
-        self.classification_provider = create_classification_provider(settings)
-        
+        self.embedding_service = EmbeddingService(session)
+        self._credentials = load_credentials(session, current_user.id) if current_user else {}
+
         # Validate required config
         self.question = config.get("question")
         self.embedding_model_id = config.get("embedding_model_id")
-        
+
         if not self.question:
             raise ValueError("Missing required config: 'question'")
         if not self.embedding_model_id:
@@ -56,7 +54,8 @@ class RagAdapter(AnalysisAdapterProtocol):
         self.distance_function = config.get("distance_function", "cosine")
         
         # Simple model and thinking control
-        self.model_name = config.get("model", "gemini-2.5-flash-preview-05-20")
+        self.model_name = config.get("model", "gemini-3-flash")
+        self.provider_type_key = config.get("provider")
         self.enable_thinking = config.get("enable_thinking", False)
         self.temperature = config.get("temperature", 0.1)
         self.max_tokens = config.get("max_tokens", 500)
@@ -225,23 +224,25 @@ class RagAdapter(AnalysisAdapterProtocol):
         prompt = self._build_rag_prompt(context)
         
         try:
-            # Simple provider config
-            provider_config = {
-                "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
-                "model_name_override": self.model_name,
-                "enable_thinking": self.enable_thinking
-            }
-            
-            response = await self.classification_provider.classify(
-                text_content=prompt,
-                output_model_class=RagResponse,
-                instructions="Answer the question based on the provided context.",
-                provider_config=provider_config
+            from app.core.config import settings
+            provider = resolve_provider(LanguageModelProvider, self.provider_type_key, settings, self._credentials)
+            if not provider:
+                raise ValueError(f"No LLM provider available for model '{self.model_name}'")
+
+            messages = [
+                {"role": "system", "content": "Answer the question based on the provided context."},
+                {"role": "user", "content": prompt},
+            ]
+            response = await provider.generate(
+                messages=messages,
+                model_name=self.model_name,
+                response_format=RagResponse,
             )
-            
+
+            if hasattr(response, "model_dump"):
+                return response.model_dump()
             return response
-            
+
         except Exception as e:
             logger.error(f"Error generating LLM response: {e}")
             # Fallback response

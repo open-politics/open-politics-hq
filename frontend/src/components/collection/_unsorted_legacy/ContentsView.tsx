@@ -487,7 +487,7 @@ export function ContentsView({
         title: content.title,
         text_content: content.text_content?.slice(0, 350) || '',
         url: content.url,
-        source: content.source_identifier || content.source_metadata?.name || 'Unknown',
+        source: content.source_identifier || (content as { file_info?: Record<string, unknown>; source_metadata?: Record<string, unknown> }).file_info?.name || (content as { source_metadata?: Record<string, unknown> }).source_metadata?.name || 'Unknown',
         insertion_date: content.insertion_date,
         content_type: content.content_type || 'article',
         content_language: content.content_language || null,

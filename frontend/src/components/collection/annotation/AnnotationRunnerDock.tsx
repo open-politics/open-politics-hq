@@ -146,8 +146,8 @@ export default function AnnotationRunnerDock({
   const [enableVisionProcessing, setEnableVisionProcessing] = useState(false);
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem();
   const { apiKeys, selections, setApiKey } = useProvidersStore();
-  const selectedProvider = selections.llm?.providerId || null;
-  const selectedModel = selections.llm?.modelId || null;
+  const selectedProvider = selections.annotation?.providerId || null;
+  const selectedModel = selections.annotation?.modelId || null;
   const { isFavorite } = useFavoriteRunsStore();
 
   // Sort runs with favorites first, then by most recent
@@ -266,8 +266,8 @@ export default function AnnotationRunnerDock({
     configuration.include_thoughts = includeThoughts;
     configuration.annotation_concurrency = annotationConcurrency;
     configuration.enable_parallel_processing = enableParallelProcessing;
-    configuration.ai_provider = selectedProvider;
-    configuration.ai_model = selectedModel;
+    configuration.provider = selectedProvider;
+    configuration.model = selectedModel;
     configuration.include_images = enableVisionProcessing;
     // Pass API keys from frontend to backend for runtime provider creation
     configuration.api_keys = apiKeys;
@@ -323,12 +323,12 @@ export default function AnnotationRunnerDock({
       selectedAssetIds.includes(asset.id) && asset.kind === 'csv'
     );
     
-    // Calculate total rows estimate from source metadata OR child assets
+    // Calculate total rows estimate from file_info OR child assets
     const totalRowsEstimate = csvAssets.reduce((total, asset) => {
-      // First try to get from source metadata (most efficient)
-      const metadataRowCount = asset.source_metadata?.row_count || 
-                               asset.source_metadata?.rows_processed || 
-                               asset.source_metadata?.row_count_processed;
+      // First try to get from file_info (most efficient)
+      const metadataRowCount = asset.file_info?.row_count || 
+                               asset.file_info?.rows_processed || 
+                               asset.file_info?.row_count_processed;
       
       if (metadataRowCount && typeof metadataRowCount === 'number' && metadataRowCount > 0) {
         return total + metadataRowCount;
@@ -359,12 +359,12 @@ export default function AnnotationRunnerDock({
       selectedAssetIds.includes(asset.id) && asset.kind === 'pdf'
     );
     
-    // Calculate total pages estimate from source metadata OR child assets
+    // Calculate total pages estimate from file_info OR child assets
     const totalPagesEstimate = pdfAssets.reduce((total, asset) => {
-      // First try to get from source metadata (most efficient)
-      const metadataPageCount = asset.source_metadata?.page_count || 
-                                asset.source_metadata?.pages_processed || 
-                                asset.source_metadata?.page_count_processed;
+      // First try to get from file_info (most efficient)
+      const metadataPageCount = asset.file_info?.page_count || 
+                                asset.file_info?.pages_processed || 
+                                asset.file_info?.page_count_processed;
       
       if (metadataPageCount && typeof metadataPageCount === 'number' && metadataPageCount > 0) {
         return total + metadataPageCount;

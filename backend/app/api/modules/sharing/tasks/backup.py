@@ -2,11 +2,12 @@ import logging
 import asyncio
 from typing import Dict, Any, List
 from celery import current_task
-from sqlmodel import Session, create_engine, select
+from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.core.db import engine
 from app.core.celery_app import celery
-from app.api.modules.foundation_service_providers.factory import create_storage_provider
+from app.api.modules.foundation_service_providers.registry import get_storage_provider
 from app.api.modules.sharing.services.backup_service import BackupService
 from app.models import Infospace, User, InfospaceBackup
 
@@ -27,20 +28,14 @@ def process_infospace_backup(self, backup_id: int, backup_options: Dict[str, Any
     logger.info(f"Processing backup {backup_id}")
     
     try:
-        # Create database session
-        engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
-        session = Session(engine)
-        
-        try:
-            # Create storage provider and backup service
-            storage_provider = create_storage_provider(settings)
+        with Session(engine) as session:
+            storage_provider = get_storage_provider(settings)
             backup_service = BackupService(
                 session=session,
                 storage_provider=storage_provider,
                 settings=settings
             )
             
-            # Execute the backup (async method called in sync context)
             success = asyncio.run(backup_service.execute_backup(backup_id, backup_options))
             
             if success:
@@ -49,9 +44,6 @@ def process_infospace_backup(self, backup_id: int, backup_options: Dict[str, Any
             else:
                 logger.error(f"Backup {backup_id} failed during execution")
                 return {"success": False, "backup_id": backup_id, "message": "Backup execution failed"}
-                
-        finally:
-            session.close()
             
     except Exception as e:
         logger.error(f"Error processing backup {backup_id}: {e}", exc_info=True)
@@ -68,27 +60,18 @@ def cleanup_expired_backups(self) -> Dict[str, Any]:
     logger.info("Starting cleanup of expired backups")
     
     try:
-        # Create database session
-        engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
-        session = Session(engine)
-        
-        try:
-            # Create storage provider and backup service
-            storage_provider = create_storage_provider(settings)
+        with Session(engine) as session:
+            storage_provider = get_storage_provider(settings)
             backup_service = BackupService(
                 session=session,
                 storage_provider=storage_provider,
                 settings=settings
             )
             
-            # Cleanup expired backups (async method called in sync context)
             cleaned_count = asyncio.run(backup_service.cleanup_expired_backups())
             
             logger.info(f"Cleaned up {cleaned_count} expired backups")
             return {"success": True, "cleaned_count": cleaned_count}
-            
-        finally:
-            session.close()
             
     except Exception as e:
         logger.error(f"Error during backup cleanup: {e}", exc_info=True)
@@ -108,20 +91,14 @@ def automatic_backup_all_infospaces(self, backup_type: str = "auto") -> Dict[str
     logger.info(f"Starting automatic backup of all infospaces (type: {backup_type})")
     
     try:
-        # Create database session
-        engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
-        session = Session(engine)
-        
-        try:
-            # Create storage provider and backup service
-            storage_provider = create_storage_provider(settings)
+        with Session(engine) as session:
+            storage_provider = get_storage_provider(settings)
             backup_service = BackupService(
                 session=session,
                 storage_provider=storage_provider,
                 settings=settings
             )
             
-            # Get all infospaces
             infospaces = session.exec(select(Infospace)).all()
             
             total_infospaces = len(infospaces)
@@ -198,9 +175,6 @@ def automatic_backup_all_infospaces(self, backup_type: str = "auto") -> Dict[str
             logger.info(f"Automatic backup completed: {result}")
             return result
             
-        finally:
-            session.close()
-            
     except Exception as e:
         logger.error(f"Error during automatic backup: {e}", exc_info=True)
         return {"success": False, "message": f"Automatic backup failed: {str(e)}"}
@@ -220,13 +194,8 @@ def backup_specific_infospaces(self, infospace_ids: List[int], backup_type: str 
     logger.info(f"Starting backup of {len(infospace_ids)} specific infospaces")
     
     try:
-        # Create database session
-        engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
-        session = Session(engine)
-        
-        try:
-            # Create storage provider and backup service
-            storage_provider = create_storage_provider(settings)
+        with Session(engine) as session:
+            storage_provider = get_storage_provider(settings)
             backup_service = BackupService(
                 session=session,
                 storage_provider=storage_provider,
@@ -281,9 +250,6 @@ def backup_specific_infospaces(self, infospace_ids: List[int], backup_type: str 
                 "failed_backups": failed_backups,
                 "results": results
             }
-            
-        finally:
-            session.close()
             
     except Exception as e:
         logger.error(f"Error during specific infospace backup: {e}", exc_info=True)

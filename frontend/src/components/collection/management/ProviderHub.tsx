@@ -14,10 +14,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { 
-  Brain, 
-  Search, 
-  MapPin, 
-  Database, 
+  Brain,
+  Search,
+  MapPin,
+  Database,
+  ScanText,
   Key, 
   CheckCircle, 
   XCircle, 
@@ -45,6 +46,7 @@ const CAPABILITY_ICONS: Record<ProviderCapability, React.ReactNode> = {
   embedding: <Database className="w-4 h-4" />,
   search: <Search className="w-4 h-4" />,
   geocoding: <MapPin className="w-4 h-4" />,
+  ocr: <ScanText className="w-4 h-4" />,
 };
 
 const CAPABILITY_NAMES: Record<ProviderCapability, string> = {
@@ -52,6 +54,7 @@ const CAPABILITY_NAMES: Record<ProviderCapability, string> = {
   embedding: 'Embeddings',
   search: 'Web Search',
   geocoding: 'Geocoding',
+  ocr: 'OCR',
 };
 
 const CAPABILITY_DESCRIPTIONS: Record<ProviderCapability, string> = {
@@ -59,6 +62,7 @@ const CAPABILITY_DESCRIPTIONS: Record<ProviderCapability, string> = {
   embedding: 'Convert text into vector embeddings for semantic search',
   search: 'Search the web for real-time information',
   geocoding: 'Convert location names to coordinates and vice versa',
+  ocr: 'Extract text from images and scanned documents',
 };
 
 export default function ProviderHub({ className = '' }: ProviderHubProps) {
@@ -538,7 +542,7 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
       </div>
 
       <Tabs value={activeCapability} onValueChange={(v) => setActiveCapability(v as ProviderCapability)} className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           {(Object.keys(providers) as ProviderCapability[]).map((capability) => (
             <TabsTrigger key={capability} value={capability} className="text-xs px-2">
               <div className="flex items-center gap-1 min-w-0">

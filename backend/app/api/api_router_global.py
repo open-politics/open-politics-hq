@@ -2,7 +2,6 @@ from fastapi import APIRouter
 from app.api.routes import (
     admin,
     analysis,
-    bundle_views,
     storage,
     annotation_runs,
     annotation_schemas,
@@ -25,6 +24,7 @@ from app.api.routes import (
     healthcheck,
     infospaces,
     login,
+    providers,  # Provider discovery (models, capabilities)
     search,
     shareables,
     sources,
@@ -47,7 +47,6 @@ api_router.include_router(assets.router, tags=["assets"])
 api_router.include_router(backups.router, tags=["Backups"])
 api_router.include_router(backups.general_router, tags=["Backups"])
 api_router.include_router(bundles.router, tags=["Bundles"])
-api_router.include_router(bundle_views.router, tags=["Bundle Views"])
 api_router.include_router(chat.router, prefix="/chat", tags=["Intelligence Chat"])  # NEW
 api_router.include_router(chat_history.router, prefix="/chat/conversations", tags=["Chat History"])  # NEW
 api_router.include_router(chunking.router, prefix="/chunking", tags=["chunking"])
@@ -62,6 +61,7 @@ api_router.include_router(healthcheck.router, prefix="/healthz", tags=["app"])
 api_router.include_router(infospaces.router, prefix="/infospaces", tags=["Infospaces"])
 api_router.include_router(knowledge_graphs.router, tags=["Knowledge Graphs"])
 api_router.include_router(login.router, tags=["login"])
+api_router.include_router(providers.router, tags=["Providers"])
 api_router.include_router(search.router, prefix="/search", tags=["Search"])
 api_router.include_router(storage.router, tags=["Storage"])
 api_router.include_router(search_history.router, prefix="/search_history", tags=["Search History"])

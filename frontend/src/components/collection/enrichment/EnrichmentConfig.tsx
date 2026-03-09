@@ -95,7 +95,7 @@ const EnrichmentConfig: React.FC = () => {
           Enrichment & OCR
         </h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Enrichers run automatically via reactive watchers (every 60s). You can also trigger them manually per bundle.
+          Enrichers run automatically via reactive watchers (every 2 min). You can also trigger them manually per bundle.
         </p>
       </div>
 

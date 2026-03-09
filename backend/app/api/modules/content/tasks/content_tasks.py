@@ -21,10 +21,8 @@ from sqlalchemy import update
 
 from app.core.celery_app import celery
 from app.core.db import engine
-from app.models import Asset, AssetKind, ProcessingStatus
-from app.api.modules.foundation_service_providers.factory import create_storage_provider, create_scraping_provider
-from app.api.modules.content.services.content_ingestion_service import ContentIngestionService
-from app.api.modules.content.services.asset_service import AssetService
+from app.models import Asset, ProcessingStatus
+from app.api.modules.content.tasks.task_services import create_task_services
 from app.core.config import settings
 from app.core.task_utils import run_async_in_celery
 
@@ -60,21 +58,29 @@ def process_content(self, asset_id: int, options: Optional[Dict[str, Any]] = Non
                 logger.info(f"[Content Processing] Asset {asset_id} already claimed or done, skipping")
                 return {"success": False, "error": "Already claimed or not PENDING"}
 
-            storage_provider = create_storage_provider(settings)
-            scraping_provider = create_scraping_provider(settings)
-            asset_service = AssetService(session, storage_provider)
-            content_service = ContentIngestionService(session)
-
-            asset = asset_service.get_asset(asset_id)
+            services = create_task_services(session)
+            asset = services.asset.get_asset(asset_id)
             if not asset:
                 return {"success": False, "error": "Asset not found"}
 
-            run_async_in_celery(content_service._process_content, asset, options or {})
+            run_async_in_celery(services.processing.process_content, asset, options or {})
             
             # Count child assets created using proper query patterns
             child_count = session.exec(
                 select(func.count(Asset.id)).where(Asset.parent_asset_id == asset_id)
             ).one()
+            
+            # Event bus: asset.processed for enrichment chaining (skip containers; children emit in ProcessingService)
+            from app.api.modules.content.types import get_content_type_registry
+            from app.core.events import emit
+
+            registry = get_content_type_registry()
+            descriptor = registry.by_kind(asset.kind)
+            if not descriptor or not descriptor.is_container:
+                emit(
+                    "asset.processed",
+                    {"asset_id": asset.id, "kind": asset.kind.value, "infospace_id": asset.infospace_id},
+                )
             
             logger.info(f"[Content Processing] Success: created {child_count} child assets")
             return {"success": True, "child_count": child_count}
@@ -82,12 +88,13 @@ def process_content(self, asset_id: int, options: Optional[Dict[str, Any]] = Non
         except Exception as e:
             logger.exception(f"[Content Processing] Error: {e}")
             try:
-                session.execute(
-                    update(Asset)
-                    .where(Asset.id == asset_id)
-                    .values(processing_status=ProcessingStatus.FAILED)
-                )
-                session.commit()
+                with Session(engine) as fail_session:
+                    fail_session.execute(
+                        update(Asset)
+                        .where(Asset.id == asset_id)
+                        .values(processing_status=ProcessingStatus.FAILED)
+                    )
+                    fail_session.commit()
             except Exception:
                 pass
             return {"success": False, "error": str(e)}
@@ -134,19 +141,12 @@ def reprocess_content(self, asset_id: int, options: Optional[Dict[str, Any]] = N
     
     with Session(engine) as session:
         try:
-            # Create services
-            storage_provider = create_storage_provider(settings)
-            scraping_provider = create_scraping_provider(settings)
-            asset_service = AssetService(session, storage_provider)
-            content_service = ContentIngestionService(session)
-            
-            # Get the asset using AssetService
-            asset = asset_service.get_asset(asset_id)
+            services = create_task_services(session)
+            asset = services.asset.get_asset(asset_id)
             if not asset:
                 return {"success": False, "error": "Asset not found"}
-            
-            # Reprocess the content using the helper function for proper event loop management
-            run_async_in_celery(content_service._process_content, asset, options or {})
+
+            run_async_in_celery(services.processing.reprocess_content, asset, options or {})
             
             # Count child assets created using proper query patterns
             child_count = session.exec(
@@ -185,14 +185,26 @@ def ingest_bulk_urls(
     
     async def process_urls():
         with Session(engine) as session:
-            # Create content service
-            storage_provider = create_storage_provider(settings)
-            scraping_provider = create_scraping_provider(settings)
-            content_service = ContentIngestionService(session)
-            
+            from app.api.modules.content.handlers import IngestionContext
+            from app.api.modules.content.ingest import ingest
+
+            services = create_task_services(session)
+            context = IngestionContext(
+                session=session,
+                storage_provider=services.storage,
+                scraping_provider=services.scraping,
+                search_provider=services.search,
+                asset_service=services.asset,
+                bundle_service=services.bundle,
+                user_id=user_id,
+                infospace_id=infospace_id,
+                settings=settings,
+                options=options or {},
+            )
+
             assets_created = []
             errors = []
-            
+
             for i, url in enumerate(urls):
                 try:
                     url_title = f"{base_title} #{i+1}" if base_title else None
@@ -201,14 +213,9 @@ def ingest_bulk_urls(
                         "batch_index": i,
                         "batch_total": len(urls)
                     })
-                    
-                    assets = await content_service.ingest_content(
-                        locator=url,
-                        infospace_id=infospace_id,
-                        user_id=user_id,
-                        title=url_title,
-                        options=url_options
-                    )
+                    context.options = url_options
+
+                    assets = await ingest(context, url, title=url_title, options=url_options)
                     assets_created.append(assets[0].id)
                     
                     # Small delay to be respectful to servers
@@ -250,10 +257,6 @@ def retry_failed_content_processing(self, infospace_id: int, max_retries: int = 
     
     with Session(engine) as session:
         try:
-            # Create services
-            storage_provider = create_storage_provider(settings)
-            asset_service = AssetService(session, storage_provider)
-            
             # Find assets with failed processing status using proper query patterns
             failed_assets = session.exec(
                 select(Asset).where(
@@ -265,19 +268,15 @@ def retry_failed_content_processing(self, infospace_id: int, max_retries: int = 
             if not failed_assets:
                 logger.info("No failed assets found to retry")
                 return {"success": True, "retried_count": 0}
-            
-            # Create content service
-            storage_provider = create_storage_provider(settings)
-            scraping_provider = create_scraping_provider(settings)
-            content_service = ContentIngestionService(session)
-            
+
+            services = create_task_services(session)
             retried_count = 0
             success_count = 0
             
             for asset in failed_assets:
                 try:
                     # Check if we've already retried too many times
-                    retry_count = asset.source_metadata.get('retry_count', 0)
+                    retry_count = (asset.file_info or {}).get('retry_count', 0)
                     if retry_count >= max_retries:
                         logger.info(f"Asset {asset.id} exceeded max retries ({max_retries})")
                         continue
@@ -285,12 +284,14 @@ def retry_failed_content_processing(self, infospace_id: int, max_retries: int = 
                     logger.info(f"Retrying processing for asset {asset.id} (attempt {retry_count + 1})")
                     
                     # Update retry count
-                    asset.source_metadata['retry_count'] = retry_count + 1
+                    file_info = asset.file_info or {}
+                    file_info['retry_count'] = retry_count + 1
+                    asset.file_info = file_info
                     session.add(asset)
                     session.flush()
                     
                     # Retry processing
-                    run_async_in_celery(content_service._process_content, asset, {})
+                    run_async_in_celery(services.processing.reprocess_content, asset, {})
                     success_count += 1
                     retried_count += 1
                     
@@ -322,10 +323,6 @@ def clean_orphaned_child_assets(self, infospace_id: int):
     
     with Session(engine) as session:
         try:
-            # Create services
-            storage_provider = create_storage_provider(settings)
-            asset_service = AssetService(session, storage_provider)
-            
             # Find child assets whose parent no longer exists using proper query patterns
             orphaned_assets = session.exec(
                 select(Asset).where(
@@ -381,14 +378,29 @@ def ingest_bulk_files(
     
     async def process_files():
         with Session(engine) as session:
-            # Create content service
-            storage_provider = create_storage_provider(settings)
-            scraping_provider = create_scraping_provider(settings)
-            content_service = ContentIngestionService(session)
-            
+            import os
+            from starlette.datastructures import UploadFile
+
+            from app.api.modules.content.handlers import IngestionContext
+            from app.api.modules.content.ingest import ingest
+
+            services = create_task_services(session)
+            context = IngestionContext(
+                session=session,
+                storage_provider=services.storage,
+                scraping_provider=services.scraping,
+                search_provider=services.search,
+                asset_service=services.asset,
+                bundle_service=services.bundle,
+                user_id=user_id,
+                infospace_id=infospace_id,
+                settings=settings,
+                options=options or {},
+            )
+
             assets_created = []
             errors = []
-            
+
             for i, file_path in enumerate(file_paths):
                 try:
                     file_options = (options or {}).copy()
@@ -396,21 +408,16 @@ def ingest_bulk_files(
                         "batch_index": i,
                         "batch_total": len(file_paths)
                     })
-                    
-                    # Open the temporary file and process it
-                    import os
-                    from starlette.datastructures import UploadFile
-                    
+
                     with open(file_path, 'rb') as file:
                         upload_file = UploadFile(
                             file=file,
                             filename=os.path.basename(file_path)
                         )
-                        
-                        assets = await content_service.ingest_content(
-                            locator=upload_file,
-                            infospace_id=infospace_id,
-                            user_id=user_id,
+
+                        assets = await ingest(
+                            context,
+                            upload_file,
                             title=os.path.basename(file_path),
                             options={"process_immediately": process_immediately, **file_options}
                         )

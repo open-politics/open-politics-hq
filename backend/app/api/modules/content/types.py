@@ -15,9 +15,10 @@ Asset.is_container, etc.) become derived views from this registry.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, FrozenSet, List, Optional, Set, Tuple, Type, TypeVar
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Protocol, Set, Tuple, Type, TypeVar, runtime_checkable
 
 from app.api.modules.content.models import Asset, AssetKind, Modality
+from app.api.modules.foundation_service_providers.base import StorageProvider
 
 # BaseProcessor/ProcessingContext not imported here to avoid circular dependency:
 # types <- processors.base <- processors/__init__ <- strategy <- types
@@ -25,6 +26,17 @@ from app.api.modules.content.models import Asset, AssetKind, Modality
 
 # Type for metadata extractors (Phase 1 pipeline - defined later)
 MetadataExtractorT = TypeVar("MetadataExtractorT")
+
+
+@runtime_checkable
+class MetadataExtractor(Protocol):
+    """Protocol for Phase 1 metadata extraction. Register on ContentTypeDescriptor."""
+
+    async def extract(
+        self, asset: Asset, storage: StorageProvider
+    ) -> Optional[Dict[str, Any]]:
+        """Extract metadata for content detection. Returns dict or None."""
+        ...
 
 
 @dataclass
@@ -43,8 +55,18 @@ class ContentTypeDescriptor:
     importable_extensions: Optional[FrozenSet[str]] = None
     # Heavy processing: PDF/CSV take longer; used by ProcessingStrategy for immediate vs background
     is_heavy_processing: bool = False
+    # Typically fast (e.g. web scraping) → immediate processing by default
+    is_typically_fast: bool = False
     # Modalities this kind can support (discovered during processing; e.g. PDF can be text or image-dominant)
     supported_modalities: Tuple[Modality, ...] = (Modality.TEXT,)  # Default for text-based kinds
+    # Skip content processing (e.g. RSS_FEED: children already extracted by poll handler)
+    skip_processing: bool = False
+    # Reprocess strategy: "delete_and_recreate" (default) or "preserve_children" (e.g. CSV rows)
+    reprocess_strategy: str = "delete_and_recreate"
+    # Preview builder name for tree UI: "csv", "pdf", "article", or None
+    preview_builder_name: Optional[str] = None
+    # Materializer class for kinds that can be materialized (e.g. CSV container -> file)
+    materializer_class: Optional[Type[Any]] = None
 
 
 class ContentTypeRegistry:
@@ -64,9 +86,12 @@ class ContentTypeRegistry:
     def _register_builtin(self) -> None:
         # Import processors here to avoid circular imports at module load
         from app.api.modules.content.processors.csv_processor import CSVProcessor
+        from app.api.modules.content.processors.csv_materializer import CsvMaterializer
         from app.api.modules.content.processors.excel_processor import ExcelProcessor
         from app.api.modules.content.processors.pdf_processor import PDFProcessor
         from app.api.modules.content.processors.web_processor import WebProcessor
+
+        from app.api.modules.content.processors.pdf_processor import PdfMetadataExtractor
 
         descriptors = [
             # Documents
@@ -77,9 +102,11 @@ class ContentTypeRegistry:
                 is_container=True,
                 child_kind=AssetKind.PDF_PAGE,
                 processor_class=PDFProcessor,
+                metadata_extractors=[PdfMetadataExtractor],
                 category="document",
                 is_heavy_processing=True,
                 supported_modalities=(Modality.TEXT, Modality.IMAGE),  # Pages can be text or image-dominant
+                preview_builder_name="pdf",
             ),
             ContentTypeDescriptor(
                 kind=AssetKind.TEXT,
@@ -87,6 +114,7 @@ class ContentTypeRegistry:
                 importable=True,
                 is_container=False,
                 category="document",
+                preview_builder_name="article",
             ),
             ContentTypeDescriptor(
                 kind=AssetKind.FILE,
@@ -103,8 +131,11 @@ class ContentTypeRegistry:
                 is_container=True,
                 child_kind=AssetKind.CSV_ROW,
                 processor_class=CSVProcessor,
+                materializer_class=CsvMaterializer,
                 category="data",
                 is_heavy_processing=True,
+                reprocess_strategy="preserve_children",
+                preview_builder_name="csv",
             ),
             # Excel uses CSV kind but ExcelProcessor; register extension override
             ContentTypeDescriptor(
@@ -198,6 +229,7 @@ class ContentTypeRegistry:
                 importable=False,
                 is_container=True,
                 category="document",
+                preview_builder_name="article",
             ),
             ContentTypeDescriptor(
                 kind=AssetKind.RSS_FEED,
@@ -205,6 +237,7 @@ class ContentTypeRegistry:
                 importable=False,
                 is_container=True,
                 category="document",
+                skip_processing=True,  # Children already extracted by poll handler
             ),
             ContentTypeDescriptor(
                 kind=AssetKind.WEB,
@@ -213,6 +246,8 @@ class ContentTypeRegistry:
                 is_container=True,
                 processor_class=WebProcessor,
                 category="document",
+                preview_builder_name="article",
+                is_typically_fast=True,
             ),
         ]
 
@@ -260,6 +295,10 @@ class ContentTypeRegistry:
         desc = self.by_kind(kind)
         return desc.is_container if desc else False
 
+    def container_kinds(self) -> FrozenSet[AssetKind]:
+        """Return all AssetKinds that are containers."""
+        return frozenset(d.kind for d in self._by_kind.values() if d.is_container)
+
     def kinds_supporting_modality(
         self, modality: Modality, include_conditional: bool = True
     ) -> FrozenSet[AssetKind]:
@@ -291,6 +330,24 @@ class ContentTypeRegistry:
         """Get instantiated processor for an asset."""
         cls = self.get_processor_class(asset)
         return cls(context) if cls else None
+
+    def get_preview_builder(self, kind: AssetKind) -> Optional[Callable[..., Dict[str, Any]]]:
+        """Get preview builder callable for a kind. Returns None if no preview."""
+        desc = self.by_kind(kind)
+        if not desc or not desc.preview_builder_name:
+            return None
+        # Lazy import to avoid circular dependency with content_tree_builder
+        from app.api.content_tree_builder import (
+            build_csv_preview,
+            build_pdf_preview,
+            build_article_preview,
+        )
+        builders = {
+            "csv": build_csv_preview,
+            "pdf": build_pdf_preview,
+            "article": build_article_preview,
+        }
+        return builders.get(desc.preview_builder_name)
 
 
 # Global instance
@@ -357,5 +414,20 @@ DEFAULT_MAX_ROWS = 50000
 DEFAULT_MAX_PAGES = 1000
 DEFAULT_MAX_IMAGES = 8
 DEFAULT_TIMEOUT = 30
+
+
+def get_supported_content_types() -> Dict[str, List[str]]:
+    """Get supported content types for UI. Derived from ContentTypeRegistry."""
+    result: Dict[str, List[str]] = {}
+    for desc in _registry._by_kind.values():
+        if desc.extensions:
+            exts = (
+                desc.importable_extensions
+                if desc.importable_extensions is not None
+                else desc.extensions
+            )
+            result.setdefault(desc.category, []).extend(sorted(exts))
+    result["web"] = ["http://", "https://"]
+    return {k: sorted(set(v)) for k, v in result.items()}
 
 

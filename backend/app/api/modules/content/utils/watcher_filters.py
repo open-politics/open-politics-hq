@@ -3,9 +3,9 @@ Shared filter clauses for reactive watchers.
 
 Used to exclude superseded assets and children of superseded parents
 from all content and annotation watchers.
-"""
 
-from sqlalchemy.sql import exists
+Uses denormalized parent_is_superseded for O(1) indexed filter (no correlated subquery).
+"""
 
 from app.api.modules.content.models import Asset
 
@@ -22,11 +22,7 @@ def non_superseded_filter(asset_col=None):
     """
     if asset_col is None:
         asset_col = Asset
-    superseded_parent = exists().where(
-        Asset.id == asset_col.parent_asset_id,
-        Asset.is_superseded == True,
-    )
     return [
         asset_col.is_superseded == False,
-        ~superseded_parent,
+        asset_col.parent_is_superseded == False,
     ]

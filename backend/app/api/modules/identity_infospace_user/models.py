@@ -8,6 +8,9 @@ import uuid
 from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.types import JSON
+
+from app.api.modules.foundation_service_providers.base import ProviderDefaults, ProviderSelection
 
 
 class UserTier(str, enum.Enum):
@@ -58,6 +61,10 @@ class User(SQLModel, table=True):
         description="Fernet-encrypted JSON of provider API keys for scheduled/background tasks"
     )
 
+    provider_defaults: Optional[ProviderDefaults] = Field(
+        default=None, sa_column=Column("provider_defaults", JSON)
+    )
+
     infospaces: List["Infospace"] = Relationship(back_populates="owner")
     datasets: List["Dataset"] = Relationship(back_populates="user")
     assets: List["Asset"] = Relationship(back_populates="user")
@@ -106,13 +113,21 @@ class Infospace(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     icon: Optional[str] = None
 
-    vector_backend: Optional[str] = Field(default="pgvector")
-    embedding_model: Optional[str] = Field(default=None)
-    embedding_dim: Optional[int] = Field(default=None)
+    embedding_selection: Optional[ProviderSelection] = Field(
+        default=None, sa_column=Column("embedding_selection", JSON)
+    )
     chunk_size: Optional[int] = Field(default=512)
     chunk_overlap: Optional[int] = Field(default=50)
     chunk_strategy: Optional[str] = Field(default="token")
     enable_related_assets: bool = Field(default=False)
+
+    @property
+    def embedding_configured(self) -> bool:
+        """True when a provider + model are selected for embedding."""
+        sel = self.embedding_selection
+        if isinstance(sel, dict):
+            return bool(sel.get("model_name"))
+        return bool(sel and sel.model_name)
 
     owner_id: int = Field(foreign_key="user.id")
     owner: Optional[User] = Relationship(back_populates="infospaces")

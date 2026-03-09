@@ -3,7 +3,7 @@ AssetQuery - Composable SQL query builder for asset search.
 
 Supports:
 - Full-text search (tsvector FTS or ILIKE fallback)
-- Kind filters, facet filters (source_metadata JSONB), fragments containment
+- Kind filters, facet filters (facets JSONB), fragments containment
 - Semantic search (pgvector via subquery)
 - Date range, bundle scope
 - Cursor pagination, composite sort
@@ -16,7 +16,8 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, or_, text
+import re
+from sqlalchemy import and_, or_, func, text
 from sqlmodel import Session, select
 
 from app.api.modules.content.facets import build_facet_filter
@@ -56,6 +57,7 @@ class AssetQuery:
         self._sort: str = "created_at_desc"
         self._cursor: Optional[int] = None
         self._limit: int = 25
+        self._offset: int = 0
 
     def text(
         self,
@@ -99,23 +101,23 @@ class AssetQuery:
         quality_score_lte: Optional[float] = None,
         **facets_kwargs: Any,
     ) -> AssetQuery:
-        """Filter by source_metadata facets (JSONB containment)."""
+        """Filter by asset.facets (JSONB containment)."""
         facet_filter = build_facet_filter(language=language, **facets_kwargs)
         if facet_filter:
             self._conditions.append(
-                text("source_metadata @> :facets::jsonb").bindparams(
+                text("metadata @> :facets::jsonb").bindparams(
                     facets=json.dumps(facet_filter)
                 )
             )
         if quality_score_gte is not None:
             self._conditions.append(
-                text("(source_metadata->'facets'->>'quality_score')::float >= :quality_gte").bindparams(
+                text("(metadata->>'quality_score')::float >= :quality_gte").bindparams(
                     quality_gte=quality_score_gte
                 )
             )
         if quality_score_lte is not None:
             self._conditions.append(
-                text("(source_metadata->'facets'->>'quality_score')::float <= :quality_lte").bindparams(
+                text("(metadata->>'quality_score')::float <= :quality_lte").bindparams(
                     quality_lte=quality_score_lte
                 )
             )
@@ -178,10 +180,68 @@ class AssetQuery:
             self._conditions.append(Asset.parent_asset_id == parent_asset_id)
         return self
 
+    def user_id(self, user_id: Optional[int] = None) -> AssetQuery:
+        """Filter by user who created the asset."""
+        if user_id is not None:
+            self._conditions.append(Asset.user_id == user_id)
+        return self
+
+    def offset(self, offset: int = 0) -> AssetQuery:
+        """Set offset for pagination (use with limit for skip/limit)."""
+        self._offset = max(0, offset)
+        return self
+
     def exclude_superseded(self) -> AssetQuery:
         """Exclude superseded assets and children of superseded parents."""
         for clause in non_superseded_filter():
             self._conditions.append(clause)
+        return self
+
+    def annotation_value(
+        self,
+        run_ids: List[int],
+        field: str,
+        op: str,
+        value: Any,
+    ) -> AssetQuery:
+        """Filter by annotation value via EXISTS subquery. SQL pushdown for post-annotation filtering."""
+        if not run_ids:
+            return self
+        # Sanitize field: allow alphanumeric, underscore, dot for nested paths
+        if not re.match(r"^[a-zA-Z0-9_.]+$", field):
+            return self
+        base = (
+            "EXISTS (SELECT 1 FROM annotation WHERE annotation.asset_id = asset.id "
+            "AND annotation.run_id = ANY(:run_ids) AND "
+        )
+        if op == "==":
+            cond = text(
+                base + "(annotation.value->>:field)::text = :val"
+            ).bindparams(run_ids=run_ids, field=field, val=str(value))
+        elif op == "!=":
+            cond = text(
+                "NOT " + base + "(annotation.value->>:field)::text = :val"
+            ).bindparams(run_ids=run_ids, field=field, val=str(value))
+        elif op in (">=", ">", "<=", "<"):
+            cond = text(
+                base + "(annotation.value->>:field)::float " + op + " :val"
+            ).bindparams(run_ids=run_ids, field=field, val=float(value))
+        elif op == "contains":
+            pat = f"%{value}%"
+            cond = text(
+                base + "annotation.value->>:field ILIKE :pat"
+            ).bindparams(run_ids=run_ids, field=field, pat=pat)
+        elif op == "exists":
+            cond = text(
+                base + "annotation.value ? :field"
+            ).bindparams(run_ids=run_ids, field=field)
+        elif op == "not_exists":
+            cond = text(
+                "NOT " + base + "annotation.value ? :field"
+            ).bindparams(run_ids=run_ids, field=field)
+        else:
+            return self
+        self._conditions.append(cond)
         return self
 
     def sort(self, mode: str = "created_at_desc") -> AssetQuery:
@@ -213,8 +273,15 @@ class AssetQuery:
                 stmt = stmt.where(Asset.id < self._cursor)
             elif self._sort == "created_at_asc":
                 stmt = stmt.where(Asset.id > self._cursor)
+        if getattr(self, "_offset", 0) > 0:
+            stmt = stmt.offset(self._offset)
         stmt = stmt.limit(self._limit)
         return stmt
+
+    def count(self) -> int:
+        """Return total count matching the current conditions (ignores limit/offset/cursor)."""
+        stmt = select(func.count(Asset.id)).where(and_(*self._conditions))
+        return self.session.exec(stmt).one() or 0
 
     def execute(self) -> List[Asset]:
         """

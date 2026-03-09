@@ -970,9 +970,9 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
               title: file.name.replace(/\.[^/.]+$/, '') || 'Pasted Image',
               kind: 'image',
               blob_path: uploadResponse.object_name,
-              source_metadata: {
+              file_info: {
                 mime_type: file.type,
-                size: file.size
+                file_size: file.size
               }
             }
           })
@@ -1029,27 +1029,27 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
           // Minimal - just title and type
           formattedMessage += `Title: ${asset.title}\n`
           if (asset.kind) formattedMessage += `Type: ${asset.kind}\n`
-          if (asset.source_metadata && typeof asset.source_metadata === 'object') {
+          if (asset.file_info && typeof asset.file_info === 'object') {
             // Add key metadata for CSVs (columns, row count)
             if (asset.kind === 'csv' && 
-                'columns' in asset.source_metadata && 
-                Array.isArray(asset.source_metadata.columns)) {
-              formattedMessage += `Columns: ${asset.source_metadata.columns.join(', ')}\n`
-              if ('row_count' in asset.source_metadata && typeof asset.source_metadata.row_count === 'number') {
-                formattedMessage += `Rows: ${asset.source_metadata.row_count}\n`
+                'columns' in asset.file_info && 
+                Array.isArray(asset.file_info.columns)) {
+              formattedMessage += `Columns: ${asset.file_info.columns.join(', ')}\n`
+              if ('row_count' in asset.file_info && typeof asset.file_info.row_count === 'number') {
+                formattedMessage += `Rows: ${asset.file_info.row_count}\n`
               }
             }
           }
         } else if (contextDepth === 'previews') {
           // Smart preview - 500 chars or structured preview
-          if (asset.kind === 'csv' && asset.source_metadata && 
-              typeof asset.source_metadata === 'object' && 
-              'columns' in asset.source_metadata && 
-              Array.isArray(asset.source_metadata.columns)) {
+          if (asset.kind === 'csv' && asset.file_info && 
+              typeof asset.file_info === 'object' && 
+              'columns' in asset.file_info && 
+              Array.isArray(asset.file_info.columns)) {
             // For CSVs, show structure
-            formattedMessage += `CSV with ${asset.source_metadata.columns.length} columns: ${asset.source_metadata.columns.join(', ')}\n`
-            if ('row_count' in asset.source_metadata && typeof asset.source_metadata.row_count === 'number') {
-              formattedMessage += `Total rows: ${asset.source_metadata.row_count}\n`
+            formattedMessage += `CSV with ${asset.file_info.columns.length} columns: ${asset.file_info.columns.join(', ')}\n`
+            if ('row_count' in asset.file_info && typeof asset.file_info.row_count === 'number') {
+              formattedMessage += `Total rows: ${asset.file_info.row_count}\n`
             }
             // Add first few rows if available in text_content
             if (asset.text_content) {
@@ -1175,6 +1175,7 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
     const tempNum = temperature === '' ? undefined : Number(temperature)
     const response = await sendMessage(messageWithContext, {
       model_name: selectedModel,
+      provider_name: selectedProvider || undefined,
       temperature: Number.isFinite(tempNum as number) ? (tempNum as number) : undefined,
       thinking_enabled: thinkingEnabled,
       tools_enabled: toolsEnabled,

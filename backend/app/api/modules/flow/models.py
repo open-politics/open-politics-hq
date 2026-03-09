@@ -144,6 +144,11 @@ class FlowExecution(SQLModel, table=True):
     step_outputs: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Reentrant execution state (for async checkpoint at ANNOTATE)
+    current_step_index: int = Field(default=0)
+    execution_state: Dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSONB)
+    )
 
     flow: Optional[Flow] = Relationship(back_populates="executions")
     annotation_runs: List[AnnotationRun] = Relationship(

@@ -22,6 +22,37 @@ from app.api.global_utils import validate_infospace_access
 
 router = APIRouter()
 
+class MaterializeVfolderRequest(BaseModel):
+    """Request body for materializing a virtual folder as a real bundle."""
+    source_bundle_id: int
+    path_prefix: str = ""
+    name: str
+
+
+@router.post("/infospaces/{infospace_id}/bundles/from-vfolder", response_model=BundleRead, status_code=status.HTTP_201_CREATED)
+def materialize_virtual_folder(
+    *,
+    infospace_id: int,
+    request: MaterializeVfolderRequest,
+    db: Session = Depends(dependency_injection.get_db),
+    current_user = Depends(dependency_injection.get_current_user),
+    service: BundleService = Depends(dependency_injection.get_bundle_service),
+) -> Bundle:
+    """Create a real bundle from a virtual folder (path prefix within a source bundle)."""
+    validate_infospace_access(db, infospace_id, current_user.id)
+    try:
+        bundle = service.materialize_virtual_folder(
+            source_bundle_id=request.source_bundle_id,
+            path_prefix=request.path_prefix,
+            name=request.name,
+            infospace_id=infospace_id,
+            user_id=current_user.id,
+        )
+        return bundle
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
 @router.post("/infospaces/{infospace_id}/bundles", response_model=BundleRead, status_code=status.HTTP_201_CREATED)
 def create_bundle(
     *,

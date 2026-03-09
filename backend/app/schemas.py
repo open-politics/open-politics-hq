@@ -264,7 +264,8 @@ class AssetCreate(AssetBase):
     blob_path: Optional[str] = None
     cells: Optional[Dict[str, Any]] = None
     source_identifier: Optional[str] = None
-    source_metadata: Optional[Dict[str, Any]] = None
+    facets: Optional[Dict[str, Any]] = None
+    file_info: Optional[Dict[str, Any]] = None
     discovered_modalities: Optional[List[str]] = None
     event_timestamp: Optional[datetime] = None
     processing_status: Optional[ProcessingStatus] = None
@@ -277,7 +278,8 @@ class AssetUpdate(SQLModel):
     text_content: Optional[str] = None
     blob_path: Optional[str] = None
     source_identifier: Optional[str] = None
-    source_metadata: Optional[Dict[str, Any]] = None
+    facets: Optional[Dict[str, Any]] = None
+    file_info: Optional[Dict[str, Any]] = None
     event_timestamp: Optional[datetime] = None
 
 class AssetRead(AssetBase):
@@ -294,7 +296,8 @@ class AssetRead(AssetBase):
     blob_path: Optional[str] = None
     logical_path: Optional[str] = None
     source_identifier: Optional[str] = None
-    source_metadata: Optional[Dict[str, Any]] = None
+    facets: Optional[Dict[str, Any]] = None
+    file_info: Optional[Dict[str, Any]] = None
     content_hash: Optional[str] = None
     fragments: Optional[Dict[str, Any]] = None
     user_id: Optional[int] = None
@@ -857,7 +860,8 @@ class AssetPreview(SQLModel):
     updated_at: datetime
     text_content: Optional[str] = None
     blob_path: Optional[str] = None
-    source_metadata: Optional[Dict[str, Any]] = None
+    facets: Optional[Dict[str, Any]] = None
+    file_info: Optional[Dict[str, Any]] = None
     children: List["AssetPreview"] = []
     
     @computed_field
@@ -1076,6 +1080,7 @@ class ChatRequest(SQLModel):
     """Request for intelligence analysis chat."""
     messages: List[ChatMessage]
     model_name: str
+    provider_name: Optional[str] = None
     infospace_id: int
     stream: bool = False
     temperature: Optional[float] = None
@@ -1221,7 +1226,6 @@ class TreeNodeType(str, enum.Enum):
     BUNDLE = "bundle"
     ASSET = "asset"
     VIRTUAL_FOLDER = "virtual_folder"
-    BUNDLE_VIEW = "bundle_view"
 
 class TreeNode(SQLModel):
     """Minimal representation of a tree node for efficient tree rendering."""
@@ -1249,8 +1253,9 @@ class TreeNode(SQLModel):
     # Stub flag for assets
     stub: Optional[bool] = None
     
-    # Source metadata (for CSV rows and other special types)
-    source_metadata: Optional[Dict[str, Any]] = None
+    # Facets and file_info (for CSV rows and other special types)
+    facets: Optional[Dict[str, Any]] = None
+    file_info: Optional[Dict[str, Any]] = None
     
     # Rich preview data (CSV structure, bundle summary, etc.)
     preview: Optional[Dict[str, Any]] = None

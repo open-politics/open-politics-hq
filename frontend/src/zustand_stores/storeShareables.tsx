@@ -30,7 +30,8 @@ export interface AssetPreview {
   updated_at: string;
   text_content?: string | null;
   blob_path?: string | null;
-  source_metadata?: { [key: string]: any } | null;
+  facets?: { [key: string]: unknown } | null;
+  file_info?: { [key: string]: unknown } | null;
   children?: AssetPreview[];
   is_container: boolean;
 }

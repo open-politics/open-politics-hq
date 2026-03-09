@@ -138,8 +138,8 @@ export default function MonitoringDock({
         fields: promoteFields,
       } : undefined,
       configuration: {
-        ai_provider: selectedProvider,
-        ai_model: selectedModel,
+        provider: selectedProvider,
+        model: selectedModel,
         api_keys: apiKeys,
       },
     };

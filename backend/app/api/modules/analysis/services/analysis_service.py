@@ -13,21 +13,18 @@ from app.core.config import AppSettings
 
 from app.api.modules.annotation.services import AnnotationService
 from app.api.modules.content.services import AssetService
-from app.api.modules.foundation_service_providers.model_registry import ModelRegistryService
-from app.api.modules.analysis.protocols import AnalysisAdapterProtocol # Import the protocol
+from app.api.modules.analysis.protocols import AnalysisAdapterProtocol
 
 logger = logging.getLogger(__name__)
 
 class AnalysisService:
-    def __init__(self, session: Session, 
-                 model_registry: ModelRegistryService,
+    def __init__(self, session: Session,
                  annotation_service: AnnotationService,
                  asset_service: AssetService,
-                 current_user: Optional[User] = None, # Passed from deps if route requires auth
-                 settings: Optional[AppSettings] = None # Passed from deps
+                 current_user: Optional[User] = None,
+                 settings: Optional[AppSettings] = None,
                ):
         self.session = session
-        self.model_registry = model_registry
         self.annotation_service = annotation_service
         self.asset_service = asset_service
         self.current_user = current_user

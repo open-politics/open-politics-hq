@@ -46,6 +46,7 @@ export interface ChatMessage {
 
 export interface UseIntelligenceChatOptions {
   model_name?: string
+  provider_name?: string
   temperature?: number
   max_tokens?: number
   thinking_enabled?: boolean
@@ -103,6 +104,7 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
           { role: 'user', content }
         ],
         model_name: customOptions?.model_name || options.model_name || undefined as unknown as string,
+        provider_name: customOptions?.provider_name || options.provider_name || undefined,
         infospace_id: activeInfospace.id,
         stream: customOptions?.stream ?? options.stream ?? false,
         temperature: customOptions?.temperature ?? options.temperature,

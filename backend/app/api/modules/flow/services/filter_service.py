@@ -257,9 +257,9 @@ def _expression_to_asset_query(
 
     for rule in filter_expr.rules:
         field, op, val = rule.field, rule.operator, rule.value
-        if field == "source_metadata.facets.language" and op == FilterOperator.EQ and val:
+        if field == "facets.language" and op == FilterOperator.EQ and val:
             asset_query.facets(language=val)
-        elif field == "source_metadata.facets.quality_score":
+        elif field == "facets.quality_score":
             if op == FilterOperator.GE:
                 asset_query.facets(quality_score_gte=float(val))
             elif op == FilterOperator.LE:
@@ -283,29 +283,43 @@ def _expression_to_asset_query(
                 asset_query.fragments_contain({frag_key: {"value": val}})
             else:
                 asset_query.fragments_contain({key: val})
+        elif annotation_run_ids and _push_annotation_rule(asset_query, field, op, val, annotation_run_ids):
+            pass  # Pushed to SQL via annotation_value
         else:
             return False
     return True
 
 
+def _push_annotation_rule(
+    asset_query,
+    field: str,
+    op,
+    val: Any,
+    run_ids: List[int],
+) -> bool:
+    """Push a single annotation field rule to AssetQuery. Returns True if pushed."""
+    op_map = {
+        FilterOperator.EQ: "==",
+        FilterOperator.NE: "!=",
+        FilterOperator.GE: ">=",
+        FilterOperator.GT: ">",
+        FilterOperator.LE: "<=",
+        FilterOperator.LT: "<",
+        FilterOperator.CONTAINS: "contains",
+        FilterOperator.EXISTS: "exists",
+        FilterOperator.NOT_EXISTS: "not_exists",
+    }
+    sql_op = op_map.get(op)
+    if sql_op is None:
+        return False
+    if op not in (FilterOperator.EXISTS, FilterOperator.NOT_EXISTS) and val is None:
+        return False
+    asset_query.annotation_value(run_ids, field, sql_op, val if op not in (FilterOperator.EXISTS, FilterOperator.NOT_EXISTS) else None)
+    return True
+
+
 class FilterService:
     """Service for managing and applying filters across the system."""
-
-    def __init__(self):
-        self._saved_filters: Dict[str, FilterExpression] = {}
-
-    def save_filter(self, name: str, filter_expression: FilterExpression):
-        """Save a filter expression for reuse."""
-        self._saved_filters[name] = filter_expression
-        logger.info(f"Saved filter '{name}'")
-
-    def get_filter(self, name: str) -> Optional[FilterExpression]:
-        """Get a saved filter by name."""
-        return self._saved_filters.get(name)
-
-    def list_filters(self) -> List[str]:
-        """List all saved filter names."""
-        return list(self._saved_filters.keys())
 
     def apply_filter(
         self,

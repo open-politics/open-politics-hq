@@ -518,6 +518,8 @@ export function adaptSourceReadToSource(sourceRead: ClientSourceRead): Source {
 }
 
 export const adaptAssetReadToAsset = (clientAsset: ClientAssetRead): Asset => {
+    const facets = (clientAsset as { facets?: Record<string, unknown> }).facets ?? {};
+    const fileInfo = (clientAsset as { file_info?: Record<string, unknown> }).file_info ?? {};
     return {
         id: clientAsset.id,
         source_id: clientAsset.source_id,
@@ -525,7 +527,7 @@ export const adaptAssetReadToAsset = (clientAsset: ClientAssetRead): Asset => {
         title: clientAsset.title,
         kind: clientAsset.kind,
         text_content: clientAsset.text_content || "",
-        source_metadata: clientAsset.source_metadata || undefined,
+        source_metadata: { ...fileInfo, ...facets },
         event_timestamp: clientAsset.event_timestamp || undefined,
         created_at: clientAsset.created_at,
         content_hash: clientAsset.content_hash || undefined,

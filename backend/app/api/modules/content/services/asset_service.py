@@ -1,9 +1,10 @@
 import logging
 from typing import Optional, List, Dict, Any, Union
-from sqlmodel import Session, select
+from sqlmodel import Session, select, delete
+from sqlalchemy import update
 import asyncio
 
-from app.models import Asset, AssetKind, ProcessingStatus
+from app.models import Asset, AssetChunk, Annotation, AssetKind, ProcessingStatus
 from app.schemas import AssetCreate, AssetUpdate
 from app.api.modules.foundation_service_providers.base import StorageProvider
 from app.core.celery_app import celery
@@ -23,7 +24,7 @@ class AssetService:
         Creates a new asset with deduplication logic.
         
         NOTE: This service is now a pure data layer - it does NOT trigger processing.
-        Processing is managed by ContentIngestionService which calls this method.
+        Processing is managed by ProcessingService which calls this method.
         """
         if asset_create.user_id is None or asset_create.infospace_id is None:
             raise ValueError("user_id and infospace_id are required for asset creation")
@@ -78,10 +79,9 @@ class AssetService:
             # Only create versioned duplicate if hashes exist and differ
             if incoming_hash and existing_hash and incoming_hash != existing_hash:
                 # Versioned duplicate: chain to previous
-                sm = dict(asset_data.get("source_metadata") or {})
-                sm["previous_asset_id"] = existing_by_source.id
-                sm["version"] = (existing_by_source.source_metadata or {}).get("version", 1) + 1
-                asset_data["source_metadata"] = sm
+                file_info = dict(asset_data.get("file_info") or {})
+                file_info["version"] = (existing_by_source.file_info or {}).get("version", 1) + 1
+                asset_data["file_info"] = file_info
                 # Set first-class column too
                 asset_data["previous_asset_id"] = existing_by_source.id
                 logger.debug(f"Creating new version of asset {existing_by_source.id} (content changed)")
@@ -100,9 +100,9 @@ class AssetService:
                 # If also same source_identifier, we already handled above; else treat as duplicate-of with different source
                 if asset_data.get("source_identifier") == existing_by_hash.source_identifier:
                     return existing_by_hash
-                sm = dict(asset_data.get("source_metadata") or {})
-                sm["duplicate_of_asset_id"] = existing_by_hash.id
-                asset_data["source_metadata"] = sm
+                file_info = dict(asset_data.get("file_info") or {})
+                file_info["duplicate_of_asset_id"] = existing_by_hash.id
+                asset_data["file_info"] = file_info
         
         # Set default status if not already set
         if "processing_status" not in asset_data:
@@ -195,12 +195,12 @@ class AssetService:
 
     def reprocess_asset(self, asset_id: int, options: Optional[Dict[str, Any]] = None) -> bool:
         """
-        DEPRECATED: Use ContentIngestionService.reprocess_content() instead.
+        DEPRECATED: Use ProcessingService.reprocess_content() instead.
         This method is kept for backward compatibility only.
         """
         logger.warning(
             f"AssetService.reprocess_asset() is deprecated. "
-            f"Use ContentIngestionService.reprocess_content() instead."
+            f"Use ProcessingService.reprocess_content() instead."
         )
         
         asset = self.session.get(Asset, asset_id)
@@ -405,7 +405,8 @@ class AssetService:
                         text_content=asset.text_content,
                         blob_path=asset.blob_path,  # Shared storage
                         source_identifier=asset.source_identifier,
-                        source_metadata=asset.source_metadata,
+                        facets=asset.facets,
+                        file_info=asset.file_info,
                         event_timestamp=asset.event_timestamp,
                         stub=asset.stub,
                         user_id=user_id,
@@ -440,4 +441,53 @@ class AssetService:
             self.session.refresh(asset)
         
         logger.info(f"Successfully transferred {len(transferred_assets)} assets")
-        return transferred_assets 
+        return transferred_assets
+
+    def cascade_delete(self, asset_ids: set[int]) -> int:
+        """
+        Delete assets and all descendants. Clears chunks, annotations, previous_asset_id refs.
+        Caller must commit. Returns number of assets deleted.
+        """
+        if not asset_ids:
+            return 0
+
+        # Recursively collect all descendant asset IDs
+        def collect_children_recursive(parent_ids: set) -> set:
+            all_children: set[int] = set()
+            current_level = parent_ids
+            while current_level:
+                children = self.session.exec(
+                    select(Asset.id).where(Asset.parent_asset_id.in_(current_level))
+                ).all()
+                if not children:
+                    break
+                child_ids = set(children)
+                all_children.update(child_ids)
+                current_level = child_ids
+            return all_children
+
+        all_children = collect_children_recursive(asset_ids)
+        if all_children:
+            logger.info(f"Cascade delete: found {len(all_children)} child assets")
+            asset_ids = asset_ids | all_children
+
+        # Clear previous_asset_id where it points to assets we're deleting
+        self.session.exec(
+            update(Asset)
+            .where(Asset.previous_asset_id.in_(asset_ids))
+            .values(previous_asset_id=None)
+        )
+
+        # Delete asset chunks and annotations
+        self.session.exec(
+            delete(AssetChunk).where(AssetChunk.asset_id.in_(asset_ids))
+        )
+        self.session.exec(
+            delete(Annotation).where(Annotation.asset_id.in_(asset_ids))
+        )
+
+        # Bulk delete assets
+        result = self.session.exec(delete(Asset).where(Asset.id.in_(asset_ids)))
+        deleted = result.rowcount if hasattr(result, "rowcount") else len(asset_ids)
+        logger.info(f"Cascade delete: removed {deleted} assets")
+        return deleted

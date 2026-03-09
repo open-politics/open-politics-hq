@@ -12,8 +12,9 @@ with existing Source-based workflows. This service handles:
 
 import logging
 import json
+from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple, Union
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from sqlmodel import Session, select, func
 from fastapi import HTTPException
 
@@ -26,8 +27,8 @@ from app.models import (
 )
 from app.schemas import SourceCreate, SourceUpdate, SourceRead
 from app.api.global_utils import validate_infospace_access
-from app.api.modules.content.services.content_ingestion_service import ContentIngestionService
-from app.api.modules.content.tasks.ingest import process_source
+from app.api.modules.content.handlers import IngestionContext
+from app.api.modules.content.ingest import ingest
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -43,9 +44,8 @@ class SourceService:
     - Source status tracking and monitoring
     """
     
-    def __init__(self, session: Session, content_ingestion_service: Optional[ContentIngestionService] = None):
+    def __init__(self, session: Session):
         self.session = session
-        self.content_ingestion_service = content_ingestion_service or ContentIngestionService(session)
         logger.info("SourceService initialized")
     
     # ─────────────── SOURCE CRUD OPERATIONS ─────────────── #
@@ -89,7 +89,79 @@ class SourceService:
         
         logger.info(f"Source '{source.name}' (ID: {source.id}) created successfully")
         return source
-    
+
+    def ensure_inbox_source(
+        self,
+        infospace_id: int,
+        user_id: int,
+        bundle_id: int,
+        source_path: str,
+        interval_seconds: int = 900,
+    ) -> Tuple[Optional[Source], Optional[str], int]:
+        """
+        Ensure an inbox Source exists for the given directory.
+        Creates _inbox/ and README if needed, creates/updates Source record.
+
+        Returns:
+            (inbox_source, inbox_path_str, inbox_files_pending)
+        """
+        from app.api.modules.content.handlers.directory_import_handler import (
+            _get_dataset_name_from_path,
+        )
+        from app.api.modules.content.services.poll_handlers.inbox_poll_handler import (
+            prepare_inbox_directory,
+            count_inbox_pending_files,
+        )
+
+        inbox_dir = prepare_inbox_directory(Path(source_path))
+        inbox_path_str = str(inbox_dir)
+        dataset_name = _get_dataset_name_from_path(
+            source_path, settings.LOCAL_STORAGE_BASE_PATH
+        )
+
+        inbox_source = self.session.exec(
+            select(Source).where(
+                Source.infospace_id == infospace_id,
+                Source.kind == "directory_inbox",
+                Source.output_bundle_id == bundle_id,
+            )
+        ).first()
+
+        if not inbox_source:
+            inbox_source = Source(
+                name=f"Inbox: {dataset_name}",
+                kind="directory_inbox",
+                details={
+                    "inbox_path": inbox_path_str,
+                    "dataset_name": dataset_name,
+                    "source_path": source_path,
+                },
+                infospace_id=infospace_id,
+                user_id=user_id,
+                is_active=True,
+                poll_interval_seconds=interval_seconds,
+                output_bundle_id=bundle_id,
+                next_poll_at=datetime.now(timezone.utc) + timedelta(seconds=interval_seconds),
+            )
+            self.session.add(inbox_source)
+        else:
+            inbox_source.is_active = True
+            inbox_source.poll_interval_seconds = interval_seconds
+            self.session.add(inbox_source)
+
+        # Update details in case source_path changed
+        details = dict(inbox_source.details or {})
+        details["inbox_path"] = inbox_path_str
+        details["dataset_name"] = dataset_name
+        details["source_path"] = source_path
+        inbox_source.details = details
+
+        inbox_files_pending = count_inbox_pending_files(inbox_dir)
+        self.session.commit()
+        self.session.refresh(inbox_source)
+
+        return inbox_source, inbox_path_str, inbox_files_pending
+
     def get_source(
         self,
         source_id: int,
@@ -216,17 +288,24 @@ class SourceService:
         source = self.create_source(user_id, infospace_id, source_in)
         
         try:
-            # Extract discovery locator from source details
             locator = self._extract_locator_from_source(source)
-            
-            # Use unified discovery service
-            assets = await self.content_ingestion_service.ingest_content(
-                locator=locator,
-                infospace_id=infospace_id,
+            opts = {**(discovery_options or {}), **(processing_options or {})}
+
+            from app.api.modules.content.tasks.task_services import create_task_services
+            services = create_task_services(self.session)
+            context = IngestionContext(
+                session=self.session,
+                storage_provider=services.storage,
+                scraping_provider=services.scraping,
+                search_provider=services.search,
+                asset_service=services.asset,
+                bundle_service=services.bundle,
                 user_id=user_id,
-                bundle_id=bundle_id,
-                options={**(discovery_options or {}), **(processing_options or {})}
+                infospace_id=infospace_id,
+                settings=settings,
+                options=opts,
             )
+            assets = await ingest(context, locator, bundle_id=bundle_id, options=opts)
             
             # Link assets to the source
             for asset in assets:
@@ -343,7 +422,8 @@ class SourceService:
             return False
         
         try:
-            # Use existing Celery task for legacy processing
+            # Use existing Celery task for legacy processing (lazy import to avoid circular import with tasks.source_monitoring)
+            from app.api.modules.content.tasks.ingest import process_source
             process_source.delay(source.id, override_details)
             
             # Update source status
@@ -434,18 +514,9 @@ class SourceService:
     # ─────────────── UTILITY METHODS ─────────────── #
     
     def get_supported_source_kinds(self) -> List[str]:
-        """Get list of supported source kinds."""
-        return [
-            "url_list",
-            "rss_feed", 
-            "rss",  # Alternative RSS source kind
-            "search",
-            "url_monitor",
-            "site_discovery",
-            "text_block_ingest",
-            "upload_csv",
-            "upload_pdf"
-        ]
+        """Get list of supported source kinds from PollHandler registry."""
+        from app.api.modules.content.services.poll_handlers import registered_poll_kinds
+        return list(registered_poll_kinds())
     
     def validate_source_details(self, kind: str, details: Dict[str, Any]) -> bool:
         """Validate source details for a given kind."""
@@ -546,23 +617,172 @@ class SourceService:
         """
         Execute a single poll of a source.
         
-        Polls the source for new content (RSS, search, etc.) and creates Assets
-        in the source's output_bundle. Any Flows watching that bundle with
-        trigger_mode=on_arrival will be triggered by check_on_arrival_flows.
-        
-        Args:
-            source_id: Source to poll
-            user_id: Optional user context
-            runtime_api_keys: Optional API keys for search providers
-            
-        Returns:
-            Poll result with statistics
+        Polling is dispatched via the PollHandler registry (poll_handlers/).
+        This method is generic — it never branches on source.kind.
         """
-        # Delegate to StreamSourceService for the actual poll implementation
-        from app.api.modules.content.services.stream_source_service import StreamSourceService
-        
-        stream_service = StreamSourceService(self.session)
-        return await stream_service.execute_poll(source_id, user_id, runtime_api_keys)
+        from app.models import (
+            SourcePollHistory,
+            IngestionJob,
+            IngestionStatus,
+            Bundle,
+        )
+        from app.api.modules.content.services.bundle_service import BundleService
+        from app.api.modules.content.services.asset_service import AssetService
+        from app.api.modules.content.services.poll_handlers import (
+            get_poll_handler,
+            registered_poll_kinds,
+            PollResult,
+        )
+        from app.api.modules.foundation_service_providers.registry import (
+            get_storage_provider,
+            get_scraping_provider,
+            get_web_search_provider,
+        )
+
+        source = self.session.get(Source, source_id)
+        if not source:
+            raise ValueError(f"Source {source_id} not found")
+
+        handler_cls = get_poll_handler(source.kind)
+        if handler_cls is None:
+            raise ValueError(
+                f"No poll handler registered for source kind '{source.kind}'. "
+                f"Registered kinds: {list(registered_poll_kinds())}"
+            )
+
+        storage_provider = get_storage_provider(settings)
+        scraping_provider = get_scraping_provider(settings)
+        try:
+            search_provider = get_web_search_provider(settings)
+        except Exception as e:
+            logger.warning("Search provider init failed: %s", e)
+            search_provider = None
+        bundle_service = BundleService(self.session)
+        asset_service = AssetService(self.session, storage_provider)
+        context = IngestionContext(
+            session=self.session,
+            storage_provider=storage_provider,
+            scraping_provider=scraping_provider,
+            search_provider=search_provider,
+            asset_service=asset_service,
+            bundle_service=bundle_service,
+            user_id=source.user_id,
+            infospace_id=source.infospace_id,
+            settings=settings,
+            options=source.details.get("processing_options", {}).copy(),
+        )
+        context.options["cursor_state"] = source.cursor_state
+
+        job = IngestionJob(
+            infospace_id=source.infospace_id,
+            user_id=source.user_id,
+            source_locator=(
+                source.details.get("feed_url")
+                or (source.details.get("search_config") or {}).get("query")
+                or source.details.get("inbox_path")
+                or source.details.get("source_path")
+                or str(source.id)
+            ),
+            kind=f"source_poll:{source.kind}",
+            source_id=source.id,
+            status=IngestionStatus.PROCESSING,
+            started_at=datetime.now(timezone.utc),
+        )
+        self.session.add(job)
+        poll_history = SourcePollHistory(
+            source_id=source_id,
+            started_at=datetime.now(timezone.utc),
+            status="processing",
+            cursor_before=source.cursor_state.copy(),
+        )
+        self.session.add(poll_history)
+        source.status = SourceStatus.PROCESSING
+        source.updated_at = datetime.now(timezone.utc)
+        self.session.add(source)
+        self.session.commit()
+
+        try:
+            handler = handler_cls()
+            result: PollResult = await handler.poll(
+                source=source,
+                context=context,
+                runtime_options={"runtime_api_keys": runtime_api_keys or {}},
+            )
+            ingested_count = 0
+            for asset in result.assets:
+                asset.source_id = source.id
+                if source.output_bundle_id:
+                    asset.bundle_id = source.output_bundle_id
+                    bundle = self.session.get(Bundle, source.output_bundle_id)
+                    if bundle:
+                        bundle.asset_count = (bundle.asset_count or 0) + 1
+                        bundle.updated_at = datetime.now(timezone.utc)
+                        self.session.add(bundle)
+                self.session.add(asset)
+                ingested_count += 1
+
+            source.cursor_state.update(result.cursor_update)
+            source.items_last_poll = len(result.assets)
+            source.total_items_ingested += ingested_count
+            source.last_poll_at = datetime.now(timezone.utc)
+            if source.poll_interval_seconds:
+                source.next_poll_at = datetime.now(timezone.utc) + timedelta(
+                    seconds=source.poll_interval_seconds
+                )
+            source.consecutive_failures = 0
+            source.status = SourceStatus.PENDING
+            job.status = IngestionStatus.COMPLETED
+            job.processed_files = ingested_count
+            job.completed_at = datetime.now(timezone.utc)
+            job.cursor_state = {
+                "summary": result.summary,
+                "stage": "completed",
+                "progress_pct": 100,
+            }
+            poll_history.completed_at = datetime.now(timezone.utc)
+            poll_history.status = "success"
+            poll_history.items_found = len(result.assets)
+            poll_history.items_ingested = ingested_count
+            poll_history.cursor_after = source.cursor_state.copy()
+            self.session.add(source)
+            self.session.add(job)
+            self.session.add(poll_history)
+            self.session.commit()
+
+            for action in result.post_commit_actions:
+                try:
+                    action()
+                except Exception as post_err:
+                    logger.warning("Post-commit action failed: %s", post_err)
+            logger.info(
+                "Source %s poll completed: %d items ingested (%s)",
+                source_id, ingested_count, result.summary,
+            )
+            new_asset_ids = [a.id for a in result.assets]
+            return {
+                "status": "success",
+                "items_found": len(result.assets),
+                "items_ingested": ingested_count,
+                "job_id": job.id,
+                "new_asset_ids": new_asset_ids,
+            }
+        except Exception as e:
+            source.status = SourceStatus.FAILED
+            source.consecutive_failures += 1
+            source.last_error_at = datetime.now(timezone.utc)
+            source.error_message = str(e)
+            job.status = IngestionStatus.FAILED
+            job.error_message = str(e)[:500]
+            job.completed_at = datetime.now(timezone.utc)
+            poll_history.completed_at = datetime.now(timezone.utc)
+            poll_history.status = "failed"
+            poll_history.error_message = str(e)
+            self.session.add(source)
+            self.session.add(job)
+            self.session.add(poll_history)
+            self.session.commit()
+            logger.error("Source %s poll failed: %s", source_id, e)
+            raise
     
     def get_stream_stats(self, source_id: int, user_id: int, infospace_id: int) -> Dict[str, Any]:
         """

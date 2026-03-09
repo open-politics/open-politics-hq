@@ -136,6 +136,7 @@ export default function LocalStorageImport() {
         const res = await StorageService.browseStorage({
           infospaceId: activeInfospace.id,
           path: path ?? undefined,
+          includeCounts: false,
         });
         setBrowseData({
           current_path: res.current_path,
@@ -279,7 +280,7 @@ export default function LocalStorageImport() {
                             <FolderOpen className="h-5 w-5 text-amber-500 flex-shrink-0" />
                             <span className="truncate">{entry.name}</span>
                             <span className="text-xs text-muted-foreground flex-shrink-0">
-                              {entry.file_count ?? 0} files
+                              {`${entry.file_count ?? 0}${entry.counts_capped ? '+' : ''} files`}
                               {(entry.importable_count ?? 0) > 0 &&
                                 ` (${entry.importable_count} importable)`}
                               {(entry.size_bytes ?? 0) > 0 && ` • ${formatBytes(entry.size_bytes!)}`}

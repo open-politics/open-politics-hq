@@ -406,8 +406,8 @@ async def get_profile_picture(user_id: int, filename: str, session: SessionDep) 
     
     try:
         # Get storage provider (we'll need to create this dependency)
-        from app.api.modules.foundation_service_providers.factory import create_storage_provider
-        storage_provider = create_storage_provider(settings)
+        from app.api.modules.foundation_service_providers.registry import get_storage_provider
+        storage_provider = get_storage_provider(settings)
         
         # Get file stream from storage
         file_stream = await storage_provider.get_file(object_name)
@@ -464,8 +464,8 @@ async def get_background_image(user_id: int, filename: str, session: SessionDep,
     
     try:
         # Get storage provider
-        from app.api.modules.foundation_service_providers.factory import create_storage_provider
-        storage_provider = create_storage_provider(settings)
+        from app.api.modules.foundation_service_providers.registry import get_storage_provider
+        storage_provider = get_storage_provider(settings)
         
         # Get file stream from storage
         file_stream = await storage_provider.get_file(object_name)

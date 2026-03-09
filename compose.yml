@@ -22,7 +22,9 @@ services:
       - db
     env_file:
       - .env
-    command: ["fastapi", "run", "--workers", "4", "--host", "0.0.0.0", "--port", "${BACKEND_PORT}"]
+    environment:
+      - PYTHONPATH=/app
+    command: ["sh", "-c", "bash /app/prestart.sh && exec uvicorn app.main:app --workers 4 --host 0.0.0.0 --port ${BACKEND_PORT}"]
     build:
       context: ./backend
       args:
@@ -71,6 +73,31 @@ services:
     env_file:
       - .env
     command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info", "-P", "prefork", "--concurrency=4"]
+    volumes:
+      - ./backend:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  celery_beat:
+    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+    build:
+      context: ./backend
+      args:
+        INSTALL_DEV: ${INSTALL_DEV-false}
+    restart: always
+    networks:
+      - default
+    depends_on:
+      - db
+      - redis
+      - backend
+    env_file:
+      - .env
+    command: >
+      celery -A app.core.celery_app.celery beat
+      --loglevel=info
+      --pidfile=/tmp/celerybeat.pid
+      --schedule=/tmp/celerybeat-schedule
     volumes:
       - ./backend:/app
     extra_hosts:

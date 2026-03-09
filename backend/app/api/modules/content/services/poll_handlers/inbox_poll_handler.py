@@ -37,6 +37,58 @@ from . import PollResult, register_poll_handler
 
 logger = logging.getLogger(__name__)
 
+_INBOX_README = """\
+# Version Inbox
+
+Drop files here to add them to the dataset.
+
+**Automatic version detection:**
+- Files with the same name as an existing asset are treated as new versions.
+- Add a `{filename}.meta.json` sidecar to explicitly declare what a file supersedes:
+
+```json
+{{
+  "supersedes": "relative/path/to/old_document.pdf",
+  "reason": "Less redacted version",
+  "version_label": "v2"
+}}
+```
+
+- Duplicate files (same content hash) are automatically skipped.
+- Files with a version-like suffix (e.g. `report_v2.pdf`) are flagged as
+  potential versions of `report.pdf` for confirmation in the UI.
+
+**Processing:**
+- Files are checked every 15 minutes (configurable via inbox_interval_seconds).
+- After import, files are moved to `_processed/{date}/`.
+"""
+
+
+def prepare_inbox_directory(source_path: Path) -> Path:
+    """Create _inbox subdirectory and README if needed. Returns inbox dir path."""
+    inbox_dir = Path(source_path).resolve() / "_inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    readme_path = inbox_dir / "README.md"
+    if not readme_path.exists():
+        readme_path.write_text(_INBOX_README)
+    return inbox_dir
+
+
+def count_inbox_pending_files(inbox_dir: Path) -> int:
+    """Count importable files in inbox (excluding .meta.json sidecars)."""
+    try:
+        from app.api.modules.content.types import importable_extensions
+
+        exts = importable_extensions()
+        return sum(
+            1
+            for f in inbox_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in exts and not f.name.endswith(".meta.json")
+        )
+    except OSError:
+        return 0
+
+
 _STABILITY_SECONDS = 30
 _VERSION_SUFFIX_RE = re.compile(
     r"^(?P<stem>.+?)(?:[-_ ]?v\d+|[-_ ]\d{4}[-]\d{2}[-]\d{2})$",
@@ -244,10 +296,10 @@ class InboxPollHandler:
             file_path, file_hash, context, source, bundle, sidecar=sidecar,
         )
         if candidate:
-            meta = dict(asset.source_metadata or {})
-            meta["potential_supersedes"] = candidate.id
-            meta["potential_supersedes_title"] = candidate.title
-            asset.source_metadata = meta
+            file_info = dict(asset.file_info or {})
+            file_info["potential_supersedes"] = candidate.id
+            file_info["potential_supersedes_title"] = candidate.title
+            asset.file_info = file_info
 
         return asset
 
@@ -269,18 +321,26 @@ class InboxPollHandler:
         """Create a new asset that supersedes *old_asset*."""
         old_asset.is_superseded = True
         context.session.add(old_asset)
+        # Cascade: mark children as having a superseded parent
+        from sqlalchemy import update as sql_update
+
+        context.session.execute(
+            sql_update(Asset)
+            .where(Asset.parent_asset_id == old_asset.id)
+            .values(parent_is_superseded=True)
+        )
 
         asset = self._build_asset(file_path, file_hash, context, source, bundle)
         asset.previous_asset_id = old_asset.id
 
-        meta = dict(asset.source_metadata or {})
-        meta["supersedes_asset_id"] = old_asset.id
+        file_info = dict(asset.file_info or {})
+        file_info["supersedes_asset_id"] = old_asset.id
         if sidecar:
             if sidecar.get("reason"):
-                meta["version_reason"] = sidecar["reason"]
+                file_info["version_reason"] = sidecar["reason"]
             if sidecar.get("version_label"):
-                meta["version_label"] = sidecar["version_label"]
-        asset.source_metadata = meta
+                file_info["version_label"] = sidecar["version_label"]
+        asset.file_info = file_info
 
         logger.info(
             "Version link: %s supersedes asset %d (%s)",
@@ -300,10 +360,10 @@ class InboxPollHandler:
     ) -> Asset:
         asset = self._build_asset(file_path, file_hash, context, source, bundle)
         if sidecar:
-            meta = dict(asset.source_metadata or {})
+            file_info = dict(asset.file_info or {})
             if sidecar.get("supersedes"):
-                meta["unresolved_supersedes"] = sidecar["supersedes"]
-            asset.source_metadata = meta
+                file_info["unresolved_supersedes"] = sidecar["supersedes"]
+            asset.file_info = file_info
         return asset
 
     def _build_asset(
@@ -334,11 +394,11 @@ class InboxPollHandler:
             logical_path=file_path.name,
             content_hash=file_hash,
             processing_status=ProcessingStatus.PENDING,
-            source_metadata={
+            file_info={
                 "ingestion_method": "inbox",
                 "source_path": str(file_path),
                 "copy_mode": False,
-                "file": file_meta,
+                **file_meta,
             },
         )
 

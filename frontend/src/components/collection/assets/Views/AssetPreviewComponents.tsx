@@ -78,7 +78,7 @@ export const CompactWebPreview: React.FC<CompactWebPreviewProps> = ({ asset, cla
 
           let featuredImage = imageAssets.find(img => 
             img.part_index === 0 && 
-            img.source_metadata?.image_role === 'featured'
+            img.file_info?.image_role === 'featured'
           );
 
           if (!featuredImage) {
@@ -443,10 +443,10 @@ export const CompactPDFPreview: React.FC<CompactPDFPreviewProps> = ({ asset, cla
         
         if (asset.text_content) {
           text = asset.text_content.substring(0, 120);
-        } else if (asset.source_metadata?.first_page_text) {
-          text = String(asset.source_metadata.first_page_text).substring(0, 120);
-        } else if (asset.source_metadata?.extracted_text) {
-          text = String(asset.source_metadata.extracted_text).substring(0, 120);
+        } else if (asset.file_info?.first_page_text) {
+          text = String(asset.file_info.first_page_text).substring(0, 120);
+        } else if (asset.file_info?.extracted_text) {
+          text = String(asset.file_info.extracted_text).substring(0, 120);
         }
 
         if (text.trim()) {
@@ -482,7 +482,7 @@ export const CompactPDFPreview: React.FC<CompactPDFPreviewProps> = ({ asset, cla
     );
   }
 
-  const pageCount = asset.source_metadata?.page_count as number | undefined;
+  const pageCount = asset.file_info?.page_count as number | undefined;
 
   return (
     <div className={cn("h-16 bg-muted/30 rounded  p-2 overflow-hidden", className)}>

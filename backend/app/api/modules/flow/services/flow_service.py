@@ -417,71 +417,88 @@ class FlowService:
     
     def run_execution(self, execution_id: int) -> FlowExecution:
         """
-        Execute a FlowExecution (called by Celery task).
-        
-        Runs each step in sequence, updating step_outputs as it goes.
+        Execute a FlowExecution (reentrant state machine).
+        Resumes from current_step_index when status is WAITING.
+        Returns early at ANNOTATE checkpoint; resume_flow_execution continues when annotation completes.
         """
         execution = self.session.get(FlowExecution, execution_id)
         if not execution:
             raise ValueError(f"FlowExecution {execution_id} not found")
-        
         flow = self.session.get(Flow, execution.flow_id)
         if not flow:
             raise ValueError(f"Flow {execution.flow_id} not found")
-        
-        # Update execution status
-        execution.status = RunStatus.RUNNING
-        execution.started_at = datetime.now(timezone.utc)
-        self.session.add(execution)
-        self.session.commit()
-        
+
+        state = execution.execution_state or {}
+        current_asset_ids = set(state.get("current_asset_ids", execution.input_asset_ids))
+        annotation_run_ids = state.get("annotation_run_ids", [])
+
+        if execution.status == RunStatus.WAITING:
+            execution.status = RunStatus.RUNNING
+            self.session.add(execution)
+            self.session.commit()
+
+        if execution.status == RunStatus.PENDING:
+            execution.status = RunStatus.RUNNING
+            execution.started_at = datetime.now(timezone.utc)
+            self.session.add(execution)
+            self.session.commit()
+
         try:
-            # Get current asset set
-            current_asset_ids = set(execution.input_asset_ids)
-            
             if not current_asset_ids:
                 logger.info(f"FlowExecution {execution_id}: No assets to process")
                 execution.status = RunStatus.COMPLETED
                 execution.completed_at = datetime.now(timezone.utc)
+                execution.output_asset_ids = []
                 self.session.add(execution)
                 self.session.commit()
                 self._update_flow_stats(flow, execution)
                 return execution
-            
-            # Execute each step
-            for step_index, step_config in enumerate(flow.steps):
+
+            start_index = execution.current_step_index
+            for step_index in range(start_index, len(flow.steps)):
+                step_config = flow.steps[step_index]
                 step_type = step_config.get("type", "").upper()
-                
                 logger.info(f"FlowExecution {execution_id}: Running step {step_index} ({step_type})")
-                
+
                 step_output = self._execute_step(
                     step_type=step_type,
                     step_config=step_config,
                     asset_ids=list(current_asset_ids),
+                    annotation_run_ids=annotation_run_ids,
                     execution=execution,
                     flow=flow,
                 )
-                
-                # Store step output
+
                 execution.step_outputs[str(step_index)] = step_output
-                
-                # Update current asset set based on step output
+
+                if step_output.get("checkpoint") == "waiting_annotation":
+                    annotation_run_ids.append(step_output["run_id"])
+                    execution.current_step_index = step_index + 1
+                    execution.execution_state = {
+                        "current_asset_ids": list(current_asset_ids),
+                        "annotation_run_ids": annotation_run_ids,
+                        "pending_run_id": step_output["run_id"],
+                    }
+                    execution.status = RunStatus.WAITING
+                    self.session.add(execution)
+                    self.session.commit()
+                    return execution
+
                 if "passed_asset_ids" in step_output:
                     current_asset_ids = set(step_output["passed_asset_ids"])
                 elif "routed_asset_ids" in step_output:
                     current_asset_ids = set(step_output["routed_asset_ids"])
-                
+
                 self.session.add(execution)
                 self.session.commit()
-            
-            # Update cursor state with processed assets
+
             self._update_cursor(flow, list(execution.input_asset_ids))
-            
-            # Mark execution as complete
             execution.status = RunStatus.COMPLETED
             execution.completed_at = datetime.now(timezone.utc)
             execution.output_asset_ids = list(current_asset_ids)
-            
+            execution.execution_state = {}
+            execution.current_step_index = 0
+
         except Exception as e:
             logger.error(f"FlowExecution {execution_id} failed: {e}", exc_info=True)
             execution.status = RunStatus.FAILED
@@ -489,13 +506,11 @@ class FlowService:
             execution.error_message = str(e)
             flow.consecutive_failures += 1
             flow.status = FlowStatus.ERROR if flow.consecutive_failures >= 3 else flow.status
-        
+
         self.session.add(execution)
         self.session.add(flow)
         self.session.commit()
-        
         self._update_flow_stats(flow, execution)
-        
         return execution
     
     def _execute_step(
@@ -503,6 +518,7 @@ class FlowService:
         step_type: str,
         step_config: Dict[str, Any],
         asset_ids: List[int],
+        annotation_run_ids: List[int],
         execution: FlowExecution,
         flow: Flow,
     ) -> Dict[str, Any]:
@@ -513,11 +529,11 @@ class FlowService:
         if step_type == "ANNOTATE":
             return self._execute_annotate_step(step_config, asset_ids, execution, flow)
         elif step_type == "FILTER":
-            return self._execute_filter_step(step_config, asset_ids, execution)
+            return self._execute_filter_step(step_config, asset_ids, execution, annotation_run_ids)
         elif step_type == "CURATE":
-            return self._execute_curate_step(step_config, asset_ids, execution, flow)
+            return self._execute_curate_step(step_config, asset_ids, execution, flow, annotation_run_ids)
         elif step_type == "ROUTE":
-            return self._execute_route_step(step_config, asset_ids, execution, flow)
+            return self._execute_route_step(step_config, asset_ids, execution, flow, annotation_run_ids)
         elif step_type == "EMBED":
             return self._execute_embed_step(step_config, asset_ids, execution, flow)
         elif step_type == "ANALYZE":
@@ -534,9 +550,8 @@ class FlowService:
     ) -> Dict[str, Any]:
         """
         Execute an ANNOTATE step.
-        
-        This step creates an AnnotationRun and processes it inline (synchronously)
-        to ensure annotations are available for subsequent FILTER/CURATE steps.
+        Queues the annotation run for async processing and returns a checkpoint.
+        Flow resumes when process_annotation_run completes (via resume_flow_execution hook).
         """
         schema_ids = step_config.get("schema_ids", [])
         config = step_config.get("config", {})
@@ -544,7 +559,6 @@ class FlowService:
         if not schema_ids:
             raise ValueError("ANNOTATE step requires schema_ids")
         
-        # Create an AnnotationRun for this step
         from app.schemas import AnnotationRunCreate
         
         follow_on_version_change = config.get("follow_on_version_change", False)
@@ -557,67 +571,41 @@ class FlowService:
             follow_on_version_change=follow_on_version_change,
         )
         
-        # Initialize annotation service if needed
         if not self.annotation_service:
             from app.api.modules.content.services.asset_service import AssetService
-            from app.api.modules.foundation_service_providers.model_registry import ModelRegistryService
-            asset_service = AssetService(self.session)
-            model_registry = ModelRegistryService()
+            from app.api.modules.foundation_service_providers.registry import get_storage_provider
+            from app.core.config import settings as app_settings
+            storage_provider = get_storage_provider(app_settings)
+            asset_service = AssetService(self.session, storage_provider)
             self.annotation_service = AnnotationService(
-                self.session, model_registry, asset_service
+                session=self.session, asset_service=asset_service
             )
         
-        # Create the run with flow_step type, but DON'T queue Celery task
-        # We'll process inline to ensure completion before next step
+        # Create run without queueing (we'll set flow_execution_id before queueing)
         annotation_run = self.annotation_service.create_run(
             user_id=flow.user_id,
             infospace_id=flow.infospace_id,
             run_in=run_in,
-            queue_task=False,  # Don't queue - we'll process inline
+            queue_task=False,
         )
         
-        # Mark as flow_step run and link to execution
         annotation_run.run_type = RunType.FLOW_STEP
         annotation_run.flow_execution_id = execution.id
         self.session.add(annotation_run)
         self.session.commit()
+        self.session.refresh(annotation_run)
         
-        # Process the annotation run inline (synchronously)
-        # This ensures annotations exist before FILTER/CURATE steps run
-        logger.info(f"FlowExecution {execution.id}: Processing annotation run {annotation_run.id} inline")
-        
-        try:
-            from app.api.modules.annotation.tasks.annotate import process_annotation_run
-            # Call the task function directly (not .delay()) for synchronous execution
-            process_annotation_run(annotation_run.id)
-            
-            # Refresh to get updated status
-            self.session.refresh(annotation_run)
-            
-            if annotation_run.status not in [RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_ERRORS]:
-                logger.warning(
-                    f"FlowExecution {execution.id}: Annotation run {annotation_run.id} "
-                    f"finished with status {annotation_run.status}"
-                )
-        except Exception as e:
-            logger.error(
-                f"FlowExecution {execution.id}: Annotation run {annotation_run.id} failed: {e}",
-                exc_info=True
-            )
-            # Update run status
-            annotation_run.status = RunStatus.FAILED
-            annotation_run.error_message = str(e)
-            self.session.add(annotation_run)
-            self.session.commit()
-            raise
+        # Queue for async processing
+        from app.api.modules.annotation.tasks.annotate import process_annotation_run
+        process_annotation_run.delay(annotation_run.id)
+        logger.info(f"FlowExecution {execution.id}: Queued annotation run {annotation_run.id} (async)")
         
         return {
             "type": "ANNOTATE",
             "run_id": annotation_run.id,
-            "run_status": annotation_run.status.value if annotation_run.status else None,
+            "checkpoint": "waiting_annotation",
             "schema_ids": schema_ids,
             "asset_count": len(asset_ids),
-            "passed_asset_ids": asset_ids,  # All assets pass through
         }
     
     def _execute_ingest_step(
@@ -645,7 +633,7 @@ class FlowService:
             }
 
         source = self.session.get(Source, source_id)
-        if not source or source.infospace_id != execution.infospace_id:
+        if not source or source.infospace_id != flow.infospace_id:
             return {
                 "type": "INGEST",
                 "error": "Source not found",
@@ -662,7 +650,7 @@ class FlowService:
             row = self.session.exec(
                 select(func.coalesce(func.max(Asset.id), 0)).where(
                     Asset.bundle_id == bundle_id,
-                    Asset.infospace_id == execution.infospace_id,
+                    Asset.infospace_id == flow.infospace_id,
                 )
             ).first()
             max_id_before = row[0] if row else 0
@@ -691,7 +679,7 @@ class FlowService:
             select(Asset.id)
             .where(
                 Asset.bundle_id == bundle_id,
-                Asset.infospace_id == execution.infospace_id,
+                Asset.infospace_id == flow.infospace_id,
                 Asset.id > max_id_before,
             )
             .order_by(Asset.id.asc())
@@ -709,6 +697,7 @@ class FlowService:
         step_config: Dict[str, Any],
         asset_ids: List[int],
         execution: FlowExecution,
+        annotation_run_ids: List[int],
     ) -> Dict[str, Any]:
         """
         Execute a FILTER step.
@@ -746,15 +735,14 @@ class FlowService:
         
         # Build filter expression
         filter_expr = self.filter_service.create_from_config({"expression": expression_config})
-
-        # Collect ALL annotation run IDs from previous steps (not just immediate predecessor)
-        annotation_run_ids = self._collect_annotation_run_ids(execution)
         filter_mode = "pre_annotation" if not annotation_run_ids else "post_annotation"
 
         # Try SQL pushdown via AssetQuery when filter is compatible
+        flow = self.session.get(Flow, execution.flow_id)
+        infospace_id = flow.infospace_id if flow else 0
         passed_ids = self.filter_service.apply_filter_sql(
             self.session,
-            execution.infospace_id,
+            infospace_id,
             asset_ids,
             filter_expr,
             annotation_run_ids,
@@ -770,7 +758,8 @@ class FlowService:
                 if not asset:
                     rejected_ids.append(asset_id)
                     continue
-                context = self._build_filter_context(asset, annotation_run_ids)
+                from app.api.asset_context_builder import build_asset_context
+                context = build_asset_context(self.session, asset, annotation_run_ids)
                 try:
                     if filter_expr.evaluate(context):
                         passed_ids.append(asset_id)
@@ -797,73 +786,13 @@ class FlowService:
                 run_ids.append(step_output["run_id"])
         return run_ids
     
-    def _build_filter_context(self, asset: Asset, annotation_run_ids: List[int]) -> Dict[str, Any]:
-        """
-        Build comprehensive filter context for an asset.
-        
-        This provides all available fields for filtering, whether pre or post annotation.
-        """
-        # Core asset fields
-        context = {
-            "asset_id": asset.id,
-            "title": asset.title or "",
-            "kind": asset.kind.value if asset.kind else None,
-            "url": asset.url or "",
-            "source_identifier": asset.source_identifier or "",
-            "source_id": asset.source_id,
-            "created_at": asset.created_at.isoformat() if asset.created_at else None,
-            "updated_at": asset.updated_at.isoformat() if asset.updated_at else None,
-            "tags": asset.tags or [],
-        }
-        
-        # Text content for keyword/regex matching (truncate for performance)
-        if asset.text_content:
-            # Provide full text for matching, but also a preview
-            context["text_content"] = asset.text_content
-            context["text_preview"] = asset.text_content[:500] if len(asset.text_content) > 500 else asset.text_content
-            context["text_length"] = len(asset.text_content)
-        else:
-            context["text_content"] = ""
-            context["text_preview"] = ""
-            context["text_length"] = 0
-        
-        # Source metadata (flattened for easy access)
-        if asset.source_metadata:
-            context["source_metadata"] = asset.source_metadata
-            # Also flatten common fields for convenience
-            for key in ["author", "published_date", "feed_title", "domain", "language"]:
-                if key in asset.source_metadata:
-                    context[f"source_{key}"] = asset.source_metadata[key]
-        
-        # Curated fragments (already promoted annotation values)
-        if asset.fragments:
-            for frag_key, frag_data in asset.fragments.items():
-                # Extract just the value from fragment structure
-                if isinstance(frag_data, dict) and "value" in frag_data:
-                    context[frag_key] = frag_data["value"]
-                else:
-                    context[frag_key] = frag_data
-        
-        # Add annotation values from all previous ANNOTATE steps
-        for run_id in annotation_run_ids:
-            annotations = self.session.exec(
-                select(Annotation).where(
-                    Annotation.run_id == run_id,
-                    Annotation.asset_id == asset.id
-                )
-            ).all()
-            for ann in annotations:
-                if ann.value:
-                    context.update(ann.value)
-        
-        return context
-    
     def _execute_curate_step(
         self,
         step_config: Dict[str, Any],
         asset_ids: List[int],
         execution: FlowExecution,
         flow: Optional[Flow] = None,
+        annotation_run_ids: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
         """
         Execute a CURATE step - promote annotation fields to asset.fragments or trigger graph resolution.
@@ -880,7 +809,8 @@ class FlowService:
 
         if target == "graph":
             return self._execute_curate_graph(
-                step_config, asset_ids, execution, flow, fields_to_curate, graph_id
+                step_config, asset_ids, execution, flow, fields_to_curate, graph_id,
+                annotation_run_ids or self._collect_annotation_run_ids(execution),
             )
 
         if not fields_to_curate:
@@ -890,10 +820,8 @@ class FlowService:
                 "passed_asset_ids": asset_ids,
             }
         
-        # Collect ALL annotation run IDs from previous steps
-        annotation_run_ids = self._collect_annotation_run_ids(execution)
-        
-        if not annotation_run_ids:
+        run_ids = annotation_run_ids or self._collect_annotation_run_ids(execution)
+        if not run_ids:
             logger.warning("CURATE step requires at least one preceding ANNOTATE step")
             return {
                 "type": "CURATE",
@@ -913,7 +841,7 @@ class FlowService:
             fragments = asset.fragments or {}
             
             # Search for fields across ALL annotation runs from this execution
-            for run_id in annotation_run_ids:
+            for run_id in run_ids:
                 annotations = self.session.exec(
                     select(Annotation).where(
                         Annotation.run_id == run_id,
@@ -960,13 +888,14 @@ class FlowService:
         flow: Optional[Flow],
         fields_to_curate: List[str],
         graph_id: Optional[int],
+        annotation_run_ids: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
         """
         CURATE target=graph: extract entities from annotations and run entity resolution.
         Creates FragmentCuration records for audit trail to source annotation run.
         """
-        annotation_run_ids = self._collect_annotation_run_ids(execution)
-        if not annotation_run_ids:
+        run_ids = annotation_run_ids or self._collect_annotation_run_ids(execution)
+        if not run_ids:
             return {
                 "type": "CURATE",
                 "target": "graph",
@@ -989,7 +918,7 @@ class FlowService:
         annotation_entity_map: List[tuple] = []  # (annotation_id, (name, type))
 
         for asset_id in asset_ids:
-            for run_id in annotation_run_ids:
+            for run_id in run_ids:
                 annotations = self.session.exec(
                     select(Annotation).where(
                         Annotation.run_id == run_id,
@@ -1017,21 +946,16 @@ class FlowService:
                 "passed_asset_ids": asset_ids,
             }
 
-        import asyncio
+        from app.core.task_utils import run_async_in_celery
         from app.api.modules.graph.resolution import resolve_entities_batch
 
-        loop = asyncio.new_event_loop()
-        try:
-            resolved = loop.run_until_complete(
-                resolve_entities_batch(
-                    self.session,
-                    infospace_id,
-                    list(dict.fromkeys(entities_to_resolve)),
-                    graph_id=graph_id,
-                )
-            )
-        finally:
-            loop.close()
+        resolved = run_async_in_celery(
+            resolve_entities_batch,
+            self.session,
+            infospace_id,
+            list(dict.fromkeys(entities_to_resolve)),
+            graph_id=graph_id,
+        )
 
         from app.api.modules.graph.models import FragmentCuration
         from sqlalchemy.orm.attributes import flag_modified
@@ -1053,7 +977,8 @@ class FlowService:
                     annotation_id=ann_id,
                     fragment_path=path,
                     status="curated",
-                    resolved_refs={"entity_canonical_id": canonical.id, "source_run_id": execution.id},
+                    entity_canonical_id=canonical.id,
+                    source_run_id=execution.id,
                 )
                 self.session.add(fc)
                 curated += 1
@@ -1074,6 +999,7 @@ class FlowService:
         asset_ids: List[int],
         execution: FlowExecution,
         flow: Flow,
+        annotation_run_ids: List[int],
     ) -> Dict[str, Any]:
         """Execute a ROUTE step - move/copy assets to bundles."""
         bundle_id = step_config.get("bundle_id")
@@ -1091,36 +1017,33 @@ class FlowService:
         routed_asset_ids = []
         
         if conditions:
-            # Conditional routing
+            multi_match = step_config.get("multi_match", False)
             for asset_id in asset_ids:
                 asset = self.session.get(Asset, asset_id)
                 if not asset:
                     continue
-                
-                context = {
-                    "asset_id": asset_id,
-                    "title": asset.title,
-                    **asset.fragments,
-                }
-                
+                from app.api.asset_context_builder import build_asset_context
+                context = build_asset_context(self.session, asset, annotation_run_ids)
+                matched = False
                 for condition in conditions:
-                    cond_expr = condition.get("if")
-                    target_bundle_id = condition.get("bundle_id")
-                    
-                    if cond_expr and target_bundle_id:
-                        filter_expr = self.filter_service.create_from_config({"expression": cond_expr})
-                        if filter_expr.evaluate(context):
-                            self.bundle_service.add_asset_to_bundle(
-                                bundle_id=target_bundle_id,
-                                asset_id=asset_id,
-                                infospace_id=flow.infospace_id,
-                                user_id=flow.user_id
-                            )
-                            routed_count += 1
-                            routed_asset_ids.append(asset_id)
-                            break
-                    elif condition.get("else"):
-                        # Default/else branch
+                    if "if" in condition:
+                        cond_expr = condition.get("if")
+                        target_bundle_id = condition.get("bundle_id")
+                        if target_bundle_id:
+                            filter_expr = self.filter_service.create_from_config({"expression": cond_expr})
+                            if filter_expr.evaluate(context):
+                                self.bundle_service.add_asset_to_bundle(
+                                    bundle_id=target_bundle_id,
+                                    asset_id=asset_id,
+                                    infospace_id=flow.infospace_id,
+                                    user_id=flow.user_id
+                                )
+                                routed_count += 1
+                                routed_asset_ids.append(asset_id)
+                                matched = True
+                                if not multi_match:
+                                    break
+                    elif condition.get("else") and not matched:
                         else_bundle_id = condition.get("bundle_id")
                         if else_bundle_id:
                             self.bundle_service.add_asset_to_bundle(
@@ -1131,6 +1054,7 @@ class FlowService:
                             )
                             routed_count += 1
                             routed_asset_ids.append(asset_id)
+                            matched = True
         else:
             # Simple routing to bundle(s)
             for asset_id in asset_ids:
@@ -1248,23 +1172,30 @@ class FlowService:
                 "message": "No adapter_name specified",
                 "passed_asset_ids": asset_ids,
             }
-        
-        # Map adapter names to classes
-        adapter_map = {
-            "time_series": "app.api.modules.analysis.adapters.time_series_adapter.TimeSeriesAggregationAdapter",
-            "label_distribution": "app.api.modules.analysis.adapters.label_distribution.LabelDistributionAdapter",
-            "graph_aggregator": "app.api.modules.analysis.adapters.graph_aggregator_adapter.GraphAggregatorAdapter",
-        }
-        
-        adapter_path = adapter_map.get(adapter_name)
-        if not adapter_path:
+
+        # Look up adapter from DB (AnalysisAdapter registry)
+        from app.models import AnalysisAdapter
+
+        adapter_record = self.session.exec(
+            select(AnalysisAdapter).where(
+                AnalysisAdapter.name == adapter_name,
+                AnalysisAdapter.is_active == True,
+            )
+        ).first()
+        if not adapter_record or not adapter_record.module_path:
+            available = [
+                r.name for r in self.session.exec(
+                    select(AnalysisAdapter.name).where(AnalysisAdapter.is_active == True)
+                ).all()
+            ]
             return {
                 "type": "ANALYZE",
                 "asset_count": len(asset_ids),
                 "status": "error",
-                "message": f"Unknown adapter: {adapter_name}. Available: {list(adapter_map.keys())}",
+                "message": f"Unknown or inactive adapter: {adapter_name}. Available: {available}",
                 "passed_asset_ids": asset_ids,
             }
+        adapter_path = adapter_record.module_path
         
         # Get flow context for adapter
         flow = self.session.get(Flow, execution.flow_id)

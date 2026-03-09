@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 from sqlmodel import Session, select
 from datetime import datetime, timezone
 import uuid
@@ -7,7 +7,9 @@ import logging
 from app.models import (
     Bundle,
     Asset,
-    User
+    IngestionJob,
+    Source,
+    User,
 )
 from app.schemas import BundleCreate, BundleUpdate, InfospaceCreate
 from app.api.global_utils import validate_infospace_access
@@ -152,6 +154,232 @@ class BundleService:
         self.session.commit()
         logger.info(f"Service: Bundle {bundle_id} deleted.")
         return True
+
+    def add_assets_to_bundle(
+        self,
+        asset_ids: List[int],
+        bundle_id: int,
+    ) -> None:
+        """
+        Add multiple assets to a bundle by setting bundle_id.
+        Used after ingestion when assets are created without a bundle.
+        Does not validate user access (caller must have validated).
+        """
+        bundle = self.session.get(Bundle, bundle_id)
+        if not bundle:
+            raise ValueError(
+                f"Bundle {bundle_id} not found - it may have been deleted. "
+                "Assets will not be added to any bundle."
+            )
+
+        assets_added = 0
+        assets_list = self.session.exec(select(Asset).where(Asset.id.in_(asset_ids))).all()
+        assets_by_id = {a.id: a for a in assets_list}
+        non_container_ids = [a.id for a in assets_list if not a.is_container]
+        children_by_parent: Dict[int, List[Asset]] = {}
+        if non_container_ids:
+            child_assets = self.session.exec(
+                select(Asset).where(Asset.parent_asset_id.in_(non_container_ids))
+            ).all()
+            for child in child_assets:
+                if child.parent_asset_id:
+                    children_by_parent.setdefault(child.parent_asset_id, []).append(child)
+
+        for asset_id in asset_ids:
+            try:
+                asset = assets_by_id.get(asset_id)
+                if not asset:
+                    logger.warning(f"Asset {asset_id} not found")
+                    continue
+                if asset.bundle_id != bundle_id:
+                    asset.bundle_id = bundle_id
+                    assets_added += 1
+                    self.session.add(asset)
+                    logger.info(f"Added asset {asset_id} to bundle {bundle_id}")
+                if not asset.is_container:
+                    for child_asset in children_by_parent.get(asset_id, []):
+                        if child_asset.bundle_id != bundle_id:
+                            child_asset.bundle_id = bundle_id
+                            assets_added += 1
+                            self.session.add(child_asset)
+            except Exception as e:
+                logger.error(f"Failed to add asset {asset_id} to bundle: {e}")
+                continue
+
+        if assets_added > 0:
+            bundle.asset_count = (bundle.asset_count or 0) + assets_added
+            bundle.updated_at = datetime.now(timezone.utc)
+            self.session.add(bundle)
+            logger.info(f"Added {assets_added} assets to bundle {bundle_id}, new count: {bundle.asset_count}")
+
+        self.session.commit()
+        logger.info(f"Committed bundle assignments for {len(asset_ids)} assets to bundle {bundle_id}")
+
+    def add_assets_to_bundle_validated(
+        self,
+        *,
+        bundle_id: int,
+        asset_ids: List[int],
+        infospace_id: int,
+        include_children: bool = True,
+    ) -> tuple[int, int]:
+        """
+        Add assets to a bundle with infospace validation.
+        Returns (assets_added_count, children_added_count).
+        """
+        bundle = self.session.get(Bundle, bundle_id)
+        if not bundle or bundle.infospace_id != infospace_id:
+            raise ValueError(f"Bundle {bundle_id} not found or infospace mismatch")
+
+        assets_added = 0
+        children_added = 0
+
+        for asset_id in asset_ids:
+            asset = self.session.get(Asset, asset_id)
+            if not asset or asset.infospace_id != infospace_id:
+                continue
+
+            if asset.bundle_id != bundle_id:
+                asset.bundle_id = bundle_id
+                self.session.add(asset)
+                assets_added += 1
+
+            if include_children and asset.is_container:
+                children = self.session.exec(
+                    select(Asset).where(Asset.parent_asset_id == asset_id)
+                ).all()
+                for child in children:
+                    if child.bundle_id != bundle_id:
+                        child.bundle_id = bundle_id
+                        self.session.add(child)
+                        children_added += 1
+
+        if assets_added > 0 or children_added > 0:
+            total_assets = self.session.exec(
+                select(Asset).where(Asset.bundle_id == bundle_id)
+            ).all()
+            bundle.asset_count = len(total_assets)
+            bundle.updated_at = datetime.now(timezone.utc)
+            self.session.add(bundle)
+
+        return assets_added, children_added
+
+    def remove_assets_from_bundle_validated(
+        self,
+        *,
+        bundle_id: int,
+        asset_ids: List[int],
+        infospace_id: int,
+    ) -> int:
+        """Remove assets from a bundle with infospace validation. Returns removed count."""
+        bundle = self.session.get(Bundle, bundle_id)
+        if not bundle or bundle.infospace_id != infospace_id:
+            raise ValueError(f"Bundle {bundle_id} not found or infospace mismatch")
+
+        removed_count = 0
+        for asset_id in asset_ids:
+            asset = self.session.get(Asset, asset_id)
+            if not asset or asset.infospace_id != infospace_id:
+                continue
+            if asset.bundle_id == bundle_id:
+                asset.bundle_id = None
+                self.session.add(asset)
+                removed_count += 1
+
+        if removed_count > 0:
+            total_assets = self.session.exec(
+                select(Asset).where(Asset.bundle_id == bundle_id)
+            ).all()
+            bundle.asset_count = len(total_assets)
+            bundle.updated_at = datetime.now(timezone.utc)
+            self.session.add(bundle)
+
+        return removed_count
+
+    def delete_bundle_returning_name(
+        self,
+        *,
+        bundle_id: int,
+        infospace_id: int,
+        user_id: int,
+    ) -> str:
+        """Delete a bundle and return its name. Raises if not found."""
+        db_bundle = self.get_bundle(bundle_id, infospace_id, user_id)
+        if not db_bundle:
+            raise ValueError(f"Bundle {bundle_id} not found or access denied")
+        name = db_bundle.name
+        self.delete_bundle(bundle_id, infospace_id, user_id)
+        return name
+
+    def materialize_virtual_folder(
+        self,
+        *,
+        source_bundle_id: int,
+        path_prefix: str,
+        name: str,
+        infospace_id: int,
+        user_id: int,
+    ) -> Bundle:
+        """
+        Create a real bundle from a virtual folder (path prefix within a bundle).
+        Creates a child bundle under source, reassigns assets matching logical_path
+        to the new bundle, and updates counts.
+        """
+        source_bundle = self.get_bundle(source_bundle_id, infospace_id, user_id)
+        if not source_bundle:
+            raise ValueError(f"Source bundle {source_bundle_id} not found or access denied")
+
+        # Match assets: logical_path = path_prefix OR logical_path LIKE path_prefix/%
+        like_prefix = f"{path_prefix}/%" if path_prefix else "%"
+        eq_prefix = path_prefix if path_prefix else None
+
+        # Find root assets (parent_asset_id IS NULL) matching the path
+        if eq_prefix:
+            stmt = select(Asset).where(
+                Asset.bundle_id == source_bundle_id,
+                Asset.parent_asset_id.is_(None),
+                Asset.logical_path.is_not(None),
+                (Asset.logical_path == eq_prefix) | (Asset.logical_path.like(like_prefix)),
+            )
+        else:
+            stmt = select(Asset).where(
+                Asset.bundle_id == source_bundle_id,
+                Asset.parent_asset_id.is_(None),
+                Asset.logical_path.is_not(None),
+                Asset.logical_path.like(like_prefix),
+            )
+        root_assets = list(self.session.exec(stmt).all())
+        root_asset_ids = [a.id for a in root_assets]
+
+        # Create child bundle
+        new_bundle = Bundle(
+            name=name,
+            infospace_id=infospace_id,
+            user_id=user_id,
+            parent_bundle_id=source_bundle_id,
+            asset_count=0,
+        )
+        self.session.add(new_bundle)
+        self.session.flush()
+
+        # Reassign assets to new bundle (including children of containers)
+        if root_asset_ids:
+            self.add_assets_to_bundle(asset_ids=root_asset_ids, bundle_id=new_bundle.id)
+
+        # Decrement source bundle count
+        moved_count = len(root_asset_ids)
+        if moved_count > 0:
+            source_bundle.asset_count = max(0, (source_bundle.asset_count or 0) - moved_count)
+            self.session.add(source_bundle)
+
+        # Update parent's child_bundle_count
+        source_bundle.child_bundle_count = (source_bundle.child_bundle_count or 0) + 1
+        self.session.add(source_bundle)
+
+        self.session.commit()
+        self.session.refresh(new_bundle)
+        logger.info(f"Materialized virtual folder '{path_prefix}' as bundle {new_bundle.id} with {moved_count} assets")
+        return new_bundle
 
     def add_asset_to_bundle(
         self,
@@ -451,7 +679,8 @@ class BundleService:
                     text_content=asset.text_content,
                     blob_path=asset.blob_path,  # Keep same blob path - storage is shared
                     source_identifier=asset.source_identifier,
-                    source_metadata=asset.source_metadata,
+                    facets=asset.facets,
+                    file_info=asset.file_info,
                     event_timestamp=asset.event_timestamp,
                     stub=asset.stub,
                     user_id=user_id,
@@ -591,4 +820,46 @@ class BundleService:
             Bundle.parent_bundle_id.is_(None)
         )
         
-        return self.session.exec(statement).all() 
+        return self.session.exec(statement).all()
+
+    def cascade_delete(self, bundle_ids: Set[int]) -> int:
+        """
+        Clear IngestionJob/Source refs and delete bundles. Caller must have already
+        deleted assets in those bundles (via AssetService.cascade_delete).
+        Returns number of bundles deleted.
+        """
+        if not bundle_ids:
+            return 0
+        bundle_ids_list = list(bundle_ids)
+        jobs = list(
+            self.session.exec(
+                select(IngestionJob).where(
+                    IngestionJob.root_bundle_id.in_(bundle_ids_list)
+                )
+            ).all()
+        )
+        for job in jobs:
+            job.root_bundle_id = None
+            self.session.add(job)
+        if jobs:
+            logger.info(f"Cascade delete: cleared root_bundle_id from {len(jobs)} jobs")
+        sources = list(
+            self.session.exec(
+                select(Source).where(
+                    Source.output_bundle_id.in_(bundle_ids_list)
+                )
+            ).all()
+        )
+        for src in sources:
+            src.output_bundle_id = None
+            self.session.add(src)
+        if sources:
+            logger.info(f"Cascade delete: cleared output_bundle_id from {len(sources)} sources")
+        deleted = 0
+        for bid in bundle_ids_list:
+            bundle = self.session.get(Bundle, bid)
+            if bundle:
+                self.session.delete(bundle)
+                deleted += 1
+                logger.info(f"Cascade delete: removed bundle {bid}")
+        return deleted

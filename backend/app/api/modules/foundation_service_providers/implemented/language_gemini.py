@@ -15,24 +15,40 @@ from app.api.modules.foundation_service_providers.base import LanguageModelProvi
 
 logger = logging.getLogger(__name__)
 
-# Default Gemini model configurations (replaces JSON config)
+# Default Gemini model configurations (March 2026)
 DEFAULT_GEMINI_MODELS = {
-    "gemini-2.5-flash-preview-05-20": {
-        "description": "Latest Gemini model with reasoning, multimodal capabilities, and structured output",
+    "gemini-3.1-pro": {
+        "description": "Gemini 3.1 Pro - Advanced intelligence with complex problem-solving",
         "max_tokens": 8192,
         "context_length": 1048576,
         "supports_multimodal": True,
         "supports_structured_output": True,
-        "supports_thinking": True
+        "supports_thinking": True,
     },
-    "gemini-2.5-flash-lite-preview-06-17": {
-        "description": "Gemini 2.5 Flash-Lite Preview",
+    "gemini-3-flash": {
+        "description": "Gemini 3 Flash - Frontier-class performance at lower cost",
         "max_tokens": 8192,
         "context_length": 1048576,
         "supports_multimodal": True,
         "supports_structured_output": True,
-        "supports_thinking": True
-    }
+        "supports_thinking": True,
+    },
+    "gemini-2.5-pro": {
+        "description": "Gemini 2.5 Pro - Most advanced for complex tasks",
+        "max_tokens": 8192,
+        "context_length": 1048576,
+        "supports_multimodal": True,
+        "supports_structured_output": True,
+        "supports_thinking": True,
+    },
+    "gemini-2.5-flash": {
+        "description": "Gemini 2.5 Flash - Best price-performance",
+        "max_tokens": 8192,
+        "context_length": 1048576,
+        "supports_multimodal": True,
+        "supports_structured_output": True,
+        "supports_thinking": True,
+    },
 }
 
 

@@ -196,7 +196,7 @@ class ArchiveHandler(BaseHandler):
         4. Delete archive file (keep extracted files)
         """
         from app.core.config import settings
-        from app.api.modules.foundation_service_providers.factory import create_storage_provider
+        from app.api.modules.foundation_service_providers.registry import get_storage_provider
 
         storage_base = Path(settings.LOCAL_STORAGE_BASE_PATH)
         managed_archives = storage_base / "managed" / "archives"
@@ -229,7 +229,7 @@ class ArchiveHandler(BaseHandler):
             storage_provider=None,
             scraping_provider=self.scraping_provider,
             search_provider=self.search_provider,
-            asset_service=AssetService(self.session, create_storage_provider(settings)),
+            asset_service=AssetService(self.session, get_storage_provider(settings)),
             bundle_service=self.bundle_service,
             user_id=user_id,
             infospace_id=infospace_id,
