@@ -11,7 +11,6 @@ services:
 
   backend:
     restart: "no"
-    # For VPS behind nginx: bind to loopback only: "127.0.0.1:${BACKEND_PORT}:${BACKEND_PORT}"
     ports:
       - "${BACKEND_PORT}:${BACKEND_PORT}"
     volumes:
@@ -36,7 +35,7 @@ services:
     restart: "no"
     volumes:
       - ./backend/:/app
-      # Same storage mount as backend
+      # Same storage mount as backend (for local_fs)
       - /data/storage:/data/storage
   
   frontend:
@@ -46,7 +45,6 @@ services:
       dockerfile: Dockerfile.dev
     depends_on:
       - backend
-    # For VPS behind nginx: bind to loopback only: "127.0.0.1:3000:3000"
     ports:
       - "3000:3000"
     environment:
@@ -96,4 +94,4 @@ volumes:
   minio:
   ollama_data:
     name: ollama_data
-  frontend_node_modules:
+  frontend_node_modules: # convenience for development
