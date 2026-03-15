@@ -12,13 +12,6 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Build task annotations for rate limiting (only if configured)
-def _process_content_annotations():
-    limit = getattr(settings, "PROCESS_CONTENT_RATE_LIMIT", None) or ""
-    if limit and limit.strip():
-        return {"rate_limit": limit.strip()}
-    return {}
-
 redis_url = settings.redis_url
 
 # Initialize Celery with explicit configuration
@@ -66,33 +59,9 @@ celery.conf.update(
     # Queue routing
     task_queues=CELERY_TASK_QUEUES,
     task_default_queue='default',
-    task_routes={
-        'app.api.modules.annotation.tasks.annotate.process_annotation_run': {'queue': 'llm'},
-        'app.api.modules.annotation.tasks.annotate.retry_failed_annotations': {'queue': 'llm'},
-        'process_content': {'queue': 'processing'},
-        'reprocess_content': {'queue': 'processing'},
-        'ingest_bulk_urls': {'queue': 'processing'},
-        'ingest_bulk_files': {'queue': 'processing'},
-        'batch_process_pending': {'queue': 'processing'},
-        'batch_enrich': {'queue': 'processing'},
-        'ingest_archive_task': {'queue': 'processing'},
-        'import_directory_task': {'queue': 'processing'},
-        'enrich_embedding': {'queue': 'embedding'},
-        'reactive_curate_annotated': {'queue': 'llm'},
-        'enrich_geocoding': {'queue': 'external_api'},
-        'enrich_ocr': {'queue': 'external_api'},
-        'enrich_file_hash': {'queue': 'processing'},
-        'enrich_language': {'queue': 'processing'},
-        'enrich_quality_score': {'queue': 'processing'},
-        'create_followup_annotation_runs': {'queue': 'llm'},
-        're_resolve_entity_singletons': {'queue': 'default'},
-        'flag_superseded_entity_sources': {'queue': 'default'},
-        'reset_stale_processing_assets': {'queue': 'default'},
-    },
+    task_routes={},  # Queue routing handled by @task queue parameter
     task_default_delivery_mode=2,  # persistent
-    task_annotations={
-        "process_content": _process_content_annotations(),
-    },
+    task_annotations={},
     # Crash resilience: tasks are re-queued if worker dies before ack (OOM, kill, etc.)
     task_acks_late=True,
     task_reject_on_worker_lost=True,
@@ -103,52 +72,22 @@ celery.conf.update(
     imports=(
         'app.core.events',
         'app.core.dispatch',
-        'app.api.modules.content.watchers',
-        'app.api.modules.annotation.watchers',
-        'app.api.modules.graph.watchers',
-        'app.api.modules.annotation.tasks.annotate',
+        'app.api.modules.content.enrichers',
+        'app.api.modules.content.tasks',
         'app.api.modules.graph.tasks',
-        'app.api.modules.content.tasks.ingest',
-        'app.api.modules.flow.tasks.schedule',
-        'app.api.modules.content.tasks.content_tasks',
-        'app.api.modules.content.tasks.ingestion_tasks',
-        'app.api.modules.content.tasks.batch_processing',
-        'app.api.modules.content.tasks.enrichment',
-        'app.api.modules.sharing.tasks.backup',
-        'app.api.modules.sharing.tasks.user_backup',
-        'app.api.modules.embedding.tasks.embed',
-        'app.api.modules.flow.tasks.flow_tasks',
-        'app.api.modules.content.tasks.source_monitoring',
+        'app.api.modules.annotation.tasks',
+        'app.api.modules.flow.tasks',
+        'app.api.modules.sharing.tasks',
         'app.api.modules.content.services.poll_handlers.rss_poll_handler',
         'app.api.modules.content.services.poll_handlers.search_poll_handler',
         'app.api.modules.content.services.poll_handlers.inbox_poll_handler',
     ),
-    # Beat schedule
+    # Beat schedule — only dispatch_tasks + user_backup entries.
+    # All @task schedule params are handled by dispatch_tasks internally.
     beat_schedule={
-        'check-recurring-tasks-every-5min': {
-            'task': 'check_recurring_tasks',
-            'schedule': 300.0,
-        },
-        'check-on-arrival-flows-every-5min': {
-            'task': 'app.api.modules.flow.tasks.flow_tasks.check_on_arrival_flows',
-            'schedule': 300.0,
-        },
-        'poll-active-sources-every-5min': {
-            'task': 'app.api.modules.content.tasks.source_monitoring.poll_active_sources',
-            'schedule': 300.0,
-        },
-        'dispatch-reactive-work': {
-            'task': 'dispatch_reactive_work',
+        'dispatch-tasks': {
+            'task': 'dispatch_tasks',
             'schedule': settings.DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS,
-        },
-        'automatic-backup-all-infospaces': {
-            'task': 'automatic_backup_all_infospaces',
-            'schedule': 86400.0,
-            'kwargs': {'backup_type': 'auto'},
-        },
-        'cleanup-expired-backups': {
-            'task': 'cleanup_expired_backups', 
-            'schedule': 43200.0,
         },
         'cleanup-expired-user-backups': {
             'task': 'cleanup_expired_user_backups',
@@ -158,10 +97,6 @@ celery.conf.update(
             'task': 'backup_all_users',
             'schedule': crontab(day_of_week=0, hour=2, minute=0),
             'kwargs': {'backup_type': 'system', 'admin_user_id': 1},
-        },
-        'reset-stale-processing-assets-hourly': {
-            'task': 'reset_stale_processing_assets',
-            'schedule': 3600.0,
         },
     }
 )
@@ -195,18 +130,17 @@ def reset_db_pool_on_fork(**kwargs):
         )
         raise
 
-    # Log enabled reactive watchers (helps verify ENABLED_WATCHERS config)
+    # Log registered @task descriptors
     try:
-        from app.core.dispatch import get_watchers
-
-        watchers = get_watchers()
-        names = sorted(w.name for w in watchers)
+        from app.core.tasks import get_task_registry
+        registry = get_task_registry()
+        names = sorted(registry.keys())
         if names:
-            logger.info("Reactive watchers enabled: %s", ", ".join(names))
+            logger.info("Registered tasks: %s", ", ".join(names))
         else:
-            logger.info("Reactive watchers enabled: (none — set ENABLED_WATCHERS to opt in)")
+            logger.info("Registered tasks: (none)")
     except Exception as e:
-        logger.warning("Could not log enabled watchers: %s", e)
+        logger.warning("Could not log registered tasks: %s", e)
 
 
 # Task duration logging for observability

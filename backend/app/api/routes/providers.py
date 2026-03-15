@@ -110,3 +110,56 @@ async def system_capabilities(
         }
 
     return {"capabilities": capabilities}
+
+
+@router.get("/enrichment/status")
+async def enrichment_status(
+    settings: SettingsDep = None,
+) -> Dict[str, Any]:
+    """
+    Return status of registered enrichment tasks.
+
+    Shows active tasks, done/failed/skipped counts from Redis stats.
+    """
+    from app.core.tasks import get_task_registry
+
+    registry = get_task_registry()
+    tasks_info = []
+
+    for name, descriptor in sorted(registry.items()):
+        info: Dict[str, Any] = {
+            "name": name,
+            "queue": descriptor.queue,
+            "batch": descriptor.batch,
+            "tags": list(descriptor.tags),
+            "depends_on": descriptor.depends_on,
+            "capability": descriptor.capability,
+        }
+        # Try to get stats from Redis
+        try:
+            from app.core.redis import get_redis
+            r = get_redis()
+            # Aggregate across all infospaces (just show total)
+            keys = r.keys(f"task:{name}:*:stats")
+            total_done = total_failed = total_skipped = 0
+            last_run = None
+            for key in keys:
+                stats = r.hgetall(key)
+                total_done += int(stats.get("done", 0))
+                total_failed += int(stats.get("failed", 0))
+                total_skipped += int(stats.get("skipped", 0))
+                lr = stats.get("last_run")
+                if lr and (last_run is None or lr > last_run):
+                    last_run = lr
+            info["stats"] = {
+                "done": total_done,
+                "failed": total_failed,
+                "skipped": total_skipped,
+                "last_run": last_run,
+            }
+        except Exception:
+            info["stats"] = None
+
+        tasks_info.append(info)
+
+    return {"tasks": tasks_info, "count": len(tasks_info)}

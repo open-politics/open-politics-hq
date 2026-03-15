@@ -56,6 +56,7 @@ class EntityCanonical(SQLModel, table=True):
     embedding_768: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
     embedding_1024: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(1024)))
     embedding_1536: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(1536)))
+    embedding_2048: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(2048)))
     properties: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     provenance_type: str = Field(default="method")  # "method" | "manual"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -84,6 +85,7 @@ class EntityCanonical(SQLModel, table=True):
         Index("ix_entitycanonical_embedding_1536", "embedding_1536", postgresql_using="hnsw",
               postgresql_with={"m": 16, "ef_construction": 64},
               postgresql_where=text("embedding_1536 IS NOT NULL")),
+        # No HNSW index for 2048 — pgvector caps HNSW at 2000 dims.
     )
 
 

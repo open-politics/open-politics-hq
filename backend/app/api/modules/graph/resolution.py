@@ -150,15 +150,12 @@ async def find_by_embedding(
             logger.debug(f"No embedding configured for infospace {infospace_id}")
             return None
 
-        sel = infospace.embedding_selection
-        if isinstance(sel, dict):
-            from app.api.modules.foundation_service_providers.base import ProviderSelection
-            sel = ProviderSelection(**sel)
+        sel = infospace.get_embedding_selection()
 
         embedding_result = await embedding_service.generate_embeddings_for_chunks(
             chunks=[raw_name],
             model_name=sel.model_name,
-            provider=sel.type_key,
+            provider=sel.provider_key,
         )
 
         if not embedding_result or not embedding_result[0].get('embedding'):
@@ -326,14 +323,11 @@ async def resolve_entities_batch(
             from app.api.modules.identity_infospace_user.models import Infospace
             infospace = session.get(Infospace, infospace_id)
             if infospace and infospace.embedding_configured:
-                sel = infospace.embedding_selection
-                if isinstance(sel, dict):
-                    from app.api.modules.foundation_service_providers.base import ProviderSelection
-                    sel = ProviderSelection(**sel)
+                sel = infospace.get_embedding_selection()
                 emb_result = await embedding_service.generate_embeddings_for_chunks(
                     chunks=raw_names,
                     model_name=sel.model_name,
-                    provider=sel.type_key,
+                    provider=sel.provider_key,
                 )
                 if emb_result:
                     raw_embeddings = [r.get("embedding", []) for r in emb_result if r.get("embedding")]

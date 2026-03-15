@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from sqlmodel import SQLModel, Field
 
 from app.api.modules.identity_infospace_user.models import UserBase, UserTier
-from app.api.modules.foundation_service_providers.base import ProviderDefaults, ProviderSelection
+from app.api.modules.foundation_service_providers.base import ProviderDefaults, EnrichmentConfig
 
 
 # ─── User schemas ───
@@ -113,32 +113,32 @@ class InfospaceBase(SQLModel):
 
 class InfospaceCreate(InfospaceBase):
     owner_id: int
-    embedding_selection: Optional[ProviderSelection] = None
     chunk_size: Optional[int] = None
     chunk_overlap: Optional[int] = None
     chunk_strategy: Optional[str] = None
     icon: Optional[str] = None
+    enrichment_config: Optional[EnrichmentConfig] = None
 
 
 class InfospaceRead(InfospaceBase):
     id: int
     owner_id: int
     created_at: datetime
-    embedding_selection: Optional[ProviderSelection] = None
     chunk_size: Optional[int] = None
     chunk_overlap: Optional[int] = None
     chunk_strategy: Optional[str] = None
+    enrichment_config: Optional[EnrichmentConfig] = None
 
 
 class InfospaceUpdate(SQLModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    embedding_selection: Optional[ProviderSelection] = None
     chunk_size: Optional[int] = None
     chunk_overlap: Optional[int] = None
     chunk_strategy: Optional[str] = None
     icon: Optional[str] = None
     enable_related_assets: Optional[bool] = None
+    enrichment_config: Optional[EnrichmentConfig] = None
 
 
 class InfospacesOut(SQLModel):

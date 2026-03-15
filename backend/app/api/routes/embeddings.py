@@ -5,10 +5,11 @@ import logging
 from typing import List, Optional, Dict
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
-from sqlmodel import Session
+from sqlalchemy import text
+from sqlmodel import Session, select
 
 from app.api.dependency_injection import CurrentUser, SessionDep
-from app.models import User, Infospace, Asset, AssetKind
+from app.models import User, Infospace, Asset, AssetChunk, AssetKind
 from app.schemas import Message
 from app.api.modules.embedding.services import EmbeddingService, VectorSearchService
 from pydantic import BaseModel, Field
@@ -36,6 +37,8 @@ class GenerateAssetEmbeddingsRequest(BaseModel):
 class EmbeddingStatsResponse(BaseModel):
     """Response with embedding statistics."""
     total_assets: int
+    documents: int  # top-level assets (parent_asset_id IS NULL) with text
+    sub_assets: int  # child assets with text
     total_chunks: int
     embedded_chunks: int
     coverage_percentage: float
@@ -77,6 +80,27 @@ class AvailableModelsResponse(BaseModel):
     models: List[EmbeddingModelInfo]
 
 
+# ======================== HELPERS ========================
+
+def _reset_embedding_for_assets(session: Session, asset_ids: list[int]):
+    """Clear chunks and enrichment state so the embedding enricher re-processes assets."""
+    from sqlalchemy import delete as sa_delete
+
+    # Delete existing chunks (enricher only processes assets with no chunks)
+    session.execute(
+        sa_delete(AssetChunk).where(AssetChunk.asset_id.in_(asset_ids))
+    )
+    # Bulk clear enrichment_resolved and enrichment_errors for embedding
+    session.execute(text(
+        "UPDATE asset SET "
+        "  enrichment_resolved = array_remove(COALESCE(enrichment_resolved, ARRAY[]::text[]), 'embedding'),"
+        "  enrichment_errors = CASE WHEN jsonb_typeof(enrichment_errors) = 'object' "
+        "    THEN enrichment_errors - 'embedding' ELSE enrichment_errors END "
+        "WHERE id = ANY(:ids)"
+    ), {"ids": asset_ids})
+    session.commit()
+
+
 # ======================== ENDPOINTS ========================
 
 @router.post("/infospaces/{infospace_id}/embeddings/generate", response_model=Message)
@@ -88,10 +112,8 @@ async def generate_infospace_embeddings(
 ):
     """
     Generate embeddings for all assets in an infospace.
-    Dispatches background tasks using the infospace's embedding_selection.
+    Dispatches the embedding enricher for eligible assets.
     """
-    from app.api.modules.embedding.tasks.embed import enrich_embedding_task
-
     infospace = session.get(Infospace, infospace_id)
     if not infospace:
         raise HTTPException(status_code=404, detail="Infospace not found")
@@ -103,7 +125,6 @@ async def generate_infospace_embeddings(
         raise HTTPException(status_code=400, detail="Infospace has no embedding configured. Select a model in settings.")
 
     # Query embeddable asset IDs
-    from sqlmodel import select
     query = select(Asset.id).where(
         Asset.infospace_id == infospace_id,
         Asset.text_content.isnot(None),
@@ -111,21 +132,17 @@ async def generate_infospace_embeddings(
     )
     if request.asset_kinds:
         query = query.where(Asset.kind.in_([AssetKind(k) for k in request.asset_kinds]))
-    asset_ids = [row for row in session.exec(query).all()]
+    asset_ids = list(session.exec(query).all())
 
     if not asset_ids:
         return Message(message="No embeddable assets found")
 
-    # Dispatch in batches of 50
-    batch_size = 50
-    for i in range(0, len(asset_ids), batch_size):
-        batch = asset_ids[i : i + batch_size]
-        enrich_embedding_task.delay(
-            asset_ids=batch,
-            user_id=current_user.id,
-            api_keys=request.api_keys,
-            overwrite=request.overwrite,
-        )
+    if request.overwrite:
+        _reset_embedding_for_assets(session, asset_ids)
+
+    # Fire embedding enricher in self-query mode (async, doesn't block the request)
+    from app.api.modules.content.enrichers import enrich_embedding
+    enrich_embedding.delay(None, infospace_id)
 
     return Message(message=f"Embedding generation dispatched for {len(asset_ids)} assets")
 
@@ -138,8 +155,6 @@ async def generate_asset_embeddings(
     current_user: CurrentUser
 ):
     """Generate embeddings for a single asset."""
-    from app.api.modules.embedding.tasks.embed import enrich_embedding_task
-
     asset = session.get(Asset, asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -154,12 +169,11 @@ async def generate_asset_embeddings(
     if not infospace.embedding_configured:
         raise HTTPException(status_code=400, detail="Infospace has no embedding configured")
 
-    enrich_embedding_task.delay(
-        asset_ids=[asset_id],
-        user_id=current_user.id,
-        api_keys=request.api_keys,
-        overwrite=request.overwrite,
-    )
+    if request.overwrite:
+        _reset_embedding_for_assets(session, [asset_id])
+
+    from app.api.modules.content.enrichers import enrich_embedding
+    enrich_embedding.delay([asset_id], infospace.id)
     return Message(message=f"Embedding generation dispatched for asset {asset_id}")
 
 
@@ -169,20 +183,17 @@ async def get_embedding_stats(
     session: SessionDep,
     current_user: CurrentUser
 ):
-    """
-    Get statistics about embedding coverage in an infospace.
-    """
-    # Verify infospace exists and user has access
+    """Get statistics about embedding coverage in an infospace."""
     infospace = session.get(Infospace, infospace_id)
     if not infospace:
         raise HTTPException(status_code=404, detail="Infospace not found")
-    
+
     if infospace.owner_id != current_user.id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
+
     service = EmbeddingService(session)
     stats = service.get_embedding_stats(infospace_id)
-    
+
     return EmbeddingStatsResponse(**stats)
 
 
@@ -195,30 +206,27 @@ async def semantic_search(
 ):
     """
     Perform semantic search within an infospace using vector embeddings.
-    
+
     For cloud providers (OpenAI, Voyage AI, Jina AI), API keys must be provided
     in the request to generate the query embedding.
     """
-    # Verify infospace exists and user has access
     infospace = session.get(Infospace, infospace_id)
     if not infospace:
         raise HTTPException(status_code=404, detail="Infospace not found")
-    
+
     if infospace.owner_id != current_user.id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
+
     if not infospace.embedding_configured:
         raise HTTPException(status_code=400, detail="Infospace has no embedding configured")
-    
-    # Convert asset_kinds strings to enum
+
     kinds = None
     if request.asset_kinds:
         try:
             kinds = [AssetKind(kind) for kind in request.asset_kinds]
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"Invalid asset kind: {e}")
-    
-    # Perform search
+
     service = VectorSearchService(session, runtime_api_keys=request.api_keys, user_id=current_user.id)
     results = await service.semantic_search(
         query_text=request.query,
@@ -231,7 +239,7 @@ async def semantic_search(
         distance_threshold=request.distance_threshold,
         distance_function=request.distance_function
     )
-    
+
     return SemanticSearchResponse(
         query=request.query,
         results=[r.to_dict() for r in results],
@@ -250,47 +258,38 @@ async def clear_infospace_embeddings(
     Clear all embeddings for an infospace.
     Useful when changing embedding models or resetting the vector store.
     """
-    from app.models import AssetChunk
-    from sqlalchemy import delete
-    
-    # Verify infospace exists and user has access
+    from sqlalchemy import delete as sa_delete
+    from app.api.modules.content.models import EMBEDDING_SUPPORTED_DIMS
+
     infospace = session.get(Infospace, infospace_id)
     if not infospace:
         raise HTTPException(status_code=404, detail="Infospace not found")
-    
+
     if infospace.owner_id != current_user.id and not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Not authorized")
-    
-    try:
-        from sqlalchemy import select
-        from app.api.modules.content.models import EMBEDDING_SUPPORTED_DIMS
 
-        chunks_query = (
-            select(AssetChunk.id)
-            .join(Asset)
-            .where(Asset.infospace_id == infospace_id)
-        )
-        chunk_ids = [r[0] for r in session.exec(chunks_query).all()]
+    chunks_query = (
+        select(AssetChunk.id)
+        .join(Asset)
+        .where(Asset.infospace_id == infospace_id)
+    )
+    chunk_ids = [r for r in session.exec(chunks_query).all()]
 
-        if chunk_ids:
-            for chunk_id in chunk_ids:
-                chunk = session.get(AssetChunk, chunk_id)
-                if chunk:
-                    chunk.embedding_model_id = None
-                    for dim in EMBEDDING_SUPPORTED_DIMS:
-                        setattr(chunk, f"embedding_{dim}", None)
-                    session.add(chunk)
-            
-            session.commit()
-            logger.info(f"Cleared embeddings for {len(chunk_ids)} chunks in infospace {infospace_id}")
-            
-            return Message(message=f"Cleared embeddings for {len(chunk_ids)} chunks")
-        else:
-            return Message(message="No embeddings found to clear")
-            
-    except Exception as e:
-        logger.error(f"Failed to clear embeddings: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to clear embeddings: {str(e)}")
+    if not chunk_ids:
+        return Message(message="No embeddings found to clear")
+
+    for chunk_id in chunk_ids:
+        chunk = session.get(AssetChunk, chunk_id)
+        if chunk:
+            chunk.embedding_model_id = None
+            for dim in EMBEDDING_SUPPORTED_DIMS:
+                setattr(chunk, f"embedding_{dim}", None)
+            session.add(chunk)
+
+    session.commit()
+    logger.info("Cleared embeddings for %d chunks in infospace %d", len(chunk_ids), infospace_id)
+
+    return Message(message=f"Cleared embeddings for {len(chunk_ids)} chunks")
 
 
 class DiscoverModelsRequest(BaseModel):
@@ -304,90 +303,72 @@ async def discover_embedding_models(
     current_user: CurrentUser
 ):
     """
-    Discover available embedding models from all providers with runtime API keys.
-    
-    This endpoint supports runtime API key injection from frontend for:
-    - OpenAI: requires api_keys.openai
-    - Voyage AI (Anthropic): requires api_keys.voyage
-    - Jina AI: requires api_keys.jina
-    - Ollama: no API key needed
+    Discover available embedding models from all providers.
+
+    Supports runtime API key injection from frontend for cloud providers.
     """
-    try:
-        from app.api.modules.foundation_service_providers.base import (
-            EmbeddingProvider as EmbeddingProviderProtocol,
-            EmbeddingModelSpec,
-        )
-        from app.api.modules.foundation_service_providers.registry import list_providers, get_provider
-        from app.core.config import settings
+    from app.api.modules.foundation_service_providers.base import (
+        EmbeddingProvider as EmbeddingProviderProtocol,
+        EmbeddingModelSpec,
+    )
+    from app.api.modules.foundation_service_providers.registry import list_providers, get_provider
+    from app.core.config import settings
 
-        descriptors = list_providers(EmbeddingProviderProtocol)
+    descriptors = list_providers(EmbeddingProviderProtocol)
 
-        model_infos = []
-        for type_key, desc in descriptors:
-            # Check reachability: local providers always reachable;
-            # cloud providers need runtime keys, or env-configured keys
-            reachable = False
-            if not desc.requires_api_key:
-                reachable = True
-            elif request.api_keys and desc.credential_key and desc.credential_key in request.api_keys:
-                reachable = True
-            elif desc.api_key_setting and getattr(settings, desc.api_key_setting, None):
-                reachable = True
+    model_infos = []
+    for provider_key, desc in descriptors:
+        reachable = False
+        if not desc.requires_api_key:
+            reachable = True
+        elif request.api_keys and desc.credential_key and desc.credential_key in request.api_keys:
+            reachable = True
+        elif desc.api_key_setting and getattr(settings, desc.api_key_setting, None):
+            reachable = True
 
-            if not reachable:
-                continue
+        if not reachable:
+            continue
 
-            if desc.models:
-                # Static model list from descriptor (OpenAI, Voyage, Jina)
-                for spec in desc.models:
-                    if isinstance(spec, EmbeddingModelSpec):
-                        model_infos.append(EmbeddingModelInfo(
-                            name=spec.name,
-                            provider=type_key,
-                            dimension=spec.dimension,
-                            description=spec.description or None,
-                            max_sequence_length=spec.max_sequence_length,
-                        ))
-                    else:
-                        model_infos.append(EmbeddingModelInfo(
-                            name=spec.name,
-                            provider=type_key,
-                            dimension=0,
-                            description=spec.description or None,
-                        ))
-            else:
-                # Runtime discovery for providers without static model lists (e.g. Ollama)
-                try:
-                    api_key_override = None
-                    if request.api_keys and desc.credential_key:
-                        api_key_override = request.api_keys.get(desc.credential_key)
-                    provider = get_provider(
-                        EmbeddingProviderProtocol, type_key, settings,
-                        api_key_override=api_key_override,
-                    )
-                    # Prefer async discover_models() which actually queries the
-                    # provider (e.g. Ollama /api/tags); fall back to the sync
-                    # cache accessor only if no async method exists.
-                    raw_models = []
-                    if hasattr(provider, "discover_models"):
-                        raw_models = await provider.discover_models()
-                    elif hasattr(provider, "get_available_models"):
-                        raw_models = provider.get_available_models()
-                    for m in raw_models:
-                        model_infos.append(EmbeddingModelInfo(
-                            name=m["name"],
-                            provider=type_key,
-                            dimension=m.get("dimension", 0),
-                            description=m.get("description"),
-                            max_sequence_length=m.get("max_sequence_length"),
-                        ))
-                except Exception as disc_err:
-                    logger.warning(f"Runtime model discovery failed for {type_key}: {disc_err}")
+        if desc.models:
+            for spec in desc.models:
+                if isinstance(spec, EmbeddingModelSpec):
+                    model_infos.append(EmbeddingModelInfo(
+                        name=spec.name,
+                        provider=provider_key,
+                        dimension=spec.dimension,
+                        description=spec.description or None,
+                        max_sequence_length=spec.max_sequence_length,
+                    ))
+                else:
+                    model_infos.append(EmbeddingModelInfo(
+                        name=spec.name,
+                        provider=provider_key,
+                        dimension=0,
+                        description=spec.description or None,
+                    ))
+        else:
+            try:
+                api_key_override = None
+                if request.api_keys and desc.credential_key:
+                    api_key_override = request.api_keys.get(desc.credential_key)
+                provider = get_provider(
+                    EmbeddingProviderProtocol, provider_key, settings,
+                    api_key_override=api_key_override,
+                )
+                raw_models = []
+                if hasattr(provider, "discover_models"):
+                    raw_models = await provider.discover_models()
+                elif hasattr(provider, "get_available_models"):
+                    raw_models = provider.get_available_models()
+                for m in raw_models:
+                    model_infos.append(EmbeddingModelInfo(
+                        name=m["name"],
+                        provider=provider_key,
+                        dimension=m.get("dimension", 0),
+                        description=m.get("description"),
+                        max_sequence_length=m.get("max_sequence_length"),
+                    ))
+            except Exception as disc_err:
+                logger.warning("Runtime model discovery failed for %s: %s", provider_key, disc_err)
 
-        return AvailableModelsResponse(models=model_infos)
-
-    except Exception as e:
-        logger.error(f"Failed to discover embedding models: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to discover models: {str(e)}")
-
-
+    return AvailableModelsResponse(models=model_infos)

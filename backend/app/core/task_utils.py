@@ -224,15 +224,6 @@ def create_pydantic_model_from_json_schema(
     return DynamicModel
 
 
-def monitor_provider_cache():
-    """Monitor provider cache status. For management commands or monitoring endpoints."""
-    try:
-        from app.core.task_primitives import get_provider_cache_status
-        return get_provider_cache_status()
-    except ImportError:
-        return None
-
-
 def run_async_in_celery(async_func, *args, **kwargs):
     """
     Safely run an async function in a Celery task context.
@@ -271,27 +262,3 @@ def run_async_in_celery(async_func, *args, **kwargs):
                     pass
         except Exception:
             pass
-
-
-def clear_all_provider_caches():
-    """Clear all provider caches. For memory cleanup or cache invalidation."""
-    try:
-        from app.core.task_primitives import clear_provider_cache
-        clear_provider_cache()
-        return True
-    except ImportError:
-        return False
-
-
-def get_performance_recommendations(asset_count: int, schema_count: int) -> dict:
-    """Provide performance recommendations based on workload size."""
-    total_operations = asset_count * schema_count
-    recommendations = {"total_operations": total_operations, "recommendations": []}
-    if total_operations > 100:
-        recommendations["recommendations"].append("Consider breaking large annotation runs into smaller batches")
-    if asset_count > 50:
-        recommendations["recommendations"].append("Large asset count. Ensure sufficient memory")
-    if schema_count > 10:
-        recommendations["recommendations"].append("Multiple schemas. Schema pre-validation will help")
-    recommendations["estimated_improvement"] = "60-80% performance improvement with caching optimizations"
-    return recommendations

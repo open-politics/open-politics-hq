@@ -291,15 +291,19 @@ class SourceService:
             locator = self._extract_locator_from_source(source)
             opts = {**(discovery_options or {}), **(processing_options or {})}
 
-            from app.api.modules.content.tasks.task_services import create_task_services
-            services = create_task_services(self.session)
+            from app.api.modules.foundation_service_providers.registry import (
+                get_storage_provider, get_scraping_provider, get_web_search_provider,
+            )
+            from app.api.modules.content.services.asset_service import AssetService
+            from app.api.modules.content.services.bundle_service import BundleService
+            storage = get_storage_provider(settings)
             context = IngestionContext(
                 session=self.session,
-                storage_provider=services.storage,
-                scraping_provider=services.scraping,
-                search_provider=services.search,
-                asset_service=services.asset,
-                bundle_service=services.bundle,
+                storage_provider=storage,
+                scraping_provider=get_scraping_provider(settings),
+                search_provider=get_web_search_provider(settings),
+                asset_service=AssetService(self.session, storage),
+                bundle_service=BundleService(self.session),
                 user_id=user_id,
                 infospace_id=infospace_id,
                 settings=settings,
@@ -422,19 +426,21 @@ class SourceService:
             return False
         
         try:
-            # Use existing Celery task for legacy processing (lazy import to avoid circular import with tasks.source_monitoring)
-            from app.api.modules.content.tasks.ingest import process_source
-            process_source.delay(source.id, override_details)
-            
-            # Update source status
-            source.status = SourceStatus.PROCESSING
+            # Store overrides in source.details before dispatching
+            if override_details:
+                source.details = {**(source.details or {}), **override_details}
+
+            source.status = SourceStatus.PENDING
             source.updated_at = datetime.now(timezone.utc)
             self.session.add(source)
             self.session.commit()
-            
-            logger.info(f"Triggered legacy processing for source {source_id}")
+
+            from app.api.modules.content.tasks.ingest import process_source
+            process_source.delay([source.id], source.infospace_id)
+
+            logger.info(f"Triggered source processing for source {source_id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to trigger processing for source {source_id}: {e}")
             return False

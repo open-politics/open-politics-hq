@@ -93,7 +93,6 @@ def create_directory_import_job(
     """
     from pathlib import Path
     from app.core.config import settings
-    from app.api.modules.content.tasks.ingestion_tasks import import_directory_task
 
     validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
 
@@ -135,26 +134,22 @@ def create_directory_import_job(
     job = IngestionJob(
         infospace_id=infospace_id,
         user_id=current_user.id,
-        source_locator=request.source_path,
+        source_locator=str(source),
         kind="directory_local",
         status=IngestionStatus.PENDING,
+        cursor_state={
+            "stage": "pending",
+            "message": "Queued for import",
+            "progress_pct": 0,
+            "options": options,
+        },
     )
     db.add(job)
     db.commit()
     db.refresh(job)
 
-    task = import_directory_task.delay(
-        job_id=job.id,
-        source_path=str(source),
-        infospace_id=infospace_id,
-        user_id=current_user.id,
-        options=options,
-    )
-    job.task_id = task.id
-    job.started_at = datetime.now(timezone.utc)
-    db.add(job)
-    db.commit()
-    db.refresh(job)
+    from app.core.events import emit
+    emit("ingestion_job.created", {"infospace_id": infospace_id})
 
     job_dict = job.model_dump(mode="json")
     job_dict["progress_pct"] = job.cursor_state.get("progress_pct", 0)
@@ -172,8 +167,7 @@ class BatchProcessResponse(BaseModel):
 
 class BatchEnrichRequest(BaseModel):
     """Request to trigger batch enrichment."""
-    enricher_name: str  # e.g. "language_detection", "quality_score"
-    missing_facet: Optional[str] = None  # Override: facet to backfill (default from enricher)
+    enricher_name: str  # e.g. "language_detection", "quality_score", "ocr", "embedding"
     batch_size: int = 100
 
 
@@ -199,7 +193,7 @@ class ProcessingStatusResponse(BaseModel):
     "/infospaces/{infospace_id}/bundles/{bundle_id}/process-pending",
     response_model=BatchProcessResponse,
 )
-def trigger_batch_process_pending(
+def trigger_process_pending(
     *,
     infospace_id: int,
     bundle_id: int,
@@ -214,7 +208,7 @@ def trigger_batch_process_pending(
     This endpoint starts background processing (PDF extraction, CSV row creation).
     Processing runs in self-chaining batches until all PENDING assets are done.
     """
-    from app.api.modules.content.tasks.batch_processing import batch_process_pending
+    from app.core.dispatch import kick_tasks
 
     validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
 
@@ -225,12 +219,12 @@ def trigger_batch_process_pending(
             detail=f"Bundle {bundle_id} not found",
         )
 
-    task = batch_process_pending.delay(bundle_id=bundle_id, batch_size=batch_size)
+    kick_tasks(infospace_id, tags=frozenset({"content"}))
     return BatchProcessResponse(
         message="Batch processing started",
         bundle_id=bundle_id,
         batch_size=batch_size,
-        task_id=task.id,
+        task_id="kick",  # kick_tasks is synchronous fan-out
     )
 
 
@@ -238,7 +232,7 @@ def trigger_batch_process_pending(
     "/infospaces/{infospace_id}/bundles/{bundle_id}/enrich",
     response_model=BatchEnrichResponse,
 )
-def trigger_batch_enrich(
+def trigger_enrich(
     *,
     infospace_id: int,
     bundle_id: int,
@@ -252,15 +246,8 @@ def trigger_batch_enrich(
     Runs enrichers (geocoding, etc.) on assets that don't yet have the target
     facet set. Self-chaining until all are enriched.
     """
-    from app.api.modules.content.tasks.batch_processing import batch_enrich
-    from app.api.modules.content.enrichers import get_enricher
-    from app.api.modules.content.facets import (
-        CONTENT_HASH_FIELD,
-        FACET_LOCATION_LAT,
-        FACET_LOCATION_LON,
-        FACET_SUMMARY,
-        FACET_OCR_USED,
-    )
+    from app.core.tasks import get_task_registry
+    from app.core.dispatch import kick_tasks
 
     validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
 
@@ -271,33 +258,19 @@ def trigger_batch_enrich(
             detail=f"Bundle {bundle_id} not found",
         )
 
-    enricher = get_enricher(request.enricher_name)
-    if not enricher:
+    registry = get_task_registry()
+    if request.enricher_name not in registry:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown enricher: {request.enricher_name}",
         )
 
-    target_facet = request.missing_facet or enricher.target_facet
-    allowed = {FACET_LOCATION_LAT, FACET_LOCATION_LON, FACET_SUMMARY, FACET_OCR_USED, CONTENT_HASH_FIELD}
-    if target_facet not in allowed:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Facet {target_facet} not allowlisted for enrichment",
-        )
-
-    filter_criteria = {"missing_facet": target_facet}
-    task = batch_enrich.delay(
-        enricher_name=request.enricher_name,
-        filter_criteria=filter_criteria,
-        bundle_id=bundle_id,
-        batch_size=request.batch_size,
-    )
+    kick_tasks(infospace_id, tags=frozenset({"enrichment"}))
     return BatchEnrichResponse(
         message="Batch enrichment started",
         bundle_id=bundle_id,
         enricher_name=request.enricher_name,
-        task_id=task.id,
+        task_id="kick",
     )
 
 
@@ -488,19 +461,29 @@ async def create_archive_ingestion_job(
     from app.core.config import settings
     from app.api.modules.content.handlers import IngestionContext
     from app.api.modules.content.ingest import ingest
-    from app.api.modules.content.tasks.task_services import create_task_services
+    from app.api.modules.foundation_service_providers.registry import (
+        get_storage_provider, get_scraping_provider, get_web_search_provider,
+    )
+    from app.api.modules.content.services.asset_service import AssetService
+    from app.api.modules.content.services.bundle_service import BundleService
 
     options = request.options or {}
     options['use_background'] = True  # Always use background for explicit job creation
 
-    services = create_task_services(db)
+    storage = get_storage_provider(settings)
+    scraping = get_scraping_provider(settings)
+    try:
+        search = get_web_search_provider(settings)
+    except Exception:
+        search = None
+
     context = IngestionContext(
         session=db,
-        storage_provider=services.storage,
-        scraping_provider=services.scraping,
-        search_provider=services.search,
-        asset_service=services.asset,
-        bundle_service=services.bundle,
+        storage_provider=storage,
+        scraping_provider=scraping,
+        search_provider=search,
+        asset_service=AssetService(db, storage),
+        bundle_service=BundleService(db),
         user_id=current_user.id,
         infospace_id=infospace_id,
         settings=settings,
@@ -856,3 +839,89 @@ def get_watch_status(
                 entry["inbox_files_pending"] = 0
 
     return [WatchStatusResponse(**v) for v in by_bundle.values()]
+
+
+# ─── Pipeline observability ──────────────────────────────────────────────── #
+
+
+@router.get("/infospaces/{infospace_id}/task-status")
+def get_task_status(
+    *,
+    infospace_id: int,
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user=dependency_injection.Depends(dependency_injection.get_current_user),
+) -> Any:
+    """Per-task stats for an infospace. Reads from Redis — no DB queries."""
+    validate_infospace_access(db, infospace_id, current_user.id)
+
+    from app.core.tasks import get_task_registry
+    from app.core.redis import get_redis
+    r = get_redis()
+    result = {}
+    for name in get_task_registry():
+        key = f"task:{name}:{infospace_id}:stats"
+        stats = r.hgetall(key)
+        if stats:
+            result[name] = {k: v for k, v in stats.items()}
+    return result
+
+
+class PipelineStatsResponse(BaseModel):
+    """Pipeline timing and asset breakdown for an ingestion job."""
+    import_started: Optional[str] = None
+    import_finished: Optional[str] = None
+    total_assets: int = 0
+    ready: int = 0
+    processing: int = 0
+    pending: int = 0
+    failed: int = 0
+    last_asset_ready: Optional[str] = None
+
+
+@router.get("/ingestion-jobs/{job_id}/pipeline-stats", response_model=PipelineStatsResponse)
+def get_pipeline_stats(
+    *,
+    job_id: int,
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    current_user=dependency_injection.Depends(dependency_injection.get_current_user),
+) -> Any:
+    """Asset processing breakdown for a completed ingestion job."""
+    from sqlalchemy import func, case, literal_column
+    from app.models import Asset, ProcessingStatus
+
+    job = db.get(IngestionJob, job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
+    validate_infospace_access(db, job.infospace_id, current_user.id)
+
+    if not job.root_bundle_id:
+        return PipelineStatsResponse(
+            import_started=str(job.created_at) if job.created_at else None,
+            import_finished=str(job.completed_at) if job.completed_at else None,
+        )
+
+    row = db.exec(
+        select(
+            func.count(Asset.id).label("total"),
+            func.count(Asset.id).filter(Asset.processing_status == ProcessingStatus.READY).label("ready"),
+            func.count(Asset.id).filter(Asset.processing_status == ProcessingStatus.PROCESSING).label("processing"),
+            func.count(Asset.id).filter(Asset.processing_status == ProcessingStatus.PENDING).label("pending"),
+            func.count(Asset.id).filter(Asset.processing_status == ProcessingStatus.FAILED).label("failed"),
+            func.max(Asset.updated_at).filter(Asset.processing_status == ProcessingStatus.READY).label("last_ready"),
+        )
+        .where(Asset.bundle_id == job.root_bundle_id, Asset.parent_asset_id.is_(None))
+    ).first()
+
+    if not row:
+        return PipelineStatsResponse()
+
+    return PipelineStatsResponse(
+        import_started=str(job.created_at) if job.created_at else None,
+        import_finished=str(job.completed_at) if job.completed_at else None,
+        total_assets=row[0] or 0,
+        ready=row[1] or 0,
+        processing=row[2] or 0,
+        pending=row[3] or 0,
+        failed=row[4] or 0,
+        last_asset_ready=str(row[5]) if row[5] else None,
+    )

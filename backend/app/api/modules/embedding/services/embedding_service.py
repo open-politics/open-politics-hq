@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from sqlmodel import Session, select
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from app.models import Asset, AssetChunk, Infospace, EmbeddingModel, AssetKind, User
 from app.api.modules.content.models import get_embedding_column_for_dimension, EMBEDDING_SUPPORTED_DIMS
@@ -59,23 +60,36 @@ class EmbeddingService:
         model_name: str,
         dimension: Optional[int] = None
     ) -> EmbeddingModel:
-        """
-        Ensure an embedding model is registered in the database.
-        Auto-detects dimension if not provided.
-        """
-        # Check if model already exists
-        existing = self.session.exec(
-            select(EmbeddingModel)
-            .where(EmbeddingModel.name == model_name)
-            .where(EmbeddingModel.provider == provider.lower())
-        ).first()
+        """Ensure an embedding model is registered in the database.
 
-        if existing:
-            return existing
+        When ``dimension`` is provided (Matryoshka override), the lookup and
+        unique key include it — same model at different dimensions gets separate
+        rows.  When ``dimension`` is None, auto-detection runs and we look up
+        by (name, provider) only (non-Matryoshka models have exactly one row).
+        """
+        prov = provider.lower()
 
-        # Auto-detect dimension if not provided
-        if dimension is None:
-            # Try to get dimension from the descriptor's model catalog
+        if dimension is not None:
+            # Matryoshka / explicit dimension — look up the exact triple
+            existing = self.session.exec(
+                select(EmbeddingModel)
+                .where(EmbeddingModel.name == model_name)
+                .where(EmbeddingModel.provider == prov)
+                .where(EmbeddingModel.dimension == dimension)
+            ).first()
+            if existing:
+                return existing
+        else:
+            # Normal path — one row per (name, provider)
+            existing = self.session.exec(
+                select(EmbeddingModel)
+                .where(EmbeddingModel.name == model_name)
+                .where(EmbeddingModel.provider == prov)
+            ).first()
+            if existing:
+                return existing
+
+            # Auto-detect dimension
             from app.api.modules.foundation_service_providers.registry import get_descriptor
             from app.api.modules.foundation_service_providers.base import EmbeddingProvider, EmbeddingModelSpec
             desc = get_descriptor(EmbeddingProvider, provider)
@@ -84,11 +98,8 @@ class EmbeddingService:
                 if isinstance(spec, EmbeddingModelSpec):
                     dimension = spec.dimension
 
-            # If still unknown, ask the provider (async-safe)
             if dimension is None:
                 provider_instance = await self._get_provider(provider, model_name)
-                # Prefer async probe if available (e.g. Ollama's _probe_model),
-                # otherwise detect dimension from a test embedding.
                 if hasattr(provider_instance, '_probe_model'):
                     info = await provider_instance._probe_model(model_name)
                     dimension = info.get("dimension") or 0
@@ -96,16 +107,24 @@ class EmbeddingService:
                     test_embedding = await provider_instance.embed_single(" ", model_name)
                     dimension = len(test_embedding)
 
-        # Create new model record
+        # Insert — handle concurrent workers hitting the same unique key
         embedding_model = EmbeddingModel(
-            name=model_name,
-            provider=provider.lower(),
-            dimension=dimension,
-            is_active=True,
+            name=model_name, provider=prov, dimension=dimension, is_active=True,
         )
-
         self.session.add(embedding_model)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            existing = self.session.exec(
+                select(EmbeddingModel)
+                .where(EmbeddingModel.name == model_name)
+                .where(EmbeddingModel.provider == prov)
+                .where(EmbeddingModel.dimension == dimension)
+            ).first()
+            if existing:
+                return existing
+            raise
         self.session.refresh(embedding_model)
 
         logger.info(f"Registered embedding model: {model_name} ({provider}) with dimension {dimension}")
@@ -219,26 +238,30 @@ class EmbeddingService:
 
     def get_embedding_stats(self, infospace_id: int) -> Dict[str, Any]:
         """Get statistics about embedding coverage in an infospace."""
-        total_assets = self.session.exec(
-            select(func.count(Asset.id))
-            .where(Asset.infospace_id == infospace_id)
-            .where(Asset.text_content.isnot(None))
-        ).one()
+        from sqlalchemy import or_, case, literal_column
 
-        total_chunks = self.session.exec(
-            select(func.count(AssetChunk.id))
-            .join(Asset)
-            .where(Asset.infospace_id == infospace_id)
+        # Single query: asset counts by level (documents vs sub-assets)
+        asset_counts = self.session.exec(
+            select(
+                func.count(Asset.id),
+                func.count(Asset.id).filter(Asset.parent_asset_id.is_(None)),
+            )
+            .where(Asset.infospace_id == infospace_id, Asset.text_content.isnot(None))
         ).one()
+        total_assets, documents = asset_counts
+        sub_assets = total_assets - documents
 
-        from sqlalchemy import or_
+        # Single query: total + embedded chunk counts
         dim_conditions = [getattr(AssetChunk, f"embedding_{d}").isnot(None) for d in EMBEDDING_SUPPORTED_DIMS]
-        embedded_chunks = self.session.exec(
-            select(func.count(AssetChunk.id))
+        chunk_counts = self.session.exec(
+            select(
+                func.count(AssetChunk.id),
+                func.count(AssetChunk.id).filter(or_(*dim_conditions)),
+            )
             .join(Asset)
             .where(Asset.infospace_id == infospace_id)
-            .where(or_(*dim_conditions))
         ).one()
+        total_chunks, embedded_chunks = chunk_counts
 
         models_used = self.session.exec(
             select(EmbeddingModel.name, func.count(AssetChunk.id))
@@ -253,6 +276,8 @@ class EmbeddingService:
 
         return {
             "total_assets": total_assets,
+            "documents": documents,
+            "sub_assets": sub_assets,
             "total_chunks": total_chunks,
             "embedded_chunks": embedded_chunks,
             "coverage_percentage": round(coverage_percentage, 2),

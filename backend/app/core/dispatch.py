@@ -1,235 +1,262 @@
 """
-Reactive dispatch infrastructure.
+Dispatch infrastructure.
 
-Provides:
-- ReactiveWatcher protocol: watchers define SQL-pushdown queries for "work to do"
-- Watcher registry: register_watcher(), get_watchers()
-- Beat dispatcher task: dispatch_reactive_work iterates watchers, runs queries,
-  and dispatches tasks by name string (no cross-domain imports).
+Three dispatch mechanisms:
+- Schedule: beat task polls registered @tasks per their declared schedule
+- Kick: on-demand full dispatch for an infospace (after import, admin, deploy)
+- Events: handled by core/events.py, not in this file
+
+The dispatcher iterates @task registry × infospaces. Per-task schedule controls
+poll frequency. kick_tasks bypasses schedule for immediate dispatch.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, Protocol, runtime_checkable
+import time
+from typing import Any
 
 from sqlmodel import Session
 
 logger = logging.getLogger(__name__)
 
-MAX_DISPATCH_PER_CYCLE = 2000  # raised: 500 was too low for 400GB datasets
-MAX_PER_WATCHER_PER_CYCLE = 500  # no single watcher takes more than this
-
-# Type for queries that yield (id,) tuples when executed
-# SQLModel/SQLAlchemy Select objects work with session.exec()
-QueryLike = Any
+MAX_DISPATCH_PER_CYCLE = 2000
+MAX_PER_TASK_PER_CYCLE = 500
 
 
-def _get_enabled_watchers() -> set[str]:
-    """Parse ENABLED_WATCHERS config into a set. Used by watcher modules at import time."""
+def _get_enabled_enrichers() -> set[str] | None:
+    """Parse ENABLED_ENRICHERS config.
+
+    Returns None if all enrichers are enabled ("*"), an empty set if none,
+    or a set of names for a whitelist.
+    """
     from app.core.config import settings
-
-    raw = getattr(settings, "ENABLED_WATCHERS", "") or ""
+    raw = (getattr(settings, "ENABLED_ENRICHERS", "") or "").strip()
+    if not raw:
+        return set()  # empty = nothing runs
+    if raw == "*":
+        return None  # None = all run (no filter)
     return {e.strip() for e in raw.split(",") if e.strip()}
 
 
-_CAPABILITY_NAME_TO_PROTOCOL: dict[str, type] = {}
-
-
-def _get_protocol_for_capability(name: str) -> type | None:
-    """Lazy-load protocol mapping to avoid import-time circular deps."""
-    if not _CAPABILITY_NAME_TO_PROTOCOL:
-        from app.api.modules.foundation_service_providers.base import (
-            GeocodingProvider, OcrProvider, StorageProvider, EmbeddingProvider,
-            LanguageModelProvider, WebSearchProvider, ScrapingProvider,
-        )
-        _CAPABILITY_NAME_TO_PROTOCOL.update({
-            "geocoding": GeocodingProvider,
-            "ocr": OcrProvider,
-            "storage": StorageProvider,
-            "embedding": EmbeddingProvider,
-            "language": LanguageModelProvider,
-            "web_search": WebSearchProvider,
-            "scraping": ScrapingProvider,
-        })
-    return _CAPABILITY_NAME_TO_PROTOCOL.get(name)
+def _get_redis():
+    try:
+        from app.core.redis import get_redis
+        return get_redis()
+    except Exception:
+        return None
 
 
 def _is_capability_configured(capability_name: str) -> bool:
-    """
-    Check if any provider for this capability is accessible in this deployment.
-    Used as a circuit breaker to skip watchers whose capability is unavailable.
-    """
-    protocol = _get_protocol_for_capability(capability_name)
-    if not protocol:
-        return True  # unknown capability, assume configured
-
+    """Check if any provider for this capability is accessible in this deployment."""
+    from app.api.modules.foundation_service_providers.registry import CAPABILITIES, is_capability_available
     from app.core.config import settings
-    from app.api.modules.foundation_service_providers.registry import is_capability_available
+    protocol = CAPABILITIES.get(capability_name)
+    if not protocol:
+        return True  # unknown capability = don't block
     return is_capability_available(protocol, settings)
 
 
-@runtime_checkable
-class ReactiveWatcher(Protocol):
-    """
-    Protocol for reactive work watchers.
-
-    Watchers define "what entities need work" via a SQL-pushdown query.
-    They never import from the domain that executes the work; they dispatch
-    by Celery task name string.
-    """
-
-    name: str
-    """Human-readable watcher name for logging."""
-
-    task_name: str
-    """Celery task name as string, e.g. 'app.api.modules.search.tasks.embed.embed_task'."""
-
-    batch_size: int
-    """Max IDs to pass per task invocation."""
-
-    depends_on: Optional[str] = None
-    """Name of another watcher that must run first. Enables two-pass dispatch."""
-
-    def build_query(self, session: Session) -> QueryLike:
-        """
-        Build a query that selects (id,) for entities that need work.
-
-        The query is executed by the dispatcher. Must yield rows of (entity_id,).
-        """
-        ...
+def _is_due(descriptor) -> bool:
+    """Check if enough time has passed since last dispatch for this task."""
+    if descriptor.schedule is None:
+        return False
+    r = _get_redis()
+    if not r:
+        return True  # no Redis = dispatch (safe default)
+    last = r.get(f"task:{descriptor.name}:last_dispatched")
+    if not last:
+        return True
+    try:
+        return (time.time() - float(last)) >= descriptor.schedule
+    except (ValueError, TypeError):
+        return True
 
 
-_WATCHERS: list[ReactiveWatcher] = []
+def _chunk(lst, n):
+    """Split list into chunks of size n."""
+    for i in range(0, len(lst), n):
+        yield lst[i : i + n]
 
 
-def register_watcher(watcher: ReactiveWatcher) -> None:
-    """Register a reactive watcher. Call at module import time."""
-    _WATCHERS.append(watcher)
-    logger.debug("Registered watcher: %s -> %s", watcher.name, watcher.task_name)
+def _dispatch_task_for_infospace(desc, infospace_id: int, budget: int = MAX_PER_TASK_PER_CYCLE) -> int:
+    """Core dispatch logic for one task × one infospace. Used by both beat and kick.
 
-
-def get_watchers() -> list[ReactiveWatcher]:
-    """Return all registered watchers."""
-    return list(_WATCHERS)
-
-
-def _dispatch_reactive_work_impl() -> dict[str, Any]:
-    """
-    Implementation of dispatch_reactive_work.
-    Separate so the Celery task can be defined after imports resolve.
-    Two-pass dispatch: independent watchers first, then dependent watchers.
-    Per-watcher budget prevents one watcher from starving others.
+    Runs the task's check query, filters failed items, chunks by batch size,
+    sends Celery tasks. Returns count of items dispatched.
     """
     from app.core.db import engine
     from app.core.celery_app import celery_app
+    from app.core.tasks import filter_failed_items
+
+    # Check capability availability
+    if desc.capability and not _is_capability_configured(desc.capability):
+        return 0
+
+    # Apply dispatch_filter (enrichment config + ENABLED_ENRICHERS)
+    if desc.dispatch_filter:
+        try:
+            # dispatch_filter receives infospace object, but we have only the id.
+            # Load infospace if needed.
+            from app.api.modules.identity_infospace_user.models import Infospace
+            with Session(engine) as session:
+                infospace = session.get(Infospace, infospace_id)
+                if not infospace:
+                    return 0
+                session.expunge(infospace)
+            if not desc.dispatch_filter(infospace):
+                return 0
+        except Exception as e:
+            logger.warning("Dispatch filter failed for %s: %s", desc.name, e)
+            return 0
+
+    # Check backoff
+    r = _get_redis()
+    if r:
+        try:
+            if r.get(f"task:{desc.name}:{infospace_id}:backoff"):
+                return 0
+        except Exception:
+            pass
+
+    try:
+        with engine.connect() as conn:
+            with Session(bind=conn) as session:
+                try:
+                    query = desc.check(infospace_id).limit(min(budget, MAX_PER_TASK_PER_CYCLE))
+                    rows = session.exec(query).all()
+                    ids = [
+                        row[0] if hasattr(row, "__getitem__") and not isinstance(row, (int, str))
+                        else row
+                        for row in (rows or [])
+                    ]
+                except Exception:
+                    conn.invalidate()
+                    raise
+
+        if not ids:
+            return 0
+
+        # Filter failed items
+        ids = filter_failed_items(desc.name, ids, desc.max_item_failures)
+        if not ids:
+            return 0
+
+        dispatched = 0
+        total_items = 0
+        for batch in _chunk(ids, desc.batch):
+            if desc.dispatch_limit and dispatched >= desc.dispatch_limit:
+                break
+            if total_items >= budget:
+                break
+            celery_app.send_task(
+                desc.celery_task_name,
+                args=[batch, infospace_id],
+                queue=desc.queue,
+            )
+            dispatched += 1
+            total_items += len(batch)
+
+        return total_items
+
+    except Exception as e:
+        logger.error("Dispatch failed for %s infospace %d: %s",
+                     desc.name, infospace_id, e, exc_info=True)
+        return 0
+
+
+def _dispatch_tasks_impl() -> dict[str, Any]:
+    """
+    Beat task: iterate scheduled @tasks × infospaces, dispatch work.
+
+    For each task in topological order:
+    1. Skip if schedule is None
+    2. Skip if not due (Redis last_dispatched check)
+    3. For each infospace: _dispatch_task_for_infospace()
+    4. Update last_dispatched timestamp in Redis
+    """
+    from app.core.db import engine
+    from app.core.tasks import get_task_registry, topological_sort
+
+    task_registry = get_task_registry()
+    if not task_registry:
+        return {"total_dispatched": 0, "tasks": {}}
+
+    # Get all infospaces (one DB query, cached for cycle)
+    from app.api.modules.identity_infospace_user.models import Infospace
+    from sqlmodel import select as _select
+    with Session(engine) as session:
+        infospaces = session.exec(_select(Infospace)).all()
+        for isp in infospaces:
+            session.expunge(isp)
 
     total_dispatched = 0
-    watcher_results: dict[str, int] = {}
-    watchers = get_watchers()
-    global_budget = MAX_DISPATCH_PER_CYCLE
+    task_results: dict[str, int] = {}
+    budget = MAX_DISPATCH_PER_CYCLE
 
-    # Two-pass: independent (no depends_on) first, then dependent
-    independent = [w for w in watchers if not getattr(w, "depends_on", None)]
-    dependent = [w for w in watchers if getattr(w, "depends_on", None)]
+    sorted_tasks = topological_sort(list(task_registry.values()))
 
-    # One connection per watcher: avoids InFailedSqlTransaction cascade when one
-    # watcher fails (connection is invalidated and discarded; next watcher gets fresh).
-    for watcher in independent + dependent:
-        if global_budget <= 0:
-            logger.warning(
-                "Global dispatch budget exhausted (%d); deferring remaining work",
-                MAX_DISPATCH_PER_CYCLE,
-            )
-            watcher_results[watcher.name] = -2  # budget sentinel
+    for descriptor in sorted_tasks:
+        if budget <= 0:
+            break
+
+        # Only dispatch tasks with a schedule (event/kick-only tasks skip)
+        if not _is_due(descriptor):
             continue
 
-        watcher_budget = min(MAX_PER_WATCHER_PER_CYCLE, global_budget)
+        task_dispatched = 0
 
-        capability = getattr(watcher, "capability", None) or (
-            getattr(getattr(watcher, "enricher", None), "capability", None)
-        )
-        if capability and not _is_capability_configured(capability):
-            logger.debug(
-                "Skipping watcher %s: capability %s not available",
-                watcher.name,
-                capability,
-            )
-            watcher_results[watcher.name] = 0
+        for infospace in infospaces:
+            if budget <= 0:
+                break
+            count = _dispatch_task_for_infospace(descriptor, infospace.id, budget)
+            task_dispatched += count
+            budget -= count
+
+        # Update last_dispatched
+        if descriptor.schedule is not None:
+            r = _get_redis()
+            if r:
+                try:
+                    r.set(f"task:{descriptor.name}:last_dispatched", str(time.time()))
+                except Exception:
+                    pass
+
+        task_results[descriptor.name] = task_dispatched
+        total_dispatched += task_dispatched
+        if task_dispatched:
+            logger.info("Dispatched %s: %d items", descriptor.name, task_dispatched)
+
+    return {"total_dispatched": total_dispatched, "tasks": task_results}
+
+
+def kick_tasks(infospace_id: int, tags: frozenset[str] | None = None):
+    """On-demand dispatch. Runs full check→fan-out logic, bypasses schedule.
+
+    Called by:
+    - Import tasks after creating PENDING assets (kick_tasks(iid, tags={"content"}))
+    - Admin endpoints for manual re-sweep
+    """
+    from app.core.tasks import get_task_registry
+
+    for name, desc in get_task_registry().items():
+        if tags and not (desc.tags & tags):
             continue
-
-        try:
-            with engine.connect() as conn:
-                with Session(bind=conn) as session:
-                    try:
-                        query = watcher.build_query(session)
-                        rows = session.exec(query).all()
-                        ids = [
-                            row[0] if hasattr(row, "__getitem__") and not isinstance(row, (int, str))
-                            else row
-                            for row in (rows or [])
-                        ]
-                    except Exception:
-                        conn.invalidate()
-                        raise
-
-            if not ids:
-                watcher_results[watcher.name] = 0
-                continue
-
-            ids = ids[:watcher_budget]
-
-            # Batch IDs
-            batched = [
-                ids[i : i + watcher.batch_size]
-                for i in range(0, len(ids), watcher.batch_size)
-            ]
-            for batch in batched:
-                celery_app.send_task(
-                    watcher.task_name,
-                    args=[batch],
-                    kwargs={},
-                )
-                total_dispatched += len(batch)
-
-            global_budget -= len(ids)
-            watcher_results[watcher.name] = len(ids)
-            logger.info(
-                "Dispatched %s: %d IDs to %s",
-                watcher.name,
-                len(ids),
-                watcher.task_name,
-            )
-        except Exception as e:
-            logger.error(
-                "Watcher %s failed: %s",
-                watcher.name,
-                e,
-                exc_info=True,
-            )
-            watcher_results[watcher.name] = -1  # error sentinel
-
-    return {
-        "total_dispatched": total_dispatched,
-        "watchers": watcher_results,
-    }
+        count = _dispatch_task_for_infospace(desc, infospace_id)
+        if count:
+            logger.info("kick_tasks: dispatched %s for infospace %d: %d items", name, infospace_id, count)
 
 
 def _create_dispatch_task():
     from app.core.celery_app import celery_app
 
-    @celery_app.task(name="dispatch_reactive_work")
-    def dispatch_reactive_work() -> dict[str, Any]:
-        """
-        Beat task: iterate registered watchers, run queries, dispatch work.
+    @celery_app.task(name="dispatch_tasks")
+    def dispatch_tasks() -> dict[str, Any]:
+        """Beat task: iterate registered @task descriptors × infospaces, dispatch work."""
+        return _dispatch_tasks_impl()
 
-        Replaces ad-hoc Beat tasks for source polling, flow on-arrival,
-        and enrichment. Watchers are registered by content domain at import time.
-        """
-        return _dispatch_reactive_work_impl()
-
-    return dispatch_reactive_work
+    return dispatch_tasks
 
 
-# Task instance for Beat schedule (wired in cleanup-and-wire step)
-dispatch_reactive_work = _create_dispatch_task()
+# Create task instance for Beat schedule
+dispatch_tasks = _create_dispatch_task()

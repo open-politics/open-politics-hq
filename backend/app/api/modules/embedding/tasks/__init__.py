@@ -1,5 +1,1 @@
-"""Embedding domain tasks."""
-
-from .embed import enrich_embedding_task
-
-__all__ = ["enrich_embedding_task"]
+"""Embedding domain tasks — now handled by @enricher("embedding") in content/enrichers.py."""

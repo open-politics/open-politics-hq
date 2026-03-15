@@ -50,11 +50,13 @@ from mcp.types import TextContent
 
 from app.api.global_utils import validate_infospace_access
 from app.core.config import settings
-from app.api.modules.foundation_service_providers.registry import get_storage_provider
+from app.api.modules.foundation_service_providers.registry import (
+    get_storage_provider, get_scraping_provider, get_web_search_provider,
+)
 from app.api.modules.content.services import AssetService
+from app.api.modules.content.services.bundle_service import BundleService
 from app.api.modules.content.handlers import IngestionContext
 from app.api.modules.content.ingest import ingest
-from app.api.modules.content.tasks.task_services import create_task_services
 from app.api.modules.annotation.services import AnnotationService
 from app.models import Asset, AssetKind, Infospace
 from app.schemas import (
@@ -120,17 +122,17 @@ def get_services():
     
     try:
         # Initialize core services
-        task_services = create_task_services(session)
-        asset_service = task_services.asset
+        asset_service = AssetService(session)
+        bundle_service = BundleService(session)
         annotation_service = AnnotationService(session=session, asset_service=asset_service)
 
         ingestion_context = IngestionContext(
             session=session,
-            storage_provider=task_services.storage,
-            scraping_provider=task_services.scraping,
-            search_provider=task_services.search,
-            asset_service=task_services.asset,
-            bundle_service=task_services.bundle,
+            storage_provider=get_storage_provider(settings),
+            scraping_provider=get_scraping_provider(settings),
+            search_provider=get_web_search_provider(settings),
+            asset_service=asset_service,
+            bundle_service=bundle_service,
             user_id=user_id,
             infospace_id=infospace_id,
             settings=settings,

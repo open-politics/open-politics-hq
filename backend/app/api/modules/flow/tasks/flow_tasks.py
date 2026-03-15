@@ -1,298 +1,207 @@
 """
-Flow Tasks
-==========
+Flow execution @task functions.
 
-Celery tasks for executing Flows.
+- execute_pending_flows: claim and run PENDING FlowExecutions
+- resume_waiting_flows: resume flows waiting on async steps (annotation)
+- check_on_arrival_flows: trigger flows with on_arrival mode when new assets arrive
+- trigger_source_poll_flows: check STREAM flows when sources are polled
 """
 
 import logging
-from typing import List
-from celery import shared_task
+from datetime import datetime, timezone
+
 from sqlmodel import Session, select
 
-from app.core.celery_app import celery
-from app.core.events import subscribe
-
-# Event bus: flow subscribes to annotation_run.completed (no import from annotation)
-subscribe("annotation_run.completed", "app.api.modules.flow.tasks.flow_tasks.resume_flow_execution", args_key="flow_execution_id")
-from app.core.db import engine
-from app.api.modules.flow.services.flow_service import FlowService
-from app.models import FlowExecution, AnnotationRun, RunStatus
+from app.api.modules.flow.models import Flow, FlowExecution, FlowStatus, FlowTriggerMode, FlowInputType
+from app.models import AnnotationRun, RunStatus
+from app.core.tasks import TaskContext, task
 
 logger = logging.getLogger(__name__)
 
 
-@shared_task
-def resume_flow_execution(execution_id: int) -> None:
-    """
-    Resume a flow execution after an async step (e.g. ANNOTATE) completes.
-    Called by process_annotation_run when the run has flow_execution_id.
-    """
-    if not execution_id:
-        return  # standalone annotation run, no flow to resume
-    with Session(engine) as session:
-        execution = session.get(FlowExecution, execution_id)
-        if not execution or execution.status != RunStatus.WAITING:
-            return
-        pending_run_id = (execution.execution_state or {}).get("pending_run_id")
-        if pending_run_id:
-            run = session.get(AnnotationRun, pending_run_id)
-            if run and run.status not in (RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_ERRORS):
-                return
-        execution.status = RunStatus.RUNNING
-        session.add(execution)
-        session.commit()
-        flow_service = FlowService(session)
-        flow_service.run_execution(execution_id)
+# ── execute_pending_flows ─────────────────────────────────────────────────────
 
-
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def execute_flow(self, execution_id: int):
-    """
-    Execute a FlowExecution.
-
-    Uses Redis advisory lock per flow_id to prevent concurrent execution.
-    If lock cannot be acquired, retries after default_retry_delay.
-
-    Args:
-        execution_id: ID of the FlowExecution to run
-    """
-    from app.models import FlowExecution
+@task("execute_pending_flows",
+      check=lambda iid: (
+          select(FlowExecution.id)
+          .join(Flow, FlowExecution.flow_id == Flow.id)
+          .where(
+              Flow.infospace_id == iid,
+              FlowExecution.status == RunStatus.PENDING,
+          )
+          .order_by(FlowExecution.created_at)
+      ),
+      schedule=None,
+      triggers=["flow.execute"],
+      batch=1,
+      self_chain=True,
+      queue="default",
+      timeout=3600,
+      exclusive=True,
+      tags=frozenset({"flow"}))
+def execute_pending_flows(ctx: TaskContext, execution_ids: list[int]):
+    """Claim and run PENDING FlowExecutions."""
+    from app.api.modules.flow.services.flow_service import FlowService
     from app.core.redis_lock import flow_execution_lock
 
-    with Session(engine) as session:
-        execution = session.get(FlowExecution, execution_id)
-        if not execution:
-            logger.error(f"FlowExecution {execution_id} not found")
-            return {"error": "Execution not found"}
-        flow_id = execution.flow_id
+    for execution_id in execution_ids:
+        with ctx.session() as session:
+            execution = session.get(FlowExecution, execution_id)
+            if not execution or execution.status != RunStatus.PENDING:
+                continue
+            flow_id = execution.flow_id
 
-    with flow_execution_lock(flow_id) as acquired:
-        if not acquired:
-            logger.info(f"Flow {flow_id} already executing, will retry")
-            raise self.retry(countdown=60)
-
-        logger.info(f"Starting FlowExecution {execution_id} (flow {flow_id})")
-
-        try:
-            with Session(engine) as session:
-                flow_service = FlowService(session)
-                execution = flow_service.run_execution(execution_id)
-
-                logger.info(
-                    f"FlowExecution {execution_id} completed with status: {execution.status}"
-                )
-
-                return {
-                    "execution_id": execution_id,
-                    "status": execution.status.value if execution.status else None,
-                    "input_count": len(execution.input_asset_ids),
-                    "output_count": len(execution.output_asset_ids),
-                }
-
-        except Exception as e:
-            logger.error(f"FlowExecution {execution_id} failed: {e}", exc_info=True)
+        with flow_execution_lock(flow_id) as acquired:
+            if not acquired:
+                logger.info("Flow %d already executing, will retry later", flow_id)
+                continue
 
             try:
-                with Session(engine) as session:
-                    from app.models import FlowExecution, RunStatus
-                    from datetime import datetime, timezone
+                with ctx.session() as session:
+                    svc = FlowService(session)
+                    svc.run_execution(execution_id)
+                ctx.stat("done")
 
+            except Exception as e:
+                logger.error("FlowExecution %d failed: %s", execution_id, e, exc_info=True)
+                with ctx.session() as session:
                     execution = session.get(FlowExecution, execution_id)
                     if execution:
                         execution.status = RunStatus.FAILED
-                        execution.error_message = str(e)
+                        execution.error_message = str(e)[:500]
                         execution.completed_at = datetime.now(timezone.utc)
                         session.add(execution)
                         session.commit()
-            except Exception as update_error:
-                logger.error(f"Failed to update execution status: {update_error}")
-
-            if self.request.retries < self.max_retries:
-                raise self.retry(exc=e)
-
-            raise
+                ctx.item_failed(execution_id)
+                ctx.stat("failed")
 
 
-@celery.task(name="trigger_flows_for_source_poll")
-def trigger_flows_for_source_poll(source_id: int, asset_ids: List[int]) -> List[int]:
-    """
-    Trigger flows that watch a source, given new asset IDs from a poll.
+# ── resume_waiting_flows ──────────────────────────────────────────────────────
 
-    Called by content domain (e.g. StreamSourceService) via Celery task name
-    to avoid Content -> Flow layer violation.
+@task("resume_waiting_flows",
+      check=lambda iid: (
+          select(FlowExecution.id)
+          .join(Flow, FlowExecution.flow_id == Flow.id)
+          .where(
+              Flow.infospace_id == iid,
+              FlowExecution.status == RunStatus.WAITING,
+          )
+      ),
+      schedule=None,
+      triggers=["annotation_run.completed"],
+      batch=1,
+      self_chain=True,
+      queue="default",
+      timeout=3600,
+      tags=frozenset({"flow"}))
+def resume_waiting_flows(ctx: TaskContext, execution_ids: list[int]):
+    """Resume FlowExecutions waiting on completed async steps."""
+    from app.api.modules.flow.services.flow_service import FlowService
 
-    Args:
-        source_id: ID of the source that was polled
-        asset_ids: Asset IDs created/updated by the poll
+    for execution_id in execution_ids:
+        with ctx.session() as session:
+            execution = session.get(FlowExecution, execution_id)
+            if not execution or execution.status != RunStatus.WAITING:
+                continue
 
-    Returns:
-        List of FlowExecution IDs triggered
-    """
-    from app.models import Flow, FlowInputType, FlowStatus
+            # Check that the pending annotation run is actually completed
+            pending_run_id = (execution.execution_state or {}).get("pending_run_id")
+            if pending_run_id:
+                run = session.get(AnnotationRun, pending_run_id)
+                if run and run.status not in (RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_ERRORS):
+                    continue
 
-    if not asset_ids:
-        return []
-
-    logger.info(f"Triggering flows for source {source_id} ({len(asset_ids)} assets)")
-
-    with Session(engine) as session:
-        flows = session.exec(
-            select(Flow).where(
-                Flow.input_type == FlowInputType.STREAM,
-                Flow.input_source_id == source_id,
-                Flow.status == FlowStatus.ACTIVE,
-            )
-        ).all()
-
-        if not flows:
-            return []
-
-        flow_service = FlowService(session)
-        execution_ids = []
-        for flow in flows:
-            try:
-                execution = flow_service.trigger_execution(
-                    flow_id=flow.id,
-                    user_id=flow.user_id,
-                    infospace_id=flow.infospace_id,
-                    triggered_by="source_poll",
-                    triggered_by_source_id=source_id,
-                )
-                execution_ids.append(execution.id)
-                logger.info(f"Triggered Flow {flow.id} for source {source_id}")
-            except Exception as e:
-                logger.error(f"Failed to trigger Flow {flow.id}: {e}")
-
-        return execution_ids
-
-
-@shared_task
-def trigger_flow_by_task(task_id: int):
-    """
-    Trigger a Flow execution from a scheduled Task.
-    
-    Called by Celery Beat when a Task with type='flow' is due.
-    
-    Args:
-        task_id: ID of the Task that triggered this
-    """
-    logger.info(f"Task {task_id} triggering Flow execution")
-    
-    try:
-        with Session(engine) as session:
-            from app.models import Task, Flow
-            
-            task = session.get(Task, task_id)
-            if not task:
-                logger.error(f"Task {task_id} not found")
-                return {"error": "Task not found"}
-            
-            flow_id = task.configuration.get("flow_id") or task.configuration.get("target_id")
-            if not flow_id:
-                logger.error(f"Task {task_id} has no flow_id in configuration")
-                return {"error": "No flow_id configured"}
-            
-            flow = session.get(Flow, flow_id)
-            if not flow:
-                logger.error(f"Flow {flow_id} not found")
-                return {"error": "Flow not found"}
-            
-            flow_service = FlowService(session)
-            execution = flow_service.trigger_execution(
-                flow_id=flow_id,
-                user_id=flow.user_id,
-                infospace_id=flow.infospace_id,
-                triggered_by="task",
-                triggered_by_task_id=task_id,
-            )
-            
-            # Update task last run info
-            from datetime import datetime, timezone
-            task.last_run_at = datetime.now(timezone.utc)
-            task.last_run_status = "triggered"
-            session.add(task)
+            execution.status = RunStatus.RUNNING
+            session.add(execution)
             session.commit()
-            
-            return {
-                "task_id": task_id,
-                "flow_id": flow_id,
-                "execution_id": execution.id,
-            }
-            
-    except Exception as e:
-        logger.error(f"Failed to trigger Flow from Task {task_id}: {e}", exc_info=True)
-        
-        # Update task failure info
-        try:
-            with Session(engine) as session:
-                from app.models import Task
-                from datetime import datetime, timezone
-                
-                task = session.get(Task, task_id)
-                if task:
-                    task.last_run_at = datetime.now(timezone.utc)
-                    task.last_run_status = "failed"
-                    task.last_run_message = str(e)
-                    task.consecutive_failure_count += 1
-                    session.add(task)
-                    session.commit()
-        except Exception as update_error:
-            logger.error(f"Failed to update task status: {update_error}")
-        
-        raise
+
+            try:
+                svc = FlowService(session)
+                svc.run_execution(execution_id)
+                ctx.stat("done")
+            except Exception as e:
+                logger.error("Flow resume failed for execution %d: %s", execution_id, e, exc_info=True)
+                ctx.item_failed(execution_id)
+                ctx.stat("failed")
 
 
-@shared_task
-def check_on_arrival_flows():
-    """
-    Periodic task to check for flows with on_arrival trigger mode.
-    
-    This should be scheduled to run frequently (e.g., every minute) via Celery Beat.
-    It checks each active on_arrival flow for new assets and triggers execution if any.
-    """
-    logger.info("Checking on_arrival flows")
-    
-    triggered_count = 0
-    
-    try:
-        with Session(engine) as session:
-            from sqlmodel import select
-            from app.models import Flow, FlowStatus, FlowTriggerMode
-            
-            # Get all active flows with on_arrival trigger
-            flows = session.exec(
-                select(Flow).where(
-                    Flow.status == FlowStatus.ACTIVE,
-                    Flow.trigger_mode == FlowTriggerMode.ON_ARRIVAL,
-                )
-            ).all()
-            
-            flow_service = FlowService(session)
-            
-            for flow in flows:
-                # Check for delta assets
-                delta_assets = flow_service._get_delta_assets(flow)
-                
+# ── check_on_arrival_flows ────────────────────────────────────────────────────
+
+@task("check_on_arrival_flows",
+      check=lambda iid: (
+          select(Flow.id)
+          .where(
+              Flow.infospace_id == iid,
+              Flow.status == FlowStatus.ACTIVE,
+              Flow.trigger_mode == FlowTriggerMode.ON_ARRIVAL,
+          )
+      ),
+      schedule=300,
+      batch=10,
+      queue="default",
+      tags=frozenset({"flow"}))
+def check_on_arrival(ctx: TaskContext, flow_ids: list[int]):
+    """Check on_arrival flows for new assets and trigger execution."""
+    from app.api.modules.flow.services.flow_service import FlowService
+
+    with ctx.session() as session:
+        svc = FlowService(session)
+        for flow_id in flow_ids:
+            try:
+                flow = session.get(Flow, flow_id)
+                if not flow:
+                    continue
+                delta_assets = svc._get_delta_assets(flow)
                 if delta_assets:
-                    logger.info(f"Flow {flow.id} has {len(delta_assets)} new assets, triggering")
-                    
-                    try:
-                        flow_service.trigger_execution(
-                            flow_id=flow.id,
-                            user_id=flow.user_id,
-                            infospace_id=flow.infospace_id,
-                            triggered_by="on_arrival",
-                        )
-                        triggered_count += 1
-                    except Exception as e:
-                        logger.error(f"Failed to trigger Flow {flow.id}: {e}")
-            
-            return {
-                "flows_checked": len(flows),
-                "flows_triggered": triggered_count,
-            }
-            
-    except Exception as e:
-        logger.error(f"Error checking on_arrival flows: {e}", exc_info=True)
-        raise
+                    svc.trigger_execution(
+                        flow_id=flow.id,
+                        user_id=flow.user_id,
+                        infospace_id=flow.infospace_id,
+                        triggered_by="on_arrival",
+                    )
+                    ctx.stat("done")
+            except Exception as e:
+                logger.error("On-arrival check failed for flow %d: %s", flow_id, e)
+                ctx.stat("failed")
+
+
+# ── trigger_source_poll_flows ─────────────────────────────────────────────────
+
+@task("trigger_source_poll_flows",
+      check=lambda iid: (
+          select(Flow.id)
+          .where(
+              Flow.infospace_id == iid,
+              Flow.input_type == FlowInputType.STREAM,
+              Flow.status == FlowStatus.ACTIVE,
+          )
+      ),
+      schedule=None,
+      triggers=["source.polled"],
+      batch=10,
+      queue="default",
+      tags=frozenset({"flow"}))
+def trigger_source_poll_flows(ctx: TaskContext, flow_ids: list[int]):
+    """Check active STREAM flows and trigger execution when their source has new content."""
+    from app.api.modules.flow.services.flow_service import FlowService
+
+    with ctx.session() as session:
+        svc = FlowService(session)
+        for flow_id in flow_ids:
+            try:
+                flow = session.get(Flow, flow_id)
+                if not flow or not flow.input_source_id:
+                    continue
+                delta_assets = svc._get_delta_assets(flow)
+                if delta_assets:
+                    svc.trigger_execution(
+                        flow_id=flow.id,
+                        user_id=flow.user_id,
+                        infospace_id=flow.infospace_id,
+                        triggered_by="source_poll",
+                        triggered_by_source_id=flow.input_source_id,
+                    )
+                    ctx.stat("done")
+            except Exception as e:
+                logger.error("Failed to trigger Flow %d: %s", flow_id, e)
+                ctx.stat("failed")

@@ -28,7 +28,7 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
 
     def __init__(self, base_url: str = "http://host.docker.internal:11434"):
         self.base_url = base_url.rstrip('/')
-        self.client = httpx.AsyncClient(timeout=120.0)
+        self.client = httpx.AsyncClient(timeout=600.0)  # CPU embedding is slow
         self._model_cache: Dict[str, Dict[str, Any]] = {}
         logger.info(f"Ollama embedding provider initialized with base_url: {self.base_url}")
 

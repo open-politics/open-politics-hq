@@ -90,9 +90,9 @@ class BackupService:
         self.session.commit()
         self.session.refresh(backup)
         
-        # Trigger async backup creation
-        from app.api.modules.sharing.tasks.backup import process_infospace_backup
-        process_infospace_backup.delay(backup.id, backup_data.model_dump())
+        # Trigger async backup creation via event
+        from app.core.events import emit
+        emit("backup.created", {"infospace_id": infospace_id})
         
         logger.info(f"Backup record created with ID {backup.id}, queued for processing")
         return backup

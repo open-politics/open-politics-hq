@@ -1,5 +1,2 @@
-"""Annotation domain tasks."""
-
-from .annotate import process_annotation_run, retry_failed_annotations
-
-__all__ = ["process_annotation_run", "retry_failed_annotations"]
+"""Annotation domain task registration. Imported by celery_app.py."""
+from app.api.modules.annotation.tasks import followup, annotate

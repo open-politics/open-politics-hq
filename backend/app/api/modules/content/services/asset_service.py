@@ -5,10 +5,10 @@ from sqlalchemy import update
 import asyncio
 
 from app.models import Asset, AssetChunk, Annotation, AssetKind, ProcessingStatus
+from app.api.modules.annotation.models import Justification
+from app.api.modules.graph.models import FragmentCuration, GraphEdge
 from app.schemas import AssetCreate, AssetUpdate
 from app.api.modules.foundation_service_providers.base import StorageProvider
-from app.core.celery_app import celery
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_BATCH_SIZE = 500
@@ -196,25 +196,20 @@ class AssetService:
     def reprocess_asset(self, asset_id: int, options: Optional[Dict[str, Any]] = None) -> bool:
         """
         DEPRECATED: Use ProcessingService.reprocess_content() instead.
-        This method is kept for backward compatibility only.
+        Resets asset to PENDING so process_pending @task picks it up.
         """
-        logger.warning(
-            f"AssetService.reprocess_asset() is deprecated. "
-            f"Use ProcessingService.reprocess_content() instead."
-        )
-        
         asset = self.session.get(Asset, asset_id)
         if not asset:
             return False
-        
-        try:
-            from app.api.modules.content.tasks.content_tasks import reprocess_content
-            reprocess_content.delay(asset.id, options=options)
-            logger.info(f"Triggered reprocessing for asset {asset.id} with options: {options}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to trigger reprocessing for asset {asset.id}: {e}")
-            return False
+
+        from app.models import ProcessingStatus
+        asset.processing_status = ProcessingStatus.PENDING
+        self.session.add(asset)
+        self.session.commit()
+
+        from app.core.events import emit
+        emit("asset.ingested", {"asset_id": asset.id, "infospace_id": asset.infospace_id})
+        return True
 
     async def search_assets(
         self,
@@ -478,10 +473,26 @@ class AssetService:
             .values(previous_asset_id=None)
         )
 
-        # Delete asset chunks and annotations
+        # Delete asset chunks, graph data, and annotations
         self.session.exec(
             delete(AssetChunk).where(AssetChunk.asset_id.in_(asset_ids))
         )
+
+        # Collect annotation IDs so we can clear FK references from graph tables
+        annotation_ids = set(self.session.exec(
+            select(Annotation.id).where(Annotation.asset_id.in_(asset_ids))
+        ).all())
+        if annotation_ids:
+            self.session.exec(
+                delete(Justification).where(Justification.annotation_id.in_(annotation_ids))
+            )
+            self.session.exec(
+                delete(FragmentCuration).where(FragmentCuration.annotation_id.in_(annotation_ids))
+            )
+            self.session.exec(
+                delete(GraphEdge).where(GraphEdge.annotation_id.in_(annotation_ids))
+            )
+
         self.session.exec(
             delete(Annotation).where(Annotation.asset_id.in_(asset_ids))
         )

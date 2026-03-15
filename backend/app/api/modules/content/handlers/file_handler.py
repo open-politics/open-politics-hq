@@ -152,10 +152,10 @@ class FileHandler(BaseHandler):
                 builder.with_processing_status(ProcessingStatus.PENDING)
                 asset = await builder.build()
                 
-                # Trigger background task
-                from app.api.modules.content.tasks.content_tasks import process_content
-                process_content.delay(asset.id, options)
-                logger.info(f"Queued background processing for asset {asset.id}")
+                # Emit event for background processing
+                from app.core.events import emit
+                emit("asset.ingested", {"asset_id": asset.id, "infospace_id": asset.infospace_id})
+                logger.info(f"Emitted asset.ingested event for asset {asset.id}")
         else:
             # No processing needed
             builder.with_processing_status(ProcessingStatus.READY)

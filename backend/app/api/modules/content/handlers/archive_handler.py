@@ -136,26 +136,12 @@ class ArchiveHandler(BaseHandler):
             self.session.commit()
             self.session.refresh(job)
             
-            # Queue celery task for background processing
-            from app.api.modules.content.tasks.ingestion_tasks import ingest_archive_task
-            task = ingest_archive_task.delay(
-                job_id=job.id,
-                archive_url=archive_url,
-                root_bundle_id=root_bundle.id,
-                infospace_id=infospace_id,
-                user_id=user_id,
-                options=options,
-                user_agent=user_agent  # Pass browser's User-Agent
-            )
-            
-            # Update job with task ID
-            job.task_id = task.id
-            job.started_at = datetime.now(timezone.utc)
-            self.session.add(job)
-            self.session.commit()
-            
-            logger.info(f"Created ingestion job {job.id} with task {task.id}")
-            
+            # Emit event — @task discovers PENDING IngestionJob via event bus
+            from app.core.events import emit
+            emit("ingestion_job.created", {"infospace_id": infospace_id})
+
+            logger.info(f"Created ingestion job {job.id}, emitted ingestion_job.created")
+
             # Return stub asset for the root bundle
             stub_asset = await (AssetBuilder(self.session, user_id, infospace_id)
                 .as_kind(AssetKind.FILE)
@@ -163,7 +149,6 @@ class ArchiveHandler(BaseHandler):
                 .with_metadata(
                     source_locator=archive_url,
                     root_bundle_id=root_bundle.id,
-                    task_id=task.id,
                     job_id=job.id,
                     job_uuid=str(job.uuid),
                     processing_status="queued"

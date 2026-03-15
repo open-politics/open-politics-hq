@@ -1753,8 +1753,8 @@ class PackageService:
             imported_entity = await importer.import_source_package(package, conflict_strategy)
             if imported_entity and imported_entity.kind in ["upload_csv", "upload_pdf", "url_list_scrape", "rss_feed"]:
                 from app.api.modules.content.tasks.ingest import process_source
-                process_source.delay(imported_entity.id)
-                logger.info(f"Queued Celery task for imported Source ID: {imported_entity.id} (Kind: {imported_entity.kind})")
+                process_source.delay([imported_entity.id], imported_entity.infospace_id)
+                logger.info(f"Queued process_source task for imported Source ID: {imported_entity.id} (Kind: {imported_entity.kind})")
         elif pt == ResourceType.ASSET:
             logger.warning("Direct import of single Asset package. Asset will be imported without an explicit parent Source unless its package data specifies one or it can be inferred.")
             asset_content_from_package = package.content.get("asset")
@@ -1927,20 +1927,25 @@ class PackageService:
 
             new_infospace_name = ws_details.get("name", "Imported Infospace") + f" (Imported {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')})"
 
-            # Reconstruct embedding_selection from legacy or new format
-            embedding_selection = ws_details.get("embedding_selection")
-            if not embedding_selection and ws_details.get("embedding_model"):
-                embedding_selection = {
-                    "type_key": "ollama",
-                    "model_name": ws_details["embedding_model"],
-                }
+            # Reconstruct enrichment_config from package data
+            enrichment_config = ws_details.get("enrichment_config")
+            if not enrichment_config:
+                # Legacy: convert embedding_selection or embedding_model into enrichment_config
+                embedding_selection = ws_details.get("embedding_selection")
+                if not embedding_selection and ws_details.get("embedding_model"):
+                    embedding_selection = {
+                        "provider_key": "ollama",
+                        "model_name": ws_details["embedding_model"],
+                    }
+                if embedding_selection:
+                    enrichment_config = {"embedding": embedding_selection}
 
             infospace_create_data = InfospaceCreate(
                 name=new_infospace_name,
                 description=ws_details.get("description", "Imported infospace"),
                 owner_id=user_id,
                 icon=ws_details.get("icon"),
-                embedding_selection=embedding_selection,
+                enrichment_config=enrichment_config,
                 chunk_size=ws_details.get("chunk_size"),
                 chunk_overlap=ws_details.get("chunk_overlap"),
                 chunk_strategy=ws_details.get("chunk_strategy"),

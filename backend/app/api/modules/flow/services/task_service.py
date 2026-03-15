@@ -367,7 +367,7 @@ class TaskService:
                 # The 'target_source_id' is required and validated in the config
                 target_source_id = task.source_id
                 if target_source_id:
-                    process_source.delay(target_source_id)
+                    process_source.delay([target_source_id], infospace_id)
                     logger.info(f"TaskService: Dispatched process_source for Task {task.id} targeting Source {target_source_id}")
                 else:
                     logger.error(f"TaskService: Cannot execute INGEST task {task.id}. Missing 'source_id' on the task.")
@@ -421,19 +421,11 @@ class TaskService:
                         self.session.commit()
                         return False
                     
-                    # Dispatch to appropriate monitoring task based on source kind
-                    if source.kind == "rss_feed":
-                        from app.api.modules.content.tasks.source_monitoring import execute_source_poll
-                        execute_source_poll.delay(task.source_id)
-                        logger.info(f"TaskService: Dispatched RSS monitoring task {task.id} for source {task.source_id}")
-                    elif source.kind == "search":
-                        from app.api.modules.content.tasks.source_monitoring import execute_source_poll
-                        execute_source_poll.delay(task.source_id)
-                        logger.info(f"TaskService: Dispatched search monitoring task {task.id} for source {task.source_id}")
-                    elif source.kind in ["news_source_monitor", "site_discovery"]:
-                        from app.api.modules.content.tasks.source_monitoring import execute_source_poll
-                        execute_source_poll.delay(task.source_id)
-                        logger.info(f"TaskService: Dispatched news source monitoring task {task.id} for source {task.source_id}")
+                    # Dispatch source polling via @task direct invocation
+                    if source.kind in ("rss_feed", "search", "news_source_monitor", "site_discovery"):
+                        from app.api.modules.content.tasks.source_monitoring import poll_sources
+                        poll_sources.delay([task.source_id], infospace_id)
+                        logger.info(f"TaskService: Dispatched poll_sources task {task.id} for source {task.source_id}")
                     else:
                         logger.error(f"TaskService: Unsupported source kind '{source.kind}' for MONITOR task {task.id}")
                         task.last_run_status = "error"
@@ -463,10 +455,38 @@ class TaskService:
                 return False
 
             elif task.type == TaskType.FLOW:
-                # New unified FLOW task type
-                from app.api.modules.flow.tasks.flow_tasks import trigger_flow_by_task
-                trigger_flow_by_task.delay(task.id)
-                logger.info(f"TaskService: Dispatched FLOW task {task.id}")
+                # Trigger flow execution via FlowService
+                from app.api.modules.flow.services.flow_service import FlowService
+                from app.api.modules.flow.models import Flow
+                flow_id = task.configuration.get("flow_id") or task.configuration.get("target_id")
+                if flow_id:
+                    flow = self.session.get(Flow, flow_id)
+                    if flow:
+                        svc = FlowService(self.session)
+                        execution = svc.trigger_execution(
+                            flow_id=flow_id,
+                            user_id=flow.user_id,
+                            infospace_id=flow.infospace_id,
+                            triggered_by="task",
+                            triggered_by_task_id=task.id,
+                        )
+                        logger.info(f"TaskService: Triggered flow execution {execution.id} for FLOW task {task.id}")
+                    else:
+                        logger.error(f"TaskService: Flow {flow_id} not found for FLOW task {task.id}")
+                        task.last_run_status = "error"
+                        task.last_run_message = f"Flow {flow_id} not found"
+                        task.last_run_at = datetime.now(timezone.utc)
+                        self.session.add(task)
+                        self.session.commit()
+                        return False
+                else:
+                    logger.error(f"TaskService: Missing flow_id in configuration for FLOW task {task.id}")
+                    task.last_run_status = "error"
+                    task.last_run_message = "Missing flow_id in configuration"
+                    task.last_run_at = datetime.now(timezone.utc)
+                    self.session.add(task)
+                    self.session.commit()
+                    return False
                 task.last_run_status = "running"
                 task.last_run_message = "Task dispatched to flow executor"
 

@@ -1,6 +1,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 
 from app.api import dependency_injection
@@ -63,13 +64,25 @@ def create_bundle(
     service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> Bundle:
     """Create a new bundle in an infospace."""
-    bundle = service.create_bundle(
-        bundle_in=bundle_in,
-        infospace_id=infospace_id,
-        user_id=current_user.id
-    )
+    try:
+        bundle = service.create_bundle(
+            bundle_in=bundle_in,
+            infospace_id=infospace_id,
+            user_id=current_user.id
+        )
+    except IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f'A bundle named "{bundle_in.name}" already exists in this infospace.',
+        )
     if not bundle:
         raise HTTPException(status_code=400, detail="Could not create bundle")
+
+    # Kick background population if a source_query was provided
+    if bundle.bundle_metadata and bundle.bundle_metadata.get("source_query"):
+        from app.api.modules.content.tasks.bundle_populate import populate_bundle_from_query
+        populate_bundle_from_query.delay([bundle.id], infospace_id)
+
     return bundle
 
 @router.get("/bundles/{bundle_id}", response_model=BundleRead)

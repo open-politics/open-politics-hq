@@ -173,18 +173,21 @@ class AppSettings(BaseSettings):
     PROCESS_CONTENT_RATE_LIMIT: str = Field(default="10/s", env="PROCESS_CONTENT_RATE_LIMIT")
     # Re-resolve singleton window: only consider EntityCanonicals created in last N days; 0 = no time limit
     RESOLVE_SINGLETON_WINDOW_DAYS: int = Field(default=7, env="RESOLVE_SINGLETON_WINDOW_DAYS")
-    # Reactive watchers: comma-separated names. Empty = none run. Content: geocoding,ocr,hash,language_detection,quality_score,embedding. Annotation: version_gap_annotation,annotated_to_curate. Graph: superseded_entity_retire,re_resolve_singletons
-    ENABLED_WATCHERS: str = Field(default="", env="ENABLED_WATCHERS")
-    # Beat interval (seconds) for dispatch_reactive_work. Default 120 (2 min).
+    # Enrichers to dispatch: comma-separated names, "*" for all, empty = none.
+    # Values: hash, ocr, geocoding, language_detection, quality_score, embedding
+    ENABLED_ENRICHERS: str = Field(default="", env="ENABLED_ENRICHERS")
+    # Beat interval (seconds) for dispatch_tasks. Default 120 (2 min).
     DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS: int = Field(default=120, env="DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS")
 
     # === Provider Access Control ===
-    # Per-provider access levels, set via PROVIDER_ACCESS_<CAPABILITY>_<type_key> env vars.
-    # Values: "all" (any user), "superuser" (superuser only), "none" (disabled).
-    # Smart defaults: requires_api_key=False → "all", True → "none".
+    # Per-provider access levels, set via PROVIDER_ACCESS_<CAPABILITY>_<TYPE_KEY> env vars.
+    # Capability names match CAPABILITIES dict: language, embedding, ocr, geocoding, storage, scraping, web_search.
+    # Values: "all" (any user can use system key), "superuser" (superuser only), "none" (disabled).
+    # Smart defaults: is_local → "all", cloud → "none" (system key not shared).
+    # Users who bring their own key always get through regardless of access level.
     # Examples:
-    #   PROVIDER_ACCESS_LLM_ollama=all          # any user can use system Ollama
-    #   PROVIDER_ACCESS_LLM_openai=superuser    # only superusers can use system OpenAI key
+    #   PROVIDER_ACCESS_LANGUAGE_ollama=all       # any user can use system Ollama for LLM
+    #   PROVIDER_ACCESS_LANGUAGE_openai=superuser  # only superusers can use system OpenAI key
     #   PROVIDER_ACCESS_EMBEDDING_ollama=all
     #   PROVIDER_ACCESS_OCR_tesseract=all
 
@@ -250,7 +253,7 @@ class AppSettings(BaseSettings):
     GEOSPATIAL_PROVIDER_TYPE: Literal["opol", "nominatim"] = Field(default="opol", env="GEOSPATIAL_PROVIDER_TYPE")
     NOMINATIM_DOMAIN: Optional[str] = Field(default="nominatim.openstreetmap.org", env="NOMINATIM_DOMAIN")
 
-    # --- Embedding settings (provider is per-infospace via embedding_selection) ---
+    # --- Embedding settings (provider is per-infospace via enrichment_config.embedding) ---
     # Ollama embedding settings
     OLLAMA_EMBEDDING_MODEL: str = Field(default="nomic-embed-text", env="OLLAMA_EMBEDDING_MODEL")
     # Jina AI embedding settings  
@@ -263,6 +266,9 @@ class AppSettings(BaseSettings):
 
     # --- Scraping Provider ---
     SCRAPING_PROVIDER_TYPE: str = Field(default="newspaper4k", env="SCRAPING_PROVIDER_TYPE")
+
+    # --- Web Search Provider ---
+    WEB_SEARCH_PROVIDER_TYPE: Optional[str] = Field(default=None, env="WEB_SEARCH_PROVIDER_TYPE")
 
     # --- OCR Provider ---
     OCR_PROVIDER_TYPE: str = Field(default="tesseract", env="OCR_PROVIDER_TYPE")

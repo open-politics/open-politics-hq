@@ -7,7 +7,7 @@ import uuid
 
 from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Column, Index, JSON, Text, text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY, JSONB
 from pgvector.sqlalchemy import Vector
 
 # Identity types (Layer 1) - content is Layer 2
@@ -203,6 +203,17 @@ class Asset(SQLModel, table=True):
     is_superseded: bool = Field(default=False, index=True)
     parent_is_superseded: bool = Field(default=False, index=True)
 
+    # Enrichment tracking: which enrichers have resolved this asset (PG text[] for array_append/containment)
+    enrichment_resolved: Optional[List[str]] = Field(
+        default=None,
+        sa_column=Column("enrichment_resolved", PG_ARRAY(Text), server_default=text("'{}'::text[]")),
+    )
+    # Enrichment errors: per-enricher error details
+    enrichment_errors: Optional[Dict[str, Any]] = Field(
+        default=None,
+        sa_column=Column("enrichment_errors", JSONB),
+    )
+
     parent_asset: Optional["Asset"] = Relationship(
         back_populates="children_assets",
         sa_relationship_kwargs=dict(foreign_keys="[Asset.parent_asset_id]", remote_side="[Asset.id]"),
@@ -236,6 +247,7 @@ class Asset(SQLModel, table=True):
         Index("ix_asset_fragments", "fragments", postgresql_using="gin", postgresql_ops={"fragments": "jsonb_path_ops"}),
         Index("ix_asset_discovered_modalities", "discovered_modalities", postgresql_using="gin"),
         Index("ix_asset_metadata", "metadata", postgresql_using="gin", postgresql_ops={"metadata": "jsonb_path_ops"}),
+        Index("ix_asset_enrichment_resolved", "enrichment_resolved", postgresql_using="gin"),
     )
 
     @property
@@ -248,9 +260,12 @@ class Asset(SQLModel, table=True):
 # ─── Embedding models ───
 
 class EmbeddingModel(SQLModel, table=True):
-    """Dimension cache: maps (provider type_key, model name) → vector dimension.
+    """Dimension cache: maps (provider, model name, dimension) → DB row.
 
     Probed once at first use and kept for search-time column selection.
+    Dimension is part of the unique key because Matryoshka models can be
+    deployed at different dimensions — same model at 768d vs 1024d produces
+    incompatible vector spaces.
     """
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
@@ -261,7 +276,7 @@ class EmbeddingModel(SQLModel, table=True):
     chunks: List["AssetChunk"] = Relationship(back_populates="embedding_model")
 
     __table_args__ = (
-        UniqueConstraint("name", "provider"),
+        UniqueConstraint("name", "provider", "dimension"),
         Index("ix_embeddingmodel_provider_active", "provider", "is_active"),
     )
 
@@ -269,7 +284,7 @@ class EmbeddingModel(SQLModel, table=True):
 # ─── Asset chunks ───
 
 # Supported embedding dimensions for indexed vector search
-EMBEDDING_SUPPORTED_DIMS = (384, 512, 768, 1024, 1536)
+EMBEDDING_SUPPORTED_DIMS = (384, 512, 768, 1024, 1536, 2048)
 
 
 def get_embedding_column_for_dimension(dim: int) -> Optional[str]:
@@ -291,6 +306,7 @@ class AssetChunk(SQLModel, table=True):
     embedding_768: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
     embedding_1024: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(1024)))
     embedding_1536: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(1536)))
+    embedding_2048: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(2048)))
     chunk_metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -305,6 +321,7 @@ class AssetChunk(SQLModel, table=True):
         Index("ix_assetchunk_embedding_768", "embedding_768", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}, postgresql_where=text("embedding_768 IS NOT NULL")),
         Index("ix_assetchunk_embedding_1024", "embedding_1024", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}, postgresql_where=text("embedding_1024 IS NOT NULL")),
         Index("ix_assetchunk_embedding_1536", "embedding_1536", postgresql_using="hnsw", postgresql_with={"m": 16, "ef_construction": 64}, postgresql_where=text("embedding_1536 IS NOT NULL")),
+        # No HNSW index for 2048 — pgvector caps HNSW at 2000 dims. Sequential scan is fine for sparse column.
     )
 
 

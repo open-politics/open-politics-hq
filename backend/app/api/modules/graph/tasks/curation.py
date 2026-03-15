@@ -1,21 +1,22 @@
 """
-Graph domain Celery tasks.
+Graph curation @task: extract entity triplets from annotations, resolve to EntityCanonical,
+create FragmentCuration + GraphEdge.
 """
 
-import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.core.celery_app import celery
-from app.core.task_utils import run_async_in_celery
+from sqlalchemy import table, column
+from sqlalchemy.sql import exists
 from sqlmodel import Session, select
-from sqlalchemy import or_
 
-from app.core.db import engine
-from app.api.modules.graph.models import EntityCanonical, FragmentCuration, GraphEdge
-from app.api.modules.graph.resolution import find_by_alias, resolve_entities_batch
-from app.models import Annotation
+from app.api.modules.graph.models import FragmentCuration, GraphEdge
+from app.api.modules.graph.resolution import resolve_entities_batch
+from app.models import Annotation, ResultStatus
 from app.api.modules.annotation.models import AnnotationRun
+from app.api.modules.content.models import Asset
+from app.core.tasks import TaskContext, task
+from app.core.task_utils import run_async_in_celery
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +59,7 @@ def _find_entity_type_by_id(entity_id: Any, entities: List[Dict]) -> str:
 def _triplet_to_entity_pairs(
     triplet: Dict, entities: List[Dict]
 ) -> List[Tuple[str, str]]:
-    """
-    Extract (raw_name, entity_type) pairs from a triplet.
-    Supports subject_name/object_name format and source_id/target_id with entities.
-    """
+    """Extract (raw_name, entity_type) pairs from a triplet."""
     pairs: List[Tuple[str, str]] = []
     if "subject_name" in triplet and triplet.get("subject_name"):
         sub_type = triplet.get("subject_type", "UNKNOWN")
@@ -164,136 +162,38 @@ async def _curate_annotation_batch(session: Session, annotation_ids: List[int]) 
                 curated += 1
 
             session.commit()
-            logger.info(
-                "reactive_curate: curated annotation %d (%d fragments)",
-                ann_id,
-                len(triplets),
-            )
+            logger.info("curate_annotated: curated annotation %d (%d fragments)", ann_id, len(triplets))
         except Exception as e:
-            logger.warning("reactive_curate: failed for annotation %d: %s", ann_id, e, exc_info=True)
+            logger.warning("curate_annotated: failed for annotation %d: %s", ann_id, e, exc_info=True)
             failed += 1
             session.rollback()
 
     return {"curated": curated, "failed": failed}
 
 
-@celery.task(name="reactive_curate_annotated")
-def reactive_curate_annotated(annotation_ids: List[int]) -> dict:
-    """
-    Reactive task: process annotations for graph curation.
-    Extracts entity triplets, resolves to EntityCanonical, creates FragmentCuration.
-    Dispatched by AnnotatedToCurateWatcher for annotations with graph output.
-    """
-    if not annotation_ids:
-        return {"curated": 0, "failed": 0}
-
-    with Session(engine) as session:
-        result = run_async_in_celery(_curate_annotation_batch, session, annotation_ids)
-        return result or {"curated": 0, "failed": 0}
-
-
-@celery.task(name="flag_superseded_entity_sources")
-def flag_superseded_entity_sources(fragment_curation_ids: List[int]) -> dict:
-    """
-    Flag FragmentCuration entries whose source asset is superseded.
-    Sets source_asset_superseded = True so entity resolution can treat them
-    as candidates for merging with entities from the preferred version.
-    Dispatched by _SupersededEntityRetireWatcher.
-    """
-    if not fragment_curation_ids:
-        return {"flagged": 0}
-
-    flagged = 0
-    with Session(engine) as session:
-        for fc_id in fragment_curation_ids:
-            try:
-                fc = session.get(FragmentCuration, fc_id)
-                if not fc:
-                    continue
-                if fc.source_asset_superseded:
-                    continue
-                fc.source_asset_superseded = True
-                session.add(fc)
-                flagged += 1
-            except Exception as e:
-                logger.warning("flag_superseded: failed for FragmentCuration %d: %s", fc_id, e)
-                session.rollback()
-        if flagged:
-            session.commit()
-    return {"flagged": flagged}
-
-
-@celery.task(name="re_resolve_entity_singletons")
-def re_resolve_entity_singletons(entity_ids: List[int]) -> None:
-    """
-    Re-resolution task: for each singleton entity, check if it should be merged
-    into an existing canonical. Dispatched by _ReResolveSingletonWatcher.
-    """
-    if not entity_ids:
-        return
-
-    merged = 0
-    with Session(engine) as session:
-        for eid in entity_ids:
-            try:
-                entity = session.get(EntityCanonical, eid)
-                if not entity:
-                    continue
-                # Find another entity that matches this one (exclude self)
-                other = find_by_alias(
-                    session,
-                    entity.infospace_id,
-                    entity.canonical_name,
-                    entity.entity_type,
-                    graph_id=entity.graph_id,
-                    exclude_entity_id=entity.id,
-                )
-                if not other:
-                    continue
-                # Merge entity into other (other survives)
-                all_aliases = set(other.aliases or [])
-                all_aliases.add(entity.canonical_name)
-                all_aliases.update(entity.aliases or [])
-                other.aliases = list(all_aliases)
-                merged_props = dict(other.properties or {})
-                merged_props.update(entity.properties or {})
-
-                # Update FragmentCuration FK columns pointing to entity -> other
-                for fc in session.exec(
-                    select(FragmentCuration).where(
-                        or_(
-                            FragmentCuration.subject_entity_id == entity.id,
-                            FragmentCuration.object_entity_id == entity.id,
-                            FragmentCuration.entity_canonical_id == entity.id,
-                        )
-                    )
-                ).all():
-                    updated = False
-                    if fc.subject_entity_id == entity.id:
-                        fc.subject_entity_id = other.id
-                        updated = True
-                    if fc.object_entity_id == entity.id:
-                        fc.object_entity_id = other.id
-                        updated = True
-                    if fc.entity_canonical_id == entity.id:
-                        fc.entity_canonical_id = other.id
-                        updated = True
-                    if updated:
-                        session.add(fc)
-
-                session.delete(entity)
-                other.properties = merged_props
-                session.add(other)
-                session.commit()
-                merged += 1
-                logger.info(
-                    "Re-resolve: merged entity %s '%s' into %s",
-                    entity.id,
-                    entity.canonical_name,
-                    other.id,
-                )
-            except Exception as e:
-                logger.warning("re_resolve: failed for entity %s: %s", eid, e)
-                session.rollback()
-    if merged:
-        logger.info("Re-resolve: merged %d singleton entities", merged)
+@task("annotated_to_curate",
+      check=lambda iid: (
+          select(Annotation.id)
+          .join(AnnotationRun, Annotation.run_id == AnnotationRun.id)
+          .join(Asset, Annotation.asset_id == Asset.id)
+          .where(
+              Asset.infospace_id == iid,
+              Annotation.status == ResultStatus.SUCCESS,
+              Annotation.value.isnot(None),
+              AnnotationRun.graph_config.isnot(None),
+              ~exists().select_from(
+                  table("fragmentcuration", column("annotation_id"))
+              ).where(column("annotation_id") == Annotation.id),
+              Asset.is_superseded == False,
+              Asset.parent_is_superseded == False,
+          )
+      ),
+      schedule=120,
+      batch=10,
+      tags=frozenset({"annotation"}))
+def curate_annotated(ctx: TaskContext, ids: list[int]):
+    """Extract entity triplets from annotations, resolve to EntityCanonical, create FragmentCuration + GraphEdge."""
+    with ctx.session() as session:
+        result = run_async_in_celery(_curate_annotation_batch, session, ids)
+    ctx.stat("curated", result.get("curated", 0))
+    ctx.stat("failed", result.get("failed", 0))

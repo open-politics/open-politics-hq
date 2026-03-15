@@ -1,52 +1,40 @@
+"""
+Source ingestion @task: process sources by dispatching to the unified ingestion system.
+"""
+
 import logging
 import time
 from typing import Dict, Any, Optional
 
-from app.core.celery_app import celery
-from sqlmodel import Session
-from app.core.db import engine
-from app.models import Source, SourceStatus
+from sqlmodel import select
+
+from app.api.modules.content.models import Source, SourceStatus
+from app.core.tasks import TaskContext, task
 from app.core.task_utils import run_async_in_celery
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-class BaseIngestionTask(celery.Task):
-    def on_failure(self, exc, task_id, args, kwargs, einfo):
-        logger.error(f'Celery task {task_id} failed: {exc!r}')
-        source_id = args[0] if args else None
-        if source_id:
-            logger.info(f"Attempting to mark Source {source_id} as FAILED due to task failure.")
-            try:
-                with Session(engine) as fail_session:
-                    source_obj = fail_session.get(Source, source_id)
-                    if source_obj:
-                        error_message = f"Task failed: {type(exc).__name__}: {str(exc)[:250]}"
-                        source_obj.status = SourceStatus.FAILED
-                        source_obj.error_message = error_message
-                        fail_session.add(source_obj)
-                        fail_session.commit()
-                        logger.info(f"Successfully marked Source {source_id} as FAILED.")
-                    else:
-                        logger.error(f"Source {source_id} not found during on_failure handling.")
-            except Exception as fail_update_e:
-                logger.error(f"CRITICAL: Failed to update Source {source_id} status to FAILED: {fail_update_e}", exc_info=True)
-        else:
-            logger.error("Could not determine source_id from task arguments for failure handling.")
 
 async def _process_source_async(source_id: int, task_origin_details_override: Optional[Dict[str, Any]] = None):
     """
     Asynchronous core logic for processing a source using the unified discovery service.
     """
+    from sqlmodel import Session
+    from app.core.db import engine
+
     with Session(engine) as session:
         from app.core.config import settings
         from app.api.modules.content.handlers import IngestionContext
         from app.api.modules.content.ingest import ingest
         from app.api.modules.content.services.source_service import SourceService
-        from app.api.modules.content.tasks.task_services import create_task_services
+        from app.api.modules.foundation_service_providers.registry import (
+            get_storage_provider, get_scraping_provider, get_web_search_provider,
+        )
+        from app.api.modules.content.services.asset_service import AssetService
+        from app.api.modules.content.services.bundle_service import BundleService
 
         source_service = SourceService(session)
-        services = create_task_services(session)
 
         # Get source directly without user validation for system task
         source = session.get(Source, source_id)
@@ -59,14 +47,14 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
 
         try:
             locator = source_service._extract_locator_from_source(source)
-            
+
             # Get bundle_id from source details or task config
             bundle_id = None
             if task_origin_details_override and 'target_bundle_id' in task_origin_details_override:
                 bundle_id = task_origin_details_override['target_bundle_id']
             elif source.details and 'target_bundle_id' in source.details:
                 bundle_id = source.details['target_bundle_id']
-            
+
             # Validate that the bundle still exists (it may have been deleted)
             if bundle_id:
                 from app.models import Bundle
@@ -76,10 +64,10 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
                     from app.schemas import BundleCreate
                     from app.api.modules.content.services.bundle_service import BundleService
                     from sqlmodel import select
-                    
+
                     bundle_service = BundleService(session)
                     bundle_name = f"Ingestion for {source.name}"
-                    
+
                     # First, try to find existing bundle with this name (reuse it)
                     existing_bundle = session.exec(
                         select(Bundle).where(
@@ -87,7 +75,7 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
                             Bundle.name == bundle_name
                         )
                     ).first()
-                    
+
                     if existing_bundle:
                         # Reuse existing bundle
                         bundle_id = existing_bundle.id
@@ -104,23 +92,24 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
                         )
                         bundle_id = new_bundle.id
                         logger.info(f"Created new bundle {bundle_id} ('{bundle_name}') for source {source_id}")
-                    
+
                     # Update source.details with bundle_id (new or reused)
                     if source.details is None:
                         source.details = {}
                     source.details['target_bundle_id'] = bundle_id
                     session.add(source)
                     session.commit()
-            
+
             logger.info(f"Ingesting content for source {source_id} into bundle {bundle_id}")
 
+            storage = get_storage_provider(settings)
             context = IngestionContext(
                 session=session,
-                storage_provider=services.storage,
-                scraping_provider=services.scraping,
-                search_provider=services.search,
-                asset_service=services.asset,
-                bundle_service=services.bundle,
+                storage_provider=storage,
+                scraping_provider=get_scraping_provider(settings),
+                search_provider=get_web_search_provider(settings),
+                asset_service=AssetService(session, storage),
+                bundle_service=BundleService(session),
                 user_id=source.user_id,
                 infospace_id=source.infospace_id,
                 settings=settings,
@@ -163,21 +152,32 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
             session.commit()
             raise
 
-@celery.task(bind=True, max_retries=3, base=BaseIngestionTask, autoretry_for=(ValueError,), retry_backoff=True, retry_backoff_max=60)
-def process_source(self, source_id: int, task_origin_details_override: Optional[Dict[str, Any]] = None):
-    """
-    Unified background task to process a Source by dispatching to the AssetDiscoveryService.
-    This task is now the single entry point for all source-based ingestion.
-    """
-    logging.info(f"Starting unified ingestion task for Source ID: {source_id}")
-    start_time = time.time()
 
-    try:
-        run_async_in_celery(_process_source_async, source_id, task_origin_details_override)
-    except Exception as e:
-        # The on_failure handler in BaseIngestionTask will catch this
-        logging.error(f"Unified ingestion task for Source {source_id} failed after async execution: {e}", exc_info=True)
-        raise
-    finally:
-        end_time = time.time()
-        logger.info(f"Unified ingestion task for Source ID: {source_id} finished in {end_time - start_time:.2f} seconds.")
+@task("process_source",
+      check=lambda iid: (
+          select(Source.id)
+          .where(
+              Source.infospace_id == iid,
+              Source.status == SourceStatus.PENDING,
+          )
+          .order_by(Source.created_at)
+      ),
+      schedule=None,
+      triggers=["source.process"],
+      batch=5,
+      self_chain=True,
+      queue="processing",
+      timeout=3600,
+      retries=3,
+      retry_delay=60,
+      tags=frozenset({"content", "ingestion"}))
+def process_source(ctx: TaskContext, source_ids: list[int]):
+    """Process pending sources by dispatching to the unified ingestion system."""
+    for source_id in source_ids:
+        try:
+            run_async_in_celery(_process_source_async, source_id)
+            ctx.stat("done")
+        except Exception as e:
+            logger.error("Source %d processing failed: %s", source_id, e, exc_info=True)
+            ctx.item_failed(source_id)
+            ctx.stat("failed")

@@ -22,9 +22,9 @@ from app.models import (
 )
 from app.schemas import AnnotationCreate
 from app.core.db import engine
-from app.core.celery_app import celery
 from app.api.modules.foundation_service_providers.registry import get_storage_provider, resolve, load_credentials
 from app.core.task_utils import create_pydantic_model_from_json_schema, make_python_identifier, run_async_in_celery
+from app.core.tasks import TaskContext, task
 from app.core.config import settings
 from app.api.modules.content.types import get_content_type_registry
 
@@ -58,9 +58,12 @@ def get_annotation_processing_config():
 
 async def get_cached_provider(provider_type: str, settings_instance):
     """Get a cached provider instance."""
-    from app.core.task_primitives import _get_cached_provider as _shared_get_cached_provider
+    from app.core.tasks import cached_resolve
+    from app.api.modules.foundation_service_providers.base import StorageProvider
+    from app.api.modules.foundation_service_providers.registry import system_default_provider_key
     if provider_type == "storage":
-        return _shared_get_cached_provider("storage", lambda: get_storage_provider(settings_instance))
+        key = system_default_provider_key(StorageProvider, settings_instance)
+        return cached_resolve(StorageProvider, key, settings_instance)
     raise ValueError(f"Unknown provider type: {provider_type}")
 
 def _get_image_asset_kinds(process_pdfs_as_images: bool = True) -> frozenset:
@@ -94,22 +97,20 @@ def validate_hierarchical_schema(output_contract: dict) -> bool:
         
     return True
 
-def simplify_schema_for_model(schema: dict, model_name: str) -> dict:
+def simplify_schema_for_model(schema: dict, model_name: str, provider_key: str | None = None) -> dict:
     """
-    Simplify schemas for less capable models like Ollama by truncating long descriptions.
-    This is a generic approach that preserves all fields but reduces description length.
-    
+    Simplify schemas for local/self-hosted models by truncating long descriptions.
+
     Args:
         schema: Original JSON schema (in standard JSON schema format with "type" and "properties")
         model_name: Name of the model being used
-        
+        provider_key: Provider type key (e.g. "ollama", "mistral", "openai")
+
     Returns:
         Potentially simplified schema (always in standard JSON schema format, all fields preserved)
     """
-    # Check if this is an Ollama model that might struggle with complexity
-    is_ollama = "ollama" in model_name.lower() or any(x in model_name.lower() for x in ["gpt-oss", "llama", "mistral", "phi"])
-    
-    if not is_ollama:
+    # Only simplify for local/self-hosted providers (Ollama etc.), not cloud APIs
+    if provider_key not in ("ollama",):
         return schema
     
     # For smaller models, truncate long descriptions to reduce token usage
@@ -1102,56 +1103,89 @@ async def demultiplex_results(
 CHAINED_RUN_CURSOR_KEY = "_chained_asset_ids"
 
 
-@celery.task(bind=True)
-def process_annotation_run(self, run_id: int, cursor: int = 0) -> None:
+@task("process_annotation_run",
+      check=lambda iid: (
+          select(AnnotationRun.id)
+          .where(
+              AnnotationRun.infospace_id == iid,
+              AnnotationRun.status.in_([RunStatus.PENDING, RunStatus.RUNNING]),
+          )
+          .order_by(AnnotationRun.created_at)
+      ),
+      schedule=None,
+      triggers=["annotation_run.created"],
+      batch=1,
+      self_chain=True,
+      queue="llm",
+      timeout=7200,
+      tags=frozenset({"annotation"}))
+def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
     """
-    Process an annotation run. For large runs (> ANNOTATION_CHUNK_SIZE), self-chains
-    to process in batches and avoid long-running tasks.
-    Uses Redis lock to prevent duplicate concurrent execution.
+    Process annotation runs. Discovers PENDING/RUNNING runs via check query.
+    For large runs (> ANNOTATION_CHUNK_SIZE), processes one chunk per invocation
+    and self-chains to continue. Uses Redis lock per run.
     """
     from app.core.redis_lock import annotation_run_lock
 
-    with annotation_run_lock(run_id) as acquired:
-        if not acquired:
-            logger.info(f"Annotation run {run_id} already in progress, skipping")
-            return
+    chunk_size = settings.ANNOTATION_CHUNK_SIZE
 
-        logger.info(f"Task: Processing annotation run {run_id} (cursor={cursor})")
-        chunk_size = settings.ANNOTATION_CHUNK_SIZE
+    for run_id in run_ids:
+        with annotation_run_lock(run_id) as acquired:
+            if not acquired:
+                logger.info("Annotation run %d already in progress, skipping", run_id)
+                continue
 
-        try:
-            next_cursor = run_async_in_celery(_process_annotation_run_async, run_id, cursor, chunk_size)
-            if isinstance(next_cursor, int):
-                process_annotation_run.delay(run_id, cursor=next_cursor)
-                logger.info(f"Task: Chained annotation run {run_id} from cursor {cursor} to {next_cursor}")
-            else:
-                # Run fully completed - emit event for flow resumption (no import from flow)
-                with Session(engine) as session:
-                    run = session.get(AnnotationRun, run_id)
-                    if run:
-                        from app.core.events import emit
-                        emit("annotation_run.completed", {
-                            "run_id": run_id,
-                            "flow_execution_id": run.flow_execution_id,  # None for standalone runs
-                            "infospace_id": run.infospace_id,
-                        })
-                        logger.info(f"Task: Emitted annotation_run.completed for run {run_id}")
-        except Exception as e:
-            logger.exception(f"Task: Critical unhandled error in async processing for run {run_id}: {e}")
-            # If the async task fails with an unhandled exception, mark the run as FAILED.
+            # Load cursor from configuration (persisted between self-chain invocations)
             with Session(engine) as session:
-                try:
-                    run = session.get(AnnotationRun, run_id)
-                    if run:
-                        run.status = RunStatus.FAILED
-                        run.error_message = f"Critical task execution error: {str(e)}"
-                        run.completed_at = datetime.now(timezone.utc)
-                        run.updated_at = datetime.now(timezone.utc)
-                        session.add(run)
-                        session.commit()
-                except Exception as db_exc:
-                    logger.error(f"Task: Could not even update run {run_id} to FAILED status: {db_exc}")
-            raise  # Re-raise the exception so Celery knows the task failed
+                run = session.get(AnnotationRun, run_id)
+                if not run:
+                    continue
+                if run.status in (RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_ERRORS):
+                    continue
+                cursor = (run.configuration or {}).get("_cursor", 0)
+
+            try:
+                next_cursor = run_async_in_celery(_process_annotation_run_async, run_id, cursor, chunk_size)
+                if isinstance(next_cursor, int):
+                    # Store cursor for next self-chain invocation
+                    with Session(engine) as session:
+                        run = session.get(AnnotationRun, run_id)
+                        if run:
+                            cfg = dict(run.configuration or {})
+                            cfg["_cursor"] = next_cursor
+                            run.configuration = cfg
+                            session.add(run)
+                            session.commit()
+                    logger.info("Annotation run %d: chunk done, cursor %d → %d", run_id, cursor, next_cursor)
+                    ctx.stat("chunk_done")
+                else:
+                    # Run fully completed — emit event for flow resumption
+                    with Session(engine) as session:
+                        run = session.get(AnnotationRun, run_id)
+                        if run:
+                            from app.core.events import emit
+                            emit("annotation_run.completed", {
+                                "run_id": run_id,
+                                "flow_execution_id": run.flow_execution_id,
+                                "infospace_id": run.infospace_id,
+                            })
+                    ctx.stat("done")
+            except Exception as e:
+                logger.exception("process_annotation_run failed for run %d: %s", run_id, e)
+                with Session(engine) as session:
+                    try:
+                        run = session.get(AnnotationRun, run_id)
+                        if run:
+                            run.status = RunStatus.FAILED
+                            run.error_message = f"Critical task error: {str(e)}"
+                            run.completed_at = datetime.now(timezone.utc)
+                            run.updated_at = datetime.now(timezone.utc)
+                            session.add(run)
+                            session.commit()
+                    except Exception as db_exc:
+                        logger.error("Could not update run %d to FAILED: %s", run_id, db_exc)
+                ctx.item_failed(run_id)
+                ctx.stat("failed")
 
 async def process_single_asset_schema(
     asset: Asset,
@@ -1258,7 +1292,7 @@ async def process_single_asset_schema(
 
         # Call the provider for structured classification
         # Get the model name from run config (frontend sends as ai_model and ai_provider)
-        model_name = run_config.get("ai_model") or run_config.get("model_name")
+        model_name = run_config.get("model") or run_config.get("ai_model") or run_config.get("model_name")
         thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
 
         logger.info(f"Task: Using model '{model_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}")
@@ -1555,7 +1589,7 @@ async def process_assets_sequential(
 
                 # Call the provider for structured classification
                 # Get the model name from run config (frontend sends as ai_model)
-                model_name = run_config.get("ai_model") or run_config.get("model_name")
+                model_name = run_config.get("model") or run_config.get("ai_model") or run_config.get("model_name")
                 thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
 
                 logger.info(f"Task: Using model '{model_name}' for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}")
@@ -2025,11 +2059,8 @@ async def _process_annotation_run_async(
                     errors_run_level.append(f"Schema {schema.id} ({schema.name}) invalid structure.")
                     continue
                 
-                # Get model name from run config to determine if we need schema simplification
-                model_name = run_config.get("ai_model") or run_config.get("model_name")
-                
-                # Simplify schema for less capable models
-                optimized_contract = simplify_schema_for_model(schema.output_contract, model_name)
+                # Simplify schema for local/self-hosted models
+                optimized_contract = simplify_schema_for_model(schema.output_contract, model_name_for_resolve, type_key)
                 
                 # Validate that optimized_contract is a valid JSON schema
                 if not isinstance(optimized_contract, dict):
@@ -2514,23 +2545,29 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
                 session.commit()
 
 
-@celery.task
-def retry_failed_annotations(run_id: int) -> None:
-    """
-    Retry failed annotations in a run using actual LLM re-processing.
-    This task will find annotations from the given run that are in a FAILED status
-    and attempt to re-process them using the same LLM pipeline as the original run.
-    """
-    logger.info(f"Task: Sync wrapper started for retry of failed annotations in run {run_id}")
-    
-    try:
-        # Use the helper function for proper event loop management
-        run_async_in_celery(_retry_failed_annotations_async, run_id)
-    except Exception as e:
-        logger.exception(f"Task: Critical unhandled error in async retry processing for run {run_id}: {e}")
-        # If the async task fails with an unhandled exception, mark the run as FAILED.
-        with Session(engine) as session:
-            try:
+@task("retry_failed_annotations",
+      check=lambda iid: (
+          select(AnnotationRun.id)
+          .where(
+              AnnotationRun.infospace_id == iid,
+              AnnotationRun.status.in_([RunStatus.COMPLETED_WITH_ERRORS, RunStatus.FAILED]),
+          )
+          .order_by(AnnotationRun.created_at)
+      ),
+      schedule=None,
+      batch=1,
+      queue="llm",
+      timeout=7200,
+      tags=frozenset({"annotation"}))
+def retry_failed_annotations(ctx: TaskContext, run_ids: list[int]) -> None:
+    """Retry failed annotations in runs using actual LLM re-processing."""
+    for run_id in run_ids:
+        try:
+            run_async_in_celery(_retry_failed_annotations_async, run_id)
+            ctx.stat("done")
+        except Exception as e:
+            logger.exception(f"Retry failed for run {run_id}: {e}")
+            with ctx.session() as session:
                 run = session.get(AnnotationRun, run_id)
                 if run:
                     run.status = RunStatus.FAILED
@@ -2539,108 +2576,5 @@ def retry_failed_annotations(run_id: int) -> None:
                     run.updated_at = datetime.now(timezone.utc)
                     session.add(run)
                     session.commit()
-            except Exception as db_exc:
-                logger.error(f"Task: Could not even update run {run_id} to FAILED status during retry: {db_exc}")
-        raise  # Re-raise the exception so Celery knows the task failed
-
-
-@celery.task(name="create_followup_annotation_runs")
-def create_followup_annotation_runs(asset_ids: List[int]) -> None:
-    """
-    Reactive task: create annotation runs for versioned assets that have no annotations
-    but whose previous version had annotations from runs with follow_on_version_change=True.
-    Dispatched by _VersionGapAnnotationWatcher.
-    """
-    if not asset_ids:
-        return
-    from app.api.modules.annotation.models import RunSchemaLink
-    from app.api.modules.content.types import get_content_type_registry
-    from app.api.modules.content.services.asset_service import AssetService
-    from app.api.modules.annotation.services.annotation_service import AnnotationService
-    from app.schemas import AnnotationRunCreate
-
-    with Session(engine) as session:
-        asset_service = AssetService(session)
-        ann_svc = AnnotationService(session=session, asset_service=asset_service)
-
-        for asset_id in asset_ids:
-            try:
-                asset = session.get(Asset, asset_id)
-                if not asset or not asset.previous_asset_id:
-                    continue
-                prev_id = asset.previous_asset_id
-
-                # Find run IDs that had annotations on prev and have follow_on_version_change
-                run_ids = session.exec(
-                    select(AnnotationRun.id)
-                    .join(Annotation, Annotation.run_id == AnnotationRun.id)
-                    .where(
-                        Annotation.asset_id == prev_id,
-                        AnnotationRun.follow_on_version_change == True,
-                    )
-                    .distinct()
-                ).all()
-
-                if not run_ids:
-                    continue
-
-                # Resolve target asset IDs: if container, use children; else use self
-                registry = get_content_type_registry()
-                is_container = registry.is_container(asset.kind)
-                if is_container:
-                    children = session.exec(
-                        select(Asset.id).where(Asset.parent_asset_id == asset_id)
-                    ).all()
-                    target_ids = list(children) if children else [asset_id]
-                else:
-                    target_ids = [asset_id]
-
-                if not target_ids:
-                    continue
-
-                # Create one follow-up run per source run (distinct schema/config)
-                seen_keys: set = set()
-                for run_id in run_ids:
-                    source_run = session.get(AnnotationRun, run_id)
-                    if not source_run:
-                        continue
-                    schema_ids = session.exec(
-                        select(RunSchemaLink.schema_id).where(RunSchemaLink.run_id == run_id)
-                    ).all()
-                    schema_ids = [s for s in schema_ids if s]
-                    if not schema_ids:
-                        continue
-                    key = (tuple(sorted(schema_ids)), tuple(sorted((source_run.configuration or {}).items())))
-                    if key in seen_keys:
-                        continue
-                    seen_keys.add(key)
-
-                    run_in = AnnotationRunCreate(
-                        name=f"Version follow-up of run {source_run.id}",
-                        description=f"Re-annotation after content version change (previous_asset_id={prev_id})",
-                        schema_ids=schema_ids,
-                        target_asset_ids=target_ids,
-                        configuration=source_run.configuration or {},
-                        follow_on_version_change=False,
-                        trigger_type="version_followup",
-                        trigger_context={
-                            "previous_asset_id": prev_id,
-                            "source_run_id": source_run.id,
-                            "new_asset_id": asset_id,
-                        },
-                    )
-                    new_run = ann_svc.create_run(
-                        user_id=source_run.user_id,
-                        infospace_id=source_run.infospace_id,
-                        run_in=run_in,
-                        queue_task=True,
-                    )
-                    new_run.parent_run_id = source_run.id
-                    session.add(new_run)
-                    session.commit()
-                    logger.info(
-                        f"Created follow-up run {new_run.id} for versioned asset {asset_id} "
-                        f"(source run {source_run.id})"
-                    )
-            except Exception as e:
-                logger.warning(f"create_followup_annotation_runs: failed for asset {asset_id}: {e}")
+            ctx.item_failed(run_id)
+            ctx.stat("failed")

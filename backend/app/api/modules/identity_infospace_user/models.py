@@ -10,7 +10,7 @@ from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import JSON
 
-from app.api.modules.foundation_service_providers.base import ProviderDefaults, ProviderSelection
+from app.api.modules.foundation_service_providers.base import ProviderDefaults, ProviderSelection, EnrichmentConfig
 
 
 class UserTier(str, enum.Enum):
@@ -113,21 +113,41 @@ class Infospace(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     icon: Optional[str] = None
 
-    embedding_selection: Optional[ProviderSelection] = Field(
-        default=None, sa_column=Column("embedding_selection", JSON)
-    )
     chunk_size: Optional[int] = Field(default=512)
     chunk_overlap: Optional[int] = Field(default=50)
     chunk_strategy: Optional[str] = Field(default="token")
     enable_related_assets: bool = Field(default=False)
 
+    enrichment_config: Optional[EnrichmentConfig] = Field(
+        default=None, sa_column=Column("enrichment_config", JSON)
+    )
+
     @property
     def embedding_configured(self) -> bool:
         """True when a provider + model are selected for embedding."""
-        sel = self.embedding_selection
+        sel = self.get_embedding_selection()
+        return sel is not None and bool(sel.model_name)
+
+    def get_embedding_selection(self) -> Optional[ProviderSelection]:
+        """Extract the embedding ProviderSelection from enrichment_config."""
+        config = self.enrichment_config
+        if not config:
+            return None
+        if isinstance(config, dict):
+            config = EnrichmentConfig(**config)
+        sel = config.embedding
         if isinstance(sel, dict):
-            return bool(sel.get("model_name"))
-        return bool(sel and sel.model_name)
+            return ProviderSelection(**sel)
+        return sel if isinstance(sel, ProviderSelection) else None
+
+    def get_embedding_dimension_override(self) -> Optional[int]:
+        """Matryoshka override: explicit dimension choice for variable-dim models."""
+        config = self.enrichment_config
+        if not config:
+            return None
+        if isinstance(config, dict):
+            config = EnrichmentConfig(**config)
+        return config.embedding_dimension_override
 
     owner_id: int = Field(foreign_key="user.id")
     owner: Optional[User] = Relationship(back_populates="infospaces")

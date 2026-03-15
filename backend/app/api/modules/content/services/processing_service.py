@@ -5,12 +5,11 @@ Processing Service
 Phase 1–2 pipeline orchestration: metadata extraction, content processing.
 
 Used by:
-- batch_process_pending (Celery): Process PENDING assets in batches
-- reprocess_content (route + Celery): Re-run pipeline on existing asset
-- Celery content_tasks call process_content / reprocess_content directly
+- process_pending (@task in content/tasks/processing.py): Process PENDING assets
+- reprocess_content() method: Re-run pipeline on existing asset (called by routes directly)
 
 Flow: PENDING → Phase 1 (metadata + type refinement) → Phase 2 (processor) → READY.
-Enrichment (geocoding, embedding) is reactive: watchers dispatch tasks when facets are missing.
+Enrichment (geocoding, embedding) is reactive: @enricher tasks dispatch when facets are missing.
 """
 
 import asyncio
@@ -64,7 +63,7 @@ class ProcessingService:
     async def process_content(self, asset: Asset, options: Dict[str, Any]) -> None:
         """
         Process asset content: Phase 1 → 2 → 3.
-        Used by batch_process_pending, reprocess_content.
+        Used by process_pending (@task), reprocess_content (triggered).
         """
         from app.api.modules.content.types import get_content_type_registry
 

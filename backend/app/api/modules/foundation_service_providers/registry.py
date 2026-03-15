@@ -56,9 +56,9 @@ class Capability:
 
 @dataclass
 class ProviderDescriptor:
-    """Internal runtime descriptor — one per (protocol, type_key) pair."""
+    """Internal runtime descriptor — one per (protocol, provider_key) pair."""
     protocol: Type
-    type_key: str
+    provider_key: str
     impl: str                                     # "module.ClassName"
     credential_key: Optional[str] = None
     api_key_setting: Optional[str] = None
@@ -79,6 +79,11 @@ class ProviderDescriptor:
     def get_model(self, name: str) -> Optional[ModelSpec]:
         return next((m for m in self.models if m.name == name), None)
 
+    # Backwards compat: code that reads .type_key still works
+    @property
+    def type_key(self) -> str:
+        return self.provider_key
+
 
 # ── Registry core ─────────────────────────────────────────────────────────────
 
@@ -86,14 +91,14 @@ _registry: Dict[tuple[Type, str], ProviderDescriptor] = {}
 
 
 def register_provider(descriptor: ProviderDescriptor) -> None:
-    key = (descriptor.protocol, descriptor.type_key.lower())
+    key = (descriptor.protocol, descriptor.provider_key.lower())
     if key in _registry:
         logger.warning("Overwriting provider registration: %s", key)
     _registry[key] = descriptor
 
 
-def get_descriptor(protocol: Type, type_key: str) -> Optional[ProviderDescriptor]:
-    return _registry.get((protocol, type_key.lower()))
+def get_descriptor(protocol: Type, provider_key: str) -> Optional[ProviderDescriptor]:
+    return _registry.get((protocol, provider_key.lower()))
 
 
 def list_providers(protocol: Type) -> list[tuple[str, ProviderDescriptor]]:
@@ -134,15 +139,15 @@ def _build_config(
 
 def get_provider(
     protocol: Type,
-    type_key: str,
+    provider_key: str,
     settings: AppSettings,
     api_key_override: Optional[str] = None,
 ) -> Any:
     """Lazy-import and construct a provider instance."""
-    key = (protocol, type_key.lower())
+    key = (protocol, provider_key.lower())
     desc = _registry.get(key)
     if not desc:
-        raise ValueError(f"No provider registered for {protocol.__name__} type_key={type_key}")
+        raise ValueError(f"No provider registered for {protocol.__name__} provider_key={provider_key}")
     config = _build_config(desc, settings, api_key_override=api_key_override)
     # Parse impl: "module.ClassName"
     parts = desc.impl.rsplit(".", 1)
@@ -154,7 +159,7 @@ def get_provider(
 
 # ── @provider decorator ──────────────────────────────────────────────────────
 
-_CAPABILITY_PROTOCOLS: Dict[str, Type] = {
+CAPABILITIES: Dict[str, Type] = {
     "language":   LanguageModelProvider,
     "embedding":  EmbeddingProvider,
     "ocr":        OcrProvider,
@@ -163,7 +168,6 @@ _CAPABILITY_PROTOCOLS: Dict[str, Type] = {
     "scraping":   ScrapingProvider,
     "web_search": WebSearchProvider,
 }
-
 
 def provider(cls):
     """Class decorator: reads Capability attributes, registers ProviderDescriptors."""
@@ -174,13 +178,13 @@ def provider(cls):
     credential_key = getattr(cls, "credential_key", key if api_key else None)
     contexts = getattr(cls, "contexts", set())
 
-    for attr_name, protocol in _CAPABILITY_PROTOCOLS.items():
+    for attr_name, protocol in CAPABILITIES.items():
         cap = getattr(cls, attr_name, None)
         if not isinstance(cap, Capability):
             continue
         desc = ProviderDescriptor(
             protocol=protocol,
-            type_key=key,
+            provider_key=key,
             impl=cap.impl,
             credential_key=credential_key,
             api_key_setting=api_key.attr_name if api_key else None,
@@ -214,6 +218,7 @@ _SYSTEM_DEFAULT_SETTINGS: Dict[str, str] = {
     "ScrapingProvider": "SCRAPING_PROVIDER_TYPE",
     "GeocodingProvider": "GEOCODING_PROVIDER_TYPE",
     "OcrProvider": "OCR_PROVIDER_TYPE",
+    "WebSearchProvider": "WEB_SEARCH_PROVIDER_TYPE",
 }
 
 
@@ -224,13 +229,48 @@ def _access_prefix(protocol: Type) -> str:
     )
 
 
-def system_default_type_key(protocol: Type, settings: AppSettings) -> Optional[str]:
-    """Get the deployment-wide default type_key for a protocol, if one exists."""
+def system_default_provider_key(protocol: Type, settings: AppSettings) -> Optional[str]:
+    """Get the deployment-wide default provider_key for a protocol, if one exists."""
     attr = _SYSTEM_DEFAULT_SETTINGS.get(protocol.__name__)
     if not attr:
         return None
     val = getattr(settings, attr, None)
     return val.lower() if val else None
+
+
+def capability_name(protocol: Type) -> Optional[str]:
+    """Return the capability name string for a protocol class, or None."""
+    for name, proto in CAPABILITIES.items():
+        if proto is protocol:
+            return name
+    return None
+
+
+def select_provider(
+    protocol: Type,
+    settings: AppSettings,
+    *,
+    selection: Optional[Any] = None,
+) -> Optional[str]:
+    """
+    Deterministic provider key selection. Most specific config wins.
+
+    Priority:
+    1. selection.provider_key (from EnrichmentConfig, ProviderDefaults, etc.)
+    2. System default (env var like STORAGE_PROVIDER_TYPE)
+
+    Returns provider_key string or None if nothing configured.
+    """
+    if selection is not None:
+        # Support both ProviderSelection objects and plain dicts
+        if isinstance(selection, dict):
+            pk = selection.get("provider_key") or selection.get("type_key")
+        else:
+            pk = getattr(selection, "provider_key", None) or getattr(selection, "type_key", None)
+        if pk:
+            return pk.lower()
+
+    return system_default_provider_key(protocol, settings)
 
 
 # ── Resolution ────────────────────────────────────────────────────────────────
@@ -242,7 +282,7 @@ def is_accessible(
 ) -> bool:
     """Is this provider allowed in this deployment?"""
     prefix = _access_prefix(desc.protocol)
-    access_key = f"{prefix}_{desc.type_key}"
+    access_key = f"{prefix}_{desc.provider_key}"
     access = settings.provider_access.get(access_key)
     if access is None:
         return desc.is_local
@@ -256,7 +296,7 @@ def is_capability_available(protocol: Type, settings: AppSettings) -> bool:
     Used as a circuit breaker in dispatch — if no provider can possibly work,
     skip the watcher entirely and save the query + task overhead.
     """
-    for type_key, desc in list_providers(protocol):
+    for pk, desc in list_providers(protocol):
         if not is_accessible(desc, settings):
             continue
         if not desc.requires_api_key:
@@ -268,32 +308,42 @@ def is_capability_available(protocol: Type, settings: AppSettings) -> bool:
 
 def resolve(
     protocol: Type,
-    type_key: str,
+    provider_key: str,
     settings: AppSettings,
     credentials: Optional[Dict[str, str]] = None,
 ) -> Optional[Any]:
     """
     Resolve a provider instance.
 
-    Caller determines type_key (from domain object, user default, or system setting).
+    Caller determines provider_key (from domain object, user default, or system setting).
     Caller provides credentials (merged runtime + stored keys, or empty dict).
-    This function checks access, satisfies credential requirements, and constructs.
+
+    Access control gates the system env-var key only. Users who supply their own
+    credential always get through — access settings govern who may use the
+    deployment's key, not whether the provider exists at all.
 
     Returns the provider instance or None.
     """
-    desc = get_descriptor(protocol, type_key)
+    desc = get_descriptor(protocol, provider_key)
     if not desc:
         return None
+
+    # User-provided credential: always allowed (they brought their own key)
+    if desc.requires_api_key:
+        user_key = (credentials or {}).get(desc.credential_key)
+        if user_key:
+            return get_provider(protocol, provider_key, settings, api_key_override=user_key)
+
+    # System key path: access control applies
     if not is_accessible(desc, settings):
         return None
     if not desc.requires_api_key:
-        return get_provider(protocol, type_key, settings)
-    key = (credentials or {}).get(desc.credential_key)
-    if not key and desc.api_key_setting:
+        return get_provider(protocol, provider_key, settings)
+    if desc.api_key_setting:
         key = getattr(settings, desc.api_key_setting, None)
-    if not key:
-        return None
-    return get_provider(protocol, type_key, settings, api_key_override=key)
+        if key:
+            return get_provider(protocol, provider_key, settings, api_key_override=key)
+    return None
 
 
 def load_credentials(
@@ -326,7 +376,7 @@ def discover_models(
     """
     results: List[dict] = []
 
-    for type_key, desc in list_providers(protocol):
+    for pk, desc in list_providers(protocol):
         if not is_accessible(desc, settings):
             continue
         if desc.requires_api_key:
@@ -338,7 +388,7 @@ def discover_models(
 
         if desc.models:
             for spec in desc.models:
-                entry: dict = {"name": spec.name, "provider": type_key}
+                entry: dict = {"name": spec.name, "provider": pk}
                 if isinstance(spec, LLMModelSpec):
                     entry.update({
                         "supports_tools": spec.supports_tools,
@@ -359,7 +409,7 @@ def discover_models(
                 results.append(entry)
         else:
             try:
-                provider_instance = resolve(protocol, type_key, settings, credentials)
+                provider_instance = resolve(protocol, pk, settings, credentials)
                 if provider_instance and hasattr(provider_instance, "discover_models"):
                     import asyncio
                     try:
@@ -367,16 +417,18 @@ def discover_models(
                     except RuntimeError:
                         loop = None
                     if loop and loop.is_running():
-                        pass
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                            discovered = pool.submit(asyncio.run, provider_instance.discover_models()).result(timeout=10)
                     else:
                         discovered = asyncio.run(provider_instance.discover_models())
                         for model_info in discovered:
                             if hasattr(model_info, "name"):
-                                results.append({"name": model_info.name, "provider": type_key})
+                                results.append({"name": model_info.name, "provider": pk})
                             elif isinstance(model_info, str):
-                                results.append({"name": model_info, "provider": type_key})
+                                results.append({"name": model_info, "provider": pk})
             except Exception as e:
-                logger.debug("Runtime model discovery failed for %s: %s", type_key, e)
+                logger.debug("Runtime model discovery failed for %s: %s", pk, e)
 
     return results
 
@@ -399,26 +451,26 @@ def probe_providers(settings: Optional[AppSettings] = None) -> Dict[str, str]:
         ("Web Search", WebSearchProvider),
     ]
 
-    status: Dict[str, str] = {}
+    status: Dict[str, list] = {}
     parts = []
 
     for label, protocol in protocols:
-        found = False
-        for tk, desc in list_providers(protocol):
+        providers_found = []
+        for pk, desc in list_providers(protocol):
             if is_accessible(desc, settings):
                 if not desc.requires_api_key or (
                     desc.api_key_setting and getattr(settings, desc.api_key_setting, None)
                 ):
-                    access_key = f"{_access_prefix(protocol)}_{tk}"
+                    access_key = f"{_access_prefix(protocol)}_{pk}"
                     access = settings.provider_access.get(access_key)
                     if access is None:
                         access = "all" if desc.is_local else "none"
-                    status[label] = f"{tk} ({access})"
-                    parts.append(f"{label}: {tk} \u2713 ({access})")
-                    found = True
-                    break
-        if not found:
-            status[label] = "not configured"
+                    providers_found.append(f"{pk} ({access})")
+        if providers_found:
+            status[label] = providers_found
+            parts.append(f"{label}: {', '.join(providers_found)}")
+        else:
+            status[label] = []
             parts.append(f"{label}: not configured")
 
     logger.info("[PROVIDERS] %s", " | ".join(parts))

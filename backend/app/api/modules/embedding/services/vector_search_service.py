@@ -99,12 +99,14 @@ class VectorSearchService:
         Returns:
             List of SearchResult objects
         """
-        # Load infospace (always needed for embedding_selection)
+        # Load infospace (always needed for enrichment_config.embedding)
         infospace = self.session.get(Infospace, infospace_id)
         if not infospace:
             raise ValueError(f"Infospace {infospace_id} not found")
 
-        # Resolve embedding model: explicit id or from infospace's embedding_selection
+        dim_override = infospace.get_embedding_dimension_override()
+
+        # Resolve embedding model: explicit id or from infospace's enrichment_config
         if embedding_model_id is not None:
             embedding_model = self.session.get(EmbeddingModel, embedding_model_id)
             if not embedding_model:
@@ -112,14 +114,11 @@ class VectorSearchService:
             model_name = embedding_model.name
             type_key = embedding_model.provider
         else:
-            sel = infospace.embedding_selection
-            if isinstance(sel, dict):
-                from app.api.modules.foundation_service_providers.base import ProviderSelection
-                sel = ProviderSelection(**sel)
+            sel = infospace.get_embedding_selection()
             if not sel or not sel.model_name:
                 raise ValueError(f"Infospace {infospace_id} has no embedding configured")
             model_name = sel.model_name
-            type_key = sel.type_key
+            type_key = sel.provider_key
             embedding_model = None
 
         # Resolve provider via registry
@@ -144,14 +143,16 @@ class VectorSearchService:
 
         # Get embedding model for filtering (if not already resolved)
         if embedding_model is None:
-            embedding_model = self.session.exec(
+            q = (
                 select(EmbeddingModel)
                 .where(EmbeddingModel.name == model_name)
                 .where(EmbeddingModel.provider == provider_name.lower())
-            ).first()
+            )
+            if dim_override is not None:
+                q = q.where(EmbeddingModel.dimension == dim_override)
+            embedding_model = self.session.exec(q).first()
 
         if not embedding_model:
-            # Auto-register if missing (e.g., after clearing embeddings)
             logger.info(f"Embedding model '{model_name}' ({provider_name}) not in DB. Auto-registering...")
             try:
                 from app.api.modules.embedding.services.embedding_service import EmbeddingService
@@ -162,6 +163,7 @@ class VectorSearchService:
                 embedding_model = await embedding_service.ensure_embedding_model_registered(
                     provider=provider_name,
                     model_name=model_name,
+                    dimension=dim_override,
                 )
             except Exception as e:
                 raise ValueError(
@@ -173,10 +175,14 @@ class VectorSearchService:
         dim = embedding_model.dimension
         col_name = get_embedding_column_for_dimension(dim)
         if not col_name:
+            from app.api.modules.content.models import EMBEDDING_SUPPORTED_DIMS
             raise ValueError(
                 f"Embedding dimension {dim} not supported for search. "
-                f"Supported: 384, 512, 768, 1024, 1536."
+                f"Supported: {', '.join(str(d) for d in EMBEDDING_SUPPORTED_DIMS)}."
             )
+        # Matryoshka truncation: query embedding may be native dim, stored vectors are truncated
+        if len(query_embedding) > dim:
+            query_embedding = query_embedding[:dim]
         query_vec_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
 
         # Build WHERE clauses for optional filters

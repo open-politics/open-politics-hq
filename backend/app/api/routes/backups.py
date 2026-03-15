@@ -17,7 +17,6 @@ from app.schemas import (
 )
 from app.api.modules.sharing.services import BackupService
 from app.api.global_utils import validate_infospace_access
-from app.api.modules.sharing.tasks.backup import automatic_backup_all_infospaces, backup_specific_infospaces
 from app.models import Infospace
 from sqlmodel import select
 
@@ -408,21 +407,37 @@ def get_infospaces_backup_overview(
 @general_router.post("/admin/backup-all", response_model=Message)
 def trigger_backup_all_infospaces(
     *,
+    db: SessionDep,
     current_user: CurrentUser,
     backup_type: str = "manual"
 ) -> Message:
     """
     Admin endpoint: Trigger backup creation for all infospaces.
+    Creates PENDING backup records; the process_backup @task picks them up.
     """
     if not current_user.is_superuser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can trigger bulk backups")
-    
+
     try:
-        # Start the backup task
-        automatic_backup_all_infospaces.delay(backup_type=backup_type)
-        
-        return Message(message=f"Bulk backup task started for all infospaces (type: {backup_type})")
-        
+        from app.core.events import emit
+        infospaces = db.exec(select(Infospace)).all()
+        for infospace in infospaces:
+            backup_service = get_backup_service(db, current_user.id, infospace.id)
+            backup_service.create_backup(
+                infospace_id=infospace.id,
+                user_id=current_user.id,
+                backup_data=InfospaceBackupCreate(
+                    name=f"Admin Backup - {infospace.name}",
+                    backup_type=backup_type,
+                    include_sources=True,
+                    include_schemas=True,
+                    include_runs=True,
+                    include_datasets=True,
+                    include_annotations=True,
+                ),
+            )
+        return Message(message=f"Backup tasks created for {len(infospaces)} infospaces (type: {backup_type})")
+
     except Exception as e:
         logger.error(f"Failed to start bulk backup: {e}")
         raise HTTPException(
@@ -434,27 +449,45 @@ def trigger_backup_all_infospaces(
 def trigger_backup_specific_infospaces(
     *,
     infospace_ids: List[int],
+    db: SessionDep,
     current_user: CurrentUser,
     backup_type: str = "manual"
 ) -> Message:
     """
     Admin endpoint: Trigger backup creation for specific infospaces.
+    Creates PENDING backup records; the process_backup @task picks them up.
     """
     if not current_user.is_superuser:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can trigger bulk backups")
-    
+
     try:
         if not infospace_ids:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No infospace IDs provided"
             )
-        
-        # Start the backup task for specific infospaces
-        backup_specific_infospaces.delay(infospace_ids=infospace_ids, backup_type=backup_type)
-        
+
+        for iid in infospace_ids:
+            infospace = db.get(Infospace, iid)
+            if not infospace:
+                continue
+            backup_service = get_backup_service(db, current_user.id, iid)
+            backup_service.create_backup(
+                infospace_id=iid,
+                user_id=current_user.id,
+                backup_data=InfospaceBackupCreate(
+                    name=f"Admin Backup - {infospace.name}",
+                    backup_type=backup_type,
+                    include_sources=True,
+                    include_schemas=True,
+                    include_runs=True,
+                    include_datasets=True,
+                    include_annotations=True,
+                ),
+            )
+
         return Message(message=f"Backup task started for {len(infospace_ids)} infospaces")
-        
+
     except HTTPException:
         raise
     except Exception as e:

@@ -30,7 +30,6 @@ from app.api.modules.foundation_service_providers.registry import get_scraping_p
 from app.core.config import settings
 from sqlalchemy import func
 from sqlmodel import select, delete
-from app.api.modules.content.tasks.content_tasks import process_content, ingest_bulk_urls
 from app.core.celery_app import celery
 from app.api.modules.content.services import BundleService
 from app.api.modules.content.ingest import ingest
@@ -385,15 +384,27 @@ async def bulk_ingest_urls(
         validate_infospace_access(session, infospace_id, current_user.id)
 
         if len(bulk_request.urls) > 100:
-            # For large batches, use background task
-            from app.api.modules.content.tasks.content_tasks import ingest_bulk_urls
-            ingest_bulk_urls.delay(
-                urls=bulk_request.urls,
+            # For large batches, create IngestionJob — @task picks it up via event
+            from app.models import IngestionJob, IngestionStatus
+            from app.core.events import emit
+            job = IngestionJob(
                 infospace_id=infospace_id,
                 user_id=current_user.id,
-                base_title=bulk_request.base_title,
-                scrape_immediately=bulk_request.scrape_immediately
+                source_locator="bulk_urls",
+                kind="bulk_urls",
+                status=IngestionStatus.PENDING,
+                total_files=len(bulk_request.urls),
+                cursor_state={
+                    "stage": "pending", "message": "Queued",
+                    "progress_pct": 0, "urls": bulk_request.urls,
+                    "base_title": bulk_request.base_title,
+                    "scrape_immediately": bulk_request.scrape_immediately,
+                    "options": {},
+                },
             )
+            session.add(job)
+            session.commit()
+            emit("ingestion_job.created", {"infospace_id": infospace_id})
             return {"message": f"Bulk ingestion of {len(bulk_request.urls)} URLs started in background"}
 
         # For smaller batches, process immediately
@@ -1146,17 +1157,27 @@ async def create_assets_background_bulk(
     with Session(engine) as session:
         from app.api.modules.content.handlers import IngestionContext
         from app.api.modules.content.ingest import ingest
-        from app.api.modules.content.tasks.task_services import create_task_services
+        from app.api.modules.foundation_service_providers.registry import get_storage_provider, get_scraping_provider, get_web_search_provider
+        from app.api.modules.content.services.asset_service import AssetService
+        from app.api.modules.content.services.bundle_service import BundleService
 
-        services = create_task_services(session)
+        storage = get_storage_provider(settings)
+        scraping = get_scraping_provider(settings)
+        try:
+            search = get_web_search_provider(settings)
+        except Exception:
+            search = None
+        asset_service = AssetService(session, storage)
+        bundle_service = BundleService(session)
+
         opts = {"process_immediately": False, **upload_options}
         context = IngestionContext(
             session=session,
-            storage_provider=services.storage,
-            scraping_provider=services.scraping,
-            search_provider=services.search,
-            asset_service=services.asset,
-            bundle_service=services.bundle,
+            storage_provider=storage,
+            scraping_provider=scraping,
+            search_provider=search,
+            asset_service=asset_service,
+            bundle_service=bundle_service,
             user_id=current_user.id,
             infospace_id=infospace_id,
             settings=settings,
@@ -1203,27 +1224,40 @@ async def create_assets_background_urls(
     *,
     infospace_id: int,
     request: BulkUrlIngestion,
-    current_user: CurrentUser
+    current_user: CurrentUser,
+    session: SessionDep,
 ):
     """
     Ingest multiple URLs using background processing.
-    Returns task ID for progress tracking.
+    Creates IngestionJob — @task picks it up via event bus.
     """
     logger.info(f"Background URL ingestion: {len(request.urls)} URLs for infospace {infospace_id}")
-    
-    # Trigger background task
-    task = ingest_bulk_urls.delay(
-        urls=request.urls,
+
+    from app.models import IngestionJob, IngestionStatus
+    from app.core.events import emit
+    job = IngestionJob(
         infospace_id=infospace_id,
         user_id=current_user.id,
-        base_title=getattr(request, 'base_title', None),
-        scrape_immediately=True,
-        options={}
+        source_locator="bulk_urls",
+        kind="bulk_urls",
+        status=IngestionStatus.PENDING,
+        total_files=len(request.urls),
+        cursor_state={
+            "stage": "pending", "message": "Queued",
+            "progress_pct": 0, "urls": request.urls,
+            "base_title": getattr(request, 'base_title', None),
+            "scrape_immediately": True,
+            "options": {},
+        },
     )
-    
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    emit("ingestion_job.created", {"infospace_id": infospace_id})
+
     return {
         "message": f"Background URL ingestion initiated for {len(request.urls)} URLs",
-        "task_id": task.id,
+        "job_id": job.id,
         "url_count": len(request.urls)
     }
 
@@ -1251,22 +1285,31 @@ async def add_files_to_bundle_background(
     with Session(engine) as session:
         from app.api.modules.content.handlers import IngestionContext
         from app.api.modules.content.ingest import ingest
-        from app.api.modules.content.tasks.task_services import create_task_services
+        from app.api.modules.foundation_service_providers.registry import get_storage_provider, get_scraping_provider, get_web_search_provider
+        from app.api.modules.content.services.asset_service import AssetService
+        from app.api.modules.content.services.bundle_service import BundleService as BundleServiceCls
 
-        bundle_service = BundleService(session)
+        storage = get_storage_provider(settings)
+        scraping = get_scraping_provider(settings)
+        try:
+            search = get_web_search_provider(settings)
+        except Exception:
+            search = None
+        asset_service = AssetService(session, storage)
+        bundle_service = BundleServiceCls(session)
+
         bundle = bundle_service.get_bundle(bundle_id, infospace_id, current_user.id)
         if not bundle:
             raise HTTPException(status_code=404, detail="Bundle not found")
 
-        services = create_task_services(session)
         opts = {"process_immediately": False, **upload_options}
         context = IngestionContext(
             session=session,
-            storage_provider=services.storage,
-            scraping_provider=services.scraping,
-            search_provider=services.search,
-            asset_service=services.asset,
-            bundle_service=services.bundle,
+            storage_provider=storage,
+            scraping_provider=scraping,
+            search_provider=search,
+            asset_service=asset_service,
+            bundle_service=bundle_service,
             user_id=current_user.id,
             infospace_id=infospace_id,
             settings=settings,
@@ -1405,4 +1448,28 @@ async def ingest_rss_feeds_from_awesome(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"RSS feed ingestion failed: {str(e)}"
-        ) 
+        )
+
+
+@router.post("/{asset_id}/enrichment/{enricher_name}/retry", response_model=Message)
+async def retry_asset_enrichment(
+    infospace_id: int,
+    asset_id: int,
+    enricher_name: str,
+    session: SessionDep,
+    current_user: CurrentUser,
+):
+    """Clear enrichment state for an asset so it is eligible for re-enrichment."""
+    validate_infospace_access(session, infospace_id, current_user)
+
+    asset = session.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if asset.infospace_id != infospace_id:
+        raise HTTPException(status_code=404, detail="Asset not in this infospace")
+
+    from app.api.modules.content.enrichers import retry_enrichment
+    retry_enrichment(session, asset_id, enricher_name)
+    session.commit()
+
+    return Message(message=f"Enrichment '{enricher_name}' reset for asset {asset_id}")

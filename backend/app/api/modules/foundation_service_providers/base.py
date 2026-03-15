@@ -48,8 +48,36 @@ class EmbeddingModelSpec(ModelSpec):
 
 class ProviderSelection(BaseModel):
     """A typed provider+model choice."""
-    type_key: str
+    provider_key: str
     model_name: Optional[str] = None
+    dimension: Optional[int] = None  # override for variable-dim models (Matryoshka etc.)
+
+    # Accept type_key as alias for backwards compat with existing JSON
+    class Config:
+        populate_by_name = True
+
+    @classmethod
+    def __get_validators__(cls):
+        yield cls._compat_validator
+
+    @classmethod
+    def _compat_validator(cls, v):
+        if isinstance(v, dict) and "type_key" in v and "provider_key" not in v:
+            v = {**v, "provider_key": v.pop("type_key")}
+        return v
+
+    def __init__(self, **data):
+        # Accept type_key in constructor for backwards compat
+        if "type_key" in data and "provider_key" not in data:
+            data["provider_key"] = data.pop("type_key")
+        elif "type_key" in data:
+            data.pop("type_key")
+        super().__init__(**data)
+
+    @property
+    def type_key(self) -> str:
+        """Backwards compat accessor."""
+        return self.provider_key
 
 
 class LanguageDefaults(BaseModel):
@@ -80,9 +108,17 @@ class ProviderDefaults(BaseModel):
     """
     language: Optional[LanguageDefaults] = None
     embedding: Optional[ProviderSelection] = None
-    search: Optional[ProviderSelection] = None
+    web_search: Optional[ProviderSelection] = None
     ocr: Optional[ProviderSelection] = None
     geocoding: Optional[ProviderSelection] = None
+
+    def __init__(self, **data):
+        # Accept "search" as alias for backwards compat
+        if "search" in data and "web_search" not in data:
+            data["web_search"] = data.pop("search")
+        elif "search" in data:
+            data.pop("search")
+        super().__init__(**data)
 
     def get(
         self, capability: str, context: Optional[str] = None
@@ -94,6 +130,49 @@ class ProviderDefaults(BaseModel):
         if isinstance(cap, LanguageDefaults):
             return cap.resolve(context)
         return cap
+
+
+# ─────────────────────────────────────── Enrichment Config ──── #
+
+
+class EnrichmentConfig(BaseModel):
+    """Per-infospace enrichment configuration. All enrichers require explicit opt-in.
+
+    Each field is either:
+    - True (enable with system defaults)
+    - ProviderSelection (enable with specific provider + optional model)
+    - None/missing (disabled)
+
+    Embedding is always ``ProviderSelection`` (never plain bool) because you
+    can't embed without choosing a provider and model.
+    """
+    ocr: Optional[bool | ProviderSelection] = None
+    geocoding: Optional[bool | ProviderSelection] = None
+    language_detection: Optional[bool] = None
+    quality_score: Optional[bool] = None
+    hash: Optional[bool] = None
+    embedding: Optional[ProviderSelection] = None
+    embedding_dimension_override: Optional[int] = None
+
+    def is_enabled(self, enricher_name: str) -> bool:
+        """Check if a specific enricher is enabled."""
+        val = getattr(self, enricher_name, None)
+        if val is None:
+            return False
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, (ProviderSelection, dict)):
+            return True
+        return False
+
+    def get_selection(self, enricher_name: str) -> Optional[ProviderSelection]:
+        """Get provider selection for an enricher, if configured."""
+        val = getattr(self, enricher_name, None)
+        if isinstance(val, dict):
+            return ProviderSelection(**val)
+        if isinstance(val, ProviderSelection):
+            return val
+        return None
 
 
 # ─────────────────────────────────────────── File Stat ──── #

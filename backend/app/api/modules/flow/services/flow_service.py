@@ -356,9 +356,9 @@ class FlowService:
         self.session.commit()
         self.session.refresh(execution)
         
-        # Queue the execution for processing
-        from app.api.modules.flow.tasks.flow_tasks import execute_flow
-        execute_flow.delay(execution.id)
+        # Queue the execution for processing via event
+        from app.core.events import emit
+        emit("flow.execute", {"infospace_id": infospace_id})
         
         logger.info(f"Triggered Flow {flow_id} execution {execution.id} with {len(input_asset_ids)} assets")
         return execution
@@ -595,9 +595,9 @@ class FlowService:
         self.session.commit()
         self.session.refresh(annotation_run)
         
-        # Queue for async processing
-        from app.api.modules.annotation.tasks.annotate import process_annotation_run
-        process_annotation_run.delay(annotation_run.id)
+        # Queue for async processing via event
+        from app.core.events import emit
+        emit("annotation_run.created", {"infospace_id": flow.infospace_id})
         logger.info(f"FlowExecution {execution.id}: Queued annotation run {annotation_run.id} (async)")
         
         return {
@@ -657,11 +657,21 @@ class FlowService:
 
         try:
             from app.api.modules.content.tasks.ingest import process_source
+            from app.api.modules.content.models import Source as SourceModel
 
-            opts = {"target_bundle_id": bundle_id} if bundle_id else {}
-            if execution.triggered_by_user_id:
-                opts["user_id"] = execution.triggered_by_user_id
-            result = process_source.delay(source_id, opts)
+            # Store overrides in source.details before dispatching
+            source_obj = self.session.get(SourceModel, source_id)
+            if source_obj:
+                details = dict(source_obj.details or {})
+                if bundle_id:
+                    details["target_bundle_id"] = bundle_id
+                if execution.triggered_by_user_id:
+                    details["user_id"] = execution.triggered_by_user_id
+                source_obj.details = details
+                self.session.add(source_obj)
+                self.session.commit()
+
+            result = process_source.delay([source_id], flow.infospace_id)
             result.get(timeout=300)
         except Exception as e:
             logger.warning("INGEST step failed: %s", e)
