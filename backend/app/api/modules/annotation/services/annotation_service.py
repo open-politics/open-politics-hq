@@ -17,7 +17,8 @@ from app.models import (
 )
 from app.schemas import AnnotationCreate
 from app.api.global_utils import validate_infospace_access
-from app.api.modules.annotation.tasks.annotate import process_annotation_run, retry_failed_annotations
+from app.api.modules.annotation.tasks.annotate import retry_failed_annotations
+from app.core.events import emit
 from app.api.modules.content.services.asset_service import AssetService
 from collections import Counter
 from math import sqrt
@@ -193,17 +194,14 @@ class AnnotationService:
         )
         
         self.session.add(run)
-        self.session.flush()  # Get ID
-        
-        # Queue the run for processing
-        try:
-            process_annotation_run.delay(run.id)
-            logger.info(f"Queued annotation task for run {run.id}")
-            return True, run.id
-        except Exception as e:
-            logger.error(f"Failed to queue annotation task for run {run.id}: {e}")
-            self.session.rollback()
-            return False, None
+        self.session.commit()
+        self.session.refresh(run)
+
+        # Trigger processing via event (process_annotation_run subscribes to annotation_run.created)
+        from app.core.events import emit
+        emit("annotation_run.created", {"infospace_id": infospace_id})
+        logger.info(f"Queued annotation task for run {run.id}")
+        return True, run.id
     
     def trigger_retry_failed_annotations(
         self,
@@ -240,21 +238,14 @@ class AnnotationService:
         # Check run status
         if run.status not in [RunStatus.COMPLETED_WITH_ERRORS, RunStatus.FAILED]:
             raise ValueError(f"Run {run_id} is not in a state that can be retried (status: {run.status})")
-        
-        # Queue the retry task
+
+        # Queue the retry task via direct invocation
         try:
-            # Debug: Log Celery broker config at the moment of queueing
-            from app.core.celery_app import celery
-            logger.info(f"About to queue task. Celery broker URL: {celery.conf.broker_url}")
-            logger.info(f"Celery app: {celery}")
-            
-            retry_failed_annotations.delay(run.id)
+            retry_failed_annotations.delay([run.id], infospace_id)
             logger.info(f"Queued retry task for run {run.id}")
             return True
         except Exception as e:
             logger.error(f"Failed to queue retry task for run {run.id}: {e}")
-            import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
     
     def get_annotations_for_asset(
@@ -1027,19 +1018,9 @@ class AnnotationService:
 
         # Trigger the Celery task if requested
         if queue_task:
-            try:
-                process_annotation_run.delay(db_run.id)
-                logger.info(f"Service: Annotation task for run {db_run.id} ('{db_run.name}') queued successfully.")
-            except Exception as e_celery:
-                logger.error(f"Service: Failed to queue annotation task for run {db_run.id}: {e_celery}")
-                # Potentially mark run as failed or requiring manual trigger
-                db_run.status = RunStatus.FAILED
-                db_run.error_message = f"Failed to queue Celery task: {e_celery}"
-                self.session.add(db_run)
-                self.session.commit()
-                self.session.refresh(db_run)
-                # Re-raise or handle appropriately depending on desired behavior
-                raise ValueError(f"Failed to queue annotation task: {e_celery}") from e_celery
+            from app.core.events import emit
+            emit("annotation_run.created", {"infospace_id": infospace_id})
+            logger.info(f"Service: Annotation task for run {db_run.id} ('{db_run.name}') queued successfully.")
         else:
             logger.info(f"Service: Annotation run {db_run.id} ('{db_run.name}') created without queuing task (caller handles execution).")
 
