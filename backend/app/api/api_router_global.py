@@ -25,6 +25,7 @@ from app.api.routes import (
     infospaces,
     login,
     providers,  # Provider discovery (models, capabilities)
+    query,  # Universal asset query (AQL)
     search,
     shareables,
     sources,
@@ -62,6 +63,7 @@ api_router.include_router(infospaces.router, prefix="/infospaces", tags=["Infosp
 api_router.include_router(knowledge_graphs.router, tags=["Knowledge Graphs"])
 api_router.include_router(login.router, tags=["login"])
 api_router.include_router(providers.router, tags=["Providers"])
+api_router.include_router(query.router, tags=["Query"])
 api_router.include_router(search.router, prefix="/search", tags=["Search"])
 api_router.include_router(storage.router, tags=["Storage"])
 api_router.include_router(search_history.router, prefix="/search_history", tags=["Search History"])
