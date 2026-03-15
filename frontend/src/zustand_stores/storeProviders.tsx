@@ -4,7 +4,7 @@ import { UsersService } from '@/client';
 import type { ProviderDefaults_Output, ProviderSelection as BackendProviderSelection } from '@/client';
 
 // Provider types match backend capabilities
-export type ProviderCapability = 'llm' | 'embedding' | 'search' | 'geocoding' | 'ocr' | 'annotation';
+export type ProviderCapability = 'llm' | 'embedding' | 'web_search' | 'geocoding' | 'ocr' | 'annotation';
 
 export interface ProviderMetadata {
   id: string;
@@ -59,7 +59,7 @@ export const useProvidersStore = create<ProvidersState>()(
       providers: {
         llm: [],
         embedding: [],
-        search: [],
+        web_search: [],
         geocoding: [],
         ocr: [],
         annotation: [],
@@ -70,7 +70,7 @@ export const useProvidersStore = create<ProvidersState>()(
       selections: {
         llm: { providerId: 'gemini' },
         embedding: { providerId: 'ollama_embeddings' },
-        search: { providerId: 'tavily' },
+        web_search: { providerId: 'tavily' },
         geocoding: { providerId: 'nominatim_local' },
         ocr: { providerId: 'tesseract' },
         annotation: { providerId: 'gemini' },
@@ -119,7 +119,7 @@ export const useProvidersStore = create<ProvidersState>()(
             annotation: toSel(selections.annotation),
           },
           embedding: toSel(selections.embedding),
-          search: toSel(selections.search),
+          web_search: toSel(selections.web_search),
           ocr: toSel(selections.ocr),
           geocoding: toSel(selections.geocoding),
         };
@@ -143,8 +143,8 @@ export const useProvidersStore = create<ProvidersState>()(
           if (providerDefaults.embedding) {
             next.embedding = fromSel(providerDefaults.embedding) || next.embedding;
           }
-          if (providerDefaults.search) {
-            next.search = fromSel(providerDefaults.search) || next.search;
+          if (providerDefaults.web_search) {
+            next.web_search = fromSel(providerDefaults.web_search) || next.web_search;
           }
           if (providerDefaults.ocr) {
             next.ocr = fromSel(providerDefaults.ocr) || next.ocr;

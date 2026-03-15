@@ -281,32 +281,32 @@ const parseJsonSchemaProperties = (properties: any = {}, required: string[] = []
     const hasTriplets = properties.triplets && properties.triplets.type === 'array';
     
     if (hasTriplets) {
-        // This is a triplet-based graph field - reconstruct it as a single graph field
+        // Reconstruct the triplets property as a single graph field
         const tripletSchema = properties.triplets.items || {};
         const tripletProps = tripletSchema.properties || {};
-        
+
         // Extract entity type constraints (from subject_type or object_type)
         const subjectTypeSchema = tripletProps.subject_type || {};
         const typeEnum = subjectTypeSchema.enum || undefined;
         const typeConstrained = !!typeEnum && typeEnum.length > 0;
         const typeDescription = subjectTypeSchema.description || undefined;
         const typeColors = subjectTypeSchema['x-entityTypeColors'] || undefined;
-        
+
         // Extract predicate constraints
         const predicateSchema = tripletProps.predicate || {};
         const predicateEnum = predicateSchema.enum || undefined;
         const predicateConstrained = !!predicateEnum && predicateEnum.length > 0;
         const predicateDescription = predicateSchema.description || undefined;
         const predicateColors = predicateSchema['x-predicateColors'] || undefined;
-        
+
         // Extract optional fields (everything except the 5 required triplet fields)
         const requiredTripletFields = ['subject_name', 'subject_type', 'predicate', 'object_name', 'object_type'];
         const optionalFields = parseJsonSchemaProperties(
             tripletProps,
             tripletSchema.required || []
         ).filter(f => !requiredTripletFields.includes(f.name));
-        
-        const field: AdvancedSchemeField = {
+
+        const graphField: AdvancedSchemeField = {
             id: nanoid(),
             name: 'graph',
             type: 'graph',
@@ -337,10 +337,46 @@ const parseJsonSchemaProperties = (properties: any = {}, required: string[] = []
                 }
             }
         };
-        fields.push(field);
+        fields.push(graphField);
+
+        // Parse remaining (non-triplets) properties as regular fields
+        const otherProperties = Object.fromEntries(
+            Object.entries(properties).filter(([name]) => name !== 'triplets')
+        );
+        if (Object.keys(otherProperties).length > 0) {
+            fields.push(...Object.entries(otherProperties).map(([name, schema]: [string, any]) => {
+                const field: AdvancedSchemeField = {
+                    id: nanoid(),
+                    name: name,
+                    type: schema.type,
+                    description: schema.description,
+                    required: required.includes(name),
+                };
+                if (schema.enum) field.enum = schema.enum;
+                if (schema.minimum !== undefined) field.minimum = schema.minimum;
+                if (schema.maximum !== undefined) field.maximum = schema.maximum;
+                if (schema.type === 'object') {
+                    field.properties = parseJsonSchemaProperties(schema.properties, schema.required);
+                }
+                if (schema.type === 'array' && schema.items) {
+                    field.items = { type: schema.items.type };
+                    if (schema.items.type === 'object') {
+                        field.items.properties = parseJsonSchemaProperties(schema.items.properties, schema.items.required);
+                    }
+                    if (schema.items.enum && Array.isArray(schema.items.enum)) {
+                        const enumValues = [...schema.items.enum];
+                        const hasOther = enumValues.includes('other');
+                        field.items.enum = hasOther ? enumValues.filter(v => v !== 'other') : enumValues;
+                        field.items.includeOther = hasOther;
+                    }
+                }
+                return field;
+            }));
+        }
+
         return fields;
     }
-    
+
     // Regular field parsing
     return Object.entries(properties).map(([name, schema]: [string, any]) => {
         const field: AdvancedSchemeField = {

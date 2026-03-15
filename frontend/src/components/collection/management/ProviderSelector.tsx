@@ -16,24 +16,28 @@ interface Provider {
 interface ProviderSelectorProps {
   showModels?: boolean;
   className?: string;
+  /** Which capability key to read/write in the store. Defaults to 'llm'.
+   *  Use 'annotation' when embedded in the annotation runner so the selection
+   *  is stored independently from the chat/general LLM selection. */
+  capability?: 'llm' | 'annotation';
 }
 
-export default function ProviderSelector({ showModels = true, className = '' }: ProviderSelectorProps) {
-  const { 
+export default function ProviderSelector({ showModels = true, className = '', capability = 'llm' }: ProviderSelectorProps) {
+  const {
     selections,
     setSelection,
   } = useProvidersStore();
-  
-  const selectedProvider = selections.llm?.providerId || null;
-  const selectedModel = selections.llm?.modelId || null;
-  
+
+  const selectedProvider = selections[capability]?.providerId || null;
+  const selectedModel = selections[capability]?.modelId || null;
+
   const setSelectedProvider = (provider: string) => {
-    setSelection('llm', { providerId: provider });
+    setSelection(capability, { providerId: provider });
   };
-  
+
   const setSelectedModel = (model: string) => {
     if (selectedProvider) {
-      setSelection('llm', { providerId: selectedProvider, modelId: model });
+      setSelection(capability, { providerId: selectedProvider, modelId: model });
     }
   };
   
@@ -65,9 +69,9 @@ export default function ProviderSelector({ showModels = true, className = '' }: 
         // If no provider is selected, or if the selected provider is no longer valid, set a default.
         if (!selectedProvider || !providerList.some(p => p.name === selectedProvider)) {
           // Prefer Anthropic (Claude) providers first, then others
-          const defaultProvider = 
+          const defaultProvider =
             providerList.find(p => p.name.toLowerCase().includes('anthropic')) ||
-            providerList.find(p => p.name === 'gemini') || 
+            providerList.find(p => p.name === 'gemini') ||
             providerList[0];
           if (defaultProvider) {
             setSelectedProvider(defaultProvider.name);
@@ -82,7 +86,7 @@ export default function ProviderSelector({ showModels = true, className = '' }: 
 
     fetchProviders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Intentionally run only once on mount
+  }, [capability]); // Re-run when capability changes
 
   useEffect(() => {
     // Update available models when the selectedProvider or the list of providers changes.
@@ -109,7 +113,7 @@ export default function ProviderSelector({ showModels = true, className = '' }: 
       if (defaultModel && defaultModel !== selectedModel) {
         // Only update if it's actually different to avoid infinite loops
         if (selectedProvider) {
-          setSelection('llm', { providerId: selectedProvider, modelId: defaultModel });
+          setSelection(capability, { providerId: selectedProvider, modelId: defaultModel });
         }
       }
     }
@@ -119,7 +123,7 @@ export default function ProviderSelector({ showModels = true, className = '' }: 
   const handleProviderChange = (providerName: string) => {
     // When provider changes, clear the model selection and set new provider
     // This ensures the useEffect picks up the change and loads the correct models
-    setSelection('llm', { providerId: providerName, modelId: undefined });
+    setSelection(capability, { providerId: providerName, modelId: undefined });
   };
 
   return (

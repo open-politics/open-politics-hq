@@ -31,7 +31,8 @@ import {
   Code2,
   Lock,
   Upload,
-  Info
+  Info,
+  Tags
 } from "lucide-react";
 import { useProvidersStore, ProviderCapability, ProviderMetadata } from '@/zustand_stores/storeProviders';
 import { toast } from 'sonner';
@@ -44,25 +45,28 @@ interface ProviderHubProps {
 const CAPABILITY_ICONS: Record<ProviderCapability, React.ReactNode> = {
   llm: <Brain className="w-4 h-4" />,
   embedding: <Database className="w-4 h-4" />,
-  search: <Search className="w-4 h-4" />,
+  web_search: <Search className="w-4 h-4" />,
   geocoding: <MapPin className="w-4 h-4" />,
   ocr: <ScanText className="w-4 h-4" />,
+  annotation: <Tags className="w-4 h-4" />,
 };
 
 const CAPABILITY_NAMES: Record<ProviderCapability, string> = {
   llm: 'Language Models',
   embedding: 'Embeddings',
-  search: 'Web Search',
+  web_search: 'Web Search',
   geocoding: 'Geocoding',
   ocr: 'OCR',
+  annotation: 'Annotation',
 };
 
 const CAPABILITY_DESCRIPTIONS: Record<ProviderCapability, string> = {
   llm: 'AI models for chat, classification, and structured output',
   embedding: 'Convert text into vector embeddings for semantic search',
-  search: 'Search the web for real-time information',
+  web_search: 'Search the web for real-time information',
   geocoding: 'Convert location names to coordinates and vice versa',
   ocr: 'Extract text from images and scanned documents',
+  annotation: 'AI-powered annotation and structured extraction',
 };
 
 export default function ProviderHub({ className = '' }: ProviderHubProps) {
@@ -235,6 +239,8 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
 
   const handleSelectProvider = (capability: ProviderCapability, providerId: string) => {
     setSelection(capability, { providerId });
+    // Sync to backend so preferences persist across sessions
+    useProvidersStore.getState().syncToBackend();
     toast.success(`Selected ${getProvider(providerId)?.name} for ${CAPABILITY_NAMES[capability]}`);
   };
 
@@ -476,6 +482,11 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
     );
   }
 
+  // Only show tabs that have providers (hides annotation — it has its own selector in the runner)
+  const visibleCapabilities = (Object.keys(providers) as ProviderCapability[]).filter(
+    (cap) => providers[cap].length > 0
+  );
+
   const hasRuntimeKeysToTransfer = Object.entries(apiKeys).some(
     ([providerId, key]) => key && !storedProviders.includes(providerId)
   );
@@ -542,8 +553,8 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
       </div>
 
       <Tabs value={activeCapability} onValueChange={(v) => setActiveCapability(v as ProviderCapability)} className="w-full">
-        <TabsList className="grid w-full grid-cols-5">
-          {(Object.keys(providers) as ProviderCapability[]).map((capability) => (
+        <TabsList className="grid w-full" style={{ gridTemplateColumns: `repeat(${visibleCapabilities.length}, minmax(0, 1fr))` }}>
+          {visibleCapabilities.map((capability) => (
             <TabsTrigger key={capability} value={capability} className="text-xs px-2">
               <div className="flex items-center gap-1 min-w-0">
                 {CAPABILITY_ICONS[capability]}
@@ -553,7 +564,7 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
           ))}
         </TabsList>
 
-        {(Object.keys(providers) as ProviderCapability[]).map((capability) => (
+        {visibleCapabilities.map((capability) => (
           <TabsContent key={capability} value={capability} className="space-y-4 w-full">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg">
               <div className="flex items-center gap-2 min-w-0">

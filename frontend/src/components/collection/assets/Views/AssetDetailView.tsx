@@ -153,7 +153,7 @@ const AssetDetailView = ({
       !!asset &&
       !!activeInfospace?.enable_related_assets &&
       !!kindConfig?.showRelatedAssets &&
-      !!activeInfospace?.embedding_selection?.model_name &&
+      !!(activeInfospace?.enrichment_config as any)?.embedding?.model_name &&
       relatedAssetsQuery.length > 0,
     limit: 6,
     parentAssetId: asset?.parent_asset_id || undefined,
@@ -1939,7 +1939,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                   {asset &&
                     activeInfospace?.enable_related_assets &&
                     kindConfig?.showRelatedAssets &&
-                    activeInfospace?.embedding_selection?.model_name && (
+                    (activeInfospace?.enrichment_config as any)?.embedding?.model_name && (
                     <div className="mt-8 pt-8 border-t">
                       <AssetFeedView
                         title="Related Articles"

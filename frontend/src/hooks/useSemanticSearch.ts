@@ -42,8 +42,8 @@ export interface UseSemanticSearchReturn {
 /**
  * Check if semantic search is available for the current infospace
  */
-function isSemanticSearchAvailable(infospace: { embedding_selection?: { model_name?: string | null } | null } | null): boolean {
-  return !!infospace?.embedding_selection?.model_name;
+function isSemanticSearchAvailable(infospace: { enrichment_config?: { embedding?: { model_name?: string | null } | null } | null } | null): boolean {
+  return !!(infospace?.enrichment_config as any)?.embedding?.model_name;
 }
 
 /**
@@ -129,8 +129,9 @@ export function useSemanticSearch(options: UseSemanticSearchOptions): UseSemanti
       
       // Also try to infer provider from model name and include API key if available
       // This helps when the model name doesn't match the selected provider
-      if (activeInfospace?.embedding_selection?.model_name) {
-        const modelName = activeInfospace.embedding_selection.model_name.toLowerCase();
+      const embSel = (activeInfospace?.enrichment_config as any)?.embedding;
+      if (embSel?.model_name) {
+        const modelName = (embSel.model_name as string).toLowerCase();
         
         // Infer provider from model name patterns
         if (modelName.includes('text-embedding') && !apiKeys['openai']) {

@@ -45,6 +45,8 @@ interface EmbeddingModel {
 
 interface EmbeddingStats {
   total_assets: number;
+  documents: number;
+  sub_assets: number;
   total_chunks: number;
   embedded_chunks: number;
   coverage_percentage: number;
@@ -59,7 +61,8 @@ interface EmbeddingManagerProps {
 export default function EmbeddingManager({ infospace, onInfospaceUpdate }: EmbeddingManagerProps) {
   const { apiKeys, setApiKey, providers: storeProviders } = useProvidersStore();
   const [availableModels, setAvailableModels] = useState<EmbeddingModel[]>([]);
-  const [selectedModel, setSelectedModel] = useState<string>(infospace.embedding_selection?.model_name || '');
+  const embeddingSel = (infospace.enrichment_config as any)?.embedding;
+  const [selectedModel, setSelectedModel] = useState<string>(embeddingSel?.model_name || '');
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isEnabling, setIsEnabling] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -74,7 +77,7 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
   // API key visibility toggles (generic per-provider)
   const [keyVisibility, setKeyVisibility] = useState<Record<string, boolean>>({});
   
-  const isEnabled = !!infospace.embedding_selection?.model_name;
+  const isEnabled = !!embeddingSel?.model_name;
   
   // Group models by provider
   const modelsByProvider = availableModels.reduce((acc, model) => {
@@ -142,6 +145,8 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
       // Map response to ensure proper types
       const statsData: EmbeddingStats = {
         total_assets: response.total_assets,
+        documents: (response as any).documents ?? response.total_assets,
+        sub_assets: (response as any).sub_assets ?? 0,
         total_chunks: response.total_chunks,
         embedded_chunks: response.embedded_chunks,
         coverage_percentage: response.coverage_percentage,
@@ -204,11 +209,15 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
     try {
       // Find the selected model to get its provider
       const model = availableModels.find(m => m.name === selectedModel);
-      // Update infospace with embedding model + typed provider selection
+      // Update infospace enrichment_config with embedding provider selection
+      const currentConfig = (infospace.enrichment_config || {}) as Record<string, any>;
       await InfospacesService.updateInfospace({
         infospaceId: infospace.id,
         requestBody: {
-          embedding_selection: model ? { type_key: model.provider, model_name: selectedModel } : undefined,
+          enrichment_config: {
+            ...currentConfig,
+            embedding: model ? { provider_key: model.provider, model_name: selectedModel } : undefined,
+          },
         },
       });
 
@@ -253,10 +262,11 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
 
     setIsEnabling(true);
     try {
+      const currentConfig = (infospace.enrichment_config || {}) as Record<string, any>;
       await InfospacesService.updateInfospace({
         infospaceId: infospace.id,
         requestBody: {
-          embedding_selection: null,
+          enrichment_config: { ...currentConfig, embedding: null },
         },
       });
 
@@ -348,11 +358,15 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
         return;
       }
 
-      // Update infospace with new model + typed provider selection
+      // Update infospace enrichment_config with new embedding provider selection
+      const currentConfig = (infospace.enrichment_config || {}) as Record<string, any>;
       await InfospacesService.updateInfospace({
         infospaceId: infospace.id,
         requestBody: {
-          embedding_selection: { type_key: model.provider, model_name: newModel },
+          enrichment_config: {
+            ...currentConfig,
+            embedding: { provider_key: model.provider, model_name: newModel },
+          },
         },
       });
 
@@ -710,12 +724,59 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
       {isEnabled && (
         <div className="p-4 space-y-4 ">
           {/* Current Configuration */}
-          <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-            <div>
+          <div className="flex items-center justify-between p-3 bg-muted rounded-lg gap-3">
+            <div className="min-w-0 flex-1">
               <div className="text-sm font-medium">Current Model</div>
-              <div className="text-xs text-muted-foreground">{infospace.embedding_selection?.model_name}</div>
+              <div className="text-xs text-muted-foreground truncate">{embeddingSel?.model_name}</div>
             </div>
-            <Badge variant="default">Active</Badge>
+            {(() => {
+              const activeModel = availableModels.find(m => m.name === embeddingSel?.model_name);
+              const nativeDim = activeModel?.dimension;
+              const currentDim = embeddingSel?.dimension || nativeDim;
+              const SUPPORTED_DIMS = [384, 512, 768, 1024, 1536, 2048];
+              const eligibleDims = nativeDim
+                ? SUPPORTED_DIMS.filter(d => d <= nativeDim)
+                : currentDim ? [currentDim] : [];
+              if (eligibleDims.length <= 1) return <Badge variant="default">{currentDim || '?'}d</Badge>;
+              return (
+                <Select
+                  value={String(currentDim)}
+                  onValueChange={async (val) => {
+                    const dim = parseInt(val);
+                    const currentConfig = (infospace.enrichment_config || {}) as Record<string, any>;
+                    try {
+                      await InfospacesService.updateInfospace({
+                        infospaceId: infospace.id,
+                        requestBody: {
+                          enrichment_config: {
+                            ...currentConfig,
+                            embedding: { ...currentConfig.embedding, dimension: dim === nativeDim ? null : dim },
+                          },
+                        },
+                      });
+                      toast.success(`Dimension set to ${dim}. Clear and regenerate to apply.`);
+                      if (onInfospaceUpdate) {
+                        const updated = await InfospacesService.getInfospace({ infospaceId: infospace.id });
+                        onInfospaceUpdate(updated);
+                      }
+                    } catch {
+                      toast.error('Failed to update dimension');
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-[90px] h-7 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {eligibleDims.map(d => (
+                      <SelectItem key={d} value={String(d)}>
+                        {d}d{d === nativeDim ? ' (native)' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              );
+            })()}
           </div>
 
           {/* Statistics */}
@@ -724,28 +785,35 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Embedding Coverage</span>
                 <span className="text-sm text-muted-foreground">
-                  {stats.embedded_chunks} / {stats.total_chunks} chunks
+                  {stats.embedded_chunks.toLocaleString()} / {stats.total_chunks.toLocaleString()} chunks
                 </span>
               </div>
               <Progress value={stats.coverage_percentage} className="h-2" />
               <div className="text-xs text-center text-muted-foreground">
-                {stats.coverage_percentage.toFixed(1)}% of assets embedded
+                {stats.coverage_percentage.toFixed(1)}% embedded
               </div>
 
-              <div className="grid grid-cols-3 gap-4 pt-2">
+              <div className="grid grid-cols-4 gap-3 pt-2">
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{stats.total_assets}</div>
-                  <div className="text-xs text-muted-foreground">Assets</div>
+                  <div className="text-2xl font-bold">{stats.documents.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">Documents</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{stats.total_chunks}</div>
+                  <div className="text-2xl font-bold">{stats.sub_assets.toLocaleString()}</div>
+                  <div className="text-xs text-muted-foreground">Parts</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold">{stats.total_chunks.toLocaleString()}</div>
                   <div className="text-xs text-muted-foreground">Chunks</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold">{stats.embedded_chunks}</div>
+                  <div className="text-2xl font-bold">{stats.embedded_chunks.toLocaleString()}</div>
                   <div className="text-xs text-muted-foreground">Embedded</div>
                 </div>
               </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Documents are embedded whole for similarity matching. Parts (pages, rows) are embedded separately for precise search retrieval.
+              </p>
             </div>
           )}
 
@@ -847,9 +915,9 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
             <div className="space-y-2">
               <Label>Current Model</Label>
               <div className="flex items-center gap-2 p-3 bg-muted rounded-md">
-                <span className="font-medium">{infospace.embedding_selection?.model_name}</span>
-                {infospace.embedding_selection?.type_key && (
-                  <Badge variant="secondary">{infospace.embedding_selection.type_key}</Badge>
+                <span className="font-medium">{embeddingSel?.model_name}</span>
+                {embeddingSel?.provider_key && (
+                  <Badge variant="secondary">{embeddingSel.provider_key}</Badge>
                 )}
               </div>
             </div>

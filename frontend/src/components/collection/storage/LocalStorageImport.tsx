@@ -6,17 +6,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { StorageService, IngestionJobsService, SourcesService } from '@/client';
 import { useIngestionJobs } from '@/hooks/useIngestionJobs';
 import { useWatchStatus } from '@/hooks/useWatchStatus';
 import {
   HardDrive, FolderOpen, File, Loader2, ChevronRight, Download,
-  Eye, Inbox, CheckCircle2,
+  Eye, Inbox, CheckCircle2, Clock, Timer,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
-import type { StorageBrowseEntry } from '@/client';
+import type { StorageBrowseEntry, IngestionJobRead } from '@/client';
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -35,6 +36,144 @@ const statusColors: Record<string, string> = {
   failed: 'bg-red-100 text-red-800',
   cancelled: 'bg-gray-100 text-gray-800',
 };
+
+const ACTIVE_STATUSES = ['pending', 'downloading', 'extracting', 'processing'];
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return '<1s';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  if (m < 60) return rs > 0 ? `${m}m ${rs}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
+}
+
+function ElapsedTimer({ since }: { since: string }) {
+  const [elapsed, setElapsed] = useState(() => Date.now() - new Date(since).getTime());
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(Date.now() - new Date(since).getTime()), 1000);
+    return () => clearInterval(id);
+  }, [since]);
+  return <span>{formatDuration(elapsed)}</span>;
+}
+
+interface PipelineStats {
+  import_started: string | null;
+  import_finished: string | null;
+  total_assets: number;
+  ready: number;
+  processing: number;
+  pending: number;
+  failed: number;
+  last_asset_ready: string | null;
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function usePipelineStats(jobId: number | null, poll: boolean = false) {
+  const [stats, setStats] = useState<PipelineStats | null>(null);
+  // Keep polling completed jobs until all assets are READY (processing finished)
+  const stillProcessing = stats ? (stats.processing > 0 || stats.pending > 0) : false;
+  const shouldPoll = poll || stillProcessing;
+  useEffect(() => {
+    if (!jobId) return;
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || '';
+    const doFetch = () =>
+      fetch(`${baseUrl}/api/v1/ingestion-jobs/${jobId}/pipeline-stats`, {
+        credentials: 'include',
+        headers: getAuthHeaders(),
+      })
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => data && setStats(data))
+        .catch(() => {});
+    doFetch();
+    if (!shouldPoll) return;
+    const id = setInterval(doFetch, shouldPoll && !poll ? 5000 : 3000);
+    return () => clearInterval(id);
+  }, [jobId, shouldPoll, poll]);
+  return stats;
+}
+
+function JobTimingRow({ job }: { job: IngestionJobRead }) {
+  const isActive = ACTIVE_STATUSES.includes(job.status);
+  const isCompleted = job.status === 'completed';
+  const isFailed = job.status === 'failed';
+  const showStats = (isActive || isCompleted) && job.root_bundle_id;
+  const stats = usePipelineStats(showStats ? job.id : null, isActive);
+
+  const duration = (job.started_at && job.completed_at)
+    ? new Date(job.completed_at).getTime() - new Date(job.started_at).getTime()
+    : null;
+
+  // For completed jobs: time from import start to last asset fully processed
+  const totalPipelineDuration = (stats?.import_started && stats?.last_asset_ready)
+    ? new Date(stats.last_asset_ready).getTime() - new Date(stats.import_started).getTime()
+    : null;
+
+  return (
+    <div className="space-y-1.5">
+      {/* Progress bar for active jobs */}
+      {isActive && job.progress_pct !== undefined && job.progress_pct > 0 && (
+        <Progress value={job.progress_pct} className="h-1.5" />
+      )}
+
+      {/* Timing + stage info */}
+      <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
+        {/* Live elapsed for active jobs */}
+        {isActive && job.started_at && (
+          <span className="flex items-center gap-1">
+            <Timer className="h-3 w-3" />
+            <ElapsedTimer since={job.started_at} />
+          </span>
+        )}
+
+        {/* Stage message for active jobs */}
+        {isActive && job.stage_message && (
+          <span>{job.stage_message}</span>
+        )}
+
+        {/* Import duration for completed/failed */}
+        {(isCompleted || isFailed) && duration !== null && (
+          <span className="flex items-center gap-1">
+            <Clock className="h-3 w-3" />
+            Import: {formatDuration(duration)}
+          </span>
+        )}
+
+        {/* Total pipeline time (import + processing) for completed jobs */}
+        {isCompleted && totalPipelineDuration !== null && totalPipelineDuration !== duration && (
+          <span className="flex items-center gap-1">
+            <Timer className="h-3 w-3" />
+            Total pipeline: {formatDuration(totalPipelineDuration)}
+          </span>
+        )}
+      </div>
+
+      {/* Asset processing breakdown for completed jobs */}
+      {isCompleted && stats && stats.total_assets > 0 && (
+        <div className="space-y-1">
+          <Progress
+            value={(stats.ready / stats.total_assets) * 100}
+            className="h-1.5"
+          />
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <span>{stats.total_assets} assets</span>
+            {stats.ready > 0 && <span className="text-green-600">{stats.ready} ready</span>}
+            {stats.processing > 0 && <span className="text-blue-600">{stats.processing} processing</span>}
+            {stats.pending > 0 && <span className="text-yellow-600">{stats.pending} pending</span>}
+            {stats.failed > 0 && <span className="text-red-600">{stats.failed} failed</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function LocalStorageImport() {
   const { activeInfospace } = useInfospaceStore();
@@ -66,7 +205,7 @@ export default function LocalStorageImport() {
         const baseUrl = process.env.NEXT_PUBLIC_API_URL || '';
         const res = await fetch(`${baseUrl}/api/v1/infospaces/${activeInfospace.id}/reconcile-directory`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ source_path: sourcePath, bundle_id: bundleId }),
           credentials: 'include',
         });
@@ -359,23 +498,27 @@ export default function LocalStorageImport() {
 
                 return (
                   <div key={job.id} className="rounded border overflow-hidden">
-                    <div className="flex items-center justify-between gap-2 p-2 text-sm">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{job.source_locator}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {job.processed_files}/{job.total_files} • {job.status}
-                        </p>
+                    <div className="p-2 text-sm space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium">{job.source_locator}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {job.processed_files}/{job.total_files} files
+                            {job.failed_files > 0 && <span className="text-red-600"> ({job.failed_files} failed)</span>}
+                          </p>
+                        </div>
+                        <Badge className={statusColors[job.status] ?? 'bg-gray-100'}>
+                          {job.status}
+                        </Badge>
+                        {job.status === 'completed' && job.root_bundle_id && (
+                          <Link href="/hq/infospaces/asset-manager">
+                            <Button variant="link" size="sm" className="p-0 h-auto">
+                              View bundle
+                            </Button>
+                          </Link>
+                        )}
                       </div>
-                      <Badge className={statusColors[job.status] ?? 'bg-gray-100'}>
-                        {job.status}
-                      </Badge>
-                      {job.status === 'completed' && job.root_bundle_id && (
-                        <Link href="/hq/infospaces/asset-manager">
-                          <Button variant="link" size="sm" className="p-0 h-auto">
-                            View bundle
-                          </Button>
-                        </Link>
-                      )}
+                      <JobTimingRow job={job} />
                     </div>
                     {job.status === 'completed' && job.root_bundle_id && (
                       <div className="border-t bg-muted/30 px-3 py-2 text-sm space-y-3">

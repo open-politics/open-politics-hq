@@ -23,6 +23,21 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import AnnotationSchemaCard from './AnnotationSchemaCard';
 import { SchemePreview } from './schemaCreation/SchemePreview';
 
+/** Count actual fields inside all sections of an output_contract */
+function countSchemaFields(outputContract: any): number {
+  const props = outputContract?.properties;
+  if (!props || typeof props !== 'object') return 0;
+  let count = 0;
+  for (const section of Object.values(props) as any[]) {
+    if (section?.type === 'object' && section.properties) {
+      count += Object.keys(section.properties).length;
+    } else if (section?.type === 'array' && section.items?.properties) {
+      count += Object.keys(section.items.properties).length;
+    }
+  }
+  return count;
+}
+
 // Interface for export dialog state
 interface ExportDialogState {
   open: boolean;
@@ -482,7 +497,7 @@ const AnnotationSchemaManager: React.FC = () => {
                                             {!schema.is_active && <Badge variant="outline" className="ml-2">Archived</Badge>}
                                           </TableCell>
                                           <TableCell className="text-muted-foreground text-sm max-w-sm truncate" title={schema.description || undefined}>{schema.description || '-'}</TableCell>
-                                          <TableCell className="text-center text-sm">{Object.keys((schema.output_contract as any)?.properties || {}).length}</TableCell>
+                                          <TableCell className="text-center text-sm">{countSchemaFields(schema.output_contract)}</TableCell>
                                           <TableCell className="text-center text-sm">{(schema as any).annotation_count ?? '-'}</TableCell>
                                           <TableCell className="text-muted-foreground text-xs">
                                               {schema.updated_at ? formatDistanceToNowStrict(new Date(schema.updated_at), { addSuffix: true }) : '-'}
@@ -768,7 +783,7 @@ const SchemaCard: React.FC<SchemaCardProps> = ({
                  {!schema.is_active && <Badge variant="outline">Archived</Badge>}
                 <div className="flex justify-between">
                     <span className="text-muted-foreground">Fields:</span>
-                    <span>{Object.keys((schema.output_contract as any)?.properties || {}).length}</span>
+                    <span>{countSchemaFields(schema.output_contract)}</span>
                 </div>
                 <div className="flex justify-between">
                     <span className="text-muted-foreground">Annotations:</span>

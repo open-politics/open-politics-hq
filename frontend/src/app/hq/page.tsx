@@ -37,7 +37,7 @@ function DesksPage() {
                   <div className="text-xs font-medium text-gray-900 dark:text-gray-100 truncate">
                     {activeInfospace?.name || 'No active infospace'}
                   </div>
-                  {activeInfospace?.embedding_selection?.model_name && (
+                  {(activeInfospace?.enrichment_config as any)?.embedding?.model_name && (
                     <div className="flex items-center gap-1 text-xs text-muted-foreground">
                       <Sparkles className="w-3 h-3" />
                       <span>Embeddings active</span>

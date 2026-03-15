@@ -206,15 +206,7 @@ export default function AnnotationRunnerDock({
     }
     
     // Other providers require API keys
-    const configured = !!(apiKeys[selectedProvider]);
-    console.log('DOCK AI Config Check:', {
-      selectedProvider,
-      apiKeys,
-      hasKey: selectedProvider ? !!apiKeys[selectedProvider] : false,
-      isConfigured: configured,
-      isOllama: selectedProvider === 'ollama'
-    });
-    return configured;
+    return !!(apiKeys[selectedProvider]);
   }, [selectedProvider, apiKeys]);
 
   // New state for collapsible sections
@@ -938,7 +930,7 @@ export default function AnnotationRunnerDock({
                           <div className="space-y-2">
                             <Label className="text-xs font-medium">AI Model Configuration</Label>
                             <div className="space-y-2">
-                              <ProviderSelector />
+                              <ProviderSelector capability="annotation" />
                               
                               {/* API Key Management */}
                               {selectedProvider && selectedProvider !== 'ollama' && (

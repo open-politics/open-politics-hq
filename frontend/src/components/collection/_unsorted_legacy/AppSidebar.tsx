@@ -131,6 +131,13 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
 
   const storesNav = React.useMemo(() => [
     {
+      title: "Explore",
+      url: "/hq/infospaces/explore",
+      icon: Search,
+      isActive: true,
+      colorClass: "sidebar-sky",
+    },
+    {
       title: "Assets",
       url: "/hq/infospaces/asset-manager",
       icon: FileText,

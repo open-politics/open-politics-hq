@@ -227,7 +227,7 @@ export default function AssetSelector({
   });
   
   // Semantic search hook
-  const semanticSearchEnabled = useSemanticMode && !!activeInfospace?.embedding_selection?.model_name && debouncedSearchTerm.trim().length > 0;
+  const semanticSearchEnabled = useSemanticMode && !!(activeInfospace?.enrichment_config as any)?.embedding?.model_name && debouncedSearchTerm.trim().length > 0;
   const { 
     results: semanticResults, 
     isLoading: isSemanticSearching,
