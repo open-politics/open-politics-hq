@@ -1,19 +1,19 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
-import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useUserPreferencesStore } from '@/zustand_stores/storeUserPreferences';
 import EditInfospaceOverlay from '@/components/collection/management/EditInfospaceOverlay';
 import EmbeddingManager from '@/components/collection/management/EmbeddingManager';
 import EnrichmentConfig from '@/components/collection/enrichment/EnrichmentConfig';
 import LocalStorageImport from '@/components/collection/storage/LocalStorageImport';
-import EntityManager from '@/components/collection/graph/EntityManager';
+import ProviderHub from '@/components/collection/management/ProviderHub';
 import { InfospaceRowData } from '@/components/collection/tables/columns';
 import InfospacesPage from '@/components/collection/tables/page';
-import { PlusCircle, Upload, Trash2, Loader2, Archive, History, Download, Database } from 'lucide-react';
+import { PlusCircle, Upload, Trash2, Loader2, Archive, Download, Database } from 'lucide-react';
 import { InfospaceRead, InfospaceBackupRead, InfospaceBackupCreate } from '@/client';
 import { BackupsService } from '@/client';
 import { toast } from 'sonner';
@@ -26,48 +26,27 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { ButtonGroup, ButtonGroupSeparator } from '@/components/ui/button-group';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import { Separator } from '@/components/ui/separator';
+import { IconRenderer } from '@/components/collection/utilities/icons/icon-picker';
 import { formatDistanceToNowStrict, format } from 'date-fns';
 
 interface InfospaceManagerProps {
   activeInfospace: InfospaceRead | null;
-}
-
-interface BackupData {
-  id: number;
-  name: string;
-  description?: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'expired';
-  backup_type: string;
-  file_size_bytes?: number;
-  included_sources: number;
-  included_assets: number;
-  included_schemas: number;
-  included_runs: number;
-  included_datasets: number;
-  created_at: string;
-  completed_at?: string;
-  is_ready: boolean;
-  is_expired: boolean;
 }
 
 export default function InfospaceManager({ activeInfospace }: InfospaceManagerProps) {
@@ -80,321 +59,181 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
     infospaces,
     setActiveInfospace,
   } = useInfospaceStore();
-  
-  // Auto-select first infospace if none is active
+
   if (!activeInfospace && infospaces.length > 0) {
     setActiveInfospace(infospaces[0].id);
   }
-  
-  // Easter egg: Globe toggle
+
   const { preferences, togglePreference } = useUserPreferencesStore();
 
   const [isCreateOverlayOpen, setIsCreateOverlayOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [selectedInfospaceId, setSelectedInfospaceId] = useState<number | null>(null);
   const [InfospaceToEdit, setInfospaceToEdit] = useState<InfospaceRead | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  // Multi-selection state
+
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
-  // Backup-related state
+  // Backup state
   const [isBackupDialogOpen, setIsBackupDialogOpen] = useState(false);
-  const [isBackupsViewOpen, setIsBackupsViewOpen] = useState(false);
   const [isCreatingBackup, setIsCreatingBackup] = useState(false);
   const [isLoadingBackups, setIsLoadingBackups] = useState(false);
-  const [backups, setBackups] = useState<BackupData[]>([]);
+  const [backups, setBackups] = useState<InfospaceBackupRead[]>([]);
+  const [backupTarget, setBackupTarget] = useState<InfospaceRead | null>(null);
   const [newBackupName, setNewBackupName] = useState('');
   const [newBackupDescription, setNewBackupDescription] = useState('');
-  const [selectedInfospaceForBackup, setSelectedInfospaceForBackup] = useState<InfospaceRead | null>(null);
 
-  const handleEdit = (Infospace: InfospaceRowData) => {
-    const fullInfospaceData = useInfospaceStore.getState().infospaces.find(ws => ws.id === Infospace.id);
-    setSelectedInfospaceId(Infospace.id);
-    setInfospaceToEdit(fullInfospaceData || null);
+  // --- Handlers ---
+
+  const handleEdit = (infospace: InfospaceRowData) => {
+    const full = useInfospaceStore.getState().infospaces.find(ws => ws.id === infospace.id);
+    setInfospaceToEdit(full || null);
     setIsEditDialogOpen(true);
   };
 
-  const handleOpenCreateOverlay = () => {
-    setIsCreateOverlayOpen(true);
+  const handleBackupFromRow = (infospace: InfospaceRowData) => {
+    const full = useInfospaceStore.getState().infospaces.find(ws => ws.id === infospace.id);
+    if (!full) return;
+    setBackupTarget(full);
+    setNewBackupName(`Backup of ${full.name} - ${format(new Date(), 'yyyy-MM-dd HH:mm')}`);
+    setNewBackupDescription('');
+    setIsBackupDialogOpen(true);
   };
 
-  const handleCreateInfospace = async (name: string, description: string, icon: string, systemPrompt: string) => {
-    if (!user) {
-      toast.error("User not authenticated.");
-      return;
-    }
+  const handleCreateBackupClick = () => {
+    if (!activeInfospace) return;
+    setBackupTarget(activeInfospace);
+    setNewBackupName(`Backup of ${activeInfospace.name} - ${format(new Date(), 'yyyy-MM-dd HH:mm')}`);
+    setNewBackupDescription('');
+    setIsBackupDialogOpen(true);
+  };
+
+  const handleCreateInfospace = async (name: string, description: string, icon: string) => {
+    if (!user) { toast.error("Not authenticated."); return; }
     try {
-      const newWs = await createInfospace({
-        name,
-        description,
-        icon,
-        owner_id: user.id,
-      });
+      const ws = await createInfospace({ name, description, icon, owner_id: user.id });
       setIsCreateOverlayOpen(false);
-      if (newWs) {
-        toast.success(`Infospace "${newWs.name}" created successfully.`);
-      } else {
-        // Error toast handled by store
-      }
+      if (ws) toast.success(`Infospace "${ws.name}" created.`);
     } catch (error) {
-      // Error toast handled by store
-      console.error('Error creating Infospace via overlay:', error);
+      console.error('Error creating infospace:', error);
     }
-  };
-
-  const handleImportButtonClick = () => {
-    fileInputRef.current?.click();
   };
 
   const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file) {
-      toast.error("No file selected for import.");
-      return;
-    }
-
-    const placeholderInfospaceIdForApi = 0;
-
+    if (!file) { toast.error("No file selected."); return; }
     try {
-      const imported = await importInfospace(file, placeholderInfospaceIdForApi);
-      if (imported) {
-        toast.success(`Infospace "${imported.name}" imported successfully and set as active.`);
-      } else {
-        // Error handled by store, but can add a generic one if needed
-        // toast.error("Failed to import Infospace. Check console for details.");
-      }
+      const imported = await importInfospace(file, 0);
+      if (imported) toast.success(`Infospace "${imported.name}" imported.`);
     } catch (error) {
-      // Error handled by store
-      console.error('Error importing Infospace:', error);
+      console.error('Error importing infospace:', error);
     }
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleBulkDelete = async () => {
     const selectedIds = Object.keys(rowSelection).filter(id => rowSelection[id]);
-    const selectedInfospaces = infospaces.filter(info => selectedIds.includes(info.id.toString()));
-    
-    if (selectedInfospaces.length === 0) {
-      toast.error("No infospaces selected for deletion.");
-      return;
-    }
-
-    // Check if any selected infospace is the active one
-    const isActiveInfospaceSelected = selectedInfospaces.some(info => info.id === activeInfospace?.id);
-    
-    if (isActiveInfospaceSelected) {
-      toast.error("Cannot delete the currently active infospace. Please switch to a different infospace first.", {
-        duration: 5000,
-      });
+    const selected = infospaces.filter(i => selectedIds.includes(i.id.toString()));
+    if (selected.length === 0) { toast.error("No infospaces selected."); return; }
+    if (selected.some(i => i.id === activeInfospace?.id)) {
+      toast.error("Cannot delete the active infospace. Switch first.", { duration: 5000 });
       return;
     }
 
     setIsBulkDeleting(true);
-    
-    let successCount = 0;
-    let errorCount = 0;
-    
-    for (const infospace of selectedInfospaces) {
-      try {
-        await deleteInfospace(infospace.id);
-        successCount++;
-      } catch (error) {
-        errorCount++;
-        console.error(`Error deleting infospace ${infospace.id}:`, error);
-      }
+    let ok = 0, fail = 0;
+    for (const i of selected) {
+      try { await deleteInfospace(i.id); ok++; }
+      catch { fail++; }
     }
-    
-    // Clear selection after deletion attempt
     setRowSelection({});
     setIsBulkDeleting(false);
-    
-    // Show summary toast
-    if (successCount > 0 && errorCount === 0) {
-      toast.success(`Successfully deleted ${successCount} infospace${successCount > 1 ? 's' : ''}.`);
-    } else if (successCount > 0 && errorCount > 0) {
-      toast.warning(`Deleted ${successCount} infospace${successCount > 1 ? 's' : ''}, but ${errorCount} failed.`);
-    } else if (errorCount > 0) {
-      toast.error(`Failed to delete ${errorCount} infospace${errorCount > 1 ? 's' : ''}.`);
-    }
+
+    if (ok > 0 && fail === 0) toast.success(`Deleted ${ok} infospace${ok > 1 ? 's' : ''}.`);
+    else if (ok > 0) toast.warning(`Deleted ${ok}, ${fail} failed.`);
+    else toast.error(`Failed to delete ${fail} infospace${fail > 1 ? 's' : ''}.`);
   };
 
-  // Backup Functions
-  const handleBackupInfospace = (infospace: InfospaceRead) => {
-    setSelectedInfospaceForBackup(infospace);
-    setNewBackupName(`Backup of ${infospace.name} - ${format(new Date(), 'yyyy-MM-dd HH:mm')}`);
-    setNewBackupDescription(`Manual backup created on ${format(new Date(), 'PPP')}`);
-    setIsBackupDialogOpen(true);
-  };
+  // --- Backup handlers ---
+
+  const loadBackups = useCallback(async (infospaceId: number) => {
+    setIsLoadingBackups(true);
+    try {
+      const res = await BackupsService.listBackups({ infospaceId, limit: 10, skip: 0 });
+      setBackups(res.data);
+    } catch {
+      setBackups([]);
+    }
+    setIsLoadingBackups(false);
+  }, []);
 
   const createBackup = async () => {
-    if (!selectedInfospaceForBackup || !newBackupName.trim()) {
+    if (!backupTarget || !newBackupName.trim()) {
       toast.error("Please provide a backup name.");
       return;
     }
-
     setIsCreatingBackup(true);
-    
     try {
-      const backupData: InfospaceBackupCreate = {
+      const data: InfospaceBackupCreate = {
         name: newBackupName,
         description: newBackupDescription || undefined,
         backup_type: 'manual',
-        include_sources: true,
-        include_schemas: true,
-        include_runs: true,
-        include_datasets: true,
-        include_annotations: true,
+        include_sources: true, include_schemas: true, include_runs: true,
+        include_datasets: true, include_annotations: true,
       };
-
-      const backup = await BackupsService.createBackup({
-        infospaceId: selectedInfospaceForBackup.id,
-        requestBody: backupData,
-      });
-
-      toast.success(`Backup "${backup.name}" created successfully. It will be processed in the background.`);
+      const backup = await BackupsService.createBackup({ infospaceId: backupTarget.id, requestBody: data });
+      toast.success(`Backup "${backup.name}" created. Processing in background.`);
       setIsBackupDialogOpen(false);
       setNewBackupName('');
       setNewBackupDescription('');
-      setSelectedInfospaceForBackup(null);
+      setBackupTarget(null);
+      if (activeInfospace) loadBackups(activeInfospace.id);
     } catch (error: any) {
-      console.error('Error creating backup:', error);
-      toast.error(`Failed to create backup: ${error?.body?.detail || error?.message || 'Unknown error'}`);
+      toast.error(`Failed: ${error?.body?.detail || error?.message || 'Unknown error'}`);
     }
-    
     setIsCreatingBackup(false);
   };
 
-  const loadBackups = async (infospaceId: number) => {
-    setIsLoadingBackups(true);
-    
+  const restoreBackup = async (backup: InfospaceBackupRead) => {
+    if (!backup.is_ready) { toast.error('Backup not ready.'); return; }
+    if (!window.confirm(`Restore from "${backup.name}"? This creates a new infospace.`)) return;
     try {
-      const response = await BackupsService.listBackups({
-        infospaceId: infospaceId,
-        limit: 50,
-        skip: 0,
-      });
-
-      // Convert InfospaceBackupRead[] to BackupData[] for compatibility
-      const backupData: BackupData[] = response.data.map((backup: InfospaceBackupRead) => ({
-        id: backup.id,
-        name: backup.name,
-        description: backup.description ? backup.description : undefined,
-        status: backup.status as 'pending' | 'running' | 'completed' | 'failed' | 'expired',
-        backup_type: backup.backup_type || 'manual',
-        file_size_bytes: backup.file_size_bytes ? backup.file_size_bytes : undefined,
-        included_sources: backup.included_sources || 0,
-        included_assets: backup.included_assets || 0,
-        included_schemas: backup.included_schemas || 0,
-        included_runs: backup.included_runs || 0,
-        included_datasets: backup.included_datasets || 0,
-        created_at: backup.created_at,
-        completed_at: backup.completed_at ? backup.completed_at : undefined,
-        is_ready: backup.is_ready,
-        is_expired: backup.is_expired,
-      }));
-
-      setBackups(backupData);
-    } catch (error: any) {
-      console.error('Error loading backups:', error);
-      toast.error(`Failed to load backups: ${error?.body?.detail || error?.message || 'Unknown error'}`);
-      setBackups([]);
-    }
-    
-    setIsLoadingBackups(false);
-  };
-
-  const handleViewBackups = (infospace: InfospaceRead) => {
-    setSelectedInfospaceForBackup(infospace);
-    setIsBackupsViewOpen(true);
-    loadBackups(infospace.id);
-  };
-
-  const restoreBackup = async (backup: BackupData) => {
-    if (!backup.is_ready) {
-      toast.error('This backup is not ready for restoration.');
-      return;
-    }
-
-    const confirmRestore = window.confirm(
-      `Are you sure you want to restore from "${backup.name}"? This will create a new infospace with the backup data.`
-    );
-    
-    if (!confirmRestore) return;
-
-    try {
-      const restoredInfospace = await BackupsService.restoreBackup({
+      const restored = await BackupsService.restoreBackup({
         backupId: backup.id,
-        requestBody: {
-          backup_id: backup.id,
-          target_infospace_name: `${backup.name} (Restored)`,
-          conflict_strategy: 'skip',
-        },
+        requestBody: { backup_id: backup.id, target_infospace_name: `${backup.name} (Restored)`, conflict_strategy: 'skip' },
       });
-
-      toast.success(`Infospace restored successfully as "${restoredInfospace.name}"`);
-      // Refresh infospaces list
+      toast.success(`Restored as "${restored.name}"`);
       useInfospaceStore.getState().fetchInfospaces();
-      setIsBackupsViewOpen(false);
     } catch (error: any) {
-      console.error('Error restoring backup:', error);
-      toast.error(`Failed to restore backup: ${error?.body?.detail || error?.message || 'Unknown error'}`);
+      toast.error(`Failed: ${error?.body?.detail || error?.message || 'Unknown error'}`);
     }
   };
 
-  const downloadBackup = async (backup: BackupData) => {
-    if (!backup.is_ready) {
-      toast.error('This backup is not ready for download.');
-      return;
-    }
-
+  const downloadBackup = async (backup: InfospaceBackupRead) => {
+    if (!backup.is_ready) { toast.error('Backup not ready.'); return; }
     try {
-      // First create a share link
       const shareData = await BackupsService.createBackupShareLink({
         backupId: backup.id,
-        requestBody: {
-          backup_id: backup.id,
-          is_shareable: true,
-          expiration_hours: 1, // 1 hour expiration for download
-        },
+        requestBody: { backup_id: backup.id, is_shareable: true, expiration_hours: 1 },
       });
-
-      // Download the file  
-      const downloadUrl = (shareData as any).download_url as string;
-      if (downloadUrl) {
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = `${backup.name}.zip`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
-        toast.success('Backup download started.');
-      } else {
-        toast.error('Download URL not available.');
-      }
+      const url = (shareData as any).download_url as string;
+      if (url) {
+        const a = document.createElement('a');
+        a.href = url; a.download = `${backup.name}.zip`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        toast.success('Download started.');
+      } else { toast.error('Download URL not available.'); }
     } catch (error: any) {
-      console.error('Error downloading backup:', error);
-      toast.error(`Failed to download backup: ${error?.body?.detail || error?.message || 'Unknown error'}`);
+      toast.error(`Failed: ${error?.body?.detail || error?.message || 'Unknown error'}`);
     }
   };
 
-  const formatFileSize = (bytes?: number) => {
-    if (!bytes) return 'Unknown size';
+  const formatFileSize = (bytes?: number | null) => {
+    if (!bytes) return '—';
     const units = ['B', 'KB', 'MB', 'GB'];
-    let size = bytes;
-    let unitIndex = 0;
-    
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex++;
-    }
-    
-    return `${size.toFixed(1)} ${units[unitIndex]}`;
+    let size = bytes, i = 0;
+    while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+    return `${size.toFixed(1)} ${units[i]}`;
   };
 
   const getStatusColor = (status: string) => {
@@ -403,377 +242,223 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
       case 'pending': return 'bg-yellow-100 text-yellow-800';
       case 'running': return 'bg-blue-100 text-blue-800';
       case 'failed': return 'bg-red-100 text-red-800';
-      case 'expired': return 'bg-gray-100 text-gray-800';
       default: return 'bg-gray-100 text-gray-800';
     }
   };
 
   const selectedCount = Object.values(rowSelection).filter(Boolean).length;
 
+  // --- Effects ---
+
   const pathname = usePathname();
   useEffect(() => {
     const hash = typeof window !== 'undefined' ? window.location.hash?.replace('#', '') : '';
     if (!hash) return;
-    const scroll = () => {
-      const el = document.getElementById(hash);
-      el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    };
+    const scroll = () => document.getElementById(hash)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     scroll();
     const t = setTimeout(scroll, 300);
     return () => clearTimeout(t);
   }, [pathname, activeInfospace?.id]);
 
-  return (
-    <div className="space-y-4 w-full">
+  useEffect(() => {
+    if (activeInfospace) loadBackups(activeInfospace.id);
+  }, [activeInfospace?.id, loadBackups]);
 
-      {/* Show content if we have infospaces, or empty state if not */}
+  return (
+    <div className="space-y-3 w-full md:px-8 md:pr-10">
+
       {infospaces.length > 0 ? (
         activeInfospace && (
           <>
-            {/* Infospaces Table - No Card wrapper */}
-            <div className="p-4 ">
-              <InfospacesPage 
+            {/* Current Infospace */}
+            <section className="px-3 mt-4">
+              <h3 className="text-sm font-medium mb-4.5">Current Infospace</h3>
+              <div className="rounded-md border px-3 py-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-0.5">
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    {activeInfospace.icon && (
+                      <IconRenderer icon={activeInfospace.icon} className="h-4 w-4 text-muted-foreground shrink-0" />
+                    )}
+                    <div className="min-w-0">
+                      <span className="inline-block h-2.5 w-2.5 rounded-full bg-green-500 mr-1" title="Active infospace"></span>
+                      <span className="text-sm font-medium truncate">{activeInfospace.name}</span>
+                      {activeInfospace.description && (
+                        <span className="ml-2 text-[11px] text-muted-foreground truncate">"{activeInfospace.description}"</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Backups popover */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button size="sm" variant="ghost" className="h-6 text-xs px-1.5">
+                          <Archive className="h-3 w-3 mr-1" />
+                          {isLoadingBackups ? '...' : `${backups.length} backup${backups.length !== 1 ? 's' : ''}`}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-80 p-0">
+                        <div className="flex items-center justify-between px-3 py-2 border-b">
+                          <span className="text-xs font-medium">Backups</span>
+                          <Button size="sm" variant="ghost" className="h-6 text-xs px-1.5" onClick={handleCreateBackupClick}>
+                            <Archive className="h-3 w-3 mr-1" /> New
+                          </Button>
+                        </div>
+                        <div className="max-h-60 overflow-y-auto">
+                          {backups.length === 0 ? (
+                            <div className="text-xs text-muted-foreground text-center py-4">No backups yet</div>
+                          ) : (
+                            <div className="divide-y">
+                              {backups.map((b) => (
+                                <div key={b.id} className="flex items-center gap-2 px-3 py-1.5 text-[11px]">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1">
+                                      <span className="truncate">{b.name}</span>
+                                      <Badge className={`${getStatusColor(b.status)} text-[9px] px-1 py-0`}>{b.status}</Badge>
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground">
+                                      {formatFileSize(b.file_size_bytes)} · {formatDistanceToNowStrict(new Date(b.created_at))} ago
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-0.5 shrink-0">
+                                    <Button size="icon" variant="ghost" className="h-5 w-5" onClick={() => downloadBackup(b)} disabled={!b.is_ready} title="Download">
+                                      <Download className="h-3 w-3" />
+                                    </Button>
+                                    <Button size="sm" variant="ghost" className="h-5 text-[10px] px-1" onClick={() => restoreBackup(b)} disabled={!b.is_ready}>
+                                      Restore
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                </div>
+
+                <Separator className="my-2" />
+
+                <EmbeddingManager
+                  infospace={activeInfospace}
+                  onInfospaceUpdate={(updated) => {
+                    useInfospaceStore.getState().fetchInfospaceById(updated.id);
+                  }}
+                />
+              </div>
+            </section>
+
+            {/* All Infospaces */}
+            <section className="px-3 mt-4 md:mt-6">
+              <div className="flex items-center justify-between mb-1.5">
+                <h3 className="text-sm font-medium">All Infospaces</h3>
+              </div>
+              <div className="flex items-center gap-1.5 mb-2.5">
+                  <Button onClick={() => setIsCreateOverlayOpen(true)} size="sm" className="h-7 text-xs">
+                    <PlusCircle className="mr-1.5 h-3 w-3" /> New
+                  </Button>
+                  <Button onClick={() => fileInputRef.current?.click()} size="sm" variant="outline" className="h-7 text-xs" disabled={isLoading}>
+                    <Download className="mr-1.5 h-3 w-3" /> Import
+                  </Button>
+                  <input type="file" ref={fileInputRef} onChange={handleFileImport} className="hidden" accept=".zip,.json" />
+              </div>
+              <InfospacesPage
                 onEdit={handleEdit}
+                onBackup={handleBackupFromRow}
                 enableRowSelection={true}
                 rowSelection={rowSelection}
                 onRowSelectionChange={setRowSelection}
               />
-            </div>
-            {/* Embedding Manager */}
+              <div
+                className="flex items-center gap-2 mt-1"
+                style={{
+                  minHeight: "32px",
+                  visibility: selectedCount > 0 ? "visible" : "hidden",
+                }}
+              >
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={handleBulkDelete}
+                  disabled={isBulkDeleting || isLoading || !selectedCount}
+                  style={{ opacity: selectedCount > 0 ? 1 : 0, pointerEvents: selectedCount > 0 ? "auto" : "none" }}
+                >
+                  {isBulkDeleting ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <Trash2 className="mr-1.5 h-3 w-3" />}
+                  Delete
+                </Button>
+              </div>
+            </section>
 
+            {/* Providers */}
+            <section className="px-3" id="provider-section">
+              <ProviderHub />
+            </section>
 
-            {/* Unified Toolbar */}
-      <div className="flex flex-col sm:flex-row flex-wrap items-start px-4 md:px-3 sm:items-center justify-between gap-3 px-2 mt-2 md:mt-2 w-full">
-        {/* Bulk Actions - shown when items are selected */}
-        {selectedCount > 0 ? (
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-muted-foreground">
-              {selectedCount} infospace{selectedCount > 1 ? 's' : ''} selected
-            </span>
-            <Button 
-              variant="destructive" 
-              size="sm"
-              onClick={handleBulkDelete}
-              disabled={isBulkDeleting || isLoading}
-            >
-              {isBulkDeleting ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="mr-2 h-4 w-4" />
-              )}
-              Delete Selected
-            </Button>
-          </div>
-        ) : (
-          <>
-            {/* Primary Actions */}
-            <div className="w-full sm:w-auto">
-              <Button onClick={handleOpenCreateOverlay} size="sm" disabled={isBulkDeleting} className="w-full sm:w-auto">
-                <PlusCircle className="mr-2 h-4 w-4" /> New Infospace
-              </Button>
-            </div>
-
-            {/* Backup Actions - only shown when active infospace exists and no selection */}
-            {activeInfospace && (
-              <div className="flex flex-col sm:flex-row gap-2 sm:gap-0 w-full sm:w-auto">
-                {/* Desktop: ButtonGroup, Mobile: Individual buttons with spacing */}
-                <div className="hidden sm:block">
-                  <ButtonGroup className="">
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleBackupInfospace(activeInfospace)}
-                            disabled={isBulkDeleting}
-                          >
-                            <Archive className="h-4 w-4 mr-2" />
-                            Create Backup
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Create a backup of the current infospace</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleViewBackups(activeInfospace)}
-                            disabled={isBulkDeleting}
-                          >
-                            <History className="h-4 w-4 mr-2" />
-                            View Backups
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>View and restore backups</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                    <Button onClick={handleImportButtonClick} size="sm" variant="outline" disabled={isLoading || isBulkDeleting}>
-                      <Download className="mr-2 h-4 w-4" /> Import Infospace
-                    </Button>
-                  </ButtonGroup>
+            {/* Processing + Storage */}
+            <section className="px-3 mt-6 md:mt-12">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div id="enrichment-section">
+                  <EnrichmentConfig />
                 </div>
-                
-                {/* Mobile: Individual buttons stacked */}
-                <div className="grid grid-cols-2 gap-2 w-full sm:hidden">
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleBackupInfospace(activeInfospace)}
-                          disabled={isBulkDeleting}
-                          className="w-full justify-start"
-                        >
-                          <Archive className="h-4 w-4 mr-2" />
-                          Create Backup
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Create a backup of the current infospace</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                          <Button 
-                          onClick={handleImportButtonClick} 
-                          size="sm" 
-                          variant="outline" 
-                          disabled={isLoading || isBulkDeleting}
-                          className="w-full justify-start"
-                        >
-                          <Download className="mr-2 h-4 w-4" /> Import Infospace
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>View and restore backups</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                  <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleViewBackups(activeInfospace)}
-                      disabled={isBulkDeleting}
-                      className="w-full justify-start"
-                    >
-                    <History className="h-4 w-4 mr-2" />
-                    View Backups
-                  </Button>
+                <div id="local-storage-section">
+                  <LocalStorageImport />
                 </div>
               </div>
-            )}
-          </>
-        )}
-        
-        <input 
-          type="file" 
-          ref={fileInputRef} 
-          onChange={handleFileImport} 
-          className="hidden" 
-          accept=".zip,.json"
-        />
-      </div>
-
-
-            <div className="p-4 space-y-6">
-              <EmbeddingManager 
-                infospace={activeInfospace}
-                onInfospaceUpdate={(updated) => {
-                  useInfospaceStore.getState().fetchInfospaceById(updated.id);
-                }}
-              />
-              <div id="enrichment-section"><EnrichmentConfig /></div>
-              <div id="local-storage-section"><LocalStorageImport /></div>
-              <div id="entities-section"><EntityManager /></div>
-            </div>
+            </section>
           </>
         )
       ) : (
         !isLoading && (
-          <div className="flex p-4 md:p-2 flex-col items-center justify-center py-12 text-center border rounded-lg bg-muted/30">
-            <Database className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No Infospaces Yet</h3>
-            <p className="text-sm text-muted-foreground mb-4 max-w-md">
-              Get started by creating your first infospace or importing an existing one.
+          <div className="flex flex-col items-center justify-center py-10 text-center border rounded-lg bg-muted/30 mx-3">
+            <Database className="h-10 w-10 text-muted-foreground mb-3" />
+            <h3 className="text-base font-semibold mb-1">No Infospaces Yet</h3>
+            <p className="text-sm text-muted-foreground mb-3 max-w-sm">
+              Create your first infospace or import an existing one.
             </p>
             <div className="flex gap-2">
-              <Button onClick={handleOpenCreateOverlay}>
-                <PlusCircle className="mr-2 h-4 w-4" /> Create Infospace
+              <Button onClick={() => setIsCreateOverlayOpen(true)} size="sm">
+                <PlusCircle className="mr-1.5 h-3.5 w-3.5" /> Create
               </Button>
-              <Button onClick={handleImportButtonClick} variant="outline">
-                <Upload className="mr-2 h-4 w-4" /> Import
+              <Button onClick={() => fileInputRef.current?.click()} variant="outline" size="sm">
+                <Upload className="mr-1.5 h-3.5 w-3.5" /> Import
               </Button>
             </div>
+            <input type="file" ref={fileInputRef} onChange={handleFileImport} className="hidden" accept=".zip,.json" />
           </div>
         )
       )}
 
-      
-
-      {/* Create Backup Dialog */}
+      {/* Backup Dialog */}
       <Dialog open={isBackupDialogOpen} onOpenChange={setIsBackupDialogOpen}>
-        <DialogContent className="sm:max-w-[425px]">
+        <DialogContent className="sm:max-w-[400px]">
           <DialogHeader>
             <DialogTitle>Create Backup</DialogTitle>
             <DialogDescription>
-              Create a backup of "{selectedInfospaceForBackup?.name}". This will include all sources, schemas, runs, datasets, and annotations.
+              Back up &ldquo;{backupTarget?.name}&rdquo; including all sources, schemas, runs, datasets, and annotations.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="backup-name" className="text-right">
-                Name
-              </Label>
-              <Input
-                id="backup-name"
-                value={newBackupName}
-                onChange={(e) => setNewBackupName(e.target.value)}
-                className="col-span-3"
-              />
+          <div className="grid gap-3 py-3">
+            <div className="grid grid-cols-4 items-center gap-3">
+              <Label htmlFor="backup-name" className="text-right text-sm">Name</Label>
+              <Input id="backup-name" value={newBackupName} onChange={(e) => setNewBackupName(e.target.value)} className="col-span-3" />
             </div>
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="backup-description" className="text-right">
-                Description
-              </Label>
-              <Textarea
-                id="backup-description"
-                value={newBackupDescription}
-                onChange={(e) => setNewBackupDescription(e.target.value)}
-                className="col-span-3"
-                rows={3}
-              />
+            <div className="grid grid-cols-4 items-center gap-3">
+              <Label htmlFor="backup-desc" className="text-right text-sm">Note</Label>
+              <Textarea id="backup-desc" value={newBackupDescription} onChange={(e) => setNewBackupDescription(e.target.value)} className="col-span-3" rows={2} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsBackupDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={createBackup} disabled={isCreatingBackup || !newBackupName.trim()}>
-              {isCreatingBackup ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                <>
-                  <Archive className="mr-2 h-4 w-4" />
-                  Create Backup
-                </>
-              )}
+            <Button variant="outline" onClick={() => setIsBackupDialogOpen(false)} size="sm">Cancel</Button>
+            <Button onClick={createBackup} disabled={isCreatingBackup || !newBackupName.trim()} size="sm">
+              {isCreatingBackup ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Creating...</> : <><Archive className="mr-1.5 h-3.5 w-3.5" /> Create Backup</>}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* View Backups Dialog */}
-      <Dialog open={isBackupsViewOpen} onOpenChange={setIsBackupsViewOpen}>
-        <DialogContent className="sm:max-w-[800px] max-h-[600px]">
-          <DialogHeader>
-            <DialogTitle>Backups for "{selectedInfospaceForBackup?.name}"</DialogTitle>
-            <DialogDescription>
-              View and manage backups for this infospace. You can restore from any completed backup.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-4 max-h-[400px] overflow-y-auto">
-            {isLoadingBackups ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin" />
-                <span className="ml-2">Loading backups...</span>
-              </div>
-            ) : backups.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                No backups found for this infospace.
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {backups.map((backup) => (
-                  <Card key={backup.id} className="p-4">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <h3 className="font-medium">{backup.name}</h3>
-                          <Badge className={getStatusColor(backup.status)}>
-                            {backup.status}
-                          </Badge>
-                          {backup.is_expired && (
-                            <Badge variant="outline" className="text-red-600">
-                              Expired
-                            </Badge>
-                          )}
-                        </div>
-                        {backup.description && (
-                          <p className="text-sm text-muted-foreground mb-2">{backup.description}</p>
-                        )}
-                        <div className="grid grid-cols-3 gap-4 text-xs text-muted-foreground">
-                          <div>Sources: {backup.included_sources}</div>
-                          <div>Assets: {backup.included_assets}</div>
-                          <div>Schemas: {backup.included_schemas}</div>
-                          <div>Runs: {backup.included_runs}</div>
-                          <div>Datasets: {backup.included_datasets}</div>
-                          <div>Size: {formatFileSize(backup.file_size_bytes)}</div>
-                        </div>
-                        <div className="mt-2 text-xs text-muted-foreground">
-                          Created {formatDistanceToNowStrict(new Date(backup.created_at))} ago
-                          {backup.completed_at && (
-                            <span> • Completed {formatDistanceToNowStrict(new Date(backup.completed_at))} ago</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex gap-2 ml-4">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => downloadBackup(backup)}
-                          disabled={!backup.is_ready}
-                          title="Download backup"
-                        >
-                          <Download className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={() => restoreBackup(backup)}
-                          disabled={!backup.is_ready}
-                          title="Restore from backup"
-                        >
-                          Restore
-                        </Button>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsBackupsViewOpen(false)}>
-              Close
-            </Button>
-            <Button 
-              onClick={() => {
-                setIsBackupsViewOpen(false);
-                if (selectedInfospaceForBackup) {
-                  handleBackupInfospace(selectedInfospaceForBackup);
-                }
-              }}
-            >
-              <Archive className="mr-2 h-4 w-4" />
-              Create New Backup
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
+      {/* Edit / Create overlays */}
       <EditInfospaceOverlay
         open={isCreateOverlayOpen}
         onClose={() => setIsCreateOverlayOpen(false)}
@@ -782,36 +467,37 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
       />
 
       {InfospaceToEdit && (
-      <EditInfospaceOverlay
-        open={isEditDialogOpen}
-        onClose={() => setIsEditDialogOpen(false)}
-            InfospaceId={InfospaceToEdit.id}
-            defaultName={InfospaceToEdit.name}
-            defaultDescription={InfospaceToEdit.description ?? ''}
-            defaultIcon={InfospaceToEdit.icon ?? ''}
-      />
+        <EditInfospaceOverlay
+          open={isEditDialogOpen}
+          onClose={() => setIsEditDialogOpen(false)}
+          InfospaceId={InfospaceToEdit.id}
+          defaultName={InfospaceToEdit.name}
+          defaultDescription={InfospaceToEdit.description ?? ''}
+          defaultIcon={InfospaceToEdit.icon ?? ''}
+        />
       )}
-      <div className="flex items-center gap-1">
-            {/* Hidden easter egg: Click the sparkles to toggle globe */}
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => {
-                      togglePreference('globe_enabled');
-                      toast.success(preferences.globe_enabled ? 'Globe disabled ✨' : 'Globe enabled ✨');
-                    }}
-                    className="text-lg hover:scale-110 transition-transform cursor-pointer"
-                  >
-                    ✨
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Toggle globe visualization</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
+
+      {/* Globe easter egg */}
+      <div className="flex items-center gap-1 px-3">
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => {
+                  togglePreference('globe_enabled');
+                  toast.success(preferences.globe_enabled ? 'Globe disabled' : 'Globe enabled');
+                }}
+                className="text-lg hover:scale-110 transition-transform cursor-pointer"
+              >
+                ✨
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Toggle globe visualization</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
     </div>
   );
 }

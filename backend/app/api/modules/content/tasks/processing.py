@@ -23,7 +23,6 @@ from app.api.modules.content.models import Asset, ProcessingStatus
 from app.api.modules.content.services.asset_service import AssetService
 from app.api.modules.content.services.processing_service import ProcessingService
 from app.api.modules.foundation_service_providers.base import StorageProvider, ScrapingProvider
-from app.core.events import emit
 from app.core.tasks import TaskContext, task
 from app.core.task_utils import run_async_in_celery
 
@@ -78,13 +77,6 @@ def process_pending(ctx: TaskContext, asset_ids: list[int]):
                 if not asset:
                     continue
                 run_async_in_celery(svc.process_content, asset, {})
-
-                # Emit for enrichment chaining (skip containers — children emit in ProcessingService)
-                from app.api.modules.content.types import get_content_type_registry
-                descriptor = get_content_type_registry().by_kind(asset.kind)
-                if not descriptor or not descriptor.is_container:
-                    emit("asset.processed", {"asset_id": asset.id, "kind": asset.kind.value,
-                                              "infospace_id": asset.infospace_id})
             ctx.stat("done")
         except Exception as e:
             logger.error("process_pending failed for asset %d: %s", asset_id, e, exc_info=True)
@@ -96,6 +88,9 @@ def process_pending(ctx: TaskContext, asset_ids: list[int]):
                 session.commit()
             ctx.item_failed(asset_id)
             ctx.stat("failed")
+
+    from app.core.events import emit
+    emit("asset.processed", {"infospace_id": ctx.infospace_id})
 
 
 @task("reset_stale_processing",

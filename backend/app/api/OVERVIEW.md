@@ -222,6 +222,8 @@ AssetQuery(session, infospace_id)
 ```
 Consumers: SearchService, FilterService (flow FILTER step), routes, any service needing asset access.
 
+Package scope is applied via `.scope(package_scope)` — a single method that adds the full visibility predicate (bundle GIN overlap, direct asset PK lookup, run-derived semi-join). No-op when scope is None. Every consumer of AssetQuery gets scope filtering for free.
+
 **`AssetBuilder`** — Fluent builder for asset creation. Handlers use this to create assets from various sources:
 ```
 builder = AssetBuilder(context)
@@ -242,8 +244,35 @@ Consumers: all 7 handlers.
 
 Each execution context has its own DI pattern. Using the wrong pattern is a bug.
 
+**Access Control** — Every infospace-scoped route resolves a frozen `Access` context via `Requires(Capability.X)`. The context carries `infospace_id`, `user_id`, `capabilities`, and `scope` (None for full access, `PackageScope` for package consumers).
+
+Resolution priority (first match wins): owner → collaborator → package token → internal visibility → public visibility → 404.
+
+| Role | Capabilities |
+|---|---|
+| Owner | all |
+| Analyst | organize, ingest, compute, delete |
+| Curator | organize |
+| Viewer | (none) |
+
+Two scope enforcement primitives on the `Access` context:
+- **`access.scope_filter(stmt, column, scope_field)`** — applies `column.in_(scope_ids)` to a SELECT. No-op when scope is None. Returns `WHERE FALSE` when scope is set but ID set is empty. Used for list endpoints on non-asset entities (runs, schemas, graphs, entities).
+- **`access.require_in_scope(scope_field, entity_id)`** — point check for single-entity endpoints. Raises 404 when entity is outside scope. No-op when scope is None.
+
+For assets, `AssetQuery.scope()` provides the full visibility predicate (three-branch OR: GIN bundle overlap, PK asset lookup, run-derived semi-join).
+
+| Operation | Required capability |
+|---|---|
+| View/list | (none — viewer access) |
+| Create bundles, schemas, entities, annotations, graphs, packages | organize |
+| Create sources, upload assets, import | ingest |
+| Run annotations, flows, enrichments | compute |
+| Delete assets, bundles, remove from bundles | delete |
+| Infospace settings, collaborators, enrichment config | setup |
+
 **Routes** — HTTP entry points. Thin dispatchers: validate input, call composable or service, return response.
 - DI: `IngestionContextFactoryDep` for ingestion, FastAPI `Depends()` for services/providers
+- Access control: `access: Access = Requires(Capability.X)` for path-parameter routes. Routes with `infospace_id` in the request body use `resolve_access()` directly.
 - Pattern: `make_ingestion_context(user_id, infospace_id, options)` → `IngestionContext`
 - One route file per resource (`assets.py`, `bundles.py`, `sources.py`). Routes outside the domain layer hierarchy — they compose primitives from any domain.
 - Anti-pattern: manually constructing `IngestionContext` with 10 fields. Use `IngestionContextFactoryDep`.
@@ -292,8 +321,8 @@ Domains own their models, services, tasks, and reactions. Each domain is a bound
 |---|---|---|---|
 | Foundation Providers | L0 | 7 protocols, implementations, registry resolve() | StorageProvider, WebSearchProvider, OcrProvider, etc. Resolved via `resolve()`. |
 | Core Infrastructure | L0 | DB, Celery, dispatch, events, @task | `@task`, `kick_tasks()`, `emit()`, `cached_resolve()` |
-| Identity / Infospace | L1 | User, Infospace, access control | `validate_infospace_access()` |
-| Content | L2 | Asset, Bundle, Source, handlers, processors, enrichers | ContentTypeRegistry, `ingest()`, AssetQuery, AssetBuilder |
+| Identity / Infospace | L1 | User, Infospace, access control | `Requires()`, `resolve_access()`, `Access`, `PackageScope` |
+| Content | L2 | Asset, Bundle, Source, handlers, processors, enrichers | ContentTypeRegistry, `ingest()`, AssetQuery, AssetBuilder. Bundle deletion: `_expand_bundle_descendants()` (recursive CTE) collects subtree, `_analyze_deletion()` splits assets into exclusive (delete) vs shared (unlink). Preview via `POST /tree/delete-preview`. `BundleService.get_descendant_ids()` for service-level cascade. |
 | Embedding | L2.5 | AssetChunk, HNSW indexes | EmbeddingService, ChunkingService, VectorSearchService |
 | Annotation | L3 | AnnotationSchema, AnnotationRun, Annotation | LLM pipeline (`annotate.py`), version_gap @task |
 | Search | L3 | SearchHistory | SearchService (FTS, semantic, tree multi-phase) |
@@ -301,7 +330,7 @@ Domains own their models, services, tasks, and reactions. Each domain is a bound
 | Flow | L4 | Flow, FlowExecution, Task | FlowService (reentrant state machine, 7 step types) |
 | Analysis | L4 | AnalysisAdapter | DB-registered adapters, dynamic import |
 | Conversational Intelligence | L5 | ChatConversation | MCP server, conversation service |
-| Sharing | L6 | ShareableLink, InfospaceBackup | PackageService, BackupService |
+| Sharing | L6 | Package, PackageItem, ShareableLink, InfospaceBackup | PackageService, BackupService. PackageItem uses typed FK columns (bundle_id, run_id, etc.) with CHECK constraint. |
 
 ### Mechanisms: How Dimensions Interact
 
@@ -542,7 +571,10 @@ Workers listening on the same queue will round-robin tasks automatically. No coo
 **8. Is it a new Foundation provider?**
 → Add a `@provider`-decorated class in `providers.py` with `key`, capability attributes (`language`, `embedding`, etc.), and optional `api_key`/`base_url`/`credential_key`/`contexts`. The decorator handles registration. To resolve a provider in any execution context, use `resolve(protocol, type_key, settings, credentials)` from `registry.py`. Do NOT manually construct providers, merge credentials, or check provider availability outside `resolve()`.
 
-**9. Is it thinning a route file?**
+**9. Does the route accept an infospace_id?**
+→ Use `access: Access = Requires(Capability.X)` for path-parameter routes, or `resolve_access(session, infospace_id, user, Capability.X)` for body/derived infospace_id. Do NOT validate access in service methods. The `Access` context is frozen and trusted — use `access.infospace_id`, `access.user_id`, `access.scope`. For package-scoped consumers, apply `AssetQuery.scope(access.scope)` to asset queries.
+
+**10. Is it thinning a route file?**
 → Move domain logic to the appropriate module (`content/*`, `annotation/*`, etc.). Routes are thin dispatchers: validate input, call primitive (`ingest()`, `AssetQuery`, service method), return response. Do NOT split route files by concern type (e.g. "CRUD vs ingestion"). The pattern is one route file per resource (`assets.py`, `bundles.py`, `sources.py`). The route gets shorter because the logic moves down, not because it gets split sideways.
 
 ### Anti-patterns to avoid:
@@ -552,6 +584,8 @@ Workers listening on the same queue will round-robin tasks automatically. No coo
 - **Manual IngestionContext construction in routes.** Use `IngestionContextFactoryDep`. The factory ensures consistent provider wiring.
 - **Inline request models in route files.** Put them in `schemas.py`. Routes should be thin — validate input, call service, return response.
 - **Processing logic in ProcessingService for a specific kind.** Kind-specific logic belongs on the processor or materializer, invoked via the descriptor. ProcessingService orchestrates the pipeline; it doesn't know about CSV columns.
+- **Access validation in services.** Services never check infospace access — `Requires()` at the route level handles it. Services receive `user_id` and `infospace_id` as trusted parameters. The legacy `validate_infospace_access()` pattern is removed; `global_utils.py` is deleted.
+- **Scope filtering at the route level per-endpoint.** For assets, put scope in `AssetQuery.scope()` once — every consumer gets it. For non-asset entities, use `access.scope_filter()` (lists) and `access.require_in_scope()` (get-by-ID). Don't write manual `if scope: query = query.where(...)` checks.
 
 ---
 
@@ -580,7 +614,7 @@ The acid test: "The VPS deployment with 400GB+ of drifting PDFs should require z
 
 ## Known Gaps (March 2026)
 
-**What's structurally complete:** Content processing pipeline (handlers → processors → enrichers), all registries (ContentType, handler, @task, @enricher, PollHandler), metadata decomposition (facets/file_info), versioning (superseding), scale hardening (P0–P2 architecture review items), task dispatch with per-task scheduling, task concurrency safety.
+**What's structurally complete:** Content processing pipeline (handlers → processors → enrichers), all registries (ContentType, handler, @task, @enricher, PollHandler), metadata decomposition (facets/file_info), versioning (superseding), scale hardening (P0–P2 architecture review items), task dispatch with per-task scheduling, task concurrency safety, capability-based access control (`Requires()` on all infospace routes, `PackageScope` with full visibility predicate via `AssetQuery.scope()`), package sharing with typed FK PackageItems and precomputed scope resolution.
 
 **What's structurally complete and connected:**
 
@@ -606,6 +640,9 @@ The acid test: "The VPS deployment with 400GB+ of drifting PDFs should require z
 - ~~`resolve_handler` dispatch table~~ — `handlers/registry.py` with priority-based lookup.
 - ~~`factory.py` if/elif chains~~ — Eliminated; declarative `@provider` classes in `providers.py`.
 - ~~`source_metadata` confusion~~ — Decomposed to `facets` + `file_info`, column dropped.
+- ~~Service-layer access validation~~ — `validate_infospace_access()` removed from all 14 service files. `global_utils.py` deleted. Routes use `Requires()` / `resolve_access()`.
+- ~~Package polymorphic FK~~ — `PackageItem.resource_type`/`resource_id` replaced with typed nullable FK columns (`bundle_id`, `run_id`, `graph_id`, `schema_id`, `asset_id`, `entity_canonical_id`). CHECK constraint enforces exactly one non-null.
+- ~~Package scope incomplete~~ — `PackageScope` now precomputes all bounded derivations: recursive bundle expansion, graph→run, run→schema, ancestor asset chain. `AssetQuery.scope()` applies the three-branch visibility predicate.
 
 **Future enhancements (P3, deferred until core is stable):**
 - DAG flow execution (design complete in DAG_FLOW_STEPS_DESIGN.md).

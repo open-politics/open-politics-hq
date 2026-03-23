@@ -16,7 +16,6 @@ from app.models import (
     RunAggregate,
 )
 from app.schemas import AnnotationCreate
-from app.api.global_utils import validate_infospace_access
 from app.api.modules.annotation.tasks.annotate import retry_failed_annotations
 from app.core.events import emit
 from app.api.modules.content.services.asset_service import AssetService
@@ -105,9 +104,6 @@ class AnnotationService:
         """
         logger.info(f"Service: Creating annotation for asset {asset_id} with schema {schema_id}")
         
-        # Validate infospace access
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         # Validate asset exists and belongs to infospace
         asset = self.session.get(Asset, asset_id)
         if not asset:
@@ -175,9 +171,6 @@ class AnnotationService:
         """
         logger.info(f"Service: Creating batch of {len(annotations)} annotations")
         
-        # Validate infospace access
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         # Create a run to track the batch
         run = AnnotationRun(
             name=f"Batch Annotation Run - {datetime.now(timezone.utc).isoformat()}",
@@ -224,9 +217,6 @@ class AnnotationService:
             ValueError: If validation fails
         """
         logger.info(f"Service: Triggering retry of failed annotations for run {run_id}")
-        
-        # Validate infospace access
-        validate_infospace_access(self.session, infospace_id, user_id)
         
         # Get the run
         run = self.session.get(AnnotationRun, run_id)
@@ -283,9 +273,6 @@ class AnnotationService:
         if infospace_id:
             if asset.infospace_id != infospace_id:
                 raise ValueError(f"Asset with ID {asset_id} does not belong to infospace {infospace_id}")
-            if user_id:
-                validate_infospace_access(self.session, infospace_id, user_id)
-        
         query = (
             select(Annotation)
             .where(Annotation.asset_id == asset_id)
@@ -330,9 +317,6 @@ class AnnotationService:
         if infospace_id:
             if schema.infospace_id != infospace_id:
                 raise ValueError(f"AnnotationSchema with ID {schema_id} does not belong to infospace {infospace_id}")
-            if user_id:
-                validate_infospace_access(self.session, infospace_id, user_id)
-        
         query = (
             select(Annotation)
             .where(Annotation.schema_id == schema_id)
@@ -397,9 +381,6 @@ class AnnotationService:
             ValueError: If validation fails
         """
         logger.info(f"Service: Getting annotations for run {run_id}")
-
-        # Validate infospace access
-        validate_infospace_access(self.session, infospace_id, user_id)
 
         # Optional: Validate run exists and belongs to infospace
         run = self.session.get(AnnotationRun, run_id)
@@ -469,9 +450,6 @@ class AnnotationService:
         """
         logger.info(f"Service: Updating annotation {annotation_id}")
         
-        # Validate infospace access
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         # Get and validate annotation
         annotation = self.session.get(Annotation, annotation_id)
         if not annotation:
@@ -519,9 +497,6 @@ class AnnotationService:
         """
         logger.info(f"Service: Deleting annotation {annotation_id}")
         
-        # Validate infospace access
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         # Get and validate annotation
         annotation = self.session.get(Annotation, annotation_id)
         if not annotation:
@@ -558,9 +533,6 @@ class AnnotationService:
             ValueError: If validation fails
         """
         logger.info(f"Service: Retrying single annotation {annotation_id}")
-        
-        # Validate infospace access
-        validate_infospace_access(self.session, infospace_id, user_id)
         
         # Get and validate annotation
         annotation = self.session.get(Annotation, annotation_id)
@@ -736,9 +708,6 @@ class AnnotationService:
         """
         logger.debug(f"Service: Getting annotation {annotation_id} for infospace {infospace_id}")
         
-        # Validate infospace access
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         annotation = self.session.get(Annotation, annotation_id)
         if annotation and annotation.infospace_id == infospace_id:
             return annotation
@@ -767,9 +736,6 @@ class AnnotationService:
             ValueError: If validation fails
         """
         logger.info(f"Service: Getting annotation stats for infospace {infospace_id}")
-        
-        # Validate infospace access
-        validate_infospace_access(self.session, infospace_id, user_id)
         
         # Get total annotations
         total_annotations = self.session.exec(
@@ -819,9 +785,6 @@ class AnnotationService:
         """
         logger.debug(f"Service: Getting schema {schema_id} for infospace {infospace_id}")
         
-        # Validate infospace access
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         schema = self.session.get(AnnotationSchema, schema_id)
         if schema and schema.infospace_id == infospace_id:
             return schema
@@ -852,9 +815,6 @@ class AnnotationService:
             ValueError: If validation fails
         """
         logger.debug(f"Service: Getting run details for run {run_id} in infospace {infospace_id}")
-        
-        # Validate infospace access
-        validate_infospace_access(self.session, infospace_id, user_id)
         
         run = self.session.get(AnnotationRun, run_id)
         if run and run.infospace_id == infospace_id:
@@ -896,9 +856,6 @@ class AnnotationService:
             ValueError: If validation fails
         """
         logger.info(f"Service: Creating annotation schema '{name}' in infospace {infospace_id}")
-        
-        # Validate infospace access
-        validate_infospace_access(self.session, infospace_id, user_id)
         
         # Check for existing schema with the same name and version in the infospace
         existing_schema = self.session.exec(
@@ -955,9 +912,6 @@ class AnnotationService:
             ValueError: If validation fails (e.g., schema not found)
         """
         logger.info(f"Service: Creating annotation run '{run_in.name}' in infospace {infospace_id}")
-
-        # Validate infospace access (already done in route, but good practice)
-        validate_infospace_access(self.session, infospace_id, user_id)
 
         # Validate schemas exist and belong to the infospace
         if not run_in.schema_ids:

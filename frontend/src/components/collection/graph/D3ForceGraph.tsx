@@ -74,7 +74,9 @@ interface D3ForceGraphProps {
   height?: number;
   highlightedNodeId?: string | null;
   connectedNodeIds?: string[];
+  mergeSelectedNodeIds?: string[]; // Nodes selected for merge (shift+click)
   onNodeClick?: (node: GraphNode) => void;
+  onNodeShiftClick?: (node: GraphNode) => void; // Shift+click for merge selection
   onEdgeClick?: (edge: GraphEdge) => void;
   autoResize?: boolean; // If true, uses ResizeObserver to fill container
   config?: Partial<GraphViewConfig>; // Optional config override
@@ -148,7 +150,9 @@ export function D3ForceGraph({
   height: propHeight = 600,
   highlightedNodeId = null,
   connectedNodeIds = [],
+  mergeSelectedNodeIds = [],
   onNodeClick,
+  onNodeShiftClick,
   onEdgeClick,
   autoResize = false,
   config: configOverride = {},
@@ -178,15 +182,19 @@ export function D3ForceGraph({
 
   // Refs for volatile callbacks (never in any dep array)
   const onNodeClickRef = useRef(onNodeClick);
+  const onNodeShiftClickRef = useRef(onNodeShiftClick);
   const onEdgeClickRef = useRef(onEdgeClick);
   useEffect(() => { onNodeClickRef.current = onNodeClick; }, [onNodeClick]);
+  useEffect(() => { onNodeShiftClickRef.current = onNodeShiftClick; }, [onNodeShiftClick]);
   useEffect(() => { onEdgeClickRef.current = onEdgeClick; }, [onEdgeClick]);
 
   // Refs for volatile visual params (used by Effect 2, never rebuild simulation)
   const highlightedNodeIdRef = useRef(highlightedNodeId);
   const connectedNodeIdsRef = useRef(connectedNodeIds);
+  const mergeSelectedNodeIdsRef = useRef(mergeSelectedNodeIds);
   useEffect(() => { highlightedNodeIdRef.current = highlightedNodeId; }, [highlightedNodeId]);
   useEffect(() => { connectedNodeIdsRef.current = connectedNodeIds; }, [connectedNodeIds]);
+  useEffect(() => { mergeSelectedNodeIdsRef.current = mergeSelectedNodeIds; }, [mergeSelectedNodeIds]);
 
   // Build legend from unique entity types in nodes
   const entityTypeLegend = useMemo(() => {
@@ -367,7 +375,11 @@ export function D3ForceGraph({
       )
       .on('click', (event: any, d: any) => {
         event.stopPropagation();
-        onNodeClickRef.current?.(d);
+        if (event.shiftKey && onNodeShiftClickRef.current) {
+          onNodeShiftClickRef.current(d);
+        } else {
+          onNodeClickRef.current?.(d);
+        }
       });
     nodeSelRef.current = node;
 
@@ -440,6 +452,7 @@ export function D3ForceGraph({
     if (!nodeSelRef.current || !nodeLabelSelRef.current) return;
     const hId = highlightedNodeId;
     const cIds = connectedNodeIds;
+    const mIds = mergeSelectedNodeIds;
 
     nodeSelRef.current
       .attr('r', (d: any) => {
@@ -449,21 +462,27 @@ export function D3ForceGraph({
       })
       .attr('fill', (d: any) => {
         const c = getEntityTypeColor(d.type, colorOverrides);
+        if (mIds.includes(d.id)) return d3.color(c)?.brighter(0.3)?.toString() || c;
         if (hId === d.id) return d3.color(c)?.brighter(0.5)?.toString() || c;
         if (cIds.includes(d.id)) return d3.color(c)?.brighter(0.2)?.toString() || c;
         if (hId && !cIds.includes(d.id)) return d3.color(c)?.darker(0.5)?.toString() || c;
         return c;
       })
       .attr('stroke', (d: any) => {
+        if (mIds.includes(d.id)) return '#f59e0b'; // amber for merge selection
         if (hId === d.id) return '#2563eb';
         if (cIds.includes(d.id)) return '#10b981';
         return '#fff';
       })
-      .attr('stroke-width', (d: any) => (hId === d.id) ? 3 : 2)
-      .attr('opacity', (d: any) => (hId && hId !== d.id && !cIds.includes(d.id)) ? 0.4 : 1);
+      .attr('stroke-width', (d: any) => mIds.includes(d.id) ? 4 : (hId === d.id) ? 3 : 2)
+      .attr('opacity', (d: any) => (hId && hId !== d.id && !cIds.includes(d.id) && !mIds.includes(d.id)) ? 0.4 : 1);
 
     nodeLabelSelRef.current
-      .attr('fill', (d: any) => (hId && hId !== d.id && !cIds.includes(d.id)) ? '#999' : '#333');
+      .attr('fill', (d: any) => {
+        if (mIds.includes(d.id)) return '#92400e'; // amber-800
+        if (hId && hId !== d.id && !cIds.includes(d.id)) return '#999';
+        return '#333';
+      });
 
     if (linkSelRef.current) {
       linkSelRef.current
@@ -473,7 +492,7 @@ export function D3ForceGraph({
           return (edge.sourceId === hId || edge.targetId === hId) ? 1 : 0.2;
         });
     }
-  }, [highlightedNodeId, connectedNodeIds, degreeMap]);
+  }, [highlightedNodeId, connectedNodeIds, mergeSelectedNodeIds, degreeMap]);
 
   // ==========================================================================
   // EFFECT D: Zoom to highlighted node

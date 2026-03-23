@@ -1,11 +1,13 @@
-"""Sharing domain: ShareableLink, Package, InfospaceBackup, UserBackup. Use sharing.services for services."""
+"""Sharing domain: ShareableLink, Package, PackageItem, InfospaceBackup, UserBackup."""
 
 from app.api.modules.sharing.models import (
-    ShareableLink, Package, InfospaceBackup, UserBackup,
+    ShareableLink, Package, PackageItem, PackageVisibility,
+    InfospaceBackup, UserBackup,
     PermissionLevel, ResourceType, BackupType, BackupStatus,
 )
 
 __all__ = [
-    "ShareableLink", "Package", "InfospaceBackup", "UserBackup",
+    "ShareableLink", "Package", "PackageItem", "PackageVisibility",
+    "InfospaceBackup", "UserBackup",
     "PermissionLevel", "ResourceType", "BackupType", "BackupStatus",
 ]

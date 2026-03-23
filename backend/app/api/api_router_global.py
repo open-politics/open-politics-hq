@@ -24,6 +24,7 @@ from app.api.routes import (
     healthcheck,
     infospaces,
     login,
+    packages,  # Package CRUD + discovery
     providers,  # Provider discovery (models, capabilities)
     query,  # Universal asset query (AQL)
     search,
@@ -62,6 +63,7 @@ api_router.include_router(healthcheck.router, prefix="/healthz", tags=["app"])
 api_router.include_router(infospaces.router, prefix="/infospaces", tags=["Infospaces"])
 api_router.include_router(knowledge_graphs.router, tags=["Knowledge Graphs"])
 api_router.include_router(login.router, tags=["login"])
+api_router.include_router(packages.router, tags=["Packages"])
 api_router.include_router(providers.router, tags=["Providers"])
 api_router.include_router(query.router, tags=["Query"])
 api_router.include_router(search.router, prefix="/search", tags=["Search"])

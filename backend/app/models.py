@@ -3,7 +3,12 @@
 Re-export hub: imports from domain models. Alembic and existing code use from app.models import *.
 """
 
-from app.api.modules.identity_infospace_user.models import User, Infospace, InfospaceCollaborator, UserBase, UserTier
+from app.api.modules.identity_infospace_user.models import (
+    User, Infospace, InfospaceCollaborator, InfospaceVisibility,
+    CollaboratorRole, UserBase, UserTier,
+)
+# Access module imported lazily to avoid circular import with dependency_injection.
+# Use: from app.api.modules.identity_infospace_user.access import Access, Requires, ...
 from app.api.modules.content.models import (
     Asset,
     AssetChunk,
@@ -59,6 +64,8 @@ from app.api.modules.conversational_intelligence.models import ChatConversation,
 from app.api.modules.sharing.models import (
     ShareableLink,
     Package,
+    PackageItem,
+    PackageVisibility,
     InfospaceBackup,
     UserBackup,
     PermissionLevel,

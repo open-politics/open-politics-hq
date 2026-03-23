@@ -8,6 +8,7 @@ from app.api.dependency_injection import WebSearchProviderDep, get_current_user,
 from app.api.modules.foundation_service_providers.base import WebSearchProvider
 from app.api.modules.foundation_service_providers.registry import get_provider
 from app.api.modules.content.ingest import ingest
+from app.api.modules.identity_infospace_user.access import Capability, resolve_access
 from app.models import User
 from app.schemas import SearchResultsOut, SearchRequest
 from app.core.config import settings
@@ -122,8 +123,11 @@ async def search_and_ingest(
     from web content. It supports multiple search providers and can automatically
     scrape full content from discovered URLs.
     """
+    # Validate infospace access
+    resolve_access(db, request.infospace_id, current_user, Capability.INGEST)
+
     logger.info(f"External search and ingest request: query='{request.query}', provider={request.provider}")
-    
+
     try:
         # Create the requested search provider using the descriptor registry
         try:
@@ -262,8 +266,9 @@ async def create_assets_from_urls(
     This endpoint allows for selective asset creation from a list of URLs,
     providing more control over which search results become assets.
     """
+    resolve_access(db, request.infospace_id, current_user, Capability.INGEST)
     logger.info(f"Creating assets from {len(request.urls)} URLs for user {current_user.id}")
-    
+
     try:
         opts = {
             'scrape_immediately': request.scrape_content,
@@ -329,8 +334,9 @@ async def create_assets_from_results(
     This endpoint creates assets using the rich data already available from search results,
     avoiding the need to re-scrape URLs and providing faster asset creation.
     """
+    resolve_access(db, request.infospace_id, current_user, Capability.INGEST)
     logger.info(f"Creating assets from {len(request.search_results)} search results for user {current_user.id}")
-    
+
     try:
         query = request.search_metadata.get('query', 'Search Results') if request.search_metadata else 'Search Results'
 

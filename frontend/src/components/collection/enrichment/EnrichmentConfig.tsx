@@ -2,11 +2,12 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
-import { IngestionJobsService } from '@/client';
-import { Loader2, Sparkles, FileCheck, MapPin, Image } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { IngestionJobsService, InfospacesService } from '@/client';
+import { OpenAPI } from '@/client/core/OpenAPI';
+import { Loader2, FileCheck, MapPin, Image, Languages, BarChart3, Play, RefreshCw } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -16,63 +17,131 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
+import type { LucideIcon } from 'lucide-react';
 
-const ENRICHERS = [
-  { name: 'hash', label: 'Content Hash', icon: FileCheck, description: 'SHA-256 for dedup and change detection' },
-  { name: 'ocr', label: 'OCR', icon: Image, description: 'Extract text from PDF pages (Tesseract or Ollama)' },
-  { name: 'geocoding', label: 'Geocoding', icon: MapPin, description: 'Resolve location facets to lat/lon' },
+interface TaskStats {
+  done: number;
+  failed: number;
+  skipped: number;
+  last_run: string | null;
+}
+
+interface TaskStatus {
+  name: string;
+  tags: string[];
+  capability: string | null;
+  stats: TaskStats | null;
+}
+
+const ENRICHER_META: { name: string; label: string; icon: LucideIcon; capability?: string; description: string }[] = [
+  { name: 'hash', label: 'Hash', icon: FileCheck, description: 'SHA-256 dedup' },
+  { name: 'ocr', label: 'OCR', icon: Image, capability: 'ocr', description: 'PDF text extraction' },
+  { name: 'geocoding', label: 'Geo', icon: MapPin, capability: 'geocoding', description: 'Location resolution' },
+  { name: 'language_detection', label: 'Lang', icon: Languages, description: 'Language detection' },
+  { name: 'quality_score', label: 'Quality', icon: BarChart3, description: 'Text quality metric' },
 ];
+
+async function fetchTaskStatuses(): Promise<TaskStatus[]> {
+  try {
+    const res = await fetch(`${OpenAPI.BASE}/api/v1/providers/enrichment/status`, { credentials: 'include' });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.tasks || [];
+  } catch {
+    return [];
+  }
+}
 
 const EnrichmentConfig: React.FC = () => {
   const { activeInfospace } = useInfospaceStore();
   const { bundles, fetchBundles } = useBundleStore();
-  const [selectedBundleId, setSelectedBundleId] = useState<number | null>(null);
-  const [selectedEnricher, setSelectedEnricher] = useState('hash');
+  const [selectedScope, setSelectedScope] = useState<string>('all');
+  const [selectedEnricher, setSelectedEnricher] = useState('all');
   const [isTriggering, setIsTriggering] = useState(false);
-  const [processingStatus, setProcessingStatus] = useState<Record<string, number> | null>(null);
+  const [allTasks, setAllTasks] = useState<TaskStatus[]>([]);
+  const [togglingEnricher, setTogglingEnricher] = useState<string | null>(null);
+
+  const enrichmentConfig = (activeInfospace?.enrichment_config ?? {}) as Record<string, any>;
 
   const loadBundles = useCallback(async () => {
     if (!activeInfospace?.id) return;
     await fetchBundles(activeInfospace.id);
   }, [activeInfospace?.id, fetchBundles]);
 
-  useEffect(() => {
-    loadBundles();
-  }, [loadBundles]);
+  useEffect(() => { loadBundles(); }, [loadBundles]);
 
-  useEffect(() => {
-    if (bundles.length > 0 && !selectedBundleId) setSelectedBundleId(bundles[0].id);
-  }, [bundles, selectedBundleId]);
+  useEffect(() => { fetchTaskStatuses().then(setAllTasks); }, []);
 
-  const loadProcessingStatus = useCallback(async () => {
-    if (!activeInfospace?.id || !selectedBundleId) return;
+  const refreshStats = useCallback(() => { fetchTaskStatuses().then(setAllTasks); }, []);
+
+  const enricherTasks = allTasks.filter(t => t.tags.includes('enrichment') && t.name !== 'embedding');
+
+  const isEnricherEnabled = (name: string): boolean => {
+    const val = enrichmentConfig[name];
+    if (val === undefined || val === null) return true; // default: enabled
+    if (typeof val === 'boolean') return val;
+    if (typeof val === 'object') return true; // ProviderSelection = enabled
+    return true;
+  };
+
+  const toggleEnricher = async (name: string, enabled: boolean) => {
+    if (!activeInfospace?.id) return;
+    setTogglingEnricher(name);
     try {
-      const res = await IngestionJobsService.getProcessingStatus({
+      const meta = ENRICHER_META.find(e => e.name === name);
+      // For enrichers with capabilities, enabling means true (use system default provider)
+      // For built-in enrichers, just boolean
+      const newValue = enabled ? (meta?.capability ? true : true) : false;
+      await InfospacesService.updateInfospace({
         infospaceId: activeInfospace.id,
-        bundleId: selectedBundleId,
+        requestBody: {
+          enrichment_config: { ...enrichmentConfig, [name]: newValue },
+        } as any,
       });
-      setProcessingStatus(res as Record<string, number>);
+      toast.success(`${meta?.label ?? name} ${enabled ? 'enabled' : 'disabled'}`);
+      // Refresh infospace to get updated config
+      useInfospaceStore.getState().fetchInfospaceById(activeInfospace.id);
     } catch {
-      setProcessingStatus(null);
+      toast.error(`Failed to update ${name}`);
+    } finally {
+      setTogglingEnricher(null);
     }
-  }, [activeInfospace?.id, selectedBundleId]);
-
-  useEffect(() => {
-    loadProcessingStatus();
-  }, [loadProcessingStatus]);
+  };
 
   const handleTriggerEnrich = async () => {
-    if (!activeInfospace?.id || !selectedBundleId) return;
+    if (!activeInfospace?.id) return;
     setIsTriggering(true);
+
+    const targetBundles = selectedScope === 'all'
+      ? bundles
+      : bundles.filter(b => b.id.toString() === selectedScope);
+
+    if (targetBundles.length === 0) {
+      toast.error('No bundles to process.');
+      setIsTriggering(false);
+      return;
+    }
+
+    const targetEnrichers = selectedEnricher === 'all'
+      ? ENRICHER_META.filter(e => isEnricherEnabled(e.name)).map(e => e.name)
+      : [selectedEnricher];
+
     try {
-      await IngestionJobsService.triggerBatchEnrich({
-        infospaceId: activeInfospace.id,
-        bundleId: selectedBundleId,
-        requestBody: { enricher_name: selectedEnricher, batch_size: 50 },
-      });
-      toast.success(`Enrichment (${selectedEnricher}) started`);
-      loadProcessingStatus();
-    } catch (e) {
+      let started = 0;
+      for (const bundle of targetBundles) {
+        for (const enricher of targetEnrichers) {
+          await IngestionJobsService.triggerBatchEnrich({
+            infospaceId: activeInfospace.id,
+            bundleId: bundle.id,
+            requestBody: { enricher_name: enricher, batch_size: 50 },
+          });
+          started++;
+        }
+      }
+      const label = selectedEnricher === 'all' ? 'All enrichers' : selectedEnricher;
+      toast.success(`${label} started on ${targetBundles.length} bundle${targetBundles.length > 1 ? 's' : ''}`);
+      refreshStats();
+    } catch {
       toast.error('Failed to start enrichment');
     } finally {
       setIsTriggering(false);
@@ -80,139 +149,102 @@ const EnrichmentConfig: React.FC = () => {
   };
 
   if (!activeInfospace) {
-    return (
-      <div className="p-6 text-muted-foreground">
-        Select an infospace to configure enrichment.
-      </div>
-    );
+    return <div className="text-xs text-muted-foreground">Select an infospace first.</div>;
   }
 
   return (
-    <div className="h-full flex flex-col p-4 gap-6">
-      <div>
-        <h2 className="text-lg font-semibold flex items-center gap-2">
-          <Sparkles className="h-5 w-5" />
-          Enrichment & OCR
-        </h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Enrichers run automatically via reactive watchers (every 2 min). You can also trigger them manually per bundle.
-        </p>
+    <div className="space-y-2.5">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium">Background Processing</h3>
+        <button onClick={refreshStats} className="text-muted-foreground hover:text-foreground transition-colors" title="Refresh stats">
+          <RefreshCw className="h-3 w-3" />
+        </button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">OCR Configuration</CardTitle>
-          <CardDescription>
-            Configure in .env: OCR_PROVIDER_TYPE (tesseract | ollama), OLLAMA_OCR_MODEL (e.g. llava).
-            Same OLLAMA_BASE_URL as LLMs. Reuse LLM config menu for Ollama vision models.
-          </CardDescription>
-        </CardHeader>
-      </Card>
+      {/* Trigger — above tiles */}
+      <div className="flex items-end gap-1.5 pt-1.25">
+        <div className="grid gap-0.5 flex-1 min-w-0">
+          <Label className="text-[10px] text-muted-foreground">Scope</Label>
+          <Select value={selectedScope} onValueChange={setSelectedScope}>
+            <SelectTrigger className="h-8.5 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-48">
+              <SelectItem value="all">All bundles</SelectItem>
+              {bundles.map((b) => (
+                <SelectItem key={b.id} value={b.id.toString()}>{b.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-0.5 flex-1 min-w-0">
+          <Label className="text-[10px] text-muted-foreground">Enricher</Label>
+          <Select value={selectedEnricher} onValueChange={setSelectedEnricher}>
+            <SelectTrigger className="h-8.5 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All enrichers</SelectItem>
+              {ENRICHER_META.map((e) => (
+                <SelectItem key={e.name} value={e.name}>{e.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <Button
+          size="icon"
+          variant="outline"
+          onClick={handleTriggerEnrich}
+          disabled={isTriggering}
+          className="h-8.5 w-8.5 shrink-0"
+        >
+          {isTriggering ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+        </Button>
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Available Enrichers</CardTitle>
-          <CardDescription>
-            Watchers dispatch work automatically. Manual trigger runs on selected bundle.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {ENRICHERS.map((e) => {
-            const Icon = e.icon;
-            return (
-              <div key={e.name} className="flex items-center gap-4 p-3 rounded-lg border">
-                <Icon className="h-8 w-8 text-muted-foreground" />
-                <div className="flex-1">
-                  <p className="font-medium">{e.label}</p>
-                  <p className="text-sm text-muted-foreground">{e.description}</p>
-                </div>
-              </div>
-            );
-          })}
-        </CardContent>
-      </Card>
+      {/* Enricher tiles */}
+      <div className="grid grid-cols-3 gap-1.5">
+        {ENRICHER_META.map((meta) => {
+          const task = enricherTasks.find(t => t.name === meta.name);
+          const stats = task?.stats;
+          const Icon = meta.icon;
+          const enabled = isEnricherEnabled(meta.name);
+          const isToggling = togglingEnricher === meta.name;
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Manual Trigger</CardTitle>
-          <CardDescription>
-            Run an enricher on a specific bundle.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-2">
-            <Label>Bundle</Label>
-            <Select
-              value={selectedBundleId?.toString() ?? ''}
-              onValueChange={(v) => setSelectedBundleId(v ? parseInt(v, 10) : null)}
+          return (
+            <div
+              key={meta.name}
+              className={`rounded-md border p-2 space-y-1.5 transition-opacity ${!enabled ? 'opacity-40' : ''}`}
             >
-              <SelectTrigger>
-                <SelectValue placeholder="Select bundle" />
-              </SelectTrigger>
-              <SelectContent>
-                {bundles.length === 0 ? (
-                  <SelectItem value="_none">No bundles — fetch first</SelectItem>
-                ) : (
-                  bundles.map((b) => (
-                    <SelectItem key={b.id} value={b.id.toString()}>
-                      {b.name}
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid gap-2">
-            <Label>Enricher</Label>
-            <Select value={selectedEnricher} onValueChange={setSelectedEnricher}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ENRICHERS.map((e) => (
-                  <SelectItem key={e.name} value={e.name}>
-                    {e.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Button
-            onClick={handleTriggerEnrich}
-            disabled={!selectedBundleId || isTriggering}
-          >
-            {isTriggering ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            Run now
-          </Button>
-        </CardContent>
-      </Card>
-
-      {selectedBundleId && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Processing Status</CardTitle>
-            <CardDescription>
-              Asset counts by status for selected bundle.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {processingStatus ? (
-              <div className="flex gap-4 flex-wrap">
-                {Object.entries(processingStatus).map(([status, count]) => (
-                  <span key={status} className="text-sm">
-                    <strong>{status}:</strong> {count}
-                  </span>
-                ))}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1">
+                  <Icon className="h-3 w-3 text-muted-foreground" />
+                  <span className="text-[11px] font-medium">{meta.label}</span>
+                </div>
+                <Switch
+                  checked={enabled}
+                  onCheckedChange={(v) => toggleEnricher(meta.name, v)}
+                  disabled={isToggling}
+                  className="scale-[0.6] origin-right"
+                />
               </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">Load status...</p>
-            )}
-            <Button variant="outline" size="sm" className="mt-2" onClick={loadProcessingStatus}>
-              Refresh
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+              {enabled && stats ? (
+                <div className="text-center">
+                  <div className="text-base font-semibold tabular-nums leading-none">{stats.done.toLocaleString()}</div>
+                  <div className="text-[9px] text-muted-foreground mt-0.5">
+                    {stats.failed > 0 ? <span className="text-red-500">{stats.failed} failed</span> : 'processed'}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center">
+                  <div className="text-base font-semibold tabular-nums leading-none text-muted-foreground/40">—</div>
+                  <div className="text-[9px] text-muted-foreground mt-0.5">{meta.description}</div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };

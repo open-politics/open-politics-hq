@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import uuid
 
 # Removed Depends
+from sqlalchemy import text
 from sqlmodel import Session, select, func
 
 from app.models import (
@@ -48,9 +49,6 @@ if TYPE_CHECKING:
     from app.api.modules.sharing.services.shareable_service import ShareableService
 
 # Removed SessionDep import
-# Import the new utility function
-from app.api.global_utils import validate_infospace_access
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -79,8 +77,6 @@ class InfospaceService:
     ) -> Infospace:
         """Create a new infospace."""
         logger.info(f"Service: Creating infospace '{infospace_in.name}' for user {user_id}")
-        # No need for validate_infospace_access here as we are creating it for the user
-        
         db_infospace = Infospace.model_validate(infospace_in) # Use model_validate
         db_infospace.owner_id = user_id # Correct field name for owner
         # Timestamps and UUID should be handled by model defaults
@@ -96,10 +92,9 @@ class InfospaceService:
         infospace_id: int,
         user_id: int # user_id is mandatory for validation
     ) -> Optional[Infospace]:
-        """Get a specific infospace by ID, ensuring user ownership."""
+        """Get a specific infospace by ID."""
         logger.debug(f"Service: Getting infospace {infospace_id} for user {user_id}")
-        # validate_infospace_access will raise HTTPException if not found or access denied
-        infospace = validate_infospace_access(self.session, infospace_id, user_id)
+        infospace = self.session.get(Infospace, infospace_id)
         return infospace
 
     def list_infospaces( # Renamed from get_user_infospaces for consistency
@@ -223,12 +218,11 @@ class InfospaceService:
             ).all()
             logger.info(f"Service: Deleting {len(bundles)} bundles")
             for bundle in bundles:
-                # Clear bundle_id from all assets in this bundle (orphan them)
-                assets_in_bundle = self.session.exec(
-                    select(Asset).where(Asset.bundle_id == bundle.id)
-                ).all()
-                for asset in assets_in_bundle:
-                    asset.bundle_id = None
+                # Remove this bundle from all assets' bundle_ids arrays
+                self.session.execute(
+                    text("UPDATE asset SET bundle_ids = NULLIF(array_remove(bundle_ids, :bid), ARRAY[]::int[]) WHERE bundle_ids @> ARRAY[:bid]::int[]"),
+                    {"bid": bundle.id},
+                )
                 
                 # Clear root_bundle_id from IngestionJob records
                 from app.models import IngestionJob

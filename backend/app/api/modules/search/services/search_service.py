@@ -20,7 +20,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from sqlmodel import Session, select
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from app.api.modules.content.query import AssetQuery
 from app.models import Asset, Bundle, AssetKind
@@ -136,7 +136,9 @@ class SearchService:
             bundle = self.session.get(Bundle, bundle_id)
             if not bundle or bundle.infospace_id != infospace_id:
                 raise ValueError(f"Bundle {bundle_id} not found")
-            base_query = base_query.where(Asset.bundle_id == bundle_id)
+            base_query = base_query.where(
+                text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id)
+            )
 
         # Phase 1: Title matches
         title_query = base_query.where(func.lower(Asset.title).contains(search_term))
@@ -155,7 +157,7 @@ class SearchService:
             for bundle in matching_bundles:
                 bundle_asset_query = (
                     select(Asset)
-                    .where(Asset.bundle_id == bundle.id)
+                    .where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle.id))
                     .where(Asset.infospace_id == infospace_id)
                     .where(Asset.user_id == user_id)
                 )

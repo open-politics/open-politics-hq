@@ -1,13 +1,10 @@
   'use client'
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Brain, Microscope, FileText, Search, Activity, Terminal, Settings, MessageSquare, Database, Sparkles } from "lucide-react"
+import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Microscope, FileText, Terminal, Settings, MessageSquare, Database, Sparkles } from "lucide-react"
 import Link from "next/link"
-import ProviderHub from '@/components/collection/management/ProviderHub'
-import ModelManager from '@/components/collection/management/ModelManager'
 import withAuth from '@/hooks/withAuth'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useEffect } from 'react'
 
@@ -147,33 +144,6 @@ function DesksPage() {
         </div>
       </div>
 
-      {/* Provider Configuration Section - Full Width */}
-      <div>
-        <h2 className="text-lg font-medium mb-4 text-gray-700 dark:text-gray-300">Foundation Services & Provider Configuration</h2>
-        <Card className="bg-gray-50/40 dark:bg-gray-900/20 border-gray-300 dark:border-gray-700">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-3">
-              <div className="p-1.5 rounded-md bg-gray-500/15 dark:bg-gray-500/20 text-gray-700 dark:text-gray-400">
-                <Settings className="w-4 h-4" />
-              </div>
-              <div>
-                <CardTitle className="text-base font-medium text-gray-900 dark:text-gray-100">
-                  Manage AI, Search, Embedding, and Geocoding Providers
-                </CardTitle>
-                <CardDescription className="text-sm text-gray-600 dark:text-gray-400">
-                  Configure your AI models and service providers
-                </CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-0 space-y-4">
-            <ProviderHub />
-            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-              <ModelManager showModels={true} showProviderSelector={false} />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
     </div>
   )
 }

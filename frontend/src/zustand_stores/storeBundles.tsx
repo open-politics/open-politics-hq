@@ -179,7 +179,7 @@ export const useBundleStore = create<BundleState>((set, get) => ({
     
     set({ isLoading: true, error: null });
     try {
-      const response = await fetch(`${OpenAPI.BASE}/api/v1/bundles/infospaces/${activeInfospace.id}/bundles/${bundleId}/assets?skip=0&limit=100`, {
+      const response = await fetch(`${OpenAPI.BASE}/api/v1/infospaces/${activeInfospace.id}/bundles/${bundleId}/assets?skip=0&limit=100`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,

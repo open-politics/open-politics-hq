@@ -15,7 +15,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from app.api import dependency_injection
-from app.api.global_utils import validate_infospace_access
+from app.api.modules.identity_infospace_user.access import Access, Capability, Requires
 from app.api.modules.content.types import importable_extensions
 
 logger = logging.getLogger(__name__)
@@ -64,8 +64,8 @@ def browse_storage(
         True,
         description="Include file_count, importable_count, size_bytes for directories (expensive on large trees)",
     ),
+    access: Access = Requires(Capability.INGEST),  # browsing storage for import = ingest capability
     db=dependency_injection.Depends(dependency_injection.get_db),
-    current_user=dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> StorageBrowseResponse:
     """
     List immediate children of a directory under allowed import paths.
@@ -75,8 +75,7 @@ def browse_storage(
     """
     from app.core.config import settings
 
-    infospace = validate_infospace_access(db, infospace_id, current_user.id)
-    is_owner = infospace.owner_id == current_user.id
+    is_owner = access.is_owner
 
     allowed_str = [p.strip() for p in (settings.ALLOWED_IMPORT_PATHS or "").split(",") if p.strip()]
     if not allowed_str:

@@ -119,6 +119,18 @@ def _dispatch_task_for_infospace(desc, infospace_id: int, budget: int = MAX_PER_
         except Exception:
             pass
 
+    # Check available concurrency slots
+    available_slots = desc.max_concurrency
+    if r:
+        try:
+            from app.core.tasks import count_occupied_slots
+            occupied = count_occupied_slots(r, desc.name, infospace_id, desc.max_concurrency)
+            available_slots = desc.max_concurrency - occupied
+            if available_slots <= 0:
+                return 0
+        except Exception:
+            pass  # degrade to max_concurrency if count fails
+
     try:
         with engine.connect() as conn:
             with Session(bind=conn) as session:
@@ -145,7 +157,7 @@ def _dispatch_task_for_infospace(desc, infospace_id: int, budget: int = MAX_PER_
         dispatched = 0
         total_items = 0
         for batch in _chunk(ids, desc.batch):
-            if desc.dispatch_limit and dispatched >= desc.dispatch_limit:
+            if dispatched >= available_slots:
                 break
             if total_items >= budget:
                 break

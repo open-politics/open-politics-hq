@@ -8,7 +8,7 @@ import logging
 import tempfile
 import os
 
-from app.api.dependency_injection import SessionDep, CurrentUser, DatasetServiceDep, ShareableServiceDep, StorageProviderDep
+from app.api.dependency_injection import SessionDep, DatasetServiceDep, ShareableServiceDep, StorageProviderDep
 from app.models import (
     Dataset,
     ResourceType,
@@ -21,6 +21,9 @@ from app.schemas import (
     Message,
 )
 from app.api.modules.sharing.services import DataPackage
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +36,17 @@ router = APIRouter(
 @router.post("/", response_model=DatasetRead, status_code=status.HTTP_201_CREATED)
 def create_dataset(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     dataset_in: DatasetCreate,
-    service: DatasetServiceDep
+    service: DatasetServiceDep,
+    access: Access = Requires(Capability.ORGANIZE),
 ) -> DatasetRead:
     """
     Create a new dataset within a specific infospace.
     """
     try:
         dataset = service.create_dataset(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             dataset_in=dataset_in
         )
         return dataset
@@ -62,19 +64,21 @@ def create_dataset(
 @router.get("/", response_model=DatasetsOut)
 def list_datasets(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     skip: int = 0,
     limit: int = Query(default=100, le=200),
-    service: DatasetServiceDep
+    service: DatasetServiceDep,
+    access: Access = Requires(),
 ) -> DatasetsOut:
     """
     Retrieve datasets within a specific infospace.
     """
+    # Datasets aren't in the package scope model — scoped access sees nothing
+    if access.scope:
+        return DatasetsOut(data=[], count=0)
     try:
         datasets, count = service.list_datasets(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             skip=skip,
             limit=limit
         )
@@ -91,22 +95,23 @@ def list_datasets(
 @router.get("/{dataset_id}", response_model=DatasetRead)
 def get_dataset(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     dataset_id: int,
-    service: DatasetServiceDep
+    service: DatasetServiceDep,
+    access: Access = Requires(),
 ) -> DatasetRead:
     """
     Get a specific dataset by ID.
     """
+    # Datasets aren't in the package scope model — scoped access sees nothing
+    if access.scope:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     try:
         dataset = service.get_dataset(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             dataset_id=dataset_id
         )
         if not dataset:
-            # Service returns None if not found/accessible
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dataset not found or not accessible")
         return dataset
     except ValueError as e:
@@ -121,19 +126,18 @@ def get_dataset(
 @router.patch("/{dataset_id}", response_model=DatasetRead)
 def update_dataset(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     dataset_id: int,
     dataset_in: DatasetUpdate,
-    service: DatasetServiceDep
+    service: DatasetServiceDep,
+    access: Access = Requires(Capability.ORGANIZE),
 ) -> DatasetRead:
     """
     Update a dataset.
     """
     try:
         updated_dataset = service.update_dataset(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             dataset_id=dataset_id,
             dataset_in=dataset_in
         )
@@ -154,18 +158,17 @@ def update_dataset(
 @router.delete("/{dataset_id}", response_model=Message)
 def delete_dataset(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     dataset_id: int,
-    service: DatasetServiceDep
+    service: DatasetServiceDep,
+    access: Access = Requires(Capability.DELETE),
 ) -> Message:
     """
     Delete a dataset.
     """
     try:
         deleted_dataset = service.delete_dataset(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             dataset_id=dataset_id
         )
         if not deleted_dataset:
@@ -186,9 +189,8 @@ def delete_dataset(
 @router.post("/{dataset_id}/export", response_class=FileResponse)
 async def export_dataset(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     dataset_id: int,
+    access: Access = Requires(),
     include_content: bool = Query(False, description="Include full text content of data records"),
     include_results: bool = Query(False, description="Include associated classification results"),
     include_source_files: bool = Query(True, description="Include original source files (PDFs, CSVs, etc.)"),
@@ -200,8 +202,8 @@ async def export_dataset(
     try:
         # Export the dataset to a package
         package = await service.export_dataset_package(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             dataset_id=dataset_id,
             include_record_content=include_content,
             include_results=include_results,
@@ -244,11 +246,10 @@ async def export_dataset(
 @router.post("/import", response_model=DatasetRead)
 async def import_dataset(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     file: UploadFile = File(..., description="Dataset Package file (.zip)"),
     conflict_strategy: str = Query('skip', description="How to handle conflicts"),
     service: DatasetServiceDep,
+    access: Access = Requires(Capability.INGEST),
 ) -> DatasetRead:
     """
     Import a dataset from an exported Dataset Package file.
@@ -262,8 +263,8 @@ async def import_dataset(
 
         # Import the package
         imported_dataset = await service.import_dataset_package(
-            target_user_id=current_user.id,
-            target_infospace_id=infospace_id,
+            target_user_id=access.user_id,
+            target_infospace_id=access.infospace_id,
             package=package,
             conflict_resolution_strategy=conflict_strategy
         )
@@ -284,9 +285,8 @@ async def import_dataset(
 @router.post("/import_from_token", response_model=DatasetRead)
 async def import_dataset_from_token(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     share_token: str = Query(..., description="Share token for the dataset"),
+    access: Access = Requires(Capability.INGEST),
     include_content: bool = Query(False, description="Include full text content if available"),
     include_results: bool = Query(False, description="Include classification results if available"),
     conflict_strategy: str = Query('skip', description="How to handle conflicts"),
@@ -297,13 +297,14 @@ async def import_dataset_from_token(
     Import a dataset into the target infospace using a share token.
     This internally performs an export from the source and then an import.
     """
+    infospace_id = access.infospace_id
     logger.info(f"Attempting import from token {share_token[:5]}... into infospace {infospace_id}")
 
     # 1. Validate Token & Get Metadata
     try:
         shared_info = shareable_service.access_shared_resource(
             token=share_token,
-            requesting_user_id=current_user.id
+            requesting_user_id=access.user_id
         )
         if shared_info.get("resource_type") != ResourceType.DATASET.value:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Token does not correspond to a dataset")
@@ -330,7 +331,7 @@ async def import_dataset_from_token(
     # 2. Internally Export the Dataset Package
     try:
         package = await service.export_dataset_package(
-            user_id=current_user.id,
+            user_id=access.user_id,
             infospace_id=original_infospace_id,
             dataset_id=original_dataset_id,
             include_record_content=include_content,
@@ -347,8 +348,8 @@ async def import_dataset_from_token(
     # 3. Import the Dataset Package into the Target Infospace
     try:
         imported_dataset = await service.import_dataset_package(
-            target_user_id=current_user.id,
-            target_infospace_id=infospace_id,
+            target_user_id=access.user_id,
+            target_infospace_id=access.infospace_id,
             package=package,
             conflict_resolution_strategy=conflict_strategy
         )

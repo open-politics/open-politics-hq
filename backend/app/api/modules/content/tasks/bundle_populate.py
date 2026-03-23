@@ -2,9 +2,10 @@
 
 import logging
 
-from sqlmodel import select, update
+from sqlalchemy import text
+from sqlmodel import select
 
-from app.api.modules.content.models import Asset, Bundle
+from app.api.modules.content.models import Bundle
 from app.api.modules.content.query import AssetQuery
 from app.api.modules.content.query_parser import parse
 from app.core.tasks import TaskContext, task
@@ -53,10 +54,14 @@ def populate_bundle_from_query(ctx: TaskContext, bundle_ids: list[int]):
             if not asset_ids:
                 continue
 
-            session.exec(
-                update(Asset)
-                .where(Asset.id.in_(asset_ids))
-                .values(bundle_id=bundle_id)
+            # Use array_append pattern — "Add to" semantics (assets keep existing memberships)
+            session.execute(
+                text(
+                    "UPDATE asset SET bundle_ids = array_append(COALESCE(bundle_ids, ARRAY[]::int[]), :bid) "
+                    "WHERE id = ANY(:ids) "
+                    "AND NOT (COALESCE(bundle_ids, ARRAY[]::int[]) @> ARRAY[:bid]::int[])"
+                ),
+                {"bid": bundle_id, "ids": asset_ids},
             )
             bundle.asset_count = len(asset_ids)
             session.commit()

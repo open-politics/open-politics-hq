@@ -7,7 +7,7 @@ Periodic maintenance: retire superseded entity references, re-resolve singletons
 from sqlalchemy import text, or_
 from sqlmodel import select
 
-from app.api.modules.graph.models import EntityCanonical, FragmentCuration
+from app.api.modules.graph.models import EntityCanonical, FragmentCuration, GraphEdge
 from app.api.modules.content.models import Asset
 from app.models import Annotation
 from app.core.tasks import TaskContext, task
@@ -42,7 +42,7 @@ def retire_superseded(ctx: TaskContext, ids: list[int]):
           .where(text("(aliases IS NULL OR jsonb_array_length(COALESCE(aliases::jsonb, '[]'::jsonb)) <= 1)"))
       ),
       schedule=21600,
-      batch=20, exclusive=True, tags=frozenset({"graph"}))
+      batch=20, max_concurrency=1, tags=frozenset({"graph"}))
 def re_resolve(ctx: TaskContext, ids: list[int]):
     """Re-resolve singleton entities for deduplication."""
     from app.api.modules.graph.resolution import find_by_alias
@@ -68,6 +68,21 @@ def re_resolve(ctx: TaskContext, ids: list[int]):
             merged_props = dict(other.properties or {})
             merged_props.update(entity.properties or {})
 
+            # Update GraphEdge FK references
+            for ge in session.exec(
+                select(GraphEdge).where(
+                    or_(
+                        GraphEdge.subject_entity_id == entity.id,
+                        GraphEdge.object_entity_id == entity.id,
+                    )
+                )
+            ).all():
+                if ge.subject_entity_id == entity.id:
+                    ge.subject_entity_id = other.id
+                if ge.object_entity_id == entity.id:
+                    ge.object_entity_id = other.id
+                session.add(ge)
+            # Update FragmentCuration FK references
             for fc in session.exec(
                 select(FragmentCuration).where(
                     or_(

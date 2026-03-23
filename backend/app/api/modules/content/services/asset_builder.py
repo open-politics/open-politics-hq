@@ -641,10 +641,6 @@ class AssetBuilder:
         Compose article with embedded assets.
         Used by POST /assets/compose-article route.
         """
-        from app.api.global_utils import validate_infospace_access
-
-        validate_infospace_access(session, infospace_id, user_id)
-
         builder = cls(session, user_id, infospace_id).from_article(
             title, content, summary, embedded_assets
         )

@@ -8,6 +8,7 @@ No service class needed - just pure functions for formatting data.
 
 from typing import List, Dict, Set, Optional, Any
 from urllib.parse import quote, unquote
+from sqlalchemy import text
 from sqlmodel import Session, select
 from app.models import Asset, Bundle, AssetKind, Source, Flow, FlowStatus, Task, TaskStatus, IngestionJob, IngestionStatus
 from app.schemas import TreeNode, TreeNodeType
@@ -149,20 +150,21 @@ def build_tree_node_from_asset(asset: Asset, parent_type: str = None, parent_id:
     )
 
 
-def get_bundled_asset_ids(bundles: List[Bundle]) -> Set[int]:
+def get_bundled_asset_ids(bundles: List[Bundle], session: Optional[Session] = None) -> Set[int]:
     """
     Extract all asset IDs that are contained in the given bundles.
-    
+
     Returns a set of asset IDs for efficient lookup.
-    Note: With the new one-to-many model, we could query by bundle_id,
-    but keeping this for compatibility with the relationship access pattern.
+    Requires a session to query via the bundle_ids array column.
     """
-    bundled_ids = set()
-    for bundle in bundles:
-        # Access the assets relationship (one-to-many via bundle_id)
-        for asset in bundle.assets:
-            bundled_ids.add(asset.id)
-    return bundled_ids
+    if not bundles or not session:
+        return set()
+    bundle_id_list = [b.id for b in bundles]
+    rows = session.execute(
+        text("SELECT id FROM asset WHERE bundle_ids && ARRAY[:bids]::int[]"),
+        {"bids": bundle_id_list},
+    ).all()
+    return {r[0] for r in rows}
 
 
 def build_root_tree_nodes(

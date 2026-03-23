@@ -25,6 +25,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from sqlalchemy import text as sa_text
 from sqlmodel import Session, select
 
 from app.models import Asset, AssetKind, Bundle, ProcessingStatus
@@ -115,7 +116,7 @@ class DirectoryImportHandler(BaseHandler):
     def _existing_blob_paths(self, bundle_id: int) -> Set[str]:
         """Get set of existing blob_paths for idempotency."""
         stmt = select(Asset.blob_path).where(
-            Asset.bundle_id == bundle_id,
+            sa_text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id),
             Asset.infospace_id == self.infospace_id,
             Asset.blob_path.is_not(None),
         )
@@ -129,7 +130,7 @@ class DirectoryImportHandler(BaseHandler):
         stmt = (
             select(Asset)
             .where(
-                Asset.bundle_id == bundle_id,
+                sa_text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id),
                 Asset.infospace_id == self.infospace_id,
                 Asset.blob_path.isnot(None),
                 Asset.parent_asset_id.is_(None),
@@ -362,7 +363,7 @@ class DirectoryImportHandler(BaseHandler):
                     kind=kind,
                     infospace_id=self.infospace_id,
                     user_id=self.user_id,
-                    bundle_id=root_bundle.id,
+                    bundle_ids=[root_bundle.id],
                     blob_path=blob_path,
                     logical_path=logical_path,
                     processing_status=ProcessingStatus.PENDING,
@@ -441,7 +442,7 @@ class DirectoryImportHandler(BaseHandler):
                     kind=kind,
                     infospace_id=self.infospace_id,
                     user_id=self.user_id,
-                    bundle_id=root_bundle.id,
+                    bundle_ids=[root_bundle.id],
                     blob_path=blob_path,
                     logical_path=logical_path,
                     processing_status=ProcessingStatus.PENDING,
@@ -475,9 +476,8 @@ class DirectoryImportHandler(BaseHandler):
             self.session.commit()
 
         # Update bundle asset count
-        from sqlalchemy import func
-        count_stmt = select(func.count(Asset.id)).where(Asset.bundle_id == root_bundle.id)
-        new_count = self.session.exec(count_stmt).one() or 0
+        count_stmt = sa_text("SELECT count(*) FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=root_bundle.id)
+        new_count = self.session.execute(count_stmt).scalar() or 0
         root_bundle.asset_count = new_count
         self.session.add(root_bundle)
         self.session.commit()
@@ -635,7 +635,7 @@ class DirectoryImportHandler(BaseHandler):
                 kind=kind,
                 infospace_id=self.infospace_id,
                 user_id=self.user_id,
-                bundle_id=root_bundle.id,
+                bundle_ids=[root_bundle.id],
                 blob_path=blob_path,
                 logical_path=logical_path,
                 processing_status=ProcessingStatus.PENDING,
@@ -665,9 +665,8 @@ class DirectoryImportHandler(BaseHandler):
                 on_batch_complete(last_processed_path, total_processed)
 
         # Update root bundle asset count
-        from sqlalchemy import func
-        count_stmt = select(func.count(Asset.id)).where(Asset.bundle_id == root_bundle.id)
-        new_count = self.session.exec(count_stmt).one() or 0
+        count_stmt = sa_text("SELECT count(*) FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=root_bundle.id)
+        new_count = self.session.execute(count_stmt).scalar() or 0
         root_bundle.asset_count = new_count
         self.session.add(root_bundle)
         self.session.commit()

@@ -218,7 +218,7 @@ const EntityManager: React.FC = () => {
           </Button>
         </div>
       ) : (
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 max-h-[calc(100vh-12rem)]">
           <Table>
             <TableHeader>
               <TableRow>

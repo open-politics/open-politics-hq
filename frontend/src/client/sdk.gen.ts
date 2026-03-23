@@ -3,7 +3,7 @@
 import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
-import type { GetRegistrationStatsResponse, ListAnalysisAdaptersResponse, ExecuteAnalysisAdapterData, ExecuteAnalysisAdapterResponse, PromoteFragmentData, PromoteFragmentResponse, DeleteFragmentData, DeleteFragmentResponse2, CreateRunData, CreateRunResponse, ListRunsData, ListRunsResponse, CreateRun1Data, CreateRun1Response, ListRuns1Data, ListRuns1Response, GetRunData, GetRunResponse, UpdateRunData, UpdateRunResponse, DeleteRunData, DeleteRunResponse, RetryFailedAnnotationsData, RetryFailedAnnotationsResponse, CreatePackageFromRunEndpointData, CreatePackageFromRunEndpointResponse, ExportRunAnnotationsCsvData, ExportRunAnnotationsCsvResponse, CreateAnnotationData, CreateAnnotationResponse, CreateAnnotation1Data, CreateAnnotation1Response, ListAnnotationsData, ListAnnotationsResponse, ListAnnotations1Data, ListAnnotations1Response, CreateAnnotation2Data, CreateAnnotation2Response, CreateAnnotation3Data, CreateAnnotation3Response, ListAnnotations2Data, ListAnnotations2Response, ListAnnotations3Data, ListAnnotations3Response, GetAnnotationData, GetAnnotationResponse, GetAnnotation1Data, GetAnnotation1Response, UpdateAnnotationData, UpdateAnnotationResponse, UpdateAnnotation1Data, UpdateAnnotation1Response, DeleteAnnotationData, DeleteAnnotationResponse, DeleteAnnotation1Data, DeleteAnnotation1Response, CreateBatchAnnotationsData, CreateBatchAnnotationsResponse, CreateBatchAnnotations1Data, CreateBatchAnnotations1Response, GetRunResultsData, GetRunResultsResponse, GetRunResults1Data, GetRunResults1Response, RetrySingleAnnotationData, RetrySingleAnnotationResponse, RetrySingleAnnotation1Data, RetrySingleAnnotation1Response, CurateFragmentsData, CurateFragmentsResponse, CurateFragments1Data, CurateFragments1Response, RemoveCurationData, RemoveCurationResponse, RemoveCuration1Data, RemoveCuration1Response, GetCuratedTripletsData, GetCuratedTripletsResponse, GetCuratedTriplets1Data, GetCuratedTriplets1Response, CreateAnnotationSchemaData, CreateAnnotationSchemaResponse, ListAnnotationSchemasData, ListAnnotationSchemasResponse, CreateAnnotationSchema1Data, CreateAnnotationSchema1Response, ListAnnotationSchemas1Data, ListAnnotationSchemas1Response, GetAnnotationSchemaData, GetAnnotationSchemaResponse, UpdateAnnotationSchemaData, UpdateAnnotationSchemaResponse, DeleteAnnotationSchemaData, DeleteAnnotationSchemaResponse, RestoreAnnotationSchemaData, RestoreAnnotationSchemaResponse, ReadyzResponse, LivenessResponse, HealthzResponse, CreateAssetData, CreateAssetResponse, CreateAsset1Data, CreateAsset1Response, ListAssetsData, ListAssetsResponse, ListAssets1Data, ListAssets1Response, CreateAsset2Data, CreateAsset2Response, CreateAsset3Data, CreateAsset3Response, ListAssets2Data, ListAssets2Response, ListAssets3Data, ListAssets3Response, BatchCreateAssetsData, BatchCreateAssetsResponse, BatchCreateAssets1Data, BatchCreateAssets1Response, UploadFileData, UploadFileResponse, UploadFile1Data, UploadFile1Response, IngestUrlData, IngestUrlResponse, IngestUrl1Data, IngestUrl1Response, IngestTextData, IngestTextResponse, IngestText1Data, IngestText1Response, ComposeArticleData, ComposeArticleResponse, ComposeArticle1Data, ComposeArticle1Response, BulkIngestUrlsData, BulkIngestUrlsResponse, BulkIngestUrls1Data, BulkIngestUrls1Response, IngestSearchResultsData, IngestSearchResultsResponse, IngestSearchResults1Data, IngestSearchResults1Response, MaterializeCsvFromRowsData, MaterializeCsvFromRowsResponse, MaterializeCsvFromRows1Data, MaterializeCsvFromRows1Response, ReprocessAssetData, ReprocessAssetResponse, ReprocessAsset1Data, ReprocessAsset1Response, UpdateAssetContentData, UpdateAssetContentResponse, UpdateAssetContent1Data, UpdateAssetContent1Response, DiscoverRssFeedsData, DiscoverRssFeedsResponse, DiscoverRssFeeds1Data, DiscoverRssFeeds1Response, PreviewRssFeedData, PreviewRssFeedResponse, PreviewRssFeed1Data, PreviewRssFeed1Response, IngestSelectedArticlesData, IngestSelectedArticlesResponse, IngestSelectedArticles1Data, IngestSelectedArticles1Response, GetAssetData, GetAssetResponse, GetAsset1Data, GetAsset1Response, UpdateAssetData, UpdateAssetResponse, UpdateAsset1Data, UpdateAsset1Response, DeleteAssetData, DeleteAssetResponse, DeleteAsset1Data, DeleteAsset1Response, GetAssetChildrenData, GetAssetChildrenResponse, GetAssetChildren1Data, GetAssetChildren1Response, BulkDeleteAssetsData, BulkDeleteAssetsResponse, BulkDeleteAssets1Data, BulkDeleteAssets1Response, TransferAssetsData, TransferAssetsResponse, TransferAssets1Data, TransferAssets1Response, GetSupportedContentTypesResponse, GetSupportedContentTypes1Response, CreateAssetsBackgroundBulkData, CreateAssetsBackgroundBulkResponse, CreateAssetsBackgroundBulk1Data, CreateAssetsBackgroundBulk1Response, CreateAssetsBackgroundUrlsData, CreateAssetsBackgroundUrlsResponse, CreateAssetsBackgroundUrls1Data, CreateAssetsBackgroundUrls1Response, AddFilesToBundleBackgroundData, AddFilesToBundleBackgroundResponse, AddFilesToBundleBackground1Data, AddFilesToBundleBackground1Response, GetTaskStatusData, GetTaskStatusResponse, GetTaskStatus1Data, GetTaskStatus1Response, IngestRssFeedsFromAwesomeData, IngestRssFeedsFromAwesomeResponse, IngestRssFeedsFromAwesome1Data, IngestRssFeedsFromAwesome1Response, CreateBackupData, CreateBackupResponse, ListBackupsData, ListBackupsResponse, ListAllUserBackupsData, ListAllUserBackupsResponse, GetBackupData, GetBackupResponse, UpdateBackupData, UpdateBackupResponse, DeleteBackupData, DeleteBackupResponse, RestoreBackupData, RestoreBackupResponse, CreateBackupShareLinkData, CreateBackupShareLinkResponse, DownloadSharedBackupData, DownloadSharedBackupResponse, CleanupExpiredBackupsResponse, GetInfospacesBackupOverviewData, GetInfospacesBackupOverviewResponse, TriggerBackupAllInfospacesData, TriggerBackupAllInfospacesResponse, TriggerBackupSpecificInfospacesData, TriggerBackupSpecificInfospacesResponse, MaterializeVirtualFolderData, MaterializeVirtualFolderResponse, CreateBundleData, CreateBundleResponse, GetBundlesData, GetBundlesResponse, GetBundleData, GetBundleResponse, UpdateBundleData, UpdateBundleResponse, DeleteBundleData, DeleteBundleResponse, BulkDeleteBundlesData, BulkDeleteBundlesResponse, AddAssetToBundleData, AddAssetToBundleResponse, RemoveAssetFromBundleData, RemoveAssetFromBundleResponse, GetAssetsInBundleData, GetAssetsInBundleResponse, TransferBundleData, TransferBundleResponse, MoveBundleToParentData, MoveBundleToParentResponse, GetBundleHierarchyData, GetBundleHierarchyResponse, GetRootBundlesData, GetRootBundlesResponse, GetBulkBundleAssetsData, GetBulkBundleAssetsResponse, ListEntitiesData, ListEntitiesResponse, CreateEntityData, CreateEntityResponse, UpdateEntityData, UpdateEntityResponse, DeleteEntityData, DeleteEntityResponse, MergeEntitiesData, MergeEntitiesResponse, TriggerResolutionData, TriggerResolutionResponse, ListConversationsData, ListConversationsResponse, CreateConversationData, CreateConversationResponse, GetConversationData, GetConversationResponse, UpdateConversationData, UpdateConversationResponse, DeleteConversationData, DeleteConversationResponse, AddMessageToConversationData, AddMessageToConversationResponse, GetConversationMessagesData, GetConversationMessagesResponse, ChunkSingleAssetData, ChunkSingleAssetResponse, ChunkMultipleAssetsData, ChunkMultipleAssetsResponse, GetAssetChunksData, GetAssetChunksResponse, RemoveAssetChunksData, RemoveAssetChunksResponse, GetChunkingStatisticsData, GetChunkingStatisticsResponse, CreateDatasetData, CreateDatasetResponse, ListDatasetsData, ListDatasetsResponse, CreateDataset1Data, CreateDataset1Response, ListDatasets1Data, ListDatasets1Response, GetDatasetData, GetDatasetResponse, UpdateDatasetData, UpdateDatasetResponse, DeleteDatasetData, DeleteDatasetResponse, ExportDatasetData, ExportDatasetResponse, ImportDatasetData, ImportDatasetResponse, ImportDatasetFromTokenData, ImportDatasetFromTokenResponse, GenerateInfospaceEmbeddingsData, GenerateInfospaceEmbeddingsResponse, GenerateAssetEmbeddingsData, GenerateAssetEmbeddingsResponse, GetEmbeddingStatsData, GetEmbeddingStatsResponse, SemanticSearchData, SemanticSearchResponse2, ClearInfospaceEmbeddingsData, ClearInfospaceEmbeddingsResponse, DiscoverEmbeddingModelsData, DiscoverEmbeddingModelsResponse, FileUploadData, FileUploadResponse2, FileDownloadData, FileDownloadResponse, ListFilesData, ListFilesResponse, DeleteFileData, DeleteFileResponse, StreamFileData, StreamFileResponse, TestFilterData, TestFilterResponse, GetBasicFilterExamplesResponse, GetAdvancedFilterExamplesResponse, CreateThresholdFilterData, CreateThresholdFilterResponse, CreateRangeFilterData, CreateRangeFilterResponse, CreateKeywordFilterData, CreateKeywordFilterResponse, CreateFlowData, CreateFlowResponse, ListFlowsData, ListFlowsResponse, CreateFlow1Data, CreateFlow1Response, ListFlows1Data, ListFlows1Response, GetFlowData, GetFlowResponse, UpdateFlowData, UpdateFlowResponse, DeleteFlowData, DeleteFlowResponse, ActivateFlowData, ActivateFlowResponse, PauseFlowData, PauseFlowResponse, TriggerFlowExecutionData, TriggerFlowExecutionResponse, ListFlowExecutionsData, ListFlowExecutionsResponse, GetFlowExecutionData, GetFlowExecutionResponse, GetPendingAssetsData, GetPendingAssetsResponse, ResetFlowCursorData, ResetFlowCursorResponse, CreateInfospaceData, CreateInfospaceResponse, ListInfospacesData, ListInfospacesResponse, CreateInfospace1Data, CreateInfospace1Response, ListInfospaces1Data, ListInfospaces1Response, GetInfospaceData, GetInfospaceResponse, UpdateInfospaceData, UpdateInfospaceResponse, DeleteInfospaceData, DeleteInfospaceResponse, InviteCollaboratorData, InviteCollaboratorResponse, ListCollaboratorsData, ListCollaboratorsResponse, RemoveCollaboratorData, RemoveCollaboratorResponse, GetInfospaceStatsData, GetInfospaceStatsResponse, ExportInfospaceData, ExportInfospaceResponse, ImportInfospaceData, ImportInfospaceResponse, CreateDirectoryImportJobData, CreateDirectoryImportJobResponse, TriggerBatchProcessPendingData, TriggerBatchProcessPendingResponse, TriggerBatchEnrichData, TriggerBatchEnrichResponse, GetProcessingStatusData, GetProcessingStatusResponse, ListIngestionJobsData, ListIngestionJobsResponse, GetIngestionJobStatusData, GetIngestionJobStatusResponse, DeleteIngestionJobData, DeleteIngestionJobResponse, GetIngestionJobByUuidData, GetIngestionJobByUuidResponse, CreateArchiveIngestionJobData, CreateArchiveIngestionJobResponse, CancelIngestionJobData, CancelIngestionJobResponse, ReconcileDirectoryData, ReconcileDirectoryResponse, EnableDirectoryWatchData, EnableDirectoryWatchResponse, GetWatchStatusData, GetWatchStatusResponse, IntelligenceChatData, IntelligenceChatResponse, ExecuteToolCallData, ExecuteToolCallResponse, ListAvailableModelsData, ListAvailableModelsResponse, ListUniversalToolsData, ListUniversalToolsResponse, GetInfospaceToolContextData, GetInfospaceToolContextResponse, ListKnowledgeGraphsData, ListKnowledgeGraphsResponse, CreateKnowledgeGraphData, CreateKnowledgeGraphResponse, GetKnowledgeGraphData, GetKnowledgeGraphResponse, UpdateKnowledgeGraphData, UpdateKnowledgeGraphResponse, DeleteKnowledgeGraphData, DeleteKnowledgeGraphResponse, LoginAccessTokenData, LoginAccessTokenResponse, TestTokenResponse, RecoverPasswordData, RecoverPasswordResponse, ResetPasswordData, ResetPasswordResponse, RecoverPasswordHtmlContentData, RecoverPasswordHtmlContentResponse, DiscoverModelsData, DiscoverModelsResponse, SystemCapabilitiesResponse, SearchContentData, SearchContentResponse, SearchContent1Data, SearchContent1Response, SearchAndIngestData, SearchAndIngestResponse2, CreateAssetsFromUrlsData, CreateAssetsFromUrlsResponse, CreateAssetsFromResultsData, CreateAssetsFromResultsResponse, CreateSearchHistoryData, CreateSearchHistoryResponse, ReadSearchHistoriesData, ReadSearchHistoriesResponse, CreateShareableLinkData, CreateShareableLinkResponse, GetShareableLinksData, GetShareableLinksResponse, GetShareableLinkByTokenData, GetShareableLinkByTokenResponse, UpdateShareableLinkData, UpdateShareableLinkResponse, DeleteShareableLinkData, DeleteShareableLinkResponse, AccessSharedResourceData, AccessSharedResourceResponse, ViewSharedResourceData, ViewSharedResourceResponse, GetSharingStatsData, GetSharingStatsResponse, ExportResourceData, ExportResourceResponse, ImportResourceData, ImportResourceResponse, ExportResourcesBatchData, ExportResourcesBatchResponse, ExportMixedBatchData, ExportMixedBatchResponse, StreamSharedAssetFileData, StreamSharedAssetFileResponse, DownloadSharedBundleData, DownloadSharedBundleResponse, DownloadSharedAssetFileData, DownloadSharedAssetFileResponse, ViewDatasetPackageSummaryData, ViewDatasetPackageSummaryResponse, ImportResourceFromTokenData, ImportResourceFromTokenResponse, CreateSourceData, CreateSourceResponse, ListSourcesData, ListSourcesResponse, CreateSource1Data, CreateSource1Response, ListSources1Data, ListSources1Response, GetSourceData, GetSourceResponse, UpdateSourceData, UpdateSourceResponse, DeleteSourceData, DeleteSourceResponse, TriggerSourceProcessingData, TriggerSourceProcessingResponse, TransferSourcesData, TransferSourcesResponse, CreateRssSourceData, CreateRssSourceResponse, ActivateStreamData, ActivateStreamResponse, PauseStreamData, PauseStreamResponse, PollSourceData, PollSourceResponse, GetStreamStatsData, GetStreamStatsResponse, GetPollHistoryData, GetPollHistoryResponse, InitiateDiscourseLoginResponse, InitiateDiscourseLogin1Response, HandleDiscourseSsoData, HandleDiscourseSsoResponse, HandleDiscourseSso1Data, HandleDiscourseSso1Response, HandleDiscourseLogoutResponse, HandleDiscourseLogout1Response, GetDiscourseSsoInfoResponse, GetDiscourseSsoInfo1Response, SyncUserToDiscourseData, SyncUserToDiscourseResponse, SyncUserToDiscourse1Data, SyncUserToDiscourse1Response, CompleteDiscourseSsoData, CompleteDiscourseSsoResponse, CompleteDiscourseSso1Data, CompleteDiscourseSso1Response, BrowseStorageData, BrowseStorageResponse, CreateTaskData, CreateTaskResponse, CreateTask1Data, CreateTask1Response, ListTasksData, ListTasksResponse, ListTasks1Data, ListTasks1Response, CreateTask2Data, CreateTask2Response, CreateTask3Data, CreateTask3Response, ListTasks2Data, ListTasks2Response, ListTasks3Data, ListTasks3Response, GetTaskData, GetTaskResponse, GetTask1Data, GetTask1Response, UpdateTaskData, UpdateTaskResponse, UpdateTask1Data, UpdateTask1Response, DeleteTaskData, DeleteTaskResponse, DeleteTask1Data, DeleteTask1Response, ExecuteTaskManuallyData, ExecuteTaskManuallyResponse, ExecuteTaskManually1Data, ExecuteTaskManually1Response, GetInfospaceTreeData, GetInfospaceTreeResponse, GetTreeChildrenData, GetTreeChildrenResponse, DeleteTreeNodesData, DeleteTreeNodesResponse, GetFeedAssetsData, GetFeedAssetsResponse, BatchGetAssetsData, BatchGetAssetsResponse, TextSearchAssetsData, TextSearchAssetsResponse, CreateUserBackupData, CreateUserBackupResponse, ListUserBackupsData, ListUserBackupsResponse, GetUserBackupData, GetUserBackupResponse, UpdateUserBackupData, UpdateUserBackupResponse, DeleteUserBackupData, DeleteUserBackupResponse, RestoreUserBackupData, RestoreUserBackupResponse, CreateUserBackupShareLinkData, CreateUserBackupShareLinkResponse, DownloadSharedUserBackupData, DownloadSharedUserBackupResponse, CleanupExpiredUserBackupsResponse, GetUsersBackupOverviewData, GetUsersBackupOverviewResponse, TriggerBackupAllUsersData, TriggerBackupAllUsersResponse, TriggerBackupSpecificUsersData, TriggerBackupSpecificUsersResponse, ReadUsersData, ReadUsersResponse, CreateUserData, CreateUserResponse, ReadUsers1Data, ReadUsers1Response, CreateUser1Data, CreateUser1Response, ReadUserMeResponse, UpdateUserMeData, UpdateUserMeResponse, UpdatePasswordMeData, UpdatePasswordMeResponse, SaveCredentialsData, SaveCredentialsResponse, ListCredentialProvidersResponse, DeleteCredentialData, DeleteCredentialResponse, UploadProfilePictureData, UploadProfilePictureResponse, UploadBackgroundImageData, UploadBackgroundImageResponse, GetUserPublicProfileData, GetUserPublicProfileResponse, GetProfilePictureData, GetProfilePictureResponse, GetBackgroundImageData, GetBackgroundImageResponse, DeleteBackgroundImageResponse, ListUserProfilesData, ListUserProfilesResponse, GetUserProfileStatsData, GetUserProfileStatsResponse, UpdateUserProfileData, UpdateUserProfileResponse, CreateUserOpenData, CreateUserOpenResponse, ReadUserByIdData, ReadUserByIdResponse, UpdateUserData, UpdateUserResponse, DeleteUserData, DeleteUserResponse, VerifyEmailData, VerifyEmailResponse, ResendVerificationData, ResendVerificationResponse, TestEmailData, TestEmailResponse, GetAvailableRssCountriesResponse, DiscoverCuratedRssFeedsData, DiscoverCuratedRssFeedsResponse, ExtractPdfTextData, ExtractPdfTextResponse, ExtractPdfMetadataData, ExtractPdfMetadataResponse, ScrapeArticleData, ScrapeArticleResponse, AnalyzeSourceData, AnalyzeSourceResponse, DiscoverRssFeedsFromSiteData, DiscoverRssFeedsFromSiteResponse, BrowseRssFeedData, BrowseRssFeedResponse, GetUnifiedProvidersResponse, GetProvidersResponse, PullOllamaModelData, PullOllamaModelResponse, GetOllamaAvailableModelsData, GetOllamaAvailableModelsResponse, RemoveOllamaModelData, RemoveOllamaModelResponse, GetGeocodingProvidersResponse, GeocodeLocationData, GeocodeLocationResponse, GeocodeLocationWithProviderData, GeocodeLocationWithProviderResponse, GetCountryDataData, GetCountryDataResponse } from './types.gen';
+import type { GetRegistrationStatsResponse, ListAnalysisAdaptersResponse, ExecuteAnalysisAdapterData, ExecuteAnalysisAdapterResponse, PromoteFragmentData, PromoteFragmentResponse, DeleteFragmentData, DeleteFragmentResponse2, CreateRunData, CreateRunResponse, ListRunsData, ListRunsResponse, CreateRun1Data, CreateRun1Response, ListRuns1Data, ListRuns1Response, GetRunData, GetRunResponse, UpdateRunData, UpdateRunResponse, DeleteRunData, DeleteRunResponse, RetryFailedAnnotationsData, RetryFailedAnnotationsResponse, CreatePackageFromRunEndpointData, CreatePackageFromRunEndpointResponse, ExportRunAnnotationsCsvData, ExportRunAnnotationsCsvResponse, CreateAnnotationData, CreateAnnotationResponse, CreateAnnotation1Data, CreateAnnotation1Response, ListAnnotationsData, ListAnnotationsResponse, ListAnnotations1Data, ListAnnotations1Response, CreateAnnotation2Data, CreateAnnotation2Response, CreateAnnotation3Data, CreateAnnotation3Response, ListAnnotations2Data, ListAnnotations2Response, ListAnnotations3Data, ListAnnotations3Response, GetAnnotationData, GetAnnotationResponse, GetAnnotation1Data, GetAnnotation1Response, UpdateAnnotationData, UpdateAnnotationResponse, UpdateAnnotation1Data, UpdateAnnotation1Response, DeleteAnnotationData, DeleteAnnotationResponse, DeleteAnnotation1Data, DeleteAnnotation1Response, CreateBatchAnnotationsData, CreateBatchAnnotationsResponse, CreateBatchAnnotations1Data, CreateBatchAnnotations1Response, GetRunResultsData, GetRunResultsResponse, GetRunResults1Data, GetRunResults1Response, RetrySingleAnnotationData, RetrySingleAnnotationResponse, RetrySingleAnnotation1Data, RetrySingleAnnotation1Response, CurateFragmentsData, CurateFragmentsResponse, CurateFragments1Data, CurateFragments1Response, RemoveCurationData, RemoveCurationResponse, RemoveCuration1Data, RemoveCuration1Response, GetCuratedTripletsData, GetCuratedTripletsResponse, GetCuratedTriplets1Data, GetCuratedTriplets1Response, CreateAnnotationSchemaData, CreateAnnotationSchemaResponse, ListAnnotationSchemasData, ListAnnotationSchemasResponse, CreateAnnotationSchema1Data, CreateAnnotationSchema1Response, ListAnnotationSchemas1Data, ListAnnotationSchemas1Response, GetAnnotationSchemaData, GetAnnotationSchemaResponse, UpdateAnnotationSchemaData, UpdateAnnotationSchemaResponse, DeleteAnnotationSchemaData, DeleteAnnotationSchemaResponse, RestoreAnnotationSchemaData, RestoreAnnotationSchemaResponse, ReadyzResponse, LivenessResponse, HealthzResponse, CreateAssetData, CreateAssetResponse, CreateAsset1Data, CreateAsset1Response, ListAssetsData, ListAssetsResponse, ListAssets1Data, ListAssets1Response, CreateAsset2Data, CreateAsset2Response, CreateAsset3Data, CreateAsset3Response, ListAssets2Data, ListAssets2Response, ListAssets3Data, ListAssets3Response, BatchCreateAssetsData, BatchCreateAssetsResponse, BatchCreateAssets1Data, BatchCreateAssets1Response, UploadFileData, UploadFileResponse, UploadFile1Data, UploadFile1Response, IngestUrlData, IngestUrlResponse, IngestUrl1Data, IngestUrl1Response, IngestTextData, IngestTextResponse, IngestText1Data, IngestText1Response, ComposeArticleData, ComposeArticleResponse, ComposeArticle1Data, ComposeArticle1Response, BulkIngestUrlsData, BulkIngestUrlsResponse, BulkIngestUrls1Data, BulkIngestUrls1Response, IngestSearchResultsData, IngestSearchResultsResponse, IngestSearchResults1Data, IngestSearchResults1Response, MaterializeCsvFromRowsData, MaterializeCsvFromRowsResponse, MaterializeCsvFromRows1Data, MaterializeCsvFromRows1Response, ReprocessAssetData, ReprocessAssetResponse, ReprocessAsset1Data, ReprocessAsset1Response, UpdateAssetContentData, UpdateAssetContentResponse, UpdateAssetContent1Data, UpdateAssetContent1Response, DiscoverRssFeedsData, DiscoverRssFeedsResponse, DiscoverRssFeeds1Data, DiscoverRssFeeds1Response, PreviewRssFeedData, PreviewRssFeedResponse, PreviewRssFeed1Data, PreviewRssFeed1Response, IngestSelectedArticlesData, IngestSelectedArticlesResponse, IngestSelectedArticles1Data, IngestSelectedArticles1Response, UpdateAssetData, UpdateAssetResponse, UpdateAsset1Data, UpdateAsset1Response, DeleteAssetData, DeleteAssetResponse, DeleteAsset1Data, DeleteAsset1Response, GetAssetChildrenData, GetAssetChildrenResponse, GetAssetChildren1Data, GetAssetChildren1Response, BulkDeleteAssetsData, BulkDeleteAssetsResponse, BulkDeleteAssets1Data, BulkDeleteAssets1Response, TransferAssetsData, TransferAssetsResponse, TransferAssets1Data, TransferAssets1Response, GetSupportedContentTypesResponse, GetSupportedContentTypes1Response, CreateAssetsBackgroundBulkData, CreateAssetsBackgroundBulkResponse, CreateAssetsBackgroundBulk1Data, CreateAssetsBackgroundBulk1Response, CreateAssetsBackgroundUrlsData, CreateAssetsBackgroundUrlsResponse, CreateAssetsBackgroundUrls1Data, CreateAssetsBackgroundUrls1Response, AddFilesToBundleBackgroundData, AddFilesToBundleBackgroundResponse, AddFilesToBundleBackground1Data, AddFilesToBundleBackground1Response, GetTaskStatusData, GetTaskStatusResponse, GetTaskStatus1Data, GetTaskStatus1Response, IngestRssFeedsFromAwesomeData, IngestRssFeedsFromAwesomeResponse, IngestRssFeedsFromAwesome1Data, IngestRssFeedsFromAwesome1Response, RetryAssetEnrichmentData, RetryAssetEnrichmentResponse, RetryAssetEnrichment1Data, RetryAssetEnrichment1Response, CreateBackupData, CreateBackupResponse, ListBackupsData, ListBackupsResponse, ListAllUserBackupsData, ListAllUserBackupsResponse, GetBackupData, GetBackupResponse, UpdateBackupData, UpdateBackupResponse, DeleteBackupData, DeleteBackupResponse, RestoreBackupData, RestoreBackupResponse, CreateBackupShareLinkData, CreateBackupShareLinkResponse, DownloadSharedBackupData, DownloadSharedBackupResponse, CleanupExpiredBackupsResponse, GetInfospacesBackupOverviewData, GetInfospacesBackupOverviewResponse, TriggerBackupAllInfospacesData, TriggerBackupAllInfospacesResponse, TriggerBackupSpecificInfospacesData, TriggerBackupSpecificInfospacesResponse, GetAssetData, GetAssetResponse, MaterializeVirtualFolderData, MaterializeVirtualFolderResponse, CreateBundleData, CreateBundleResponse, GetBundlesData, GetBundlesResponse, GetBundleData, GetBundleResponse, UpdateBundleData, UpdateBundleResponse, DeleteBundleData, DeleteBundleResponse, BulkDeleteBundlesData, BulkDeleteBundlesResponse, AddAssetToBundleData, AddAssetToBundleResponse, RemoveAssetFromBundleData, RemoveAssetFromBundleResponse, GetAssetsInBundleData, GetAssetsInBundleResponse, TransferBundleData, TransferBundleResponse, MoveBundleToParentData, MoveBundleToParentResponse, GetBundleHierarchyData, GetBundleHierarchyResponse, GetRootBundlesData, GetRootBundlesResponse, GetBulkBundleAssetsData, GetBulkBundleAssetsResponse, ListEntitiesData, ListEntitiesResponse, CreateEntityData, CreateEntityResponse, UpdateEntityData, UpdateEntityResponse, DeleteEntityData, DeleteEntityResponse, MergeEntitiesData, MergeEntitiesResponse, TriggerResolutionData, TriggerResolutionResponse, ListConversationsData, ListConversationsResponse, CreateConversationData, CreateConversationResponse, GetConversationData, GetConversationResponse, UpdateConversationData, UpdateConversationResponse, DeleteConversationData, DeleteConversationResponse, AddMessageToConversationData, AddMessageToConversationResponse, GetConversationMessagesData, GetConversationMessagesResponse, ChunkSingleAssetData, ChunkSingleAssetResponse, ChunkMultipleAssetsData, ChunkMultipleAssetsResponse, GetAssetChunksData, GetAssetChunksResponse, RemoveAssetChunksData, RemoveAssetChunksResponse, GetChunkingStatisticsData, GetChunkingStatisticsResponse, CreateDatasetData, CreateDatasetResponse, ListDatasetsData, ListDatasetsResponse, CreateDataset1Data, CreateDataset1Response, ListDatasets1Data, ListDatasets1Response, GetDatasetData, GetDatasetResponse, UpdateDatasetData, UpdateDatasetResponse, DeleteDatasetData, DeleteDatasetResponse, ExportDatasetData, ExportDatasetResponse, ImportDatasetData, ImportDatasetResponse, ImportDatasetFromTokenData, ImportDatasetFromTokenResponse, GenerateInfospaceEmbeddingsData, GenerateInfospaceEmbeddingsResponse, GenerateAssetEmbeddingsData, GenerateAssetEmbeddingsResponse, GetEmbeddingStatsData, GetEmbeddingStatsResponse, SemanticSearchData, SemanticSearchResponse2, ClearInfospaceEmbeddingsData, ClearInfospaceEmbeddingsResponse, DiscoverEmbeddingModelsData, DiscoverEmbeddingModelsResponse, FileUploadData, FileUploadResponse2, FileDownloadData, FileDownloadResponse, ListFilesData, ListFilesResponse, DeleteFileData, DeleteFileResponse, StreamFileData, StreamFileResponse, TestFilterData, TestFilterResponse, GetBasicFilterExamplesResponse, GetAdvancedFilterExamplesResponse, CreateThresholdFilterData, CreateThresholdFilterResponse, CreateRangeFilterData, CreateRangeFilterResponse, CreateKeywordFilterData, CreateKeywordFilterResponse, CreateFlowData, CreateFlowResponse, ListFlowsData, ListFlowsResponse, CreateFlow1Data, CreateFlow1Response, ListFlows1Data, ListFlows1Response, GetFlowData, GetFlowResponse, UpdateFlowData, UpdateFlowResponse, DeleteFlowData, DeleteFlowResponse, ActivateFlowData, ActivateFlowResponse, PauseFlowData, PauseFlowResponse, TriggerFlowExecutionData, TriggerFlowExecutionResponse, ListFlowExecutionsData, ListFlowExecutionsResponse, GetFlowExecutionData, GetFlowExecutionResponse, GetPendingAssetsData, GetPendingAssetsResponse, ResetFlowCursorData, ResetFlowCursorResponse, CreateInfospaceData, CreateInfospaceResponse, ListInfospacesData, ListInfospacesResponse, CreateInfospace1Data, CreateInfospace1Response, ListInfospaces1Data, ListInfospaces1Response, GetInfospaceData, GetInfospaceResponse, UpdateInfospaceData, UpdateInfospaceResponse, DeleteInfospaceData, DeleteInfospaceResponse, InviteCollaboratorData, InviteCollaboratorResponse, ListCollaboratorsData, ListCollaboratorsResponse, RemoveCollaboratorData, RemoveCollaboratorResponse, GetInfospaceStatsData, GetInfospaceStatsResponse, ExportInfospaceData, ExportInfospaceResponse, ImportInfospaceData, ImportInfospaceResponse, CreateDirectoryImportJobData, CreateDirectoryImportJobResponse, TriggerProcessPendingData, TriggerProcessPendingResponse, TriggerEnrichData, TriggerEnrichResponse, GetProcessingStatusData, GetProcessingStatusResponse, ListIngestionJobsData, ListIngestionJobsResponse, GetIngestionJobStatusData, GetIngestionJobStatusResponse, DeleteIngestionJobData, DeleteIngestionJobResponse, GetIngestionJobByUuidData, GetIngestionJobByUuidResponse, CreateArchiveIngestionJobData, CreateArchiveIngestionJobResponse, CancelIngestionJobData, CancelIngestionJobResponse, ReconcileDirectoryData, ReconcileDirectoryResponse, EnableDirectoryWatchData, EnableDirectoryWatchResponse, GetWatchStatusData, GetWatchStatusResponse, GetPipelineStatsData, GetPipelineStatsResponse, IntelligenceChatData, IntelligenceChatResponse, ExecuteToolCallData, ExecuteToolCallResponse, ListAvailableModelsData, ListAvailableModelsResponse, ListUniversalToolsData, ListUniversalToolsResponse, GetInfospaceToolContextData, GetInfospaceToolContextResponse, ListKnowledgeGraphsData, ListKnowledgeGraphsResponse, CreateKnowledgeGraphData, CreateKnowledgeGraphResponse, GetKnowledgeGraphData, GetKnowledgeGraphResponse, UpdateKnowledgeGraphData, UpdateKnowledgeGraphResponse, DeleteKnowledgeGraphData, DeleteKnowledgeGraphResponse, LoginAccessTokenData, LoginAccessTokenResponse, TestTokenResponse, RecoverPasswordData, RecoverPasswordResponse, ResetPasswordData, ResetPasswordResponse, RecoverPasswordHtmlContentData, RecoverPasswordHtmlContentResponse, CreatePackageData, CreatePackageResponse, ListPackagesData, ListPackagesResponse, GetPackageData, GetPackageResponse, UpdatePackageData, UpdatePackageResponse, DeletePackageData, DeletePackageResponse, AddPackageItemData, AddPackageItemResponse, RemovePackageItemData, RemovePackageItemResponse, DiscoverPackagesData, DiscoverPackagesResponse, AccessPackageByTokenData, AccessPackageByTokenResponse, DiscoverModelsData, DiscoverModelsResponse, SystemCapabilitiesResponse, EnrichmentStatusResponse, QueryAssetsData, QueryAssetsResponse, GetQueryFieldsData, GetQueryFieldsResponse, SearchContentData, SearchContentResponse, SearchContent1Data, SearchContent1Response, SearchAndIngestData, SearchAndIngestResponse2, CreateAssetsFromUrlsData, CreateAssetsFromUrlsResponse, CreateAssetsFromResultsData, CreateAssetsFromResultsResponse, CreateSearchHistoryData, CreateSearchHistoryResponse, ReadSearchHistoriesData, ReadSearchHistoriesResponse, CreateShareableLinkData, CreateShareableLinkResponse, GetShareableLinksData, GetShareableLinksResponse, GetShareableLinkByTokenData, GetShareableLinkByTokenResponse, UpdateShareableLinkData, UpdateShareableLinkResponse, DeleteShareableLinkData, DeleteShareableLinkResponse, AccessSharedResourceData, AccessSharedResourceResponse, ViewSharedResourceData, ViewSharedResourceResponse, GetSharingStatsData, GetSharingStatsResponse, ExportResourceData, ExportResourceResponse, ImportResourceData, ImportResourceResponse, ExportResourcesBatchData, ExportResourcesBatchResponse, ExportMixedBatchData, ExportMixedBatchResponse, StreamSharedAssetFileData, StreamSharedAssetFileResponse, DownloadSharedBundleData, DownloadSharedBundleResponse, DownloadSharedAssetFileData, DownloadSharedAssetFileResponse, ViewDatasetPackageSummaryData, ViewDatasetPackageSummaryResponse, ImportResourceFromTokenData, ImportResourceFromTokenResponse, CreateSourceData, CreateSourceResponse, ListSourcesData, ListSourcesResponse, CreateSource1Data, CreateSource1Response, ListSources1Data, ListSources1Response, GetSourceData, GetSourceResponse, UpdateSourceData, UpdateSourceResponse, DeleteSourceData, DeleteSourceResponse, TriggerSourceProcessingData, TriggerSourceProcessingResponse, TransferSourcesData, TransferSourcesResponse, CreateRssSourceData, CreateRssSourceResponse, ActivateStreamData, ActivateStreamResponse, PauseStreamData, PauseStreamResponse, PollSourceData, PollSourceResponse, GetStreamStatsData, GetStreamStatsResponse, GetPollHistoryData, GetPollHistoryResponse, InitiateDiscourseLoginResponse, InitiateDiscourseLogin1Response, HandleDiscourseSsoData, HandleDiscourseSsoResponse, HandleDiscourseSso1Data, HandleDiscourseSso1Response, HandleDiscourseLogoutResponse, HandleDiscourseLogout1Response, GetDiscourseSsoInfoResponse, GetDiscourseSsoInfo1Response, SyncUserToDiscourseData, SyncUserToDiscourseResponse, SyncUserToDiscourse1Data, SyncUserToDiscourse1Response, CompleteDiscourseSsoData, CompleteDiscourseSsoResponse, CompleteDiscourseSso1Data, CompleteDiscourseSso1Response, BrowseStorageData, BrowseStorageResponse, CreateTaskData, CreateTaskResponse, CreateTask1Data, CreateTask1Response, ListTasksData, ListTasksResponse, ListTasks1Data, ListTasks1Response, CreateTask2Data, CreateTask2Response, CreateTask3Data, CreateTask3Response, ListTasks2Data, ListTasks2Response, ListTasks3Data, ListTasks3Response, GetTaskData, GetTaskResponse, GetTask1Data, GetTask1Response, UpdateTaskData, UpdateTaskResponse, UpdateTask1Data, UpdateTask1Response, DeleteTaskData, DeleteTaskResponse, DeleteTask1Data, DeleteTask1Response, ExecuteTaskManuallyData, ExecuteTaskManuallyResponse, ExecuteTaskManually1Data, ExecuteTaskManually1Response, GetInfospaceTreeData, GetInfospaceTreeResponse, GetTreeChildrenData, GetTreeChildrenResponse, DeleteTreeNodesData, DeleteTreeNodesResponse, GetFeedAssetsData, GetFeedAssetsResponse, BatchGetAssetsData, BatchGetAssetsResponse, TextSearchAssetsData, TextSearchAssetsResponse, CreateUserBackupData, CreateUserBackupResponse, ListUserBackupsData, ListUserBackupsResponse, GetUserBackupData, GetUserBackupResponse, UpdateUserBackupData, UpdateUserBackupResponse, DeleteUserBackupData, DeleteUserBackupResponse, RestoreUserBackupData, RestoreUserBackupResponse, CreateUserBackupShareLinkData, CreateUserBackupShareLinkResponse, DownloadSharedUserBackupData, DownloadSharedUserBackupResponse, CleanupExpiredUserBackupsResponse, GetUsersBackupOverviewData, GetUsersBackupOverviewResponse, TriggerBackupAllUsersData, TriggerBackupAllUsersResponse, TriggerBackupSpecificUsersData, TriggerBackupSpecificUsersResponse, ReadUsersData, ReadUsersResponse, CreateUserData, CreateUserResponse, ReadUsers1Data, ReadUsers1Response, CreateUser1Data, CreateUser1Response, ReadUserMeResponse, UpdateUserMeData, UpdateUserMeResponse, UpdatePasswordMeData, UpdatePasswordMeResponse, SaveCredentialsData, SaveCredentialsResponse, ListCredentialProvidersResponse, DeleteCredentialData, DeleteCredentialResponse, UploadProfilePictureData, UploadProfilePictureResponse, UploadBackgroundImageData, UploadBackgroundImageResponse, GetUserPublicProfileData, GetUserPublicProfileResponse, GetProfilePictureData, GetProfilePictureResponse, GetBackgroundImageData, GetBackgroundImageResponse, DeleteBackgroundImageResponse, ListUserProfilesData, ListUserProfilesResponse, GetUserProfileStatsData, GetUserProfileStatsResponse, UpdateUserProfileData, UpdateUserProfileResponse, CreateUserOpenData, CreateUserOpenResponse, ReadUserByIdData, ReadUserByIdResponse, UpdateUserData, UpdateUserResponse, DeleteUserData, DeleteUserResponse, VerifyEmailData, VerifyEmailResponse, ResendVerificationData, ResendVerificationResponse, TestEmailData, TestEmailResponse, GetAvailableRssCountriesResponse, DiscoverCuratedRssFeedsData, DiscoverCuratedRssFeedsResponse, ExtractPdfTextData, ExtractPdfTextResponse, ExtractPdfMetadataData, ExtractPdfMetadataResponse, ScrapeArticleData, ScrapeArticleResponse, AnalyzeSourceData, AnalyzeSourceResponse, DiscoverRssFeedsFromSiteData, DiscoverRssFeedsFromSiteResponse, BrowseRssFeedData, BrowseRssFeedResponse, GetUnifiedProvidersResponse, GetProvidersResponse, PullOllamaModelData, PullOllamaModelResponse, GetOllamaAvailableModelsData, GetOllamaAvailableModelsResponse, RemoveOllamaModelData, RemoveOllamaModelResponse, GetGeocodingProvidersResponse, GeocodeLocationData, GeocodeLocationResponse, GeocodeLocationWithProviderData, GeocodeLocationWithProviderResponse, GetCountryDataData, GetCountryDataResponse } from './types.gen';
 
 export class AdminService {
     /**
@@ -156,6 +156,8 @@ export class AnnotationJobsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRunRead Successful Response
      * @throws ApiError
      */
@@ -165,6 +167,12 @@ export class AnnotationJobsService {
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -182,6 +190,8 @@ export class AnnotationJobsService {
      * @param data.skip
      * @param data.limit
      * @param data.includeCounts Include counts of annotations and assets
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRunsOut Successful Response
      * @throws ApiError
      */
@@ -192,10 +202,14 @@ export class AnnotationJobsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
-                include_counts: data.includeCounts
+                include_counts: data.includeCounts,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -209,6 +223,8 @@ export class AnnotationJobsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRunRead Successful Response
      * @throws ApiError
      */
@@ -218,6 +234,12 @@ export class AnnotationJobsService {
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -235,6 +257,8 @@ export class AnnotationJobsService {
      * @param data.skip
      * @param data.limit
      * @param data.includeCounts Include counts of annotations and assets
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRunsOut Successful Response
      * @throws ApiError
      */
@@ -245,10 +269,14 @@ export class AnnotationJobsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
-                include_counts: data.includeCounts
+                include_counts: data.includeCounts,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -260,9 +288,11 @@ export class AnnotationJobsService {
      * Get Run
      * Retrieve a specific Run by its ID.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
      * @param data.includeCounts Include counts of annotations and assets
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRunRead Successful Response
      * @throws ApiError
      */
@@ -271,11 +301,15 @@ export class AnnotationJobsService {
             method: 'GET',
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
             },
             query: {
-                include_counts: data.includeCounts
+                include_counts: data.includeCounts,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -287,9 +321,11 @@ export class AnnotationJobsService {
      * Update Run
      * Update a Run.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRunRead Successful Response
      * @throws ApiError
      */
@@ -298,8 +334,14 @@ export class AnnotationJobsService {
             method: 'PATCH',
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -313,8 +355,10 @@ export class AnnotationJobsService {
      * Delete Run
      * Delete a Run.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns void Successful Response
      * @throws ApiError
      */
@@ -323,8 +367,14 @@ export class AnnotationJobsService {
             method: 'DELETE',
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -336,8 +386,10 @@ export class AnnotationJobsService {
      * Retry Failed Annotations
      * Retry failed annotations in a run.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -346,8 +398,14 @@ export class AnnotationJobsService {
             method: 'POST',
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}/retry_failures',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -359,10 +417,12 @@ export class AnnotationJobsService {
      * Create Package From Run Endpoint
      * Create a package from a run.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
      * @param data.requestBody
-     * @returns PackageRead Successful Response
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns app__schemas__PackageRead Successful Response
      * @throws ApiError
      */
     public static createPackageFromRunEndpoint(data: CreatePackageFromRunEndpointData): CancelablePromise<CreatePackageFromRunEndpointResponse> {
@@ -370,8 +430,14 @@ export class AnnotationJobsService {
             method: 'POST',
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}/create_package',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -392,11 +458,13 @@ export class AnnotationJobsService {
      *
      * Perfect for loading into pandas, Excel, or ML tools like lazypredict.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
      * @param data.flattenJson Flatten nested JSON fields into dot-notation columns
      * @param data.includeMetadata Include asset and schema metadata
      * @param data.includeJustifications Include justification text (adds columns)
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -405,13 +473,17 @@ export class AnnotationJobsService {
             method: 'GET',
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}/export/csv',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
             },
             query: {
                 flatten_json: data.flattenJson,
                 include_metadata: data.includeMetadata,
-                include_justifications: data.includeJustifications
+                include_justifications: data.includeJustifications,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -427,6 +499,8 @@ export class AnnotationsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRead Successful Response
      * @throws ApiError
      */
@@ -437,6 +511,12 @@ export class AnnotationsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -451,6 +531,8 @@ export class AnnotationsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRead Successful Response
      * @throws ApiError
      */
@@ -461,6 +543,12 @@ export class AnnotationsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -478,6 +566,8 @@ export class AnnotationsService {
      * @param data.limit
      * @param data.sourceId
      * @param data.schemaId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationsOut Successful Response
      * @throws ApiError
      */
@@ -488,11 +578,15 @@ export class AnnotationsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
                 source_id: data.sourceId,
-                schema_id: data.schemaId
+                schema_id: data.schemaId,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -509,6 +603,8 @@ export class AnnotationsService {
      * @param data.limit
      * @param data.sourceId
      * @param data.schemaId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationsOut Successful Response
      * @throws ApiError
      */
@@ -519,11 +615,15 @@ export class AnnotationsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
                 source_id: data.sourceId,
-                schema_id: data.schemaId
+                schema_id: data.schemaId,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -537,6 +637,8 @@ export class AnnotationsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRead Successful Response
      * @throws ApiError
      */
@@ -547,6 +649,12 @@ export class AnnotationsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -561,6 +669,8 @@ export class AnnotationsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRead Successful Response
      * @throws ApiError
      */
@@ -571,6 +681,12 @@ export class AnnotationsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -588,6 +704,8 @@ export class AnnotationsService {
      * @param data.limit
      * @param data.sourceId
      * @param data.schemaId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationsOut Successful Response
      * @throws ApiError
      */
@@ -598,11 +716,15 @@ export class AnnotationsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
                 source_id: data.sourceId,
-                schema_id: data.schemaId
+                schema_id: data.schemaId,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -619,6 +741,8 @@ export class AnnotationsService {
      * @param data.limit
      * @param data.sourceId
      * @param data.schemaId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationsOut Successful Response
      * @throws ApiError
      */
@@ -629,11 +753,15 @@ export class AnnotationsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
                 source_id: data.sourceId,
-                schema_id: data.schemaId
+                schema_id: data.schemaId,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -645,8 +773,10 @@ export class AnnotationsService {
      * Get Annotation
      * Retrieve a specific Annotation by its ID.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.annotationId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRead Successful Response
      * @throws ApiError
      */
@@ -655,8 +785,14 @@ export class AnnotationsService {
             method: 'GET',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}',
             path: {
-                infospace_id: data.infospaceId,
-                annotation_id: data.annotationId
+                annotation_id: data.annotationId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -668,8 +804,10 @@ export class AnnotationsService {
      * Get Annotation
      * Retrieve a specific Annotation by its ID.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.annotationId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRead Successful Response
      * @throws ApiError
      */
@@ -678,8 +816,14 @@ export class AnnotationsService {
             method: 'GET',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}',
             path: {
-                infospace_id: data.infospaceId,
-                annotation_id: data.annotationId
+                annotation_id: data.annotationId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -691,9 +835,11 @@ export class AnnotationsService {
      * Update Annotation
      * Update an Annotation.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.annotationId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRead Successful Response
      * @throws ApiError
      */
@@ -702,8 +848,14 @@ export class AnnotationsService {
             method: 'PATCH',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}',
             path: {
-                infospace_id: data.infospaceId,
-                annotation_id: data.annotationId
+                annotation_id: data.annotationId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -717,9 +869,11 @@ export class AnnotationsService {
      * Update Annotation
      * Update an Annotation.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.annotationId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRead Successful Response
      * @throws ApiError
      */
@@ -728,8 +882,14 @@ export class AnnotationsService {
             method: 'PATCH',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}',
             path: {
-                infospace_id: data.infospaceId,
-                annotation_id: data.annotationId
+                annotation_id: data.annotationId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -743,8 +903,10 @@ export class AnnotationsService {
      * Delete Annotation
      * Delete an Annotation.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.annotationId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns void Successful Response
      * @throws ApiError
      */
@@ -753,8 +915,14 @@ export class AnnotationsService {
             method: 'DELETE',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}',
             path: {
-                infospace_id: data.infospaceId,
-                annotation_id: data.annotationId
+                annotation_id: data.annotationId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -766,8 +934,10 @@ export class AnnotationsService {
      * Delete Annotation
      * Delete an Annotation.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.annotationId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns void Successful Response
      * @throws ApiError
      */
@@ -776,8 +946,14 @@ export class AnnotationsService {
             method: 'DELETE',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}',
             path: {
-                infospace_id: data.infospaceId,
-                annotation_id: data.annotationId
+                annotation_id: data.annotationId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -791,6 +967,8 @@ export class AnnotationsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -801,6 +979,12 @@ export class AnnotationsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -815,6 +999,8 @@ export class AnnotationsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -825,6 +1011,12 @@ export class AnnotationsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -838,10 +1030,12 @@ export class AnnotationsService {
      * Retrieve all annotations for a specific AnnotationRun.
      * The service handles run ownership and infospace context verification.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
      * @param data.skip
      * @param data.limit
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRead Successful Response
      * @throws ApiError
      */
@@ -850,12 +1044,16 @@ export class AnnotationsService {
             method: 'GET',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/run/{run_id}/results',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
             },
             query: {
                 skip: data.skip,
-                limit: data.limit
+                limit: data.limit,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -868,10 +1066,12 @@ export class AnnotationsService {
      * Retrieve all annotations for a specific AnnotationRun.
      * The service handles run ownership and infospace context verification.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
      * @param data.skip
      * @param data.limit
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRead Successful Response
      * @throws ApiError
      */
@@ -880,12 +1080,16 @@ export class AnnotationsService {
             method: 'GET',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/run/{run_id}/results',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
             },
             query: {
                 skip: data.skip,
-                limit: data.limit
+                limit: data.limit,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -897,9 +1101,11 @@ export class AnnotationsService {
      * Retry Single Annotation
      * Retries a single failed annotation synchronously.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.annotationId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRead Successful Response
      * @throws ApiError
      */
@@ -908,8 +1114,14 @@ export class AnnotationsService {
             method: 'POST',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}/retry',
             path: {
-                infospace_id: data.infospaceId,
-                annotation_id: data.annotationId
+                annotation_id: data.annotationId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -923,9 +1135,11 @@ export class AnnotationsService {
      * Retry Single Annotation
      * Retries a single failed annotation synchronously.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.annotationId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRead Successful Response
      * @throws ApiError
      */
@@ -934,8 +1148,14 @@ export class AnnotationsService {
             method: 'POST',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}/retry',
             path: {
-                infospace_id: data.infospaceId,
-                annotation_id: data.annotationId
+                annotation_id: data.annotationId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -955,9 +1175,11 @@ export class AnnotationsService {
      * "status": "curated"  # "curated" or "rejected"
      * }
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.annotationId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -966,8 +1188,14 @@ export class AnnotationsService {
             method: 'POST',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}/curate',
             path: {
-                infospace_id: data.infospaceId,
-                annotation_id: data.annotationId
+                annotation_id: data.annotationId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -987,9 +1215,11 @@ export class AnnotationsService {
      * "status": "curated"  # "curated" or "rejected"
      * }
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.annotationId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -998,8 +1228,14 @@ export class AnnotationsService {
             method: 'POST',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}/curate',
             path: {
-                infospace_id: data.infospaceId,
-                annotation_id: data.annotationId
+                annotation_id: data.annotationId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -1013,9 +1249,11 @@ export class AnnotationsService {
      * Remove Curation
      * Remove curation from an annotation fragment.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.annotationId
      * @param data.fragmentPath
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns void Successful Response
      * @throws ApiError
      */
@@ -1024,9 +1262,15 @@ export class AnnotationsService {
             method: 'DELETE',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}/curate/{fragment_path}',
             path: {
-                infospace_id: data.infospaceId,
                 annotation_id: data.annotationId,
-                fragment_path: data.fragmentPath
+                fragment_path: data.fragmentPath,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1038,9 +1282,11 @@ export class AnnotationsService {
      * Remove Curation
      * Remove curation from an annotation fragment.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.annotationId
      * @param data.fragmentPath
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns void Successful Response
      * @throws ApiError
      */
@@ -1049,9 +1295,15 @@ export class AnnotationsService {
             method: 'DELETE',
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/{annotation_id}/curate/{fragment_path}',
             path: {
-                infospace_id: data.infospaceId,
                 annotation_id: data.annotationId,
-                fragment_path: data.fragmentPath
+                fragment_path: data.fragmentPath,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1065,6 +1317,8 @@ export class AnnotationsService {
      * Returns triplets with resolved entity information.
      * @param data The data for the request.
      * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -1075,6 +1329,12 @@ export class AnnotationsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             errors: {
                 422: 'Validation Error'
             }
@@ -1087,6 +1347,8 @@ export class AnnotationsService {
      * Returns triplets with resolved entity information.
      * @param data The data for the request.
      * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -1096,6 +1358,12 @@ export class AnnotationsService {
             url: '/api/v1/annotations/infospaces/{infospace_id}/annotations/curated/triplets',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1109,8 +1377,10 @@ export class AnnotationSchemasService {
      * Create Annotation Schema
      * Create a new Annotation Schema.
      * @param data The data for the request.
-     * @param data.infospaceId The ID of the infospace
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationSchemaRead Successful Response
      * @throws ApiError
      */
@@ -1120,6 +1390,12 @@ export class AnnotationSchemasService {
             url: '/api/v1/infospaces/{infospace_id}/annotation_schemas/',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -1133,11 +1409,13 @@ export class AnnotationSchemasService {
      * List Annotation Schemas
      * Retrieve Annotation Schemas for the infospace.
      * @param data The data for the request.
-     * @param data.infospaceId The ID of the infospace
+     * @param data.infospaceId
      * @param data.skip
      * @param data.limit
      * @param data.includeCounts Include counts of annotations using this schema
      * @param data.includeArchived Include archived (inactive) schemas
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationSchemasOut Successful Response
      * @throws ApiError
      */
@@ -1148,11 +1426,15 @@ export class AnnotationSchemasService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
                 include_counts: data.includeCounts,
-                include_archived: data.includeArchived
+                include_archived: data.includeArchived,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1164,8 +1446,10 @@ export class AnnotationSchemasService {
      * Create Annotation Schema
      * Create a new Annotation Schema.
      * @param data The data for the request.
-     * @param data.infospaceId The ID of the infospace
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationSchemaRead Successful Response
      * @throws ApiError
      */
@@ -1175,6 +1459,12 @@ export class AnnotationSchemasService {
             url: '/api/v1/infospaces/{infospace_id}/annotation_schemas',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -1188,11 +1478,13 @@ export class AnnotationSchemasService {
      * List Annotation Schemas
      * Retrieve Annotation Schemas for the infospace.
      * @param data The data for the request.
-     * @param data.infospaceId The ID of the infospace
+     * @param data.infospaceId
      * @param data.skip
      * @param data.limit
      * @param data.includeCounts Include counts of annotations using this schema
      * @param data.includeArchived Include archived (inactive) schemas
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationSchemasOut Successful Response
      * @throws ApiError
      */
@@ -1203,11 +1495,15 @@ export class AnnotationSchemasService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
                 include_counts: data.includeCounts,
-                include_archived: data.includeArchived
+                include_archived: data.includeArchived,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1219,9 +1515,11 @@ export class AnnotationSchemasService {
      * Get Annotation Schema
      * Retrieve a specific Annotation Schema by its ID.
      * @param data The data for the request.
-     * @param data.infospaceId The ID of the infospace
      * @param data.schemaId
+     * @param data.infospaceId
      * @param data.includeCounts Include counts of annotations using this schema
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationSchemaRead Successful Response
      * @throws ApiError
      */
@@ -1230,11 +1528,15 @@ export class AnnotationSchemasService {
             method: 'GET',
             url: '/api/v1/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
             path: {
-                infospace_id: data.infospaceId,
-                schema_id: data.schemaId
+                schema_id: data.schemaId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
             },
             query: {
-                include_counts: data.includeCounts
+                include_counts: data.includeCounts,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1246,9 +1548,11 @@ export class AnnotationSchemasService {
      * Update Annotation Schema
      * Update an Annotation Schema.
      * @param data The data for the request.
-     * @param data.infospaceId The ID of the infospace
      * @param data.schemaId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationSchemaRead Successful Response
      * @throws ApiError
      */
@@ -1257,8 +1561,14 @@ export class AnnotationSchemasService {
             method: 'PATCH',
             url: '/api/v1/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
             path: {
-                infospace_id: data.infospaceId,
-                schema_id: data.schemaId
+                schema_id: data.schemaId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -1273,8 +1583,10 @@ export class AnnotationSchemasService {
      * Archive an annotation schema by setting it to inactive (soft delete).
      * This is a non-destructive operation.
      * @param data The data for the request.
-     * @param data.infospaceId The ID of the infospace
      * @param data.schemaId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationSchemaRead Successful Response
      * @throws ApiError
      */
@@ -1283,8 +1595,14 @@ export class AnnotationSchemasService {
             method: 'DELETE',
             url: '/api/v1/infospaces/{infospace_id}/annotation_schemas/{schema_id}',
             path: {
-                infospace_id: data.infospaceId,
-                schema_id: data.schemaId
+                schema_id: data.schemaId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1296,8 +1614,10 @@ export class AnnotationSchemasService {
      * Restore Annotation Schema
      * Restores an archived (soft-deleted) annotation schema.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.schemaId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationSchemaRead Successful Response
      * @throws ApiError
      */
@@ -1306,8 +1626,14 @@ export class AnnotationSchemasService {
             method: 'POST',
             url: '/api/v1/infospaces/{infospace_id}/annotation_schemas/{schema_id}/restore',
             path: {
-                infospace_id: data.infospaceId,
-                schema_id: data.schemaId
+                schema_id: data.schemaId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1370,6 +1696,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1380,6 +1708,12 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -1400,6 +1734,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1410,6 +1746,12 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -1426,6 +1768,8 @@ export class AssetsService {
      * @param data.skip
      * @param data.limit
      * @param data.parentAssetId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetsOut Successful Response
      * @throws ApiError
      */
@@ -1436,10 +1780,14 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
-                parent_asset_id: data.parentAssetId
+                parent_asset_id: data.parentAssetId,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1455,6 +1803,8 @@ export class AssetsService {
      * @param data.skip
      * @param data.limit
      * @param data.parentAssetId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetsOut Successful Response
      * @throws ApiError
      */
@@ -1465,10 +1815,14 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
-                parent_asset_id: data.parentAssetId
+                parent_asset_id: data.parentAssetId,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1488,6 +1842,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1498,6 +1854,12 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -1518,6 +1880,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1528,6 +1892,12 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -1544,6 +1914,8 @@ export class AssetsService {
      * @param data.skip
      * @param data.limit
      * @param data.parentAssetId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetsOut Successful Response
      * @throws ApiError
      */
@@ -1554,10 +1926,14 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
-                parent_asset_id: data.parentAssetId
+                parent_asset_id: data.parentAssetId,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1573,6 +1949,8 @@ export class AssetsService {
      * @param data.skip
      * @param data.limit
      * @param data.parentAssetId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetsOut Successful Response
      * @throws ApiError
      */
@@ -1583,10 +1961,14 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
-                parent_asset_id: data.parentAssetId
+                parent_asset_id: data.parentAssetId,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1601,6 +1983,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1611,6 +1995,12 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -1626,6 +2016,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1636,6 +2028,12 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -1650,6 +2048,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.formData
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1660,6 +2060,12 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             formData: data.formData,
             mediaType: 'multipart/form-data',
             errors: {
@@ -1674,6 +2080,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.formData
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1683,6 +2091,12 @@ export class AssetsService {
             url: '/api/v1/infospaces/{infospace_id}/assets/upload',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             formData: data.formData,
             mediaType: 'multipart/form-data',
@@ -1702,6 +2116,8 @@ export class AssetsService {
      * @param data.url
      * @param data.title
      * @param data.scrapeImmediately
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1712,10 +2128,14 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 url: data.url,
                 title: data.title,
-                scrape_immediately: data.scrapeImmediately
+                scrape_immediately: data.scrapeImmediately,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1733,6 +2153,8 @@ export class AssetsService {
      * @param data.url
      * @param data.title
      * @param data.scrapeImmediately
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1743,10 +2165,14 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 url: data.url,
                 title: data.title,
-                scrape_immediately: data.scrapeImmediately
+                scrape_immediately: data.scrapeImmediately,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1764,6 +2190,8 @@ export class AssetsService {
      * @param data.textContent
      * @param data.title
      * @param data.eventTimestamp
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1774,10 +2202,14 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 text_content: data.textContent,
                 title: data.title,
-                event_timestamp: data.eventTimestamp
+                event_timestamp: data.eventTimestamp,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1795,6 +2227,8 @@ export class AssetsService {
      * @param data.textContent
      * @param data.title
      * @param data.eventTimestamp
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1805,10 +2239,14 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 text_content: data.textContent,
                 title: data.title,
-                event_timestamp: data.eventTimestamp
+                event_timestamp: data.eventTimestamp,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -1822,6 +2260,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1832,6 +2272,12 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -1846,6 +2292,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1856,6 +2304,12 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -1870,6 +2324,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1880,6 +2336,12 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -1894,6 +2356,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1904,33 +2368,11 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
-            body: data.requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Ingest Search Results
-     * Ingest search results with their pre-fetched content (no re-scraping).
-     *
-     * This endpoint is optimized for search results from providers like Tavily
-     * that already include the full content. We create ARTICLE assets directly
-     * using the new AssetBuilder pattern.
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.requestBody
-     * @returns AssetRead Successful Response
-     * @throws ApiError
-     */
-    public static ingestSearchResults(data: IngestSearchResultsData): CancelablePromise<IngestSearchResultsResponse> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/v1/infospaces/{infospace_id}/assets/ingest-search-results',
-            path: {
-                infospace_id: data.infospaceId
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -1950,6 +2392,44 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns AssetRead Successful Response
+     * @throws ApiError
+     */
+    public static ingestSearchResults(data: IngestSearchResultsData): CancelablePromise<IngestSearchResultsResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/assets/ingest-search-results',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Ingest Search Results
+     * Ingest search results with their pre-fetched content (no re-scraping).
+     *
+     * This endpoint is optimized for search results from providers like Tavily
+     * that already include the full content. We create ARTICLE assets directly
+     * using the new AssetBuilder pattern.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1959,6 +2439,12 @@ export class AssetsService {
             url: '/api/v1/infospaces/{infospace_id}/assets/ingest-search-results',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -1978,6 +2464,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.assetId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -1989,6 +2477,12 @@ export class AssetsService {
                 infospace_id: data.infospaceId,
                 asset_id: data.assetId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             errors: {
                 422: 'Validation Error'
             }
@@ -2005,6 +2499,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.assetId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -2016,6 +2512,12 @@ export class AssetsService {
                 infospace_id: data.infospaceId,
                 asset_id: data.assetId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             errors: {
                 422: 'Validation Error'
             }
@@ -2029,6 +2531,8 @@ export class AssetsService {
      * @param data.infospaceId
      * @param data.assetId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -2040,6 +2544,12 @@ export class AssetsService {
                 infospace_id: data.infospaceId,
                 asset_id: data.assetId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -2055,6 +2565,8 @@ export class AssetsService {
      * @param data.infospaceId
      * @param data.assetId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -2066,6 +2578,12 @@ export class AssetsService {
                 infospace_id: data.infospaceId,
                 asset_id: data.assetId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -2090,6 +2608,8 @@ export class AssetsService {
      * @param data.infospaceId
      * @param data.assetId
      * @param data.formData
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -2101,6 +2621,12 @@ export class AssetsService {
                 infospace_id: data.infospaceId,
                 asset_id: data.assetId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             formData: data.formData,
             mediaType: 'multipart/form-data',
             errors: {
@@ -2125,6 +2651,8 @@ export class AssetsService {
      * @param data.infospaceId
      * @param data.assetId
      * @param data.formData
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -2135,6 +2663,12 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId,
                 asset_id: data.assetId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             formData: data.formData,
             mediaType: 'multipart/form-data',
@@ -2157,6 +2691,8 @@ export class AssetsService {
      * @param data.country
      * @param data.category
      * @param data.limit
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -2167,10 +2703,14 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 country: data.country,
                 category: data.category,
-                limit: data.limit
+                limit: data.limit,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -2191,6 +2731,8 @@ export class AssetsService {
      * @param data.country
      * @param data.category
      * @param data.limit
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -2201,10 +2743,14 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 country: data.country,
                 category: data.category,
-                limit: data.limit
+                limit: data.limit,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -2219,6 +2765,8 @@ export class AssetsService {
      * @param data.infospaceId
      * @param data.feedUrl
      * @param data.maxItems
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -2229,9 +2777,13 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 feed_url: data.feedUrl,
-                max_items: data.maxItems
+                max_items: data.maxItems,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -2246,6 +2798,8 @@ export class AssetsService {
      * @param data.infospaceId
      * @param data.feedUrl
      * @param data.maxItems
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -2256,9 +2810,13 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 feed_url: data.feedUrl,
-                max_items: data.maxItems
+                max_items: data.maxItems,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -2279,6 +2837,8 @@ export class AssetsService {
      * @param data.feedUrl
      * @param data.requestBody
      * @param data.bundleId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -2289,9 +2849,13 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 feed_url: data.feedUrl,
-                bundle_id: data.bundleId
+                bundle_id: data.bundleId,
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -2314,6 +2878,8 @@ export class AssetsService {
      * @param data.feedUrl
      * @param data.requestBody
      * @param data.bundleId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -2324,58 +2890,16 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 feed_url: data.feedUrl,
-                bundle_id: data.bundleId
+                bundle_id: data.bundleId,
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Get Asset
-     * Get a specific asset.
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.assetId
-     * @returns AssetRead Successful Response
-     * @throws ApiError
-     */
-    public static getAsset(data: GetAssetData): CancelablePromise<GetAssetResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/infospaces/{infospace_id}/assets/{asset_id}',
-            path: {
-                infospace_id: data.infospaceId,
-                asset_id: data.assetId
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Get Asset
-     * Get a specific asset.
-     * @param data The data for the request.
-     * @param data.infospaceId
-     * @param data.assetId
-     * @returns AssetRead Successful Response
-     * @throws ApiError
-     */
-    public static getAsset1(data: GetAsset1Data): CancelablePromise<GetAsset1Response> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/infospaces/{infospace_id}/assets/{asset_id}',
-            path: {
-                infospace_id: data.infospaceId,
-                asset_id: data.assetId
-            },
             errors: {
                 422: 'Validation Error'
             }
@@ -2389,6 +2913,8 @@ export class AssetsService {
      * @param data.infospaceId
      * @param data.assetId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -2400,6 +2926,12 @@ export class AssetsService {
                 infospace_id: data.infospaceId,
                 asset_id: data.assetId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -2415,6 +2947,8 @@ export class AssetsService {
      * @param data.infospaceId
      * @param data.assetId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -2426,6 +2960,12 @@ export class AssetsService {
                 infospace_id: data.infospaceId,
                 asset_id: data.assetId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -2440,6 +2980,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.assetId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -2451,6 +2993,12 @@ export class AssetsService {
                 infospace_id: data.infospaceId,
                 asset_id: data.assetId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             errors: {
                 422: 'Validation Error'
             }
@@ -2463,6 +3011,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.assetId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -2474,6 +3024,12 @@ export class AssetsService {
                 infospace_id: data.infospaceId,
                 asset_id: data.assetId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             errors: {
                 422: 'Validation Error'
             }
@@ -2488,6 +3044,8 @@ export class AssetsService {
      * @param data.assetId
      * @param data.skip
      * @param data.limit
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -2499,9 +3057,13 @@ export class AssetsService {
                 infospace_id: data.infospaceId,
                 asset_id: data.assetId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
-                limit: data.limit
+                limit: data.limit,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -2517,6 +3079,8 @@ export class AssetsService {
      * @param data.assetId
      * @param data.skip
      * @param data.limit
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -2528,9 +3092,13 @@ export class AssetsService {
                 infospace_id: data.infospaceId,
                 asset_id: data.assetId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
-                limit: data.limit
+                limit: data.limit,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -2548,6 +3116,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -2557,6 +3127,12 @@ export class AssetsService {
             url: '/api/v1/infospaces/{infospace_id}/assets/bulk-delete',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -2576,6 +3152,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -2585,6 +3163,12 @@ export class AssetsService {
             url: '/api/v1/infospaces/{infospace_id}/assets/bulk-delete',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -2597,19 +3181,7 @@ export class AssetsService {
     /**
      * Transfer Assets
      * Transfer assets between infospaces.
-     *
-     * This endpoint allows you to copy or move multiple assets from one infospace to another.
-     * When copying (should_copy=True), new assets are created in the target infospace with the same content.
-     * When moving (should_copy=False), assets are moved by changing their infospace_id.
-     *
-     * Args:
-     * asset_ids: List of asset IDs to transfer
-     * source_infospace_id: Source infospace ID
-     * target_infospace_id: Target infospace ID
-     * should_copy: If True, copy assets (default). If False, move them.
-     *
-     * Returns:
-     * List of transferred assets in the target infospace
+     * Validates organize capability on source, ingest capability on target.
      * @param data The data for the request.
      * @param data.requestBody
      * @returns AssetRead Successful Response
@@ -2630,19 +3202,7 @@ export class AssetsService {
     /**
      * Transfer Assets
      * Transfer assets between infospaces.
-     *
-     * This endpoint allows you to copy or move multiple assets from one infospace to another.
-     * When copying (should_copy=True), new assets are created in the target infospace with the same content.
-     * When moving (should_copy=False), assets are moved by changing their infospace_id.
-     *
-     * Args:
-     * asset_ids: List of asset IDs to transfer
-     * source_infospace_id: Source infospace ID
-     * target_infospace_id: Target infospace ID
-     * should_copy: If True, copy assets (default). If False, move them.
-     *
-     * Returns:
-     * List of transferred assets in the target infospace
+     * Validates organize capability on source, ingest capability on target.
      * @param data The data for the request.
      * @param data.requestBody
      * @returns AssetRead Successful Response
@@ -2693,6 +3253,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.formData
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -2702,6 +3264,12 @@ export class AssetsService {
             url: '/api/v1/infospaces/{infospace_id}/assets/bulk-upload-background',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             formData: data.formData,
             mediaType: 'multipart/form-data',
@@ -2718,6 +3286,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.formData
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -2727,6 +3297,12 @@ export class AssetsService {
             url: '/api/v1/infospaces/{infospace_id}/assets/bulk-upload-background',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             formData: data.formData,
             mediaType: 'multipart/form-data',
@@ -2739,10 +3315,12 @@ export class AssetsService {
     /**
      * Create Assets Background Urls
      * Ingest multiple URLs using background processing.
-     * Returns task ID for progress tracking.
+     * Creates IngestionJob — @task picks it up via event bus.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -2752,6 +3330,12 @@ export class AssetsService {
             url: '/api/v1/infospaces/{infospace_id}/assets/bulk-urls-background',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -2764,10 +3348,12 @@ export class AssetsService {
     /**
      * Create Assets Background Urls
      * Ingest multiple URLs using background processing.
-     * Returns task ID for progress tracking.
+     * Creates IngestionJob — @task picks it up via event bus.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -2777,6 +3363,12 @@ export class AssetsService {
             url: '/api/v1/infospaces/{infospace_id}/assets/bulk-urls-background',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -2793,6 +3385,8 @@ export class AssetsService {
      * @param data.infospaceId
      * @param data.bundleId
      * @param data.formData
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -2804,6 +3398,12 @@ export class AssetsService {
                 infospace_id: data.infospaceId,
                 bundle_id: data.bundleId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             formData: data.formData,
             mediaType: 'multipart/form-data',
             errors: {
@@ -2819,6 +3419,8 @@ export class AssetsService {
      * @param data.infospaceId
      * @param data.bundleId
      * @param data.formData
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -2829,6 +3431,12 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId,
                 bundle_id: data.bundleId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             formData: data.formData,
             mediaType: 'multipart/form-data',
@@ -2892,6 +3500,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -2901,6 +3511,12 @@ export class AssetsService {
             url: '/api/v1/infospaces/{infospace_id}/assets/ingest-rss-feeds-from-awesome',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -2922,6 +3538,8 @@ export class AssetsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -2932,8 +3550,80 @@ export class AssetsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Retry Asset Enrichment
+     * Clear enrichment state for an asset so it is eligible for re-enrichment.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.assetId
+     * @param data.enricherName
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static retryAssetEnrichment(data: RetryAssetEnrichmentData): CancelablePromise<RetryAssetEnrichmentResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/assets/{asset_id}/enrichment/{enricher_name}/retry',
+            path: {
+                infospace_id: data.infospaceId,
+                asset_id: data.assetId,
+                enricher_name: data.enricherName
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Retry Asset Enrichment
+     * Clear enrichment state for an asset so it is eligible for re-enrichment.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.assetId
+     * @param data.enricherName
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns Message Successful Response
+     * @throws ApiError
+     */
+    public static retryAssetEnrichment1(data: RetryAssetEnrichment1Data): CancelablePromise<RetryAssetEnrichment1Response> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/assets/{asset_id}/enrichment/{enricher_name}/retry',
+            path: {
+                infospace_id: data.infospaceId,
+                asset_id: data.assetId,
+                enricher_name: data.enricherName
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             errors: {
                 422: 'Validation Error'
             }
@@ -3194,6 +3884,7 @@ export class BackupsService {
     /**
      * Trigger Backup All Infospaces
      * Admin endpoint: Trigger backup creation for all infospaces.
+     * Creates PENDING backup records; the process_backup @task picks them up.
      * @param data The data for the request.
      * @param data.backupType
      * @returns Message Successful Response
@@ -3215,6 +3906,7 @@ export class BackupsService {
     /**
      * Trigger Backup Specific Infospaces
      * Admin endpoint: Trigger backup creation for specific infospaces.
+     * Creates PENDING backup records; the process_backup @task picks them up.
      * @param data The data for the request.
      * @param data.requestBody
      * @param data.backupType
@@ -3239,11 +3931,44 @@ export class BackupsService {
 
 export class BundlesService {
     /**
+     * Get Asset
+     * Get an asset by ID.
+     * @param data The data for the request.
+     * @param data.assetId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns AssetRead Successful Response
+     * @throws ApiError
+     */
+    public static getAsset(data: GetAssetData): CancelablePromise<GetAssetResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/assets/{asset_id}',
+            path: {
+                asset_id: data.assetId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
      * Materialize Virtual Folder
      * Create a real bundle from a virtual folder (path prefix within a source bundle).
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BundleRead Successful Response
      * @throws ApiError
      */
@@ -3253,6 +3978,12 @@ export class BundlesService {
             url: '/api/v1/infospaces/{infospace_id}/bundles/from-vfolder',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -3268,6 +3999,8 @@ export class BundlesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BundleRead Successful Response
      * @throws ApiError
      */
@@ -3277,6 +4010,12 @@ export class BundlesService {
             url: '/api/v1/infospaces/{infospace_id}/bundles',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -3293,6 +4032,8 @@ export class BundlesService {
      * @param data.infospaceId
      * @param data.skip
      * @param data.limit
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BundleRead Successful Response
      * @throws ApiError
      */
@@ -3303,9 +4044,13 @@ export class BundlesService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
-                limit: data.limit
+                limit: data.limit,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -3318,15 +4063,25 @@ export class BundlesService {
      * Get a bundle by ID.
      * @param data The data for the request.
      * @param data.bundleId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BundleRead Successful Response
      * @throws ApiError
      */
     public static getBundle(data: GetBundleData): CancelablePromise<GetBundleResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/bundles/{bundle_id}',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}',
             path: {
-                bundle_id: data.bundleId
+                bundle_id: data.bundleId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -3339,16 +4094,26 @@ export class BundlesService {
      * Update a bundle.
      * @param data The data for the request.
      * @param data.bundleId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BundleRead Successful Response
      * @throws ApiError
      */
     public static updateBundle(data: UpdateBundleData): CancelablePromise<UpdateBundleResponse> {
         return __request(OpenAPI, {
             method: 'PUT',
-            url: '/api/v1/bundles/{bundle_id}',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}',
             path: {
-                bundle_id: data.bundleId
+                bundle_id: data.bundleId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -3363,15 +4128,25 @@ export class BundlesService {
      * Delete a bundle.
      * @param data The data for the request.
      * @param data.bundleId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns void Successful Response
      * @throws ApiError
      */
     public static deleteBundle(data: DeleteBundleData): CancelablePromise<DeleteBundleResponse> {
         return __request(OpenAPI, {
             method: 'DELETE',
-            url: '/api/v1/bundles/{bundle_id}',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}',
             path: {
-                bundle_id: data.bundleId
+                bundle_id: data.bundleId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -3386,14 +4161,26 @@ export class BundlesService {
      * More efficient than individual DELETE requests when cleaning up
      * multiple bundles at once.
      * @param data The data for the request.
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
     public static bulkDeleteBundles(data: BulkDeleteBundlesData): CancelablePromise<BulkDeleteBundlesResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/bundles/bulk-delete',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/bulk-delete',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -3408,16 +4195,26 @@ export class BundlesService {
      * @param data The data for the request.
      * @param data.bundleId
      * @param data.assetId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BundleRead Successful Response
      * @throws ApiError
      */
     public static addAssetToBundle(data: AddAssetToBundleData): CancelablePromise<AddAssetToBundleResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/bundles/{bundle_id}/assets/{asset_id}',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/assets/{asset_id}',
             path: {
                 bundle_id: data.bundleId,
-                asset_id: data.assetId
+                asset_id: data.assetId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -3431,16 +4228,26 @@ export class BundlesService {
      * @param data The data for the request.
      * @param data.bundleId
      * @param data.assetId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BundleRead Successful Response
      * @throws ApiError
      */
     public static removeAssetFromBundle(data: RemoveAssetFromBundleData): CancelablePromise<RemoveAssetFromBundleResponse> {
         return __request(OpenAPI, {
             method: 'DELETE',
-            url: '/api/v1/bundles/{bundle_id}/assets/{asset_id}',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/assets/{asset_id}',
             path: {
                 bundle_id: data.bundleId,
-                asset_id: data.assetId
+                asset_id: data.assetId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -3456,6 +4263,8 @@ export class BundlesService {
      * @param data.infospaceId
      * @param data.skip
      * @param data.limit
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -3467,30 +4276,13 @@ export class BundlesService {
                 bundle_id: data.bundleId,
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
-                limit: data.limit
-            },
-            errors: {
-                422: 'Validation Error'
-            }
-        });
-    }
-    
-    /**
-     * Get Asset
-     * Get an asset by ID.
-     * @param data The data for the request.
-     * @param data.assetId
-     * @returns AssetRead Successful Response
-     * @throws ApiError
-     */
-    public static getAsset(data: GetAssetData): CancelablePromise<GetAssetResponse> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/v1/assets/{asset_id}',
-            path: {
-                asset_id: data.assetId
+                limit: data.limit,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -3511,21 +4303,29 @@ export class BundlesService {
      * copy: If True, copy bundle and all assets. If False, move bundle.
      * @param data The data for the request.
      * @param data.bundleId
+     * @param data.infospaceId
      * @param data.targetInfospaceId
      * @param data.copy
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BundleRead Successful Response
      * @throws ApiError
      */
     public static transferBundle(data: TransferBundleData): CancelablePromise<TransferBundleResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/bundles/{bundle_id}/transfer',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/transfer',
             path: {
-                bundle_id: data.bundleId
+                bundle_id: data.bundleId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
             },
             query: {
                 target_infospace_id: data.targetInfospaceId,
-                copy: data.copy
+                copy: data.copy,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -3538,16 +4338,26 @@ export class BundlesService {
      * Move a bundle into another bundle or to root level.
      * @param data The data for the request.
      * @param data.bundleId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BundleRead Successful Response
      * @throws ApiError
      */
     public static moveBundleToParent(data: MoveBundleToParentData): CancelablePromise<MoveBundleToParentResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/bundles/{bundle_id}/move',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/move',
             path: {
-                bundle_id: data.bundleId
+                bundle_id: data.bundleId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -3562,19 +4372,27 @@ export class BundlesService {
      * Get bundle with its complete child hierarchy.
      * @param data The data for the request.
      * @param data.bundleId
+     * @param data.infospaceId
      * @param data.maxDepth
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BundleHierarchy Successful Response
      * @throws ApiError
      */
     public static getBundleHierarchy(data: GetBundleHierarchyData): CancelablePromise<GetBundleHierarchyResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/bundles/{bundle_id}/hierarchy',
+            url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/hierarchy',
             path: {
-                bundle_id: data.bundleId
+                bundle_id: data.bundleId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
             },
             query: {
-                max_depth: data.maxDepth
+                max_depth: data.maxDepth,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -3587,6 +4405,8 @@ export class BundlesService {
      * Get all top-level bundles (those without parent bundles) in an infospace.
      * @param data The data for the request.
      * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BundleRead Successful Response
      * @throws ApiError
      */
@@ -3596,6 +4416,12 @@ export class BundlesService {
             url: '/api/v1/infospaces/{infospace_id}/bundles/root',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -3612,6 +4438,8 @@ export class BundlesService {
      * @param data.bundleIds Comma-separated list of bundle IDs
      * @param data.skip
      * @param data.limit
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -3622,10 +4450,14 @@ export class BundlesService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 bundle_ids: data.bundleIds,
                 skip: data.skip,
-                limit: data.limit
+                limit: data.limit,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -3642,6 +4474,8 @@ export class CanonicalEntitiesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.entityType
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
@@ -3652,8 +4486,12 @@ export class CanonicalEntitiesService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
-                entity_type: data.entityType
+                entity_type: data.entityType,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -3667,6 +4505,8 @@ export class CanonicalEntitiesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
@@ -3676,6 +4516,12 @@ export class CanonicalEntitiesService {
             url: '/api/v1/infospaces/{infospace_id}/entities',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -3689,9 +4535,11 @@ export class CanonicalEntitiesService {
      * Update Entity
      * Update a canonical entity (rename, edit aliases, properties).
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.entityId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
@@ -3700,8 +4548,14 @@ export class CanonicalEntitiesService {
             method: 'PUT',
             url: '/api/v1/infospaces/{infospace_id}/entities/{entity_id}',
             path: {
-                infospace_id: data.infospaceId,
-                entity_id: data.entityId
+                entity_id: data.entityId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -3715,8 +4569,10 @@ export class CanonicalEntitiesService {
      * Delete Entity
      * Delete a canonical entity.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.entityId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns void Successful Response
      * @throws ApiError
      */
@@ -3725,8 +4581,14 @@ export class CanonicalEntitiesService {
             method: 'DELETE',
             url: '/api/v1/infospaces/{infospace_id}/entities/{entity_id}',
             path: {
-                infospace_id: data.infospaceId,
-                entity_id: data.entityId
+                entity_id: data.entityId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -3740,6 +4602,8 @@ export class CanonicalEntitiesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
@@ -3749,6 +4613,12 @@ export class CanonicalEntitiesService {
             url: '/api/v1/infospaces/{infospace_id}/entities/merge',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -3764,6 +4634,8 @@ export class CanonicalEntitiesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -3773,6 +4645,12 @@ export class CanonicalEntitiesService {
             url: '/api/v1/infospaces/{infospace_id}/entities/resolve',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -4342,7 +5220,7 @@ export class EmbeddingsService {
     /**
      * Generate Infospace Embeddings
      * Generate embeddings for all assets in an infospace.
-     * Dispatches background tasks using the infospace's embedding_selection.
+     * Dispatches the embedding enricher for eligible assets.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
@@ -4460,13 +5338,9 @@ export class EmbeddingsService {
     
     /**
      * Discover Embedding Models
-     * Discover available embedding models from all providers with runtime API keys.
+     * Discover available embedding models from all providers.
      *
-     * This endpoint supports runtime API key injection from frontend for:
-     * - OpenAI: requires api_keys.openai
-     * - Voyage AI (Anthropic): requires api_keys.voyage
-     * - Jina AI: requires api_keys.jina
-     * - Ollama: no API key needed
+     * Supports runtime API key injection from frontend for cloud providers.
      * @param data The data for the request.
      * @param data.requestBody
      * @returns AvailableModelsResponse Successful Response
@@ -4493,6 +5367,8 @@ export class EntitiesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.entityType
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
@@ -4503,8 +5379,12 @@ export class EntitiesService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
-                entity_type: data.entityType
+                entity_type: data.entityType,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -4518,6 +5398,8 @@ export class EntitiesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
@@ -4527,6 +5409,12 @@ export class EntitiesService {
             url: '/api/v1/infospaces/{infospace_id}/entities',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -4540,9 +5428,11 @@ export class EntitiesService {
      * Update Entity
      * Update a canonical entity (rename, edit aliases, properties).
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.entityId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
@@ -4551,8 +5441,14 @@ export class EntitiesService {
             method: 'PUT',
             url: '/api/v1/infospaces/{infospace_id}/entities/{entity_id}',
             path: {
-                infospace_id: data.infospaceId,
-                entity_id: data.entityId
+                entity_id: data.entityId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -4566,8 +5462,10 @@ export class EntitiesService {
      * Delete Entity
      * Delete a canonical entity.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.entityId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns void Successful Response
      * @throws ApiError
      */
@@ -4576,8 +5474,14 @@ export class EntitiesService {
             method: 'DELETE',
             url: '/api/v1/infospaces/{infospace_id}/entities/{entity_id}',
             path: {
-                infospace_id: data.infospaceId,
-                entity_id: data.entityId
+                entity_id: data.entityId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -4591,6 +5495,8 @@ export class EntitiesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns EntityCanonicalRead Successful Response
      * @throws ApiError
      */
@@ -4600,6 +5506,12 @@ export class EntitiesService {
             url: '/api/v1/infospaces/{infospace_id}/entities/merge',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -4615,6 +5527,8 @@ export class EntitiesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -4624,6 +5538,12 @@ export class EntitiesService {
             url: '/api/v1/infospaces/{infospace_id}/entities/resolve',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -5704,6 +6624,8 @@ export class IngestionJobsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns IngestionJobRead Successful Response
      * @throws ApiError
      */
@@ -5714,6 +6636,12 @@ export class IngestionJobsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -5723,7 +6651,7 @@ export class IngestionJobsService {
     }
     
     /**
-     * Trigger Batch Process Pending
+     * Trigger Process Pending
      * Trigger batch processing of PENDING assets in a bundle.
      *
      * After directory import (reference mode), assets are created with PENDING status.
@@ -5733,10 +6661,12 @@ export class IngestionJobsService {
      * @param data.infospaceId
      * @param data.bundleId
      * @param data.batchSize
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BatchProcessResponse Successful Response
      * @throws ApiError
      */
-    public static triggerBatchProcessPending(data: TriggerBatchProcessPendingData): CancelablePromise<TriggerBatchProcessPendingResponse> {
+    public static triggerProcessPending(data: TriggerProcessPendingData): CancelablePromise<TriggerProcessPendingResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/process-pending',
@@ -5744,8 +6674,12 @@ export class IngestionJobsService {
                 infospace_id: data.infospaceId,
                 bundle_id: data.bundleId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
-                batch_size: data.batchSize
+                batch_size: data.batchSize,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -5754,7 +6688,7 @@ export class IngestionJobsService {
     }
     
     /**
-     * Trigger Batch Enrich
+     * Trigger Enrich
      * Trigger batch enrichment for assets in a bundle missing a facet.
      *
      * Runs enrichers (geocoding, etc.) on assets that don't yet have the target
@@ -5763,16 +6697,24 @@ export class IngestionJobsService {
      * @param data.infospaceId
      * @param data.bundleId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns BatchEnrichResponse Successful Response
      * @throws ApiError
      */
-    public static triggerBatchEnrich(data: TriggerBatchEnrichData): CancelablePromise<TriggerBatchEnrichResponse> {
+    public static triggerEnrich(data: TriggerEnrichData): CancelablePromise<TriggerEnrichResponse> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/v1/infospaces/{infospace_id}/bundles/{bundle_id}/enrich',
             path: {
                 infospace_id: data.infospaceId,
                 bundle_id: data.bundleId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -5790,6 +6732,8 @@ export class IngestionJobsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.bundleId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns ProcessingStatusResponse Successful Response
      * @throws ApiError
      */
@@ -5800,6 +6744,12 @@ export class IngestionJobsService {
             path: {
                 infospace_id: data.infospaceId,
                 bundle_id: data.bundleId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -5818,6 +6768,8 @@ export class IngestionJobsService {
      * @param data.kind Filter by job kind (directory_local, zip, tar.gz, etc.)
      * @param data.sourceId Filter by source ID (jobs created by this source poll)
      * @param data.limit
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns IngestionJobRead Successful Response
      * @throws ApiError
      */
@@ -5828,11 +6780,15 @@ export class IngestionJobsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 status: data.status,
                 kind: data.kind,
                 source_id: data.sourceId,
-                limit: data.limit
+                limit: data.limit,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -5847,15 +6803,25 @@ export class IngestionJobsService {
      * Frontend polls this endpoint to show real-time progress.
      * @param data The data for the request.
      * @param data.jobId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns IngestionJobRead Successful Response
      * @throws ApiError
      */
     public static getIngestionJobStatus(data: GetIngestionJobStatusData): CancelablePromise<GetIngestionJobStatusResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/ingestion-jobs/{job_id}',
+            url: '/api/v1/infospaces/{infospace_id}/ingestion-jobs/{job_id}',
             path: {
-                job_id: data.jobId
+                job_id: data.jobId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -5870,15 +6836,25 @@ export class IngestionJobsService {
      * Note: This only deletes the job tracking record, not the created assets/bundles.
      * @param data The data for the request.
      * @param data.jobId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
     public static deleteIngestionJob(data: DeleteIngestionJobData): CancelablePromise<DeleteIngestionJobResponse> {
         return __request(OpenAPI, {
             method: 'DELETE',
-            url: '/api/v1/ingestion-jobs/{job_id}',
+            url: '/api/v1/infospaces/{infospace_id}/ingestion-jobs/{job_id}',
             path: {
-                job_id: data.jobId
+                job_id: data.jobId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -5891,15 +6867,25 @@ export class IngestionJobsService {
      * Get job status by UUID (useful when only UUID is known).
      * @param data The data for the request.
      * @param data.jobUuid
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns IngestionJobRead Successful Response
      * @throws ApiError
      */
     public static getIngestionJobByUuid(data: GetIngestionJobByUuidData): CancelablePromise<GetIngestionJobByUuidResponse> {
         return __request(OpenAPI, {
             method: 'GET',
-            url: '/api/v1/ingestion-jobs/by-uuid/{job_uuid}',
+            url: '/api/v1/infospaces/{infospace_id}/ingestion-jobs/by-uuid/{job_uuid}',
             path: {
-                job_uuid: data.jobUuid
+                job_uuid: data.jobUuid,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -5916,6 +6902,8 @@ export class IngestionJobsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns IngestionJobRead Successful Response
      * @throws ApiError
      */
@@ -5925,6 +6913,12 @@ export class IngestionJobsService {
             url: '/api/v1/infospaces/{infospace_id}/ingestion-jobs/ingest-archive',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -5939,15 +6933,25 @@ export class IngestionJobsService {
      * Cancel a running ingestion job.
      * @param data The data for the request.
      * @param data.jobId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
     public static cancelIngestionJob(data: CancelIngestionJobData): CancelablePromise<CancelIngestionJobResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/ingestion-jobs/{job_id}/cancel',
+            url: '/api/v1/infospaces/{infospace_id}/ingestion-jobs/{job_id}/cancel',
             path: {
-                job_id: data.jobId
+                job_id: data.jobId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -5965,6 +6969,8 @@ export class IngestionJobsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -5974,6 +6980,12 @@ export class IngestionJobsService {
             url: '/api/v1/infospaces/{infospace_id}/reconcile-directory',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -5995,6 +7007,8 @@ export class IngestionJobsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns WatchStatusResponse Successful Response
      * @throws ApiError
      */
@@ -6004,6 +7018,12 @@ export class IngestionJobsService {
             url: '/api/v1/infospaces/{infospace_id}/enable-watch',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -6020,6 +7040,8 @@ export class IngestionJobsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.bundleId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns WatchStatusResponse Successful Response
      * @throws ApiError
      */
@@ -6030,8 +7052,72 @@ export class IngestionJobsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
-                bundle_id: data.bundleId
+                bundle_id: data.bundleId,
+                package_token: data.packageToken
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Task Status
+     * Per-task stats for an infospace. Reads from Redis — no DB queries.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static getTaskStatus(data: GetTaskStatusData): CancelablePromise<GetTaskStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/task-status',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Pipeline Stats
+     * Asset processing breakdown for a completed ingestion job.
+     * @param data The data for the request.
+     * @param data.jobId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns PipelineStatsResponse Successful Response
+     * @throws ApiError
+     */
+    public static getPipelineStats(data: GetPipelineStatsData): CancelablePromise<GetPipelineStatsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/ingestion-jobs/{job_id}/pipeline-stats',
+            path: {
+                job_id: data.jobId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -6172,6 +7258,8 @@ export class KnowledgeGraphsService {
      * List knowledge graphs for an infospace.
      * @param data The data for the request.
      * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns KnowledgeGraphRead Successful Response
      * @throws ApiError
      */
@@ -6181,6 +7269,12 @@ export class KnowledgeGraphsService {
             url: '/api/v1/infospaces/{infospace_id}/knowledge-graphs',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -6194,6 +7288,8 @@ export class KnowledgeGraphsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns KnowledgeGraphRead Successful Response
      * @throws ApiError
      */
@@ -6203,6 +7299,12 @@ export class KnowledgeGraphsService {
             url: '/api/v1/infospaces/{infospace_id}/knowledge-graphs',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -6216,8 +7318,10 @@ export class KnowledgeGraphsService {
      * Get Knowledge Graph
      * Get a knowledge graph by ID.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.graphId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns KnowledgeGraphRead Successful Response
      * @throws ApiError
      */
@@ -6226,8 +7330,14 @@ export class KnowledgeGraphsService {
             method: 'GET',
             url: '/api/v1/infospaces/{infospace_id}/knowledge-graphs/{graph_id}',
             path: {
-                infospace_id: data.infospaceId,
-                graph_id: data.graphId
+                graph_id: data.graphId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -6239,9 +7349,11 @@ export class KnowledgeGraphsService {
      * Update Knowledge Graph
      * Update a knowledge graph.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.graphId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns KnowledgeGraphRead Successful Response
      * @throws ApiError
      */
@@ -6250,8 +7362,14 @@ export class KnowledgeGraphsService {
             method: 'PATCH',
             url: '/api/v1/infospaces/{infospace_id}/knowledge-graphs/{graph_id}',
             path: {
-                infospace_id: data.infospaceId,
-                graph_id: data.graphId
+                graph_id: data.graphId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -6265,8 +7383,10 @@ export class KnowledgeGraphsService {
      * Delete Knowledge Graph
      * Delete a knowledge graph. Entities with graph_id set will need handling (cascade or nullify).
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.graphId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns void Successful Response
      * @throws ApiError
      */
@@ -6275,8 +7395,14 @@ export class KnowledgeGraphsService {
             method: 'DELETE',
             url: '/api/v1/infospaces/{infospace_id}/knowledge-graphs/{graph_id}',
             path: {
-                infospace_id: data.infospaceId,
-                graph_id: data.graphId
+                graph_id: data.graphId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -6382,6 +7508,280 @@ export class LoginService {
     }
 }
 
+export class PackagesService {
+    /**
+     * Create Package
+     * Create a new package in an infospace. Requires organize capability (curator+).
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns app__api__routes__packages__PackageRead Successful Response
+     * @throws ApiError
+     */
+    public static createPackage(data: CreatePackageData): CancelablePromise<CreatePackageResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/packages',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * List Packages
+     * List packages in an infospace. Any access level can see them.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns app__api__routes__packages__PackageRead Successful Response
+     * @throws ApiError
+     */
+    public static listPackages(data: ListPackagesData): CancelablePromise<ListPackagesResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/packages',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Package
+     * Get a package by ID.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.packageId
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns app__api__routes__packages__PackageRead Successful Response
+     * @throws ApiError
+     */
+    public static getPackage(data: GetPackageData): CancelablePromise<GetPackageResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/packages/{package_id}',
+            path: {
+                infospace_id: data.infospaceId,
+                package_id: data.packageId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Update Package
+     * Update a package. Requires organize capability.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.packageId
+     * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns app__api__routes__packages__PackageRead Successful Response
+     * @throws ApiError
+     */
+    public static updatePackage(data: UpdatePackageData): CancelablePromise<UpdatePackageResponse> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/v1/infospaces/{infospace_id}/packages/{package_id}',
+            path: {
+                infospace_id: data.infospaceId,
+                package_id: data.packageId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Delete Package
+     * Delete a package. Requires delete capability.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.packageId
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns void Successful Response
+     * @throws ApiError
+     */
+    public static deletePackage(data: DeletePackageData): CancelablePromise<DeletePackageResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/infospaces/{infospace_id}/packages/{package_id}',
+            path: {
+                infospace_id: data.infospaceId,
+                package_id: data.packageId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Add Package Item
+     * Add an item to a package. Requires organize capability.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.packageId
+     * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns PackageItemRead Successful Response
+     * @throws ApiError
+     */
+    public static addPackageItem(data: AddPackageItemData): CancelablePromise<AddPackageItemResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/packages/{package_id}/items',
+            path: {
+                infospace_id: data.infospaceId,
+                package_id: data.packageId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Remove Package Item
+     * Remove an item from a package.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.packageId
+     * @param data.itemId
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns void Successful Response
+     * @throws ApiError
+     */
+    public static removePackageItem(data: RemovePackageItemData): CancelablePromise<RemovePackageItemResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/infospaces/{infospace_id}/packages/{package_id}/items/{item_id}',
+            path: {
+                infospace_id: data.infospaceId,
+                package_id: data.packageId,
+                item_id: data.itemId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Discover Packages
+     * Discover packages by visibility level.
+     *
+     * - PUBLIC packages: visible to everyone (no auth required).
+     * - INTERNAL packages: visible to any authenticated user on the instance.
+     * @param data The data for the request.
+     * @param data.visibility Filter: 'public' or 'internal'
+     * @param data.limit
+     * @returns PackagePublicRead Successful Response
+     * @throws ApiError
+     */
+    public static discoverPackages(data: DiscoverPackagesData = {}): CancelablePromise<DiscoverPackagesResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/packages/discover',
+            query: {
+                visibility: data.visibility,
+                limit: data.limit
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Access Package By Token
+     * Access a package by its token. This is the external-facing URL for shared packages.
+     * Returns package metadata and item list (without exposing the token again).
+     * @param data The data for the request.
+     * @param data.token
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static accessPackageByToken(data: AccessPackageByTokenData): CancelablePromise<AccessPackageByTokenResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/p/{token}',
+            path: {
+                token: data.token
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+}
+
 export class ProvidersService {
     /**
      * Discover Models
@@ -6423,6 +7823,67 @@ export class ProvidersService {
             url: '/api/v1/providers/capabilities'
         });
     }
+    
+    /**
+     * Enrichment Status
+     * Return status of registered enrichment tasks.
+     *
+     * Shows active tasks, done/failed/skipped counts from Redis stats.
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static enrichmentStatus(): CancelablePromise<EnrichmentStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/providers/enrichment/status'
+        });
+    }
+}
+
+export class QueryService {
+    /**
+     * Query Assets
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.requestBody
+     * @returns QueryResponse Successful Response
+     * @throws ApiError
+     */
+    public static queryAssets(data: QueryAssetsData): CancelablePromise<QueryAssetsResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/infospaces/{infospace_id}/query',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Get Query Fields
+     * Return available annotation fields, entity types, and recent runs for the query helper panel.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @returns QueryFieldsResponse Successful Response
+     * @throws ApiError
+     */
+    public static getQueryFields(data: GetQueryFieldsData): CancelablePromise<GetQueryFieldsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/query/fields',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
 }
 
 export class RunsService {
@@ -6432,6 +7893,8 @@ export class RunsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRunRead Successful Response
      * @throws ApiError
      */
@@ -6442,6 +7905,12 @@ export class RunsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             body: data.requestBody,
             mediaType: 'application/json',
             errors: {
@@ -6458,6 +7927,8 @@ export class RunsService {
      * @param data.skip
      * @param data.limit
      * @param data.includeCounts Include counts of annotations and assets
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRunsOut Successful Response
      * @throws ApiError
      */
@@ -6468,10 +7939,14 @@ export class RunsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
-                include_counts: data.includeCounts
+                include_counts: data.includeCounts,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -6485,6 +7960,8 @@ export class RunsService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRunRead Successful Response
      * @throws ApiError
      */
@@ -6494,6 +7971,12 @@ export class RunsService {
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -6511,6 +7994,8 @@ export class RunsService {
      * @param data.skip
      * @param data.limit
      * @param data.includeCounts Include counts of annotations and assets
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRunsOut Successful Response
      * @throws ApiError
      */
@@ -6521,10 +8006,14 @@ export class RunsService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
-                include_counts: data.includeCounts
+                include_counts: data.includeCounts,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -6536,9 +8025,11 @@ export class RunsService {
      * Get Run
      * Retrieve a specific Run by its ID.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
      * @param data.includeCounts Include counts of annotations and assets
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRunRead Successful Response
      * @throws ApiError
      */
@@ -6547,11 +8038,15 @@ export class RunsService {
             method: 'GET',
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
             },
             query: {
-                include_counts: data.includeCounts
+                include_counts: data.includeCounts,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -6563,9 +8058,11 @@ export class RunsService {
      * Update Run
      * Update a Run.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AnnotationRunRead Successful Response
      * @throws ApiError
      */
@@ -6574,8 +8071,14 @@ export class RunsService {
             method: 'PATCH',
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -6589,8 +8092,10 @@ export class RunsService {
      * Delete Run
      * Delete a Run.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns void Successful Response
      * @throws ApiError
      */
@@ -6599,8 +8104,14 @@ export class RunsService {
             method: 'DELETE',
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -6612,8 +8123,10 @@ export class RunsService {
      * Retry Failed Annotations
      * Retry failed annotations in a run.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -6622,8 +8135,14 @@ export class RunsService {
             method: 'POST',
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}/retry_failures',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -6635,10 +8154,12 @@ export class RunsService {
      * Create Package From Run Endpoint
      * Create a package from a run.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
      * @param data.requestBody
-     * @returns PackageRead Successful Response
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns app__schemas__PackageRead Successful Response
      * @throws ApiError
      */
     public static createPackageFromRunEndpoint(data: CreatePackageFromRunEndpointData): CancelablePromise<CreatePackageFromRunEndpointResponse> {
@@ -6646,8 +8167,14 @@ export class RunsService {
             method: 'POST',
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}/create_package',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -6668,11 +8195,13 @@ export class RunsService {
      *
      * Perfect for loading into pandas, Excel, or ML tools like lazypredict.
      * @param data The data for the request.
-     * @param data.infospaceId
      * @param data.runId
+     * @param data.infospaceId
      * @param data.flattenJson Flatten nested JSON fields into dot-notation columns
      * @param data.includeMetadata Include asset and schema metadata
      * @param data.includeJustifications Include justification text (adds columns)
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -6681,13 +8210,17 @@ export class RunsService {
             method: 'GET',
             url: '/api/v1/annotation_jobs/infospaces/{infospace_id}/runs/{run_id}/export/csv',
             path: {
-                infospace_id: data.infospaceId,
-                run_id: data.runId
+                run_id: data.runId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
             },
             query: {
                 flatten_json: data.flattenJson,
                 include_metadata: data.includeMetadata,
-                include_justifications: data.includeJustifications
+                include_justifications: data.includeJustifications,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -7277,6 +8810,8 @@ export class SourcesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns SourceRead Successful Response
      * @throws ApiError
      */
@@ -7286,6 +8821,12 @@ export class SourcesService {
             url: '/api/v1/infospaces/{infospace_id}/sources/',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -7303,6 +8844,8 @@ export class SourcesService {
      * @param data.skip
      * @param data.limit
      * @param data.includeCounts Include counts of assets
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns SourcesOut Successful Response
      * @throws ApiError
      */
@@ -7313,10 +8856,14 @@ export class SourcesService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
-                include_counts: data.includeCounts
+                include_counts: data.includeCounts,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -7334,6 +8881,8 @@ export class SourcesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns SourceRead Successful Response
      * @throws ApiError
      */
@@ -7343,6 +8892,12 @@ export class SourcesService {
             url: '/api/v1/infospaces/{infospace_id}/sources',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -7360,6 +8915,8 @@ export class SourcesService {
      * @param data.skip
      * @param data.limit
      * @param data.includeCounts Include counts of assets
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns SourcesOut Successful Response
      * @throws ApiError
      */
@@ -7370,10 +8927,14 @@ export class SourcesService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
-                include_counts: data.includeCounts
+                include_counts: data.includeCounts,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -7388,6 +8949,8 @@ export class SourcesService {
      * @param data.infospaceId
      * @param data.sourceId
      * @param data.includeCounts Include counts of assets
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns SourceRead Successful Response
      * @throws ApiError
      */
@@ -7399,8 +8962,12 @@ export class SourcesService {
                 infospace_id: data.infospaceId,
                 source_id: data.sourceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
-                include_counts: data.includeCounts
+                include_counts: data.includeCounts,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -7415,6 +8982,8 @@ export class SourcesService {
      * @param data.infospaceId
      * @param data.sourceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns SourceRead Successful Response
      * @throws ApiError
      */
@@ -7425,6 +8994,12 @@ export class SourcesService {
             path: {
                 infospace_id: data.infospaceId,
                 source_id: data.sourceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -7440,6 +9015,8 @@ export class SourcesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.sourceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns void Successful Response
      * @throws ApiError
      */
@@ -7450,6 +9027,12 @@ export class SourcesService {
             path: {
                 infospace_id: data.infospaceId,
                 source_id: data.sourceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -7463,6 +9046,8 @@ export class SourcesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.sourceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -7474,6 +9059,12 @@ export class SourcesService {
                 infospace_id: data.infospaceId,
                 source_id: data.sourceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
             errors: {
                 422: 'Validation Error'
             }
@@ -7483,6 +9074,7 @@ export class SourcesService {
     /**
      * Transfer Sources
      * Transfer sources between infospaces.
+     * Validates organize on source, ingest on target.
      * @param data The data for the request.
      * @param data.requestBody
      * @returns SourceTransferResponse Successful Response
@@ -7509,6 +9101,8 @@ export class SourcesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns SourceRead Successful Response
      * @throws ApiError
      */
@@ -7518,6 +9112,12 @@ export class SourcesService {
             url: '/api/v1/infospaces/{infospace_id}/sources/create-rss-source',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -7533,6 +9133,8 @@ export class SourcesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.sourceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns SourceRead Successful Response
      * @throws ApiError
      */
@@ -7543,6 +9145,12 @@ export class SourcesService {
             path: {
                 infospace_id: data.infospaceId,
                 source_id: data.sourceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -7556,6 +9164,8 @@ export class SourcesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.sourceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns SourceRead Successful Response
      * @throws ApiError
      */
@@ -7566,6 +9176,12 @@ export class SourcesService {
             path: {
                 infospace_id: data.infospaceId,
                 source_id: data.sourceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -7579,6 +9195,8 @@ export class SourcesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.sourceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -7589,6 +9207,12 @@ export class SourcesService {
             path: {
                 infospace_id: data.infospaceId,
                 source_id: data.sourceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -7602,6 +9226,8 @@ export class SourcesService {
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.sourceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -7612,6 +9238,12 @@ export class SourcesService {
             path: {
                 infospace_id: data.infospaceId,
                 source_id: data.sourceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -7626,6 +9258,8 @@ export class SourcesService {
      * @param data.infospaceId
      * @param data.sourceId
      * @param data.limit
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -7637,8 +9271,12 @@ export class SourcesService {
                 infospace_id: data.infospaceId,
                 source_id: data.sourceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
-                limit: data.limit
+                limit: data.limit,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -7882,6 +9520,8 @@ export class StorageService {
      * @param data.infospaceId
      * @param data.path Directory path to list; defaults to first allowed root
      * @param data.includeCounts Include file_count, importable_count, size_bytes for directories (expensive on large trees)
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns StorageBrowseResponse Successful Response
      * @throws ApiError
      */
@@ -7892,9 +9532,13 @@ export class StorageService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 path: data.path,
-                include_counts: data.includeCounts
+                include_counts: data.includeCounts,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -8420,12 +10064,12 @@ export class TreeNavigationService {
      * - Root bundles (no parent_bundle_id)
      * - Root assets (no parent_asset_id, not in any bundle)
      *
-     * This provides fast initial rendering. Use the /tree/children endpoint
-     * to lazy-load contents when user expands a node.
-     *
-     * **Performance:** Single query, minimal data transfer (~50-100KB vs 500KB-2MB)
+     * When accessed via package token, only scoped bundles are returned.
+     * See docs/authoritative_designs/access-control.md § Scope.
      * @param data The data for the request.
      * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns TreeResponse Successful Response
      * @throws ApiError
      */
@@ -8435,6 +10079,12 @@ export class TreeNavigationService {
             url: '/api/v1/infospaces/{infospace_id}/tree',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -8446,15 +10096,16 @@ export class TreeNavigationService {
      * Get Tree Children
      * Get children of a specific tree node (lazy loading).
      *
-     * For bundles: Returns child bundles + assets in that bundle
+     * For bundles: Returns child bundles + assets in that bundle.
      * For container assets: Returns child assets (PDF pages, CSV rows, etc.)
-     *
-     * **Performance:** Only loads children when user expands, minimal data transfer
+     * Scope-aware: package token access only sees scoped bundles.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.parentId Parent node ID (format: 'bundle-123' or 'asset-456')
      * @param data.skip
      * @param data.limit
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns TreeChildrenResponse Successful Response
      * @throws ApiError
      */
@@ -8465,10 +10116,14 @@ export class TreeNavigationService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 parent_id: data.parentId,
                 skip: data.skip,
-                limit: data.limit
+                limit: data.limit,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -8480,9 +10135,12 @@ export class TreeNavigationService {
      * Delete Tree Nodes
      * Delete tree nodes (bundles and/or assets).
      * Cascades: bundle delete includes assets; asset delete includes children.
+     * Requires DELETE capability (analyst+).
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns Message Successful Response
      * @throws ApiError
      */
@@ -8492,6 +10150,12 @@ export class TreeNavigationService {
             url: '/api/v1/infospaces/{infospace_id}/tree/delete',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -8504,17 +10168,7 @@ export class TreeNavigationService {
     /**
      * Get Feed Assets
      * Get a feed of recent assets sorted by date.
-     *
-     * Unlike the tree endpoint, this returns ALL displayable assets regardless
-     * of whether their containing bundle is expanded. Perfect for "latest" feeds.
-     *
-     * Features:
-     * - Includes assets from all bundles (not just expanded ones)
-     * - Filters out child assets (only parent/standalone assets)
-     * - Sorted by date (created_at or updated_at) or name
-     * - Supports kind filtering
-     * - Supports bundle_id and path_filter for Bundle/virtual folder detail views
-     * - Includes source_metadata for image extraction
+     * Scope-aware: package token access restricts to scoped bundles.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.skip
@@ -8524,6 +10178,8 @@ export class TreeNavigationService {
      * @param data.sortOrder Sort order: asc, desc
      * @param data.bundleId Filter to assets in this bundle (for Bundle detail)
      * @param data.pathFilter Filter by logical_path prefix (for virtual folder)
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns FeedAssetsResponse Successful Response
      * @throws ApiError
      */
@@ -8534,6 +10190,9 @@ export class TreeNavigationService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 skip: data.skip,
                 limit: data.limit,
@@ -8541,7 +10200,8 @@ export class TreeNavigationService {
                 sort_by: data.sortBy,
                 sort_order: data.sortOrder,
                 bundle_id: data.bundleId,
-                path_filter: data.pathFilter
+                path_filter: data.pathFilter,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'
@@ -8551,15 +10211,12 @@ export class TreeNavigationService {
     
     /**
      * Batch Get Assets
-     * Batch fetch multiple assets by IDs in a single request.
-     *
-     * Efficient alternative to multiple GET /assets/{id} calls.
-     * Used by semantic search and other features that need multiple assets.
-     *
-     * This endpoint follows the tree API pattern for efficient batch operations.
+     * Batch fetch multiple assets by IDs. Scope-aware.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns AssetRead Successful Response
      * @throws ApiError
      */
@@ -8569,6 +10226,12 @@ export class TreeNavigationService {
             url: '/api/v1/infospaces/{infospace_id}/tree/assets/batch',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -8581,13 +10244,15 @@ export class TreeNavigationService {
     /**
      * Text Search Assets
      * Comprehensive text search across all assets in an infospace.
-     * Search strategy: title → bundle name → content. Returns assets with relevance scores.
+     * Scope-aware: package token restricts search to scoped bundles.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.query Search query
      * @param data.limit Maximum number of results
      * @param data.assetKinds Filter by asset types
      * @param data.bundleId Search within specific bundle
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns TextSearchResponse Successful Response
      * @throws ApiError
      */
@@ -8598,11 +10263,15 @@ export class TreeNavigationService {
             path: {
                 infospace_id: data.infospaceId
             },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
             query: {
                 query: data.query,
                 limit: data.limit,
                 asset_kinds: data.assetKinds,
-                bundle_id: data.bundleId
+                bundle_id: data.bundleId,
+                package_token: data.packageToken
             },
             errors: {
                 422: 'Validation Error'

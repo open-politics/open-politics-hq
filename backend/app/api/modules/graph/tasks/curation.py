@@ -118,8 +118,31 @@ async def _curate_annotation_batch(session: Session, annotation_ids: List[int]) 
 
             run = session.get(AnnotationRun, ann.run_id) if ann.run_id else None
             graph_id = None
+            merge_normalize: Dict[str, str] = {}
+            merge_type_override: Dict[str, str] = {}  # lowered keep name → forced type
             if run and run.graph_config and isinstance(run.graph_config, dict):
                 graph_id = run.graph_config.get("graph_id") or run.graph_config.get("target_graph_id")
+                # Build normalization map from entity_merges hints
+                for group in run.graph_config.get("entity_merges", []):
+                    keep = group.get("keep", "")
+                    forced_type = group.get("type")  # optional type override
+                    for name in group.get("names", []):
+                        if name.strip().lower() != keep.strip().lower():
+                            merge_normalize[name.strip().lower()] = keep
+                    if forced_type:
+                        merge_type_override[keep.strip().lower()] = forced_type
+
+            if merge_normalize or merge_type_override:
+                unique_pairs = list(dict.fromkeys(
+                    (
+                        merge_normalize.get(name.strip().lower(), name),
+                        merge_type_override.get(
+                            merge_normalize.get(name.strip().lower(), name).strip().lower(),
+                            etype,
+                        ),
+                    )
+                    for name, etype in unique_pairs
+                ))
 
             resolution_map = await resolve_entities_batch(
                 session,
@@ -135,6 +158,11 @@ async def _curate_annotation_batch(session: Session, annotation_ids: List[int]) 
                     continue
                 sub_name, sub_type = pairs[0]
                 obj_name, obj_type = pairs[1]
+                # Normalize through merge hints so lookups match resolution_map keys
+                sub_name = merge_normalize.get(sub_name.strip().lower(), sub_name)
+                obj_name = merge_normalize.get(obj_name.strip().lower(), obj_name)
+                sub_type = merge_type_override.get(sub_name.strip().lower(), sub_type)
+                obj_type = merge_type_override.get(obj_name.strip().lower(), obj_type)
                 sub_entity = resolution_map.get((sub_name, sub_type))
                 obj_entity = resolution_map.get((obj_name, obj_type))
                 if not sub_entity or not obj_entity:

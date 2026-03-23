@@ -6,7 +6,8 @@ import enum
 import uuid
 
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Column, Index, JSON, Text, text, UniqueConstraint
+import sqlalchemy as sa
+from sqlalchemy import CheckConstraint, Column, Index, JSON, Text, text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY, JSONB
 from pgvector.sqlalchemy import Vector
 
@@ -156,7 +157,6 @@ class Bundle(SQLModel, table=True):
 
     infospace: Optional[Infospace] = Relationship(back_populates="bundles")
     user: Optional[User] = Relationship(back_populates="bundles")
-    assets: List["Asset"] = Relationship(back_populates="bundle")
     parent_bundle: Optional["Bundle"] = Relationship(
         back_populates="child_bundles",
         sa_relationship_kwargs=dict(foreign_keys="[Bundle.parent_bundle_id]", remote_side="Bundle.id"),
@@ -193,7 +193,12 @@ class Asset(SQLModel, table=True):
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: Optional[int] = Field(default=None, foreign_key="user.id")
     source_id: Optional[int] = Field(default=None, foreign_key="source.id")
-    bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id", index=True)
+    # Multi-membership: asset can belong to many bundles. NULL = unorganized.
+    # All mutations MUST use raw SQL array_append/array_remove (no ORM read-modify-write).
+    bundle_ids: Optional[List[int]] = Field(
+        default=None,
+        sa_column=Column("bundle_ids", PG_ARRAY(sa.Integer), nullable=True),
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     event_timestamp: Optional[datetime] = Field(default=None)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
@@ -233,7 +238,6 @@ class Asset(SQLModel, table=True):
     infospace: Optional[Infospace] = Relationship(back_populates="assets")
     user: Optional[User] = Relationship(back_populates="assets")
     source: Optional[Source] = Relationship(back_populates="assets")
-    bundle: Optional[Bundle] = Relationship(back_populates="assets")
     annotations: List["Annotation"] = Relationship(
         back_populates="asset",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
@@ -248,6 +252,11 @@ class Asset(SQLModel, table=True):
         Index("ix_asset_discovered_modalities", "discovered_modalities", postgresql_using="gin"),
         Index("ix_asset_metadata", "metadata", postgresql_using="gin", postgresql_ops={"metadata": "jsonb_path_ops"}),
         Index("ix_asset_enrichment_resolved", "enrichment_resolved", postgresql_using="gin"),
+        Index("ix_asset_bundle_ids", "bundle_ids", postgresql_using="gin"),
+        CheckConstraint(
+            "bundle_ids IS NULL OR array_length(bundle_ids, 1) > 0",
+            name="ck_asset_bundle_ids_no_empty",
+        ),
     )
 
     @property

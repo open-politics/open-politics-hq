@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from sqlalchemy import text
 from sqlmodel import select
 
 from app.models import Asset, AssetKind, Bundle, ProcessingStatus, Source
@@ -389,7 +390,7 @@ class InboxPollHandler:
             kind=kind,
             infospace_id=source.infospace_id,
             user_id=source.user_id,
-            bundle_id=bundle.id,
+            bundle_ids=[bundle.id],
             blob_path=blob_path,
             logical_path=file_path.name,
             content_hash=file_hash,
@@ -414,7 +415,7 @@ class InboxPollHandler:
         """
         from sqlalchemy import or_
         base = (
-            Asset.bundle_id == bundle_id,
+            text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id),
             Asset.infospace_id == infospace_id,
             Asset.parent_asset_id.is_(None),
             Asset.is_superseded.is_(False),
@@ -445,7 +446,7 @@ class InboxPollHandler:
     ) -> bool:
         """Check if content_hash exists in bundle. Single indexed query."""
         stmt = select(Asset.id).where(
-            Asset.bundle_id == bundle_id,
+            text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id),
             Asset.infospace_id == infospace_id,
             Asset.content_hash == content_hash,
             Asset.is_superseded.is_(False),
@@ -461,7 +462,7 @@ class InboxPollHandler:
         pattern_suffix = f"%/{base_stem}."
         pattern_exact = f"%/{base_stem}"
         stmt = select(Asset).where(
-            Asset.bundle_id == bundle_id,
+            text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id),
             Asset.infospace_id == infospace_id,
             Asset.parent_asset_id.is_(None),
             Asset.is_superseded.is_(False),
@@ -489,7 +490,7 @@ class InboxPollHandler:
         from sqlalchemy import or_
 
         stmt = select(Asset).where(
-            Asset.bundle_id == bundle_id,
+            text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id),
             Asset.infospace_id == context.infospace_id,
             Asset.is_superseded.is_(False),
             Asset.parent_asset_id.is_(None),

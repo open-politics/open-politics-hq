@@ -16,7 +16,10 @@ from pydantic import BaseModel, Field
 from app.api import dependency_injection
 from app.models import Asset, Bundle, AssetKind
 from app.schemas import TreeResponse, TreeNode, TreeChildrenResponse, Message, AssetRead
-from app.api.global_utils import validate_infospace_access
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires, ViewAccess, DeleteAccess,
+)
+from app.schemas import DeletionImpact
 from app.api.content_tree_builder import (
     build_root_tree_nodes,
     build_bundle_children_nodes,
@@ -61,7 +64,7 @@ def _get_virtual_folder_children(
             substring(logical_path from :prefix_len + 1), '/', 1
         ) AS segment
         FROM asset
-        WHERE bundle_id = :bundle_id
+        WHERE bundle_ids @> ARRAY[:bundle_id]::int[]
           AND logical_path IS NOT NULL
           AND logical_path LIKE :like_prefix
           AND parent_asset_id IS NULL
@@ -74,7 +77,7 @@ def _get_virtual_folder_children(
     # Files at this level (suffix has no slash)
     files_count_stmt = text("""
         SELECT count(*) FROM asset
-        WHERE bundle_id = :bundle_id
+        WHERE bundle_ids @> ARRAY[:bundle_id]::int[]
           AND logical_path IS NOT NULL
           AND logical_path LIKE :like_prefix
           AND parent_asset_id IS NULL
@@ -99,7 +102,7 @@ def _get_virtual_folder_children(
         files_params = {**params, "file_skip": file_skip, "remaining": remaining}
         files_stmt = text("""
             SELECT id FROM asset
-            WHERE bundle_id = :bundle_id
+            WHERE bundle_ids @> ARRAY[:bundle_id]::int[]
               AND logical_path IS NOT NULL
               AND logical_path LIKE :like_prefix
               AND parent_asset_id IS NULL
@@ -128,60 +131,132 @@ def _get_virtual_folder_children(
 def get_infospace_tree(
     *,
     infospace_id: int,
+    access: Access = ViewAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Get the root-level tree structure for an infospace.
-    
+
     Returns minimal metadata for bundles and assets:
     - Root bundles (no parent_bundle_id)
     - Root assets (no parent_asset_id, not in any bundle)
-    
-    This provides fast initial rendering. Use the /tree/children endpoint
-    to lazy-load contents when user expands a node.
-    
-    **Performance:** Single query, minimal data transfer (~50-100KB vs 500KB-2MB)
+
+    When accessed via package token, only scoped bundles are returned.
+    See FOUNDATION.md § Access Control.
     """
-    validate_infospace_access(db, infospace_id, current_user.id)
-    
-    # Query root bundles (no parent) - limited to root level only
-    root_bundles = db.exec(
-        select(Bundle)
-        .where(Bundle.infospace_id == infospace_id)
-        .where(Bundle.parent_bundle_id.is_(None))
-        .order_by(Bundle.name)
-    ).all()
-    
-    logger.info(f"Found {len(root_bundles)} root bundles in infospace {infospace_id}")
-    
-    # Query root assets (not in any bundle, no parent asset)
-    # Use bundle_id IS NULL instead of loading all bundled IDs - scalable for large infospaces
-    root_assets = db.exec(
-        select(Asset)
-        .where(Asset.infospace_id == infospace_id)
-        .where(Asset.parent_asset_id.is_(None))
-        .where(Asset.bundle_id.is_(None))
-        .where(Asset.user_id == current_user.id)
-        .order_by(Asset.updated_at.desc())
-    ).all()
-    
-    logger.info(f"Found {len(root_assets)} root assets in infospace {infospace_id}")
-    
-    # Build tree nodes using utility functions
-    tree_nodes = build_root_tree_nodes(root_bundles, root_assets, db)
-    
-    # Count totals (DB-side, scalable for large infospaces)
-    total_bundles = db.exec(
-        select(func.count(Bundle.id)).where(Bundle.infospace_id == infospace_id)
-    ).one() or 0
-    
-    total_assets = db.exec(
-        select(func.count(Asset.id))
-        .where(Asset.infospace_id == infospace_id)
-        .where(Asset.user_id == current_user.id)
-    ).one() or 0
-    
+    scope = access.scope  # None = full access, PackageScope = restricted
+
+    if not scope:
+        # ── Full access: all root bundles + unorganized assets ──
+        root_bundles = db.exec(
+            select(Bundle)
+            .where(Bundle.infospace_id == infospace_id)
+            .where(Bundle.parent_bundle_id.is_(None))
+            .order_by(Bundle.name)
+        ).all()
+        root_assets = db.exec(
+            select(Asset)
+            .where(Asset.infospace_id == infospace_id)
+            .where(Asset.parent_asset_id.is_(None))
+            .where(Asset.bundle_ids.is_(None))
+            .order_by(Asset.updated_at.desc())
+        ).all()
+        tree_nodes = build_root_tree_nodes(root_bundles, root_assets, db)
+        total_bundles = db.exec(
+            select(func.count(Bundle.id)).where(Bundle.infospace_id == infospace_id)
+        ).one() or 0
+        total_assets = db.exec(
+            select(func.count(Asset.id)).where(Asset.infospace_id == infospace_id)
+        ).one() or 0
+    else:
+        # ── Package scope: explicit bundles + derived bundles (ancestor rule) ──
+        from app.api.modules.content.query import AssetQuery
+
+        # Explicitly granted bundles at root level
+        explicit_root_bundles = []
+        if scope.bundle_ids:
+            explicit_root_bundles = db.exec(
+                select(Bundle)
+                .where(Bundle.id.in_(scope.bundle_ids))
+                .where(Bundle.parent_bundle_id.is_(None) | Bundle.parent_bundle_id.not_in(scope.bundle_ids))
+                .order_by(Bundle.name)
+            ).all()
+
+        # Derived bundles: bundles containing visible assets but not explicitly granted.
+        # Discover from visible assets' bundle_ids, then apply the ancestor rule:
+        # only show if the bundle has its own visible content.
+        derived_bundle_ids: set[int] = set()
+        if scope.run_ids or scope.asset_ids:
+            visible_bids_rows = db.execute(text("""
+                SELECT DISTINCT unnest(bundle_ids) AS bid FROM asset
+                WHERE infospace_id = :iid AND (
+                    id = ANY(:aids)
+                    OR id IN (
+                        SELECT DISTINCT asset_id FROM annotation
+                        WHERE run_id = ANY(:rids) AND asset_id IS NOT NULL
+                    )
+                ) AND bundle_ids IS NOT NULL
+            """), {
+                "iid": infospace_id,
+                "aids": list(scope.asset_ids) if scope.asset_ids else [],
+                "rids": list(scope.run_ids) if scope.run_ids else [],
+            }).fetchall()
+            all_visible_bids = {r[0] for r in visible_bids_rows}
+            derived_bundle_ids = all_visible_bids - set(scope.bundle_ids)
+
+        # Ancestor rule: a derived bundle appears only if it has its own visible
+        # assets.  Ancestors without content → children promoted to root.
+        visible_derived_bundles = []
+        promoted_bundles = []  # bundles promoted to root because ancestor has no content
+        if derived_bundle_ids:
+            for bid in derived_bundle_ids:
+                bundle = db.get(Bundle, bid)
+                if not bundle or bundle.infospace_id != infospace_id:
+                    continue
+                # Check if this bundle has its own visible content
+                has_content = db.execute(text("""
+                    SELECT EXISTS(
+                        SELECT 1 FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[]
+                        AND infospace_id = :iid AND parent_asset_id IS NULL
+                        AND (
+                            id = ANY(:aids)
+                            OR id IN (
+                                SELECT DISTINCT asset_id FROM annotation
+                                WHERE run_id = ANY(:rids) AND asset_id IS NOT NULL
+                            )
+                        )
+                    )
+                """), {
+                    "bid": bid, "iid": infospace_id,
+                    "aids": list(scope.asset_ids) if scope.asset_ids else [],
+                    "rids": list(scope.run_ids) if scope.run_ids else [],
+                }).scalar()
+                if has_content:
+                    visible_derived_bundles.append(bundle)
+                # If no content, children that ARE in derived_bundle_ids will be
+                # promoted to root on their own iteration
+
+        all_root_bundles = explicit_root_bundles + visible_derived_bundles
+        all_root_bundles.sort(key=lambda b: b.name or "")
+
+        # Scoped root assets: visible assets not in any bundle (unbundled direct grants)
+        scoped_root_assets = []
+        if scope.asset_ids:
+            scoped_root_assets = db.exec(
+                select(Asset)
+                .where(Asset.id.in_(scope.asset_ids))
+                .where(Asset.parent_asset_id.is_(None))
+                .where(Asset.bundle_ids.is_(None))
+                .order_by(Asset.updated_at.desc())
+            ).all()
+
+        tree_nodes = build_root_tree_nodes(all_root_bundles, scoped_root_assets, db)
+        total_bundles = len(all_root_bundles)
+        total_assets = 0
+        if scope.bundle_ids or scope.asset_ids or scope.run_ids:
+            aq = AssetQuery(db, infospace_id).scope(scope)
+            total_assets = aq.count()
+
     return TreeResponse(
         nodes=tree_nodes,
         total_bundles=total_bundles,
@@ -197,18 +272,17 @@ def get_tree_children(
     parent_id: str = Query(..., description="Parent node ID (format: 'bundle-123' or 'asset-456')"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    access: Access = ViewAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Get children of a specific tree node (lazy loading).
-    
-    For bundles: Returns child bundles + assets in that bundle
+
+    For bundles: Returns child bundles + assets in that bundle.
     For container assets: Returns child assets (PDF pages, CSV rows, etc.)
-    
-    **Performance:** Only loads children when user expands, minimal data transfer
+    Scope-aware: package token access only sees scoped bundles.
     """
-    validate_infospace_access(db, infospace_id, current_user.id)
+    scope = access.scope
     
     # Parse the parent ID
     try:
@@ -223,20 +297,21 @@ def get_tree_children(
     total_children = 0
     
     if parent_type == "bundle":
-        # Get the bundle and verify access
+        # Get the bundle and verify access + scope
         bundle = db.get(Bundle, parent_numeric_id)
         if not bundle or bundle.infospace_id != infospace_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Bundle {parent_numeric_id} not found"
             )
+        # Scope guard: package token can only browse scoped bundles
+        if scope and scope.bundle_ids and bundle.id not in scope.bundle_ids:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
         # Bundles with assets that have logical_path use virtual folders
-        has_logical_path = db.exec(
-            select(Asset.id)
-            .where(Asset.bundle_id == parent_numeric_id)
-            .where(Asset.logical_path.is_not(None))
-            .limit(1)
+        has_logical_path = db.execute(
+            text("SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[] AND logical_path IS NOT NULL LIMIT 1"),
+            {"bid": parent_numeric_id},
         ).first()
         if has_logical_path:
             # Include both: real child bundles (e.g. materialized vfolders) + virtual folders
@@ -271,14 +346,21 @@ def get_tree_children(
             asset_skip = max(0, skip - (bundle.child_bundle_count or 0))
             bundle_assets = []
             if remaining_limit > 0:
-                bundle_assets = db.exec(
-                    select(Asset)
-                    .where(Asset.bundle_id == parent_numeric_id)
-                    .where(Asset.parent_asset_id.is_(None))
-                    .order_by(Asset.title)
-                    .offset(asset_skip)
-                    .limit(remaining_limit)
-                ).all()
+                asset_ids = [
+                    r[0] for r in db.execute(
+                        text(
+                            "SELECT id FROM asset "
+                            "WHERE bundle_ids @> ARRAY[:bid]::int[] "
+                            "AND parent_asset_id IS NULL "
+                            "ORDER BY title OFFSET :off LIMIT :lim"
+                        ),
+                        {"bid": parent_numeric_id, "off": asset_skip, "lim": remaining_limit},
+                    ).fetchall()
+                ]
+                if asset_ids:
+                    bundle_assets = list(db.exec(
+                        select(Asset).where(Asset.id.in_(asset_ids)).order_by(Asset.title)
+                    ).all())
             children_nodes = build_bundle_children_nodes(bundle, child_bundles, bundle_assets, db)
             total_children = (bundle.child_bundle_count or 0) + (bundle.asset_count or 0)
 
@@ -311,7 +393,8 @@ def get_tree_children(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Asset {parent_numeric_id} not found"
             )
-        
+        access.require_in_scope("asset_ids", parent_numeric_id)
+
         if not asset.is_container:
             # Not a container, no children
             return TreeChildrenResponse(
@@ -356,29 +439,133 @@ def get_tree_children(
     )
 
 
+def _expand_bundle_descendants(db: Session, bundle_ids: set[int]) -> set[int]:
+    """Recursive CTE: given root bundle IDs, return the full subtree including roots."""
+    if not bundle_ids:
+        return set()
+    rows = db.execute(text("""
+        WITH RECURSIVE tree AS (
+            SELECT id FROM bundle WHERE id = ANY(:bids)
+            UNION ALL
+            SELECT b.id FROM bundle b JOIN tree ON b.parent_bundle_id = tree.id
+        )
+        SELECT id FROM tree
+    """), {"bids": list(bundle_ids)}).fetchall()
+    return {r[0] for r in rows}
+
+
+def _analyze_deletion(
+    db: Session,
+    bundle_ids: set[int],
+    explicit_asset_ids: set[int],
+) -> DeletionImpact:
+    """Compute what a deletion of these bundles + assets would affect."""
+    # Bundle names
+    bundle_names = []
+    if bundle_ids:
+        rows = db.execute(
+            text("SELECT name FROM bundle WHERE id = ANY(:bids) ORDER BY name"),
+            {"bids": list(bundle_ids)},
+        ).fetchall()
+        bundle_names = [r[0] for r in rows]
+
+    # Assets in the bundle subtree: split into exclusive vs shared
+    exclusive_count = 0
+    shared_count = 0
+    if bundle_ids:
+        bids_list = list(bundle_ids)
+        asset_rows = db.execute(
+            text("SELECT id, bundle_ids FROM asset WHERE bundle_ids && :bids::int[]"),
+            {"bids": bids_list},
+        ).fetchall()
+        for row in asset_rows:
+            asset_id, bids = row
+            if asset_id in explicit_asset_ids:
+                continue  # counted separately
+            if bids and all(b in bundle_ids for b in bids):
+                exclusive_count += 1
+            else:
+                shared_count += 1
+
+    # Structural children of explicitly selected assets
+    child_asset_count = 0
+    if explicit_asset_ids:
+        child_asset_count = db.execute(
+            text("SELECT count(*) FROM asset WHERE parent_asset_id = ANY(:aids)"),
+            {"aids": list(explicit_asset_ids)},
+        ).scalar() or 0
+
+    return DeletionImpact(
+        bundles_to_delete=len(bundle_ids),
+        bundle_names=bundle_names,
+        assets_to_delete=exclusive_count + len(explicit_asset_ids),
+        assets_to_unlink=shared_count,
+        child_assets_to_delete=child_asset_count,
+    )
+
+
 class TreeDeleteRequest(BaseModel):
     node_ids: List[str]  # Format: ["bundle-123", "asset-456"]
+
+
+@router.post("/infospaces/{infospace_id}/tree/delete-preview", response_model=DeletionImpact)
+def preview_tree_deletion(
+    *,
+    infospace_id: int,
+    request: TreeDeleteRequest,
+    access: Access = Requires(Capability.DELETE),
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+) -> Any:
+    """
+    Preview the impact of deleting tree nodes without mutating anything.
+    Returns counts of bundles, exclusive assets, shared assets, and child assets.
+    """
+    if not request.node_ids:
+        return DeletionImpact(
+            bundles_to_delete=0, bundle_names=[],
+            assets_to_delete=0, assets_to_unlink=0, child_assets_to_delete=0,
+        )
+
+    raw_bundle_ids: set[int] = set()
+    explicit_asset_ids: set[int] = set()
+
+    for node_id in request.node_ids:
+        try:
+            node_type, node_numeric_id = parse_tree_node_id(node_id)
+            if node_type == "bundle":
+                bundle = db.get(Bundle, node_numeric_id)
+                if bundle and bundle.infospace_id == infospace_id:
+                    raw_bundle_ids.add(bundle.id)
+            elif node_type == "asset":
+                asset = db.get(Asset, node_numeric_id)
+                if asset and asset.infospace_id == infospace_id:
+                    explicit_asset_ids.add(node_numeric_id)
+        except Exception:
+            continue
+
+    expanded_bundle_ids = _expand_bundle_descendants(db, raw_bundle_ids)
+    return _analyze_deletion(db, expanded_bundle_ids, explicit_asset_ids)
+
 
 @router.post("/infospaces/{infospace_id}/tree/delete", response_model=Message)
 def delete_tree_nodes(
     *,
     infospace_id: int,
     request: TreeDeleteRequest,
+    access: Access = DeleteAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
     asset_service: dependency_injection.AssetServiceDep,
     bundle_service: dependency_injection.BundleServiceDep,
 ) -> Any:
     """
     Delete tree nodes (bundles and/or assets).
     Cascades: bundle delete includes assets; asset delete includes children.
+    Requires DELETE capability (analyst+).
     """
-    validate_infospace_access(db, infospace_id, current_user.id)
     if not request.node_ids:
         return Message(message="No items to delete")
 
-    bundles_to_delete: List[Bundle] = []
-    bundle_ids_to_delete: set[int] = set()
+    raw_bundle_ids: set[int] = set()
     explicitly_selected_asset_ids: set[int] = set()
     failed_count = 0
 
@@ -391,8 +578,7 @@ def delete_tree_nodes(
                     logger.warning(f"Bundle {node_numeric_id} not found or not in infospace")
                     failed_count += 1
                     continue
-                bundles_to_delete.append(bundle)
-                bundle_ids_to_delete.add(bundle.id)
+                raw_bundle_ids.add(bundle.id)
             elif node_type == "asset":
                 asset = db.get(Asset, node_numeric_id)
                 if not asset or asset.infospace_id != infospace_id:
@@ -404,14 +590,22 @@ def delete_tree_nodes(
             logger.error(f"Failed to parse/validate node {node_id}: {e}")
             failed_count += 1
 
+    # Expand selected bundles to include all descendants
+    bundle_ids_to_delete = _expand_bundle_descendants(db, raw_bundle_ids)
+
     asset_ids_to_delete = set(explicitly_selected_asset_ids)
     if bundle_ids_to_delete:
-        assets_in_bundles = db.exec(
-            select(Asset).where(Asset.bundle_id.in_(bundle_ids_to_delete))
-        ).all()
-        for asset in assets_in_bundles:
-            asset_ids_to_delete.add(asset.id)
-        logger.info(f"Found {len(assets_in_bundles)} assets in {len(bundle_ids_to_delete)} bundles")
+        # Find assets that are ONLY in the bundles being deleted (will be permanently deleted)
+        # Assets shared with bundles outside the delete set survive (just unlinked by DB trigger)
+        asset_rows = db.execute(
+            text("SELECT id, bundle_ids FROM asset WHERE bundle_ids && :bids::int[]"),
+            {"bids": list(bundle_ids_to_delete)},
+        ).fetchall()
+        for row in asset_rows:
+            asset_id, bids = row
+            if bids and all(b in bundle_ids_to_delete for b in bids):
+                asset_ids_to_delete.add(asset_id)
+        logger.info(f"Found {len(asset_ids_to_delete - explicitly_selected_asset_ids)} assets exclusively in deleted bundles")
 
     deleted_assets = asset_service.cascade_delete(asset_ids_to_delete)
     deleted_bundles = bundle_service.cascade_delete(bundle_ids_to_delete)
@@ -446,30 +640,20 @@ def get_feed_assets(
     sort_order: str = Query("desc", description="Sort order: asc, desc"),
     bundle_id: Optional[int] = Query(None, description="Filter to assets in this bundle (for Bundle detail)"),
     path_filter: Optional[str] = Query(None, description="Filter by logical_path prefix (for virtual folder)"),
+    access: Access = ViewAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Get a feed of recent assets sorted by date.
-    
-    Unlike the tree endpoint, this returns ALL displayable assets regardless
-    of whether their containing bundle is expanded. Perfect for "latest" feeds.
-    
-    Features:
-    - Includes assets from all bundles (not just expanded ones)
-    - Filters out child assets (only parent/standalone assets)
-    - Sorted by date (created_at or updated_at) or name
-    - Supports kind filtering
-    - Supports bundle_id and path_filter for Bundle/virtual folder detail views
-    - Includes source_metadata for image extraction
+    Scope-aware: package token access restricts to scoped bundles.
     """
-    validate_infospace_access(db, infospace_id, current_user.id)
-    
+    scope = access.scope
+
     # Base query: assets in this infospace, no parent asset
     query = (
         select(Asset)
         .where(Asset.infospace_id == infospace_id)
-        .where(Asset.parent_asset_id.is_(None))  # Only top-level assets
+        .where(Asset.parent_asset_id.is_(None))
     )
     count_query = (
         select(func.count(Asset.id))
@@ -477,25 +661,36 @@ def get_feed_assets(
         .where(Asset.parent_asset_id.is_(None))
     )
 
-    # When filtering by bundle, collaborators see all bundle assets (no user_id filter)
+    # Scope filtering: restrict to scoped bundles if package token access
+    if scope and scope.bundle_ids:
+        scope_cond = text("bundle_ids && :scope_ids::int[]").bindparams(scope_ids=list(scope.bundle_ids))
+        query = query.where(scope_cond)
+        count_query = count_query.where(scope_cond)
+
     if bundle_id is not None:
+        # Verify bundle is accessible (exists + in scope if scoped)
         bundle = db.get(Bundle, bundle_id)
         if not bundle or bundle.infospace_id != infospace_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Bundle {bundle_id} not found"
             )
-        query = query.where(Asset.bundle_id == bundle_id)
-        count_query = count_query.where(Asset.bundle_id == bundle_id)
+        if scope and scope.bundle_ids and bundle_id not in scope.bundle_ids:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        bundle_cond = text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id)
+        query = query.where(bundle_cond)
+        count_query = count_query.where(bundle_cond)
         if path_filter:
             # logical_path LIKE 'path_prefix%' (path_prefix can be "politics/eu/" or "politics/eu")
             like_prefix = f"{path_filter}%" if path_filter else "%"
             path_cond = (Asset.logical_path.is_not(None)) & (Asset.logical_path.like(like_prefix))
             query = query.where(path_cond)
             count_query = count_query.where(path_cond)
-    else:
-        query = query.where(Asset.user_id == current_user.id)
-        count_query = count_query.where(Asset.user_id == current_user.id)
+    elif not scope:
+        # No bundle filter and no scope — show user's unscoped assets
+        if access.user_id:
+            query = query.where(Asset.user_id == access.user_id)
+            count_query = count_query.where(Asset.user_id == access.user_id)
     
     # Filter by kinds if specified
     if kinds:
@@ -538,29 +733,18 @@ def batch_get_assets(
     *,
     infospace_id: int,
     request: BatchGetAssetsRequest,
+    access: Access = ViewAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
-    """
-    Batch fetch multiple assets by IDs in a single request.
-    
-    Efficient alternative to multiple GET /assets/{id} calls.
-    Used by semantic search and other features that need multiple assets.
-    
-    This endpoint follows the tree API pattern for efficient batch operations.
-    """
-    validate_infospace_access(db, infospace_id, current_user.id)
-    
+    """Batch fetch multiple assets by IDs. Scope-aware."""
     if not request.asset_ids:
         return []
-    
-    # Fetch all assets in a single query (same pattern as tree API)
-    assets = db.exec(
-        select(Asset)
-        .where(Asset.id.in_(request.asset_ids))
-        .where(Asset.infospace_id == infospace_id)
-        .where(Asset.user_id == current_user.id)
-    ).all()
+
+    from app.api.modules.content.query import AssetQuery
+    aq = AssetQuery(db, infospace_id).scope(access.scope)
+    # Filter to only the requested IDs within scope
+    aq._query = aq._query.where(Asset.id.in_(request.asset_ids))
+    assets = aq.execute()
     
     # Return in the same order as requested IDs (preserve order)
     asset_map = {asset.id: asset for asset in assets}
@@ -597,20 +781,21 @@ def text_search_assets(
     limit: int = Query(100, ge=1, le=500, description="Maximum number of results"),
     asset_kinds: Optional[List[AssetKind]] = Query(None, description="Filter by asset types"),
     bundle_id: Optional[int] = Query(None, description="Search within specific bundle"),
+    access: Access = ViewAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
 ) -> Any:
     """
     Comprehensive text search across all assets in an infospace.
-    Search strategy: title → bundle name → content. Returns assets with relevance scores.
     """
-    validate_infospace_access(db, infospace_id, current_user.id)
+    # Text search service doesn't support scope filtering yet — deny scoped access
+    if access.scope:
+        return TextSearchResponse(query=query, results=[], total_found=0, infospace_id=infospace_id)
     try:
         from app.api.modules.search.services import SearchService
         search_service = SearchService(db)
         data = search_service.search_assets_tree_text(
             infospace_id=infospace_id,
-            user_id=current_user.id,
+            user_id=access.user_id,
             query=query,
             limit=limit,
             asset_kinds=asset_kinds,

@@ -25,7 +25,9 @@ from app.api.dependency_injection import (
     ProcessingServiceDep,
     CheckUploadSizeDep,
 )
-from app.api.global_utils import validate_infospace_access
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires, resolve_access,
+)
 from app.api.modules.foundation_service_providers.registry import get_scraping_provider, get_storage_provider
 from app.core.config import settings
 from sqlalchemy import func
@@ -103,7 +105,7 @@ class BatchAssetCreateRequest(BaseModel):
 async def create_asset(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     ingestion_context_factory: IngestionContextFactoryDep,
     processing_service: ProcessingServiceDep,
     infospace_id: int,
@@ -111,7 +113,7 @@ async def create_asset(
 ) -> Any:
     """
     Generic asset creation endpoint that routes to appropriate specific endpoint.
-    
+
     This endpoint maintains backward compatibility while using the new ContentService.
     Based on the asset data provided, it routes to the appropriate ingestion method:
     - If source_identifier (URL) is provided: ingest as web content
@@ -119,13 +121,11 @@ async def create_asset(
     - Otherwise: create a basic asset record
     """
     try:
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
         locator: Any = None
         options: Dict[str, Any] = {}
 
         if asset_in.source_identifier and (
-            asset_in.source_identifier.startswith('http://') or 
+            asset_in.source_identifier.startswith('http://') or
             asset_in.source_identifier.startswith('https://')
         ):
             locator = asset_in.source_identifier
@@ -133,10 +133,10 @@ async def create_asset(
         elif asset_in.text_content:
             locator = asset_in.text_content
             options['event_timestamp'] = asset_in.event_timestamp
-        
+
         if locator:
             context = ingestion_context_factory(
-                user_id=current_user.id,
+                user_id=access.user_id,
                 infospace_id=infospace_id,
                 options=options,
             )
@@ -150,8 +150,8 @@ async def create_asset(
         else:
             from app.api.modules.content.processors import detect_asset_kind_from_extension, needs_processing
 
-            context = ingestion_context_factory(current_user.id, infospace_id, {})
-            asset_in.user_id = current_user.id
+            context = ingestion_context_factory(access.user_id, infospace_id, {})
+            asset_in.user_id = access.user_id
             asset_in.infospace_id = infospace_id
 
             if asset_in.blob_path:
@@ -189,7 +189,7 @@ async def create_asset(
 def batch_create_assets(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     asset_service: AssetServiceDep,
     infospace_id: int,
     request: BatchAssetCreateRequest,
@@ -198,14 +198,13 @@ def batch_create_assets(
     Batch create assets. Single pattern for CSV rows, PDF pages, directory imports, RSS articles.
     Uses per-batch commits (default 500) for scale.
     """
-    validate_infospace_access(session, infospace_id, current_user.id)
     if not request.assets:
         return []
     # Ensure user_id and infospace_id on each asset
     normalized = []
     for ac in request.assets:
         data = ac.model_dump(exclude_unset=True)
-        data["user_id"] = current_user.id
+        data["user_id"] = access.user_id
         data["infospace_id"] = infospace_id
         normalized.append(data)
     created = asset_service.batch_create_assets(
@@ -220,7 +219,7 @@ def batch_create_assets(
 async def upload_file(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     _: CheckUploadSizeDep,
@@ -232,11 +231,10 @@ async def upload_file(
     Upload a file and create an asset.
     """
     try:
-        validate_infospace_access(session, infospace_id, current_user.id)
         from app.api.modules.content.handlers import FileHandler
 
         context = make_ingestion_context(
-            current_user.id, infospace_id, {"process_immediately": process_immediately}
+            access.user_id, infospace_id, {"process_immediately": process_immediately}
         )
         handler = FileHandler(context)
         assets = await handler.handle(file, title, {"process_immediately": process_immediately})
@@ -257,7 +255,7 @@ async def upload_file(
 async def ingest_url(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     url: str,
@@ -270,12 +268,10 @@ async def ingest_url(
     Uses WebHandler directly for clean URL ingestion.
     """
     try:
-        validate_infospace_access(session, infospace_id, current_user.id)
-
         from app.api.modules.content.handlers import WebHandler
 
         context = make_ingestion_context(
-            current_user.id, infospace_id, {"scrape_immediately": scrape_immediately}
+            access.user_id, infospace_id, {"scrape_immediately": scrape_immediately}
         )
         handler = WebHandler(context)
         assets = await handler.handle(url, title, {"scrape_immediately": scrape_immediately})
@@ -296,7 +292,7 @@ async def ingest_url(
 async def ingest_text(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     text_content: str,
@@ -309,12 +305,10 @@ async def ingest_text(
     Uses TextHandler directly for clean text ingestion.
     """
     try:
-        validate_infospace_access(session, infospace_id, current_user.id)
-
         from app.api.modules.content.handlers import TextHandler
 
         options = {"event_timestamp": event_timestamp} if event_timestamp else {}
-        context = make_ingestion_context(current_user.id, infospace_id, options)
+        context = make_ingestion_context(access.user_id, infospace_id, options)
         handler = TextHandler(context)
         assets = await handler.handle(text_content, title, options)
 
@@ -334,7 +328,7 @@ async def ingest_text(
 async def compose_article(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     infospace_id: int,
     composition: ArticleComposition
 ) -> Any:
@@ -344,11 +338,9 @@ async def compose_article(
     try:
         from app.api.modules.content.services.asset_builder import AssetBuilder
 
-        validate_infospace_access(session, infospace_id, current_user.id)
-
         article = await AssetBuilder.compose_article(
             session=session,
-            user_id=current_user.id,
+            user_id=access.user_id,
             infospace_id=infospace_id,
             title=composition.title,
             content=composition.content,
@@ -372,7 +364,7 @@ async def compose_article(
 async def bulk_ingest_urls(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     ingestion_context_factory: IngestionContextFactoryDep,
     infospace_id: int,
     bulk_request: BulkUrlIngestion
@@ -381,15 +373,13 @@ async def bulk_ingest_urls(
     Ingest multiple URLs as separate assets.
     """
     try:
-        validate_infospace_access(session, infospace_id, current_user.id)
-
         if len(bulk_request.urls) > 100:
             # For large batches, create IngestionJob — @task picks it up via event
             from app.models import IngestionJob, IngestionStatus
             from app.core.events import emit
             job = IngestionJob(
                 infospace_id=infospace_id,
-                user_id=current_user.id,
+                user_id=access.user_id,
                 source_locator="bulk_urls",
                 kind="bulk_urls",
                 status=IngestionStatus.PENDING,
@@ -409,7 +399,7 @@ async def bulk_ingest_urls(
 
         # For smaller batches, process immediately
         context = ingestion_context_factory(
-            user_id=current_user.id,
+            user_id=access.user_id,
             infospace_id=infospace_id,
             options={
                 "base_title": bulk_request.base_title,
@@ -438,20 +428,19 @@ async def bulk_ingest_urls(
 async def ingest_search_results(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     bundle_service: BundleServiceDep,
     infospace_id: int,
     bulk_request: BulkSearchResultIngestion
 ) -> Any:
     """
     Ingest search results with their pre-fetched content (no re-scraping).
-    
+
     This endpoint is optimized for search results from providers like Tavily
-    that already include the full content. We create ARTICLE assets directly 
+    that already include the full content. We create ARTICLE assets directly
     using the new AssetBuilder pattern.
     """
     try:
-        validate_infospace_access(session, infospace_id, current_user.id)
         
         from app.api.modules.content.services import AssetBuilder
         from app.schemas import SearchResult
@@ -476,7 +465,7 @@ async def ingest_search_results(
                 )
                 
                 # Build asset using AssetBuilder pattern
-                asset = await (AssetBuilder(session, current_user.id, infospace_id)
+                asset = await (AssetBuilder(session, access.user_id, infospace_id)
                     .from_search_result(search_result, query="ingested search results")
                     .with_metadata(
                         ingestion_rank=idx + 1,
@@ -494,7 +483,7 @@ async def ingest_search_results(
                             bundle_id=bulk_request.bundle_id,
                             asset_id=asset.id,
                             infospace_id=infospace_id,
-                            user_id=current_user.id
+                            user_id=access.user_id
                         )
                     except Exception as bundle_error:
                         logger.warning(f"Failed to add asset {asset.id} to bundle: {bundle_error}")
@@ -526,7 +515,7 @@ async def ingest_search_results(
 async def materialize_csv_from_rows(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.COMPUTE),
     infospace_id: int,
     asset_id: int,
     storage_provider: StorageProviderDep,
@@ -538,7 +527,6 @@ async def materialize_csv_from_rows(
     Generates a CSV file from the row assets and uploads it to storage,
     then updates the parent asset with the blob_path.
     """
-    validate_infospace_access(session, infospace_id, current_user.id)
 
     asset = session.get(Asset, asset_id)
     if not asset or asset.infospace_id != infospace_id:
@@ -572,7 +560,7 @@ async def materialize_csv_from_rows(
 async def reprocess_asset(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.COMPUTE),
     processing_service: ProcessingServiceDep,
     infospace_id: int,
     asset_id: int,
@@ -582,7 +570,6 @@ async def reprocess_asset(
     Reprocess an asset with new options.
     """
     try:
-        validate_infospace_access(session, infospace_id, current_user.id)
         
         # Get the asset
         asset = session.get(Asset, asset_id)
@@ -614,7 +601,7 @@ async def reprocess_asset(
 async def update_asset_content(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     storage_provider: StorageProviderDep,
     processing_service: ProcessingServiceDep,
     infospace_id: int,
@@ -623,18 +610,17 @@ async def update_asset_content(
 ) -> Any:
     """
     Update CSV asset content and trigger reprocessing.
-    
+
     This endpoint:
     1. Validates the asset exists and user has access
     2. Updates the blob storage with new CSV content
     3. Updates existing child row assets in-place (preserves IDs and relationships)
     4. Creates new assets for added rows, deletes assets for removed rows
-    
+
     IMPORTANT: Row assets are updated in-place rather than deleted/recreated.
     This preserves annotations, fragments, and all relationships that reference these assets.
     """
     try:
-        validate_infospace_access(session, infospace_id, current_user.id)
         
         # Get the asset
         asset = session.get(Asset, asset_id)
@@ -701,8 +687,8 @@ async def update_asset_content(
 @router.get("/", response_model=AssetsOut)
 def list_assets(
     session: SessionDep,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(),
+    infospace_id: int = 0,
     skip: int = 0,
     limit: int = 100,
     parent_asset_id: Optional[int] = None
@@ -710,11 +696,9 @@ def list_assets(
     """
     Retrieve assets for an infospace.
     """
-    validate_infospace_access(session, infospace_id, current_user.id)
-
     if parent_asset_id is not None:
         parent_asset = session.get(Asset, parent_asset_id)
-        if not parent_asset or parent_asset.infospace_id != infospace_id or parent_asset.user_id != current_user.id:
+        if not parent_asset or parent_asset.infospace_id != infospace_id or parent_asset.user_id != access.user_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Parent asset not found"
@@ -724,8 +708,9 @@ def list_assets(
 
     q = (
         AssetQuery(session, infospace_id)
+        .scope(access.scope)
         .parent_asset(parent_asset_id)
-        .user_id(current_user.id if parent_asset_id is None else None)
+        .user_id(access.user_id if parent_asset_id is None else None)
         .sort("created_at_desc")
         .offset(skip)
         .paginate(cursor=None, limit=limit)
@@ -742,7 +727,7 @@ def list_assets(
 async def discover_rss_feeds(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(),
     infospace_id: int,
     country: Optional[str] = None,
     category: Optional[str] = None,
@@ -750,14 +735,13 @@ async def discover_rss_feeds(
 ) -> Any:
     """
     Discover RSS feeds from the awesome-rss-feeds repository.
-    
+
     Args:
         country: Country name (e.g., "Australia", "United States") - if None, returns all countries
         category: Category filter (e.g., "News", "Technology") - if None, returns all categories
         limit: Maximum number of feeds to return
     """
     try:
-        validate_infospace_access(session, infospace_id, current_user.id)
 
         from app.api.modules.content.handlers import RSSHandler
 
@@ -786,7 +770,7 @@ async def discover_rss_feeds(
 async def preview_rss_feed(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(),
     infospace_id: int,
     feed_url: str,
     max_items: int = 20
@@ -812,7 +796,7 @@ async def preview_rss_feed(
 async def ingest_selected_articles(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     ingestion_context_factory: IngestionContextFactoryDep,
     infospace_id: int,
     feed_url: str,
@@ -821,14 +805,13 @@ async def ingest_selected_articles(
 ) -> Any:
     """
     Ingest selected articles from an RSS feed preview.
-    
+
     Args:
         feed_url: URL of the RSS feed
         selected_articles: List of article objects with at least 'link' and 'title'
         bundle_id: Optional bundle to add articles to
     """
     try:
-        validate_infospace_access(session, infospace_id, current_user.id)
         
         if not selected_articles:
             raise HTTPException(
@@ -854,7 +837,7 @@ async def ingest_selected_articles(
             "feed_url": feed_url,
         }
         context = ingestion_context_factory(
-            user_id=current_user.id,
+            user_id=access.user_id,
             infospace_id=infospace_id,
             options=opts,
         )
@@ -885,14 +868,13 @@ async def ingest_selected_articles(
 @router.get("/{asset_id}", response_model=AssetRead)
 def get_asset(
     session: SessionDep,
-    current_user: CurrentUser,
-    infospace_id: int,
-    asset_id: int
+    access: Access = Requires(),
+    infospace_id: int = 0,
+    asset_id: int = 0,
 ) -> Any:
     """
     Get a specific asset.
     """
-    validate_infospace_access(session, infospace_id, current_user.id)
     
     asset = session.get(Asset, asset_id)
     if not asset or asset.infospace_id != infospace_id:
@@ -900,22 +882,22 @@ def get_asset(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Asset not found"
         )
-    
+    access.require_in_scope("asset_ids", asset_id)
+
     return AssetRead.model_validate(asset)
 
 @router.get("/{asset_id}/children", response_model=List[AssetRead])
 def get_asset_children(
     session: SessionDep,
-    current_user: CurrentUser,
-    infospace_id: int,
-    asset_id: int,
+    access: Access = Requires(),
+    infospace_id: int = 0,
+    asset_id: int = 0,
     skip: int = 0,
-    limit: int = 100
+    limit: int = 100,
 ) -> Any:
     """
     Get child assets of a specific asset.
     """
-    validate_infospace_access(session, infospace_id, current_user.id)
     
     # Verify parent asset exists and belongs to user
     parent_asset = session.get(Asset, asset_id)
@@ -924,7 +906,8 @@ def get_asset_children(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Parent asset not found"
         )
-    
+    access.require_in_scope("asset_ids", asset_id)
+
     # Get child assets
     query = select(Asset).where(
         Asset.parent_asset_id == asset_id,
@@ -939,7 +922,7 @@ def get_asset_children(
 def update_asset(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.ORGANIZE),
     infospace_id: int,
     asset_id: int,
     asset_in: AssetUpdate
@@ -947,7 +930,6 @@ def update_asset(
     """
     Update an asset.
     """
-    validate_infospace_access(session, infospace_id, current_user.id)
     
     asset = session.get(Asset, asset_id)
     if not asset or asset.infospace_id != infospace_id:
@@ -969,14 +951,13 @@ def update_asset(
 @router.delete("/{asset_id}", response_model=Message)
 def delete_asset(
     session: SessionDep,
-    current_user: CurrentUser,
-    infospace_id: int,
-    asset_id: int
+    access: Access = Requires(Capability.DELETE),
+    infospace_id: int = 0,
+    asset_id: int = 0,
 ) -> Any:
     """
     Delete an asset and its children (explicitly handled for reliability).
     """
-    validate_infospace_access(session, infospace_id, current_user.id, require_editor=True)
     
     asset = session.get(Asset, asset_id)
     if not asset or asset.infospace_id != infospace_id:
@@ -1024,18 +1005,17 @@ class BulkDeleteRequest(BaseModel):
 def bulk_delete_assets(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.DELETE),
     infospace_id: int,
     request: BulkDeleteRequest
 ) -> Any:
     """
     Delete multiple assets in one request.
-    
+
     Much more efficient than individual DELETE requests when cleaning up
     multiple assets at once. Validates all assets belong to the infospace
     before deleting any.
     """
-    validate_infospace_access(session, infospace_id, current_user.id)
     
     if not request.asset_ids:
         return Message(message="No assets to delete")
@@ -1083,23 +1063,11 @@ def transfer_assets(
 ) -> Any:
     """
     Transfer assets between infospaces.
-    
-    This endpoint allows you to copy or move multiple assets from one infospace to another.
-    When copying (should_copy=True), new assets are created in the target infospace with the same content.
-    When moving (should_copy=False), assets are moved by changing their infospace_id.
-    
-    Args:
-        asset_ids: List of asset IDs to transfer
-        source_infospace_id: Source infospace ID
-        target_infospace_id: Target infospace ID
-        should_copy: If True, copy assets (default). If False, move them.
-    
-    Returns:
-        List of transferred assets in the target infospace
+    Validates organize capability on source, ingest capability on target.
     """
-    # Validate access to both infospaces
-    validate_infospace_access(session, request.source_infospace_id, current_user.id)
-    validate_infospace_access(session, request.target_infospace_id, current_user.id)
+    # Cross-infospace: resolve access for both sides
+    resolve_access(session, request.source_infospace_id, current_user, Capability.ORGANIZE)
+    resolve_access(session, request.target_infospace_id, current_user, Capability.INGEST)
     
     # Get asset service
     from app.api.modules.content.services import AssetService
@@ -1140,7 +1108,7 @@ async def create_assets_background_bulk(
     infospace_id: int,
     files: List[UploadFile] = File(...),
     options: str = Form("{}"),
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
 ):
     """
     Upload multiple files as individual assets using background processing.
@@ -1178,7 +1146,7 @@ async def create_assets_background_bulk(
             search_provider=search,
             asset_service=asset_service,
             bundle_service=bundle_service,
-            user_id=current_user.id,
+            user_id=access.user_id,
             infospace_id=infospace_id,
             settings=settings,
             options=opts,
@@ -1203,7 +1171,7 @@ async def create_assets_background_bulk(
                     "filename": file.filename,
                     "status": "queued" if asset.processing_status == ProcessingStatus.PENDING else "complete"
                 })
-                    
+
             except Exception as e:
                 logger.error(f"Failed to upload {file.filename}: {e}")
                 task_ids.append({
@@ -1212,7 +1180,7 @@ async def create_assets_background_bulk(
                     "status": "failed",
                     "error": str(e)
                 })
-        
+
         return {
             "message": f"Background upload initiated for {len(files)} files",
             "tasks": task_ids,
@@ -1224,7 +1192,7 @@ async def create_assets_background_urls(
     *,
     infospace_id: int,
     request: BulkUrlIngestion,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     session: SessionDep,
 ):
     """
@@ -1237,7 +1205,7 @@ async def create_assets_background_urls(
     from app.core.events import emit
     job = IngestionJob(
         infospace_id=infospace_id,
-        user_id=current_user.id,
+        user_id=access.user_id,
         source_locator="bulk_urls",
         kind="bulk_urls",
         status=IngestionStatus.PENDING,
@@ -1269,7 +1237,7 @@ async def add_files_to_bundle_background(
     _: CheckUploadSizeDep,
     files: List[UploadFile] = File(...),
     options: str = Form("{}"),
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
 ):
     """
     Add files to existing bundle using background processing.
@@ -1298,7 +1266,7 @@ async def add_files_to_bundle_background(
         asset_service = AssetService(session, storage)
         bundle_service = BundleServiceCls(session)
 
-        bundle = bundle_service.get_bundle(bundle_id, infospace_id, current_user.id)
+        bundle = bundle_service.get_bundle(bundle_id, infospace_id, access.user_id)
         if not bundle:
             raise HTTPException(status_code=404, detail="Bundle not found")
 
@@ -1310,7 +1278,7 @@ async def add_files_to_bundle_background(
             search_provider=search,
             asset_service=asset_service,
             bundle_service=bundle_service,
-            user_id=current_user.id,
+            user_id=access.user_id,
             infospace_id=infospace_id,
             settings=settings,
             options=opts,
@@ -1406,14 +1374,14 @@ async def get_task_status(
 async def ingest_rss_feeds_from_awesome(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     request: RSSDiscoveryRequest
 ) -> Any:
     """
     Discover and ingest RSS feeds from the awesome-rss-feeds repository.
-    
+
     This endpoint will:
     1. Fetch RSS feeds from the specified country
     2. Optionally filter by category
@@ -1421,12 +1389,10 @@ async def ingest_rss_feeds_from_awesome(
     4. Optionally add to a bundle
     """
     try:
-        validate_infospace_access(session, infospace_id, current_user.id)
-
         from app.api.modules.content.handlers import RSSHandler
 
         context = make_ingestion_context(
-            user_id=current_user.id,
+            user_id=access.user_id,
             infospace_id=infospace_id,
             options=request.options,
         )
@@ -1457,10 +1423,9 @@ async def retry_asset_enrichment(
     asset_id: int,
     enricher_name: str,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.COMPUTE),
 ):
     """Clear enrichment state for an asset so it is eligible for re-enrichment."""
-    validate_infospace_access(session, infospace_id, current_user)
 
     asset = session.get(Asset, asset_id)
     if not asset:

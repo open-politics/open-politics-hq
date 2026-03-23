@@ -187,6 +187,9 @@ export type AnnotationRunUpdate = {
     views_config?: (Array<{
     [key: string]: unknown;
 }> | null);
+    graph_config?: ({
+    [key: string]: unknown;
+} | null);
 };
 
 export type AnnotationSchemaCreate = {
@@ -259,6 +262,31 @@ export type AnnotationUpdate = {
     links?: (Array<{
     [key: string]: unknown;
 }> | null);
+};
+
+export type app__api__routes__packages__PackageRead = {
+    id: number;
+    uuid: string;
+    name: string;
+    description: (string | null);
+    token: string;
+    visibility: string;
+    infospace_id: number;
+    user_id: (number | null);
+    default_allow_download: boolean;
+    default_allow_copy: boolean;
+    is_active: boolean;
+    expires_at: (string | null);
+    created_at: string;
+    items?: Array<PackageItemRead>;
+};
+
+export type app__schemas__PackageRead = {
+    name: string;
+    description?: (string | null);
+    id: number;
+    infospace_id: number;
+    created_at: string;
 };
 
 export type ArticleComposition = {
@@ -435,7 +463,6 @@ export type BatchAssetCreateRequest = {
  */
 export type BatchEnrichRequest = {
     enricher_name: string;
-    missing_facet?: (string | null);
     batch_size?: number;
 };
 
@@ -993,6 +1020,8 @@ export type EmbeddingModelInfo = {
  */
 export type EmbeddingStatsResponse = {
     total_assets: number;
+    documents: number;
+    sub_assets: number;
     total_chunks: number;
     embedded_chunks: number;
     coverage_percentage: number;
@@ -1011,6 +1040,27 @@ export type EnableWatchRequest = {
     reconcile_interval_seconds?: number;
     enable_inbox?: boolean;
     inbox_interval_seconds?: number;
+};
+
+/**
+ * Per-infospace enrichment configuration. All enrichers require explicit opt-in.
+ *
+ * Each field is either:
+ * - True (enable with system defaults)
+ * - ProviderSelection (enable with specific provider + optional model)
+ * - None/missing (disabled)
+ *
+ * Embedding is always ``ProviderSelection`` (never plain bool) because you
+ * can't embed without choosing a provider and model.
+ */
+export type EnrichmentConfig = {
+    ocr?: (boolean | ProviderSelection | null);
+    geocoding?: (boolean | ProviderSelection | null);
+    language_detection?: (boolean | null);
+    quality_score?: (boolean | null);
+    hash?: (boolean | null);
+    embedding?: (ProviderSelection | null);
+    embedding_dimension_override?: (number | null);
 };
 
 /**
@@ -1329,10 +1379,10 @@ export type InfospaceCreate = {
     icon?: (string | null);
     enable_related_assets?: (boolean | null);
     owner_id: number;
-    embedding_selection?: (ProviderSelection | null);
     chunk_size?: (number | null);
     chunk_overlap?: (number | null);
     chunk_strategy?: (string | null);
+    enrichment_config?: (EnrichmentConfig | null);
 };
 
 export type InfospaceRead = {
@@ -1343,10 +1393,10 @@ export type InfospaceRead = {
     id: number;
     owner_id: number;
     created_at: string;
-    embedding_selection?: (ProviderSelection | null);
     chunk_size?: (number | null);
     chunk_overlap?: (number | null);
     chunk_strategy?: (string | null);
+    enrichment_config?: (EnrichmentConfig | null);
 };
 
 export type InfospacesOut = {
@@ -1357,12 +1407,12 @@ export type InfospacesOut = {
 export type InfospaceUpdate = {
     name?: (string | null);
     description?: (string | null);
-    embedding_selection?: (ProviderSelection | null);
     chunk_size?: (number | null);
     chunk_overlap?: (number | null);
     chunk_strategy?: (string | null);
     icon?: (string | null);
     enable_related_assets?: (boolean | null);
+    enrichment_config?: (EnrichmentConfig | null);
 };
 
 /**
@@ -1516,12 +1566,55 @@ export type NewPassword = {
     new_password: string;
 };
 
-export type PackageRead = {
+export type PackageCreate = {
     name: string;
     description?: (string | null);
+    /**
+     * token, internal, or public
+     */
+    visibility?: string;
+    default_allow_download?: boolean;
+    default_allow_copy?: boolean;
+    items?: Array<PackageItemCreate>;
+};
+
+export type PackageItemCreate = {
+    /**
+     * Type of resource: bundle, graph, run, schema
+     */
+    resource_type: string;
+    resource_id: number;
+    allow_download?: (boolean | null);
+    allow_copy?: (boolean | null);
+};
+
+export type PackageItemRead = {
     id: number;
-    infospace_id: number;
+    resource_type: string;
+    resource_id: number;
+    allow_download: (boolean | null);
+    allow_copy: (boolean | null);
+};
+
+/**
+ * Public-facing package info (no token exposed).
+ */
+export type PackagePublicRead = {
+    uuid: string;
+    name: string;
+    description: (string | null);
+    visibility: string;
+    item_count: number;
     created_at: string;
+};
+
+export type PackageUpdate = {
+    name?: (string | null);
+    description?: (string | null);
+    visibility?: (string | null);
+    default_allow_download?: (boolean | null);
+    default_allow_copy?: (boolean | null);
+    is_active?: (boolean | null);
 };
 
 export type Paginated = {
@@ -1530,6 +1623,20 @@ export type Paginated = {
 };
 
 export type PermissionLevel = 'read_only' | 'edit' | 'full_access';
+
+/**
+ * Pipeline timing and asset breakdown for an ingestion job.
+ */
+export type PipelineStatsResponse = {
+    import_started?: (string | null);
+    import_finished?: (string | null);
+    total_assets?: number;
+    ready?: number;
+    processing?: number;
+    pending?: number;
+    failed?: number;
+    last_asset_ready?: (string | null);
+};
 
 export type ProcessingStatus = 'ready' | 'pending' | 'processing' | 'failed';
 
@@ -1561,7 +1668,7 @@ export type PromoteFragmentRequest = {
 export type ProviderDefaults_Input = {
     language?: (LanguageDefaults | null);
     embedding?: (ProviderSelection | null);
-    search?: (ProviderSelection | null);
+    web_search?: (ProviderSelection | null);
     ocr?: (ProviderSelection | null);
     geocoding?: (ProviderSelection | null);
 };
@@ -1576,7 +1683,7 @@ export type ProviderDefaults_Input = {
 export type ProviderDefaults_Output = {
     language?: (LanguageDefaults | null);
     embedding?: (ProviderSelection | null);
-    search?: (ProviderSelection | null);
+    web_search?: (ProviderSelection | null);
     ocr?: (ProviderSelection | null);
     geocoding?: (ProviderSelection | null);
 };
@@ -1599,8 +1706,55 @@ export type ProviderModel = {
  * A typed provider+model choice.
  */
 export type ProviderSelection = {
-    type_key: string;
+    provider_key: string;
     model_name?: (string | null);
+    dimension?: (number | null);
+};
+
+export type QueryFieldsResponse = {
+    schemas: Array<SchemaInfo>;
+    entity_types: Array<string>;
+    runs: Array<RunInfo>;
+};
+
+export type QueryRequest = {
+    /**
+     * AQL query string
+     */
+    q: string;
+    /**
+     * Last asset ID for cursor pagination
+     */
+    cursor?: (number | null);
+    /**
+     * Offset for relevance-sorted pagination
+     */
+    offset?: number;
+    /**
+     * Page size
+     */
+    limit?: number;
+    /**
+     * relevance | created_at_desc | created_at_asc | title
+     */
+    sort?: string;
+};
+
+export type QueryResponse = {
+    query: string;
+    parsed: {
+        [key: string]: unknown;
+    };
+    results: Array<QueryResult>;
+    total: number;
+    has_more: boolean;
+    cursor_next?: (number | null);
+};
+
+export type QueryResult = {
+    asset: AssetRead;
+    score?: (number | null);
+    highlight?: (string | null);
 };
 
 /**
@@ -1669,6 +1823,13 @@ export type RssSourceCreateRequest = {
     target_bundle_name?: (string | null);
 };
 
+export type RunInfo = {
+    id: number;
+    name: string;
+    status: string;
+    schema_names: Array<string>;
+};
+
 export type RunStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'completed_with_errors';
 
 /**
@@ -1678,6 +1839,17 @@ export type SaveCredentialsRequest = {
     credentials: {
         [key: string]: string;
     };
+};
+
+export type SchemaField = {
+    key: string;
+    type?: string;
+};
+
+export type SchemaInfo = {
+    id: number;
+    name: string;
+    fields: Array<SchemaField>;
 };
 
 export type SearchAndIngestResponse = {
@@ -2405,7 +2577,9 @@ export type DeleteFragmentResponse2 = (DeleteFragmentResponse);
 
 export type CreateRunData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationRunCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateRunResponse = (AnnotationRunRead);
@@ -2417,14 +2591,18 @@ export type ListRunsData = {
     includeCounts?: boolean;
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListRunsResponse = (AnnotationRunsOut);
 
 export type CreateRun1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationRunCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateRun1Response = (AnnotationRunRead);
@@ -2436,7 +2614,9 @@ export type ListRuns1Data = {
     includeCounts?: boolean;
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListRuns1Response = (AnnotationRunsOut);
@@ -2447,40 +2627,50 @@ export type GetRunData = {
      */
     includeCounts?: boolean;
     infospaceId: number;
+    packageToken?: (string | null);
     runId: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetRunResponse = (AnnotationRunRead);
 
 export type UpdateRunData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationRunUpdate;
     runId: number;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateRunResponse = (AnnotationRunRead);
 
 export type DeleteRunData = {
     infospaceId: number;
+    packageToken?: (string | null);
     runId: number;
+    xPackageToken?: (string | null);
 };
 
 export type DeleteRunResponse = (void);
 
 export type RetryFailedAnnotationsData = {
     infospaceId: number;
+    packageToken?: (string | null);
     runId: number;
+    xPackageToken?: (string | null);
 };
 
 export type RetryFailedAnnotationsResponse = (Message);
 
 export type CreatePackageFromRunEndpointData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: CreatePackageFromRunRequest;
     runId: number;
+    xPackageToken?: (string | null);
 };
 
-export type CreatePackageFromRunEndpointResponse = (PackageRead);
+export type CreatePackageFromRunEndpointResponse = (app__schemas__PackageRead);
 
 export type ExportRunAnnotationsCsvData = {
     /**
@@ -2496,21 +2686,27 @@ export type ExportRunAnnotationsCsvData = {
      */
     includeMetadata?: boolean;
     infospaceId: number;
+    packageToken?: (string | null);
     runId: number;
+    xPackageToken?: (string | null);
 };
 
 export type ExportRunAnnotationsCsvResponse = (unknown);
 
 export type CreateAnnotationData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateAnnotationResponse = (AnnotationRead);
 
 export type CreateAnnotation1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateAnnotation1Response = (AnnotationRead);
@@ -2518,9 +2714,11 @@ export type CreateAnnotation1Response = (AnnotationRead);
 export type ListAnnotationsData = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     schemaId?: (number | null);
     skip?: number;
     sourceId?: (number | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListAnnotationsResponse = (AnnotationsOut);
@@ -2528,23 +2726,29 @@ export type ListAnnotationsResponse = (AnnotationsOut);
 export type ListAnnotations1Data = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     schemaId?: (number | null);
     skip?: number;
     sourceId?: (number | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListAnnotations1Response = (AnnotationsOut);
 
 export type CreateAnnotation2Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateAnnotation2Response = (AnnotationRead);
 
 export type CreateAnnotation3Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateAnnotation3Response = (AnnotationRead);
@@ -2552,9 +2756,11 @@ export type CreateAnnotation3Response = (AnnotationRead);
 export type ListAnnotations2Data = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     schemaId?: (number | null);
     skip?: number;
     sourceId?: (number | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListAnnotations2Response = (AnnotationsOut);
@@ -2562,9 +2768,11 @@ export type ListAnnotations2Response = (AnnotationsOut);
 export type ListAnnotations3Data = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     schemaId?: (number | null);
     skip?: number;
     sourceId?: (number | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListAnnotations3Response = (AnnotationsOut);
@@ -2572,6 +2780,8 @@ export type ListAnnotations3Response = (AnnotationsOut);
 export type GetAnnotationData = {
     annotationId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetAnnotationResponse = (AnnotationRead);
@@ -2579,6 +2789,8 @@ export type GetAnnotationResponse = (AnnotationRead);
 export type GetAnnotation1Data = {
     annotationId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetAnnotation1Response = (AnnotationRead);
@@ -2586,7 +2798,9 @@ export type GetAnnotation1Response = (AnnotationRead);
 export type UpdateAnnotationData = {
     annotationId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationUpdate;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateAnnotationResponse = (AnnotationRead);
@@ -2594,7 +2808,9 @@ export type UpdateAnnotationResponse = (AnnotationRead);
 export type UpdateAnnotation1Data = {
     annotationId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationUpdate;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateAnnotation1Response = (AnnotationRead);
@@ -2602,6 +2818,8 @@ export type UpdateAnnotation1Response = (AnnotationRead);
 export type DeleteAnnotationData = {
     annotationId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DeleteAnnotationResponse = (void);
@@ -2609,20 +2827,26 @@ export type DeleteAnnotationResponse = (void);
 export type DeleteAnnotation1Data = {
     annotationId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DeleteAnnotation1Response = (void);
 
 export type CreateBatchAnnotationsData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: Array<AnnotationCreate>;
+    xPackageToken?: (string | null);
 };
 
 export type CreateBatchAnnotationsResponse = (Message);
 
 export type CreateBatchAnnotations1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: Array<AnnotationCreate>;
+    xPackageToken?: (string | null);
 };
 
 export type CreateBatchAnnotations1Response = (Message);
@@ -2630,8 +2854,10 @@ export type CreateBatchAnnotations1Response = (Message);
 export type GetRunResultsData = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     runId: number;
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetRunResultsResponse = (Array<AnnotationRead>);
@@ -2639,8 +2865,10 @@ export type GetRunResultsResponse = (Array<AnnotationRead>);
 export type GetRunResults1Data = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     runId: number;
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetRunResults1Response = (Array<AnnotationRead>);
@@ -2648,7 +2876,9 @@ export type GetRunResults1Response = (Array<AnnotationRead>);
 export type RetrySingleAnnotationData = {
     annotationId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationRetryRequest;
+    xPackageToken?: (string | null);
 };
 
 export type RetrySingleAnnotationResponse = (AnnotationRead);
@@ -2656,7 +2886,9 @@ export type RetrySingleAnnotationResponse = (AnnotationRead);
 export type RetrySingleAnnotation1Data = {
     annotationId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationRetryRequest;
+    xPackageToken?: (string | null);
 };
 
 export type RetrySingleAnnotation1Response = (AnnotationRead);
@@ -2664,9 +2896,11 @@ export type RetrySingleAnnotation1Response = (AnnotationRead);
 export type CurateFragmentsData = {
     annotationId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: {
         [key: string]: unknown;
     };
+    xPackageToken?: (string | null);
 };
 
 export type CurateFragmentsResponse = ({
@@ -2676,9 +2910,11 @@ export type CurateFragmentsResponse = ({
 export type CurateFragments1Data = {
     annotationId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: {
         [key: string]: unknown;
     };
+    xPackageToken?: (string | null);
 };
 
 export type CurateFragments1Response = ({
@@ -2689,6 +2925,8 @@ export type RemoveCurationData = {
     annotationId: number;
     fragmentPath: string;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type RemoveCurationResponse = (void);
@@ -2697,12 +2935,16 @@ export type RemoveCuration1Data = {
     annotationId: number;
     fragmentPath: string;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type RemoveCuration1Response = (void);
 
 export type GetCuratedTripletsData = {
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetCuratedTripletsResponse = (Array<{
@@ -2711,6 +2953,8 @@ export type GetCuratedTripletsResponse = (Array<{
 
 export type GetCuratedTriplets1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetCuratedTriplets1Response = (Array<{
@@ -2718,11 +2962,10 @@ export type GetCuratedTriplets1Response = (Array<{
 }>);
 
 export type CreateAnnotationSchemaData = {
-    /**
-     * The ID of the infospace
-     */
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationSchemaCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateAnnotationSchemaResponse = (AnnotationSchemaRead);
@@ -2736,22 +2979,20 @@ export type ListAnnotationSchemasData = {
      * Include counts of annotations using this schema
      */
     includeCounts?: boolean;
-    /**
-     * The ID of the infospace
-     */
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListAnnotationSchemasResponse = (AnnotationSchemasOut);
 
 export type CreateAnnotationSchema1Data = {
-    /**
-     * The ID of the infospace
-     */
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationSchemaCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateAnnotationSchema1Response = (AnnotationSchemaRead);
@@ -2765,12 +3006,11 @@ export type ListAnnotationSchemas1Data = {
      * Include counts of annotations using this schema
      */
     includeCounts?: boolean;
-    /**
-     * The ID of the infospace
-     */
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListAnnotationSchemas1Response = (AnnotationSchemasOut);
@@ -2780,39 +3020,38 @@ export type GetAnnotationSchemaData = {
      * Include counts of annotations using this schema
      */
     includeCounts?: boolean;
-    /**
-     * The ID of the infospace
-     */
     infospaceId: number;
+    packageToken?: (string | null);
     schemaId: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetAnnotationSchemaResponse = (AnnotationSchemaRead);
 
 export type UpdateAnnotationSchemaData = {
-    /**
-     * The ID of the infospace
-     */
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AnnotationSchemaUpdate;
     schemaId: number;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateAnnotationSchemaResponse = (AnnotationSchemaRead);
 
 export type DeleteAnnotationSchemaData = {
-    /**
-     * The ID of the infospace
-     */
     infospaceId: number;
+    packageToken?: (string | null);
     schemaId: number;
+    xPackageToken?: (string | null);
 };
 
 export type DeleteAnnotationSchemaResponse = (AnnotationSchemaRead);
 
 export type RestoreAnnotationSchemaData = {
     infospaceId: number;
+    packageToken?: (string | null);
     schemaId: number;
+    xPackageToken?: (string | null);
 };
 
 export type RestoreAnnotationSchemaResponse = (AnnotationSchemaRead);
@@ -2825,14 +3064,18 @@ export type HealthzResponse = (unknown);
 
 export type CreateAssetData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AssetCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateAssetResponse = (AssetRead);
 
 export type CreateAsset1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AssetCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateAsset1Response = (AssetRead);
@@ -2840,8 +3083,10 @@ export type CreateAsset1Response = (AssetRead);
 export type ListAssetsData = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     parentAssetId?: (number | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListAssetsResponse = (AssetsOut);
@@ -2849,22 +3094,28 @@ export type ListAssetsResponse = (AssetsOut);
 export type ListAssets1Data = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     parentAssetId?: (number | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListAssets1Response = (AssetsOut);
 
 export type CreateAsset2Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AssetCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateAsset2Response = (AssetRead);
 
 export type CreateAsset3Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AssetCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateAsset3Response = (AssetRead);
@@ -2872,8 +3123,10 @@ export type CreateAsset3Response = (AssetRead);
 export type ListAssets2Data = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     parentAssetId?: (number | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListAssets2Response = (AssetsOut);
@@ -2881,22 +3134,28 @@ export type ListAssets2Response = (AssetsOut);
 export type ListAssets3Data = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     parentAssetId?: (number | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListAssets3Response = (AssetsOut);
 
 export type BatchCreateAssetsData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BatchAssetCreateRequest;
+    xPackageToken?: (string | null);
 };
 
 export type BatchCreateAssetsResponse = (Array<AssetRead>);
 
 export type BatchCreateAssets1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BatchAssetCreateRequest;
+    xPackageToken?: (string | null);
 };
 
 export type BatchCreateAssets1Response = (Array<AssetRead>);
@@ -2904,6 +3163,8 @@ export type BatchCreateAssets1Response = (Array<AssetRead>);
 export type UploadFileData = {
     formData: Body_assets_upload_file;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type UploadFileResponse = (AssetRead);
@@ -2911,24 +3172,30 @@ export type UploadFileResponse = (AssetRead);
 export type UploadFile1Data = {
     formData: Body_assets_upload_file;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type UploadFile1Response = (AssetRead);
 
 export type IngestUrlData = {
     infospaceId: number;
+    packageToken?: (string | null);
     scrapeImmediately?: boolean;
     title?: (string | null);
     url: string;
+    xPackageToken?: (string | null);
 };
 
 export type IngestUrlResponse = (AssetRead);
 
 export type IngestUrl1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     scrapeImmediately?: boolean;
     title?: (string | null);
     url: string;
+    xPackageToken?: (string | null);
 };
 
 export type IngestUrl1Response = (AssetRead);
@@ -2936,8 +3203,10 @@ export type IngestUrl1Response = (AssetRead);
 export type IngestTextData = {
     eventTimestamp?: (string | null);
     infospaceId: number;
+    packageToken?: (string | null);
     textContent: string;
     title?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type IngestTextResponse = (AssetRead);
@@ -2945,50 +3214,64 @@ export type IngestTextResponse = (AssetRead);
 export type IngestText1Data = {
     eventTimestamp?: (string | null);
     infospaceId: number;
+    packageToken?: (string | null);
     textContent: string;
     title?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type IngestText1Response = (AssetRead);
 
 export type ComposeArticleData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: ArticleComposition;
+    xPackageToken?: (string | null);
 };
 
 export type ComposeArticleResponse = (AssetRead);
 
 export type ComposeArticle1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: ArticleComposition;
+    xPackageToken?: (string | null);
 };
 
 export type ComposeArticle1Response = (AssetRead);
 
 export type BulkIngestUrlsData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BulkUrlIngestion;
+    xPackageToken?: (string | null);
 };
 
 export type BulkIngestUrlsResponse = (Array<AssetRead>);
 
 export type BulkIngestUrls1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BulkUrlIngestion;
+    xPackageToken?: (string | null);
 };
 
 export type BulkIngestUrls1Response = (Array<AssetRead>);
 
 export type IngestSearchResultsData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BulkSearchResultIngestion;
+    xPackageToken?: (string | null);
 };
 
 export type IngestSearchResultsResponse = (Array<AssetRead>);
 
 export type IngestSearchResults1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BulkSearchResultIngestion;
+    xPackageToken?: (string | null);
 };
 
 export type IngestSearchResults1Response = (Array<AssetRead>);
@@ -2996,6 +3279,8 @@ export type IngestSearchResults1Response = (Array<AssetRead>);
 export type MaterializeCsvFromRowsData = {
     assetId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type MaterializeCsvFromRowsResponse = (AssetRead);
@@ -3003,6 +3288,8 @@ export type MaterializeCsvFromRowsResponse = (AssetRead);
 export type MaterializeCsvFromRows1Data = {
     assetId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type MaterializeCsvFromRows1Response = (AssetRead);
@@ -3010,7 +3297,9 @@ export type MaterializeCsvFromRows1Response = (AssetRead);
 export type ReprocessAssetData = {
     assetId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: ReprocessOptions;
+    xPackageToken?: (string | null);
 };
 
 export type ReprocessAssetResponse = (Message);
@@ -3018,7 +3307,9 @@ export type ReprocessAssetResponse = (Message);
 export type ReprocessAsset1Data = {
     assetId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: ReprocessOptions;
+    xPackageToken?: (string | null);
 };
 
 export type ReprocessAsset1Response = (Message);
@@ -3027,6 +3318,8 @@ export type UpdateAssetContentData = {
     assetId: number;
     formData: Body_assets_update_asset_content;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type UpdateAssetContentResponse = (Message);
@@ -3035,6 +3328,8 @@ export type UpdateAssetContent1Data = {
     assetId: number;
     formData: Body_assets_update_asset_content;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type UpdateAssetContent1Response = (Message);
@@ -3044,6 +3339,8 @@ export type DiscoverRssFeedsData = {
     country?: (string | null);
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DiscoverRssFeedsResponse = (unknown);
@@ -3053,6 +3350,8 @@ export type DiscoverRssFeeds1Data = {
     country?: (string | null);
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DiscoverRssFeeds1Response = (unknown);
@@ -3061,6 +3360,8 @@ export type PreviewRssFeedData = {
     feedUrl: string;
     infospaceId: number;
     maxItems?: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type PreviewRssFeedResponse = (unknown);
@@ -3069,6 +3370,8 @@ export type PreviewRssFeed1Data = {
     feedUrl: string;
     infospaceId: number;
     maxItems?: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type PreviewRssFeed1Response = (unknown);
@@ -3077,9 +3380,11 @@ export type IngestSelectedArticlesData = {
     bundleId?: (number | null);
     feedUrl: string;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: Array<{
         [key: string]: unknown;
     }>;
+    xPackageToken?: (string | null);
 };
 
 export type IngestSelectedArticlesResponse = (unknown);
@@ -3088,31 +3393,21 @@ export type IngestSelectedArticles1Data = {
     bundleId?: (number | null);
     feedUrl: string;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: Array<{
         [key: string]: unknown;
     }>;
+    xPackageToken?: (string | null);
 };
 
 export type IngestSelectedArticles1Response = (unknown);
 
-export type GetAssetData = {
-    assetId: number;
-    infospaceId: number;
-};
-
-export type GetAssetResponse = (AssetRead);
-
-export type GetAsset1Data = {
-    assetId: number;
-    infospaceId: number;
-};
-
-export type GetAsset1Response = (AssetRead);
-
 export type UpdateAssetData = {
     assetId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AssetUpdate;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateAssetResponse = (AssetRead);
@@ -3120,7 +3415,9 @@ export type UpdateAssetResponse = (AssetRead);
 export type UpdateAsset1Data = {
     assetId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: AssetUpdate;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateAsset1Response = (AssetRead);
@@ -3128,6 +3425,8 @@ export type UpdateAsset1Response = (AssetRead);
 export type DeleteAssetData = {
     assetId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DeleteAssetResponse = (Message);
@@ -3135,6 +3434,8 @@ export type DeleteAssetResponse = (Message);
 export type DeleteAsset1Data = {
     assetId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DeleteAsset1Response = (Message);
@@ -3143,7 +3444,9 @@ export type GetAssetChildrenData = {
     assetId: number;
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetAssetChildrenResponse = (Array<AssetRead>);
@@ -3152,21 +3455,27 @@ export type GetAssetChildren1Data = {
     assetId: number;
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetAssetChildren1Response = (Array<AssetRead>);
 
 export type BulkDeleteAssetsData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BulkDeleteRequest;
+    xPackageToken?: (string | null);
 };
 
 export type BulkDeleteAssetsResponse = (Message);
 
 export type BulkDeleteAssets1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BulkDeleteRequest;
+    xPackageToken?: (string | null);
 };
 
 export type BulkDeleteAssets1Response = (Message);
@@ -3194,6 +3503,8 @@ export type GetSupportedContentTypes1Response = ({
 export type CreateAssetsBackgroundBulkData = {
     formData: Body_assets_create_assets_background_bulk;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type CreateAssetsBackgroundBulkResponse = ({
@@ -3203,6 +3514,8 @@ export type CreateAssetsBackgroundBulkResponse = ({
 export type CreateAssetsBackgroundBulk1Data = {
     formData: Body_assets_create_assets_background_bulk;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type CreateAssetsBackgroundBulk1Response = ({
@@ -3211,7 +3524,9 @@ export type CreateAssetsBackgroundBulk1Response = ({
 
 export type CreateAssetsBackgroundUrlsData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BulkUrlIngestion;
+    xPackageToken?: (string | null);
 };
 
 export type CreateAssetsBackgroundUrlsResponse = ({
@@ -3220,7 +3535,9 @@ export type CreateAssetsBackgroundUrlsResponse = ({
 
 export type CreateAssetsBackgroundUrls1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BulkUrlIngestion;
+    xPackageToken?: (string | null);
 };
 
 export type CreateAssetsBackgroundUrls1Response = ({
@@ -3231,6 +3548,8 @@ export type AddFilesToBundleBackgroundData = {
     bundleId: number;
     formData: Body_assets_add_files_to_bundle_background;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type AddFilesToBundleBackgroundResponse = ({
@@ -3241,6 +3560,8 @@ export type AddFilesToBundleBackground1Data = {
     bundleId: number;
     formData: Body_assets_add_files_to_bundle_background;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type AddFilesToBundleBackground1Response = ({
@@ -3265,17 +3586,41 @@ export type GetTaskStatus1Response = ({
 
 export type IngestRssFeedsFromAwesomeData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: RSSDiscoveryRequest;
+    xPackageToken?: (string | null);
 };
 
 export type IngestRssFeedsFromAwesomeResponse = (Array<AssetRead>);
 
 export type IngestRssFeedsFromAwesome1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: RSSDiscoveryRequest;
+    xPackageToken?: (string | null);
 };
 
 export type IngestRssFeedsFromAwesome1Response = (Array<AssetRead>);
+
+export type RetryAssetEnrichmentData = {
+    assetId: number;
+    enricherName: string;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type RetryAssetEnrichmentResponse = (Message);
+
+export type RetryAssetEnrichment1Data = {
+    assetId: number;
+    enricherName: string;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type RetryAssetEnrichment1Response = (Message);
 
 export type CreateBackupData = {
     infospaceId: number;
@@ -3372,16 +3717,29 @@ export type TriggerBackupSpecificInfospacesData = {
 
 export type TriggerBackupSpecificInfospacesResponse = (Message);
 
+export type GetAssetData = {
+    assetId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type GetAssetResponse = (AssetRead);
+
 export type MaterializeVirtualFolderData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: MaterializeVfolderRequest;
+    xPackageToken?: (string | null);
 };
 
 export type MaterializeVirtualFolderResponse = (BundleRead);
 
 export type CreateBundleData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BundleCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateBundleResponse = (BundleRead);
@@ -3389,32 +3747,46 @@ export type CreateBundleResponse = (BundleRead);
 export type GetBundlesData = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetBundlesResponse = (Array<BundleRead>);
 
 export type GetBundleData = {
     bundleId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetBundleResponse = (BundleRead);
 
 export type UpdateBundleData = {
     bundleId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BundleUpdate;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateBundleResponse = (BundleRead);
 
 export type DeleteBundleData = {
     bundleId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DeleteBundleResponse = (void);
 
 export type BulkDeleteBundlesData = {
+    infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BulkDeleteBundlesRequest;
+    xPackageToken?: (string | null);
 };
 
 export type BulkDeleteBundlesResponse = (Message);
@@ -3422,6 +3794,9 @@ export type BulkDeleteBundlesResponse = (Message);
 export type AddAssetToBundleData = {
     assetId: number;
     bundleId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type AddAssetToBundleResponse = (BundleRead);
@@ -3429,6 +3804,9 @@ export type AddAssetToBundleResponse = (BundleRead);
 export type RemoveAssetFromBundleData = {
     assetId: number;
     bundleId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type RemoveAssetFromBundleResponse = (BundleRead);
@@ -3437,7 +3815,9 @@ export type GetAssetsInBundleData = {
     bundleId: number;
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetAssetsInBundleResponse = (Array<AssetRead>);
@@ -3445,27 +3825,38 @@ export type GetAssetsInBundleResponse = (Array<AssetRead>);
 export type TransferBundleData = {
     bundleId: number;
     copy?: boolean;
+    infospaceId: number;
+    packageToken?: (string | null);
     targetInfospaceId: number;
+    xPackageToken?: (string | null);
 };
 
 export type TransferBundleResponse = (BundleRead);
 
 export type MoveBundleToParentData = {
     bundleId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BundleMoveRequest;
+    xPackageToken?: (string | null);
 };
 
 export type MoveBundleToParentResponse = (BundleRead);
 
 export type GetBundleHierarchyData = {
     bundleId: number;
+    infospaceId: number;
     maxDepth?: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetBundleHierarchyResponse = (BundleHierarchy);
 
 export type GetRootBundlesData = {
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetRootBundlesResponse = (Array<BundleRead>);
@@ -3477,7 +3868,9 @@ export type GetBulkBundleAssetsData = {
     bundleIds: string;
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetBulkBundleAssetsResponse = ({
@@ -3487,13 +3880,17 @@ export type GetBulkBundleAssetsResponse = ({
 export type ListEntitiesData = {
     entityType?: (string | null);
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListEntitiesResponse = (Array<EntityCanonicalRead>);
 
 export type CreateEntityData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: EntityCanonicalCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateEntityResponse = (EntityCanonicalRead);
@@ -3501,7 +3898,9 @@ export type CreateEntityResponse = (EntityCanonicalRead);
 export type UpdateEntityData = {
     entityId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: EntityCanonicalUpdate;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateEntityResponse = (EntityCanonicalRead);
@@ -3509,20 +3908,26 @@ export type UpdateEntityResponse = (EntityCanonicalRead);
 export type DeleteEntityData = {
     entityId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DeleteEntityResponse = (void);
 
 export type MergeEntitiesData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: MergeEntitiesRequest;
+    xPackageToken?: (string | null);
 };
 
 export type MergeEntitiesResponse = (EntityCanonicalRead);
 
 export type TriggerResolutionData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: ResolveEntitiesRequest;
+    xPackageToken?: (string | null);
 };
 
 export type TriggerResolutionResponse = (unknown);
@@ -4088,30 +4493,38 @@ export type ImportInfospaceResponse = (InfospaceRead);
 
 export type CreateDirectoryImportJobData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: DirectoryImportRequest;
+    xPackageToken?: (string | null);
 };
 
 export type CreateDirectoryImportJobResponse = (IngestionJobRead);
 
-export type TriggerBatchProcessPendingData = {
+export type TriggerProcessPendingData = {
     batchSize?: number;
     bundleId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
-export type TriggerBatchProcessPendingResponse = (BatchProcessResponse);
+export type TriggerProcessPendingResponse = (BatchProcessResponse);
 
-export type TriggerBatchEnrichData = {
+export type TriggerEnrichData = {
     bundleId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BatchEnrichRequest;
+    xPackageToken?: (string | null);
 };
 
-export type TriggerBatchEnrichResponse = (BatchEnrichResponse);
+export type TriggerEnrichResponse = (BatchEnrichResponse);
 
 export type GetProcessingStatusData = {
     bundleId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetProcessingStatusResponse = (ProcessingStatusResponse);
@@ -4123,6 +4536,7 @@ export type ListIngestionJobsData = {
      */
     kind?: (string | null);
     limit?: number;
+    packageToken?: (string | null);
     /**
      * Filter by source ID (jobs created by this source poll)
      */
@@ -4131,51 +4545,70 @@ export type ListIngestionJobsData = {
      * Filter by status
      */
     status?: (IngestionStatus | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListIngestionJobsResponse = (Array<IngestionJobRead>);
 
 export type GetIngestionJobStatusData = {
+    infospaceId: number;
     jobId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetIngestionJobStatusResponse = (IngestionJobRead);
 
 export type DeleteIngestionJobData = {
+    infospaceId: number;
     jobId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DeleteIngestionJobResponse = (Message);
 
 export type GetIngestionJobByUuidData = {
+    infospaceId: number;
     jobUuid: string;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetIngestionJobByUuidResponse = (IngestionJobRead);
 
 export type CreateArchiveIngestionJobData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: IngestionJobCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateArchiveIngestionJobResponse = (IngestionJobRead);
 
 export type CancelIngestionJobData = {
+    infospaceId: number;
     jobId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type CancelIngestionJobResponse = (Message);
 
 export type ReconcileDirectoryData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: ReconcileDirectoryRequest;
+    xPackageToken?: (string | null);
 };
 
 export type ReconcileDirectoryResponse = (unknown);
 
 export type EnableDirectoryWatchData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: EnableWatchRequest;
+    xPackageToken?: (string | null);
 };
 
 export type EnableDirectoryWatchResponse = (WatchStatusResponse);
@@ -4183,9 +4616,20 @@ export type EnableDirectoryWatchResponse = (WatchStatusResponse);
 export type GetWatchStatusData = {
     bundleId?: (number | null);
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetWatchStatusResponse = (Array<WatchStatusResponse>);
+
+export type GetPipelineStatsData = {
+    infospaceId: number;
+    jobId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type GetPipelineStatsResponse = (PipelineStatsResponse);
 
 export type IntelligenceChatData = {
     requestBody: ChatRequest;
@@ -4219,13 +4663,17 @@ export type GetInfospaceToolContextResponse = (unknown);
 
 export type ListKnowledgeGraphsData = {
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListKnowledgeGraphsResponse = (Array<KnowledgeGraphRead>);
 
 export type CreateKnowledgeGraphData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: KnowledgeGraphCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateKnowledgeGraphResponse = (KnowledgeGraphRead);
@@ -4233,6 +4681,8 @@ export type CreateKnowledgeGraphResponse = (KnowledgeGraphRead);
 export type GetKnowledgeGraphData = {
     graphId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetKnowledgeGraphResponse = (KnowledgeGraphRead);
@@ -4240,7 +4690,9 @@ export type GetKnowledgeGraphResponse = (KnowledgeGraphRead);
 export type UpdateKnowledgeGraphData = {
     graphId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: KnowledgeGraphUpdate;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateKnowledgeGraphResponse = (KnowledgeGraphRead);
@@ -4248,6 +4700,8 @@ export type UpdateKnowledgeGraphResponse = (KnowledgeGraphRead);
 export type DeleteKnowledgeGraphData = {
     graphId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DeleteKnowledgeGraphResponse = (void);
@@ -4278,6 +4732,87 @@ export type RecoverPasswordHtmlContentData = {
 
 export type RecoverPasswordHtmlContentResponse = (string);
 
+export type CreatePackageData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: PackageCreate;
+    xPackageToken?: (string | null);
+};
+
+export type CreatePackageResponse = (app__api__routes__packages__PackageRead);
+
+export type ListPackagesData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type ListPackagesResponse = (Array<app__api__routes__packages__PackageRead>);
+
+export type GetPackageData = {
+    infospaceId: number;
+    packageId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type GetPackageResponse = (app__api__routes__packages__PackageRead);
+
+export type UpdatePackageData = {
+    infospaceId: number;
+    packageId: number;
+    packageToken?: (string | null);
+    requestBody: PackageUpdate;
+    xPackageToken?: (string | null);
+};
+
+export type UpdatePackageResponse = (app__api__routes__packages__PackageRead);
+
+export type DeletePackageData = {
+    infospaceId: number;
+    packageId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type DeletePackageResponse = (void);
+
+export type AddPackageItemData = {
+    infospaceId: number;
+    packageId: number;
+    packageToken?: (string | null);
+    requestBody: PackageItemCreate;
+    xPackageToken?: (string | null);
+};
+
+export type AddPackageItemResponse = (PackageItemRead);
+
+export type RemovePackageItemData = {
+    infospaceId: number;
+    itemId: number;
+    packageId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type RemovePackageItemResponse = (void);
+
+export type DiscoverPackagesData = {
+    limit?: number;
+    /**
+     * Filter: 'public' or 'internal'
+     */
+    visibility?: string;
+};
+
+export type DiscoverPackagesResponse = (Array<PackagePublicRead>);
+
+export type AccessPackageByTokenData = {
+    token: string;
+};
+
+export type AccessPackageByTokenResponse = (unknown);
+
 export type DiscoverModelsData = {
     /**
      * Capability type: 'llm', 'embedding'
@@ -4292,6 +4827,23 @@ export type DiscoverModelsResponse = ({
 export type SystemCapabilitiesResponse = ({
     [key: string]: unknown;
 });
+
+export type EnrichmentStatusResponse = ({
+    [key: string]: unknown;
+});
+
+export type QueryAssetsData = {
+    infospaceId: number;
+    requestBody: QueryRequest;
+};
+
+export type QueryAssetsResponse = (QueryResponse);
+
+export type GetQueryFieldsData = {
+    infospaceId: number;
+};
+
+export type GetQueryFieldsResponse = (QueryFieldsResponse);
 
 export type SearchContentData = {
     args: unknown;
@@ -4457,7 +5009,9 @@ export type ImportResourceFromTokenResponse = (unknown);
 
 export type CreateSourceData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: SourceCreateRequest;
+    xPackageToken?: (string | null);
 };
 
 export type CreateSourceResponse = (SourceRead);
@@ -4469,14 +5023,18 @@ export type ListSourcesData = {
     includeCounts?: boolean;
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListSourcesResponse = (SourcesOut);
 
 export type CreateSource1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: SourceCreateRequest;
+    xPackageToken?: (string | null);
 };
 
 export type CreateSource1Response = (SourceRead);
@@ -4488,7 +5046,9 @@ export type ListSources1Data = {
     includeCounts?: boolean;
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListSources1Response = (SourcesOut);
@@ -4499,29 +5059,37 @@ export type GetSourceData = {
      */
     includeCounts?: boolean;
     infospaceId: number;
+    packageToken?: (string | null);
     sourceId: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetSourceResponse = (SourceRead);
 
 export type UpdateSourceData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: SourceUpdate;
     sourceId: number;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateSourceResponse = (SourceRead);
 
 export type DeleteSourceData = {
     infospaceId: number;
+    packageToken?: (string | null);
     sourceId: number;
+    xPackageToken?: (string | null);
 };
 
 export type DeleteSourceResponse = (void);
 
 export type TriggerSourceProcessingData = {
     infospaceId: number;
+    packageToken?: (string | null);
     sourceId: number;
+    xPackageToken?: (string | null);
 };
 
 export type TriggerSourceProcessingResponse = ({
@@ -4536,28 +5104,36 @@ export type TransferSourcesResponse = (SourceTransferResponse);
 
 export type CreateRssSourceData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: RssSourceCreateRequest;
+    xPackageToken?: (string | null);
 };
 
 export type CreateRssSourceResponse = (SourceRead);
 
 export type ActivateStreamData = {
     infospaceId: number;
+    packageToken?: (string | null);
     sourceId: number;
+    xPackageToken?: (string | null);
 };
 
 export type ActivateStreamResponse = (SourceRead);
 
 export type PauseStreamData = {
     infospaceId: number;
+    packageToken?: (string | null);
     sourceId: number;
+    xPackageToken?: (string | null);
 };
 
 export type PauseStreamResponse = (SourceRead);
 
 export type PollSourceData = {
     infospaceId: number;
+    packageToken?: (string | null);
     sourceId: number;
+    xPackageToken?: (string | null);
 };
 
 export type PollSourceResponse = ({
@@ -4566,7 +5142,9 @@ export type PollSourceResponse = ({
 
 export type GetStreamStatsData = {
     infospaceId: number;
+    packageToken?: (string | null);
     sourceId: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetStreamStatsResponse = ({
@@ -4576,7 +5154,9 @@ export type GetStreamStatsResponse = ({
 export type GetPollHistoryData = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     sourceId: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetPollHistoryResponse = ({
@@ -4655,10 +5235,12 @@ export type BrowseStorageData = {
      */
     includeCounts?: boolean;
     infospaceId: number;
+    packageToken?: (string | null);
     /**
      * Directory path to list; defaults to first allowed root
      */
     path?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type BrowseStorageResponse = (StorageBrowseResponse);
@@ -4867,6 +5449,8 @@ export type ExecuteTaskManually1Response = ({
 
 export type GetInfospaceTreeData = {
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetInfospaceTreeResponse = (TreeResponse);
@@ -4874,18 +5458,22 @@ export type GetInfospaceTreeResponse = (TreeResponse);
 export type GetTreeChildrenData = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     /**
      * Parent node ID (format: 'bundle-123' or 'asset-456')
      */
     parentId: string;
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetTreeChildrenResponse = (TreeChildrenResponse);
 
 export type DeleteTreeNodesData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: TreeDeleteRequest;
+    xPackageToken?: (string | null);
 };
 
 export type DeleteTreeNodesResponse = (Message);
@@ -4901,6 +5489,7 @@ export type GetFeedAssetsData = {
      */
     kinds?: Array<string>;
     limit?: number;
+    packageToken?: (string | null);
     /**
      * Filter by logical_path prefix (for virtual folder)
      */
@@ -4914,13 +5503,16 @@ export type GetFeedAssetsData = {
      * Sort order: asc, desc
      */
     sortOrder?: string;
+    xPackageToken?: (string | null);
 };
 
 export type GetFeedAssetsResponse = (FeedAssetsResponse);
 
 export type BatchGetAssetsData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: BatchGetAssetsRequest;
+    xPackageToken?: (string | null);
 };
 
 export type BatchGetAssetsResponse = (Array<AssetRead>);
@@ -4939,10 +5531,12 @@ export type TextSearchAssetsData = {
      * Maximum number of results
      */
     limit?: number;
+    packageToken?: (string | null);
     /**
      * Search query
      */
     query: string;
+    xPackageToken?: (string | null);
 };
 
 export type TextSearchAssetsResponse = (TextSearchResponse);

@@ -89,8 +89,10 @@ class User(SQLModel, table=True):
 
 class CollaboratorRole(str, enum.Enum):
     OWNER = "owner"
-    EDITOR = "editor"
+    ANALYST = "analyst"   # full working access: ingest, compute, delete, organize
+    CURATOR = "curator"   # non-destructive organization: organize only
     VIEWER = "viewer"
+    EDITOR = "editor"     # legacy alias for analyst — kept for migration compatibility
 
 
 class InfospaceCollaborator(SQLModel, table=True):
@@ -105,6 +107,12 @@ class InfospaceCollaborator(SQLModel, table=True):
     user: Optional[User] = Relationship(back_populates="infospace_collaborations")
 
 
+class InfospaceVisibility(str, enum.Enum):
+    PRIVATE = "private"
+    INTERNAL = "internal"
+    PUBLIC = "public"
+
+
 class Infospace(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
@@ -112,6 +120,7 @@ class Infospace(SQLModel, table=True):
     description: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     icon: Optional[str] = None
+    visibility: str = Field(default="private")
 
     chunk_size: Optional[int] = Field(default=512)
     chunk_overlap: Optional[int] = Field(default=50)

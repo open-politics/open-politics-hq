@@ -9,6 +9,9 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.api.dependency_injection import CurrentUser, SessionDep
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires, resolve_access,
+)
 from app.models import User, Infospace, Asset, AssetChunk, AssetKind
 from app.schemas import Message
 from app.api.modules.embedding.services import EmbeddingService, VectorSearchService
@@ -105,21 +108,16 @@ def _reset_embedding_for_assets(session: Session, asset_ids: list[int]):
 
 @router.post("/infospaces/{infospace_id}/embeddings/generate", response_model=Message)
 async def generate_infospace_embeddings(
-    infospace_id: int,
     request: GenerateEmbeddingsRequest,
     session: SessionDep,
-    current_user: CurrentUser
+    access: Access = Requires(Capability.COMPUTE),
 ):
     """
     Generate embeddings for all assets in an infospace.
     Dispatches the embedding enricher for eligible assets.
     """
-    infospace = session.get(Infospace, infospace_id)
-    if not infospace:
-        raise HTTPException(status_code=404, detail="Infospace not found")
-
-    if infospace.owner_id != current_user.id and not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="Not authorized to access this infospace")
+    infospace_id = access.infospace_id
+    infospace = access.infospace
 
     if not infospace.embedding_configured:
         raise HTTPException(status_code=400, detail="Infospace has no embedding configured. Select a model in settings.")
@@ -152,19 +150,15 @@ async def generate_asset_embeddings(
     asset_id: int,
     request: GenerateAssetEmbeddingsRequest,
     session: SessionDep,
-    current_user: CurrentUser
+    current_user: CurrentUser,
 ):
     """Generate embeddings for a single asset."""
     asset = session.get(Asset, asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    infospace = session.get(Infospace, asset.infospace_id)
-    if not infospace:
-        raise HTTPException(status_code=404, detail="Infospace not found")
-
-    if infospace.owner_id != current_user.id and not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    access = resolve_access(session, asset.infospace_id, current_user, Capability.COMPUTE)
+    infospace = access.infospace
 
     if not infospace.embedding_configured:
         raise HTTPException(status_code=400, detail="Infospace has no embedding configured")
@@ -179,18 +173,17 @@ async def generate_asset_embeddings(
 
 @router.get("/infospaces/{infospace_id}/embeddings/stats", response_model=EmbeddingStatsResponse)
 async def get_embedding_stats(
-    infospace_id: int,
     session: SessionDep,
-    current_user: CurrentUser
+    access: Access = Requires(),
 ):
     """Get statistics about embedding coverage in an infospace."""
-    infospace = session.get(Infospace, infospace_id)
-    if not infospace:
-        raise HTTPException(status_code=404, detail="Infospace not found")
-
-    if infospace.owner_id != current_user.id and not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="Not authorized")
-
+    # Stats are infospace-wide aggregates — not meaningful for scoped access
+    if access.scope:
+        return EmbeddingStatsResponse(
+            total_assets=0, documents=0, sub_assets=0,
+            total_chunks=0, embedded_chunks=0, coverage_percentage=0.0, models_used={},
+        )
+    infospace_id = access.infospace_id
     service = EmbeddingService(session)
     stats = service.get_embedding_stats(infospace_id)
 
@@ -199,10 +192,9 @@ async def get_embedding_stats(
 
 @router.post("/infospaces/{infospace_id}/embeddings/search", response_model=SemanticSearchResponse)
 async def semantic_search(
-    infospace_id: int,
     request: SemanticSearchRequest,
     session: SessionDep,
-    current_user: CurrentUser
+    access: Access = Requires(),
 ):
     """
     Perform semantic search within an infospace using vector embeddings.
@@ -210,12 +202,8 @@ async def semantic_search(
     For cloud providers (OpenAI, Voyage AI, Jina AI), API keys must be provided
     in the request to generate the query embedding.
     """
-    infospace = session.get(Infospace, infospace_id)
-    if not infospace:
-        raise HTTPException(status_code=404, detail="Infospace not found")
-
-    if infospace.owner_id != current_user.id and not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    infospace_id = access.infospace_id
+    infospace = access.infospace
 
     if not infospace.embedding_configured:
         raise HTTPException(status_code=400, detail="Infospace has no embedding configured")
@@ -227,7 +215,7 @@ async def semantic_search(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"Invalid asset kind: {e}")
 
-    service = VectorSearchService(session, runtime_api_keys=request.api_keys, user_id=current_user.id)
+    service = VectorSearchService(session, runtime_api_keys=request.api_keys, user_id=access.user_id)
     results = await service.semantic_search(
         query_text=request.query,
         infospace_id=infospace_id,
@@ -237,7 +225,8 @@ async def semantic_search(
         date_to=request.date_to,
         bundle_id=request.bundle_id,
         distance_threshold=request.distance_threshold,
-        distance_function=request.distance_function
+        distance_function=request.distance_function,
+        scope=access.scope,
     )
 
     return SemanticSearchResponse(
@@ -250,9 +239,8 @@ async def semantic_search(
 
 @router.delete("/infospaces/{infospace_id}/embeddings", response_model=Message)
 async def clear_infospace_embeddings(
-    infospace_id: int,
     session: SessionDep,
-    current_user: CurrentUser
+    access: Access = Requires(Capability.SETUP),
 ):
     """
     Clear all embeddings for an infospace.
@@ -261,12 +249,7 @@ async def clear_infospace_embeddings(
     from sqlalchemy import delete as sa_delete
     from app.api.modules.content.models import EMBEDDING_SUPPORTED_DIMS
 
-    infospace = session.get(Infospace, infospace_id)
-    if not infospace:
-        raise HTTPException(status_code=404, detail="Infospace not found")
-
-    if infospace.owner_id != current_user.id and not current_user.is_superuser:
-        raise HTTPException(status_code=403, detail="Not authorized")
+    infospace_id = access.infospace_id
 
     chunks_query = (
         select(AssetChunk.id)

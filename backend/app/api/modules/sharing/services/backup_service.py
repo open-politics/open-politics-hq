@@ -20,7 +20,6 @@ from app.schemas import (
     InfospaceBackupUpdate,
     BackupRestoreRequest
 )
-from app.api.global_utils import validate_infospace_access
 from app.api.modules.sharing.services.package_service import (
     PackageBuilder, PackageImporter, DataPackage, PackageMetadata, PackageService,
 )
@@ -67,10 +66,7 @@ class BackupService:
             The created backup record (status will be CREATING initially)
         """
         logger.info(f"Creating backup '{backup_data.name}' for infospace {infospace_id} by user {user_id}")
-        
-        # Validate access
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
+
         # Generate storage path
         storage_path = f"backups/infospace_{infospace_id}/{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(8)}.zip"
         
@@ -127,7 +123,6 @@ class BackupService:
             infospace = self.session.get(Infospace, backup.infospace_id)
             if not infospace:
                 raise ValueError(f"Infospace {backup.infospace_id} not found")
-            validate_infospace_access(self.session, backup.infospace_id, backup.user_id)
 
             asset_service = AssetService(session=self.session, storage_provider=self.storage_provider)
             bundle_service = BundleService(db=self.session)
@@ -234,8 +229,6 @@ class BackupService:
         query = select(InfospaceBackup).where(InfospaceBackup.user_id == user_id)
         
         if infospace_id:
-            # Validate access to the infospace
-            validate_infospace_access(self.session, infospace_id, user_id)
             query = query.where(InfospaceBackup.infospace_id == infospace_id)
         
         # Get total count
@@ -268,13 +261,8 @@ class BackupService:
         backup = self.session.get(InfospaceBackup, backup_id)
         if not backup:
             return None
-            
-        # Validate user has access to this backup's infospace
-        try:
-            validate_infospace_access(self.session, backup.infospace_id, user_id)
-            return backup
-        except HTTPException:
-            return None
+
+        return backup
 
     def update_backup(
         self,

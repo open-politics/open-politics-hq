@@ -16,7 +16,9 @@ from app.api.dependency_injection import (
     BundleServiceDep,
     SourceServiceDep,
 )
-from app.api.global_utils import validate_infospace_access
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires, resolve_access,
+)
 from app.schemas import (
     SourceCreate,
     SourceRead,
@@ -52,7 +54,7 @@ class RssSourceCreateRequest(BaseModel):
 @router.post("/", response_model=SourceRead, status_code=status.HTTP_201_CREATED)
 def create_source(
     *,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     infospace_id: int,
     source_in: SourceCreateRequest,
     session: SessionDep,
@@ -88,10 +90,10 @@ def create_source(
                 description=f"Assets ingested from source: {source_in.name}",
             )
             new_bundle = bundle_service.create_bundle(
-                bundle_in=bundle_create, user_id=current_user.id, infospace_id=infospace_id
+                bundle_in=bundle_create, user_id=access.user_id, infospace_id=infospace_id
             )
             bundle_id_to_use = new_bundle.id
-    
+
     # Store the target bundle ID in the source details for use during ingestion
     if bundle_id_to_use:
         source_details = source_in.details or {}
@@ -111,7 +113,7 @@ def create_source(
 
     # Create the source
     source = source_service.create_source(
-        user_id=current_user.id, infospace_id=infospace_id, source_in=source_create
+        user_id=access.user_id, infospace_id=infospace_id, source_in=source_create
     )
 
     # Note: Monitoring tasks are deprecated. Use the Flows API to create
@@ -124,7 +126,7 @@ def create_source(
 @router.get("/", response_model=SourcesOut)
 def list_sources(
     *,
-    current_user: CurrentUser,
+    access: Access = Requires(),
     infospace_id: int,
     skip: int = 0,
     limit: int = 100,
@@ -134,10 +136,10 @@ def list_sources(
     """
     Retrieve Sources for the infospace.
     """
+    # Sources are operational infrastructure — not in PackageScope
+    if access.scope:
+        return SourcesOut(data=[], count=0)
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
         # Build query for sources
         query = (
             select(Source)
@@ -145,7 +147,7 @@ def list_sources(
             .offset(skip)
             .limit(limit)
         )
-        
+
         # Execute query
         sources = session.exec(query).all()
         
@@ -176,7 +178,6 @@ def list_sources(
         # Should not happen if validation is correct
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve))
     except HTTPException as he:
-        # Re-raise exceptions from validate_infospace_access
         raise he
     except Exception as e:
         logger.exception(f"Route: Error listing sources: {e}")
@@ -185,7 +186,7 @@ def list_sources(
 @router.get("/{source_id}", response_model=SourceRead)
 def get_source(
     *,
-    current_user: CurrentUser,
+    access: Access = Requires(),
     infospace_id: int,
     source_id: int,
     include_counts: bool = Query(True, description="Include counts of assets"),
@@ -194,10 +195,9 @@ def get_source(
     """
     Retrieve a specific Source by its ID.
     """
+    if access.scope:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
         # Get the source
         source = session.get(Source, source_id)
         if not source:
@@ -236,7 +236,7 @@ def get_source(
 @router.patch("/{source_id}", response_model=SourceRead)
 def update_source(
     *,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.ORGANIZE),
     infospace_id: int,
     source_id: int,
     source_in: SourceUpdate,
@@ -247,9 +247,6 @@ def update_source(
     """
     logger.info(f"Route: Updating Source {source_id} in infospace {infospace_id}")
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
         # Get the source
         source = session.get(Source, source_id)
         if not source:
@@ -301,7 +298,7 @@ def update_source(
 @router.delete("/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_source(
     *,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.DELETE),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
@@ -311,9 +308,6 @@ def delete_source(
     """
     logger.info(f"Route: Attempting to delete Source {source_id} from infospace {infospace_id}")
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id, require_editor=True)
-        
         # Get the source
         source = session.get(Source, source_id)
         if not source:
@@ -344,11 +338,9 @@ def delete_source(
         logger.error(f"Route: Validation error deleting source {source_id}: {ve}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except HTTPException as he:
-        # Re-raise exceptions from validate_infospace_access
         session.rollback()
         raise he
     except Exception as e:
-        # Handle unexpected errors
         session.rollback()
         logger.exception(f"Route: Unexpected error deleting source {source_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during deletion")
@@ -356,7 +348,7 @@ def delete_source(
 @router.post("/{source_id}/process", status_code=status.HTTP_202_ACCEPTED)
 def trigger_source_processing(
     *,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.COMPUTE),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
@@ -367,8 +359,6 @@ def trigger_source_processing(
     """
     logger.info(f"Route: Triggering processing for Source {source_id} in infospace {infospace_id}")
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
         
         # Get the source
         source = session.get(Source, source_id)
@@ -395,7 +385,7 @@ def trigger_source_processing(
         # Use SourceService to trigger processing
         success = source_service.trigger_source_processing(
             source_id=source_id,
-            user_id=current_user.id,
+            user_id=access.user_id,
             infospace_id=infospace_id
         )
         
@@ -429,13 +419,11 @@ def transfer_sources(
 ) -> SourceTransferResponse:
     """
     Transfer sources between infospaces.
+    Validates organize on source, ingest on target.
     """
     try:
-        # Validate source infospace access
-        validate_infospace_access(session, request.source_infospace_id, current_user.id)
-        
-        # Validate target infospace access
-        validate_infospace_access(session, request.target_infospace_id, current_user.id)
+        resolve_access(session, request.source_infospace_id, current_user, Capability.ORGANIZE)
+        resolve_access(session, request.target_infospace_id, current_user, Capability.INGEST)
         
         # Get sources
         sources_to_transfer = []
@@ -499,7 +487,7 @@ def transfer_sources(
 async def create_rss_source(
     *,
     session: SessionDep,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.INGEST),
     infospace_id: int,
     request: RssSourceCreateRequest,
     bundle_service: BundleServiceDep,
@@ -541,10 +529,10 @@ async def create_rss_source(
                 description=f"Assets ingested from RSS feed: {source_name}",
             )
             new_bundle = bundle_service.create_bundle(
-                bundle_in=bundle_create, user_id=current_user.id, infospace_id=infospace_id
+                bundle_in=bundle_create, user_id=access.user_id, infospace_id=infospace_id
             )
             bundle_id_to_use = new_bundle.id
-    
+
     # 2. Create the Source with bundle_id in details
     source_create = SourceCreate(
         name=source_name, 
@@ -574,7 +562,7 @@ async def create_rss_source(
     else:
         source = Source.model_validate(
             source_create,
-            update={"infospace_id": infospace_id, "user_id": current_user.id},
+            update={"infospace_id": infospace_id, "user_id": access.user_id},
         )
         session.add(source)
         session.commit()
@@ -598,15 +586,14 @@ async def create_rss_source(
 @router.post("/{source_id}/activate", response_model=SourceRead, operation_id="Sources-activate_stream")
 def activate_stream(
     *,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.COMPUTE),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
     source_service: SourceServiceDep,
 ) -> SourceRead:
     """Activate a source stream - enable polling."""
-    validate_infospace_access(session, infospace_id, current_user.id)
-    source = source_service.activate_stream(source_id, current_user.id)
+    source = source_service.activate_stream(source_id, access.user_id)
 
     return SourceRead.model_validate(source)
 
@@ -614,15 +601,14 @@ def activate_stream(
 @router.post("/{source_id}/pause", response_model=SourceRead, operation_id="Sources-pause_stream")
 def pause_stream(
     *,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.COMPUTE),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
     source_service: SourceServiceDep,
 ) -> SourceRead:
     """Pause a source stream - disable polling."""
-    validate_infospace_access(session, infospace_id, current_user.id)
-    source = source_service.pause_stream(source_id, current_user.id)
+    source = source_service.pause_stream(source_id, access.user_id)
 
     return SourceRead.model_validate(source)
 
@@ -630,7 +616,7 @@ def pause_stream(
 @router.post("/{source_id}/poll", status_code=status.HTTP_202_ACCEPTED, operation_id="Sources-poll_source")
 async def poll_source(
     *,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.COMPUTE),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
@@ -638,14 +624,14 @@ async def poll_source(
 ) -> Dict[str, Any]:
     """Manually trigger a poll of a source."""
     from app.core.security import decrypt_credentials
-    
-    validate_infospace_access(session, infospace_id, current_user.id)
-    
+    from app.api.modules.identity_infospace_user.models import User
+
     # Retrieve user's stored API keys for search providers
     api_keys = {}
-    if current_user.encrypted_credentials:
-        api_keys = decrypt_credentials(current_user.encrypted_credentials)
-    result = await source_service.execute_poll(source_id, user_id=current_user.id, runtime_api_keys=api_keys)
+    user = session.get(User, access.user_id)
+    if user and user.encrypted_credentials:
+        api_keys = decrypt_credentials(user.encrypted_credentials)
+    result = await source_service.execute_poll(source_id, user_id=access.user_id, runtime_api_keys=api_keys)
     
     return result
 
@@ -653,15 +639,14 @@ async def poll_source(
 @router.get("/{source_id}/stats", operation_id="Sources-get_stream_stats")
 def get_stream_stats(
     *,
-    current_user: CurrentUser,
+    access: Access = Requires(),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
     source_service: SourceServiceDep,
 ) -> Dict[str, Any]:
     """Get stream statistics for a source."""
-    validate_infospace_access(session, infospace_id, current_user.id)
-    stats = source_service.get_stream_stats(source_id, current_user.id, infospace_id)
+    stats = source_service.get_stream_stats(source_id, access.user_id, infospace_id)
     
     return stats
 
@@ -669,7 +654,7 @@ def get_stream_stats(
 @router.get("/{source_id}/poll-history", operation_id="Sources-get_poll_history")
 def get_poll_history(
     *,
-    current_user: CurrentUser,
+    access: Access = Requires(),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
@@ -677,8 +662,6 @@ def get_poll_history(
 ) -> Dict[str, Any]:
     """Get recent poll history for a source."""
     from app.models import SourcePollHistory
-    
-    validate_infospace_access(session, infospace_id, current_user.id)
     
     # Verify source exists and belongs to infospace
     source = session.get(Source, source_id)

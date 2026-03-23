@@ -154,6 +154,10 @@ def init_db(session: Session) -> None:
                 creator_user_id=user.id,
             ))
             logger.info(f"Registered {name} adapter")
+        elif existing.module_path != module_path:
+            existing.module_path = module_path
+            session.add(existing)
+            logger.info(f"Updated {name} adapter module_path")
         else:
             logger.info(f"{name} adapter already registered")
 

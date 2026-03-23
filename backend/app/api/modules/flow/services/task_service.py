@@ -17,7 +17,6 @@ from app.models import (
     FlowStatus,
 )
 from app.api.modules.annotation.services.annotation_service import AnnotationService
-from app.api.global_utils import validate_infospace_access
 
 
 def _add_or_update_schedule(
@@ -224,8 +223,6 @@ class TaskService:
         infospace_id: int
     ) -> Optional[Task]:
         logger.debug(f"TaskService: Getting task {task_id} for infospace {infospace_id}, user {user_id}")
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         task = self.session.get(Task, task_id)
         if not task or task.infospace_id != infospace_id:
             return None
@@ -245,8 +242,6 @@ class TaskService:
         is_enabled_filter: Optional[bool] = None
     ) -> Tuple[List[Task], int]:
         logger.debug(f"TaskService: Listing tasks for infospace {infospace_id}, user {user_id}")
-        validate_infospace_access(self.session, infospace_id, user_id)
-
         statement = select(Task).where(Task.infospace_id == infospace_id, Task.user_id == user_id)
 
         if status_filter:
@@ -272,8 +267,6 @@ class TaskService:
         task_in: TaskUpdate
     ) -> Optional[Task]:
         logger.info(f"TaskService: Updating Task {task_id} in infospace {infospace_id}")
-        validate_infospace_access(self.session, infospace_id, user_id)
-
         db_task = self.session.get(Task, task_id)
         if not db_task or db_task.infospace_id != infospace_id or db_task.user_id != user_id:
             logger.warning(f"Task {task_id} not found in infospace {infospace_id} for user {user_id} or access denied.")
@@ -324,8 +317,6 @@ class TaskService:
         infospace_id: int
     ) -> bool:
         logger.info(f"TaskService: Attempting to delete Task {task_id} from infospace {infospace_id}")
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         db_task = self.session.get(Task, task_id)
         if not db_task or db_task.infospace_id != infospace_id or db_task.user_id != user_id:
             logger.warning(f"TaskService: Delete request for non-existent/mismatched task {task_id} in infospace {infospace_id} by user {user_id}")

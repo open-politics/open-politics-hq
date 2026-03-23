@@ -339,7 +339,7 @@ async def get_unified_providers():
         _CAPABILITY_MAP = {
             LanguageModelProvider: "llm",
             EmbeddingProvider: "embedding",
-            WebSearchProvider: "search",
+            WebSearchProvider: "web_search",
             GeocodingProvider: "geocoding",
             OcrProvider: "ocr",
         }

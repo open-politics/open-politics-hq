@@ -4,6 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Background
 from fastapi.responses import StreamingResponse, FileResponse
 
 from app.api.dependency_injection import CurrentUser, SessionDep, get_backup_service
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires,
+)
 from app.core.config import settings
 from app.schemas import (
     InfospaceBackupCreate,
@@ -16,7 +19,6 @@ from app.schemas import (
     Message
 )
 from app.api.modules.sharing.services import BackupService
-from app.api.global_utils import validate_infospace_access
 from app.models import Infospace
 from sqlmodel import select
 
@@ -37,19 +39,17 @@ general_router = APIRouter(
 @router.post("", response_model=InfospaceBackupRead)
 def create_backup(
     *,
-    current_user: CurrentUser,
-    session: SessionDep,
-    infospace_id: int,
     backup_data: InfospaceBackupCreate,
-    backup_service: BackupService = Depends(get_backup_service)
+    backup_service: BackupService = Depends(get_backup_service),
+    access: Access = Requires(Capability.ORGANIZE),
 ) -> Any:
     """
     Create a new backup of an infospace.
     """
     try:
         backup = backup_service.create_backup(
-            infospace_id=infospace_id,
-            user_id=current_user.id,
+            infospace_id=access.infospace_id,
+            user_id=access.user_id,
             backup_data=backup_data
         )
         return InfospaceBackupRead.model_validate(backup)
@@ -62,20 +62,18 @@ def create_backup(
 @router.get("", response_model=InfospaceBackupsOut)
 def list_backups(
     *,
-    current_user: CurrentUser,
-    session: SessionDep,
-    infospace_id: int,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    backup_service: BackupService = Depends(get_backup_service)
+    backup_service: BackupService = Depends(get_backup_service),
+    access: Access = Requires(),
 ) -> Any:
     """
     List backups for an infospace.
     """
     try:
         backups, total_count = backup_service.get_user_backups(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             skip=skip,
             limit=limit
         )

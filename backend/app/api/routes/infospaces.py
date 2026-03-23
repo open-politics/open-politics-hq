@@ -23,6 +23,9 @@ from app.api.dependency_injection import (
     PackageServiceDep,
 )
 from app.api.modules.identity_infospace_user.services import InfospaceService
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -85,46 +88,28 @@ def list_infospaces(
 @router.get("/{infospace_id}", response_model=InfospaceRead)
 def get_infospace(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
-    infospace_service: InfospaceService = Depends(get_infospace_service)
+    access: Access = Requires(),
 ) -> Any:
     """
     Retrieve a specific Infospace by its ID.
     """
-    try:
-        infospace = infospace_service.get_infospace(
-            infospace_id=infospace_id,
-            user_id=current_user.id
-        )
-        if not infospace:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Infospace not found"
-            )
-        return InfospaceRead.model_validate(infospace)
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        logger.exception(f"Route: Error getting infospace {infospace_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+    return InfospaceRead.model_validate(access.infospace)
 
 @router.patch("/{infospace_id}", response_model=InfospaceRead)
 def update_infospace(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     infospace_in: InfospaceUpdate,
-    infospace_service: InfospaceService = Depends(get_infospace_service)
+    infospace_service: InfospaceService = Depends(get_infospace_service),
+    access: Access = Requires(Capability.SETUP),
 ) -> Any:
     """
     Update an Infospace.
     """
-    logger.info(f"Route: Updating Infospace {infospace_id}")
+    logger.info(f"Route: Updating Infospace {access.infospace_id}")
     try:
         infospace = infospace_service.update_infospace(
-            infospace_id=infospace_id,
-            user_id=current_user.id,
+            infospace_id=access.infospace_id,
+            user_id=access.user_id,
             infospace_in=infospace_in
         )
         if not infospace:
@@ -138,51 +123,49 @@ def update_infospace(
     except HTTPException as he:
         raise he
     except Exception as e:
-        logger.exception(f"Route: Error updating infospace {infospace_id}: {e}")
+        logger.exception(f"Route: Error updating infospace {access.infospace_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 @router.delete("/{infospace_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_infospace(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
-    infospace_service: InfospaceService = Depends(get_infospace_service)
+    infospace_service: InfospaceService = Depends(get_infospace_service),
+    access: Access = Requires(Capability.SETUP),
 ) -> None:
     """
     Delete an Infospace.
     """
-    logger.info(f"Route: Attempting to delete Infospace {infospace_id}")
+    logger.info(f"Route: Attempting to delete Infospace {access.infospace_id}")
     try:
         success = infospace_service.delete_infospace(
-            infospace_id=infospace_id,
-            user_id=current_user.id
+            infospace_id=access.infospace_id,
+            user_id=access.user_id
         )
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Infospace not found"
             )
-        logger.info(f"Route: Infospace {infospace_id} successfully deleted")
+        logger.info(f"Route: Infospace {access.infospace_id} successfully deleted")
     except HTTPException as he:
         raise he
     except Exception as e:
-        logger.exception(f"Route: Unexpected error deleting infospace {infospace_id}: {e}")
+        logger.exception(f"Route: Unexpected error deleting infospace {access.infospace_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during deletion")
 
 @router.post("/{infospace_id}/collaborators/invite")
 def invite_collaborator(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     email: str = Query(..., description="Email of user to invite"),
     role: str = Query("viewer", description="Role: owner, editor, viewer"),
-    infospace_service: InfospaceService = Depends(get_infospace_service)
+    infospace_service: InfospaceService = Depends(get_infospace_service),
+    access: Access = Requires(Capability.SETUP),
 ) -> Any:
     """Invite a user to collaborate on an infospace. Only owner or editor can invite."""
     try:
         collab = infospace_service.invite_collaborator(
-            infospace_id=infospace_id,
-            inviter_user_id=current_user.id,
+            infospace_id=access.infospace_id,
+            inviter_user_id=access.user_id,
             invitee_email=email,
             role=role,
         )
@@ -193,15 +176,14 @@ def invite_collaborator(
 @router.get("/{infospace_id}/collaborators")
 def list_collaborators(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
-    infospace_service: InfospaceService = Depends(get_infospace_service)
+    infospace_service: InfospaceService = Depends(get_infospace_service),
+    access: Access = Requires(),
 ) -> Any:
     """List collaborators for an infospace."""
     try:
         collabs = infospace_service.list_collaborators(
-            infospace_id=infospace_id,
-            user_id=current_user.id,
+            infospace_id=access.infospace_id,
+            user_id=access.user_id,
         )
         return [
             {"id": c.id if c else None, "user_id": u.id, "email": u.email, "full_name": u.full_name, "role": role}
@@ -213,16 +195,15 @@ def list_collaborators(
 @router.delete("/{infospace_id}/collaborators/{user_id}")
 def remove_collaborator(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     user_id: int,
-    infospace_service: InfospaceService = Depends(get_infospace_service)
+    infospace_service: InfospaceService = Depends(get_infospace_service),
+    access: Access = Requires(Capability.SETUP),
 ) -> Any:
     """Remove a collaborator from an infospace."""
     try:
         infospace_service.remove_collaborator(
-            infospace_id=infospace_id,
-            remover_user_id=current_user.id,
+            infospace_id=access.infospace_id,
+            remover_user_id=access.user_id,
             collaborator_user_id=user_id,
         )
         return {"message": "Collaborator removed"}
@@ -232,32 +213,30 @@ def remove_collaborator(
 @router.get("/{infospace_id}/stats", response_model=dict)
 def get_infospace_stats(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
-    infospace_service: InfospaceService = Depends(get_infospace_service)
+    infospace_service: InfospaceService = Depends(get_infospace_service),
+    access: Access = Requires(),
 ) -> Any:
     """
     Get statistics about an Infospace.
     """
     try:
         stats = infospace_service.get_infospace_stats(
-            infospace_id=infospace_id,
-            user_id=current_user.id
+            infospace_id=access.infospace_id,
+            user_id=access.user_id
         )
         return stats
     except ValueError as ve:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
-        logger.exception(f"Route: Error getting stats for infospace {infospace_id}: {e}")
+        logger.exception(f"Route: Error getting stats for infospace {access.infospace_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
 @router.post("/{infospace_id}/export", response_class=FileResponse)
 async def export_infospace(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     include_sources: bool = Query(True, description="Include sources and their assets"),
+    access: Access = Requires(),
     include_schemas: bool = Query(True, description="Include annotation schemas"),
     include_runs: bool = Query(True, description="Include annotation runs"),
     include_datasets: bool = Query(True, description="Include datasets"),
@@ -272,16 +251,15 @@ async def export_infospace(
     This creates an immediate download of the infospace with all its contents.
     For scheduled/async backups, use the /backups endpoints instead.
     """
-    logger.info(f"Route: Exporting infospace {infospace_id} for user {current_user.id}")
-    
+    infospace_id = access.infospace_id
+    logger.info(f"Route: Exporting infospace {infospace_id} for user {access.user_id}")
+
     try:
-        infospace = infospace_service.get_infospace(infospace_id, current_user.id)
-        if not infospace:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infospace not found")
+        infospace = access.infospace
 
         package = await package_service.export_infospace(
             infospace=infospace,
-            user_id=current_user.id,
+            user_id=access.user_id,
             include_sources=include_sources,
             include_schemas=include_schemas,
             include_runs=include_runs,

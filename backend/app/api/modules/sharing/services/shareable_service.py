@@ -29,6 +29,7 @@ class DateTimeEncoder(json.JSONEncoder):
         return super().default(obj)
 
 from fastapi import HTTPException, UploadFile, status, Depends
+from sqlalchemy import text
 from sqlmodel import Session, select, func, col
 
 from app.core.config import AppSettings
@@ -48,7 +49,6 @@ from app.api.modules.sharing.services.package_service import PackageService, Pac
 from app.api.modules.content.services.bundle_service import BundleService
 from app.api.modules.content.services.asset_service import AssetService
 
-from app.api.global_utils import validate_infospace_access
 from app.models import (
     ResourceType, 
     ShareableLink,  
@@ -480,8 +480,7 @@ class ShareableService:
         return filepath, filename
 
     async def import_resource(self, user_id: int, target_infospace_id: int, file: UploadFile) -> Dict[str, Any]:
-        validate_infospace_access(self.session, target_infospace_id, user_id)
-        if not self.package_service or not self.infospace_service: 
+        if not self.package_service or not self.infospace_service:
             raise RuntimeError("Core services (PackageService or InfospaceService) not available.")
         
         outer_temp_path: Optional[str] = None
@@ -666,12 +665,15 @@ class ShareableService:
             bundle = self.session.get(Bundle, link.resource_id)
             if bundle:
                 # Check if the asset is directly in the bundle
-                if any(asset.id == requested_asset.id for asset in bundle.assets):
+                bundle_asset_ids = {r[0] for r in self.session.execute(
+                    text("SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[]"),
+                    {"bid": bundle.id},
+                ).all()}
+                if requested_asset.id in bundle_asset_ids:
                     is_accessible = True
                 else: # Check if it's a child of an asset in the bundle
-                    for root_asset in bundle.assets:
-                        # Simple recursive check, could be optimized for deep hierarchies
-                        q = self.session.query(Asset).filter(Asset.id == requested_asset.id).filter(Asset.parent_asset_id == root_asset.id)
+                    for root_asset_id in bundle_asset_ids:
+                        q = self.session.query(Asset).filter(Asset.id == requested_asset.id).filter(Asset.parent_asset_id == root_asset_id)
                         if self.session.query(q.exists()).scalar():
                              is_accessible = True
                              break
@@ -756,12 +758,15 @@ class ShareableService:
         elif link.resource_type == ResourceType.BUNDLE:
             bundle = self.session.get(Bundle, link.resource_id)
             if bundle:
-                if any(asset.id == requested_asset.id for asset in bundle.assets):
+                bundle_asset_ids = {r[0] for r in self.session.execute(
+                    text("SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[]"),
+                    {"bid": bundle.id},
+                ).all()}
+                if requested_asset.id in bundle_asset_ids:
                     is_accessible = True
                 else: # Check if it's a child of an asset in the bundle
-                    for root_asset in bundle.assets:
-                        # Simple recursive check, could be optimized for deep hierarchies
-                        q = self.session.query(Asset).filter(Asset.id == requested_asset.id, Asset.parent_asset_id == root_asset.id)
+                    for root_asset_id in bundle_asset_ids:
+                        q = self.session.query(Asset).filter(Asset.id == requested_asset.id, Asset.parent_asset_id == root_asset_id)
                         if self.session.query(q.exists()).scalar():
                                 is_accessible = True
                                 break
@@ -793,8 +798,6 @@ class ShareableService:
         if not link or not link.is_valid():
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Link not found or has expired.")
         
-        validate_infospace_access(self.session, target_infospace_id, target_user_id)
-
         original_user_id = link.user_id
         original_infospace_id = link.infospace_id
         resource_type = link.resource_type

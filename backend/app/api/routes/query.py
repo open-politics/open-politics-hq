@@ -15,6 +15,7 @@ from app.api.dependency_injection import SessionDep
 from app.api.modules.content.query_parser import parse
 from app.api.modules.content.models import AssetKind
 from app.api.modules.content.query import AssetQuery
+from app.api.modules.identity_infospace_user.access import Access, Requires
 from app.schemas import AssetRead
 
 router = APIRouter()
@@ -49,16 +50,20 @@ class QueryResponse(BaseModel):
 
 @router.post("/infospaces/{infospace_id}/query", response_model=QueryResponse, tags=["Query"])
 async def query_assets(
-    infospace_id: int,
     body: QueryRequest,
     session: SessionDep,
+    access: Access = Requires(),
 ):
+    infospace_id = access.infospace_id
     parsed = parse(body.q)
 
     if parsed.is_empty:
         return QueryResponse(query=body.q, parsed={}, results=[], total=0, has_more=False)
 
     aq = AssetQuery.from_aql(session, infospace_id, parsed)
+
+    # Apply full visibility predicate when package-scoped
+    aq.scope(access.scope)
     aq.sort(body.sort)
 
     # Use offset for relevance sort (can't cursor-paginate by rank), cursor for date sorts
@@ -162,19 +167,22 @@ def _extract_schema_fields(contract: Optional[Dict[str, Any]], prefix: str = "")
     response_model=QueryFieldsResponse,
     tags=["Query"],
 )
-async def get_query_fields(infospace_id: int, session: SessionDep):
+async def get_query_fields(session: SessionDep, access: Access = Requires()):
     """Return available annotation fields, entity types, and recent runs for the query helper panel."""
     from app.api.modules.annotation.models import AnnotationRun, AnnotationSchema, RunSchemaLink
     from app.api.modules.graph.models import EntityCanonical
     from sqlalchemy import column as sa_col
 
+    infospace_id = access.infospace_id
+
     # Active annotation schemas with their output contracts
-    schemas = session.exec(
-        select(AnnotationSchema).where(
+    schemas_query = select(AnnotationSchema).where(
             AnnotationSchema.infospace_id == infospace_id,
             AnnotationSchema.is_active == True,
         )
-    ).all()
+    if access.scope and access.scope.schema_ids:
+        schemas_query = schemas_query.where(AnnotationSchema.id.in_(access.scope.schema_ids))
+    schemas = session.exec(schemas_query).all()
 
     schema_infos = []
     schema_name_map: Dict[int, str] = {}
@@ -185,19 +193,24 @@ async def get_query_fields(infospace_id: int, session: SessionDep):
             schema_infos.append(SchemaInfo(id=s.id, name=s.name, fields=fields))
 
     # Distinct entity types in this infospace
-    entity_rows = session.exec(
+    entity_type_query = (
         select(EntityCanonical.entity_type)
         .where(EntityCanonical.infospace_id == infospace_id)
         .distinct()
-    ).all()
+    )
+    entity_type_query = access.scope_filter(entity_type_query, EntityCanonical.id, "entity_canonical_ids")
+    entity_rows = session.exec(entity_type_query).all()
 
     # Recent annotation runs (latest 30, completed/running)
-    runs = session.exec(
+    runs_query = (
         select(AnnotationRun)
         .where(AnnotationRun.infospace_id == infospace_id)
         .order_by(AnnotationRun.created_at.desc())
         .limit(30)
-    ).all()
+    )
+    if access.scope and access.scope.run_ids:
+        runs_query = runs_query.where(AnnotationRun.id.in_(access.scope.run_ids))
+    runs = session.exec(runs_query).all()
 
     run_infos = []
     for r in runs:

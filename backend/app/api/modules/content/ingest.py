@@ -17,7 +17,6 @@ from sqlmodel import Session
 from app.models import Asset, Bundle
 from app.api.modules.content.handlers import IngestionContext
 from app.api.modules.content.handlers.registry import resolve_handler
-from app.api.global_utils import validate_infospace_access
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,6 @@ async def ingest(
     Returns:
         List of created assets (root assets only for containers)
     """
-    validate_infospace_access(context.session, context.infospace_id, context.user_id)
     opts = options or {}
 
     if bundle_id:

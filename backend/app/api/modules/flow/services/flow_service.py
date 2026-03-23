@@ -14,6 +14,7 @@ Flows define:
 import logging
 from typing import Dict, Any, List, Optional, Set, Tuple
 from datetime import datetime, timezone
+from sqlalchemy import text
 from sqlmodel import Session, select, func
 
 from app.models import (
@@ -34,7 +35,6 @@ from app.models import (
     User,
 )
 from app.schemas import FlowCreate, FlowUpdate, FlowExecutionCreate
-from app.api.global_utils import validate_infospace_access
 from app.api.modules.annotation.services.annotation_service import AnnotationService
 from app.api.modules.content.services.bundle_service import BundleService
 from app.api.modules.flow.services.filter_service import FilterService, FilterExpression
@@ -85,8 +85,6 @@ class FlowService:
         Returns:
             Created Flow
         """
-        validate_infospace_access(self.session, infospace_id, user_id, require_editor=True)
-        
         # Validate input configuration
         self._validate_flow_input(flow_in, infospace_id)
         
@@ -123,8 +121,6 @@ class FlowService:
         infospace_id: int,
     ) -> Optional[Flow]:
         """Get a Flow by ID."""
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         flow = self.session.get(Flow, flow_id)
         if flow and flow.infospace_id == infospace_id:
             return flow
@@ -141,8 +137,6 @@ class FlowService:
         tags_filter: Optional[List[str]] = None,
     ) -> Tuple[List[Flow], int]:
         """List Flows with optional filtering."""
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         query = select(Flow).where(Flow.infospace_id == infospace_id)
         count_query = select(func.count(Flow.id)).where(Flow.infospace_id == infospace_id)
         
@@ -176,7 +170,6 @@ class FlowService:
         infospace_id: int,
     ) -> Optional[Flow]:
         """Update a Flow."""
-        validate_infospace_access(self.session, infospace_id, user_id, require_editor=True)
         flow = self.get_flow(flow_id, user_id, infospace_id)
         if not flow:
             return None
@@ -222,7 +215,6 @@ class FlowService:
         infospace_id: int,
     ) -> bool:
         """Delete a Flow and its executions."""
-        validate_infospace_access(self.session, infospace_id, user_id, require_editor=True)
         flow = self.get_flow(flow_id, user_id, infospace_id)
         if not flow:
             return False
@@ -370,8 +362,6 @@ class FlowService:
         infospace_id: int,
     ) -> Optional[FlowExecution]:
         """Get a FlowExecution by ID."""
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         execution = self.session.get(FlowExecution, execution_id)
         if not execution:
             return None
@@ -649,7 +639,7 @@ class FlowService:
         if bundle_id:
             row = self.session.exec(
                 select(func.coalesce(func.max(Asset.id), 0)).where(
-                    Asset.bundle_id == bundle_id,
+                    text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id),
                     Asset.infospace_id == flow.infospace_id,
                 )
             ).first()
@@ -688,7 +678,7 @@ class FlowService:
         stmt = (
             select(Asset.id)
             .where(
-                Asset.bundle_id == bundle_id,
+                text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id),
                 Asset.infospace_id == flow.infospace_id,
                 Asset.id > max_id_before,
             )
@@ -1282,7 +1272,7 @@ class FlowService:
                 delta_ids = [
                     r.id for r in self.session.exec(
                         select(Asset.id)
-                        .where(Asset.bundle_id == flow.input_bundle_id, Asset.id > last_id)
+                        .where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=flow.input_bundle_id), Asset.id > last_id)
                         .order_by(Asset.id)
                     ).all()
                 ]
@@ -1291,7 +1281,10 @@ class FlowService:
                 bundle = self.session.get(Bundle, flow.input_bundle_id)
                 if not bundle:
                     return []
-                all_asset_ids = {a.id for a in bundle.assets}
+                all_asset_ids = {r[0] for r in self.session.execute(
+                    text("SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[]"),
+                    {"bid": bundle.id},
+                ).all()}
                 delta_ids = list(all_asset_ids - processed_ids)
 
         elif flow.input_type == FlowInputType.STREAM:
@@ -1306,7 +1299,7 @@ class FlowService:
                     r.id for r in self.session.exec(
                         select(Asset.id)
                         .where(
-                            Asset.bundle_id == source.output_bundle_id,
+                            text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=source.output_bundle_id),
                             Asset.source_id == source.id,
                             Asset.id > last_id,
                         )
@@ -1318,7 +1311,10 @@ class FlowService:
                 bundle = self.session.get(Bundle, source.output_bundle_id)
                 if not bundle:
                     return []
-                all_asset_ids = {a.id for a in bundle.assets if a.source_id == source.id}
+                all_asset_ids = {r[0] for r in self.session.execute(
+                    text("SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[] AND source_id = :sid"),
+                    {"bid": bundle.id, "sid": source.id},
+                ).all()}
                 delta_ids = list(all_asset_ids - processed_ids)
         else:
             delta_ids = []
@@ -1365,14 +1361,20 @@ class FlowService:
         if flow.input_type == FlowInputType.BUNDLE and flow.input_bundle_id:
             bundle = self.session.get(Bundle, flow.input_bundle_id)
             if bundle:
-                valid_asset_ids = {a.id for a in bundle.assets}
-        
+                valid_asset_ids = {r[0] for r in self.session.execute(
+                    text("SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[]"),
+                    {"bid": bundle.id},
+                ).all()}
+
         elif flow.input_type == FlowInputType.STREAM and flow.input_source_id:
             source = self.session.get(Source, flow.input_source_id)
             if source and source.output_bundle_id:
                 bundle = self.session.get(Bundle, source.output_bundle_id)
                 if bundle:
-                    valid_asset_ids = {a.id for a in bundle.assets if a.source_id == source.id}
+                    valid_asset_ids = {r[0] for r in self.session.execute(
+                        text("SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[] AND source_id = :sid"),
+                        {"bid": bundle.id, "sid": source.id},
+                    ).all()}
         
         if not valid_asset_ids:
             # Can't validate - keep all IDs

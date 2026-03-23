@@ -52,14 +52,14 @@ def upgrade() -> None:
         SET enrichment_config = jsonb_build_object(
             'embedding',
             CASE
-                WHEN embedding_selection ? 'provider_key'
-                THEN embedding_selection
-                WHEN embedding_selection ? 'type_key'
+                WHEN embedding_selection::jsonb ? 'provider_key'
+                THEN embedding_selection::jsonb
+                WHEN embedding_selection::jsonb ? 'type_key'
                 THEN jsonb_build_object(
                     'provider_key', embedding_selection->>'type_key',
                     'model_name', embedding_selection->>'model_name'
                 )
-                ELSE embedding_selection
+                ELSE embedding_selection::jsonb
             END
         )
         WHERE embedding_selection IS NOT NULL

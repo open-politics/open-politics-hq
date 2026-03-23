@@ -5,6 +5,7 @@ from sqlmodel import Session
 
 from app.api.dependency_injection import SessionDep, CurrentUser
 from app.api.modules.embedding.services import ChunkingService
+from app.api.modules.identity_infospace_user.access import Capability, resolve_access
 from app.models import Asset, AssetKind
 from app.schemas import (
     ChunkAssetRequest,
@@ -31,14 +32,14 @@ async def chunk_single_asset(
 ):
     """Chunk a single asset into text chunks."""
     try:
-        # Get the asset
         asset = session.get(Asset, asset_id)
         if not asset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Asset not found"
             )
-        
+        resolve_access(session, asset.infospace_id, current_user, Capability.COMPUTE)
+
         # Chunk the asset
         chunks = chunking_service.chunk_asset(
             asset=asset,
@@ -74,6 +75,8 @@ async def chunk_multiple_assets(
     chunking_service: ChunkingService = Depends(get_chunking_service)
 ):
     """Chunk multiple assets based on filters."""
+    if request.infospace_id:
+        resolve_access(session, request.infospace_id, current_user, Capability.COMPUTE)
     try:
         # Convert string asset kinds to enum
         asset_kinds = None
@@ -124,14 +127,14 @@ async def get_asset_chunks(
 ):
     """Get all chunks for a specific asset."""
     try:
-        # Verify asset exists
         asset = session.get(Asset, asset_id)
         if not asset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Asset not found"
             )
-        
+        resolve_access(session, asset.infospace_id, current_user)
+
         from sqlmodel import select
         from app.models import AssetChunk
         
@@ -153,11 +156,15 @@ async def get_asset_chunks(
 @router.get("/stats", response_model=ChunkingStatsResponse)
 async def get_chunking_statistics(
     current_user: CurrentUser,
+    session: SessionDep,
     asset_id: Optional[int] = Query(None, description="Filter by specific asset"),
     infospace_id: Optional[int] = Query(None, description="Filter by infospace"),
     chunking_service: ChunkingService = Depends(get_chunking_service)
 ):
     """Get chunking statistics."""
+    # Verify access when filtering by infospace
+    if infospace_id is not None:
+        resolve_access(session, infospace_id, current_user)
     try:
         stats = chunking_service.get_chunk_statistics(
             asset_id=asset_id,
@@ -182,14 +189,14 @@ async def remove_asset_chunks(
 ):
     """Remove all chunks for an asset."""
     try:
-        # Verify asset exists
         asset = session.get(Asset, asset_id)
         if not asset:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Asset not found"
             )
-        
+        resolve_access(session, asset.infospace_id, current_user, Capability.COMPUTE)
+
         count = chunking_service.remove_chunks_for_asset(asset_id)
         
         return {

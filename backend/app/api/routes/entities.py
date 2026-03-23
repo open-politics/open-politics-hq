@@ -4,7 +4,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
-from app.models import EntityCanonical, EntityEditLog, FragmentCuration, KnowledgeGraph, User
+from app.models import EntityCanonical, EntityEditLog, FragmentCuration, KnowledgeGraph
 from app.api.modules.graph.schemas import (
     EntityCanonicalRead,
     EntityCanonicalCreate,
@@ -12,8 +12,10 @@ from app.api.modules.graph.schemas import (
     MergeEntitiesRequest,
     ResolveEntitiesRequest,
 )
-from app.api.dependency_injection import CurrentUser, get_db
-from app.api.global_utils import validate_infospace_access
+from app.api.dependency_injection import get_db
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires,
+)
 from app.api.modules.graph.resolution import resolve_entity
 from app.api.modules.embedding.services import EmbeddingService
 
@@ -28,8 +30,7 @@ router = APIRouter(
 @router.get("", response_model=List[EntityCanonicalRead])
 def list_entities(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(),
     entity_type: Optional[str] = None,
     db: Session = Depends(get_db)
 ) -> Any:
@@ -37,11 +38,12 @@ def list_entities(
     List canonical entities for an infospace.
     Optionally filter by entity_type.
     """
-    validate_infospace_access(db, infospace_id, current_user.id)
+    infospace_id = access.infospace_id
     stmt = select(EntityCanonical).where(EntityCanonical.infospace_id == infospace_id)
     if entity_type:
         stmt = stmt.where(EntityCanonical.entity_type == entity_type)
-    
+    stmt = access.scope_filter(stmt, EntityCanonical.id, "entity_canonical_ids")
+
     entities = db.exec(stmt).all()
     return list(entities)
 
@@ -49,15 +51,14 @@ def list_entities(
 @router.post("", response_model=EntityCanonicalRead, status_code=status.HTTP_201_CREATED)
 async def create_entity(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.ORGANIZE),
     entity_in: EntityCanonicalCreate,
     db: Session = Depends(get_db)
 ) -> Any:
     """
     Create a canonical entity manually.
     """
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
+    infospace_id = access.infospace_id
     canonical_name = entity_in.canonical_name
     entity_type = entity_in.entity_type
     
@@ -109,7 +110,7 @@ async def create_entity(
         log = EntityEditLog(
             entity_canonical_id=entity.id,
             action="create",
-            performed_by=f"user:{current_user.id}",
+            performed_by=f"user:{access.user_id}",
             previous_state={},
         )
         db.add(log)
@@ -121,8 +122,7 @@ async def create_entity(
 @router.put("/{entity_id}", response_model=EntityCanonicalRead)
 def update_entity(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.ORGANIZE),
     entity_id: int,
     entity_in: EntityCanonicalUpdate,
     db: Session = Depends(get_db)
@@ -130,10 +130,11 @@ def update_entity(
     """
     Update a canonical entity (rename, edit aliases, properties).
     """
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
+    infospace_id = access.infospace_id
     entity = db.get(EntityCanonical, entity_id)
     if not entity or entity.infospace_id != infospace_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
+    access.require_in_scope("entity_canonical_ids", entity_id)
 
     if entity.graph_id:
         graph = db.get(KnowledgeGraph, entity.graph_id)
@@ -157,7 +158,7 @@ def update_entity(
         log = EntityEditLog(
             entity_canonical_id=entity_id,
             action="update_properties",
-            performed_by=f"user:{current_user.id}",
+            performed_by=f"user:{access.user_id}",
             previous_state=prev_state,
         )
         db.add(log)
@@ -170,16 +171,16 @@ def update_entity(
 @router.delete("/{entity_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_entity(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.DELETE),
     entity_id: int,
     db: Session = Depends(get_db)
 ) -> None:
     """Delete a canonical entity."""
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
+    infospace_id = access.infospace_id
     entity = db.get(EntityCanonical, entity_id)
     if not entity or entity.infospace_id != infospace_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
+    access.require_in_scope("entity_canonical_ids", entity_id)
 
     if entity.graph_id:
         graph = db.get(KnowledgeGraph, entity.graph_id)
@@ -196,15 +197,16 @@ def delete_entity(
 @router.post("/merge", response_model=EntityCanonicalRead)
 async def merge_entities(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.ORGANIZE),
     merge_request: MergeEntitiesRequest,
     db: Session = Depends(get_db)
 ) -> Any:
     """
     Merge multiple entities into one canonical entity.
     """
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
+    infospace_id = access.infospace_id
+    for eid in merge_request.entity_ids:
+        access.require_in_scope("entity_canonical_ids", eid)
     entity_ids = merge_request.entity_ids
     if len(entity_ids) < 2:
         raise HTTPException(
@@ -258,10 +260,25 @@ async def merge_entities(
     keep_entity.properties = merged_properties
     keep_entity.provenance_type = "manual"
 
-    # Update FragmentCuration FK columns: replace merged (deleted) entity IDs with keep_entity.id
+    # Update FK references: replace merged entity IDs with keep_entity.id
     merged_ids = {e.id for e in entities if e.id != keep_entity.id}
     if merged_ids:
         from sqlalchemy import or_
+        # GraphEdge: subject and object entity references
+        for ge in db.exec(
+            select(GraphEdge).where(
+                or_(
+                    GraphEdge.subject_entity_id.in_(merged_ids),
+                    GraphEdge.object_entity_id.in_(merged_ids),
+                )
+            )
+        ).all():
+            if ge.subject_entity_id in merged_ids:
+                ge.subject_entity_id = keep_entity.id
+            if ge.object_entity_id in merged_ids:
+                ge.object_entity_id = keep_entity.id
+            db.add(ge)
+        # FragmentCuration: all three entity FK columns
         for fc in db.exec(
             select(FragmentCuration).where(
                 or_(
@@ -271,18 +288,13 @@ async def merge_entities(
                 )
             )
         ).all():
-            updated = False
             if fc.subject_entity_id in merged_ids:
                 fc.subject_entity_id = keep_entity.id
-                updated = True
             if fc.object_entity_id in merged_ids:
                 fc.object_entity_id = keep_entity.id
-                updated = True
             if fc.entity_canonical_id in merged_ids:
                 fc.entity_canonical_id = keep_entity.id
-                updated = True
-            if updated:
-                db.add(fc)
+            db.add(fc)
 
     # Delete other entities
     for entity in entities:
@@ -295,7 +307,7 @@ async def merge_entities(
         log = EntityEditLog(
             entity_canonical_id=keep_entity.id,
             action="merge",
-            performed_by=f"user:{current_user.id}",
+            performed_by=f"user:{access.user_id}",
             previous_state={"merged_entity_ids": entity_ids, "merged_states": prev},
         )
         db.add(log)
@@ -307,22 +319,21 @@ async def merge_entities(
 @router.post("/resolve")
 async def trigger_resolution(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.ORGANIZE),
     resolve_request: ResolveEntitiesRequest,
     db: Session = Depends(get_db)
 ) -> Any:
     """
     Trigger automatic entity resolution for raw entity mentions.
     """
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
+    infospace_id = access.infospace_id
     raw_entities = resolve_request.raw_entities
     similarity_threshold = resolve_request.similarity_threshold
     use_embeddings = resolve_request.use_embeddings
     
     embedding_service = None
     if use_embeddings:
-        embedding_service = EmbeddingService(session=db, user_id=current_user.id)
+        embedding_service = EmbeddingService(session=db, user_id=access.user_id)
     
     resolved = []
     for raw_entity in raw_entities:

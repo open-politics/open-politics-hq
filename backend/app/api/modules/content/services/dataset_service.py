@@ -5,7 +5,6 @@ from sqlmodel import Session, select, func
 from datetime import datetime, timezone
 
 # Import base service types
-from app.api.global_utils import validate_infospace_access
 from app.api.modules.foundation_service_providers.base import StorageProvider
 
 from app.models import Dataset, Asset, AnnotationRun, Annotation, ResultStatus, User
@@ -50,9 +49,7 @@ class DatasetService:
             ValueError: If validation fails
         """
         logger.info(f"Service: Creating dataset '{dataset_in.name}' in infospace {infospace_id} by user {user_id}")
-        
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
+
         # Validate assets exist and belong to infospace
         if dataset_in.asset_ids:
             for asset_id in dataset_in.asset_ids:
@@ -91,8 +88,7 @@ class DatasetService:
             ValueError: If validation fails
         """
         logger.debug(f"Service: Getting dataset {dataset_id} for infospace {infospace_id}, user {user_id}")
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
+
         dataset = self.session.get(Dataset, dataset_id)
         if dataset and dataset.infospace_id == infospace_id and dataset.user_id == user_id:
             return dataset
@@ -123,9 +119,7 @@ class DatasetService:
             ValueError: If validation fails
         """
         logger.debug(f"Service: Listing datasets for infospace {infospace_id}, user {user_id}")
-        
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
+
         query = (
             select(Dataset)
             .where(Dataset.infospace_id == infospace_id, Dataset.user_id == user_id)
@@ -246,9 +240,7 @@ class DatasetService:
             ValueError: If validation fails
         """
         logger.info(f"Service: Creating dataset from annotation run {run_id} for user {user_id}")
-        
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
+
         run = self.session.get(AnnotationRun, run_id)
         if not run or run.infospace_id != infospace_id:
             raise ValueError(f"Annotation run {run_id} not found or does not belong to infospace {infospace_id}.")

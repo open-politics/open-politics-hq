@@ -7,7 +7,7 @@ export default function EntitiesPage() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace('/hq/infospaces/infospace-manager#entities-section');
+    router.replace('/hq/infospaces/knowledge-graphs#entities-section');
   }, [router]);
 
   return null;

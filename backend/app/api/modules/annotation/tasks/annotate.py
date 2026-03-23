@@ -4,7 +4,7 @@ import logging
 from typing import List, Dict, Any, Type, Optional, TYPE_CHECKING, Tuple
 from datetime import datetime, timezone
 from sqlmodel import Session, select
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 import asyncio 
 import traceback
 from app.models import (
@@ -1165,8 +1165,6 @@ def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
                         if run:
                             from app.core.events import emit
                             emit("annotation_run.completed", {
-                                "run_id": run_id,
-                                "flow_execution_id": run.flow_execution_id,
                                 "infospace_id": run.infospace_id,
                             })
                     ctx.stat("done")
@@ -1816,7 +1814,7 @@ async def _process_annotation_run_async(
                     if bundle and bundle.infospace_id == run.infospace_id:
                         # Query asset IDs (do NOT use bundle.assets - loads all into memory)
                         path_filter = run_config.get("path_filter")  # e.g. "politics/eu" (matches logical_path from virtual folder tree)
-                        stmt = select(Asset.id).where(Asset.bundle_id == bundle_id)
+                        stmt = select(Asset.id).where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id))
                         if path_filter:
                             like_val = f"{path_filter}%" if not path_filter.endswith("%") else path_filter
                             # Use logical_path (matches virtual folder tree); fallback to blob_path for assets without logical_path
@@ -1874,7 +1872,7 @@ async def _process_annotation_run_async(
                     if bundle and bundle.infospace_id == run.infospace_id:
                         # Query asset IDs (do NOT use bundle.assets - loads all into memory)
                         path_filter = run_config.get("path_filter")
-                        stmt = select(Asset.id).where(Asset.bundle_id == bundle_id)
+                        stmt = select(Asset.id).where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id))
                         if path_filter:
                             like_val = f"{path_filter}%" if not path_filter.endswith("%") else path_filter
                             stmt = stmt.where(or_(

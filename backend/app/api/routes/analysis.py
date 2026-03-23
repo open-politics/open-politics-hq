@@ -7,8 +7,9 @@ from sqlmodel import Session, select # Added select
 from pydantic import BaseModel
 from typing import Optional
 
-from app.models import AnalysisAdapter, Annotation # Ensure this is correctly imported
-from app.api.dependency_injection import SessionDep, CurrentUser, AnalysisServiceDep # Ensure these are correctly imported
+from app.models import AnalysisAdapter, Annotation
+from app.api.dependency_injection import SessionDep, CurrentUser, AnalysisServiceDep
+from app.api.modules.identity_infospace_user.access import Access, Requires
 from app.schemas import AnalysisAdapterRead, AnnotationRead # We'll need a Pydantic model for the response
 
 logger = logging.getLogger(__name__)
@@ -22,18 +23,18 @@ class PromoteFragmentRequest(BaseModel):
 @router.post("/infospaces/{infospace_id}/assets/{asset_id}/fragments", response_model=AnnotationRead, tags=["Analysis Service"])
 async def promote_fragment(
     *,
-    infospace_id: int,
     asset_id: int,
     request: PromoteFragmentRequest,
     analysis_service: AnalysisServiceDep,
-    current_user: CurrentUser
+    access: Access = Requires(),
 ):
     """
     Promote a fragment of information to a permanent feature of an asset.
     This creates an auditable annotation and adds the fragment to the asset's metadata.
     """
+    access.require_in_scope("asset_ids", asset_id)
     annotation = await analysis_service.promote_fragment(
-        infospace_id=infospace_id,
+        infospace_id=access.infospace_id,
         asset_id=asset_id,
         fragment_key=request.fragment_key,
         fragment_value=request.fragment_value,
@@ -50,19 +51,19 @@ class DeleteFragmentResponse(BaseModel):
 @router.delete("/infospaces/{infospace_id}/assets/{asset_id}/fragments/{fragment_key}", response_model=DeleteFragmentResponse, tags=["Analysis Service"])
 async def delete_fragment(
     *,
-    infospace_id: int,
     asset_id: int,
     fragment_key: str,
     analysis_service: AnalysisServiceDep,
-    current_user: CurrentUser
+    access: Access = Requires(),
 ):
     """
     Delete a curated fragment from an asset.
     """
+    access.require_in_scope("asset_ids", asset_id)
     try:
         success = analysis_service.annotation_service.delete_fragment(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             asset_id=asset_id,
             fragment_key=fragment_key
         )

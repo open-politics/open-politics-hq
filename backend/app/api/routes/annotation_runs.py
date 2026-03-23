@@ -25,13 +25,14 @@ from app.schemas import (
 )
 from app.api.dependency_injection import (
     SessionDep,
-    CurrentUser,
     get_annotation_service,
     get_package_service
 )
 from app.api.modules.annotation.services import AnnotationService
 from app.api.modules.sharing.services import PackageService
-from app.api.global_utils import validate_infospace_access
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires,
+)
 from sqlmodel import select, func
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -46,8 +47,7 @@ router = APIRouter(
 @router.post("/", response_model=AnnotationRunRead, status_code=status.HTTP_201_CREATED)
 def create_run(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.COMPUTE),
     run_in: AnnotationRunCreate,
     session: SessionDep,
     annotation_service: AnnotationService = Depends(get_annotation_service)
@@ -55,15 +55,12 @@ def create_run(
     """
     Create a new Run.
     """
-    logger.info(f"Route: Creating run in infospace {infospace_id}")
+    logger.info(f"Route: Creating run in infospace {access.infospace_id}")
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
         # Create the run
         run = annotation_service.create_run(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             run_in=run_in
         )
         
@@ -80,8 +77,7 @@ def create_run(
 @router.get("/", response_model=AnnotationRunsOut)
 def list_runs(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(),
     skip: int = 0,
     limit: int = 100,
     include_counts: bool = Query(True, description="Include counts of annotations and assets"),
@@ -91,16 +87,15 @@ def list_runs(
     Retrieve Runs for the infospace.
     """
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
+        infospace_id = access.infospace_id
         # Build query for runs
         query = (
             select(AnnotationRun)
             .where(AnnotationRun.infospace_id == infospace_id)
-            .offset(skip)
-            .limit(limit)
         )
+        if access.scope and access.scope.run_ids:
+            query = query.where(AnnotationRun.id.in_(access.scope.run_ids))
+        query = query.offset(skip).limit(limit)
         
         # Execute query
         runs = session.exec(query).all()
@@ -109,6 +104,8 @@ def list_runs(
         count_query = select(func.count(AnnotationRun.id)).where(
             AnnotationRun.infospace_id == infospace_id
         )
+        if access.scope and access.scope.run_ids:
+            count_query = count_query.where(AnnotationRun.id.in_(access.scope.run_ids))
         total_count = session.exec(count_query).one()
         
         # Convert to read models and add counts if requested
@@ -135,7 +132,7 @@ def list_runs(
         # Should not happen if validation is correct
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve))
     except HTTPException as he:
-        # Re-raise exceptions from validate_infospace_access
+        # Re-raise HTTP exceptions
         raise he
     except Exception as e:
         logger.exception(f"Route: Error listing runs: {e}")
@@ -144,8 +141,7 @@ def list_runs(
 @router.get("/{run_id}", response_model=AnnotationRunRead)
 def get_run(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(),
     run_id: int,
     include_counts: bool = Query(True, description="Include counts of annotations and assets"),
     session: SessionDep,
@@ -154,23 +150,12 @@ def get_run(
     Retrieve a specific Run by its ID.
     """
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
-        # Get the run
+        infospace_id = access.infospace_id
         run = session.get(AnnotationRun, run_id)
-        if not run:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Run not found"
-            )
-        
-        # Verify run belongs to infospace
-        if run.infospace_id != infospace_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Run not found in this infospace"
-            )
+        if not run or run.infospace_id != infospace_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+        if access.scope and access.scope.run_ids and run_id not in access.scope.run_ids:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
         
         # Convert to read model
         run_read = AnnotationRunRead.model_validate(run.model_dump(exclude_none=False))
@@ -213,8 +198,7 @@ def get_run(
 @router.patch("/{run_id}", response_model=AnnotationRunRead)
 def update_run(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.COMPUTE),
     run_id: int,
     run_in: AnnotationRunUpdate,
     session: SessionDep,
@@ -222,11 +206,10 @@ def update_run(
     """
     Update a Run.
     """
+    infospace_id = access.infospace_id
+    access.require_in_scope("run_ids", run_id)
     logger.info(f"Route: Updating Run {run_id} in infospace {infospace_id}")
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
         # Get the run
         run = session.get(AnnotationRun, run_id)
         if not run:
@@ -234,14 +217,14 @@ def update_run(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Run not found"
             )
-        
+
         # Verify run belongs to infospace
         if run.infospace_id != infospace_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Run not found in this infospace"
             )
-        
+
         # Apply updates
         update_data = run_in.model_dump(exclude_unset=True)
         if not update_data:
@@ -288,19 +271,17 @@ def update_run(
 @router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_run(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.DELETE),
     run_id: int,
     session: SessionDep,
 ) -> None:
     """
     Delete a Run.
     """
+    infospace_id = access.infospace_id
+    access.require_in_scope("run_ids", run_id)
     logger.info(f"Route: Attempting to delete Run {run_id} from infospace {infospace_id}")
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
         # Get the run
         run = session.get(AnnotationRun, run_id)
         if not run:
@@ -331,7 +312,7 @@ def delete_run(
         logger.error(f"Route: Validation error deleting run {run_id}: {ve}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except HTTPException as he:
-        # Re-raise exceptions from validate_infospace_access
+        # Re-raise HTTP exceptions
         session.rollback()
         raise he
     except Exception as e:
@@ -343,8 +324,7 @@ def delete_run(
 @router.post("/{run_id}/retry_failures", response_model=Message, status_code=status.HTTP_202_ACCEPTED)
 def retry_failed_annotations(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.COMPUTE),
     run_id: int,
     session: SessionDep,
     service: AnnotationService = Depends(get_annotation_service),
@@ -353,9 +333,8 @@ def retry_failed_annotations(
     Retry failed annotations in a run.
     """
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
+        infospace_id = access.infospace_id
+        access.require_in_scope("run_ids", run_id)
         # Get the run
         run = session.get(AnnotationRun, run_id)
         if not run:
@@ -363,18 +342,18 @@ def retry_failed_annotations(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Run not found"
             )
-        
+
         # Verify run belongs to infospace
         if run.infospace_id != infospace_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Run not found in this infospace"
             )
-        
+
         # Trigger retry
         success = service.trigger_retry_failed_annotations(
             run_id=run_id,
-            user_id=current_user.id,
+            user_id=access.user_id,
             infospace_id=infospace_id
         )
         
@@ -395,8 +374,7 @@ def retry_failed_annotations(
 @router.post("/{run_id}/create_package", response_model=PackageRead, status_code=status.HTTP_201_CREATED)
 async def create_package_from_run_endpoint(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.ORGANIZE),
     run_id: int,
     request_data: CreatePackageFromRunRequest,
     session: SessionDep,
@@ -405,18 +383,12 @@ async def create_package_from_run_endpoint(
     """
     Create a package from a run.
     """
+    infospace_id = access.infospace_id
     logger.info(f"Route: Creating package from run {run_id} in infospace {infospace_id} with name '{request_data.name}'")
     try:
-        # Validate infospace access early
-        validate_infospace_access(session, infospace_id, current_user.id)
-
-        # The service method get_run_details (called by package_service.create_package_from_run)
-        # will also validate run existence and access within the infospace.
-        # No need to fetch run object here separately.
-
         package = await package_service.create_package_from_run(
             run_id=run_id,
-            user_id=current_user.id,
+            user_id=access.user_id,
             infospace_id=infospace_id,
             name=request_data.name,
             description=request_data.description
@@ -469,8 +441,7 @@ def _flatten_dict(d: Dict[str, Any], parent_key: str = '', sep: str = '.') -> Di
 @router.get("/{run_id}/export/csv")
 def export_run_annotations_csv(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(),
     run_id: int,
     session: SessionDep,
     annotation_service: AnnotationService = Depends(get_annotation_service),
@@ -480,20 +451,19 @@ def export_run_annotations_csv(
 ) -> StreamingResponse:
     """
     Export annotation run results as CSV.
-    
+
     Flattens nested JSON into columns like:
     - value.field_name
     - value.nested.field
     - value.items[0].property
-    
+
     Perfect for loading into pandas, Excel, or ML tools like lazypredict.
     """
     logger.info(f"Route: Exporting run {run_id} annotations as CSV (flatten={flatten_json}, include_metadata={include_metadata})")
-    
+    access.require_in_scope("run_ids", run_id)
+
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
+        infospace_id = access.infospace_id
         # Get the run
         run = session.get(AnnotationRun, run_id)
         if not run:
@@ -512,7 +482,7 @@ def export_run_annotations_csv(
         # Get all annotations for this run (no pagination)
         annotations = annotation_service.get_annotations_for_run(
             run_id=run_id,
-            user_id=current_user.id,
+            user_id=access.user_id,
             infospace_id=infospace_id,
             skip=0,
             limit=1_000_000  # Get all annotations

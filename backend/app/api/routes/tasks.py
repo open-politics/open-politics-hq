@@ -11,7 +11,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.models import (
     Task,
-    User,
     TaskStatus,
     TaskType
 )
@@ -21,9 +20,9 @@ from app.schemas import (
     TaskUpdate,
     TasksOut
 )
-from app.api.dependency_injection import (
-    CurrentUser,
-    TaskServiceDep
+from app.api.dependency_injection import TaskServiceDep
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -32,7 +31,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/infospaces/{infospace_id}/tasks",
     tags=["Tasks"],
-    dependencies=[Depends(CurrentUser)],
 )
 
 # Remove validation function if it's now only used within the service
@@ -42,19 +40,18 @@ router = APIRouter(
 @router.post("/", response_model=TaskRead, status_code=status.HTTP_201_CREATED)
 async def create_task(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
     task_in: TaskCreate,
-    task_service: TaskServiceDep
+    task_service: TaskServiceDep,
+    access: Access = Requires(Capability.COMPUTE),
 ) -> TaskRead:
     """
     Create a new Recurring Task in the specified infospace.
     """
-    logger.info(f"Route: Creating Task '{task_in.name}' in infospace {infospace_id} via service")
+    logger.info(f"Route: Creating Task '{task_in.name}' in infospace {access.infospace_id} via service")
     try:
         created_task_model = task_service.create_task(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             task_in=task_in
         )
         return created_task_model
@@ -67,9 +64,8 @@ async def create_task(
 @router.get("", response_model=TasksOut)
 @router.get("/", response_model=TasksOut)
 async def list_tasks(
-    current_user: CurrentUser,
-    infospace_id: int,
     task_service: TaskServiceDep,
+    access: Access = Requires(),
     skip: int = 0,
     limit: int = 100,
     status: Optional[TaskStatus] = Query(None, description="Filter by task status"),
@@ -79,10 +75,13 @@ async def list_tasks(
     """
     Retrieve Tasks for the infospace using the service.
     """
+    # Tasks are operational — not in PackageScope
+    if access.scope:
+        return TasksOut(data=[], count=0)
     try:
         tasks, total_count = task_service.list_tasks(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             skip=skip,
             limit=limit,
             status_filter=status,
@@ -91,23 +90,24 @@ async def list_tasks(
         )
         return TasksOut(data=tasks, count=total_count)
     except Exception as e:
-        logger.exception(f"Route: Error listing tasks for infospace {infospace_id}: {e}")
+        logger.exception(f"Route: Error listing tasks for infospace {access.infospace_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 @router.get("/{task_id}", response_model=TaskRead)
 async def get_task(
-    current_user: CurrentUser,
-    infospace_id: int,
     task_id: int,
-    task_service: TaskServiceDep
+    task_service: TaskServiceDep,
+    access: Access = Requires(),
 ) -> TaskRead:
     """
     Retrieve a specific Task by its ID from the infospace.
     """
+    if access.scope:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     task = task_service.get_task(
         task_id=task_id,
-        user_id=current_user.id,
-        infospace_id=infospace_id
+        user_id=access.user_id,
+        infospace_id=access.infospace_id
     )
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found or not accessible")
@@ -115,21 +115,20 @@ async def get_task(
 
 @router.put("/{task_id}", response_model=TaskRead)
 async def update_task(
-    current_user: CurrentUser,
-    infospace_id: int,
     task_id: int,
     task_in: TaskUpdate,
-    task_service: TaskServiceDep
+    task_service: TaskServiceDep,
+    access: Access = Requires(Capability.COMPUTE),
 ) -> TaskRead:
     """
     Update a Task in the infospace.
     """
-    logger.info(f"Route: Updating Task {task_id} in infospace {infospace_id} via service")
+    logger.info(f"Route: Updating Task {task_id} in infospace {access.infospace_id} via service")
     try:
         updated_task = task_service.update_task(
             task_id=task_id,
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             task_in=task_in
         )
         if not updated_task:
@@ -143,20 +142,19 @@ async def update_task(
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_task(
-    current_user: CurrentUser,
-    infospace_id: int,
     task_id: int,
-    task_service: TaskServiceDep
+    task_service: TaskServiceDep,
+    access: Access = Requires(Capability.DELETE),
 ) -> None:
     """
     Delete a Task from the infospace.
     """
-    logger.info(f"Route: Attempting to delete Task {task_id} from infospace {infospace_id} via service")
+    logger.info(f"Route: Attempting to delete Task {task_id} from infospace {access.infospace_id} via service")
     try:
         deleted = task_service.delete_task(
             task_id=task_id,
-            user_id=current_user.id,
-            infospace_id=infospace_id
+            user_id=access.user_id,
+            infospace_id=access.infospace_id
         )
         if not deleted:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found or not accessible")
@@ -169,10 +167,9 @@ async def delete_task(
 
 @router.post("/{task_id}/execute", status_code=status.HTTP_202_ACCEPTED)
 async def execute_task_manually(
-    current_user: CurrentUser,
-    infospace_id: int,
     task_id: int,
     task_service: TaskServiceDep,
+    access: Access = Requires(Capability.COMPUTE),
 ) -> dict:
     """
     Manually trigger the execution of a specific task.
@@ -180,7 +177,7 @@ async def execute_task_manually(
     logger.info(f"Route: Manually triggering task {task_id}")
     try:
         success = await task_service.execute_task(
-            task_id=task_id, user_id=current_user.id, infospace_id=infospace_id
+            task_id=task_id, user_id=access.user_id, infospace_id=access.infospace_id
         )
         if not success:
             raise HTTPException(

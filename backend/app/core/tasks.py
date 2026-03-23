@@ -45,8 +45,7 @@ class TaskDescriptor:
     retry_delay: int = 60
     max_item_failures: int = 5
     failure_memory: int = 3600
-    dispatch_limit: Optional[int] = None
-    exclusive: bool = False
+    max_concurrency: int = 4
     depends_on: Optional[str] = None
     self_chain: bool = False
     triggers: list[str] = field(default_factory=list)
@@ -164,6 +163,56 @@ def _get_redis():
         return None
 
 
+# Lua script: try to acquire one of N slots atomically.
+# Returns the slot index (>= 0) on success, -1 if all slots occupied.
+_ACQUIRE_SLOT_LUA = """
+local prefix = KEYS[1]
+local max = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+for i = 0, max - 1 do
+    local key = prefix .. ":" .. i
+    if redis.call("SET", key, "1", "NX", "EX", ttl) then
+        return i
+    end
+end
+return -1
+"""
+
+# Lua script: count how many of N slots are currently occupied.
+_COUNT_SLOTS_LUA = """
+local prefix = KEYS[1]
+local max = tonumber(ARGV[1])
+local count = 0
+for i = 0, max - 1 do
+    if redis.call("EXISTS", prefix .. ":" .. i) == 1 then
+        count = count + 1
+    end
+end
+return count
+"""
+
+
+def _slot_prefix(task_name: str, infospace_id: int) -> str:
+    return f"task:{task_name}:{infospace_id}:slot"
+
+
+def acquire_slot(r, task_name: str, infospace_id: int, max_concurrency: int, timeout: int) -> int:
+    """Try to acquire a concurrency slot. Returns slot index (>= 0) or -1 if full."""
+    prefix = _slot_prefix(task_name, infospace_id)
+    return r.eval(_ACQUIRE_SLOT_LUA, 1, prefix, max_concurrency, timeout)
+
+
+def release_slot(r, task_name: str, infospace_id: int, slot: int):
+    """Release a previously acquired concurrency slot."""
+    r.delete(f"{_slot_prefix(task_name, infospace_id)}:{slot}")
+
+
+def count_occupied_slots(r, task_name: str, infospace_id: int, max_concurrency: int) -> int:
+    """Count how many concurrency slots are currently occupied."""
+    prefix = _slot_prefix(task_name, infospace_id)
+    return r.eval(_COUNT_SLOTS_LUA, 1, prefix, max_concurrency)
+
+
 def filter_failed_items(task_name: str, ids: list[int], max_failures: int) -> list[int]:
     """Remove items that have exceeded max_item_failures."""
     r = _get_redis()
@@ -202,14 +251,13 @@ def task(
     *,
     schedule: int | None = None,
     batch: int = 50,
-    dispatch_limit: int | None = None,
+    max_concurrency: int = 4,
     queue: str = "default",
     timeout: int = 120,
     retries: int = 0,
     retry_delay: int = 60,
     max_item_failures: int = 5,
     failure_memory: int = 3600,
-    exclusive: bool = False,
     depends_on: str | None = None,
     self_chain: bool = False,
     triggers: list[str] | None = None,
@@ -238,8 +286,7 @@ def task(
             retry_delay=retry_delay,
             max_item_failures=max_item_failures,
             failure_memory=failure_memory,
-            dispatch_limit=dispatch_limit,
-            exclusive=exclusive,
+            max_concurrency=max_concurrency,
             depends_on=depends_on,
             self_chain=self_chain,
             triggers=triggers,
@@ -300,16 +347,19 @@ def task(
             if not batch_ids:
                 return
 
-            # Exclusive lock
-            lock_acquired = False
+            # Acquire concurrency slot
             r = _get_redis()
-            lock_key = f"task:{name}:{infospace_id}:lock"
-            if exclusive and r:
-                lock_acquired = r.set(lock_key, "1", nx=True, ex=timeout)
-                if not lock_acquired:
+            slot = -1
+            if r:
+                slot = acquire_slot(r, name, infospace_id, max_concurrency, timeout)
+                if slot < 0:
+                    # No slot available — direct invocations re-queue, others bail
+                    if batch_ids is not None and _chain_depth == 0:
+                        self_task.apply_async(
+                            args=[batch_ids, infospace_id],
+                            countdown=30,
+                        )
                     return
-            else:
-                lock_acquired = True
 
             try:
                 # Build context
@@ -327,41 +377,42 @@ def task(
                 duration_ms = (time.perf_counter() - start) * 1000
                 _flush_stats(name, infospace_id, ctx._stats, duration_ms)
 
-                # Self-chain
-                if self_chain:
-                    _depth = _chain_depth or 0
-                    try:
-                        from app.core.db import engine
-                        with Session(engine) as session:
-                            more = session.exec(check(infospace_id).limit(1)).first()
-                        if more:
-                            kwargs = {"_chain_depth": _depth + 1}
-                            if _depth >= MAX_CHAIN_DEPTH:
-                                kwargs["_chain_depth"] = 0
-                                self_task.apply_async(
-                                    args=[None, infospace_id],
-                                    kwargs=kwargs,
-                                    countdown=10,
-                                )
-                            else:
-                                self_task.apply_async(
-                                    args=[None, infospace_id],
-                                    kwargs=kwargs,
-                                )
-                    except Exception as e:
-                        logger.warning("Self-chain check failed for %s, retrying in 30s: %s", name, e)
-                        self_task.apply_async(args=[None, infospace_id], countdown=30)
-
             except Exception as e:
                 logger.error("Task %s failed: %s", name, e, exc_info=True)
-                # Set backoff key
                 if r:
                     r.set(f"task:{name}:{infospace_id}:backoff", "1", ex=300)
                 if retries > 0:
                     raise self_task.retry(countdown=retry_delay, exc=e)
+                return
             finally:
-                if exclusive and lock_acquired and r:
-                    r.delete(lock_key)
+                # Release slot before self-chain to avoid deadlock
+                if r and slot >= 0:
+                    release_slot(r, name, infospace_id, slot)
+
+            # Self-chain (runs after slot is released)
+            if self_chain:
+                _depth = _chain_depth or 0
+                try:
+                    from app.core.db import engine
+                    with Session(engine) as session:
+                        more = session.exec(check(infospace_id).limit(1)).first()
+                    if more:
+                        kwargs = {"_chain_depth": _depth + 1}
+                        if _depth >= MAX_CHAIN_DEPTH:
+                            kwargs["_chain_depth"] = 0
+                            self_task.apply_async(
+                                args=[None, infospace_id],
+                                kwargs=kwargs,
+                                countdown=10,
+                            )
+                        else:
+                            self_task.apply_async(
+                                args=[None, infospace_id],
+                                kwargs=kwargs,
+                            )
+                except Exception as e:
+                    logger.warning("Self-chain check failed for %s, retrying in 30s: %s", name, e)
+                    self_task.apply_async(args=[None, infospace_id], countdown=30)
 
         # Register with Celery
         from app.core.celery_app import celery_app

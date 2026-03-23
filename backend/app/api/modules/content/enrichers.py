@@ -68,17 +68,11 @@ class EnrichmentContext(TaskContext):
         ), {"name": self._enricher_name, "id": asset_id})
 
     def done(self, session: Session, asset_id: int, facets: dict | None = None):
-        """Mark enrichment complete. Emits event."""
+        """Mark enrichment complete for one asset. Event emitted once per batch by wrapper."""
         self._mark_resolved(session, asset_id)
         if facets:
             from app.api.modules.content.facets import merge_facets
             merge_facets(session, asset_id, facets)
-        from app.core.events import emit
-        emit("asset.enriched", {
-            "asset_id": asset_id,
-            "enricher_name": self._enricher_name,
-            "infospace_id": self.infospace_id,
-        })
         self.stat("done")
 
     def fail(self, session: Session, asset_id: int, reason: str):
@@ -328,6 +322,9 @@ def enrich_ocr(ctx: EnrichmentContext, asset_ids: list[int]):
             ctx.fail(session, asset_id, reason)
         session.commit()
 
+    from app.core.events import emit
+    emit("asset.enriched", {"enricher_name": "ocr", "infospace_id": ctx.infospace_id})
+
 
 @enricher("geocoding",
           check=lambda q: q.where(
@@ -395,6 +392,9 @@ def enrich_geocoding(ctx: EnrichmentContext, asset_ids: list[int]):
                 patch["location"] = result["display_name"]
             ctx.done(session, asset_id, facets=patch)
         session.commit()
+
+    from app.core.events import emit
+    emit("asset.enriched", {"enricher_name": "geocoding", "infospace_id": ctx.infospace_id})
 
 
 @enricher("hash",
@@ -477,6 +477,9 @@ def enrich_hash(ctx: EnrichmentContext, asset_ids: list[int]):
                 ctx.fail(session, asset_id, "hash computation failed")
         session.commit()
 
+    from app.core.events import emit
+    emit("asset.enriched", {"enricher_name": "hash", "infospace_id": ctx.infospace_id})
+
 
 @enricher("language_detection",
           check=lambda q: q.where(Asset.text_content.isnot(None)),
@@ -511,6 +514,9 @@ def enrich_language(ctx: EnrichmentContext, asset_ids: list[int]):
             else:
                 ctx.skip(session, asset_id)
         session.commit()
+
+    from app.core.events import emit
+    emit("asset.enriched", {"enricher_name": "language_detection", "infospace_id": ctx.infospace_id})
 
 
 @enricher("quality_score",
@@ -548,6 +554,9 @@ def enrich_quality_score(ctx: EnrichmentContext, asset_ids: list[int]):
                 ctx.skip(session, asset_id)
         session.commit()
 
+    from app.core.events import emit
+    emit("asset.enriched", {"enricher_name": "quality_score", "infospace_id": ctx.infospace_id})
+
 
 @enricher("embedding",
           check=lambda q: q.where(
@@ -555,6 +564,7 @@ def enrich_quality_score(ctx: EnrichmentContext, asset_ids: list[int]):
           ),
           capability="embedding",
           depends_on="ocr", batch=20, queue="embedding", timeout=1800,
+          max_concurrency=1, self_chain=True,
           triggers=["asset.enriched"])
 def enrich_embedding(ctx: EnrichmentContext, asset_ids: list[int]):
     """Generate embeddings for assets with text_content and no chunks.

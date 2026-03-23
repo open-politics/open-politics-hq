@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional, List, Tuple, Union
 from datetime import datetime, timezone, date
 import uuid
 from pathlib import Path
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlmodel import Session
 from fastapi import UploadFile
 import asyncio
@@ -645,7 +645,9 @@ class PackageBuilder:
         bundle_content = bundle.model_dump(exclude_none=True, exclude={'assets'})
         bundle_content["asset_references"] = []
 
-        assets_in_bundle = bundle.assets if hasattr(bundle, 'assets') else [] 
+        assets_in_bundle = list(self.session.exec(
+            select(Asset).where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle.id))
+        ).all())
         for asset_item_in_bundle in assets_in_bundle:
             asset_ref = {"uuid": str(asset_item_in_bundle.uuid), "id": asset_item_in_bundle.id, "title": asset_item_in_bundle.title, "kind": asset_item_in_bundle.kind.value}
             if include_assets_content:
@@ -811,7 +813,9 @@ class PackageBuilder:
         for bundle in bundles:
             bundle_content = bundle.model_dump(exclude_none=True, exclude={'assets'})
             bundle_content["asset_references"] = []
-            assets_in_bundle = bundle.assets if hasattr(bundle, 'assets') else []
+            assets_in_bundle = list(self.session.exec(
+                select(Asset).where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle.id))
+            ).all())
             for asset_item in assets_in_bundle:
                 asset_ref = {"uuid": str(asset_item.uuid), "id": asset_item.id, "title": asset_item.title, "kind": asset_item.kind.value}
                 if include_assets_content:
@@ -1091,8 +1095,8 @@ class PackageImporter:
                 # We'll set this after all bundles are imported, or resolve via asset_data if available
                 pass
             
-            # For now, we'll leave bundle_id as None and rely on the bundle import setting it
-            # via the new_bundle.assets = assets_to_link approach in import_bundle_package
+            # For now, we'll leave bundle_ids as None and rely on the bundle import setting it
+            # via array_append in import_bundle_package
             logger.debug(f"Asset {asset_uuid} had bundle_id {original_bundle_id} in original infospace, will be linked during bundle import")
         
         if parent_source_id is None and asset_data_in_pkg.get("kind") != "INFOSPACE_EXPORT_ANCHOR": # Example of a special kind
@@ -1626,10 +1630,16 @@ class PackageImporter:
                         logger.warning(f"Bundle asset reference without UUID or full_content. Asset will be skipped.")
         
         if local_asset_ids:
-            assets_to_link = [self.session.get(Asset, asset_id) for asset_id in local_asset_ids]
-            new_bundle.assets = assets_to_link
-            new_bundle.asset_count = len(assets_to_link)
-        
+            # Add bundle to each asset's bundle_ids array
+            self.session.add(new_bundle)
+            self.session.flush()  # Ensure new_bundle.id is assigned
+            for aid in local_asset_ids:
+                self.session.execute(
+                    text("UPDATE asset SET bundle_ids = array_append(COALESCE(bundle_ids, ARRAY[]::int[]), :bid) WHERE id = :aid AND (bundle_ids IS NULL OR NOT bundle_ids @> ARRAY[:bid]::int[])"),
+                    {"bid": new_bundle.id, "aid": aid},
+                )
+            new_bundle.asset_count = len(local_asset_ids)
+
         self.session.add(new_bundle)
         self.session.flush()
         self._register_imported_entity(ResourceType.BUNDLE.value, source_uuid, new_bundle)
@@ -2024,9 +2034,12 @@ class PackageService:
                             if local_asset_id:
                                 linked_asset_ids.append(local_asset_id)
                     if linked_asset_ids:
-                        assets_to_link = list(self.session.exec(select(Asset).where(Asset.id.in_(linked_asset_ids))).all())
-                        bundle.assets = assets_to_link
-                        bundle.asset_count = len(assets_to_link)
+                        for aid in linked_asset_ids:
+                            self.session.execute(
+                                text("UPDATE asset SET bundle_ids = array_append(COALESCE(bundle_ids, ARRAY[]::int[]), :bid) WHERE id = :aid AND (bundle_ids IS NULL OR NOT bundle_ids @> ARRAY[:bid]::int[])"),
+                                {"bid": bundle.id, "aid": aid},
+                            )
+                        bundle.asset_count = len(linked_asset_ids)
                         self.session.add(bundle)
                 except Exception as e:
                     logger.error(f"Failed to link assets to bundle: {e}", exc_info=True)

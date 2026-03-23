@@ -6,6 +6,7 @@ import logging
 import time
 from typing import Dict, Any, Optional
 
+from sqlalchemy import text
 from sqlmodel import select
 
 from app.api.modules.content.models import Source, SourceStatus
@@ -123,14 +124,18 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
                 options={**(source.details or {}), **(task_origin_details_override or {})}
             )
 
-            # Link assets to source and ensure bundle_id is set (ingest_content should have done this)
+            # Link assets to source and ensure bundle_ids contains target bundle (ingest should have done this)
             for asset in assets:
                 # Only set source_id on top-level assets (not child assets)
                 if asset.parent_asset_id is None:
                     asset.source_id = source.id
-                    # Ensure bundle_id is set (defensive check)
-                    if bundle_id and not asset.bundle_id:
-                        asset.bundle_id = bundle_id
+                    # Ensure bundle_ids contains this bundle (defensive check)
+                    if bundle_id and (not asset.bundle_ids or bundle_id not in asset.bundle_ids):
+                        session.execute(
+                            text(
+                                "UPDATE asset SET bundle_ids = array_append(COALESCE(bundle_ids, ARRAY[]::int[]), :bid) WHERE id = :aid"
+                            ).bindparams(bid=bundle_id, aid=asset.id)
+                        )
                 session.add(asset)
 
             source.status = SourceStatus.COMPLETE

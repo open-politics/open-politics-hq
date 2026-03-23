@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
       self_chain=True,
       queue="default",
       timeout=3600,
-      exclusive=True,
+      max_concurrency=1,
       tags=frozenset({"flow"}))
 def execute_pending_flows(ctx: TaskContext, execution_ids: list[int]):
     """Claim and run PENDING FlowExecutions."""

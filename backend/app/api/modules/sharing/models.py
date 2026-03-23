@@ -6,7 +6,7 @@ import enum
 import uuid
 
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Column, DateTime, Index, JSON, text
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, JSON, text
 
 from app.api.modules.identity_infospace_user.models import User, Infospace
 
@@ -122,20 +122,119 @@ class UserBackup(SQLModel, table=True):
     __table_args__ = (Index("ix_userbackup_target_created", "target_user_id", "created_by_user_id"),)
 
 
+class PackageVisibility(str, enum.Enum):
+    TOKEN = "token"         # accessible only with token (default)
+    INTERNAL = "internal"   # discoverable by any authenticated user
+    PUBLIC = "public"       # discoverable by anyone
+
+
 class Package(SQLModel, table=True):
+    """
+    Universal sharing primitive. A curated selection of items from an infospace
+    with per-item download/copy controls.
+
+    See FOUNDATION.md § Access Control and OVERVIEW.md § Access Control.
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
     name: str
     description: Optional[str] = None
+    token: str = Field(
+        default_factory=lambda: __import__("secrets").token_urlsafe(24),
+        unique=True,
+        index=True,
+    )
+    visibility: PackageVisibility = Field(default=PackageVisibility.TOKEN)
 
     infospace_id: int = Field(foreign_key="infospace.id")
     infospace: Optional[Infospace] = Relationship(back_populates="packages")
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id")
 
-    manifest: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
-    asset_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
-    schema_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
-    run_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
+    # Package-wide defaults (overridden by per-item settings)
+    default_allow_download: bool = Field(default=False)
+    default_allow_copy: bool = Field(default=False)
+
+    is_active: bool = Field(default=True)
+    expires_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    items: List["PackageItem"] = Relationship(
+        back_populates="package",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+
+    @property
+    def is_expired(self) -> bool:
+        if not self.expires_at:
+            return False
+        return datetime.now(timezone.utc) > self.expires_at
+
+    @property
+    def is_valid(self) -> bool:
+        return self.is_active and not self.is_expired
+
+
+class PackageItem(SQLModel, table=True):
+    """Single item in a package — exactly one typed FK is non-null per row.
+
+    Typed FKs give us referential integrity, CASCADE on source deletion,
+    and type-safe access (``item.bundle_id is not None`` instead of
+    ``item.resource_type == "bundle"``).
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    package_id: int = Field(foreign_key="package.id", index=True, sa_column_kwargs={"ondelete": "CASCADE"})
+    # Exactly one of these is non-null (CHECK constraint in migration)
+    bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id", sa_column_kwargs={"ondelete": "CASCADE"})
+    run_id: Optional[int] = Field(default=None, foreign_key="annotationrun.id", sa_column_kwargs={"ondelete": "CASCADE"})
+    graph_id: Optional[int] = Field(default=None, foreign_key="knowledgegraph.id", sa_column_kwargs={"ondelete": "CASCADE"})
+    schema_id: Optional[int] = Field(default=None, foreign_key="annotationschema.id", sa_column_kwargs={"ondelete": "CASCADE"})
+    asset_id: Optional[int] = Field(default=None, foreign_key="asset.id", sa_column_kwargs={"ondelete": "CASCADE"})
+    entity_canonical_id: Optional[int] = Field(default=None, foreign_key="entitycanonical.id", sa_column_kwargs={"ondelete": "CASCADE"})
+    # Per-item permission overrides (NULL = use package default)
+    allow_download: Optional[bool] = None
+    allow_copy: Optional[bool] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    package: Optional[Package] = Relationship(back_populates="items")
+
+    __table_args__ = (
+        CheckConstraint(
+            "(bundle_id IS NOT NULL)::int + (run_id IS NOT NULL)::int + "
+            "(graph_id IS NOT NULL)::int + (schema_id IS NOT NULL)::int + "
+            "(asset_id IS NOT NULL)::int + (entity_canonical_id IS NOT NULL)::int = 1",
+            name="ck_packageitem_exactly_one_fk",
+        ),
+    )
+
+    @property
+    def resource_type(self) -> str:
+        """Compat accessor — returns which FK is set."""
+        if self.bundle_id is not None: return "bundle"
+        if self.run_id is not None: return "run"
+        if self.graph_id is not None: return "graph"
+        if self.schema_id is not None: return "schema"
+        if self.asset_id is not None: return "asset"
+        if self.entity_canonical_id is not None: return "entity"
+        return "unknown"
+
+    @property
+    def resource_id(self) -> int:
+        """Compat accessor — returns the non-null FK value."""
+        return (
+            self.bundle_id or self.run_id or self.graph_id or self.schema_id
+            or self.asset_id or self.entity_canonical_id or 0
+        )
+
+    def effective_allow_download(self) -> bool:
+        if self.allow_download is not None:
+            return self.allow_download
+        return self.package.default_allow_download if self.package else False
+
+    def effective_allow_copy(self) -> bool:
+        if self.allow_copy is not None:
+            return self.allow_copy
+        return self.package.default_allow_copy if self.package else False
 
 
 class ShareableLink(SQLModel, table=True):

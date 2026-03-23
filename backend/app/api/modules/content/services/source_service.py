@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple, Union
 from datetime import datetime, timezone, timedelta
+from sqlalchemy import text
 from sqlmodel import Session, select, func
 from fastapi import HTTPException
 
@@ -26,7 +27,6 @@ from app.models import (
     ProcessingStatus
 )
 from app.schemas import SourceCreate, SourceUpdate, SourceRead
-from app.api.global_utils import validate_infospace_access
 from app.api.modules.content.handlers import IngestionContext
 from app.api.modules.content.ingest import ingest
 from app.core.config import settings
@@ -68,10 +68,7 @@ class SourceService:
             Created Source object
         """
         logger.info(f"Creating source '{source_in.name}' in infospace {infospace_id}")
-        
-        # Validate access
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
+
         # Create source
         source_data = source_in.model_dump()
         source = Source(
@@ -169,8 +166,6 @@ class SourceService:
         infospace_id: int
     ) -> Optional[Source]:
         """Get a source by ID with access validation."""
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         source = self.session.get(Source, source_id)
         if source and source.infospace_id == infospace_id:
             return source
@@ -186,8 +181,6 @@ class SourceService:
         kind_filter: Optional[str] = None
     ) -> Tuple[List[Source], int]:
         """List sources with optional filtering."""
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         query = select(Source).where(
             Source.infospace_id == infospace_id,
             Source.user_id == user_id
@@ -453,8 +446,6 @@ class SourceService:
         infospace_id: int
     ) -> Dict[str, Any]:
         """Get statistics about sources in an infospace."""
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
         # Total sources
         total_sources = self.session.exec(
             select(func.count(Source.id)).where(
@@ -566,8 +557,6 @@ class SourceService:
         if not source:
             raise ValueError(f"Source {source_id} not found")
         
-        validate_infospace_access(self.session, source.infospace_id, user_id)
-        
         source.is_active = True
         source.status = SourceStatus.PENDING  # Will be ACTIVE after first poll
         
@@ -599,8 +588,6 @@ class SourceService:
         source = self.session.get(Source, source_id)
         if not source:
             raise ValueError(f"Source {source_id} not found")
-        
-        validate_infospace_access(self.session, source.infospace_id, user_id)
         
         source.is_active = False
         source.status = SourceStatus.PAUSED
@@ -717,14 +704,18 @@ class SourceService:
             ingested_count = 0
             for asset in result.assets:
                 asset.source_id = source.id
+                self.session.add(asset)
+                self.session.flush()
                 if source.output_bundle_id:
-                    asset.bundle_id = source.output_bundle_id
+                    self.session.execute(
+                        text("UPDATE asset SET bundle_ids = array_append(COALESCE(bundle_ids, ARRAY[]::int[]), :bid) WHERE id = :aid AND (bundle_ids IS NULL OR NOT bundle_ids @> ARRAY[:bid]::int[])"),
+                        {"bid": source.output_bundle_id, "aid": asset.id},
+                    )
                     bundle = self.session.get(Bundle, source.output_bundle_id)
                     if bundle:
                         bundle.asset_count = (bundle.asset_count or 0) + 1
                         bundle.updated_at = datetime.now(timezone.utc)
                         self.session.add(bundle)
-                self.session.add(asset)
                 ingested_count += 1
 
             source.cursor_state.update(result.cursor_update)

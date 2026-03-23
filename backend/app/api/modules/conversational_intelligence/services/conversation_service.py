@@ -11,7 +11,6 @@ from jose import jwt
 
 from app.api.modules.foundation_service_providers.registry import resolve, load_credentials, is_accessible, list_providers, get_provider, get_descriptor
 from app.api.modules.foundation_service_providers.base import GenerationResponse, LanguageModelProvider
-from app.api.global_utils import validate_infospace_access
 from app.models import Asset, User, Infospace, Bundle, AnnotationSchema, Annotation, AssetKind
 from app.api.modules.content.services import AssetService
 from app.api.modules.annotation.services import AnnotationService
@@ -108,8 +107,6 @@ class IntelligenceConversationService:
 
         This provides real data to help AI models make better tool usage decisions.
         """
-        validate_infospace_access(self.session, infospace_id, user_id)
-
         infospace = self.session.get(Infospace, infospace_id)
 
         available_asset_kinds = self.session.exec(
@@ -191,8 +188,6 @@ class IntelligenceConversationService:
 
         The model can search, analyze, and interact with intelligence data through tool calls.
         """
-        validate_infospace_access(self.session, infospace_id, user_id)
-
         context_token = create_mcp_context_token_with_api_keys(
             user_id, infospace_id, api_keys or {}, conversation_id, model_name
         )
@@ -326,8 +321,6 @@ class IntelligenceConversationService:
         """
         Execute a tool call or resource read made by the AI model using MCP.
         """
-        validate_infospace_access(self.session, infospace_id, user_id)
-
         logger.info(f"Executing MCP capability: {tool_name} with args: {arguments}")
 
         try:
@@ -617,7 +610,6 @@ class IntelligenceConversationService:
             return {"error": "Title and content are required for a report"}
 
         try:
-            validate_infospace_access(self.session, infospace_id, user_id)
             file_info = {
                 "composition_type": "report",
                 "created_by": "user_action",

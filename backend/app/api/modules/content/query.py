@@ -202,10 +202,66 @@ class AssetQuery:
     # ─── Scoping ───
 
     def bundle(self, bundle_id: Optional[int] = None) -> AssetQuery:
-        """Scope to a bundle."""
+        """Scope to a bundle (asset.bundle_ids @> ARRAY[bundle_id])."""
         self._bundle_id = bundle_id
         if bundle_id is not None:
-            self._conditions.append(Asset.bundle_id == bundle_id)
+            self._conditions.append(
+                text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id)
+            )
+        return self
+
+    def scope_bundles(self, bundle_ids: tuple[int, ...]) -> AssetQuery:
+        """Restrict to assets in any of the given bundles (PackageScope).
+
+        Uses the && (overlap) operator: asset.bundle_ids && scope_bundle_ids.
+        """
+        if bundle_ids:
+            arr = list(bundle_ids)
+            self._conditions.append(
+                text("bundle_ids && :scope_ids::int[]").bindparams(scope_ids=arr)
+            )
+        return self
+
+    def scope(self, package_scope) -> AssetQuery:
+        """Apply full visibility predicate from a PackageScope.
+
+        Three OR branches, combined via SQL ``OR``:
+        1. Bundle path — GIN overlap on ``bundle_ids``
+        2. Direct assets + ancestor chain — PK lookup
+        3. Run-derived — semi-join via ``annotation.run_id``
+
+        No-op when *package_scope* is ``None`` (full access).
+        """
+        if package_scope is None:
+            return self  # full access
+
+        from sqlalchemy import or_
+        from app.api.modules.annotation.models import Annotation
+
+        clauses = []
+        if package_scope.bundle_ids:
+            clauses.append(
+                text("bundle_ids && :scope_bids::int[]").bindparams(
+                    scope_bids=list(package_scope.bundle_ids)
+                )
+            )
+        if package_scope.asset_ids:
+            clauses.append(Asset.id.in_(package_scope.asset_ids))
+        if package_scope.run_ids:
+            clauses.append(
+                Asset.id.in_(
+                    select(Annotation.asset_id)
+                    .where(Annotation.run_id.in_(package_scope.run_ids))
+                    .where(Annotation.asset_id.isnot(None))
+                    .distinct()
+                )
+            )
+
+        if clauses:
+            self._conditions.append(or_(*clauses))
+        else:
+            # Scope is set but has no grants — no assets are visible
+            self._conditions.append(text("FALSE"))
         return self
 
     def parent_asset(self, parent_asset_id: Optional[int] = None) -> AssetQuery:

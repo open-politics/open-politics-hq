@@ -434,6 +434,7 @@ class AnnotationRunUpdate(SQLModel):
     include_parent_context: Optional[bool] = None
     context_window: Optional[int] = None
     views_config: Optional[List[Dict[str, Any]]] = None
+    graph_config: Optional[Dict[str, Any]] = None
 
 class AnnotationRunRead(AnnotationRunBase):
     id: int
@@ -1294,3 +1295,12 @@ class TreeChildrenResponse(SQLModel):
     children: List[TreeNode]
     total_children: int
     has_more: bool
+
+
+class DeletionImpact(SQLModel):
+    """Preview of what a tree deletion would affect."""
+    bundles_to_delete: int
+    bundle_names: List[str]
+    assets_to_delete: int       # exclusive to deleted subtree — permanently deleted
+    assets_to_unlink: int       # shared with external bundles — survive, just unlinked
+    child_assets_to_delete: int # structural children of explicitly selected assets

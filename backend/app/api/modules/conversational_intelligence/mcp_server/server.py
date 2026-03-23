@@ -48,7 +48,7 @@ from fastmcp import FastMCP, Context
 from fastmcp.tools.tool import ToolResult
 from mcp.types import TextContent
 
-from app.api.global_utils import validate_infospace_access
+from app.api.modules.identity_infospace_user.access import resolve_access
 from app.core.config import settings
 from app.api.modules.foundation_service_providers.registry import (
     get_storage_provider, get_scraping_provider, get_web_search_provider,
@@ -147,6 +147,7 @@ def get_services():
 
         yield {
             "session": session,
+            "user": user,
             "user_id": user_id,
             "infospace_id": infospace_id,
             "conversation_id": conversation_id,  # Pass conversation ID to tools
@@ -374,11 +375,7 @@ async def workspace_hub(
     </quick_start>
     """
     with get_services() as services:
-        validate_infospace_access(
-            services["session"],
-            services["infospace_id"],
-            services["user_id"]
-        )
+        resolve_access(services["session"], services["infospace_id"], services["user"])
         
         # Auto-detect resource if not specified
         if not resource:
@@ -658,7 +655,7 @@ async def _navigate_tree_root(services: Dict, ctx: Context) -> ToolResult:
     all_bundles = services["session"].exec(
         select(Bundle).where(Bundle.infospace_id == services["infospace_id"])
     ).all()
-    all_bundled_ids = get_bundled_asset_ids(all_bundles)
+    all_bundled_ids = get_bundled_asset_ids(all_bundles, session=services["session"])
     
     # Get root assets (not in any bundle, no parent)
     root_assets_query = (
@@ -801,8 +798,17 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
         
         bundle_assets = []
         if remaining_limit > 0:
-            all_bundle_assets = bundle.assets
-            bundle_assets = all_bundle_assets[asset_skip:asset_skip + remaining_limit]
+            from sqlalchemy import text as sa_text
+            asset_ids = [
+                r[0] for r in services["session"].execute(
+                    sa_text("SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[] ORDER BY created_at DESC OFFSET :off LIMIT :lim"),
+                    {"bid": bundle.id, "off": asset_skip, "lim": remaining_limit},
+                ).fetchall()
+            ]
+            if asset_ids:
+                bundle_assets = list(services["session"].exec(
+                    select(Asset).where(Asset.id.in_(asset_ids))
+                ).all())
         
         # Build nodes
         children_nodes = build_bundle_children_nodes(bundle, child_bundles, bundle_assets, services["session"])
@@ -812,7 +818,16 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
             if i < len(child_bundles):
                 # Bundle node
                 entity = child_bundles[i]
-                children_nodes[i] = enrich_node_with_preview(node, entity, entity.assets)
+                child_asset_ids = [
+                    r[0] for r in services["session"].execute(
+                        sa_text("SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[]"),
+                        {"bid": entity.id},
+                    ).fetchall()
+                ]
+                child_assets_list = list(services["session"].exec(
+                    select(Asset).where(Asset.id.in_(child_asset_ids))
+                ).all()) if child_asset_ids else []
+                children_nodes[i] = enrich_node_with_preview(node, entity, child_assets_list)
             else:
                 # Asset node
                 asset_idx = i - len(child_bundles)
@@ -1091,8 +1106,8 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
                     continue
             
             # Add bundle if exists (at this level or walked up to it)
-            if current.bundle_id:
-                bundle = session.get(Bundle, current.bundle_id)
+            if current.bundle_ids:
+                bundle = session.get(Bundle, current.bundle_ids[0])
                 if bundle:
                     path.append({
                         "type": "bundle",
@@ -1247,11 +1262,7 @@ async def web_research(
     Returns combined structured_content with `search` and/or `ingestion` keys depending on what ran.
     """
     with get_services() as services:
-        validate_infospace_access(
-            services["session"], 
-            services["infospace_id"], 
-            services["user_id"]
-        )
+        resolve_access(services["session"], services["infospace_id"], services["user"])
         
         if not query and not ingest_urls and not ingest_top_k:
             return ToolResult(
@@ -1510,11 +1521,7 @@ async def library_hub(
     </quick_start>
     """
     with get_services() as services:
-        validate_infospace_access(
-            services["session"],
-            services["infospace_id"],
-            services["user_id"]
-        )
+        resolve_access(services["session"], services["infospace_id"], services["user"])
         
         await ctx.info(f"library_hub: operation={operation}")
         
@@ -1972,7 +1979,7 @@ async def analysis_hub(
     • run.share .................... Provide run_id (plus optional share_name/expiration_days) for a public link.
     """
     with get_services() as services:
-        validate_infospace_access(services["session"], services["infospace_id"], services["user_id"])
+        resolve_access(services["session"], services["infospace_id"], services["user"])
         
         await ctx.info(f"analysis_hub: operation={operation}")
         
@@ -3738,11 +3745,7 @@ async def get_asset_details(asset_id: int, ctx: Context) -> dict:
     Use this when you need the full content of an asset for detailed analysis.
     """
     with get_services() as services:
-        validate_infospace_access(
-            services["session"], 
-            services["infospace_id"], 
-            services["user_id"]
-        )
+        resolve_access(services["session"], services["infospace_id"], services["user"])
         
         from app.models import Asset
         asset = services["session"].get(Asset, asset_id)
@@ -3776,11 +3779,7 @@ async def get_asset_annotations(
     Optionally filter by schema IDs (comma-separated).
     """
     with get_services() as services:
-        validate_infospace_access(
-            services["session"], 
-            services["infospace_id"], 
-            services["user_id"]
-        )
+        resolve_access(services["session"], services["infospace_id"], services["user"])
         
         from sqlmodel import select, and_
         from app.models import Annotation

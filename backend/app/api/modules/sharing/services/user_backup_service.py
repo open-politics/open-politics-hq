@@ -27,7 +27,6 @@ from app.schemas import (
     UserBackupUpdate,
     UserBackupRestoreRequest
 )
-from app.api.global_utils import validate_infospace_access
 from app.api.modules.sharing.services.package_service import PackageBuilder, PackageImporter, DataPackage, PackageMetadata
 from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
 from app.api.modules.sharing.services.package_service import PackageService

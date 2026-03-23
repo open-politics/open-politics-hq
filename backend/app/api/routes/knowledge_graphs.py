@@ -5,10 +5,12 @@ from typing import List, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
-from app.models import KnowledgeGraph, Infospace
+from app.models import KnowledgeGraph
 from app.api.modules.graph.schemas import KnowledgeGraphCreate, KnowledgeGraphUpdate, KnowledgeGraphRead
-from app.api.dependency_injection import CurrentUser, get_db
-from app.api.global_utils import validate_infospace_access
+from app.api.dependency_injection import get_db
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +23,14 @@ router = APIRouter(
 @router.get("", response_model=List[KnowledgeGraphRead])
 def list_knowledge_graphs(
     *,
-    infospace_id: int,
-    current_user: CurrentUser,
+    access: Access = Requires(),
     db: Session = Depends(get_db),
 ) -> Any:
     """List knowledge graphs for an infospace."""
-    validate_infospace_access(db, infospace_id, current_user.id)
+    infospace_id = access.infospace_id
     stmt = select(KnowledgeGraph).where(KnowledgeGraph.infospace_id == infospace_id)
+    if access.scope and access.scope.graph_ids:
+        stmt = stmt.where(KnowledgeGraph.id.in_(access.scope.graph_ids))
     graphs = db.exec(stmt).all()
     return list(graphs)
 
@@ -35,13 +38,12 @@ def list_knowledge_graphs(
 @router.post("", response_model=KnowledgeGraphRead, status_code=status.HTTP_201_CREATED)
 def create_knowledge_graph(
     *,
-    infospace_id: int,
-    current_user: CurrentUser,
+    access: Access = Requires(Capability.ORGANIZE),
     graph_in: KnowledgeGraphCreate,
     db: Session = Depends(get_db),
 ) -> Any:
     """Create a named knowledge graph."""
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
+    infospace_id = access.infospace_id
     graph = KnowledgeGraph(
         infospace_id=infospace_id,
         name=graph_in.name,
@@ -58,15 +60,16 @@ def create_knowledge_graph(
 @router.get("/{graph_id}", response_model=KnowledgeGraphRead)
 def get_knowledge_graph(
     *,
-    infospace_id: int,
+    access: Access = Requires(),
     graph_id: int,
-    current_user: CurrentUser,
     db: Session = Depends(get_db),
 ) -> Any:
     """Get a knowledge graph by ID."""
-    validate_infospace_access(db, infospace_id, current_user.id)
+    infospace_id = access.infospace_id
     graph = db.get(KnowledgeGraph, graph_id)
     if not graph or graph.infospace_id != infospace_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge graph not found")
+    if access.scope and access.scope.graph_ids and graph_id not in access.scope.graph_ids:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge graph not found")
     return graph
 
@@ -74,14 +77,14 @@ def get_knowledge_graph(
 @router.patch("/{graph_id}", response_model=KnowledgeGraphRead)
 def update_knowledge_graph(
     *,
-    infospace_id: int,
+    access: Access = Requires(Capability.ORGANIZE),
     graph_id: int,
-    current_user: CurrentUser,
     graph_in: KnowledgeGraphUpdate,
     db: Session = Depends(get_db),
 ) -> Any:
     """Update a knowledge graph."""
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
+    infospace_id = access.infospace_id
+    access.require_in_scope("graph_ids", graph_id)
     graph = db.get(KnowledgeGraph, graph_id)
     if not graph or graph.infospace_id != infospace_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge graph not found")
@@ -102,13 +105,13 @@ def update_knowledge_graph(
 @router.delete("/{graph_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_knowledge_graph(
     *,
-    infospace_id: int,
+    access: Access = Requires(Capability.DELETE),
     graph_id: int,
-    current_user: CurrentUser,
     db: Session = Depends(get_db),
 ) -> None:
     """Delete a knowledge graph. Entities with graph_id set will need handling (cascade or nullify)."""
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
+    infospace_id = access.infospace_id
+    access.require_in_scope("graph_ids", graph_id)
     graph = db.get(KnowledgeGraph, graph_id)
     if not graph or graph.infospace_id != infospace_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge graph not found")

@@ -11,18 +11,20 @@ import { RowSelectionState } from '@tanstack/react-table';
 
 interface InfospacesPageProps {
   onEdit: (Infospace: InfospaceRowData) => void;
+  onBackup?: (Infospace: InfospaceRowData) => void;
   enableRowSelection?: boolean;
   rowSelection?: RowSelectionState;
   onRowSelectionChange?: React.Dispatch<React.SetStateAction<RowSelectionState>>;
 }
 
-export default function InfospacesPage({ 
-  onEdit, 
+export default function InfospacesPage({
+  onEdit,
+  onBackup,
   enableRowSelection = false,
   rowSelection = {},
   onRowSelectionChange
 }: InfospacesPageProps) {
-  const { infospaces, fetchInfospaces, deleteInfospace, exportInfospace } = useInfospaceStore();
+  const { infospaces, fetchInfospaces, deleteInfospace, exportInfospace, setActiveInfospace } = useInfospaceStore();
   const { createLink, isLoading: isShareLoading, error: shareError } = useShareableStore();
 
   useEffect(() => {
@@ -56,15 +58,25 @@ export default function InfospacesPage({
     toast.info("Share functionality: Opening share dialog soon...");
   };
 
+  const handleBackupInfospace = (infospace: InfospaceRowData) => {
+    onBackup?.(infospace);
+  };
+
+  const handleSwitchTo = (infospace: InfospaceRowData) => {
+    setActiveInfospace(infospace.id);
+  };
+
   const tableColumns = columns({
     onEdit: handleEdit,
     onDelete: handleDeleteInfospace,
     onExport: handleExportInfospace,
     onShare: handleShareInfospace,
+    onBackup: handleBackupInfospace,
+    onSwitchTo: handleSwitchTo,
   });
 
   return (
-    <div className="p-4 md:p-2">  
+    <div>
       <DataTable
         columns={tableColumns}
         data={infospaces as unknown as InfospaceRowData[]}

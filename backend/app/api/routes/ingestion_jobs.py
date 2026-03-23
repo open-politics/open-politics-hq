@@ -11,13 +11,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy import text as sa_text
 from sqlmodel import Session, select
 from pydantic import BaseModel
 
 from app.api import dependency_injection
 from app.models import IngestionJob, IngestionStatus, Bundle, Source, SourceStatus
 from app.schemas import Message
-from app.api.global_utils import validate_infospace_access
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +83,7 @@ def create_directory_import_job(
     infospace_id: int,
     request: DirectoryImportRequest,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(Capability.INGEST),
 ) -> Any:
     """
     Import files from a local directory.
@@ -93,8 +96,6 @@ def create_directory_import_job(
     """
     from pathlib import Path
     from app.core.config import settings
-
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
 
     source = Path(request.source_path).resolve()
     if not source.exists() or not source.is_dir():
@@ -133,7 +134,7 @@ def create_directory_import_job(
 
     job = IngestionJob(
         infospace_id=infospace_id,
-        user_id=current_user.id,
+        user_id=access.user_id,
         source_locator=str(source),
         kind="directory_local",
         status=IngestionStatus.PENDING,
@@ -199,7 +200,7 @@ def trigger_process_pending(
     bundle_id: int,
     batch_size: int = Query(100, ge=1, le=500),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(Capability.COMPUTE),
 ) -> Any:
     """
     Trigger batch processing of PENDING assets in a bundle.
@@ -209,8 +210,6 @@ def trigger_process_pending(
     Processing runs in self-chaining batches until all PENDING assets are done.
     """
     from app.core.dispatch import kick_tasks
-
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
 
     bundle = db.get(Bundle, bundle_id)
     if not bundle or bundle.infospace_id != infospace_id:
@@ -238,7 +237,7 @@ def trigger_enrich(
     bundle_id: int,
     request: BatchEnrichRequest,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(Capability.COMPUTE),
 ) -> Any:
     """
     Trigger batch enrichment for assets in a bundle missing a facet.
@@ -248,8 +247,6 @@ def trigger_enrich(
     """
     from app.core.tasks import get_task_registry
     from app.core.dispatch import kick_tasks
-
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
 
     bundle = db.get(Bundle, bundle_id)
     if not bundle or bundle.infospace_id != infospace_id:
@@ -283,17 +280,17 @@ def get_processing_status(
     infospace_id: int,
     bundle_id: int,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(),
 ) -> Any:
     """
     Get processing status counts for assets in a bundle.
 
     Returns counts by processing_status (PENDING, PROCESSING, READY, FAILED).
     """
+    if access.scope:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     from sqlalchemy import func
     from app.models import Asset, ProcessingStatus
-
-    validate_infospace_access(db, infospace_id, current_user.id)
 
     bundle = db.get(Bundle, bundle_id)
     if not bundle or bundle.infospace_id != infospace_id:
@@ -305,7 +302,7 @@ def get_processing_status(
     # Count by status (parent assets only)
     counts = db.exec(
         select(Asset.processing_status, func.count(Asset.id))
-        .where(Asset.bundle_id == bundle_id)
+        .where(sa_text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id))
         .where(Asset.parent_asset_id.is_(None))
         .group_by(Asset.processing_status)
     ).all()
@@ -336,15 +333,17 @@ def list_ingestion_jobs(
     source_id: Optional[int] = Query(None, description="Filter by source ID (jobs created by this source poll)"),
     limit: int = Query(50, ge=1, le=100),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(),
 ) -> Any:
     """
     List ingestion jobs for an infospace.
 
     Useful for showing user their ongoing/completed imports (local directory or remote archive).
     """
-    validate_infospace_access(db, infospace_id, current_user.id)
-    
+    # Ingestion jobs are operational — not in PackageScope
+    if access.scope:
+        return []
+
     query = select(IngestionJob).where(
         IngestionJob.infospace_id == infospace_id
     )
@@ -373,64 +372,62 @@ def list_ingestion_jobs(
     return result
 
 
-@router.get("/ingestion-jobs/{job_id}", response_model=IngestionJobRead)
+@router.get("/infospaces/{infospace_id}/ingestion-jobs/{job_id}", response_model=IngestionJobRead)
 def get_ingestion_job_status(
     *,
     job_id: int,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(),
 ) -> Any:
     """
     Get status of a specific ingestion job.
 
     Frontend polls this endpoint to show real-time progress.
     """
+    if access.scope:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     job = db.get(IngestionJob, job_id)
-    if not job:
+    if not job or job.infospace_id != access.infospace_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job {job_id} not found"
         )
-    
-    # Validate user access
-    validate_infospace_access(db, job.infospace_id, current_user.id)
-    
+
     # Convert to response with computed fields
     job_dict = job.model_dump(mode='json')  # mode='json' serializes datetimes to ISO strings
     job_dict['progress_pct'] = job.cursor_state.get('progress_pct', 0)
     job_dict['stage_message'] = job.cursor_state.get('message', '')
-    
+
     return IngestionJobRead(**job_dict)
 
 
-@router.get("/ingestion-jobs/by-uuid/{job_uuid}", response_model=IngestionJobRead)
+@router.get("/infospaces/{infospace_id}/ingestion-jobs/by-uuid/{job_uuid}", response_model=IngestionJobRead)
 def get_ingestion_job_by_uuid(
     *,
     job_uuid: str,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(),
 ) -> Any:
     """
     Get job status by UUID (useful when only UUID is known).
     """
+    if access.scope:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     job = db.exec(
         select(IngestionJob).where(IngestionJob.uuid == job_uuid)
     ).first()
-    
-    if not job:
+
+    if not job or job.infospace_id != access.infospace_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job {job_uuid} not found"
         )
-    
-    # Validate user access
-    validate_infospace_access(db, job.infospace_id, current_user.id)
-    
+
     # Convert to response with computed fields
     job_dict = job.model_dump(mode='json')  # mode='json' serializes datetimes to ISO strings
     job_dict['progress_pct'] = job.cursor_state.get('progress_pct', 0)
     job_dict['stage_message'] = job.cursor_state.get('message', '')
-    
+
     return IngestionJobRead(**job_dict)
 
 
@@ -440,7 +437,7 @@ async def create_archive_ingestion_job(
     infospace_id: int,
     request: IngestionJobCreate,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(Capability.INGEST),
 ) -> Any:
     """
     Create a new archive ingestion job.
@@ -448,7 +445,6 @@ async def create_archive_ingestion_job(
     Alternative endpoint to /assets/ingest-url that explicitly creates a job
     and returns job details for frontend progress tracking.
     """
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
     
     # Validate it's actually an archive URL
     from app.api.modules.content.processors import is_archive_url
@@ -484,7 +480,7 @@ async def create_archive_ingestion_job(
         search_provider=search,
         asset_service=AssetService(db, storage),
         bundle_service=BundleService(db),
-        user_id=current_user.id,
+        user_id=access.user_id,
         infospace_id=infospace_id,
         settings=settings,
         options=options,
@@ -514,25 +510,22 @@ async def create_archive_ingestion_job(
     )
 
 
-@router.post("/ingestion-jobs/{job_id}/cancel", response_model=Message)
+@router.post("/infospaces/{infospace_id}/ingestion-jobs/{job_id}/cancel", response_model=Message)
 def cancel_ingestion_job(
     *,
     job_id: int,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(Capability.COMPUTE),
 ) -> Any:
     """
     Cancel a running ingestion job.
     """
     job = db.get(IngestionJob, job_id)
-    if not job:
+    if not job or job.infospace_id != access.infospace_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job {job_id} not found"
         )
-    
-    # Validate user access
-    validate_infospace_access(db, job.infospace_id, current_user.id)
     
     # Can only cancel pending or processing jobs
     if job.status in [IngestionStatus.COMPLETED, IngestionStatus.FAILED]:
@@ -560,12 +553,12 @@ def cancel_ingestion_job(
     return Message(message=f"Job {job_id} cancelled")
 
 
-@router.delete("/ingestion-jobs/{job_id}", response_model=Message)
+@router.delete("/infospaces/{infospace_id}/ingestion-jobs/{job_id}", response_model=Message)
 def delete_ingestion_job(
     *,
     job_id: int,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(Capability.DELETE),
 ) -> Any:
     """
     Delete an ingestion job record.
@@ -573,14 +566,11 @@ def delete_ingestion_job(
     Note: This only deletes the job tracking record, not the created assets/bundles.
     """
     job = db.get(IngestionJob, job_id)
-    if not job:
+    if not job or job.infospace_id != access.infospace_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job {job_id} not found"
         )
-    
-    # Validate user access
-    validate_infospace_access(db, job.infospace_id, current_user.id)
     
     db.delete(job)
     db.commit()
@@ -604,7 +594,7 @@ async def reconcile_directory(
     infospace_id: int,
     request: ReconcileDirectoryRequest,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user = dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(Capability.INGEST),
 ) -> Any:
     """
     Run on-demand directory reconcile.
@@ -623,8 +613,6 @@ async def reconcile_directory(
     from app.api.modules.foundation_service_providers.registry import get_storage_provider, get_scraping_provider
     from app.api.modules.content.services.asset_service import AssetService
     from app.api.modules.content.services.bundle_service import BundleService
-
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
 
     source = Path(request.source_path).resolve()
     if not source.exists() or not source.is_dir():
@@ -662,7 +650,7 @@ async def reconcile_directory(
         search_provider=None,
         asset_service=asset_service,
         bundle_service=bundle_service,
-        user_id=current_user.id,
+        user_id=access.user_id,
         infospace_id=infospace_id,
         settings=settings,
         options={"allowed_import_paths": allowed_paths},
@@ -718,7 +706,7 @@ def enable_directory_watch(
     infospace_id: int,
     request: EnableWatchRequest,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user=dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(Capability.SETUP),
     source_service: dependency_injection.SourceServiceDep,
 ) -> Any:
     """
@@ -730,7 +718,6 @@ def enable_directory_watch(
 
     Idempotent: calling again with the same source_path updates existing Sources.
     """
-    validate_infospace_access(db, infospace_id, current_user.id, require_editor=True)
 
     bundle = db.get(Bundle, request.bundle_id)
     if not bundle or bundle.infospace_id != infospace_id:
@@ -749,7 +736,7 @@ def enable_directory_watch(
     if request.enable_inbox:
         inbox_source, inbox_path_str, inbox_files_pending = source_service.ensure_inbox_source(
             infospace_id=infospace_id,
-            user_id=current_user.id,
+            user_id=access.user_id,
             bundle_id=request.bundle_id,
             source_path=source_path,
             interval_seconds=request.inbox_interval_seconds,
@@ -781,13 +768,14 @@ def get_watch_status(
     infospace_id: int,
     bundle_id: Optional[int] = Query(None),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user=dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(),
 ) -> Any:
     """
     Get watch / inbox status for directories in an infospace.
     Optionally filter by bundle_id.
     """
-    validate_infospace_access(db, infospace_id, current_user.id)
+    if access.scope:
+        return []
 
     query = select(Source).where(
         Source.infospace_id == infospace_id,
@@ -849,10 +837,11 @@ def get_task_status(
     *,
     infospace_id: int,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user=dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(),
 ) -> Any:
     """Per-task stats for an infospace. Reads from Redis — no DB queries."""
-    validate_infospace_access(db, infospace_id, current_user.id)
+    if access.scope:
+        return {}
 
     from app.core.tasks import get_task_registry
     from app.core.redis import get_redis
@@ -878,21 +867,22 @@ class PipelineStatsResponse(BaseModel):
     last_asset_ready: Optional[str] = None
 
 
-@router.get("/ingestion-jobs/{job_id}/pipeline-stats", response_model=PipelineStatsResponse)
+@router.get("/infospaces/{infospace_id}/ingestion-jobs/{job_id}/pipeline-stats", response_model=PipelineStatsResponse)
 def get_pipeline_stats(
     *,
     job_id: int,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    current_user=dependency_injection.Depends(dependency_injection.get_current_user),
+    access: Access = Requires(),
 ) -> Any:
     """Asset processing breakdown for a completed ingestion job."""
+    if access.scope:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     from sqlalchemy import func, case, literal_column
     from app.models import Asset, ProcessingStatus
 
     job = db.get(IngestionJob, job_id)
-    if not job:
+    if not job or job.infospace_id != access.infospace_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
-    validate_infospace_access(db, job.infospace_id, current_user.id)
 
     if not job.root_bundle_id:
         return PipelineStatsResponse(
@@ -909,7 +899,7 @@ def get_pipeline_stats(
             func.count(Asset.id).filter(Asset.processing_status == ProcessingStatus.FAILED).label("failed"),
             func.max(Asset.updated_at).filter(Asset.processing_status == ProcessingStatus.READY).label("last_ready"),
         )
-        .where(Asset.bundle_id == job.root_bundle_id, Asset.parent_asset_id.is_(None))
+        .where(sa_text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=job.root_bundle_id), Asset.parent_asset_id.is_(None))
     ).first()
 
     if not row:

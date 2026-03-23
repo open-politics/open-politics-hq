@@ -175,7 +175,7 @@ const KnowledgeGraphManager: React.FC = () => {
         </h2>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" asChild>
-            <Link href="/hq/infospaces/infospace-manager#entities-section">
+            <Link href="#entities-section">
               <Users className="h-4 w-4 mr-1" />
               Entity Canon
             </Link>

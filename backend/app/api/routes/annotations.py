@@ -21,10 +21,11 @@ from app.schemas import (
 )
 from app.api.dependency_injection import (
     SessionDep,
-    CurrentUser,
     AnnotationServiceDep,
 )
-from app.api.global_utils import validate_infospace_access
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires,
+)
 from app.api.modules.graph.resolution import resolve_entity
 from app.api.modules.embedding.services import EmbeddingService
 from sqlmodel import select, func
@@ -41,8 +42,7 @@ router = APIRouter(
 @router.post("/", response_model=AnnotationRead, status_code=status.HTTP_201_CREATED)
 def create_annotation(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.ORGANIZE),
     annotation_in: AnnotationCreate,
     session: SessionDep,
     annotation_service: AnnotationServiceDep
@@ -50,12 +50,12 @@ def create_annotation(
     """
     Create a new annotation.
     """
-    logger.info(f"Route: Creating annotation in infospace {infospace_id}")
+    logger.info(f"Route: Creating annotation in infospace {access.infospace_id}")
     try:
         # Create annotation using service
         annotation = annotation_service.create_annotation(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             annotation_in=annotation_in
         )
         return annotation
@@ -71,8 +71,7 @@ def create_annotation(
 @router.get("/", response_model=AnnotationsOut)
 def list_annotations(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(),
     skip: int = 0,
     limit: int = 100,
     source_id: Optional[int] = None,
@@ -83,12 +82,13 @@ def list_annotations(
     Retrieve Annotations for the infospace.
     """
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
+        infospace_id = access.infospace_id
         # Cap limit to prevent unbounded responses
         limit = min(limit, 500)
         # Build base query
         query = select(Annotation).where(Annotation.infospace_id == infospace_id)
+        if access.scope and access.scope.run_ids:
+            query = query.where(Annotation.run_id.in_(access.scope.run_ids))
         # Add filters if provided
         if source_id is not None:
             # source_id parameter is actually asset_id (legacy naming)
@@ -104,6 +104,8 @@ def list_annotations(
         
         # Get total count
         count_query = select(func.count(Annotation.id)).where(Annotation.infospace_id == infospace_id)
+        if access.scope and access.scope.run_ids:
+            count_query = count_query.where(Annotation.run_id.in_(access.scope.run_ids))
         if source_id is not None:
             # source_id parameter is actually asset_id (legacy naming)
             count_query = count_query.where(Annotation.asset_id == source_id)
@@ -127,8 +129,7 @@ def list_annotations(
 @router.get("/{annotation_id}", response_model=AnnotationRead)
 def get_annotation(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(),
     annotation_id: int,
     session: SessionDep,
 ) -> Any:
@@ -136,23 +137,12 @@ def get_annotation(
     Retrieve a specific Annotation by its ID.
     """
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
-        # Get the annotation
+        infospace_id = access.infospace_id
         annotation = session.get(Annotation, annotation_id)
-        if not annotation:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Annotation not found"
-            )
-        
-        # Verify annotation belongs to infospace
-        if annotation.infospace_id != infospace_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Annotation not found in this infospace"
-            )
+        if not annotation or annotation.infospace_id != infospace_id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotation not found")
+        if access.scope and access.scope.run_ids and annotation.run_id not in access.scope.run_ids:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotation not found")
         
         return AnnotationRead.model_validate(annotation)
     
@@ -165,8 +155,7 @@ def get_annotation(
 @router.patch("/{annotation_id}", response_model=AnnotationRead)
 def update_annotation(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.ORGANIZE),
     annotation_id: int,
     annotation_in: AnnotationUpdate,
     session: SessionDep,
@@ -175,11 +164,9 @@ def update_annotation(
     """
     Update an Annotation.
     """
+    infospace_id = access.infospace_id
     logger.info(f"Route: Updating Annotation {annotation_id} in infospace {infospace_id}")
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
         # Get the annotation
         annotation = session.get(Annotation, annotation_id)
         if not annotation:
@@ -187,14 +174,15 @@ def update_annotation(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Annotation not found"
             )
-        
+
         # Verify annotation belongs to infospace
         if annotation.infospace_id != infospace_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Annotation not found in this infospace"
             )
-        
+        access.require_in_scope("run_ids", annotation.run_id)
+
         # Get schema for validation if data is being updated
         update_data = annotation_in.model_dump(exclude_unset=True)
         if "data" in update_data:
@@ -231,19 +219,16 @@ def update_annotation(
 @router.delete("/{annotation_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_annotation(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.DELETE),
     annotation_id: int,
     session: SessionDep,
 ) -> None:
     """
     Delete an Annotation.
     """
+    infospace_id = access.infospace_id
     logger.info(f"Route: Attempting to delete Annotation {annotation_id} from infospace {infospace_id}")
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
         # Get the annotation
         annotation = session.get(Annotation, annotation_id)
         if not annotation:
@@ -251,14 +236,15 @@ def delete_annotation(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Annotation not found"
             )
-        
+
         # Verify annotation belongs to infospace
         if annotation.infospace_id != infospace_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Annotation not found in this infospace"
             )
-        
+        access.require_in_scope("run_ids", annotation.run_id)
+
         # Delete the annotation
         session.delete(annotation)
         session.commit()
@@ -279,21 +265,20 @@ def delete_annotation(
 @router.post("/batch", response_model=Message, status_code=status.HTTP_202_ACCEPTED)
 def create_batch_annotations(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.ORGANIZE),
     annotations: List[AnnotationCreate],
     annotation_service: AnnotationServiceDep
 ) -> Message:
     """
     Create multiple annotations in a batch.
     """
-    logger.info(f"Route: Creating batch of {len(annotations)} annotations in infospace {infospace_id}")
+    logger.info(f"Route: Creating batch of {len(annotations)} annotations in infospace {access.infospace_id}")
     try:
         # Service method handles validation and creation
         success = annotation_service.create_batch_annotations(
             annotations=annotations,
-            user_id=current_user.id,
-            infospace_id=infospace_id
+            user_id=access.user_id,
+            infospace_id=access.infospace_id
         )
         
         if success:
@@ -316,8 +301,7 @@ def create_batch_annotations(
 @router.get("/run/{run_id}/results", response_model=List[AnnotationRead])
 def get_run_results(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(),
     run_id: int,
     skip: int = 0,
     limit: int = 100,
@@ -328,11 +312,12 @@ def get_run_results(
     Retrieve all annotations for a specific AnnotationRun.
     The service handles run ownership and infospace context verification.
     """
+    access.require_in_scope("run_ids", run_id)
     try:
         results = annotation_service.get_annotations_for_run(
             run_id=run_id,
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             skip=skip,
             limit=limit
         )
@@ -348,8 +333,7 @@ def get_run_results(
 @router.post("/{annotation_id}/retry", response_model=AnnotationRead)
 def retry_single_annotation(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.COMPUTE),
     annotation_id: int,
     annotation_retry_request: AnnotationRetryRequest,
     session: SessionDep,
@@ -359,11 +343,15 @@ def retry_single_annotation(
     Retries a single failed annotation synchronously.
     """
     logger.info(f"Route: Received request to retry single annotation {annotation_id}")
+    # Defense-in-depth: check the annotation's run is in scope
+    annotation = session.get(Annotation, annotation_id)
+    if annotation:
+        access.require_in_scope("run_ids", annotation.run_id)
     try:
         updated_annotation = annotation_service.retry_single_annotation(
             annotation_id=annotation_id,
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             custom_prompt=annotation_retry_request.custom_prompt
         )
         return AnnotationRead.model_validate(updated_annotation)
@@ -415,8 +403,7 @@ def is_triplet(fragment: Any) -> bool:
 @router.post("/{annotation_id}/curate", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def curate_fragments(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.ORGANIZE),
     annotation_id: int,
     curation_request: dict,
     session: SessionDep,
@@ -431,18 +418,20 @@ async def curate_fragments(
     }
     """
     try:
+        infospace_id = access.infospace_id
         # Get annotation
         annotation = session.get(Annotation, annotation_id)
         if not annotation:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotation not found")
-        
+
         # Verify annotation belongs to infospace
         if annotation.infospace_id != infospace_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Annotation not found in this infospace"
             )
-        
+        access.require_in_scope("run_ids", annotation.run_id)
+
         fragment_paths = curation_request.get("fragment_paths", [])
         should_resolve = curation_request.get("resolve", True)
         curation_status = curation_request.get("status", "curated")
@@ -450,7 +439,7 @@ async def curate_fragments(
         # Get embedding service if resolution is requested
         embedding_service = None
         if should_resolve:
-            embedding_service = EmbeddingService(session=session, user_id=current_user.id)
+            embedding_service = EmbeddingService(session=session, user_id=access.user_id)
         
         created_curations = []
         
@@ -489,7 +478,7 @@ async def curate_fragments(
                     existing.status = curation_status
                     existing.subject_entity_id = subject_entity_id
                     existing.object_entity_id = object_entity_id
-                    existing.curated_by = current_user.id
+                    existing.curated_by = access.user_id
                     session.add(existing)
                     created_curations.append(existing.id)
                 else:
@@ -500,7 +489,7 @@ async def curate_fragments(
                         status=curation_status,
                         subject_entity_id=subject_entity_id,
                         object_entity_id=object_entity_id,
-                        curated_by=current_user.id
+                        curated_by=access.user_id
                     )
                     session.add(curation)
                     session.flush()
@@ -532,19 +521,20 @@ async def curate_fragments(
 @router.delete("/{annotation_id}/curate/{fragment_path:path}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_curation(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.DELETE),
     annotation_id: int,
     fragment_path: str,
     session: SessionDep,
 ) -> None:
     """Remove curation from an annotation fragment."""
     try:
+        infospace_id = access.infospace_id
         # Verify annotation belongs to infospace
         annotation = session.get(Annotation, annotation_id)
         if not annotation or annotation.infospace_id != infospace_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotation not found")
-        
+        access.require_in_scope("run_ids", annotation.run_id)
+
         # Find and delete curation
         curation = session.exec(
             select(FragmentCuration).where(
@@ -574,8 +564,7 @@ def remove_curation(
 @router.get("/curated/triplets", response_model=List[dict])
 def get_curated_triplets(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(),
     session: SessionDep,
 ) -> Any:
     """
@@ -583,9 +572,10 @@ def get_curated_triplets(
     Returns triplets with resolved entity information.
     """
     try:
+        infospace_id = access.infospace_id
         # Get all curated fragments that are triplets
         from sqlalchemy import or_
-        curations = session.exec(
+        stmt = (
             select(FragmentCuration, Annotation)
             .join(Annotation, FragmentCuration.annotation_id == Annotation.id)
             .where(
@@ -596,7 +586,11 @@ def get_curated_triplets(
                     FragmentCuration.object_entity_id.isnot(None),
                 )
             )
-        ).all()
+        )
+        # Scope filter: restrict to runs/entities visible in package scope
+        if access.scope and access.scope.run_ids:
+            stmt = stmt.where(Annotation.run_id.in_(access.scope.run_ids))
+        curations = session.exec(stmt).all()
         
         # Get all canonical entities for this infospace
         entities = session.exec(

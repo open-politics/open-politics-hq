@@ -2,12 +2,11 @@
 import logging
 from typing import Any
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Path
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.models import (
     AnnotationSchema,
     Annotation,
-    RunSchemaLink,
 )
 from app.schemas import (
     AnnotationSchemaRead,
@@ -15,8 +14,10 @@ from app.schemas import (
     AnnotationSchemaUpdate,
     AnnotationSchemasOut,
 )
-from app.api.dependency_injection import SessionDep, CurrentUser, get_annotation_service
-from app.api.global_utils import validate_infospace_access
+from app.api.dependency_injection import SessionDep, get_annotation_service
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires,
+)
 from sqlmodel import select, func
 from app.api.modules.annotation.services import AnnotationService
 
@@ -32,8 +33,7 @@ router = APIRouter(
 @router.post("/", response_model=AnnotationSchemaRead, status_code=status.HTTP_201_CREATED)
 def create_annotation_schema(
     *,
-    current_user: CurrentUser,
-    infospace_id: int = Path(..., description="The ID of the infospace"),
+    access: Access = Requires(Capability.ORGANIZE),
     schema_in: AnnotationSchemaCreate,
     session: SessionDep,
     annotation_service: AnnotationService = Depends(get_annotation_service)
@@ -41,7 +41,7 @@ def create_annotation_schema(
     """
     Create a new Annotation Schema.
     """
-    logger.info(f"Route: Creating annotation schema in infospace {infospace_id}")
+    logger.info(f"Route: Creating annotation schema in infospace {access.infospace_id}")
     try:
         # Manually convert justification configs to dicts before passing to service
         just_configs = schema_in.field_specific_justification_configs
@@ -53,8 +53,8 @@ def create_annotation_schema(
 
         # Create schema using service
         schema = annotation_service.create_annotation_schema(
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             name=schema_in.name,
             description=schema_in.description,
             output_contract=schema_in.output_contract,
@@ -75,8 +75,7 @@ def create_annotation_schema(
 @router.get("/", response_model=AnnotationSchemasOut)
 def list_annotation_schemas(
     *,
-    current_user: CurrentUser,
-    infospace_id: int = Path(..., description="The ID of the infospace"),
+    access: Access = Requires(),
     skip: int = 0,
     limit: int = 100,
     include_counts: bool = Query(True, description="Include counts of annotations using this schema"),
@@ -87,11 +86,11 @@ def list_annotation_schemas(
     Retrieve Annotation Schemas for the infospace.
     """
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
+        infospace_id = access.infospace_id
         # Build query for schemas
         query = select(AnnotationSchema).where(AnnotationSchema.infospace_id == infospace_id)
+        if access.scope and access.scope.schema_ids:
+            query = query.where(AnnotationSchema.id.in_(access.scope.schema_ids))
 
         if not include_archived:
             query = query.where(AnnotationSchema.is_active == True)
@@ -105,6 +104,8 @@ def list_annotation_schemas(
         count_query = select(func.count(AnnotationSchema.id)).where(
             AnnotationSchema.infospace_id == infospace_id
         )
+        if access.scope and access.scope.schema_ids:
+            count_query = count_query.where(AnnotationSchema.id.in_(access.scope.schema_ids))
         if not include_archived:
             count_query = count_query.where(AnnotationSchema.is_active == True)
 
@@ -138,8 +139,7 @@ def list_annotation_schemas(
 @router.get("/{schema_id}", response_model=AnnotationSchemaRead)
 def get_annotation_schema(
     *,
-    current_user: CurrentUser,
-    infospace_id: int = Path(..., description="The ID of the infospace"),
+    access: Access = Requires(),
     schema_id: int,
     include_counts: bool = Query(True, description="Include counts of annotations using this schema"),
     session: SessionDep,
@@ -148,9 +148,7 @@ def get_annotation_schema(
     Retrieve a specific Annotation Schema by its ID.
     """
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
+        infospace_id = access.infospace_id
         # Get the schema
         schema = session.get(AnnotationSchema, schema_id)
         if not schema:
@@ -165,7 +163,9 @@ def get_annotation_schema(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Annotation Schema not found in this infospace"
             )
-        
+        if access.scope and access.scope.schema_ids and schema_id not in access.scope.schema_ids:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotation Schema not found")
+
         # Convert to read model
         schema_read = AnnotationSchemaRead.model_validate(schema)
         
@@ -188,8 +188,7 @@ def get_annotation_schema(
 @router.patch("/{schema_id}", response_model=AnnotationSchemaRead)
 def update_annotation_schema(
     *,
-    current_user: CurrentUser,
-    infospace_id: int = Path(..., description="The ID of the infospace"),
+    access: Access = Requires(Capability.ORGANIZE),
     schema_id: int,
     schema_in: AnnotationSchemaUpdate,
     session: SessionDep,
@@ -198,11 +197,10 @@ def update_annotation_schema(
     """
     Update an Annotation Schema.
     """
+    infospace_id = access.infospace_id
+    access.require_in_scope("schema_ids", schema_id)
     logger.info(f"Route: Updating AnnotationSchema {schema_id} in infospace {infospace_id}")
     try:
-        # Validate infospace access
-        validate_infospace_access(session, infospace_id, current_user.id)
-        
         # Get the schema
         schema = session.get(AnnotationSchema, schema_id)
         if not schema:
@@ -252,8 +250,7 @@ def update_annotation_schema(
 @router.delete("/{schema_id}", response_model=AnnotationSchemaRead, status_code=status.HTTP_200_OK)
 def delete_annotation_schema(
     *,
-    current_user: CurrentUser,
-    infospace_id: int = Path(..., description="The ID of the infospace"),
+    access: Access = Requires(Capability.DELETE),
     schema_id: int,
     session: SessionDep,
 ) -> AnnotationSchemaRead:
@@ -261,9 +258,9 @@ def delete_annotation_schema(
     Archive an annotation schema by setting it to inactive (soft delete).
     This is a non-destructive operation.
     """
-    # Validate infospace access
-    validate_infospace_access(session, infospace_id, current_user.id)
-    
+    infospace_id = access.infospace_id
+    access.require_in_scope("schema_ids", schema_id)
+
     # Get schema
     db_schema = session.get(AnnotationSchema, schema_id)
     if not db_schema:
@@ -295,16 +292,16 @@ def delete_annotation_schema(
 @router.post("/{schema_id}/restore", response_model=AnnotationSchemaRead)
 def restore_annotation_schema(
     *,
-    current_user: CurrentUser,
-    infospace_id: int,
+    access: Access = Requires(Capability.ORGANIZE),
     schema_id: int,
     session: SessionDep,
 ) -> AnnotationSchemaRead:
     """
     Restores an archived (soft-deleted) annotation schema.
     """
-    validate_infospace_access(session, infospace_id, current_user.id)
-    
+    infospace_id = access.infospace_id
+    access.require_in_scope("schema_ids", schema_id)
+
     schema = session.get(AnnotationSchema, schema_id)
     if not schema or schema.infospace_id != infospace_id:
         raise HTTPException(

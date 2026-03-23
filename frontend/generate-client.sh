@@ -14,7 +14,7 @@ fi
 # Modify operationIds by removing tag prefixes
 jq '.paths |= map_values(map_values(if (.tags and (.tags | length > 0) and .operationId) then (.tags[0] + "-") as $prefix | if (.operationId | startswith($prefix)) then .operationId = (.operationId | ltrimstr($prefix)) else . end else . end))' ./openapi.json > ./openapi.tmp.json && mv ./openapi.tmp.json ./openapi.json
 
-npm run generate-client
+bun run generate-client
 
 
 # Patch ApiRequestOptions.ts to include an optional responseType property

@@ -12,7 +12,6 @@ from sqlalchemy import or_, func
 from sqlmodel import Session, select
 
 from app.api.modules.content.models import Source, SourceStatus
-from app.core.events import emit
 from app.core.tasks import TaskContext, task
 from app.core.task_utils import run_async_in_celery
 
@@ -59,13 +58,6 @@ def poll_sources(ctx: TaskContext, source_ids: list[int]):
                     )
 
             result = run_async_in_celery(_poll, source_id)
-
-            if isinstance(result, dict) and result.get("status") == "success":
-                emit("source.polled", {
-                    "source_id": source_id,
-                    "new_asset_ids": result.get("new_asset_ids", []),
-                    "infospace_id": ctx.infospace_id,
-                })
             ctx.stat("done")
 
         except Exception as e:
@@ -81,3 +73,6 @@ def poll_sources(ctx: TaskContext, source_ids: list[int]):
                     session.commit()
             ctx.item_failed(source_id)
             ctx.stat("failed")
+
+    from app.core.events import emit
+    emit("source.polled", {"infospace_id": ctx.infospace_id})

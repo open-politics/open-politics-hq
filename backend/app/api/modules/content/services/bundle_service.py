@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any, Set
 from sqlmodel import Session, select
+from sqlalchemy import text
 from datetime import datetime, timezone
-import uuid
 import logging
 
 from app.models import (
@@ -12,13 +12,67 @@ from app.models import (
     User,
 )
 from app.schemas import BundleCreate, BundleUpdate, InfospaceCreate
-from app.api.global_utils import validate_infospace_access
 
 logger = logging.getLogger(__name__)
+
 
 class BundleService:
     def __init__(self, db: Session):
         self.session = db
+
+    # ─── Raw SQL array helpers ───
+    # All bundle_ids mutations MUST go through these. Never do ORM read-modify-write.
+
+    def _array_append(self, asset_ids: List[int], bundle_id: int) -> int:
+        """Add bundle_id to bundle_ids array for given assets. Returns count of rows changed."""
+        if not asset_ids:
+            return 0
+        result = self.session.execute(
+            text(
+                "UPDATE asset SET bundle_ids = array_append(COALESCE(bundle_ids, ARRAY[]::int[]), :bid) "
+                "WHERE id = ANY(:ids) "
+                "AND NOT (COALESCE(bundle_ids, ARRAY[]::int[]) @> ARRAY[:bid]::int[])"
+            ),
+            {"bid": bundle_id, "ids": asset_ids},
+        )
+        return result.rowcount
+
+    def _array_remove(self, asset_ids: List[int], bundle_id: int) -> int:
+        """Remove bundle_id from bundle_ids array. Normalizes empty arrays to NULL. Returns rows changed."""
+        if not asset_ids:
+            return 0
+        result = self.session.execute(
+            text(
+                "UPDATE asset SET bundle_ids = CASE "
+                "  WHEN array_length(array_remove(bundle_ids, :bid), 1) IS NULL THEN NULL "
+                "  ELSE array_remove(bundle_ids, :bid) "
+                "END "
+                "WHERE id = ANY(:ids) "
+                "AND bundle_ids @> ARRAY[:bid]::int[]"
+            ),
+            {"bid": bundle_id, "ids": asset_ids},
+        )
+        return result.rowcount
+
+    def _recount_bundle(self, bundle: Bundle) -> None:
+        """Recount assets in bundle from DB truth."""
+        count = self.session.execute(
+            text("SELECT count(*) FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[]"),
+            {"bid": bundle.id},
+        ).scalar() or 0
+        bundle.asset_count = count
+        bundle.updated_at = datetime.now(timezone.utc)
+        self.session.add(bundle)
+
+    def _get_bundle_asset_ids(self, bundle_id: int) -> List[int]:
+        """Get all asset IDs in a bundle."""
+        rows = self.session.execute(
+            text("SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[]"),
+            {"bid": bundle_id},
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    # ─── CRUD ───
 
     def create_bundle(
         self,
@@ -27,58 +81,48 @@ class BundleService:
         infospace_id: int,
         user_id: int
     ) -> Bundle:
-        """Create a new bundle."""
+        """Create a new bundle, optionally adding assets to it."""
         logger.info(f"Service: Creating bundle '{bundle_in.name}' in infospace {infospace_id} by user {user_id}")
-        validate_infospace_access(self.session, infospace_id, user_id)
 
-        assets_to_add = []
+        asset_ids_to_add = []
         if hasattr(bundle_in, 'asset_ids') and bundle_in.asset_ids:
             for asset_id in bundle_in.asset_ids:
                 asset = self.session.get(Asset, asset_id)
                 if not asset or asset.infospace_id != infospace_id:
                     raise ValueError(f"Asset ID {asset_id} not found or does not belong to infospace {infospace_id}.")
-                assets_to_add.append(asset)
-        
+                asset_ids_to_add.append(asset_id)
+
         bundle_data = bundle_in.model_dump(exclude={'asset_ids'} if hasattr(bundle_in, 'asset_ids') else None)
         db_bundle = Bundle(
             **bundle_data,
             infospace_id=infospace_id,
             user_id=user_id,
-            asset_count=len(assets_to_add)
+            asset_count=0,
         )
-
         self.session.add(db_bundle)
-        self.session.flush()  # Flush to get bundle ID
-        
-        # Set bundle_id on all assets
-        if assets_to_add:
-            for asset in assets_to_add:
-                asset.bundle_id = db_bundle.id
-        
+        self.session.flush()
+
+        if asset_ids_to_add:
+            added = self._array_append(asset_ids_to_add, db_bundle.id)
+            db_bundle.asset_count = added
+
         self.session.commit()
         self.session.refresh(db_bundle)
-        logger.info(f"Service: Bundle '{db_bundle.name}' (ID: {db_bundle.id}) created with {len(assets_to_add)} assets.")
+        logger.info(f"Service: Bundle '{db_bundle.name}' (ID: {db_bundle.id}) created with {db_bundle.asset_count} assets.")
         return db_bundle
 
     def get_bundle(self, bundle_id: int, infospace_id: int, user_id: int) -> Optional[Bundle]:
         """Get a bundle by ID, ensuring it belongs to the user's infospace."""
-        logger.debug(f"Service: Getting bundle {bundle_id} for infospace {infospace_id}, user {user_id}")
-        validate_infospace_access(self.session, infospace_id, user_id)
         bundle = self.session.get(Bundle, bundle_id)
         if bundle and bundle.infospace_id == infospace_id:
             return bundle
-        if bundle:
-             logger.warning(f"Service: Bundle {bundle_id} found but infospace_id mismatch (actual {bundle.infospace_id} vs expected {infospace_id})")
         return None
 
     def get_bundle_by_uuid(self, bundle_uuid: str, infospace_id: int, user_id: int) -> Optional[Bundle]:
         """Get a bundle by UUID, ensuring it belongs to the user's infospace."""
-        logger.debug(f"Service: Getting bundle by UUID {bundle_uuid} for infospace {infospace_id}")
-        validate_infospace_access(self.session, infospace_id, user_id)
-        bundle = self.session.exec(
+        return self.session.exec(
             select(Bundle).where(Bundle.uuid == bundle_uuid, Bundle.infospace_id == infospace_id)
         ).first()
-        return bundle
 
     def get_bundles(
         self,
@@ -89,8 +133,6 @@ class BundleService:
         limit: int = 100
     ) -> List[Bundle]:
         """Get bundles for an infospace."""
-        logger.debug(f"Service: Listing bundles for infospace {infospace_id}, user {user_id}")
-        validate_infospace_access(self.session, infospace_id, user_id)
         return self.session.exec(
             select(Bundle)
             .where(Bundle.infospace_id == infospace_id)
@@ -100,7 +142,7 @@ class BundleService:
         ).all()
 
     def list_bundles(self, infospace_id: int) -> List[Bundle]:
-        """List all bundles in an infospace."""
+        """List all bundles in an infospace (no access check — caller must validate)."""
         return self.session.exec(
             select(Bundle)
             .where(Bundle.infospace_id == infospace_id)
@@ -116,7 +158,6 @@ class BundleService:
         user_id: int
     ) -> Optional[Bundle]:
         """Update a bundle."""
-        logger.info(f"Service: Updating bundle {bundle_id} in infospace {infospace_id} by user {user_id}")
         db_bundle = self.get_bundle(bundle_id, infospace_id, user_id)
         if not db_bundle:
             return None
@@ -129,31 +170,36 @@ class BundleService:
         self.session.add(db_bundle)
         self.session.commit()
         self.session.refresh(db_bundle)
-        logger.info(f"Service: Bundle {bundle_id} updated.")
         return db_bundle
 
+    def get_descendant_ids(self, bundle_ids: set[int]) -> set[int]:
+        """Recursive CTE: return all bundle IDs including roots and all descendants."""
+        if not bundle_ids:
+            return set()
+        rows = self.session.execute(text("""
+            WITH RECURSIVE tree AS (
+                SELECT id FROM bundle WHERE id = ANY(:bids)
+                UNION ALL
+                SELECT b.id FROM bundle b JOIN tree ON b.parent_bundle_id = tree.id
+            )
+            SELECT id FROM tree
+        """), {"bids": list(bundle_ids)}).fetchall()
+        return {r[0] for r in rows}
+
     def delete_bundle(self, bundle_id: int, infospace_id: int, user_id: int) -> bool:
-        """Delete a bundle."""
-        logger.info(f"Service: Deleting bundle {bundle_id} from infospace {infospace_id} by user {user_id}")
+        """Delete a bundle and all its descendants. DB trigger cleans bundle_ids arrays."""
         db_bundle = self.get_bundle(bundle_id, infospace_id, user_id)
         if not db_bundle:
             return False
 
-        # Clear root_bundle_id from IngestionJob records that reference this bundle
-        from app.models import IngestionJob
-        jobs = self.session.exec(
-            select(IngestionJob).where(IngestionJob.root_bundle_id == bundle_id)
-        ).all()
-        if jobs:
-            logger.info(f"Service: Clearing root_bundle_id from {len(jobs)} dataset ingestion jobs")
-            for job in jobs:
-                job.root_bundle_id = None
-                self.session.add(job)
-
-        self.session.delete(db_bundle)
+        # Expand to full subtree
+        all_ids = self.get_descendant_ids({bundle_id})
+        self.cascade_delete(all_ids)
         self.session.commit()
-        logger.info(f"Service: Bundle {bundle_id} deleted.")
+        logger.info(f"Service: Bundle {bundle_id} and {len(all_ids) - 1} descendants deleted.")
         return True
+
+    # ─── Add / Remove / Move assets ───
 
     def add_assets_to_bundle(
         self,
@@ -161,59 +207,30 @@ class BundleService:
         bundle_id: int,
     ) -> None:
         """
-        Add multiple assets to a bundle by setting bundle_id.
-        Used after ingestion when assets are created without a bundle.
-        Does not validate user access (caller must have validated).
+        Add multiple assets to a bundle via array_append.
+        Used after ingestion. Does not validate user access (caller must have validated).
         """
         bundle = self.session.get(Bundle, bundle_id)
         if not bundle:
-            raise ValueError(
-                f"Bundle {bundle_id} not found - it may have been deleted. "
-                "Assets will not be added to any bundle."
-            )
+            raise ValueError(f"Bundle {bundle_id} not found - it may have been deleted.")
 
-        assets_added = 0
+        # Collect child asset IDs for non-container parents
+        all_ids = list(asset_ids)
         assets_list = self.session.exec(select(Asset).where(Asset.id.in_(asset_ids))).all()
-        assets_by_id = {a.id: a for a in assets_list}
         non_container_ids = [a.id for a in assets_list if not a.is_container]
-        children_by_parent: Dict[int, List[Asset]] = {}
         if non_container_ids:
-            child_assets = self.session.exec(
-                select(Asset).where(Asset.parent_asset_id.in_(non_container_ids))
-            ).all()
-            for child in child_assets:
-                if child.parent_asset_id:
-                    children_by_parent.setdefault(child.parent_asset_id, []).append(child)
+            child_ids = list(self.session.execute(
+                text("SELECT id FROM asset WHERE parent_asset_id = ANY(:pids)"),
+                {"pids": non_container_ids},
+            ).scalars())
+            all_ids.extend(child_ids)
 
-        for asset_id in asset_ids:
-            try:
-                asset = assets_by_id.get(asset_id)
-                if not asset:
-                    logger.warning(f"Asset {asset_id} not found")
-                    continue
-                if asset.bundle_id != bundle_id:
-                    asset.bundle_id = bundle_id
-                    assets_added += 1
-                    self.session.add(asset)
-                    logger.info(f"Added asset {asset_id} to bundle {bundle_id}")
-                if not asset.is_container:
-                    for child_asset in children_by_parent.get(asset_id, []):
-                        if child_asset.bundle_id != bundle_id:
-                            child_asset.bundle_id = bundle_id
-                            assets_added += 1
-                            self.session.add(child_asset)
-            except Exception as e:
-                logger.error(f"Failed to add asset {asset_id} to bundle: {e}")
-                continue
-
-        if assets_added > 0:
-            bundle.asset_count = (bundle.asset_count or 0) + assets_added
-            bundle.updated_at = datetime.now(timezone.utc)
-            self.session.add(bundle)
-            logger.info(f"Added {assets_added} assets to bundle {bundle_id}, new count: {bundle.asset_count}")
+        added = self._array_append(all_ids, bundle_id)
+        if added > 0:
+            self._recount_bundle(bundle)
+            logger.info(f"Added {added} assets to bundle {bundle_id}")
 
         self.session.commit()
-        logger.info(f"Committed bundle assignments for {len(asset_ids)} assets to bundle {bundle_id}")
 
     def add_assets_to_bundle_validated(
         self,
@@ -223,44 +240,38 @@ class BundleService:
         infospace_id: int,
         include_children: bool = True,
     ) -> tuple[int, int]:
-        """
-        Add assets to a bundle with infospace validation.
-        Returns (assets_added_count, children_added_count).
-        """
+        """Add assets to a bundle with infospace validation. Returns (assets_added, children_added)."""
         bundle = self.session.get(Bundle, bundle_id)
         if not bundle or bundle.infospace_id != infospace_id:
             raise ValueError(f"Bundle {bundle_id} not found or infospace mismatch")
 
-        assets_added = 0
-        children_added = 0
+        # Filter to valid assets in this infospace
+        valid_ids = [
+            r[0] for r in self.session.execute(
+                text("SELECT id FROM asset WHERE id = ANY(:ids) AND infospace_id = :iid"),
+                {"ids": asset_ids, "iid": infospace_id},
+            ).fetchall()
+        ]
 
-        for asset_id in asset_ids:
-            asset = self.session.get(Asset, asset_id)
-            if not asset or asset.infospace_id != infospace_id:
-                continue
+        children_ids = []
+        if include_children and valid_ids:
+            # Get children of container assets
+            children_ids = [
+                r[0] for r in self.session.execute(
+                    text(
+                        "SELECT c.id FROM asset c "
+                        "JOIN asset p ON c.parent_asset_id = p.id "
+                        "WHERE p.id = ANY(:ids) AND p.infospace_id = :iid"
+                    ),
+                    {"ids": valid_ids, "iid": infospace_id},
+                ).fetchall()
+            ]
 
-            if asset.bundle_id != bundle_id:
-                asset.bundle_id = bundle_id
-                self.session.add(asset)
-                assets_added += 1
-
-            if include_children and asset.is_container:
-                children = self.session.exec(
-                    select(Asset).where(Asset.parent_asset_id == asset_id)
-                ).all()
-                for child in children:
-                    if child.bundle_id != bundle_id:
-                        child.bundle_id = bundle_id
-                        self.session.add(child)
-                        children_added += 1
+        assets_added = self._array_append(valid_ids, bundle_id)
+        children_added = self._array_append(children_ids, bundle_id) if children_ids else 0
 
         if assets_added > 0 or children_added > 0:
-            total_assets = self.session.exec(
-                select(Asset).where(Asset.bundle_id == bundle_id)
-            ).all()
-            bundle.asset_count = len(total_assets)
-            bundle.updated_at = datetime.now(timezone.utc)
-            self.session.add(bundle)
+            self._recount_bundle(bundle)
 
         return assets_added, children_added
 
@@ -271,30 +282,88 @@ class BundleService:
         asset_ids: List[int],
         infospace_id: int,
     ) -> int:
-        """Remove assets from a bundle with infospace validation. Returns removed count."""
+        """Remove assets from a bundle. Returns removed count."""
         bundle = self.session.get(Bundle, bundle_id)
         if not bundle or bundle.infospace_id != infospace_id:
             raise ValueError(f"Bundle {bundle_id} not found or infospace mismatch")
 
-        removed_count = 0
-        for asset_id in asset_ids:
-            asset = self.session.get(Asset, asset_id)
-            if not asset or asset.infospace_id != infospace_id:
-                continue
-            if asset.bundle_id == bundle_id:
-                asset.bundle_id = None
-                self.session.add(asset)
-                removed_count += 1
+        valid_ids = [
+            r[0] for r in self.session.execute(
+                text("SELECT id FROM asset WHERE id = ANY(:ids) AND infospace_id = :iid"),
+                {"ids": asset_ids, "iid": infospace_id},
+            ).fetchall()
+        ]
 
-        if removed_count > 0:
-            total_assets = self.session.exec(
-                select(Asset).where(Asset.bundle_id == bundle_id)
-            ).all()
-            bundle.asset_count = len(total_assets)
-            bundle.updated_at = datetime.now(timezone.utc)
-            self.session.add(bundle)
+        removed = self._array_remove(valid_ids, bundle_id)
+        if removed > 0:
+            self._recount_bundle(bundle)
 
-        return removed_count
+        return removed
+
+    def add_asset_to_bundle(
+        self,
+        *,
+        bundle_id: int,
+        asset_id: int,
+        infospace_id: int,
+        user_id: int,
+        include_child_assets: bool = True
+    ) -> Optional[Bundle]:
+        """Add an existing asset to a bundle, optionally including child assets."""
+        db_bundle = self.get_bundle(bundle_id, infospace_id, user_id)
+        if not db_bundle:
+            return None
+
+        asset = self.session.get(Asset, asset_id)
+        if not asset or asset.infospace_id != infospace_id:
+            raise ValueError(f"Asset ID {asset_id} not found or does not belong to infospace {infospace_id}.")
+
+        ids_to_add = [asset_id]
+
+        # Add child assets for non-container assets only
+        if include_child_assets and not asset.is_container:
+            child_ids = [
+                r[0] for r in self.session.execute(
+                    text("SELECT id FROM asset WHERE parent_asset_id = :pid"),
+                    {"pid": asset_id},
+                ).fetchall()
+            ]
+            ids_to_add.extend(child_ids)
+
+        added = self._array_append(ids_to_add, bundle_id)
+        if added > 0:
+            self._recount_bundle(db_bundle)
+            self.session.commit()
+            self.session.refresh(db_bundle)
+            logger.info(f"Service: Added {added} assets to bundle {bundle_id}.")
+
+        return db_bundle
+
+    def remove_asset_from_bundle(
+        self,
+        *,
+        bundle_id: int,
+        asset_id: int,
+        infospace_id: int,
+        user_id: int
+    ) -> Optional[Bundle]:
+        """Remove an asset from a bundle (array_remove with NULL normalization)."""
+        db_bundle = self.get_bundle(bundle_id, infospace_id, user_id)
+        if not db_bundle:
+            return None
+
+        asset_to_remove = self.session.get(Asset, asset_id)
+        if not asset_to_remove or asset_to_remove.infospace_id != infospace_id:
+            raise ValueError(f"Asset ID {asset_id} not found or does not belong to the infospace.")
+
+        removed = self._array_remove([asset_id], bundle_id)
+        if removed > 0:
+            self._recount_bundle(db_bundle)
+            self.session.commit()
+            self.session.refresh(db_bundle)
+            logger.info(f"Service: Asset {asset_id} removed from bundle {bundle_id}.")
+
+        return db_bundle
 
     def delete_bundle_returning_name(
         self,
@@ -311,6 +380,46 @@ class BundleService:
         self.delete_bundle(bundle_id, infospace_id, user_id)
         return name
 
+    # ─── Asset retrieval ───
+
+    def get_assets_for_bundle(
+        self,
+        *,
+        bundle_id: int,
+        infospace_id: int,
+        user_id: Optional[int],
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[Asset]:
+        """Get assets for a bundle, with pagination."""
+        if user_id:
+            bundle = self.get_bundle(bundle_id, infospace_id, user_id)
+        else:
+            bundle = self.session.get(Bundle, bundle_id)
+            if bundle and bundle.infospace_id != infospace_id:
+                return []
+
+        if not bundle:
+            return []
+
+        # Use containment query
+        asset_ids = [
+            r[0] for r in self.session.execute(
+                text(
+                    "SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[] "
+                    "ORDER BY created_at DESC OFFSET :off LIMIT :lim"
+                ),
+                {"bid": bundle_id, "off": skip, "lim": limit},
+            ).fetchall()
+        ]
+        if not asset_ids:
+            return []
+        return list(self.session.exec(
+            select(Asset).where(Asset.id.in_(asset_ids)).order_by(Asset.created_at.desc())
+        ).all())
+
+    # ─── Virtual folder materialization ───
+
     def materialize_virtual_folder(
         self,
         *,
@@ -322,34 +431,42 @@ class BundleService:
     ) -> Bundle:
         """
         Create a real bundle from a virtual folder (path prefix within a bundle).
-        Creates a child bundle under source, reassigns assets matching logical_path
-        to the new bundle, and updates counts.
+        Uses "Add to" semantics: assets gain the new bundle membership.
         """
         source_bundle = self.get_bundle(source_bundle_id, infospace_id, user_id)
         if not source_bundle:
             raise ValueError(f"Source bundle {source_bundle_id} not found or access denied")
 
-        # Match assets: logical_path = path_prefix OR logical_path LIKE path_prefix/%
         like_prefix = f"{path_prefix}/%" if path_prefix else "%"
         eq_prefix = path_prefix if path_prefix else None
 
-        # Find root assets (parent_asset_id IS NULL) matching the path
+        # Find root assets matching the path
         if eq_prefix:
-            stmt = select(Asset).where(
-                Asset.bundle_id == source_bundle_id,
-                Asset.parent_asset_id.is_(None),
-                Asset.logical_path.is_not(None),
-                (Asset.logical_path == eq_prefix) | (Asset.logical_path.like(like_prefix)),
-            )
+            root_asset_ids = [
+                r[0] for r in self.session.execute(
+                    text(
+                        "SELECT id FROM asset "
+                        "WHERE bundle_ids @> ARRAY[:bid]::int[] "
+                        "AND parent_asset_id IS NULL "
+                        "AND logical_path IS NOT NULL "
+                        "AND (logical_path = :eq OR logical_path LIKE :like)"
+                    ),
+                    {"bid": source_bundle_id, "eq": eq_prefix, "like": like_prefix},
+                ).fetchall()
+            ]
         else:
-            stmt = select(Asset).where(
-                Asset.bundle_id == source_bundle_id,
-                Asset.parent_asset_id.is_(None),
-                Asset.logical_path.is_not(None),
-                Asset.logical_path.like(like_prefix),
-            )
-        root_assets = list(self.session.exec(stmt).all())
-        root_asset_ids = [a.id for a in root_assets]
+            root_asset_ids = [
+                r[0] for r in self.session.execute(
+                    text(
+                        "SELECT id FROM asset "
+                        "WHERE bundle_ids @> ARRAY[:bid]::int[] "
+                        "AND parent_asset_id IS NULL "
+                        "AND logical_path IS NOT NULL "
+                        "AND logical_path LIKE :like"
+                    ),
+                    {"bid": source_bundle_id, "like": like_prefix},
+                ).fetchall()
+            ]
 
         # Create child bundle
         new_bundle = Bundle(
@@ -362,15 +479,10 @@ class BundleService:
         self.session.add(new_bundle)
         self.session.flush()
 
-        # Reassign assets to new bundle (including children of containers)
+        # Add assets to new bundle (they keep source bundle membership too)
         if root_asset_ids:
-            self.add_assets_to_bundle(asset_ids=root_asset_ids, bundle_id=new_bundle.id)
-
-        # Decrement source bundle count
-        moved_count = len(root_asset_ids)
-        if moved_count > 0:
-            source_bundle.asset_count = max(0, (source_bundle.asset_count or 0) - moved_count)
-            self.session.add(source_bundle)
+            self._array_append(root_asset_ids, new_bundle.id)
+            self._recount_bundle(new_bundle)
 
         # Update parent's child_bundle_count
         source_bundle.child_bundle_count = (source_bundle.child_bundle_count or 0) + 1
@@ -378,131 +490,10 @@ class BundleService:
 
         self.session.commit()
         self.session.refresh(new_bundle)
-        logger.info(f"Materialized virtual folder '{path_prefix}' as bundle {new_bundle.id} with {moved_count} assets")
+        logger.info(f"Materialized virtual folder '{path_prefix}' as bundle {new_bundle.id} with {new_bundle.asset_count} assets")
         return new_bundle
 
-    def add_asset_to_bundle(
-        self,
-        *,
-        bundle_id: int,
-        asset_id: int,
-        infospace_id: int,
-        user_id: int,
-        include_child_assets: bool = True
-    ) -> Optional[Bundle]:
-        """Add an existing asset to a bundle (sets bundle_id), optionally including child assets."""
-        logger.info(f"Service: Adding asset {asset_id} to bundle {bundle_id} in infospace {infospace_id}")
-        db_bundle = self.get_bundle(bundle_id, infospace_id, user_id)
-        if not db_bundle:
-            logger.warning(f"Service: Bundle {bundle_id} not found or access denied for add_asset.")
-            return None
-
-        asset = self.session.get(Asset, asset_id)
-        if not asset or asset.infospace_id != infospace_id:
-            raise ValueError(f"Asset ID {asset_id} not found or does not belong to infospace {infospace_id}.")
-
-        assets_added = 0
-        
-        # Add the main asset by setting its bundle_id
-        if asset.bundle_id != bundle_id:
-            asset.bundle_id = bundle_id
-            assets_added += 1
-            logger.info(f"Service: Asset {asset_id} added to bundle {bundle_id}.")
-        else:
-            logger.info(f"Service: Asset {asset_id} already in bundle {bundle_id}. No change.")
-        
-        # Add child assets if requested, but ONLY for non-container assets
-        # Container assets (CSV, PDF, etc.) manage their children via parent_asset_id hierarchy
-        # Adding children to bundles would create duplication in the tree
-        if include_child_assets and not asset.is_container:
-            child_assets = self.session.exec(
-                select(Asset).where(Asset.parent_asset_id == asset_id)
-            ).all()
-            
-            for child_asset in child_assets:
-                if child_asset.bundle_id != bundle_id:
-                    child_asset.bundle_id = bundle_id
-                    assets_added += 1
-                    logger.info(f"Service: Child asset {child_asset.id} added to bundle {bundle_id}.")
-        elif include_child_assets and asset.is_container:
-            logger.info(f"Service: Asset {asset_id} is a container - children not added to bundle (accessed via hierarchy).")
-        
-        if assets_added > 0:
-            db_bundle.asset_count = (db_bundle.asset_count or 0) + assets_added
-            db_bundle.updated_at = datetime.now(timezone.utc)
-            self.session.add(db_bundle)
-            self.session.commit()
-            self.session.refresh(db_bundle)
-            logger.info(f"Service: Added {assets_added} assets (including children) to bundle {bundle_id}.")
-        
-        return db_bundle
-
-    def remove_asset_from_bundle(
-        self,
-        *,
-        bundle_id: int,
-        asset_id: int,
-        infospace_id: int,
-        user_id: int
-    ) -> Optional[Bundle]:
-        """Remove an asset from a bundle (sets bundle_id to None)."""
-        logger.info(f"Service: Removing asset {asset_id} from bundle {bundle_id} in infospace {infospace_id}")
-        db_bundle = self.get_bundle(bundle_id, infospace_id, user_id)
-        if not db_bundle:
-            return None
-        
-        asset_to_remove = self.session.get(Asset, asset_id)
-        if not asset_to_remove or asset_to_remove.infospace_id != infospace_id:
-            raise ValueError(f"Asset ID {asset_id} not found or does not belong to the infospace.")
-
-        if asset_to_remove.bundle_id == bundle_id:
-            asset_to_remove.bundle_id = None
-            db_bundle.asset_count = max(0, (db_bundle.asset_count or 0) - 1)
-            db_bundle.updated_at = datetime.now(timezone.utc)
-            self.session.add(db_bundle)
-            self.session.commit()
-            self.session.refresh(db_bundle)
-            logger.info(f"Service: Asset {asset_id} removed from bundle {bundle_id}.")
-        else:
-            logger.info(f"Service: Asset {asset_id} not in bundle {bundle_id}. No change.")
-        return db_bundle
-
-    def get_assets_for_bundle(
-        self,
-        *,
-        bundle_id: int,
-        infospace_id: int,
-        user_id: Optional[int],
-        skip: int = 0,
-        limit: int = 100
-    ) -> List[Asset]:
-        """Get assets for a bundle, with pagination."""
-        logger.debug(f"Service: Getting assets for bundle {bundle_id}, infospace {infospace_id}")
-        
-        # If a user_id is provided, validate their access to the bundle.
-        # If no user_id is provided, we assume access has been validated by a higher-level
-        # mechanism (like a share token) and fetch the bundle directly.
-        if user_id:
-            bundle = self.get_bundle(bundle_id, infospace_id, user_id)
-        else:
-            bundle = self.session.get(Bundle, bundle_id)
-            if bundle and bundle.infospace_id != infospace_id:
-                logger.warning(f"Public access attempt for bundle {bundle_id} failed infospace check ({bundle.infospace_id} != {infospace_id})")
-                return []
-        
-        if not bundle:
-            return []
-        
-        # Query assets by bundle_id
-        assets = self.session.exec(
-            select(Asset)
-            .where(Asset.bundle_id == bundle_id)
-            .offset(skip)
-            .limit(limit)
-            .order_by(Asset.created_at.desc())
-        ).all()
-        
-        return list(assets)
+    # ─── Bundle transfer ───
 
     def transfer_bundle(
         self,
@@ -513,140 +504,47 @@ class BundleService:
         target_infospace_id: int,
         copy: bool = True
     ) -> Optional[Bundle]:
-        """
-        Transfer a bundle to another infospace.
-        
-        Args:
-            bundle_id: ID of bundle to transfer
-            user_id: User performing the transfer
-            source_infospace_id: Source infospace
-            target_infospace_id: Target infospace
-            copy: If True, copy the bundle and all its assets to target infospace.
-                  If False, move it (limited support for cross-infospace).
-        """
-        logger.info(f"Service: Transferring bundle {bundle_id} from infospace {source_infospace_id} to {target_infospace_id} by user {user_id}. Copy: {copy}")
+        """Transfer a bundle to another infospace."""
         db_bundle = self.get_bundle(bundle_id, source_infospace_id, user_id)
         if not db_bundle:
             return None
-        
-        validate_infospace_access(self.session, target_infospace_id, user_id)
+
+        # Get assets in bundle via query (no relationship)
+        bundle_assets = list(self.session.exec(
+            select(Asset).where(
+                text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id)
+            )
+        ).all())
 
         if copy:
-            # Copy bundle with all its assets
             new_asset_ids = self._copy_assets_to_infospace(
-                assets=db_bundle.assets,
+                assets=bundle_assets,
                 target_infospace_id=target_infospace_id,
-                user_id=user_id
+                user_id=user_id,
             )
-            
-            # Check if bundle name conflicts in target infospace
-            import re
-            original_name = db_bundle.name
-            
-            # Strip existing numeric suffix if present (e.g., "Name_1" -> "Name")
-            base_name = re.sub(r'_\d+$', '', original_name)
-            
-            # Find all existing bundles with similar names in target infospace
-            existing_bundles = self.session.exec(
-                select(Bundle).where(
-                    Bundle.infospace_id == target_infospace_id,
-                    Bundle.version == (db_bundle.version or "1.0")
-                )
-            ).all()
-            
-            # Find the highest suffix number for this base name
-            max_suffix = 0
-            pattern = re.compile(rf'^{re.escape(base_name)}(_(\d+))?$')
-            for bundle in existing_bundles:
-                match = pattern.match(bundle.name)
-                if match:
-                    suffix_str = match.group(2)
-                    if suffix_str:
-                        max_suffix = max(max_suffix, int(suffix_str))
-                    else:
-                        # Base name exists without suffix
-                        max_suffix = max(max_suffix, 0)
-            
-            # Use base name if available, otherwise use next suffix
-            if max_suffix == 0:
-                # Check if base name is available
-                existing = self.session.exec(
-                    select(Bundle).where(
-                        Bundle.infospace_id == target_infospace_id,
-                        Bundle.name == base_name,
-                        Bundle.version == (db_bundle.version or "1.0")
-                    )
-                ).first()
-                new_name = base_name if not existing else f"{base_name}_1"
-            else:
-                new_name = f"{base_name}_{max_suffix + 1}"
-            
-            if new_name != original_name:
-                logger.info(f"Copied bundle renamed from '{original_name}' to '{new_name}' to avoid conflict")
-            
+            new_name = self._resolve_bundle_name(db_bundle.name, db_bundle.version or "1.0", target_infospace_id)
             new_bundle_data = BundleCreate(
-                name=new_name, 
+                name=new_name,
                 description=db_bundle.description,
-                asset_ids=new_asset_ids
+                asset_ids=new_asset_ids,
             )
             created_bundle = self.create_bundle(
-                bundle_in=new_bundle_data, 
-                infospace_id=target_infospace_id, 
-                user_id=user_id
+                bundle_in=new_bundle_data,
+                infospace_id=target_infospace_id,
+                user_id=user_id,
             )
-            logger.info(f"Service: Bundle '{created_bundle.name}' (ID: {created_bundle.id}) copied to infospace {target_infospace_id} with {len(new_asset_ids)} assets.")
+            logger.info(f"Service: Bundle '{created_bundle.name}' copied to infospace {target_infospace_id} with {len(new_asset_ids)} assets.")
             return created_bundle
         else:
-            # Move bundle (not recommended for cross-infospace with assets)
-            if any(asset.infospace_id != target_infospace_id for asset in db_bundle.assets):
-                 logger.warning(f"Cannot move bundle {bundle_id}: not all its assets are in/can be moved to target infospace {target_infospace_id}.")
+            # Move: check all assets are movable
+            asset_count = len(bundle_assets)
+            if any(a.infospace_id != source_infospace_id for a in bundle_assets):
+                logger.warning(f"Cannot move bundle {bundle_id}: asset infospace mismatch")
 
-            # Check if bundle name conflicts with existing bundle in target infospace
-            import re
-            original_name = db_bundle.name
-            
-            # Strip existing numeric suffix if present (e.g., "Name_1" -> "Name")
-            base_name = re.sub(r'_\d+$', '', original_name)
-            
-            # Find all existing bundles with similar names in target infospace
-            existing_bundles = self.session.exec(
-                select(Bundle).where(
-                    Bundle.infospace_id == target_infospace_id,
-                    Bundle.version == db_bundle.version
-                )
-            ).all()
-            
-            # Find the highest suffix number for this base name
-            max_suffix = 0
-            pattern = re.compile(rf'^{re.escape(base_name)}(_(\d+))?$')
-            for bundle in existing_bundles:
-                match = pattern.match(bundle.name)
-                if match:
-                    suffix_str = match.group(2)
-                    if suffix_str:
-                        max_suffix = max(max_suffix, int(suffix_str))
-                    else:
-                        # Base name exists without suffix
-                        max_suffix = max(max_suffix, 0)
-            
-            # Use base name if available, otherwise use next suffix
-            if max_suffix == 0:
-                # Check if base name is available
-                existing = self.session.exec(
-                    select(Bundle).where(
-                        Bundle.infospace_id == target_infospace_id,
-                        Bundle.name == base_name,
-                        Bundle.version == db_bundle.version
-                    )
-                ).first()
-                new_name = base_name if not existing else f"{base_name}_1"
-            else:
-                new_name = f"{base_name}_{max_suffix + 1}"
-            
-            if new_name != original_name:
-                logger.info(f"Renamed bundle from '{original_name}' to '{new_name}' to avoid conflict")
+            new_name = self._resolve_bundle_name(db_bundle.name, db_bundle.version, target_infospace_id)
+            if new_name != db_bundle.name:
                 db_bundle.name = new_name
-            
+
             db_bundle.infospace_id = target_infospace_id
             db_bundle.updated_at = datetime.now(timezone.utc)
             self.session.add(db_bundle)
@@ -654,30 +552,51 @@ class BundleService:
             self.session.refresh(db_bundle)
             logger.info(f"Service: Bundle {bundle_id} moved to infospace {target_infospace_id}.")
             return db_bundle
-    
+
+    def _resolve_bundle_name(self, original_name: str, version: str, target_infospace_id: int) -> str:
+        """Find a non-conflicting bundle name in the target infospace."""
+        import re
+        base_name = re.sub(r'_\d+$', '', original_name)
+        existing_bundles = self.session.exec(
+            select(Bundle).where(
+                Bundle.infospace_id == target_infospace_id,
+                Bundle.version == version,
+            )
+        ).all()
+        max_suffix = 0
+        pattern = re.compile(rf'^{re.escape(base_name)}(_(\d+))?$')
+        for bundle in existing_bundles:
+            match = pattern.match(bundle.name)
+            if match:
+                suffix_str = match.group(2)
+                max_suffix = max(max_suffix, int(suffix_str) if suffix_str else 0)
+
+        if max_suffix == 0:
+            existing = self.session.exec(
+                select(Bundle).where(
+                    Bundle.infospace_id == target_infospace_id,
+                    Bundle.name == base_name,
+                    Bundle.version == version,
+                )
+            ).first()
+            return base_name if not existing else f"{base_name}_1"
+        return f"{base_name}_{max_suffix + 1}"
+
     def _copy_assets_to_infospace(
         self,
         assets: List[Asset],
         target_infospace_id: int,
         user_id: int
     ) -> List[int]:
-        """
-        Copy assets to target infospace.
-        
-        Returns list of new asset IDs in target infospace.
-        Note: Does NOT commit - caller must commit after adding assets to bundle.
-        """
-        from app.schemas import AssetCreate
-        from app.models import Asset as AssetModel
-        
+        """Copy assets to target infospace. Returns new asset IDs."""
         new_assets = []
         for asset in assets:
             try:
-                new_asset = AssetModel(
+                new_asset = Asset(
                     title=asset.title,
                     kind=asset.kind,
                     text_content=asset.text_content,
-                    blob_path=asset.blob_path,  # Keep same blob path - storage is shared
+                    blob_path=asset.blob_path,
                     source_identifier=asset.source_identifier,
                     facets=asset.facets,
                     file_info=asset.file_info,
@@ -685,19 +604,18 @@ class BundleService:
                     stub=asset.stub,
                     user_id=user_id,
                     infospace_id=target_infospace_id,
-                    processing_status=asset.processing_status
+                    processing_status=asset.processing_status,
                 )
                 new_assets.append(new_asset)
-                logger.debug(f"Prepared copy of asset {asset.id} ('{asset.title}') for infospace {target_infospace_id}")
             except Exception as e:
                 logger.error(f"Failed to copy asset {asset.id}: {e}")
                 continue
         if new_assets:
             self.session.add_all(new_assets)
             self.session.flush()
-        new_asset_ids = [a.id for a in new_assets if a.id is not None]
-        logger.info(f"Copied {len(new_asset_ids)} assets to infospace {target_infospace_id}")
-        return new_asset_ids
+        return [a.id for a in new_assets if a.id is not None]
+
+    # ─── Bundle hierarchy ───
 
     def move_bundle_to_parent(
         self,
@@ -708,70 +626,49 @@ class BundleService:
         user_id: int
     ) -> Optional[Bundle]:
         """Move a bundle into another bundle (or to root if parent_bundle_id is None)."""
-        logger.info(f"Service: Moving bundle {child_bundle_id} to parent {parent_bundle_id} in infospace {infospace_id}")
-        
-        # Validate access to infospace
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
-        # Get the child bundle
         child_bundle = self.get_bundle(child_bundle_id, infospace_id, user_id)
         if not child_bundle:
-            logger.warning(f"Service: Child bundle {child_bundle_id} not found or access denied.")
             return None
-        
-        # Validate parent bundle if specified
+
         if parent_bundle_id is not None:
             parent_bundle = self.get_bundle(parent_bundle_id, infospace_id, user_id)
             if not parent_bundle:
-                logger.warning(f"Service: Parent bundle {parent_bundle_id} not found or access denied.")
                 return None
-            
-            # Prevent circular references
             if self._would_create_cycle(child_bundle_id, parent_bundle_id):
                 raise ValueError("Moving bundle would create a circular reference.")
-        
-        # Update child bundle counts
+
         old_parent_id = child_bundle.parent_bundle_id
-        
-        # Remove from old parent
+
         if old_parent_id:
             old_parent = self.session.get(Bundle, old_parent_id)
             if old_parent:
                 old_parent.child_bundle_count = max(0, (old_parent.child_bundle_count or 0) - 1)
                 self.session.add(old_parent)
-        
-        # Add to new parent
+
         if parent_bundle_id:
             new_parent = self.session.get(Bundle, parent_bundle_id)
             if new_parent:
                 new_parent.child_bundle_count = (new_parent.child_bundle_count or 0) + 1
                 self.session.add(new_parent)
-        
-        # Update child bundle
+
         child_bundle.parent_bundle_id = parent_bundle_id
         self.session.add(child_bundle)
-        
         self.session.commit()
         self.session.refresh(child_bundle)
-        
-        logger.info(f"Service: Successfully moved bundle {child_bundle_id} to parent {parent_bundle_id}.")
         return child_bundle
-    
+
     def _would_create_cycle(self, child_bundle_id: int, potential_parent_id: int) -> bool:
         """Check if moving child_bundle_id under potential_parent_id would create a cycle."""
         current_id = potential_parent_id
         visited = set()
-        
         while current_id and current_id not in visited:
             if current_id == child_bundle_id:
                 return True
             visited.add(current_id)
-            
             bundle = self.session.get(Bundle, current_id)
             current_id = bundle.parent_bundle_id if bundle else None
-        
         return False
-    
+
     def get_bundle_hierarchy(
         self,
         bundle_id: int,
@@ -783,7 +680,7 @@ class BundleService:
         bundle = self.get_bundle(bundle_id, infospace_id, user_id)
         if not bundle:
             return None
-        
+
         def build_hierarchy(bundle_obj: Bundle, current_depth: int = 0) -> Dict[str, Any]:
             if current_depth > max_depth:
                 return {
@@ -792,13 +689,10 @@ class BundleService:
                     "description": bundle_obj.description,
                     "asset_count": bundle_obj.asset_count,
                     "child_bundle_count": bundle_obj.child_bundle_count,
-                    "children": []  # Truncated due to depth limit
+                    "children": [],
                 }
-            
-            children = []
-            for child in bundle_obj.child_bundles:
-                children.append(build_hierarchy(child, current_depth + 1))
-            
+
+            children = [build_hierarchy(c, current_depth + 1) for c in bundle_obj.child_bundles]
             return {
                 "id": bundle_obj.id,
                 "name": bundle_obj.name,
@@ -806,60 +700,49 @@ class BundleService:
                 "asset_count": bundle_obj.asset_count,
                 "child_bundle_count": bundle_obj.child_bundle_count,
                 "parent_bundle_id": bundle_obj.parent_bundle_id,
-                "children": children
+                "children": children,
             }
-        
+
         return build_hierarchy(bundle)
-    
+
     def get_root_bundles(self, infospace_id: int, user_id: int) -> List[Bundle]:
         """Get all top-level bundles (those without parent bundles)."""
-        validate_infospace_access(self.session, infospace_id, user_id)
-        
-        statement = select(Bundle).where(
-            Bundle.infospace_id == infospace_id,
-            Bundle.parent_bundle_id.is_(None)
-        )
-        
-        return self.session.exec(statement).all()
+        return self.session.exec(
+            select(Bundle).where(
+                Bundle.infospace_id == infospace_id,
+                Bundle.parent_bundle_id.is_(None),
+            )
+        ).all()
 
     def cascade_delete(self, bundle_ids: Set[int]) -> int:
         """
-        Clear IngestionJob/Source refs and delete bundles. Caller must have already
-        deleted assets in those bundles (via AssetService.cascade_delete).
-        Returns number of bundles deleted.
+        Clear IngestionJob/Source refs and delete bundles.
+        DB trigger trg_bundle_delete_cleanup handles asset.bundle_ids cleanup.
+        Caller must have already cascade-deleted assets unique to these bundles.
         """
         if not bundle_ids:
             return 0
         bundle_ids_list = list(bundle_ids)
-        jobs = list(
-            self.session.exec(
-                select(IngestionJob).where(
-                    IngestionJob.root_bundle_id.in_(bundle_ids_list)
-                )
-            ).all()
-        )
+
+        # Clear FK references
+        jobs = list(self.session.exec(
+            select(IngestionJob).where(IngestionJob.root_bundle_id.in_(bundle_ids_list))
+        ).all())
         for job in jobs:
             job.root_bundle_id = None
             self.session.add(job)
-        if jobs:
-            logger.info(f"Cascade delete: cleared root_bundle_id from {len(jobs)} jobs")
-        sources = list(
-            self.session.exec(
-                select(Source).where(
-                    Source.output_bundle_id.in_(bundle_ids_list)
-                )
-            ).all()
-        )
+
+        sources = list(self.session.exec(
+            select(Source).where(Source.output_bundle_id.in_(bundle_ids_list))
+        ).all())
         for src in sources:
             src.output_bundle_id = None
             self.session.add(src)
-        if sources:
-            logger.info(f"Cascade delete: cleared output_bundle_id from {len(sources)} sources")
+
         deleted = 0
         for bid in bundle_ids_list:
             bundle = self.session.get(Bundle, bid)
             if bundle:
                 self.session.delete(bundle)
                 deleted += 1
-                logger.info(f"Cascade delete: removed bundle {bid}")
         return deleted

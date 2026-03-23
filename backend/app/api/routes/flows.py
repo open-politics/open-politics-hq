@@ -19,7 +19,10 @@ from app.schemas import (
     FlowExecutionRead,
     FlowExecutionsOut,
 )
-from app.api.dependency_injection import CurrentUser, SessionDep
+from app.api.dependency_injection import SessionDep
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,26 +46,25 @@ def get_flow_service(session: SessionDep):
 @router.post("/", response_model=FlowRead, status_code=status.HTTP_201_CREATED)
 async def create_flow(
     *,
-    current_user: CurrentUser,
     session: SessionDep,
-    infospace_id: int,
     flow_in: FlowCreate,
+    access: Access = Requires(Capability.COMPUTE),
 ) -> FlowRead:
     """
     Create a new Flow.
-    
+
     A Flow defines a processing workflow with:
     - Input: What to watch (bundle, source stream, or manual)
     - Steps: What processing to apply (annotate, filter, curate, route)
     - Trigger: When to run (on_arrival, scheduled, manual)
     """
     flow_service = get_flow_service(session)
-    
+
     try:
         flow = flow_service.create_flow(
             flow_in=flow_in,
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
         )
         return FlowRead.model_validate(flow)
     except ValueError as e:
@@ -72,9 +74,8 @@ async def create_flow(
 @router.get("", response_model=FlowsOut)
 @router.get("/", response_model=FlowsOut)
 async def list_flows(
-    current_user: CurrentUser,
     session: SessionDep,
-    infospace_id: int,
+    access: Access = Requires(),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     status: Optional[str] = Query(None, description="Filter by status"),
@@ -82,15 +83,18 @@ async def list_flows(
     tags: Optional[str] = Query(None, description="Comma-separated tags to filter by"),
 ) -> FlowsOut:
     """List all Flows in the infospace."""
+    # Flows are operational — not in PackageScope
+    if access.scope:
+        return FlowsOut(data=[], count=0)
     flow_service = get_flow_service(session)
-    
+
     status_filter = FlowStatus(status) if status else None
     input_type_filter = FlowInputType(input_type) if input_type else None
     tags_filter = tags.split(",") if tags else None
-    
+
     flows, total = flow_service.list_flows(
-        user_id=current_user.id,
-        infospace_id=infospace_id,
+        user_id=access.user_id,
+        infospace_id=access.infospace_id,
         skip=skip,
         limit=limit,
         status_filter=status_filter,
@@ -106,18 +110,19 @@ async def list_flows(
 
 @router.get("/{flow_id}", response_model=FlowRead)
 async def get_flow(
-    current_user: CurrentUser,
     session: SessionDep,
-    infospace_id: int,
     flow_id: int,
+    access: Access = Requires(),
 ) -> FlowRead:
     """Get a specific Flow by ID."""
+    if access.scope:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     flow_service = get_flow_service(session)
-    
+
     flow = flow_service.get_flow(
         flow_id=flow_id,
-        user_id=current_user.id,
-        infospace_id=infospace_id,
+        user_id=access.user_id,
+        infospace_id=access.infospace_id,
     )
     
     if not flow:
@@ -131,21 +136,20 @@ async def get_flow(
 
 @router.put("/{flow_id}", response_model=FlowRead)
 async def update_flow(
-    current_user: CurrentUser,
     session: SessionDep,
-    infospace_id: int,
     flow_id: int,
     flow_in: FlowUpdate,
+    access: Access = Requires(Capability.COMPUTE),
 ) -> FlowRead:
     """Update a Flow."""
     flow_service = get_flow_service(session)
-    
+
     try:
         flow = flow_service.update_flow(
             flow_id=flow_id,
             flow_in=flow_in,
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
         )
         
         if not flow:
@@ -161,18 +165,17 @@ async def update_flow(
 
 @router.delete("/{flow_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_flow(
-    current_user: CurrentUser,
     session: SessionDep,
-    infospace_id: int,
     flow_id: int,
+    access: Access = Requires(Capability.DELETE),
 ) -> None:
     """Delete a Flow and all its executions."""
     flow_service = get_flow_service(session)
-    
+
     deleted = flow_service.delete_flow(
         flow_id=flow_id,
-        user_id=current_user.id,
-        infospace_id=infospace_id,
+        user_id=access.user_id,
+        infospace_id=access.infospace_id,
     )
     
     if not deleted:
@@ -188,10 +191,9 @@ async def delete_flow(
 
 @router.post("/{flow_id}/activate", response_model=FlowRead)
 async def activate_flow(
-    current_user: CurrentUser,
     session: SessionDep,
-    infospace_id: int,
     flow_id: int,
+    access: Access = Requires(Capability.COMPUTE),
 ) -> FlowRead:
     """
     Activate a Flow for processing.
@@ -203,8 +205,8 @@ async def activate_flow(
     try:
         flow = flow_service.activate_flow(
             flow_id=flow_id,
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
         )
         
         if not flow:
@@ -220,18 +222,17 @@ async def activate_flow(
 
 @router.post("/{flow_id}/pause", response_model=FlowRead)
 async def pause_flow(
-    current_user: CurrentUser,
     session: SessionDep,
-    infospace_id: int,
     flow_id: int,
+    access: Access = Requires(Capability.COMPUTE),
 ) -> FlowRead:
     """Pause a Flow."""
     flow_service = get_flow_service(session)
     
     flow = flow_service.pause_flow(
         flow_id=flow_id,
-        user_id=current_user.id,
-        infospace_id=infospace_id,
+        user_id=access.user_id,
+        infospace_id=access.infospace_id,
     )
     
     if not flow:
@@ -249,11 +250,10 @@ async def pause_flow(
 
 @router.post("/{flow_id}/execute", response_model=FlowExecutionRead, status_code=status.HTTP_202_ACCEPTED)
 async def trigger_flow_execution(
-    current_user: CurrentUser,
     session: SessionDep,
-    infospace_id: int,
     flow_id: int,
     execution_in: Optional[FlowExecutionCreate] = None,
+    access: Access = Requires(Capability.COMPUTE),
 ) -> FlowExecutionRead:
     """
     Trigger a Flow execution manually.
@@ -266,8 +266,8 @@ async def trigger_flow_execution(
     try:
         execution = flow_service.trigger_execution(
             flow_id=flow_id,
-            user_id=current_user.id,
-            infospace_id=infospace_id,
+            user_id=access.user_id,
+            infospace_id=access.infospace_id,
             execution_in=execution_in,
             triggered_by="manual",
         )
@@ -279,10 +279,9 @@ async def trigger_flow_execution(
 
 @router.get("/{flow_id}/executions", response_model=FlowExecutionsOut)
 async def list_flow_executions(
-    current_user: CurrentUser,
     session: SessionDep,
-    infospace_id: int,
     flow_id: int,
+    access: Access = Requires(),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     status: Optional[str] = Query(None, description="Filter by status"),
@@ -294,8 +293,8 @@ async def list_flow_executions(
     
     executions, total = flow_service.list_executions(
         flow_id=flow_id,
-        user_id=current_user.id,
-        infospace_id=infospace_id,
+        user_id=access.user_id,
+        infospace_id=access.infospace_id,
         skip=skip,
         limit=limit,
         status_filter=status_filter,
@@ -309,19 +308,18 @@ async def list_flow_executions(
 
 @router.get("/{flow_id}/executions/{execution_id}", response_model=FlowExecutionRead)
 async def get_flow_execution(
-    current_user: CurrentUser,
     session: SessionDep,
-    infospace_id: int,
     flow_id: int,
     execution_id: int,
+    access: Access = Requires(),
 ) -> FlowExecutionRead:
     """Get a specific Flow execution."""
     flow_service = get_flow_service(session)
     
     execution = flow_service.get_execution(
         execution_id=execution_id,
-        user_id=current_user.id,
-        infospace_id=infospace_id,
+        user_id=access.user_id,
+        infospace_id=access.infospace_id,
     )
     
     if not execution or execution.flow_id != flow_id:
@@ -339,10 +337,9 @@ async def get_flow_execution(
 
 @router.get("/{flow_id}/pending-assets", response_model=List[int])
 async def get_pending_assets(
-    current_user: CurrentUser,
     session: SessionDep,
-    infospace_id: int,
     flow_id: int,
+    access: Access = Requires(),
 ) -> List[int]:
     """
     Get the list of asset IDs that would be processed on the next execution.
@@ -353,25 +350,24 @@ async def get_pending_assets(
     
     flow = flow_service.get_flow(
         flow_id=flow_id,
-        user_id=current_user.id,
-        infospace_id=infospace_id,
+        user_id=access.user_id,
+        infospace_id=access.infospace_id,
     )
-    
+
     if not flow:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Flow not found"
         )
-    
+
     return flow_service._get_delta_assets(flow)
 
 
 @router.post("/{flow_id}/reset-cursor", response_model=FlowRead)
 async def reset_flow_cursor(
-    current_user: CurrentUser,
     session: SessionDep,
-    infospace_id: int,
     flow_id: int,
+    access: Access = Requires(Capability.COMPUTE),
 ) -> FlowRead:
     """
     Reset the Flow's cursor state, allowing it to reprocess all assets.
@@ -382,16 +378,16 @@ async def reset_flow_cursor(
     
     flow = flow_service.get_flow(
         flow_id=flow_id,
-        user_id=current_user.id,
-        infospace_id=infospace_id,
+        user_id=access.user_id,
+        infospace_id=access.infospace_id,
     )
-    
+
     if not flow:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Flow not found"
         )
-    
+
     flow.cursor_state = {}
     session.add(flow)
     session.commit()

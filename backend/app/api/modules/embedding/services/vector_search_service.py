@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from app.models import Asset, AssetChunk, Infospace, EmbeddingModel, AssetKind
 from app.api.modules.content.models import get_embedding_column_for_dimension
+from app.api.modules.identity_infospace_user.access import PackageScope
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ class VectorSearchService:
         distance_threshold: Optional[float] = None,
         distance_function: str = "cosine",
         embedding_model_id: Optional[int] = None,
+        scope: Optional[PackageScope] = None,
     ) -> List[SearchResult]:
         """
         Perform semantic search using vector embeddings.
@@ -203,11 +205,32 @@ class VectorSearchService:
             extra_where.append("a.created_at <= :date_to")
             params["date_to"] = date_to
         if bundle_id is not None:
-            extra_where.append("a.bundle_id = :bundle_id")
+            extra_where.append("a.bundle_ids @> ARRAY[:bundle_id]::int[]")
             params["bundle_id"] = bundle_id
         if parent_asset_id is not None:
             extra_where.append("a.parent_asset_id = :parent_asset_id")
             params["parent_asset_id"] = parent_asset_id
+
+        # Package scope restriction
+        if scope is not None:
+            scope_parts = []
+            if scope.bundle_ids:
+                scope_parts.append("a.bundle_ids && :scope_bids::int[]")
+                params["scope_bids"] = list(scope.bundle_ids)
+            if scope.asset_ids:
+                scope_parts.append("a.id = ANY(:scope_aids)")
+                params["scope_aids"] = list(scope.asset_ids)
+            if scope.run_ids:
+                scope_parts.append(
+                    "a.id IN (SELECT DISTINCT asset_id FROM annotation WHERE run_id = ANY(:scope_rids))"
+                )
+                params["scope_rids"] = list(scope.run_ids)
+            if scope_parts:
+                extra_where.append("(" + " OR ".join(scope_parts) + ")")
+            else:
+                # Scope is set but all ID sets are empty — zero access
+                extra_where.append("FALSE")
+
         extra_sql = " AND " + " AND ".join(extra_where) if extra_where else ""
 
         sql = text(f"""
@@ -223,7 +246,7 @@ class VectorSearchService:
             LIMIT :limit
         """)
 
-        rows = self.session.exec(sql, params).all()
+        rows = self.session.execute(sql, params).all()
         if not rows:
             return []
 

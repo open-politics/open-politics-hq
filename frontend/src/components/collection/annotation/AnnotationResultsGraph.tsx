@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2 } from 'lucide-react';
+import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2, GitMerge } from 'lucide-react';
 import { AnnotationSchemaRead, AssetRead } from '@/client';
 import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
 import { AnalysisAdaptersService } from '@/client';
@@ -132,6 +132,11 @@ export default function AnnotationResultsGraph({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [showDetailPanel, setShowDetailPanel] = useState(false);
+
+  // Merge selection state (shift+click accumulates nodes for merge)
+  const [mergeSelectedIds, setMergeSelectedIds] = useState<string[]>([]);
+  const [mergeKeepId, setMergeKeepId] = useState<string | null>(null);
+  const [mergeKeepType, setMergeKeepType] = useState<string | null>(null);
 
   // NEW: Apply time frame filtering and variable splitting
   const assetsMap = useMemo(() => new Map(assets.map(asset => [asset.id, asset])), [assets]);
@@ -339,6 +344,102 @@ export default function AnnotationResultsGraph({
     setShowDetailPanel(true);
   }, []);
 
+  // Handle shift+click for merge selection
+  const handleNodeShiftClick = useCallback((node: GraphNode) => {
+    setMergeSelectedIds(prev => {
+      if (prev.includes(node.id)) {
+        const next = prev.filter(id => id !== node.id);
+        // If we removed the keep target, reset to first remaining
+        setMergeKeepId(kid => kid === node.id ? (next[0] || null) : kid);
+        return next;
+      }
+      const next = [...prev, node.id];
+      // Auto-select first node as keep target and type
+      if (next.length === 1) {
+        setMergeKeepId(node.id);
+        setMergeKeepType(node.type);
+      }
+      return next;
+    });
+  }, []);
+
+  // Execute merge: apply to GraphEdits + persist entity_merges to run's graph_config
+  const executeMerge = useCallback(async () => {
+    if (mergeSelectedIds.length < 2) return;
+
+    // Find the nodes being merged
+    const mergeNodes = nodes.filter(n => mergeSelectedIds.includes(n.id));
+    if (mergeNodes.length < 2) return;
+
+    // Keep the user-chosen node (or first if none chosen)
+    const keepNode = mergeNodes.find(n => n.id === mergeKeepId) || mergeNodes[0];
+    const mergedNodeIds = mergeSelectedIds.filter(id => id !== keepNode.id);
+
+    // 1. Update GraphEdits (client-side visual merge)
+    const currentEdits = graphEdits || createEmptyGraphEdits();
+    const updatedEdits: GraphEdits = {
+      ...currentEdits,
+      mergedNodes: [
+        ...currentEdits.mergedNodes,
+        {
+          targetNodeId: keepNode.id,
+          mergedNodeIds,
+          mergedAt: new Date().toISOString(),
+          reason: 'User merge (shift+click)',
+        },
+      ],
+    };
+    onGraphEditsChange?.(updatedEdits);
+
+    // 2. Persist entity_merges to run's graph_config for curation
+    if (activeRunId) {
+      try {
+        const mergedNames = mergeNodes.map(n => n.label);
+        // Build the merge hint for the backend (include type if user chose one)
+        const chosenType = mergeKeepType || keepNode.type;
+        const newMergeGroup: Record<string, unknown> = {
+          names: mergedNames,
+          keep: keepNode.label,
+        };
+        if (chosenType) {
+          newMergeGroup.type = chosenType;
+        }
+
+        // PATCH the run's graph_config (use fetch directly since SDK may not have graph_config yet)
+        const { OpenAPI } = await import('@/client');
+        const base = OpenAPI.BASE || '';
+
+        const getRes = await fetch(`${base}/api/v1/infospaces/${activeInfospace!.id}/runs/${activeRunId}`, {
+          credentials: 'include',
+        });
+        const currentRun = await getRes.json();
+        const currentGraphConfig = currentRun.graph_config || {};
+        const existingMerges = currentGraphConfig.entity_merges || [];
+
+        await fetch(`${base}/api/v1/infospaces/${activeInfospace!.id}/runs/${activeRunId}`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            graph_config: {
+              ...currentGraphConfig,
+              entity_merges: [...existingMerges, newMergeGroup],
+            },
+          }),
+        });
+      } catch (e) {
+        console.error('Failed to persist merge to run graph_config:', e);
+        // Visual merge still applies; persistence failure is non-fatal
+      }
+    }
+
+    setMergeSelectedIds([]);
+    setMergeKeepId(null);
+    setMergeKeepType(null);
+    toast.success(`Merged ${mergeNodes.length} nodes into "${keepNode.label}"`);
+    // Re-aggregate will be triggered by graphEdits change via useEffect
+  }, [mergeSelectedIds, mergeKeepId, mergeKeepType, nodes, graphEdits, onGraphEditsChange, activeRunId, activeInfospace]);
+
   // Handle search selection
   const handleSearchSelect = useCallback((suggestion: any) => {
     setSearchTerm(suggestion.label);
@@ -404,15 +505,40 @@ export default function AnnotationResultsGraph({
           // Filter out deleted nodes
           const deletedNodeIds = new Set(graphEdits.deletedNodes.map(n => n.nodeId));
           finalNodes = graphNodes.filter(n => !deletedNodeIds.has(n.id));
-          
+
           // Filter out edges connected to deleted nodes
-          finalEdges = graphEdges.filter(e => 
+          finalEdges = graphEdges.filter(e =>
             !deletedNodeIds.has(e.sourceId) && !deletedNodeIds.has(e.targetId)
           );
-          
+
           // Filter out deleted edges
           const deletedEdgeIds = new Set(graphEdits.deletedEdges.map(e => e.edgeId));
           finalEdges = finalEdges.filter(e => !deletedEdgeIds.has(e.id));
+
+          // Apply node merges: remove merged nodes, redirect edges to target
+          for (const merge of graphEdits.mergedNodes) {
+            const mergedSet = new Set(merge.mergedNodeIds);
+            // Accumulate frequency/aliases into target node
+            const targetNode = finalNodes.find(n => n.id === merge.targetNodeId);
+            if (targetNode) {
+              const absorbed = finalNodes.filter(n => mergedSet.has(n.id));
+              targetNode.frequency = (targetNode.frequency || 1) + absorbed.reduce((s, n) => s + (n.frequency || 1), 0);
+              targetNode.aliases = [
+                ...(targetNode.aliases || []),
+                ...absorbed.map(n => n.label),
+              ];
+            }
+            // Remove merged nodes
+            finalNodes = finalNodes.filter(n => !mergedSet.has(n.id));
+            // Redirect edges: merged source/target → target node
+            finalEdges = finalEdges.map(e => ({
+              ...e,
+              sourceId: mergedSet.has(e.sourceId) ? merge.targetNodeId : e.sourceId,
+              targetId: mergedSet.has(e.targetId) ? merge.targetNodeId : e.targetId,
+            }));
+            // Remove self-loops created by merge
+            finalEdges = finalEdges.filter(e => e.sourceId !== e.targetId);
+          }
         }
         
         const graphData: GraphData = {
@@ -451,12 +577,12 @@ export default function AnnotationResultsGraph({
     }
   }, [activeRunId, selectedSchemaId, schemas, graphEdits]);
 
-  // Auto-load when schema is selected
+  // Auto-load when schema is selected or edits change
   useEffect(() => {
     if (selectedSchemaId && activeRunId) {
       aggregateGraph();
     }
-  }, [selectedSchemaId, activeRunId]); // Note: aggregateGraph is stable, but we want to re-run when dependencies change
+  }, [selectedSchemaId, activeRunId, graphEdits]);
 
   const handleExportGraph = () => {
     if (graphData) {
@@ -659,11 +785,107 @@ export default function AnnotationResultsGraph({
               edges={edges}
               highlightedNodeId={selectedNodeId}
               connectedNodeIds={connectedNodeIds}
+              mergeSelectedNodeIds={mergeSelectedIds}
               onNodeClick={handleNodeSelect}
+              onNodeShiftClick={handleNodeShiftClick}
               autoResize={true}
               config={graphConfig}
             />
             
+            {/* Merge Selection Bar */}
+            {mergeSelectedIds.length > 0 && (
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-amber-50/95 px-4 py-3 rounded-lg shadow-lg border border-amber-300 z-20 max-w-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <GitMerge className="h-4 w-4 text-amber-600" />
+                  <span className="text-sm font-medium text-amber-800">
+                    Merge {mergeSelectedIds.length} nodes
+                  </span>
+                </div>
+                {/* Name selection */}
+                <div className="text-[10px] text-amber-700 font-medium mb-1">Keep name:</div>
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {mergeSelectedIds.map(id => {
+                    const node = nodes.find(n => n.id === id);
+                    if (!node) return null;
+                    const isKeep = mergeKeepId === id;
+                    return (
+                      <label
+                        key={id}
+                        className={`flex items-center gap-1.5 px-2 py-1 rounded border cursor-pointer text-xs transition-colors ${
+                          isKeep
+                            ? 'bg-amber-200 border-amber-400 font-semibold'
+                            : 'bg-white border-amber-200 hover:bg-amber-100'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="merge-keep"
+                          checked={isKeep}
+                          onChange={() => setMergeKeepId(id)}
+                          className="accent-amber-600"
+                        />
+                        {node.label}
+                      </label>
+                    );
+                  })}
+                </div>
+                {/* Type selection */}
+                {(() => {
+                  const selectedNodes = mergeSelectedIds.map(id => nodes.find(n => n.id === id)).filter(Boolean) as GraphNode[];
+                  const uniqueTypes = Array.from(new Set(selectedNodes.map(n => n.type)));
+                  if (uniqueTypes.length <= 1) return null;
+                  return (
+                    <>
+                      <div className="text-[10px] text-amber-700 font-medium mb-1">Keep type:</div>
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {uniqueTypes.map(t => (
+                          <label
+                            key={t}
+                            className={`flex items-center gap-1.5 px-2 py-1 rounded border cursor-pointer text-xs transition-colors ${
+                              mergeKeepType === t
+                                ? 'bg-amber-200 border-amber-400 font-semibold'
+                                : 'bg-white border-amber-200 hover:bg-amber-100'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="merge-keep-type"
+                              checked={mergeKeepType === t}
+                              onChange={() => setMergeKeepType(t)}
+                              className="accent-amber-600"
+                            />
+                            {t}
+                          </label>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="bg-amber-600 hover:bg-amber-700 text-white text-xs"
+                    disabled={mergeSelectedIds.length < 2 || !mergeKeepId}
+                    onClick={executeMerge}
+                  >
+                    Merge
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs text-amber-700"
+                    onClick={() => { setMergeSelectedIds([]); setMergeKeepId(null); setMergeKeepType(null); }}
+                  >
+                    Cancel
+                  </Button>
+                  <span className="text-[10px] text-amber-600 ml-auto">
+                    Shift+click to add/remove
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Graph Editing Controls */}
             {selectedNodeId && onGraphEditsChange && (
               <div className="absolute top-2 left-2 bg-white/95 p-3 rounded-lg shadow-lg border z-10">
@@ -692,8 +914,6 @@ export default function AnnotationResultsGraph({
                       setSelectedNodeId(null);
                       setShowDetailPanel(false);
                       toast.success('Node deleted');
-                      // Re-aggregate to apply changes
-                      aggregateGraph();
                     }}
                   >
                     <Trash2 className="h-3 w-3 mr-1" />
@@ -722,7 +942,6 @@ export default function AnnotationResultsGraph({
                       if (confirm('Clear all graph edits? This cannot be undone.')) {
                         onGraphEditsChange?.(createEmptyGraphEdits());
                         toast.success('Graph edits cleared');
-                        aggregateGraph();
                       }
                     }}
                     title="Clear all edits"
