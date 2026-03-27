@@ -4,18 +4,51 @@ metadata:
   name: {{ .Values.configmaps.stack.name }}
   namespace: {{ .Values.namespace }}
 data:
+  # --- Core ---
   DOMAIN: "{{ .Values.env.config.DOMAIN }}"
   ENVIRONMENT: "{{ .Values.env.config.ENVIRONMENT }}"
+  PROJECT_NAME: "{{ .Values.env.config.PROJECT_NAME }}"
+  ORGANISATION_NAME: "{{ .Values.env.config.ORGANISATION_NAME }}"
+  STACK_NAME: "{{ .Values.env.config.STACK_NAME }}"
   FRONTEND_PORT: "{{ .Values.env.config.FRONTEND_PORT }}"
   BACKEND_PORT: "{{ .Values.env.config.BACKEND_PORT }}"
-  PROJECT_NAME: "{{ .Values.env.config.PROJECT_NAME }}"
-  STACK_NAME: "{{ .Values.env.config.STACK_NAME }}"
-  REDIS_PORT: "{{ .Values.env.config.REDIS_PORT }}"
   BACKEND_CORS_ORIGINS: "{{ .Values.env.config.BACKEND_CORS_ORIGINS }}"
+
+  # --- Deployment capabilities ---
+  DEPLOYMENT_CAPABILITIES: "{{ .Values.env.config.DEPLOYMENT_CAPABILITIES }}"
+
+  # --- Storage ---
+  STORAGE_PROVIDER_TYPE: "{{ .Values.env.config.STORAGE_PROVIDER_TYPE }}"
+  LOCAL_STORAGE_BASE_PATH: "{{ .Values.env.config.LOCAL_STORAGE_BASE_PATH }}"
+  ALLOWED_IMPORT_PATHS: "{{ .Values.env.config.ALLOWED_IMPORT_PATHS }}"
+  STORAGE_BROWSE_MAX_COUNT_FILES: "{{ .Values.env.config.STORAGE_BROWSE_MAX_COUNT_FILES }}"
   MINIO_ENDPOINT: "{{ .Values.env.config.MINIO_ENDPOINT }}"
   MINIO_HOST: "{{ .Values.env.config.MINIO_HOST }}"
   MINIO_PORT: "{{ .Values.env.config.MINIO_PORT }}"
   MINIO_SECURE: "{{ .Values.env.config.MINIO_SECURE }}"
+
+  # --- Redis ---
+  REDIS_PORT: "{{ .Values.env.config.REDIS_PORT }}"
+
+  # --- Content processing ---
+  PROCESS_CONTENT_RATE_LIMIT: "{{ .Values.env.config.PROCESS_CONTENT_RATE_LIMIT }}"
+  PDF_MAX_PAGES: "{{ .Values.env.config.PDF_MAX_PAGES }}"
+  ENABLED_ENRICHERS: "{{ .Values.env.config.ENABLED_ENRICHERS }}"
+
+  # --- Annotation processing ---
+  DEFAULT_ANNOTATION_CONCURRENCY: "{{ .Values.env.config.DEFAULT_ANNOTATION_CONCURRENCY }}"
+  MAX_ANNOTATION_CONCURRENCY: "{{ .Values.env.config.MAX_ANNOTATION_CONCURRENCY }}"
+  ENABLE_PARALLEL_ANNOTATION_PROCESSING: "{{ .Values.env.config.ENABLE_PARALLEL_ANNOTATION_PROCESSING }}"
+
+  # --- Geocoding ---
+  NOMINATIM_BASE_URL: "{{ .Values.env.config.NOMINATIM_BASE_URL }}"
   NOMINATIM_PORT: "{{ .Values.nominatim.service.port }}"
   NOMINATIM_DOMAIN: "nominatim"
+  GEOCODING_USER_AGENT: "{{ .Values.env.config.GEOCODING_USER_AGENT }}"
 
+  # --- Provider types ---
+  OCR_PROVIDER_TYPE: "{{ .Values.env.config.OCR_PROVIDER_TYPE }}"
+  WEB_SEARCH_PROVIDER_TYPE: "{{ .Values.env.config.WEB_SEARCH_PROVIDER_TYPE }}"
+  SCRAPING_PROVIDER_TYPE: "{{ .Values.env.config.SCRAPING_PROVIDER_TYPE }}"
+  OLLAMA_BASE_URL: "{{ .Values.env.config.OLLAMA_BASE_URL }}"
+  OLLAMA_DEFAULT_MODEL: "{{ .Values.env.config.OLLAMA_DEFAULT_MODEL }}"

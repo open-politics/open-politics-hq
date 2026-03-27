@@ -37,6 +37,11 @@ spec:
             - -P
             - prefork
             - --concurrency=4
+          {{- if .Values.storage.persistence.enabled }}
+          volumeMounts:
+            - name: app-storage
+              mountPath: {{ .Values.env.config.LOCAL_STORAGE_BASE_PATH }}
+          {{- end }}
           livenessProbe:
             exec:
               command:
@@ -57,7 +62,6 @@ spec:
                 - app.core.celery_app.celery
                 - inspect
                 - ping
-            # Allow up to ~5 minutes for Redis to become reachable and worker to come up
             failureThreshold: 30
             periodSeconds: 10
             timeoutSeconds: 20
@@ -80,3 +84,9 @@ spec:
             requests:
               cpu: {{ .Values.resources.celery.requests.cpu }}
               memory: {{ .Values.resources.celery.requests.memory }}
+      {{- if .Values.storage.persistence.enabled }}
+      volumes:
+        - name: app-storage
+          persistentVolumeClaim:
+            claimName: app-storage-pvc
+      {{- end }}

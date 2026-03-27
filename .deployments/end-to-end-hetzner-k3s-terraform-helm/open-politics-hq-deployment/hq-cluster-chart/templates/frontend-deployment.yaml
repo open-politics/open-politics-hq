@@ -22,3 +22,10 @@ spec:
                 name: {{ .Values.configmaps.stack.name }}
             - secretRef:
                 name: {{ .Release.Name }}-secrets
+          resources:
+            limits:
+              cpu: {{ .Values.resources.frontend.limits.cpu }}
+              memory: {{ .Values.resources.frontend.limits.memory }}
+            requests:
+              cpu: {{ .Values.resources.frontend.requests.cpu }}
+              memory: {{ .Values.resources.frontend.requests.memory }}

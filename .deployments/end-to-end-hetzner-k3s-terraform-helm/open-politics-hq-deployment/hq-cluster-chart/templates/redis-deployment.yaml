@@ -39,8 +39,15 @@ spec:
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: app-secrets
+                  name: {{ .Release.Name }}-secrets
                   key: REDIS_PASSWORD
+          resources:
+            limits:
+              cpu: {{ .Values.resources.redis.limits.cpu }}
+              memory: {{ .Values.resources.redis.limits.memory }}
+            requests:
+              cpu: {{ .Values.resources.redis.requests.cpu }}
+              memory: {{ .Values.resources.redis.requests.memory }}
           volumeMounts:
             - name: redis-config
               mountPath: /usr/local/etc/redis

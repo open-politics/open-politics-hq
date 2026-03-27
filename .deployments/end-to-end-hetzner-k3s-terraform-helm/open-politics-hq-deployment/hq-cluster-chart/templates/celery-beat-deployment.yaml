@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-beat
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: celery-beat
+  template:
+    metadata:
+      labels:
+        app: celery-beat
+    spec:
+      containers:
+        - name: celery-beat
+          image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag }}"
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.configmaps.stack.name }}
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          command:
+            - celery
+          args:
+            - -A
+            - app.core.celery_app.celery
+            - beat
+            - --loglevel=info
+            - --pidfile=/tmp/celerybeat.pid
+            - --schedule=/tmp/celerybeat-schedule
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - "test -f /tmp/celerybeat.pid && kill -0 $(cat /tmp/celerybeat.pid)"
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: {{ .Values.resources.celeryBeat.limits.cpu }}
+              memory: {{ .Values.resources.celeryBeat.limits.memory }}
+            requests:
+              cpu: {{ .Values.resources.celeryBeat.requests.cpu }}
+              memory: {{ .Values.resources.celeryBeat.requests.memory }}

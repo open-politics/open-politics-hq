@@ -24,6 +24,11 @@ spec:
             - secretRef:
                 name: {{ .Release.Name }}-secrets
           command: ["/app/start.sh"]
+          {{- if .Values.storage.persistence.enabled }}
+          volumeMounts:
+            - name: app-storage
+              mountPath: {{ .Values.env.config.LOCAL_STORAGE_BASE_PATH }}
+          {{- end }}
           resources:
             limits:
               cpu: {{ .Values.resources.backend.limits.cpu }}
@@ -47,3 +52,9 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
+      {{- if .Values.storage.persistence.enabled }}
+      volumes:
+        - name: app-storage
+          persistentVolumeClaim:
+            claimName: app-storage-pvc
+      {{- end }}

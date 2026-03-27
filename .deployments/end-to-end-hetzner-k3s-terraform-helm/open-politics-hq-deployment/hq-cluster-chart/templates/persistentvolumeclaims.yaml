@@ -46,6 +46,22 @@ spec:
       storage: {{ .Values.minio.persistence.size }}
 {{- end }}
 
+{{- if .Values.storage.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: app-storage-pvc
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes:
+    - {{ .Values.storage.persistence.accessMode }}
+  storageClassName: {{ .Values.storage.persistence.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.persistence.size }}
+{{- end }}
+
 {{- if .Values.nominatim.persistence.enabled }}
 ---
 apiVersion: v1

@@ -11,7 +11,7 @@ image:
     tag: "latest"
     pullPolicy: Always
     nodes: 1
-  frontend: 
+  frontend:
     repository: openpoliticsproject/frontend
     tag: "latest"
     pullPolicy: Always
@@ -21,7 +21,7 @@ image:
     pullPolicy: Always
   postgres:
     image: pgvector/pgvector
-    tag: "pg17"
+    tag: "pg16"
     pullPolicy: IfNotPresent
     nodes: 1
   redis:
@@ -59,7 +59,7 @@ ingress:
     # Explicit domain specification for Traefik v3+
     traefik.ingress.kubernetes.io/router.tls.domains.0.main: ""
     traefik.ingress.kubernetes.io/router.tls.domains.0.sans: "www."
-    # Traefik handles HTTP→HTTPS redirect via boot.sh HelmChartConfig
+    # Traefik handles HTTP->HTTPS redirect via boot.sh HelmChartConfig
     # Session affinity
     traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
     traefik.ingress.kubernetes.io/service.sticky.cookie.name: "open-politics-session"
@@ -72,10 +72,9 @@ ingress:
 postgres:
   postgresqlDatabase: opp_app_users
   postgresqlUser: postgres
-  postgresqlPassword: "924qmgzbq"
+  postgresqlPassword: ""
   service:
     port: 5432
-  # Persistent storage for Postgres
   persistence:
     enabled: true
     storageClass: "hcloud-volumes"
@@ -85,11 +84,19 @@ postgres:
 redis:
   service:
     port: 6379
-  # Persistent storage for Redis
   persistence:
     enabled: true
     storageClass: "local-path"
     size: 8Gi
+    accessMode: ReadWriteOnce
+
+# Application file storage (for STORAGE_PROVIDER_TYPE=local_fs)
+# Shared between backend and celery-worker pods
+storage:
+  persistence:
+    enabled: false
+    storageClass: "hcloud-volumes"
+    size: 50Gi
     accessMode: ReadWriteOnce
 
 configmaps:
@@ -100,42 +107,84 @@ configmaps:
 
 env:
   config:
+    # --- Core ---
     DOMAIN: "open-politics.org"
     ENVIRONMENT: "production"
+    PROJECT_NAME: "HQ"
+    ORGANISATION_NAME: "Open Politics Project"
+    STACK_NAME: "open-politics-prod-stack"
     FRONTEND_PORT: "3000"
     BACKEND_PORT: "8022"
-    REDIS_PORT: "6379"
-    PROJECT_NAME: "Open Politics Project"
-    STACK_NAME: "open-politics-prod-stack"
-    BACKEND_CORS_ORIGINS: "http://localhost,http://localhost:5173,https://localhost,https://localhost:3000,http://localhost.tiangolo.com,http://open-politics.org,https://open-politics.org,https://open-politics.org:80,https://open-politics.org:443"
+    BACKEND_CORS_ORIGINS: "http://localhost,http://localhost:5173,https://localhost,https://localhost:3000,http://open-politics.org,https://open-politics.org,https://open-politics.org:80,https://open-politics.org:443"
+
+    # --- Deployment capabilities ---
+    # Comma-separated: organize, ingest, compute, delete, setup. "*" = all, "" = readonly.
+    DEPLOYMENT_CAPABILITIES: "*"
+
+    # --- Storage ---
+    # "minio" | "s3" | "local_fs"
+    STORAGE_PROVIDER_TYPE: "minio"
+    LOCAL_STORAGE_BASE_PATH: "/data/storage"
+    ALLOWED_IMPORT_PATHS: "/data/import,/data/storage/datasets"
+    STORAGE_BROWSE_MAX_COUNT_FILES: "5000"
     MINIO_ENDPOINT: ""
     MINIO_HOST: "minio"
     MINIO_PORT: "9000"
     MINIO_SECURE: "true"
+
+    # --- Redis ---
+    REDIS_PORT: "6379"
+
+    # --- Content processing ---
+    PROCESS_CONTENT_RATE_LIMIT: "50/s"
+    PDF_MAX_PAGES: "0"
+    # Enrichers: comma-separated names, "*" for all, "" = none.
+    # Values: hash, ocr, geocoding, language_detection, quality_score, embedding
+    ENABLED_ENRICHERS: ""
+
+    # --- Annotation processing ---
+    DEFAULT_ANNOTATION_CONCURRENCY: "5"
+    MAX_ANNOTATION_CONCURRENCY: "20"
+    ENABLE_PARALLEL_ANNOTATION_PROCESSING: "true"
+
+    # --- Geocoding ---
+    NOMINATIM_BASE_URL: "http://nominatim:8080"
+    GEOCODING_USER_AGENT: "OpenPoliticsHQ/1.0"
+
+    # --- Provider types ---
+    OCR_PROVIDER_TYPE: "tesseract"
+    WEB_SEARCH_PROVIDER_TYPE: "tavily"
+    SCRAPING_PROVIDER_TYPE: "newspaper4k"
+    OLLAMA_BASE_URL: "http://ollama:11434"
+    OLLAMA_DEFAULT_MODEL: "llama3"
+
   secrets:
     SECRET_KEY: ""
-    FIRST_SUPERUSER: "jimvw@open-politics.org"
+    ENCRYPTION_MASTER_KEY: ""
+    FIRST_SUPERUSER: ""
     FIRST_SUPERUSER_PASSWORD: ""
     USERS_OPEN_REGISTRATION: "false"
+
+    # --- Postgres ---
     POSTGRES_SERVER: "postgres"
     POSTGRES_DB: "opp_app_users_prod"
     POSTGRES_USER: "postgres"
     POSTGRES_PORT: "5432"
     POSTGRES_PASSWORD: ""
     POSTGRES_SSL_MODE: ""
-    REDIS_HOST: redis
-    REDIS_PORT: 6379
-    REDIS_DB: 0
+
+    # --- Redis ---
+    REDIS_HOST: "redis"
+    REDIS_PORT: "6379"
+    REDIS_DB: "0"
     REDIS_PASSWORD: ""
-    # Optional: Override with full URL (takes precedence if set)
-    ## Optional Redis override
-    #REDIS_URL=redis://my-redis-host.aws.com:6379/0
-    # or rediss://... for TLS
-    # or redis://user:pass@host:port/db for auth
+
+    # --- Discourse SSO ---
     DISCOURSE_CONNECT_ENABLED: "false"
     DISCOURSE_CONNECT_SECRET: ""
     DISCOURSE_CONNECT_URL: ""
-    MAPBOX_ACCESS_TOKEN: ""
+
+    # --- MinIO / S3 ---
     MINIO_ROOT_USER: ""
     MINIO_ROOT_PASSWORD: ""
     MINIO_BUCKET_NAME: "hq-user-storage-prod"
@@ -143,27 +192,40 @@ env:
     MINIO_ACCESS_KEY: ""
     MINIO_SECRET_KEY: ""
     MINIO_USE_SSL: "true"
-    MINIO_SITE_NAME: "nbg1"
-    MINIO_SITE_REGION: "eu-central"
-    SMTP_HOST: "smtp.protonmail.ch"
+
+    # --- SMTP ---
+    SMTP_HOST: ""
     SMTP_PORT: "587"
     SMTP_TLS: "true"
+    SMTP_SSL: "false"
     SMTP_USER: ""
     SMTP_PASSWORD: ""
     EMAILS_FROM_EMAIL: ""
-    SMTP_SSL: "false"
     EMAILS_FROM_NAME: "HQ"
     REQUIRE_EMAIL_VERIFICATION: "false"
-    SENTRY_DSN: ""
+
+    # --- Mapbox ---
+    MAPBOX_ACCESS_TOKEN: ""
+
+    # --- AI provider keys ---
     OPENAI_API_KEY: ""
     GOOGLE_API_KEY: ""
+    ANTHROPIC_API_KEY: ""
+    MISTRAL_API_KEY: ""
     TAVILY_API_KEY: ""
+    JINA_API_KEY: ""
+    VOYAGE_API_KEY: ""
+
+    # --- Observability ---
+    SENTRY_DSN: ""
+
+    # --- Misc ---
     WIPE_DB: "False"
 
 # Traefik Configuration (k3s native)
 # Using Traefik with built-in ACME for maximum efficiency - no cert-manager needed!
 
-# MinIO Configuration (local deployment)
+# MinIO Configuration (optional — for STORAGE_PROVIDER_TYPE=minio)
 minio:
   service:
     type: ClusterIP
@@ -207,6 +269,13 @@ resources:
     requests:
       cpu: 500m
       memory: 1Gi
+  celeryBeat:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
   postgres:
     limits:
       cpu: 1000m
@@ -222,7 +291,7 @@ resources:
       cpu: 100m
       memory: 512Mi
 
-
+# Nominatim geocoding (optional — disabled by default, heavy import)
 nominatim:
   service:
     type: ClusterIP
