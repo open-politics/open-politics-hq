@@ -1,0 +1,111 @@
+[project]
+name = "open-politics-hq"
+version = "0.1.0"
+description = "Data infrastructure for people who work in the public interest"
+requires-python = ">=3.13"
+
+dependencies = [
+    # --- web framework ---
+    "fastapi[standard]>=0.115",
+    "uvicorn[standard]>=0.34",
+    "gunicorn>=23.0",
+    "python-multipart>=0.0.18",
+
+    # --- database ---
+    "sqlmodel>=0.0.22",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.14",
+    "pgvector>=0.3",
+
+    # --- auth & security ---
+    "python-jose[cryptography]>=3.3",
+    "bcrypt>=4.2",
+    "cryptography>=44.0",
+    "werkzeug>=3.0",
+
+    # --- async task queue ---
+    "celery>=5.4",
+    "redis>=5.2",
+    "croniter>=6.0",
+    "sqlalchemy-celery-beat>=0.8",
+    "eventlet>=0.37",
+
+    # --- http clients ---
+    "httpx>=0.28",
+    "aiohttp>=3.11",
+    "requests>=2.32",
+    "tenacity>=9.0",
+
+    # --- content processing ---
+    "pymupdf>=1.25",
+    "newspaper4k>=0.9",
+    "feedparser>=6.0",
+    "openpyxl>=3.1",
+    "lxml[html_clean]>=5.3",
+    "beautifulsoup4>=4.12",
+
+    # --- LLM / AI providers ---
+    "google-genai>=1.5",
+
+    # --- search & scraping ---
+    "tavily-python>=0.5",
+
+    # --- storage ---
+    "minio>=7.2",
+
+    # --- templating ---
+    "jinja2>=3.1",
+
+    # --- data analysis ---
+    "pandas>=2.2",
+
+    # --- mcp ---
+    "fastmcp>=2.3",
+
+    # --- pydantic ---
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "pytest-celery>=1.1",
+    "pytest-mock>=3.14",
+    "mypy>=1.14",
+    "ruff>=0.9",
+    "pre-commit>=4.0",
+    "types-passlib>=1.7",
+]
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+# --- tool config ---
+
+[tool.pytest.ini_options]
+testpaths = ["app/tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
