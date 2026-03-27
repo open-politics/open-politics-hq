@@ -1,0 +1,146 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      PYTHONPATH: ${{ github.workspace }}/backend
+      # Minimal config — unit tests don't hit real services
+      ENVIRONMENT: local
+      SECRET_KEY: test-secret
+      ENCRYPTION_MASTER_KEY: dGVzdGtleQ==
+      POSTGRES_SERVER: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: unused
+      POSTGRES_USER: unused
+      POSTGRES_PASSWORD: unused
+      REDIS_HOST: localhost
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      REDIS_PASSWORD: ""
+      STORAGE_PROVIDER_TYPE: local_fs
+      LOCAL_STORAGE_BASE_PATH: /tmp/test-storage
+      FIRST_SUPERUSER: unused@test.local
+      FIRST_SUPERUSER_PASSWORD: unused
+      ENABLED_ENRICHERS: ""
+      DOMAIN: localhost
+      PROJECT_NAME: HQ
+      BACKEND_PORT: "8022"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv pip install --system --no-cache-dir -e ".[dev]"
+
+      - name: Run unit tests
+        run: >-
+          pytest -v
+          app/tests/test_config.py
+          app/tests/test_content_types.py
+          app/tests/test_filters.py
+          app/tests/test_task_decorator.py
+          app/tests/test_access_control.py
+
+  functional-tests:
+    name: Functional tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      PYTHONPATH: ${{ github.workspace }}/backend
+      ENVIRONMENT: local
+      SECRET_KEY: test-secret-key-not-for-production
+      ENCRYPTION_MASTER_KEY: dGVzdC1lbmNyeXB0aW9uLWtleS1ub3QtZm9yLXByb2Q=
+      FIRST_SUPERUSER: admin@test.local
+      FIRST_SUPERUSER_PASSWORD: testpassword123
+      USERS_OPEN_REGISTRATION: "True"
+      BACKEND_PORT: "8022"
+      BACKEND_CORS_ORIGINS: "http://localhost"
+      DOMAIN: localhost
+      PROJECT_NAME: HQ
+      STACK_NAME: hq-test
+      # Services on localhost via GHA service containers
+      POSTGRES_SERVER: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: test_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: testpassword
+      REDIS_HOST: localhost
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      REDIS_PASSWORD: ""
+      # Storage
+      STORAGE_PROVIDER_TYPE: local_fs
+      LOCAL_STORAGE_BASE_PATH: /tmp/test-storage
+      ENABLED_ENRICHERS: ""
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv pip install --system --no-cache-dir -e ".[dev]"
+
+      - name: Create storage directory
+        run: mkdir -p /tmp/test-storage
+
+      - name: Run database migrations
+        run: alembic upgrade head
+
+      - name: Run functional tests
+        run: >-
+          pytest -v
+          app/tests/test_tree.py
+          app/tests/test_user_operations.py
+          app/tests/test_processing_pipeline.py
+          app/tests/test_feature_workflows.py
