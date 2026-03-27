@@ -410,6 +410,14 @@ class Tavily:
     web_search = Capability("web_search_tavily.TavilyWebSearchProvider")
 
 
+@provider
+class SearXNG:
+    key = "searxng"
+    base_url = Setting("SEARXNG_BASE_URL", default="http://searxng:8080")
+    contexts = {"local", "self_hosted"}
+    web_search = Capability("web_search_searxng.SearXNGWebSearchProvider")
+
+
 # ── Convenience getters ──────────────────────────────────────────────────────
 
 def get_storage_provider(settings: AppSettings):
@@ -422,7 +430,8 @@ def get_scraping_provider(settings: AppSettings):
 
 
 def get_web_search_provider(settings: AppSettings):
-    return get_provider(WebSearchProvider, "tavily", settings)
+    provider_type = getattr(settings, "WEB_SEARCH_PROVIDER_TYPE", "searxng").lower()
+    return get_provider(WebSearchProvider, provider_type, settings)
 
 
 def get_embedding_provider(settings: AppSettings, type_key: str = "ollama"):

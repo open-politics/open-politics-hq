@@ -148,8 +148,9 @@ class Bundle(SQLModel, table=True):
     asset_count: Optional[int] = Field(default=0)
     version: str = Field(default="1.0")
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
-    parent_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id", index=True)
+    parent_bundle_id: int = Field(default=0, index=True)
     child_bundle_count: Optional[int] = Field(default=0)
+    sealed: bool = Field(default=False)
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -157,15 +158,7 @@ class Bundle(SQLModel, table=True):
 
     infospace: Optional[Infospace] = Relationship(back_populates="bundles")
     user: Optional[User] = Relationship(back_populates="bundles")
-    parent_bundle: Optional["Bundle"] = Relationship(
-        back_populates="child_bundles",
-        sa_relationship_kwargs=dict(foreign_keys="[Bundle.parent_bundle_id]", remote_side="Bundle.id"),
-    )
-    child_bundles: List["Bundle"] = Relationship(
-        back_populates="parent_bundle",
-        sa_relationship_kwargs=dict(foreign_keys="[Bundle.parent_bundle_id]"),
-    )
-    __table_args__ = (UniqueConstraint("infospace_id", "name", "version"),)
+    __table_args__ = (UniqueConstraint("infospace_id", "parent_bundle_id", "name", "version"),)
 
 
 # ─── Assets ───
@@ -193,11 +186,10 @@ class Asset(SQLModel, table=True):
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: Optional[int] = Field(default=None, foreign_key="user.id")
     source_id: Optional[int] = Field(default=None, foreign_key="source.id")
-    # Multi-membership: asset can belong to many bundles. NULL = unorganized.
-    # All mutations MUST use raw SQL array_append/array_remove (no ORM read-modify-write).
-    bundle_ids: Optional[List[int]] = Field(
-        default=None,
-        sa_column=Column("bundle_ids", PG_ARRAY(sa.Integer), nullable=True),
+    # Multi-membership: asset can belong to many bundles. {0} = root.
+    # All mutations MUST use core.tree (no ORM read-modify-write).
+    bundle_ids: List[int] = Field(
+        sa_column=Column("bundle_ids", PG_ARRAY(sa.Integer), nullable=False, server_default=text("ARRAY[0]::int[]")),
     )
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     event_timestamp: Optional[datetime] = Field(default=None)
@@ -254,7 +246,7 @@ class Asset(SQLModel, table=True):
         Index("ix_asset_enrichment_resolved", "enrichment_resolved", postgresql_using="gin"),
         Index("ix_asset_bundle_ids", "bundle_ids", postgresql_using="gin"),
         CheckConstraint(
-            "bundle_ids IS NULL OR array_length(bundle_ids, 1) > 0",
+            "array_length(bundle_ids, 1) > 0",
             name="ck_asset_bundle_ids_no_empty",
         ),
     )

@@ -347,12 +347,8 @@ class RSSHandler(BaseHandler):
                     if bundle_id and feed_assets:
                         root_ids = [a.id for a in feed_assets if a.parent_asset_id is None]
                         if root_ids:
-                            context.bundle_service.add_assets_to_bundle_validated(
-                                bundle_id=bundle_id,
-                                asset_ids=root_ids,
-                                infospace_id=context.infospace_id,
-                                include_children=True,
-                            )
+                            from app.core.tree import copy as tree_copy
+                            tree_copy(context.session, asset_ids=root_ids, to=bundle_id)
 
                 except Exception as e:
                     logger.error(

@@ -962,6 +962,7 @@ class AnnotationService:
             # ═══ NEW: Continuous run support ═══
             source_bundle_id=getattr(run_in, 'source_bundle_id', None),
             follow_on_version_change=getattr(run_in, 'follow_on_version_change', False) or False,
+            graph_config=getattr(run_in, 'graph_config', None),
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc)
         )

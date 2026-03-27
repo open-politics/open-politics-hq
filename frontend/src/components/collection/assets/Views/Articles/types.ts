@@ -33,6 +33,8 @@ export interface ArticleViewProps {
   onAssetClick?: (asset: AssetRead) => void;
   className?: string;
   enableHighlighting?: boolean;
+  /** When true, body text is edited elsewhere (e.g. detail inline panel); hide rendered article body */
+  hideMainBody?: boolean;
 }
 
 export interface ArticleRendererProps {

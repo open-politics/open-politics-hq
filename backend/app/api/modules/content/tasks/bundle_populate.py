@@ -54,16 +54,9 @@ def populate_bundle_from_query(ctx: TaskContext, bundle_ids: list[int]):
             if not asset_ids:
                 continue
 
-            # Use array_append pattern — "Add to" semantics (assets keep existing memberships)
-            session.execute(
-                text(
-                    "UPDATE asset SET bundle_ids = array_append(COALESCE(bundle_ids, ARRAY[]::int[]), :bid) "
-                    "WHERE id = ANY(:ids) "
-                    "AND NOT (COALESCE(bundle_ids, ARRAY[]::int[]) @> ARRAY[:bid]::int[])"
-                ),
-                {"bid": bundle_id, "ids": asset_ids},
-            )
-            bundle.asset_count = len(asset_ids)
+            from app.core.tree import copy as tree_copy
+            result = tree_copy(session, asset_ids=asset_ids, to=bundle_id)
+            bundle.asset_count = result.assets
             session.commit()
 
             ctx.stat("bundles_populated")

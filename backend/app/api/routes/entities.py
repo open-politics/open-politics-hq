@@ -1,7 +1,7 @@
 """Routes for entity canonical management."""
 import logging
 from typing import Any, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 
 from app.models import EntityCanonical, EntityEditLog, FragmentCuration, KnowledgeGraph
@@ -9,8 +9,11 @@ from app.api.modules.graph.schemas import (
     EntityCanonicalRead,
     EntityCanonicalCreate,
     EntityCanonicalUpdate,
+    FindDuplicatesRequest,
+    FindDuplicatesResponse,
     MergeEntitiesRequest,
     ResolveEntitiesRequest,
+    SimilarPairRead,
 )
 from app.api.dependency_injection import get_db
 from app.api.modules.identity_infospace_user.access import (
@@ -357,3 +360,91 @@ async def trigger_resolution(
         "resolved_count": len(resolved),
         "resolved": resolved
     }
+
+
+@router.post("/find-duplicates")
+async def find_entity_duplicates(
+    *,
+    access: Access = Requires(),
+    request: FindDuplicatesRequest,
+    db: Session = Depends(get_db),
+) -> FindDuplicatesResponse:
+    """
+    Find potential duplicate strings using the infospace's configured embedding provider.
+
+    Send a list of entity names (e.g. extracted from run-scoped triplets) and get back
+    pairs whose cosine similarity meets the threshold. No side-effects — inspect results
+    and feed accepted merges into the curation request's entity_merges field.
+    """
+    from app.api.modules.identity_infospace_user.models import Infospace
+    from app.api.modules.foundation_service_providers import registry
+    from app.api.modules.foundation_service_providers.base import EmbeddingProvider
+    from app.core.similarity import find_duplicates
+    from app.core.config import settings
+
+    infospace = db.get(Infospace, access.infospace_id)
+    if not infospace or not infospace.embedding_configured:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No embedding provider configured for this infospace",
+        )
+
+    sel = infospace.get_embedding_selection()
+    provider = registry.resolve(EmbeddingProvider, sel.provider_key, settings)
+    if not provider:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Embedding provider '{sel.provider_key}' is not available",
+        )
+
+    model_name = sel.model_name
+
+    async def embed(texts: list[str]) -> list[list[float]]:
+        return await provider.embed_texts(texts, model_name)
+
+    try:
+        pairs = await find_duplicates(request.items, embed, request.threshold)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+
+    return FindDuplicatesResponse(
+        pairs=[
+            SimilarPairRead(
+                a_index=p.a_index, b_index=p.b_index,
+                a_item=p.a_item, b_item=p.b_item,
+                similarity=p.similarity,
+            )
+            for p in pairs
+        ],
+        items_count=len(request.items),
+        unique_count=len(set(i.strip().lower() for i in request.items)),
+    )
+
+
+@router.get("/{entity_id}/neighborhood")
+def get_entity_neighborhood(
+    *,
+    access: Access = Requires(),
+    entity_id: int,
+    depth: int = Query(default=1, ge=1, le=3),
+    limit: int = Query(default=50, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> Any:
+    """
+    Get entity neighborhood via BFS traversal on materialized GraphEdge table.
+    Returns nodes and edges reachable from the given entity up to `depth` hops.
+    """
+    infospace_id = access.infospace_id
+    entity = db.get(EntityCanonical, entity_id)
+    if not entity or entity.infospace_id != infospace_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
+    access.require_in_scope("entity_canonical_ids", entity_id)
+
+    from app.api.modules.graph.services import GraphService
+    graph_service = GraphService(session=db)
+    return graph_service.get_entity_neighborhood(
+        entity_id=entity_id,
+        depth=depth,
+        limit=limit,
+        infospace_id=infospace_id,
+    )

@@ -76,8 +76,8 @@ function InspectorPanelSlot() {
   const title = viewType === 'bundle' ? 'Bundle Details' : 'Asset Details';
   
   return (
-    <div className="h-full flex flex-col bg-background border-l">
-      <div className="flex items-center justify-between p-3 border-b bg-muted/30">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden border-l bg-background">
+      <div className="flex shrink-0 items-center justify-between border-b bg-muted/30 p-3">
         <h3 className="font-semibold text-sm">{title}</h3>
         <button
           onClick={closeDetailOverlay}
@@ -86,7 +86,7 @@ function InspectorPanelSlot() {
           <X className="h-4 w-4" />
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <TextSpanHighlightProvider>
           {viewType === 'bundle' && selectedBundleId ? (
             <BundleDetailView
@@ -119,14 +119,14 @@ function MobileInspectorSheet() {
   
   return (
     <Sheet open={isOpen} onOpenChange={(open) => !open && closeDetailOverlay()}>
-      <SheetContent side="right" className="w-[90vw] sm:w-[400px] p-0">
-        <SheetHeader className="p-4 border-b">
+      <SheetContent side="right" className="flex h-full w-[90vw] flex-col p-0 sm:w-[400px]">
+        <SheetHeader className="shrink-0 border-b p-4">
           <SheetTitle>{title}</SheetTitle>
           <SheetDescription className="sr-only">
             View {viewType === 'bundle' ? 'bundle' : 'asset'} details
           </SheetDescription>
         </SheetHeader>
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <TextSpanHighlightProvider>
             {viewType === 'bundle' && selectedBundleId ? (
               <BundleDetailView
@@ -169,7 +169,7 @@ function MainContentWithInspector({
       <>
         <main 
           ref={mainContentRef}
-          className="flex-1 h-full relative z-10 focus:outline-none @container" 
+          className="relative z-10 flex h-full min-h-0 flex-1 flex-col overflow-hidden focus:outline-none @container" 
           tabIndex={-1}
         >
           {children}
@@ -183,17 +183,17 @@ function MainContentWithInspector({
   return (
     <ResizablePanelGroup 
       direction="horizontal" 
-      className="flex-1 h-full relative z-10"
+      className="relative z-10 flex h-full min-h-0 flex-1"
       autoSaveId={null}
     >
       <ResizablePanel 
         defaultSize={isOpen ? 60 : 100} 
         minSize={30}
-        className="overflow-hidden"
+        className="min-h-0 overflow-hidden"
       >
         <main 
           ref={mainContentRef}
-          className="h-full overflow-y-auto focus:outline-none @container" 
+          className="h-full min-h-0 overflow-y-auto focus:outline-none @container" 
           tabIndex={-1}
         >
           {children}
@@ -207,7 +207,7 @@ function MainContentWithInspector({
             defaultSize={40} 
             minSize={20} 
             maxSize={60}
-            className="overflow-hidden"
+            className="min-h-0 overflow-hidden"
           >
             <InspectorPanelSlot />
           </ResizablePanel>

@@ -707,15 +707,8 @@ class SourceService:
                 self.session.add(asset)
                 self.session.flush()
                 if source.output_bundle_id:
-                    self.session.execute(
-                        text("UPDATE asset SET bundle_ids = array_append(COALESCE(bundle_ids, ARRAY[]::int[]), :bid) WHERE id = :aid AND (bundle_ids IS NULL OR NOT bundle_ids @> ARRAY[:bid]::int[])"),
-                        {"bid": source.output_bundle_id, "aid": asset.id},
-                    )
-                    bundle = self.session.get(Bundle, source.output_bundle_id)
-                    if bundle:
-                        bundle.asset_count = (bundle.asset_count or 0) + 1
-                        bundle.updated_at = datetime.now(timezone.utc)
-                        self.session.add(bundle)
+                    from app.core.tree import copy as tree_copy
+                    tree_copy(self.session, asset_ids=[asset.id], to=source.output_bundle_id)
                 ingested_count += 1
 
             source.cursor_state.update(result.cursor_update)

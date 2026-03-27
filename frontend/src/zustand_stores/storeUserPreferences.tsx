@@ -2,12 +2,28 @@ import { create } from 'zustand';
 import { UsersService } from '@/client';
 import { toast } from 'sonner';
 
+// ─── Channel: a named feed view backed by an AQL query ───
+
+export interface Channel {
+  id: string;
+  name: string;
+  icon?: string;               // emoji or lucide icon name
+  bundleIds: number[];          // which bundles this channel draws from
+  query?: string;               // optional AQL refinement (kind filters, etc.)
+  sort: string;                 // AQL sort: 'created_at_desc' | 'created_at_asc' | 'title' | 'relevance'
+  view: 'list' | 'card' | 'bento';
+}
+
 export interface UserUIPreferences {
   globe_enabled: boolean;
   docs_banner_dismissed: boolean;
   tutorial_completed: boolean;
   tutorial_step: number | null;
   custom_background_url: string | null;
+  channels: Channel[];
+  active_channel_id: string | null;  // currently selected channel, null = "All"
+  default_channel_id: string | null; // landing channel on load, null = "All"
+  favorites_view: 'list' | 'card' | 'bento'; // display mode for the Favorites channel
 }
 
 const DEFAULT_PREFERENCES: UserUIPreferences = {
@@ -16,6 +32,10 @@ const DEFAULT_PREFERENCES: UserUIPreferences = {
   tutorial_completed: false,
   tutorial_step: null,
   custom_background_url: null,
+  channels: [],
+  active_channel_id: null,
+  default_channel_id: null,
+  favorites_view: 'list',
 };
 
 interface UserPreferencesState {
@@ -41,6 +61,12 @@ interface UserPreferencesState {
   // Reset to defaults
   resetPreferences: () => Promise<void>;
   
+  // Channel management
+  addChannel: (channel: Omit<Channel, 'id'>) => Promise<void>;
+  updateChannel: (id: string, updates: Partial<Omit<Channel, 'id'>>) => Promise<void>;
+  removeChannel: (id: string) => Promise<void>;
+  setActiveChannel: (id: string | null) => void;
+
   // Background image helpers
   uploadBackgroundImage: (file: File) => Promise<void>;
   deleteBackgroundImage: () => Promise<void>;
@@ -165,6 +191,35 @@ export const useUserPreferencesStore = create<UserPreferencesState>()((set, get)
       
       toast.error(message);
     }
+  },
+
+  // ─── Channel management ───
+
+  addChannel: async (channel) => {
+    const newChannel: Channel = { ...channel, id: crypto.randomUUID().slice(0, 8) };
+    const channels = [...get().preferences.channels, newChannel];
+    await get().updatePreference('channels', channels);
+  },
+
+  updateChannel: async (id, updates) => {
+    const channels = get().preferences.channels.map((ch) =>
+      ch.id === id ? { ...ch, ...updates } : ch
+    );
+    await get().updatePreference('channels', channels);
+  },
+
+  removeChannel: async (id) => {
+    const channels = get().preferences.channels.filter((ch) => ch.id !== id);
+    const prefs: Partial<UserUIPreferences> = { channels };
+    if (get().preferences.active_channel_id === id) {
+      prefs.active_channel_id = null;
+    }
+    await get().updatePreferences(prefs);
+  },
+
+  setActiveChannel: (id) => {
+    // Local-only — no need to persist which channel is open
+    set({ preferences: { ...get().preferences, active_channel_id: id } });
   },
 
   // Helper to upload background image

@@ -7,10 +7,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2, GitMerge } from 'lucide-react';
-import { AnnotationSchemaRead, AssetRead } from '@/client';
+import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2, GitMerge, Database } from 'lucide-react';
+import { AnnotationSchemaRead, AssetRead, KnowledgeGraphRead } from '@/client';
 import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
-import { AnalysisAdaptersService } from '@/client';
+import { AnalysisAdaptersService, KnowledgeGraphsService, AnnotationsService } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
 import { VariableSplittingConfig, applySplittingToResults } from './VariableSplittingControls';
@@ -23,6 +23,9 @@ import {
 } from '@/lib/annotations/utils';
 import type { GraphEdits } from '@/lib/annotations/types';
 import { D3ForceGraph, GraphNode, GraphEdge, aggregatorResponseToGraphData, GraphViewConfig, defaultGraphViewConfig, GraphSettingsPopover } from '@/components/collection/graph';
+
+/** Radix Select forbids `value=""` on items; use this for “infospace default” instead of clearing the select. */
+const CURATE_TARGET_GRAPH_INFOSPACE_DEFAULT = '__infospace_default__';
 
 // Time filtering utility function (copied from AnnotationResultsChart.tsx)
 const getTimestamp = (result: FormattedAnnotation, assetsMap: Map<number, AssetRead>, timeAxisConfig: TimeAxisConfig | null): Date | null => {
@@ -137,6 +140,12 @@ export default function AnnotationResultsGraph({
   const [mergeSelectedIds, setMergeSelectedIds] = useState<string[]>([]);
   const [mergeKeepId, setMergeKeepId] = useState<string | null>(null);
   const [mergeKeepType, setMergeKeepType] = useState<string | null>(null);
+
+  // Curation state
+  const [showCuratePanel, setShowCuratePanel] = useState(false);
+  const [isCurating, setIsCurating] = useState(false);
+  const [availableGraphs, setAvailableGraphs] = useState<KnowledgeGraphRead[]>([]);
+  const [targetGraphId, setTargetGraphId] = useState<string>(CURATE_TARGET_GRAPH_INFOSPACE_DEFAULT);
 
   // NEW: Apply time frame filtering and variable splitting
   const assetsMap = useMemo(() => new Map(assets.map(asset => [asset.id, asset])), [assets]);
@@ -598,6 +607,95 @@ export default function AnnotationResultsGraph({
     }
   };
 
+  // Load available knowledge graphs when curate panel opens
+  useEffect(() => {
+    if (showCuratePanel && activeInfospace?.id) {
+      KnowledgeGraphsService.listKnowledgeGraphs({ infospaceId: activeInfospace.id })
+        .then(graphs => setAvailableGraphs(graphs as KnowledgeGraphRead[]))
+        .catch(() => setAvailableGraphs([]));
+    }
+  }, [showCuratePanel, activeInfospace?.id]);
+
+  // Build annotation → triplet fragment paths map for curation
+  const curationData = useMemo(() => {
+    if (!selectedSchemaId) return { annotations: [], totalTriplets: 0 };
+    const schemaId = parseInt(selectedSchemaId);
+    const annotations: { id: number; paths: string[] }[] = [];
+    let totalTriplets = 0;
+
+    for (const result of resultsForGraph) {
+      if (result.schema_id !== schemaId) continue;
+      const value = result.value;
+      if (!value || typeof value !== 'object') continue;
+
+      // Find triplets array (handles document nesting)
+      const doc = (value as any).document || value;
+      const triplets = doc?.triplets;
+      if (!Array.isArray(triplets) || triplets.length === 0) continue;
+
+      const paths = triplets.map((_: any, i: number) => `triplets[${i}]`);
+      annotations.push({ id: result.id, paths });
+      totalTriplets += paths.length;
+    }
+    return { annotations, totalTriplets };
+  }, [resultsForGraph, selectedSchemaId]);
+
+  // Convert GraphEdits merges to entity_merges format for the curate request
+  const buildEntityMerges = useCallback(() => {
+    if (!graphEdits?.mergedNodes?.length) return undefined;
+    return graphEdits.mergedNodes.map(merge => {
+      const keepNode = nodes.find(n => n.id === merge.targetNodeId);
+      const mergedNodes = merge.mergedNodeIds.map(id => nodes.find(n => n.id === id)).filter(Boolean);
+      return {
+        keep: keepNode?.label || '',
+        names: [keepNode?.label || '', ...mergedNodes.map(n => n!.label)],
+        type: keepNode?.type || undefined,
+      };
+    }).filter(m => m.keep);
+  }, [graphEdits, nodes]);
+
+  // Execute curation
+  const handleCurate = useCallback(async () => {
+    if (!activeInfospace?.id || curationData.annotations.length === 0) return;
+    setIsCurating(true);
+    const entityMerges = buildEntityMerges();
+    const graphId =
+      targetGraphId && targetGraphId !== CURATE_TARGET_GRAPH_INFOSPACE_DEFAULT
+        ? parseInt(targetGraphId, 10)
+        : undefined;
+    let totalCurated = 0;
+    let totalEdges = 0;
+    let failures = 0;
+
+    for (const ann of curationData.annotations) {
+      try {
+        const res = await AnnotationsService.curateFragments({
+          infospaceId: activeInfospace.id,
+          annotationId: ann.id,
+          requestBody: {
+            fragment_paths: ann.paths,
+            graph_id: graphId,
+            entity_merges: entityMerges,
+            status: 'curated',
+          } as any,
+        });
+        totalCurated += (res as any)?.curated || 0;
+        totalEdges += (res as any)?.edges_created || 0;
+      } catch (e: any) {
+        console.error(`Failed to curate annotation ${ann.id}:`, e);
+        failures++;
+      }
+    }
+
+    setIsCurating(false);
+    setShowCuratePanel(false);
+    if (failures === 0) {
+      toast.success(`Curated ${totalCurated} triplets, ${totalEdges} edges created`);
+    } else {
+      toast.warning(`Curated ${totalCurated} triplets (${failures} annotations failed)`);
+    }
+  }, [activeInfospace?.id, curationData, buildEntityMerges, targetGraphId]);
+
   // Get connected node IDs for highlighting
   const connectedNodeIds = useMemo(() => {
     if (!selectedNodeId) return [];
@@ -732,6 +830,17 @@ export default function AnnotationResultsGraph({
         >
           <Download className="h-4 w-4 mr-2" />
           Export
+        </Button>
+        )}
+
+        {graphData && curationData.totalTriplets > 0 && (
+        <Button
+          variant="default"
+          size="sm"
+          onClick={() => setShowCuratePanel(true)}
+        >
+          <Database className="h-4 w-4 mr-2" />
+          Curate ({curationData.totalTriplets})
         </Button>
         )}
 
@@ -1085,6 +1194,66 @@ export default function AnnotationResultsGraph({
               </Card>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Curate to Graph Panel */}
+      {showCuratePanel && (
+        <div className="absolute inset-0 bg-black/30 z-30 flex items-center justify-center">
+          <Card className="w-[420px] shadow-xl">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center justify-between">
+                Curate to Knowledge Graph
+                <Button variant="ghost" size="sm" onClick={() => setShowCuratePanel(false)}>
+                  <X className="h-4 w-4" />
+                </Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="text-sm text-muted-foreground">
+                {curationData.totalTriplets} triplets from {curationData.annotations.length} annotations
+                {graphEdits?.mergedNodes?.length ? (
+                  <span className="block text-blue-600 mt-1">
+                    {graphEdits.mergedNodes.length} merge(s) will be applied during resolution
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Target Graph (optional)</Label>
+                <Select value={targetGraphId} onValueChange={setTargetGraphId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Infospace default" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={CURATE_TARGET_GRAPH_INFOSPACE_DEFAULT}>Infospace default</SelectItem>
+                    {availableGraphs.map(g => (
+                      <SelectItem key={g.id} value={g.id.toString()}>
+                        {g.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button
+                  className="flex-1"
+                  disabled={isCurating || curationData.totalTriplets === 0}
+                  onClick={handleCurate}
+                >
+                  {isCurating ? (
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Curating...</>
+                  ) : (
+                    <><Database className="h-4 w-4 mr-2" />Curate All</>
+                  )}
+                </Button>
+                <Button variant="outline" onClick={() => setShowCuratePanel(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 

@@ -179,6 +179,23 @@ class AppSettings(BaseSettings):
     # Beat interval (seconds) for dispatch_tasks. Default 120 (2 min).
     DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS: int = Field(default=120, env="DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS")
 
+    # Deployment capability ceiling: comma-separated capability names, "*" for all, empty = readonly.
+    # Intersected with per-user capabilities in Requires(). An owner on a readonly deployment gets no capabilities.
+    # Values: organize, ingest, compute, delete, setup
+    DEPLOYMENT_CAPABILITIES: str = Field(default="*", env="DEPLOYMENT_CAPABILITIES")
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def deployment_capability_names(self) -> frozenset:
+        """Parse DEPLOYMENT_CAPABILITIES into a frozenset of capability name strings.
+        '*' = all known capabilities. Empty string = none (readonly)."""
+        raw = self.DEPLOYMENT_CAPABILITIES.strip()
+        if raw == "*":
+            return frozenset({"organize", "ingest", "compute", "delete", "setup"})
+        if not raw:
+            return frozenset()
+        return frozenset(n.strip() for n in raw.split(",") if n.strip())
+
     # === Provider Access Control ===
     # Per-provider access levels, set via PROVIDER_ACCESS_<CAPABILITY>_<TYPE_KEY> env vars.
     # Capability names match CAPABILITIES dict: language, embedding, ocr, geocoding, storage, scraping, web_search.
@@ -268,7 +285,7 @@ class AppSettings(BaseSettings):
     SCRAPING_PROVIDER_TYPE: str = Field(default="newspaper4k", env="SCRAPING_PROVIDER_TYPE")
 
     # --- Web Search Provider ---
-    WEB_SEARCH_PROVIDER_TYPE: Optional[str] = Field(default=None, env="WEB_SEARCH_PROVIDER_TYPE")
+    WEB_SEARCH_PROVIDER_TYPE: str = Field(default="searxng", env="WEB_SEARCH_PROVIDER_TYPE")
 
     # --- OCR Provider ---
     OCR_PROVIDER_TYPE: str = Field(default="tesseract", env="OCR_PROVIDER_TYPE")

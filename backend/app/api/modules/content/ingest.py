@@ -58,9 +58,7 @@ async def ingest(
     assets = await method(**resolved.kwargs)
 
     if bundle_id and assets:
-        context.bundle_service.add_assets_to_bundle(
-            asset_ids=[a.id for a in assets if a.parent_asset_id is None],
-            bundle_id=bundle_id,
-        )
+        from app.core.tree import copy as tree_copy
+        tree_copy(context.session, asset_ids=[a.id for a in assets if a.parent_asset_id is None], to=bundle_id)
 
     return assets

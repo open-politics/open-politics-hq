@@ -1,106 +1,93 @@
-from collections.abc import Generator
-from typing import Dict
+"""
+Shared test fixtures.
+
+Unit tests use SQLite in-memory. Only specific tables are created per-test
+module — the full app metadata uses JSONB/pgvector types that SQLite can't handle.
+
+Functional tests hitting real Postgres use ``infospace_factory`` to ensure every
+infospace created during the run is deleted on teardown — no more ghost workspaces
+polluting the infospace list.
+"""
 import pytest
-from fastapi.testclient import TestClient
-from sqlmodel import Session, delete, SQLModel
-import os
-import asyncio
-from celery.contrib.testing.worker import start_worker
-from celery.contrib.testing.app import TestApp
+from sqlmodel import Session, create_engine
 
-from app.core.config import settings
-from app.core.db import engine
-from app.core.seed import init_db
-from app.core.celery_app import celery
-from app.main import app
-from app.models import (
-    Item,
-    User,
-    Workspace,
-    DataSource,
-    ClassificationScheme,
-    ClassificationJob,
-    ClassificationResult,
-    DataRecord,
-    Dataset,
-    ShareableLink,
-    RecurringTask,
-    ClassificationField,
-)
-from app.tests.utils.user import authentication_token_from_email
-from app.tests.utils.utils import get_superuser_token_headers
-
-# Configure test Celery app
-test_celery = TestApp(celery)
-test_celery.conf.update(
-    CELERY_ALWAYS_EAGER=True,  # Tasks run synchronously
-    CELERY_TASK_EAGER_PROPAGATES=True,  # Exceptions are propagated
-)
-
-@pytest.fixture(scope="session")
-def celery_config():
-    return {
-        "broker_url": "memory://",
-        "result_backend": "cache+memory://",
-        "task_always_eager": True,
-        "task_eager_propagates": True,
-    }
-
-@pytest.fixture(scope="session")
-def celery_enable_logging():
-    return True
-
-@pytest.fixture(scope="session")
-def celery_includes():
-    return [
-        "app.api.modules.content.tasks.ingest",
-        "app.api.modules.annotation.tasks.annotate",
-    ]
-
-@pytest.fixture(scope="function")
-def db() -> Generator:
-    """
-    Create a fresh database for each test.
-    """
-    # Create all tables
-    SQLModel.metadata.create_all(engine)
-    
-    with Session(engine) as session:
-        init_db(session)
-        yield session
-        
-        # Rollback any pending changes
-        session.rollback()
-        
-        # Delete all data after each test
-        for table in reversed(SQLModel.metadata.sorted_tables):
-            session.execute(table.delete())
-        session.commit()
 
 @pytest.fixture(scope="module")
-def client() -> TestClient:
-    """Create a test client that behaves like a regular HTTP client."""
+def sqlite_engine():
+    """In-memory SQLite engine for unit tests."""
+    return create_engine("sqlite://", echo=False)
+
+
+@pytest.fixture
+def sqlite_session(sqlite_engine):
+    """Fresh SQLite session, rolled back after each test."""
+    with Session(sqlite_engine) as session:
+        yield session
+        session.rollback()
+
+
+# ─── Functional test helpers (real Postgres) ──────────────────────────────────
+
+@pytest.fixture(scope="module")
+def client():
+    """Shared TestClient for functional test modules."""
+    from fastapi.testclient import TestClient
+    from app.main import app
     return TestClient(app)
 
-@pytest.fixture(scope="module")
-def auth_headers(client: TestClient) -> dict[str, str]:
-    """Get authentication headers by making a real login request."""
-    login_data = {
-        "username": settings.FIRST_SUPERUSER,
-        "password": settings.FIRST_SUPERUSER_PASSWORD,
-    }
-    response = client.post(f"{settings.API_V1_STR}/login/access-token", data=login_data)
-    assert response.status_code == 200, f"Login failed: {response.text}"
-    
-    tokens = response.json()
-    return {"Authorization": f"Bearer {tokens['access_token']}"}
 
 @pytest.fixture(scope="module")
-def superuser_token_headers(client: TestClient) -> dict[str, str]:
-    return get_superuser_token_headers(client)
-
-@pytest.fixture(scope="module")
-def normal_user_token_headers(client: TestClient, db: Session) -> dict[str, str]:
-    return authentication_token_from_email(
-        client=client, email=settings.EMAIL_TEST_USER, db=db
+def auth(client):
+    """Authenticate as superuser. Returns (headers, user_id)."""
+    from app.core.config import settings
+    r = client.post(
+        f"{settings.API_V1_STR}/login/access-token",
+        data={
+            "username": settings.FIRST_SUPERUSER,
+            "password": settings.FIRST_SUPERUSER_PASSWORD,
+        },
     )
+    assert r.status_code == 200, f"Login failed: {r.text}"
+    headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    me = client.get(f"{settings.API_V1_STR}/users/me", headers=headers)
+    return headers, me.json()["id"]
+
+
+@pytest.fixture(scope="module")
+def headers(auth):
+    return auth[0]
+
+
+@pytest.fixture(scope="module")
+def user_id(auth):
+    return auth[1]
+
+
+@pytest.fixture(scope="module")
+def infospace_factory(client, headers):
+    """Factory that creates infospaces and deletes them all on module teardown.
+
+    Usage in a test or fixture::
+
+        iid = infospace_factory("My Workspace", owner_id=uid)
+    """
+    from app.core.config import settings
+
+    created: list[int] = []
+
+    def _create(name: str, owner_id: int) -> int:
+        r = client.post(
+            f"{settings.API_V1_STR}/infospaces",
+            headers=headers,
+            json={"name": name, "owner_id": owner_id},
+        )
+        assert r.status_code == 201, f"Infospace creation failed: {r.text[:300]}"
+        iid = r.json()["id"]
+        created.append(iid)
+        return iid
+
+    yield _create
+
+    # Teardown — delete every infospace we created (reverse order for safety)
+    for iid in reversed(created):
+        client.delete(f"{settings.API_V1_STR}/infospaces/{iid}", headers=headers)

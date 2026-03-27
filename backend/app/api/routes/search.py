@@ -187,7 +187,8 @@ async def search_and_ingest(
             if request.bundle_id and assets:
                 asset_ids = [asset.id for asset in assets if asset.parent_asset_id is None]
                 if asset_ids:
-                    context.bundle_service.add_assets_to_bundle(asset_ids, request.bundle_id)
+                    from app.core.tree import copy as tree_copy
+                    tree_copy(db, asset_ids=asset_ids, to=request.bundle_id)
                     db.commit()
                     logger.info(f"Added {len(asset_ids)} assets to bundle {request.bundle_id}")
             
@@ -364,7 +365,8 @@ async def create_assets_from_results(
         if request.bundle_id and created_assets:
             asset_ids = [a.id for a in created_assets if a.parent_asset_id is None]
             if asset_ids:
-                context.bundle_service.add_assets_to_bundle(asset_ids, request.bundle_id)
+                from app.core.tree import copy as tree_copy
+                tree_copy(db, asset_ids=asset_ids, to=request.bundle_id)
         db.commit()
         failed_count = len(request.search_results) - len(created_assets)
         

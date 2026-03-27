@@ -93,8 +93,7 @@ def list_runs(
             select(AnnotationRun)
             .where(AnnotationRun.infospace_id == infospace_id)
         )
-        if access.scope and access.scope.run_ids:
-            query = query.where(AnnotationRun.id.in_(access.scope.run_ids))
+        query = access.scope_filter(query, AnnotationRun.id, "run_ids")
         query = query.offset(skip).limit(limit)
         
         # Execute query
@@ -104,8 +103,7 @@ def list_runs(
         count_query = select(func.count(AnnotationRun.id)).where(
             AnnotationRun.infospace_id == infospace_id
         )
-        if access.scope and access.scope.run_ids:
-            count_query = count_query.where(AnnotationRun.id.in_(access.scope.run_ids))
+        count_query = access.scope_filter(count_query, AnnotationRun.id, "run_ids")
         total_count = session.exec(count_query).one()
         
         # Convert to read models and add counts if requested
@@ -154,8 +152,7 @@ def get_run(
         run = session.get(AnnotationRun, run_id)
         if not run or run.infospace_id != infospace_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-        if access.scope and access.scope.run_ids and run_id not in access.scope.run_ids:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+        access.require_in_scope("run_ids", run_id)
         
         # Convert to read model
         run_read = AnnotationRunRead.model_validate(run.model_dump(exclude_none=False))

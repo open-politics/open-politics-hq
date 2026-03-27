@@ -132,3 +132,48 @@ class ResolveEntitiesRequest(BaseModel):
     raw_entities: List[RawEntityItem]
     similarity_threshold: float = 0.85
     use_embeddings: bool = True
+
+
+class EntityMergeHint(BaseModel):
+    """A merge group from the run-scoped graph panel: names that should resolve to `keep`."""
+
+    keep: str
+    names: List[str]
+    type: Optional[str] = None
+
+
+class CurateFragmentsRequest(BaseModel):
+    """Request schema for curating annotation fragments into the knowledge graph."""
+
+    fragment_paths: List[str]
+    graph_id: Optional[int] = None
+    entity_merges: Optional[List[EntityMergeHint]] = None
+    status: str = "curated"
+
+
+# ── Deduplication ────────────────────────────────────────────────────────────
+
+
+class FindDuplicatesRequest(BaseModel):
+    """Request: find potential duplicates in a list of strings via embedding similarity."""
+
+    items: List[str]
+    threshold: float = 0.85
+
+
+class SimilarPairRead(BaseModel):
+    """A pair of items whose similarity meets the threshold."""
+
+    a_index: int
+    b_index: int
+    a_item: str
+    b_item: str
+    similarity: float
+
+
+class FindDuplicatesResponse(BaseModel):
+    """Response from the deduplication endpoint."""
+
+    pairs: List[SimilarPairRead]
+    items_count: int
+    unique_count: int

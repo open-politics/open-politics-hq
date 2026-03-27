@@ -9,10 +9,8 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
+  DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -53,15 +51,19 @@ import {
   BookOpen,
   Sparkles,
   FolderPlus,
+  Crosshair,
+  Check,
+  SquaresIntersect,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { useDebounce } from '@/hooks/useDebounce';
-import { useAssetQuery } from '@/hooks/useAssetQuery';
+import { useAssetQuery, type ChildResultGroup } from '@/hooks/useAssetQuery';
 import { useQueryFields } from '@/hooks/useQueryFields';
 import { useFeedAssets } from '@/components/collection/assets/Feed/useFeedAssets';
 import { useAssetDetail } from '@/components/collection/assets/Views/AssetDetailProvider';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
+import { useTreeStore } from '@/zustand_stores/storeTree';
 import { AssetCard } from '@/components/collection/assets/Cards';
 import {
   getAssetKindConfig,
@@ -76,6 +78,8 @@ import {
   setDateInQuery,
   getDateFromQuery,
   setRunInQuery,
+  setChildrenInQuery,
+  getChildrenFromQuery,
   insertToken,
   QUERY_EXAMPLES,
   SORT_OPTIONS,
@@ -85,6 +89,8 @@ import { request } from '@/client/core/request';
 import { OpenAPI } from '@/client/core/OpenAPI';
 import type { AssetRead } from '@/client';
 import type { SchemaInfo, RunInfo } from '@/hooks/useQueryFields';
+import AssetSelector from '@/components/collection/assets/AssetSelector';
+import type { AssetTreeItem } from '@/components/collection/assets/AssetSelector';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -120,6 +126,19 @@ const FIELD_TYPE_ICONS: Record<string, React.ReactNode> = {
   object: <Braces className="h-3 w-3" />,
 };
 
+/** Short label for the nested-results (children:) control trigger */
+function nestedResultsTriggerSuffix(query: string): string {
+  const v = getChildrenFromQuery(query);
+  if (!v) return 'Standard';
+  if (v === 'none') return 'Off';
+  if (v === 'all') return 'All';
+  return v;
+}
+
+const explorerToolbarBtn =
+  'h-7 gap-1.5 text-xs font-normal rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/40';
+const explorerToolbarBtnActive = 'bg-muted/60 text-foreground';
+
 // ---------------------------------------------------------------------------
 // Pill rendering
 // ---------------------------------------------------------------------------
@@ -130,9 +149,11 @@ const PILL_COLORS: Record<string, { bg: string; text: string; ring: string }> = 
   kind: { bg: 'bg-blue-50 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-300', ring: 'ring-blue-300/50 dark:ring-blue-600/50' },
   date: { bg: 'bg-amber-50 dark:bg-amber-900/30', text: 'text-amber-700 dark:text-amber-300', ring: 'ring-amber-300/50 dark:ring-amber-600/50' },
   bundle: { bg: 'bg-green-50 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-300', ring: 'ring-green-300/50 dark:ring-green-600/50' },
+  asset: { bg: 'bg-emerald-50 dark:bg-emerald-900/30', text: 'text-emerald-700 dark:text-emerald-300', ring: 'ring-emerald-300/50 dark:ring-emerald-600/50' },
   entity: { bg: 'bg-cyan-50 dark:bg-cyan-900/30', text: 'text-cyan-700 dark:text-cyan-300', ring: 'ring-cyan-300/50 dark:ring-cyan-600/50' },
   entity_semantic: { bg: 'bg-teal-50 dark:bg-teal-900/30', text: 'text-teal-700 dark:text-teal-300', ring: 'ring-teal-300/50 dark:ring-teal-600/50' },
   annotation: { bg: 'bg-orange-50 dark:bg-orange-900/30', text: 'text-orange-700 dark:text-orange-300', ring: 'ring-orange-300/50 dark:ring-orange-600/50' },
+  children: { bg: 'bg-pink-50 dark:bg-pink-900/30', text: 'text-pink-700 dark:text-pink-300', ring: 'ring-pink-300/50 dark:ring-pink-600/50' },
   run: { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-700 dark:text-slate-300', ring: 'ring-slate-300/50 dark:ring-slate-600/50' },
 };
 
@@ -170,7 +191,7 @@ function sanitizeHighlight(html: string): string {
 function ServerHighlight({ html }: { html: string }) {
   return (
     <span
-      className="[&_mark]:bg-yellow-200/80 [&_mark]:dark:bg-yellow-600/30 [&_mark]:rounded-sm [&_mark]:px-0.5 [&_mark]:py-[1px]"
+      className="[&_mark]:bg-yellow-200/80 [&_mark]:dark:bg-blue-300/90 [&_mark]:rounded-xs [&_mark]:px-0.5 [&_mark]:py-[1px]"
       dangerouslySetInnerHTML={{ __html: sanitizeHighlight(html) }}
     />
   );
@@ -541,6 +562,11 @@ export default function AssetExplorer() {
   const [activeAssetId, setActiveAssetId] = useState<number | null>(null);
   const [showHelpers, setShowHelpers] = useState(true);
   const [bundleDialogOpen, setBundleDialogOpen] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
+  const [pickerSelection, setPickerSelection] = useState<Set<string>>(new Set());
+  const pickerItemsRef = useRef<Map<string, AssetTreeItem>>(new Map());
+  const lastPickerEnterId = useRef<string | null>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
 
   // Auto-switch sort
   useEffect(() => {
@@ -560,7 +586,7 @@ export default function AssetExplorer() {
   const feed = useFeedAssets({
     infospaceId,
     limit: 50,
-    sortBy: sortOption === 'title' ? 'title' : 'created_at',
+    sortBy: sortOption === 'title' ? 'name' : 'created_at',
     sortOrder: sortOption === 'created_at_asc' ? 'asc' : 'desc',
   });
 
@@ -600,6 +626,45 @@ export default function AssetExplorer() {
     return max;
   }, [results]);
 
+  const childResults: ChildResultGroup[] = isSearching ? querySearch.childResults : [];
+
+  // Group child/page-level hits under their parent rows.
+  // On by default. Suppressed with children:none.
+  const groupedResults = useMemo(() => {
+    if (childResults.length === 0) return null;
+
+    // Build parent→children map from backend child_results
+    const childMap = new Map<number, ExplorerResult[]>();
+    for (const group of childResults) {
+      childMap.set(group.parent_asset_id, group.matches.map((m) => ({
+        asset: m.asset,
+        score: m.score ?? undefined,
+        highlight: m.highlight,
+      })));
+    }
+
+    // Build grouped list: parent row with its children underneath
+    type GroupedEntry = { parent: ExplorerResult; children: ExplorerResult[] };
+    const grouped: GroupedEntry[] = [];
+    const seenParents = new Set<number>();
+    for (const r of results) {
+      grouped.push({ parent: r, children: childMap.get(r.asset.id) ?? [] });
+      seenParents.add(r.asset.id);
+    }
+
+    // Parents from child_results not in main results — append as header + children
+    for (const group of childResults) {
+      if (!seenParents.has(group.parent_asset_id)) {
+        grouped.push({
+          parent: { asset: { id: group.parent_asset_id, title: group.parent_title } as AssetRead },
+          children: childMap.get(group.parent_asset_id) ?? [],
+        });
+      }
+    }
+
+    return grouped;
+  }, [results, childResults, query]);
+
   const isLoading = isSearching ? querySearch.isLoading : feed.isLoading;
   const error = isSearching ? querySearch.error : feed.error;
   const hasMore = isSearching ? querySearch.hasMore : feed.hasMore;
@@ -632,6 +697,119 @@ export default function AssetExplorer() {
     setQuery((q) => insertToken(q, `bundle:"${name}"`));
   }, []);
 
+  // Inline picker: close on click outside
+  useEffect(() => {
+    if (!showPicker) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (pickerRef.current && !pickerRef.current.contains(target)
+          && inputRef.current && !inputRef.current.contains(target)) {
+        setShowPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showPicker]);
+
+  // Reset picker state when closed
+  useEffect(() => {
+    if (!showPicker) {
+      setPickerSelection(new Set());
+      pickerItemsRef.current.clear();
+      lastPickerEnterId.current = null;
+    }
+  }, [showPicker]);
+
+  // Inline picker: detect bundle:/asset: trigger on query input
+  const handleQueryChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setQuery(value);
+    const cursorPos = e.target.selectionStart ?? value.length;
+    const before = value.slice(0, cursorPos);
+    if (before.endsWith('bundle:') || before.endsWith('asset:')) {
+      setShowPicker(true);
+    }
+  }, []);
+
+  // Resolve a picker item ID to { name, isBundle }
+  const resolvePickerItem = useCallback((id: string): { name: string; isBundle: boolean } | null => {
+    const item = pickerItemsRef.current.get(id);
+    if (item) {
+      const name = (item.type === 'folder' ? item.bundle?.name : item.asset?.title) || item.name;
+      return { name, isBundle: item.type === 'folder' };
+    }
+    const { rootNodes, childrenCache } = useTreeStore.getState();
+    const allNodes = [...rootNodes];
+    childrenCache.forEach((children) => allNodes.push(...children));
+    const node = allNodes.find((n) => n.id === id);
+    if (!node) return null;
+    return { name: node.name, isBundle: node.type === 'bundle' || node.type === 'virtual_folder' };
+  }, []);
+
+  // Confirm current picker selection → insert grouped tokens into query
+  // e.g. bundle:"Emails","Documents" asset:"report.pdf","scan.png"
+  const confirmPickerSelection = useCallback(() => {
+    const bundleNames: string[] = [];
+    const assetNames: string[] = [];
+    pickerSelection.forEach((id) => {
+      const resolved = resolvePickerItem(id);
+      if (!resolved) return;
+      if (resolved.isBundle) bundleNames.push(resolved.name);
+      else assetNames.push(resolved.name);
+    });
+    const tokens: string[] = [];
+    if (bundleNames.length > 0) {
+      tokens.push('bundle:' + bundleNames.map((n) => `"${n}"`).join(','));
+    }
+    if (assetNames.length > 0) {
+      tokens.push('asset:' + assetNames.map((n) => `"${n}"`).join(','));
+    }
+    if (tokens.length === 0) return;
+    setQuery((q) => {
+      const cleaned = q.replace(/\s*(bundle|asset):$/, '').trimEnd();
+      const joined = tokens.join(' ');
+      return cleaned ? `${cleaned} ${joined}` : joined;
+    });
+    setShowPicker(false);
+    inputRef.current?.focus();
+  }, [pickerSelection, resolvePickerItem]);
+
+  // Picker: checkbox toggle
+  const handlePickerSelectionChange = useCallback((selectedIds: Set<string>) => {
+    setPickerSelection(selectedIds);
+  }, []);
+
+  // Picker: single-click on asset → toggle selection
+  const handlePickerItemClick = useCallback((item: AssetTreeItem) => {
+    pickerItemsRef.current.set(item.id, item);
+    setPickerSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(item.id)) next.delete(item.id); else next.add(item.id);
+      return next;
+    });
+  }, []);
+
+  // Picker: keyboard Enter / double-click → toggle, or confirm on double-enter
+  const confirmRef = useRef(confirmPickerSelection);
+  confirmRef.current = confirmPickerSelection;
+  const handlePickerItemEnter = useCallback((item: AssetTreeItem) => {
+    pickerItemsRef.current.set(item.id, item);
+    setPickerSelection((prev) => {
+      // Double-enter on the same item that's already selected → confirm
+      if (lastPickerEnterId.current === item.id && prev.has(item.id)) {
+        lastPickerEnterId.current = null;
+        // Defer confirm to after this state update
+        queueMicrotask(() => confirmRef.current());
+        return prev;
+      }
+      lastPickerEnterId.current = item.id;
+      // Toggle selection
+      const next = new Set(prev);
+      if (next.has(item.id)) next.delete(item.id); else next.add(item.id);
+      return next;
+    });
+  }, []);
+
   const dateAfterValue = useMemo(() => getDateFromQuery(query, 'after'), [query]);
   const dateBeforeValue = useMemo(() => getDateFromQuery(query, 'before'), [query]);
 
@@ -653,12 +831,17 @@ export default function AssetExplorer() {
   const [focusIndex, setFocusIndex] = useState(-1);
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      // When the picker is open, only handle Escape — let the picker own arrow/enter
+      if (showPicker) {
+        if (e.key === 'Escape') { setShowPicker(false); e.preventDefault(); }
+        return;
+      }
       if (e.key === 'ArrowDown') { e.preventDefault(); setFocusIndex((i) => Math.min(i + 1, results.length - 1)); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); setFocusIndex((i) => Math.max(i - 1, 0)); }
       else if (e.key === 'Enter' && focusIndex >= 0 && focusIndex < results.length) { e.preventDefault(); handleAssetClick(results[focusIndex].asset); }
       else if (e.key === 'Escape') { inputRef.current?.focus(); setFocusIndex(-1); }
     },
-    [results, focusIndex, handleAssetClick],
+    [results, focusIndex, handleAssetClick, showPicker],
   );
   useEffect(() => setFocusIndex(-1), [results.length, debouncedQuery]);
   const resultListRef = useRef<HTMLDivElement>(null);
@@ -676,7 +859,7 @@ export default function AssetExplorer() {
   }
 
   return (
-    <div className="flex flex-col h-full" onKeyDown={handleKeyDown}>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden" onKeyDown={handleKeyDown}>
       {/* ── Search header ── */}
       <div className="flex-none border-b bg-background/95 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80">
         <div className="px-4 pt-4 pb-2.5 space-y-2">
@@ -686,8 +869,8 @@ export default function AssetExplorer() {
             <Input
               ref={inputRef}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder='Search assets — kind: entity: after: ~semantic "phrase"'
+              onChange={handleQueryChange}
+              placeholder='Search assets — kind: entity: after: bundle: ~semantic "phrase"'
               className={cn(
                 'pl-10 pr-10 h-11 text-[15px] font-mono bg-muted/30 border-muted-foreground/10',
                 'focus:bg-background focus:ring-2 focus:ring-primary/20 focus:border-primary/30',
@@ -698,11 +881,53 @@ export default function AssetExplorer() {
             {query && (
               <button
                 type="button"
-                onClick={() => { setQuery(''); inputRef.current?.focus(); }}
+                onClick={() => { setQuery(''); setShowPicker(false); inputRef.current?.focus(); }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-md hover:bg-muted transition-colors"
               >
                 <X className="h-3.5 w-3.5 text-muted-foreground" />
               </button>
+            )}
+
+            {/* Inline asset/bundle picker — triggered by typing bundle: or asset: */}
+            {showPicker && (
+              <div
+                ref={pickerRef}
+                className="relative left-0 right-0 top-full mt-1 z-50 flex flex-col border border-border rounded-lg shadow-lg overflow-hidden bg-popover"
+              >
+                <div className="h-[300px] min-h-0 overflow-hidden">
+                  <AssetSelector
+                    selectedItems={pickerSelection}
+                    onSelectionChange={handlePickerSelectionChange}
+                    onItemView={handlePickerItemClick}
+                    onItemDoubleClick={handlePickerItemEnter}
+                    autoFocusSearch
+                    compact
+                  />
+                </div>
+                {pickerSelection.size > 0 && (
+                  <div className="flex items-center gap-2 px-3 py-2 border-t border-border bg-muted/30">
+                    <span className="text-xs text-muted-foreground flex-1">
+                      <span className="font-semibold text-foreground">{pickerSelection.size}</span> selected
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-[11px] px-2"
+                      onClick={() => setPickerSelection(new Set())}
+                    >
+                      Clear
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="h-6 text-[11px] px-3 gap-1"
+                      onClick={confirmPickerSelection}
+                    >
+                      <Check className="h-3 w-3" />
+                      Apply
+                    </Button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
@@ -715,75 +940,207 @@ export default function AssetExplorer() {
             </div>
           )}
 
-          {/* Controls */}
-          <div className="flex items-center gap-2">
-            <Button
-              variant={showHelpers ? 'secondary' : 'ghost'}
-              size="sm"
-              className="h-7 gap-1.5 text-xs rounded-md"
-              onClick={() => setShowHelpers(!showHelpers)}
-            >
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-              Helpers
-            </Button>
+          {/* Controls: left (scoping) · centered create bundle · right (stats & view) */}
+          <div className="flex items-center gap-1.5 w-full min-w-0">
+            <div className="flex flex-1 items-center justify-start gap-1 min-w-0">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={cn(explorerToolbarBtn, 'shrink-0', showHelpers && explorerToolbarBtnActive)}
+                    onClick={() => setShowHelpers(!showHelpers)}
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5 opacity-70" />
+                    Helpers
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs max-w-[240px]">
+                  Filters and query syntax reference
+                </TooltipContent>
+              </Tooltip>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1.5 text-xs"
-              onClick={() => setBundleDialogOpen(true)}
-            >
-              <FolderPlus className="h-3.5 w-3.5" />
-              Bundle
-            </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className={cn(explorerToolbarBtn, 'shrink-0', showPicker && explorerToolbarBtnActive)}
+                    onClick={() => setShowPicker((prev) => !prev)}
+                  >
+                    <SquaresIntersect className="h-3.5 w-3.5 opacity-70" />
+                    Scope
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs max-w-[260px]">
+                  Limit the query to specific bundles or assets
+                </TooltipContent>
+              </Tooltip>
 
-            <div className="flex-1" />
+              <div className="shrink-0">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        explorerToolbarBtn,
+                        'gap-1.5 shrink-0 w-auto max-w-[min(100%,14rem)]',
+                        getChildrenFromQuery(query) !== '' && explorerToolbarBtnActive,
+                      )}
+                    >
+                      <Rows3 className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                      <span className="whitespace-nowrap truncate">
+                        <span className="text-foreground">Nested</span>
+                        <span className="text-muted-foreground/80">
+                          {' · '}
+                          {nestedResultsTriggerSuffix(query)}
+                        </span>
+                      </span>
+                      <ChevronDown className="h-3 w-3 shrink-0 opacity-40" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-56 p-1">
+                    <div className="px-2.5 py-2 border-b border-border/50 mb-0.5">
+                      <p className="text-[11px] font-medium leading-snug text-foreground">Nested results</p>
+                      <p className="text-[10px] text-muted-foreground leading-relaxed mt-1">
+                        Extra hits inside the same parent asset (e.g. PDF pages or sections).
+                      </p>
+                    </div>
+                    {(() => {
+                      const cur = getChildrenFromQuery(query) || 'default';
+                      const row = (
+                        key: string,
+                        patch: string,
+                        title: string,
+                        hint: string,
+                        isSelected: boolean,
+                      ) => (
+                        <DropdownMenuItem
+                          key={key}
+                          className="cursor-pointer rounded-sm px-2.5 py-2 text-xs focus:bg-muted/80 items-start gap-2"
+                          onSelect={() => setQuery((q) => setChildrenInQuery(q, patch))}
+                        >
+                          <span className="flex-1 min-w-0 space-y-0.5 pr-1">
+                            <span className="font-medium text-foreground leading-tight block">{title}</span>
+                            <span className="text-[10px] text-muted-foreground leading-snug block">{hint}</span>
+                          </span>
+                          {isSelected && (
+                            <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" strokeWidth={2.5} />
+                          )}
+                        </DropdownMenuItem>
+                      );
+                      return (
+                        <>
+                          {row('std', '', 'Standard', 'Up to 3 nested hits per parent', cur === 'default')}
+                          {row('off', 'none', 'Off', 'Parent rows only', cur === 'none')}
+                          <DropdownMenuSeparator className="my-1" />
+                          {row('10', '10', 'Up to 10', 'Per parent asset', cur === '10')}
+                          {row('30', '30', 'Up to 30', 'Per parent asset', cur === '30')}
+                          {row('all', 'all', 'All', 'Every nested match', cur === 'all')}
+                        </>
+                      );
+                    })()}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
 
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {isLoading && results.length === 0 ? (
-                <span className="flex items-center gap-1.5">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  <span className="text-muted-foreground/60">Searching...</span>
-                </span>
-              ) : (
-                <>
-                  <span className="font-semibold text-foreground">{results.length.toLocaleString()}</span>
-                  {totalCount != null && totalCount > results.length && (
-                    <span className="text-muted-foreground/60"> of {totalCount.toLocaleString()}</span>
+            <div className="flex shrink-0 justify-center px-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={cn(explorerToolbarBtn, 'whitespace-nowrap shrink-0')}
+                onClick={() => setBundleDialogOpen(true)}
+              >
+                <FolderPlus className="h-3.5 w-3.5 opacity-70" />
+                New bundle from results
+              </Button>
+            </div>
+
+            <div className="flex flex-1 items-center justify-end gap-2 min-w-0">
+            {(() => {
+              if (isLoading && results.length === 0) {
+                return (
+                  <span className="text-xs text-muted-foreground tabular-nums flex items-center gap-1.5">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    <span className="text-muted-foreground/60">Searching...</span>
+                  </span>
+                );
+              }
+              const childHitCount = childResults.reduce((sum, g) => sum + g.matches.length, 0);
+              const assetCount = results.length + (groupedResults
+                ? childResults.filter((g) => !results.some((r) => r.asset.id === g.parent_asset_id)).length
+                : 0);
+              const totalHits = results.length + childHitCount;
+              return (
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {childHitCount > 0 ? (
+                    <>
+                      <span className="font-semibold text-foreground">{totalHits.toLocaleString()}</span>
+                      <span className="text-muted-foreground/60"> hit{totalHits !== 1 ? 's' : ''} in </span>
+                      <span className="font-semibold text-foreground">{assetCount.toLocaleString()}</span>
+                      <span className="text-muted-foreground/60"> asset{assetCount !== 1 ? 's' : ''}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-semibold text-foreground">{results.length.toLocaleString()}</span>
+                      {totalCount != null && totalCount > results.length && (
+                        <span className="text-muted-foreground/60"> of {totalCount.toLocaleString()}</span>
+                      )}
+                      <span className="text-muted-foreground/60"> asset{results.length !== 1 ? 's' : ''}</span>
+                    </>
                   )}
-                  <span className="text-muted-foreground/60"> result{results.length !== 1 ? 's' : ''}</span>
-                </>
-              )}
-            </span>
+                </span>
+              );
+            })()}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs">
-                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                <Button type="button" variant="ghost" size="sm" className={cn(explorerToolbarBtn, 'shrink-0')}>
+                  <SlidersHorizontal className="h-3.5 w-3.5 opacity-70" />
                   {SORT_OPTIONS.find((o) => o.value === sortOption)?.label || 'Sort'}
+                  <ChevronDown className="h-3 w-3 opacity-40 shrink-0" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuLabel className="text-xs">Sort order</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuRadioGroup value={sortOption} onValueChange={(v) => setSortOption(v as SortOption)}>
-                  {SORT_OPTIONS.map((opt) => (
-                    <DropdownMenuRadioItem key={opt.value} value={opt.value} className="text-xs">{opt.label}</DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
+              <DropdownMenuContent align="end" className="w-52 p-1">
+                <div className="px-2.5 py-1.5 border-b border-border/50 mb-0.5">
+                  <p className="text-[11px] font-medium text-foreground">Sort</p>
+                </div>
+                {SORT_OPTIONS.map((opt) => (
+                  <DropdownMenuItem
+                    key={opt.value}
+                    className="cursor-pointer rounded-sm px-2.5 py-2 text-xs focus:bg-muted/80 gap-2"
+                    onSelect={() => setSortOption(opt.value as SortOption)}
+                  >
+                    <span className="flex-1">{opt.label}</span>
+                    {sortOption === opt.value && (
+                      <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" strokeWidth={2.5} />
+                    )}
+                  </DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
 
-            <div className="flex items-center rounded-md border border-border/50 overflow-hidden">
+            <div className="flex items-center rounded-md border border-border/30 overflow-hidden bg-muted/20">
               {([['results', Rows3], ['grid', LayoutGrid], ['list', LayoutList]] as [LayoutMode, typeof Rows3][]).map(([mode, ModeIcon]) => (
                 <Tooltip key={mode}>
                   <TooltipTrigger asChild>
                     <Button
-                      variant="ghost" size="sm"
-                      className={cn('h-7 w-7 p-0 rounded-none border-0', layout === mode && 'bg-muted')}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        'h-7 w-7 p-0 rounded-none border-0 text-muted-foreground hover:text-foreground hover:bg-muted/60',
+                        layout === mode && 'bg-muted/80 text-foreground',
+                      )}
                       onClick={() => setLayout(mode)}
                     >
-                      <ModeIcon className="h-3.5 w-3.5" />
+                      <ModeIcon className="h-3.5 w-3.5 opacity-80" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom">{mode.charAt(0).toUpperCase() + mode.slice(1)} view</TooltipContent>
@@ -793,21 +1150,29 @@ export default function AssetExplorer() {
 
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={refresh} disabled={isLoading}>
-                  <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={cn(explorerToolbarBtn, 'h-7 w-7 p-0 shrink-0')}
+                  onClick={refresh}
+                  disabled={isLoading}
+                >
+                  <RefreshCw className={cn('h-3.5 w-3.5 opacity-70', isLoading && 'animate-spin')} />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="bottom">Refresh</TooltipContent>
             </Tooltip>
+            </div>
           </div>
         </div>
       </div>
 
       {/* ── Body ── */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Helper panel */}
         {showHelpers && (
-          <ScrollArea className="w-80 flex-shrink-0 border-r bg-muted/10">
+          <ScrollArea className="h-full min-h-0 w-80 flex-shrink-0 self-stretch border-r bg-muted/10">
             <div className="p-4 space-y-0">
               {/* Kind */}
               <Section title="Kind">
@@ -904,10 +1269,14 @@ export default function AssetExplorer() {
                     <SyntaxRow code='kind:pdf' hint="Filter by asset type" />
                     <SyntaxRow code='after:2019-01' hint="Assets from date" />
                     <SyntaxRow code='before:2022-12' hint="Assets until date" />
-                    <SyntaxRow code='bundle:"name"' hint="Scope to bundle" />
+                    <SyntaxRow code='bundle:"a","b"' hint="Scope to bundle(s)" />
+                    <SyntaxRow code='asset:"title"' hint="Scope to asset(s)" />
                     <SyntaxRow code='entity:"Name"' hint="Search by entity" />
                     <SyntaxRow code='annotation:field>=0.8' hint="Filter annotation values" />
                     <SyntaxRow code='run:42' hint="Scope to annotation run" />
+                    <SyntaxRow code='children:none' hint="Hide child/page matches" />
+                    <SyntaxRow code='children:10' hint="Up to 10 children per parent" />
+                    <SyntaxRow code='children:all' hint="Show all child matches" />
                   </div>
                   <div className="border-t border-border/30 pt-1.5 mt-1 space-y-1">
                     <SyntaxRow code='~' hint="Semantic similarity" accent="violet" />
@@ -940,7 +1309,7 @@ export default function AssetExplorer() {
         )}
 
         {/* Results */}
-        <ScrollArea className="flex-1">
+        <ScrollArea className="min-h-0 flex-1">
           <div className="p-4">
             {/* Loading */}
             {isLoading && results.length === 0 && (
@@ -965,7 +1334,7 @@ export default function AssetExplorer() {
             )}
 
             {/* Empty */}
-            {!isLoading && !error && results.length === 0 && (
+            {!isLoading && !error && results.length === 0 && !groupedResults?.length && (
               <div className="flex flex-col items-center py-24 text-center">
                 <div className="h-16 w-16 rounded-2xl bg-muted/50 flex items-center justify-center mb-5">
                   <Search className="h-8 w-8 text-muted-foreground/25" />
@@ -996,7 +1365,7 @@ export default function AssetExplorer() {
             )}
 
             {/* Row results */}
-            {results.length > 0 && layout === 'results' && (
+            {results.length > 0 && layout === 'results' && !groupedResults && (
               <div ref={resultListRef} className="space-y-0.5">
                 {results.map((r, i) => (
                   <SearchResultRow
@@ -1006,6 +1375,60 @@ export default function AssetExplorer() {
                     onClick={handleAssetClick}
                     isActive={i === focusIndex || r.asset.id === activeAssetId}
                   />
+                ))}
+              </div>
+            )}
+
+            {/* Grouped results — parents as rows, child matches as tiles underneath */}
+            {groupedResults && groupedResults.length > 0 && layout === 'results' && (
+              <div ref={resultListRef} className="space-y-1">
+                {groupedResults.map(({ parent, children }) => (
+                  <div key={parent.asset.id}>
+                    <SearchResultRow
+                      result={parent}
+                      maxScore={maxScore}
+                      onClick={handleAssetClick}
+                      isActive={parent.asset.id === activeAssetId}
+                    />
+                    {children.length > 0 && (
+                      <div className="ml-8 mt-1 mb-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {children.map((c) => {
+                          const config = getAssetKindConfig(c.asset.kind);
+                          const Icon = config.icon;
+                          const preview = c.highlight || c.asset.text_content?.slice(0, 200) || null;
+                          const pct = c.score != null && maxScore > 0 ? Math.round((c.score / maxScore) * 100) : null;
+                          return (
+                            <button
+                              key={c.asset.id}
+                              type="button"
+                              onClick={() => handleAssetClick(c.asset)}
+                              className={cn(
+                                'flex flex-col gap-1 p-3 rounded-lg border text-left transition-all duration-150',
+                                c.asset.id === activeAssetId
+                                  ? 'bg-accent/60 border-border/50 shadow-sm'
+                                  : 'bg-muted/20 border-border/20 hover:bg-muted/50 hover:border-border/40',
+                              )}
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <Icon className={cn('h-3.5 w-3.5 shrink-0', config.iconColor)} />
+                                <span className="text-xs font-medium truncate flex-1">{c.asset.title || 'Untitled'}</span>
+                                {pct != null && (
+                                  <span className={cn('text-[10px] tabular-nums font-medium shrink-0', pct >= 60 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground/60')}>
+                                    {pct}%
+                                  </span>
+                                )}
+                              </div>
+                              {preview && (
+                                <div className="text-[11px] leading-relaxed text-muted-foreground line-clamp-3">
+                                  {c.highlight ? <ServerHighlight html={c.highlight} /> : preview}
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
@@ -1041,6 +1464,7 @@ export default function AssetExplorer() {
                 ))}
               </div>
             )}
+
 
             {/* Load more */}
             {hasMore && (

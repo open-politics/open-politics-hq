@@ -130,12 +130,9 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
                 if asset.parent_asset_id is None:
                     asset.source_id = source.id
                     # Ensure bundle_ids contains this bundle (defensive check)
-                    if bundle_id and (not asset.bundle_ids or bundle_id not in asset.bundle_ids):
-                        session.execute(
-                            text(
-                                "UPDATE asset SET bundle_ids = array_append(COALESCE(bundle_ids, ARRAY[]::int[]), :bid) WHERE id = :aid"
-                            ).bindparams(bid=bundle_id, aid=asset.id)
-                        )
+                    if bundle_id and bundle_id not in (asset.bundle_ids or []):
+                        from app.core.tree import copy as tree_copy
+                        tree_copy(session, asset_ids=[asset.id], to=bundle_id)
                 session.add(asset)
 
             source.status = SourceStatus.COMPLETE

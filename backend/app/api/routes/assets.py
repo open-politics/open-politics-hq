@@ -479,12 +479,8 @@ async def ingest_search_results(
                 # Add to bundle if specified
                 if bulk_request.bundle_id:
                     try:
-                        bundle_service.add_asset_to_bundle(
-                            bundle_id=bulk_request.bundle_id,
-                            asset_id=asset.id,
-                            infospace_id=infospace_id,
-                            user_id=access.user_id
-                        )
+                        from app.core.tree import copy as tree_copy
+                        tree_copy(db, asset_ids=[asset.id], to=bulk_request.bundle_id)
                     except Exception as bundle_error:
                         logger.warning(f"Failed to add asset {asset.id} to bundle: {bundle_error}")
                 
@@ -884,7 +880,11 @@ def get_asset(
         )
     access.require_in_scope("asset_ids", asset_id)
 
-    return AssetRead.model_validate(asset)
+    result = AssetRead.model_validate(asset)
+    # Strip blob_path for scoped users who don't have download permission
+    if access.scope is not None and not access.can_download(asset_id):
+        result.blob_path = None
+    return result
 
 @router.get("/{asset_id}/children", response_model=List[AssetRead])
 def get_asset_children(

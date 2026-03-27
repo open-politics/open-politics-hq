@@ -106,7 +106,8 @@
     "js-cookie": "^3.0.5",
     "lodash": "^4.17.23",
     "lottie-react": "^2.4.1",
-    "lucide-react": "^0.545.0",
+    "lucide": "^1.6.0",
+    "lucide-react": "^1.6.0",
     "maki": "^2.1.0",
     "mapbox-gl": "^3.15.0",
     "marked": "^16.3.0",
@@ -171,7 +172,7 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
-    "@hey-api/openapi-ts": "^0.94.3",
+    "@hey-api/openapi-ts": "0.61.0",
     "@tailwindcss/postcss": "^4.1.13",
     "@types/js-cookie": "^3.0.6",
     "@types/node": "^24.5.2",

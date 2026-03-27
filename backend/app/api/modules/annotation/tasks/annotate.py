@@ -2025,6 +2025,9 @@ async def _process_annotation_run_async(
 
             # Self-chain: store full list and process first chunk if run is large
             if len(target_asset_ids_to_process) > chunk_size:
+                # Set progress_total to full asset count (before slicing)
+                run.progress_total = len(target_asset_ids_to_process)
+                run.progress_current = 0
                 cfg = dict(run.configuration or {})
                 cfg[CHAINED_RUN_CURSOR_KEY] = target_asset_ids_to_process
                 run.configuration = cfg
@@ -2032,7 +2035,14 @@ async def _process_annotation_run_async(
                 session.commit()
                 session.refresh(run)
                 target_asset_ids_to_process = target_asset_ids_to_process[:chunk_size]
-                logger.info(f"Task: Run {run.id} has {len(cfg[CHAINED_RUN_CURSOR_KEY])} assets, processing first {chunk_size} (self-chain will continue)")
+                logger.info(f"Task: Run {run.id} has {run.progress_total} assets, processing first {chunk_size} (self-chain will continue)")
+            else:
+                # Small run — set progress for single invocation
+                run.progress_total = len(target_asset_ids_to_process)
+                run.progress_current = 0
+                session.add(run)
+                session.commit()
+                session.refresh(run)
 
             schemas_to_apply = run.target_schemas
             if not schemas_to_apply:
@@ -2261,8 +2271,12 @@ async def _process_annotation_run_async(
                         delattr(j, '_parent_annotation_ref')
                 if chunk_justifications:
                     session.add_all(chunk_justifications)
+                # Update progress before commit so it's visible atomically with the new annotations
+                run.progress_current = (run.progress_current or 0) + len(chunk_asset_ids)
+                run.updated_at = datetime.now(timezone.utc)
+                session.add(run)
                 session.commit()
-                logger.info(f"Task: Run {run.id} chunk {chunk_idx + 1}/{len(chunks)} committed {len(chunk_annotations)} annotations")
+                logger.info(f"Task: Run {run.id} chunk {chunk_idx + 1}/{len(chunks)} committed {len(chunk_annotations)} annotations (progress: {run.progress_current}/{run.progress_total})")
                 all_created_annotations.extend(chunk_annotations)
                 all_created_justifications.extend(chunk_justifications)
 

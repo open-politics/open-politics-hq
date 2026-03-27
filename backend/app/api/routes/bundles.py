@@ -23,6 +23,7 @@ from app.api.modules.content.services import BundleService
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires,
 )
+from app.core.tree import ROOT, copy as tree_copy, move as tree_move, delete as tree_delete, seal_subtree, unseal_subtree
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +96,7 @@ def get_bundle(
     bundle = db.get(Bundle, bundle_id)
     if not bundle or bundle.infospace_id != access.infospace_id:
         raise HTTPException(status_code=404, detail="Bundle not found")
-    if access.scope and access.scope.bundle_ids and bundle_id not in access.scope.bundle_ids:
-        raise HTTPException(status_code=404, detail="Bundle not found")
+    access.require_in_scope("bundle_ids", bundle_id)
     return bundle
 
 @router.get("/infospaces/{infospace_id}/bundles", response_model=List[BundleRead])
@@ -113,8 +113,9 @@ def get_bundles(
         skip=skip,
         limit=limit
     )
-    if access.scope and access.scope.bundle_ids:
-        bundles = [b for b in bundles if b.id in access.scope.bundle_ids]
+    if access.scope is not None:
+        visible = set(access.scope.bundle_ids)
+        bundles = [b for b in bundles if b.id in visible]
     return bundles
 
 @router.put("/infospaces/{infospace_id}/bundles/{bundle_id}", response_model=BundleRead)
@@ -153,9 +154,11 @@ def delete_bundle(
     if not bundle or bundle.infospace_id != access.infospace_id:
         raise HTTPException(status_code=404, detail="Bundle not found")
 
-    success = service.delete_bundle(bundle_id=bundle_id, infospace_id=access.infospace_id, user_id=access.user_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Bundle not found during deletion attempt")
+    try:
+        tree_delete(db, bundle_ids=[bundle_id], out_of=bundle.parent_bundle_id, confirm=True)
+        db.commit()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 class BulkDeleteBundlesRequest(BaseModel):
     bundle_ids: List[int]
@@ -170,7 +173,7 @@ def bulk_delete_bundles(
 ) -> Message:
     """
     Delete multiple bundles in one request.
-    Expands all requested bundles through descendants, then single cascade_delete.
+    Expands all requested bundles through descendants via core.tree.delete.
     """
     if not request.bundle_ids:
         return Message(message="No bundles to delete")
@@ -185,12 +188,13 @@ def bulk_delete_bundles(
             continue
         valid_ids.add(bundle_id)
 
-    # Expand to full subtrees and delete in one pass
-    all_ids = service.get_descendant_ids(valid_ids)
-    deleted_count = service.cascade_delete(all_ids)
-    db.commit()
+    try:
+        result = tree_delete(db, bundle_ids=list(valid_ids), out_of=ROOT, confirm=True)
+        db.commit()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-    message = f"Deleted {deleted_count} bundle{'s' if deleted_count != 1 else ''}"
+    message = result.message
     if failed_count > 0:
         message += f" ({failed_count} not found)"
 
@@ -209,16 +213,17 @@ def add_asset_to_bundle(
     bundle = db.get(Bundle, bundle_id)
     if not bundle or bundle.infospace_id != access.infospace_id:
         raise HTTPException(status_code=404, detail="Bundle not found")
+    asset = db.get(Asset, asset_id)
+    if not asset or asset.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=404, detail="Asset not found")
 
-    updated_bundle = service.add_asset_to_bundle(
-        bundle_id=bundle_id,
-        asset_id=asset_id,
-        infospace_id=access.infospace_id,
-        user_id=access.user_id,
-    )
-    if not updated_bundle:
-        raise HTTPException(status_code=404, detail="Failed to add asset to bundle. Asset may not exist or access denied.")
-    return updated_bundle
+    try:
+        tree_copy(db, asset_ids=[asset_id], to=bundle_id)
+        db.commit()
+        db.refresh(bundle)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return bundle
 
 @router.delete("/infospaces/{infospace_id}/bundles/{bundle_id}/assets/{asset_id}", response_model=BundleRead, status_code=status.HTTP_200_OK)
 def remove_asset_from_bundle(
@@ -234,15 +239,13 @@ def remove_asset_from_bundle(
     if not bundle or bundle.infospace_id != access.infospace_id:
         raise HTTPException(status_code=404, detail="Bundle not found")
 
-    updated_bundle = service.remove_asset_from_bundle(
-        bundle_id=bundle_id,
-        asset_id=asset_id,
-        infospace_id=access.infospace_id,
-        user_id=access.user_id,
-    )
-    if not updated_bundle:
-        raise HTTPException(status_code=404, detail="Failed to remove asset from bundle. Asset may not be in bundle or access denied.")
-    return updated_bundle
+    try:
+        tree_delete(db, asset_ids=[asset_id], out_of=bundle_id, confirm=True)
+        db.commit()
+        db.refresh(bundle)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return bundle
 
 @router.get("/infospaces/{infospace_id}/bundles/{bundle_id}/assets", response_model=List[AssetRead])
 def get_assets_in_bundle(
@@ -265,18 +268,6 @@ def get_assets_in_bundle(
     )
     return assets
 
-@router.get("/infospaces/{infospace_id}/assets/{asset_id}", response_model=AssetRead)
-def get_asset(
-    asset_id: int,
-    access: Access = Requires(),
-    db: Session = Depends(dependency_injection.get_db),
-) -> Asset:
-    """Get an asset by ID."""
-    asset = db.get(Asset, asset_id)
-    if not asset or asset.infospace_id != access.infospace_id:
-        raise HTTPException(status_code=404, detail="Asset not found")
-    access.require_in_scope("asset_ids", asset_id)
-    return asset
 
 @router.post("/infospaces/{infospace_id}/bundles/{bundle_id}/transfer", response_model=BundleRead)
 def transfer_bundle(
@@ -328,16 +319,12 @@ def move_bundle_to_parent(
     if not bundle or bundle.infospace_id != access.infospace_id:
         raise HTTPException(status_code=404, detail="Bundle not found")
 
+    target = move_request.parent_bundle_id if move_request.parent_bundle_id is not None else ROOT
     try:
-        moved_bundle = service.move_bundle_to_parent(
-            child_bundle_id=bundle_id,
-            parent_bundle_id=move_request.parent_bundle_id,
-            infospace_id=access.infospace_id,
-            user_id=access.user_id,
-        )
-        if not moved_bundle:
-            raise HTTPException(status_code=404, detail="Bundle not found or move failed")
-        return moved_bundle
+        tree_move(db, bundle_ids=[bundle_id], out_of=bundle.parent_bundle_id, to=target)
+        db.commit()
+        db.refresh(bundle)
+        return bundle
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -376,8 +363,9 @@ def get_root_bundles(
         infospace_id=access.infospace_id,
         user_id=access.user_id
     )
-    if access.scope and access.scope.bundle_ids:
-        bundles = [b for b in bundles if b.id in access.scope.bundle_ids]
+    if access.scope is not None:
+        visible = set(access.scope.bundle_ids)
+        bundles = [b for b in bundles if b.id in visible]
     return bundles
 
 @router.get("/infospaces/{infospace_id}/bundles/bulk-assets", response_model=dict)
@@ -407,8 +395,9 @@ def get_bulk_bundle_assets(
         raise HTTPException(status_code=400, detail="Maximum 20 bundles per request")
 
     # Scope filter: restrict to visible bundles
-    if access.scope and access.scope.bundle_ids:
-        bundle_id_list = [bid for bid in bundle_id_list if bid in access.scope.bundle_ids]
+    if access.scope is not None:
+        visible = set(access.scope.bundle_ids)
+        bundle_id_list = [bid for bid in bundle_id_list if bid in visible]
 
     results = {}
     for bundle_id in bundle_id_list:
@@ -442,4 +431,39 @@ def get_bulk_bundle_assets(
                 "total": 0
             }
 
-    return results 
+    return results
+
+
+@router.post("/infospaces/{infospace_id}/bundles/{bundle_id}/seal", response_model=Message)
+def seal_bundle(
+    *,
+    bundle_id: int,
+    access: Access = Requires(Capability.DELETE),
+    db: Session = Depends(dependency_injection.get_db),
+) -> Message:
+    """Seal a bundle and all descendants. Immutable membership after sealing."""
+    bundle = db.get(Bundle, bundle_id)
+    if not bundle or bundle.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=404, detail="Bundle not found")
+    count = seal_subtree(db, bundle_id)
+    db.commit()
+    return Message(message=f"Sealed {count} bundles.")
+
+
+@router.post("/infospaces/{infospace_id}/bundles/{bundle_id}/unseal", response_model=Message)
+def unseal_bundle(
+    *,
+    bundle_id: int,
+    access: Access = Requires(Capability.DELETE),
+    db: Session = Depends(dependency_injection.get_db),
+) -> Message:
+    """Unseal a bundle and all descendants. Rejects if active packages reference the subtree."""
+    bundle = db.get(Bundle, bundle_id)
+    if not bundle or bundle.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=404, detail="Bundle not found")
+    try:
+        count = unseal_subtree(db, bundle_id)
+        db.commit()
+        return Message(message=f"Unsealed {count} bundles.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

@@ -218,8 +218,26 @@ class AssetQuery:
         if bundle_ids:
             arr = list(bundle_ids)
             self._conditions.append(
-                text("bundle_ids && :scope_ids::int[]").bindparams(scope_ids=arr)
+                text("bundle_ids && CAST(:scope_ids AS int[])").bindparams(scope_ids=arr)
             )
+        return self
+
+    def scope_items(
+        self,
+        bundle_ids: list[int] | None = None,
+        asset_ids: list[int] | None = None,
+    ) -> AssetQuery:
+        """AQL scope: assets in any of these bundles OR matching these asset IDs (OR)."""
+        clauses = []
+        if bundle_ids:
+            if len(bundle_ids) == 1:
+                clauses.append(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_ids[0]))
+            else:
+                clauses.append(text("bundle_ids && CAST(:scope_bids AS int[])").bindparams(scope_bids=bundle_ids))
+        if asset_ids:
+            clauses.append(Asset.id.in_(asset_ids))
+        if clauses:
+            self._conditions.append(or_(*clauses))
         return self
 
     def scope(self, package_scope) -> AssetQuery:
@@ -241,7 +259,7 @@ class AssetQuery:
         clauses = []
         if package_scope.bundle_ids:
             clauses.append(
-                text("bundle_ids && :scope_bids::int[]").bindparams(
+                text("bundle_ids && CAST(:scope_bids AS int[])").bindparams(
                     scope_bids=list(package_scope.bundle_ids)
                 )
             )
@@ -275,10 +293,23 @@ class AssetQuery:
         self._conditions.append(Asset.parent_asset_id.is_(None))
         return self
 
+    def children_only(self) -> AssetQuery:
+        """Only return child assets (parent_asset_id IS NOT NULL)."""
+        self._conditions.append(Asset.parent_asset_id.isnot(None))
+        return self
+
     def user_id(self, user_id: Optional[int] = None) -> AssetQuery:
         """Filter by user who created the asset."""
         if user_id is not None:
             self._conditions.append(Asset.user_id == user_id)
+        return self
+
+    def tags(self, values: List[str]) -> AssetQuery:
+        """Filter by asset tags (JSON array contains any of the given values)."""
+        for tag in values:
+            self._conditions.append(
+                text("CAST(tags AS jsonb) @> CAST(:tag_val AS jsonb)").bindparams(tag_val=json.dumps([tag]))
+            )
         return self
 
     def exclude_superseded(self) -> AssetQuery:
@@ -418,10 +449,10 @@ class AssetQuery:
         self._sort = mode or "created_at_desc"
         return self
 
-    def paginate(self, cursor: Optional[int] = None, limit: int = 25) -> AssetQuery:
+    def paginate(self, cursor: Optional[int] = None, limit: int = 25, max_limit: int = 200) -> AssetQuery:
         """Set cursor (asset id) and limit for pagination."""
         self._cursor = cursor
-        self._limit = min(limit or 25, 200)
+        self._limit = min(limit or 25, max_limit)
         return self
 
     def offset(self, offset: int = 0) -> AssetQuery:
@@ -440,18 +471,23 @@ class AssetQuery:
 
     def _apply_sort_and_pagination(self, stmt):
         """Apply ORDER BY, cursor/offset, and LIMIT to a statement."""
+        # Use event_timestamp (source publication date) when available, fall back to created_at
+        effective_date = func.coalesce(Asset.event_timestamp, Asset.created_at)
+
         if self._sort == "created_at_desc":
-            stmt = stmt.order_by(Asset.created_at.desc())
+            stmt = stmt.order_by(effective_date.desc())
         elif self._sort == "created_at_asc":
-            stmt = stmt.order_by(Asset.created_at.asc())
+            stmt = stmt.order_by(effective_date.asc())
         elif self._sort == "title":
             stmt = stmt.order_by(Asset.title.asc())
+        elif self._sort == "part_index":
+            stmt = stmt.order_by(Asset.part_index.asc().nulls_last(), Asset.created_at.asc())
         elif self._sort == "relevance" and self._text_query:
             tsv = sa_column('text_search_vector')
             tsq = func.websearch_to_tsquery('english', self._text_query)
             stmt = stmt.order_by(func.ts_rank(tsv, tsq).desc())
         else:
-            stmt = stmt.order_by(Asset.created_at.desc())
+            stmt = stmt.order_by(effective_date.desc())
 
         if self._cursor is not None:
             if self._sort in ("created_at_desc", "relevance"):
@@ -662,6 +698,7 @@ class AssetQuery:
         session: Session,
         infospace_id: int,
         parsed: "ParsedQuery",
+        parent_asset_id: Optional[int] = None,
     ) -> AssetQuery:
         """Build an AssetQuery from a ParsedQuery (AQL parse result)."""
         from app.api.modules.content.query_parser import ParsedQuery  # noqa: F811
@@ -691,8 +728,11 @@ class AssetQuery:
                 before=_parse_date(parsed.date_before, end=True),
             )
 
-        if parsed.bundle_ref:
-            _resolve_bundle(q, session, infospace_id, parsed.bundle_ref)
+        # Scope: bundles + assets combined with OR
+        if parsed.bundle_refs or parsed.asset_refs:
+            bundle_ids = _resolve_bundle_ids(session, infospace_id, parsed.bundle_refs)
+            asset_ids = _resolve_asset_ids(session, infospace_id, parsed.asset_refs)
+            q.scope_items(bundle_ids=bundle_ids or None, asset_ids=asset_ids or None)
 
         if parsed.entities:
             q.entities(parsed.entities)
@@ -707,6 +747,9 @@ class AssetQuery:
                 threshold_op=parsed.entity_semantic.threshold_op,
             )
 
+        if parsed.tags:
+            q.tags(parsed.tags)
+
         for af in parsed.annotations:
             q.annotation_value(
                 field=af.field,
@@ -716,8 +759,14 @@ class AssetQuery:
                 negated=af.negated,
             )
 
+        # Explicit parent_asset_id param (from query endpoint)
+        if parent_asset_id is not None:
+            q.parent_asset(parent_asset_id)
+
         q.exclude_superseded()
-        q.top_level_only()
+        # Only restrict to top-level when not scoping to specific assets
+        if not parsed.asset_refs and parent_asset_id is None:
+            q.top_level_only()
 
         return q
 
@@ -774,15 +823,35 @@ def _parse_date(s: Optional[str], end: bool = False) -> Optional[datetime]:
         return None
 
 
-def _resolve_bundle(q: AssetQuery, session: Session, infospace_id: int, ref: str) -> None:
-    """Resolve bundle reference (name or ID) and apply to query."""
-    try:
-        q.bundle(int(ref))
-        return
-    except ValueError:
-        pass
-    bundle = session.exec(
-        select(Bundle).where(Bundle.infospace_id == infospace_id, Bundle.name == ref)
-    ).first()
-    if bundle:
-        q.bundle(bundle.id)
+def _resolve_bundle_ids(session: Session, infospace_id: int, refs: list[str]) -> list[int]:
+    """Resolve bundle references (names or IDs) to numeric IDs."""
+    ids: list[int] = []
+    for ref in refs:
+        try:
+            ids.append(int(ref))
+            continue
+        except ValueError:
+            pass
+        bundle = session.exec(
+            select(Bundle).where(Bundle.infospace_id == infospace_id, Bundle.name == ref)
+        ).first()
+        if bundle:
+            ids.append(bundle.id)
+    return ids
+
+
+def _resolve_asset_ids(session: Session, infospace_id: int, refs: list[str]) -> list[int]:
+    """Resolve asset references (titles or IDs) to numeric IDs."""
+    ids: list[int] = []
+    for ref in refs:
+        try:
+            ids.append(int(ref))
+            continue
+        except ValueError:
+            pass
+        asset = session.exec(
+            select(Asset).where(Asset.infospace_id == infospace_id, Asset.title == ref)
+        ).first()
+        if asset:
+            ids.append(asset.id)
+    return ids

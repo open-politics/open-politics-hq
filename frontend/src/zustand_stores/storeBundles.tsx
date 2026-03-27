@@ -28,6 +28,10 @@ interface BundleState {
   moveBundleToParent: (bundleId: number, parentBundleId: number | null) => Promise<BundleRead | null>;
   getBundleHierarchy: (bundleId: number, maxDepth?: number) => Promise<BundleHierarchy | null>;
   getRootBundles: (infospaceId: number) => Promise<BundleRead[]>;
+
+  // Seal operations
+  sealBundle: (bundleId: number) => Promise<boolean>;
+  unsealBundle: (bundleId: number) => Promise<boolean>;
 }
 
 export const useBundleStore = create<BundleState>((set, get) => ({
@@ -71,9 +75,10 @@ export const useBundleStore = create<BundleState>((set, get) => ({
   },
 
   updateBundle: async (bundleId: number, bundleData: BundleUpdate) => {
+    const { activeInfospace } = useInfospaceStore.getState();
     set({ isLoading: true, error: null });
     try {
-      const updatedBundle = await BundlesService.updateBundle({ bundleId, requestBody: bundleData });
+      const updatedBundle = await BundlesService.updateBundle({ bundleId, infospaceId: activeInfospace!.id, requestBody: bundleData });
       set(state => ({
         bundles: state.bundles.map(b => b.id === bundleId ? updatedBundle : b),
         isLoading: false
@@ -89,9 +94,10 @@ export const useBundleStore = create<BundleState>((set, get) => ({
   },
 
   deleteBundle: async (bundleId: number) => {
+    const { activeInfospace } = useInfospaceStore.getState();
     set({ isLoading: true, error: null });
     try {
-      await BundlesService.deleteBundle({ bundleId });
+      await BundlesService.deleteBundle({ bundleId, infospaceId: activeInfospace!.id });
       set(state => ({
         bundles: state.bundles.filter(b => b.id !== bundleId),
         isLoading: false
@@ -114,7 +120,7 @@ export const useBundleStore = create<BundleState>((set, get) => ({
     }
     set({ isLoading: true, error: null });
     try {
-      const updatedBundle = await BundlesService.addAssetToBundle({ bundleId, assetId });
+      const updatedBundle = await BundlesService.addAssetToBundle({ bundleId, assetId, infospaceId: activeInfospace.id });
       // Refresh both bundles and assets to ensure all UI components are updated
       await Promise.allSettled([
         get().fetchBundles(activeInfospace.id),
@@ -141,7 +147,7 @@ export const useBundleStore = create<BundleState>((set, get) => ({
       }
       set({ isLoading: true, error: null });
       try {
-        const updatedBundle = await BundlesService.removeAssetFromBundle({ bundleId, assetId });
+        const updatedBundle = await BundlesService.removeAssetFromBundle({ bundleId, assetId, infospaceId: activeInfospace.id });
         // Refresh both bundles and assets to ensure all UI components are updated
         await Promise.allSettled([
           get().fetchBundles(activeInfospace.id),
@@ -162,7 +168,7 @@ export const useBundleStore = create<BundleState>((set, get) => ({
 
   getBundleAssets: async (bundleId: number): Promise<AssetRead[]> => {
     const { activeInfospace } = useInfospaceStore.getState();
-    if (!activeInfospace) {
+    if (!activeInfospace?.id) {
       const error = 'No active infospace selected.';
       set({ error, isLoading: false });
       toast.error(error);
@@ -211,12 +217,14 @@ export const useBundleStore = create<BundleState>((set, get) => ({
 
   // Nested bundle operations
   moveBundleToParent: async (bundleId: number, parentBundleId: number | null) => {
+    const { activeInfospace } = useInfospaceStore.getState();
     set({ isLoading: true, error: null });
     try {
       const moveRequest: BundleMoveRequest = { parent_bundle_id: parentBundleId };
-      const movedBundle = await BundlesService.moveBundleToParent({ 
-        bundleId, 
-        requestBody: moveRequest 
+      const movedBundle = await BundlesService.moveBundleToParent({
+        bundleId,
+        infospaceId: activeInfospace!.id,
+        requestBody: moveRequest
       });
       
       // Update the bundle in local state
@@ -239,9 +247,11 @@ export const useBundleStore = create<BundleState>((set, get) => ({
   getBundleHierarchy: async (bundleId: number, maxDepth: number = 10) => {
     set({ isLoading: true, error: null });
     try {
-      const hierarchy = await BundlesService.getBundleHierarchy({ 
-        bundleId, 
-        maxDepth 
+      const { activeInfospace } = useInfospaceStore.getState();
+      const hierarchy = await BundlesService.getBundleHierarchy({
+        bundleId,
+        infospaceId: activeInfospace!.id,
+        maxDepth
       });
       set({ isLoading: false });
       return hierarchy;
@@ -265,5 +275,40 @@ export const useBundleStore = create<BundleState>((set, get) => ({
       set({ error: message, isLoading: false, bundles: [] });
       return [];
     }
-  }
-})); 
+  },
+
+  sealBundle: async (bundleId: number) => {
+    const { activeInfospace } = useInfospaceStore.getState();
+    if (!activeInfospace?.id) { toast.error("No active infospace."); return false; }
+    try {
+      const result = await BundlesService.sealBundle({ bundleId, infospaceId: activeInfospace.id });
+      toast.success(result.message);
+      // Update local state
+      set(state => ({
+        bundles: state.bundles.map(b => b.id === bundleId ? { ...b, sealed: true } : b),
+      }));
+      return true;
+    } catch (err: any) {
+      const message = err.body?.detail || err.message || 'Failed to seal bundle';
+      toast.error(message);
+      return false;
+    }
+  },
+
+  unsealBundle: async (bundleId: number) => {
+    const { activeInfospace } = useInfospaceStore.getState();
+    if (!activeInfospace?.id) { toast.error("No active infospace."); return false; }
+    try {
+      const result = await BundlesService.unsealBundle({ bundleId, infospaceId: activeInfospace.id });
+      toast.success(result.message);
+      set(state => ({
+        bundles: state.bundles.map(b => b.id === bundleId ? { ...b, sealed: false } : b),
+      }));
+      return true;
+    } catch (err: any) {
+      const message = err.body?.detail || err.message || 'Failed to unseal bundle';
+      toast.error(message);
+      return false;
+    }
+  },
+}));

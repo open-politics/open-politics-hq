@@ -25,6 +25,9 @@ import {
   Trash2, 
   Copy, 
   Edit2,
+  Save,
+  X,
+  Loader2,
   ArrowDownAZ,
   Clock,
   ChevronDown,
@@ -48,12 +51,41 @@ import {
 
 export type FragmentSortMode = 'alphabetical' | 'time';
 
+/** Format ISO event time for datetime-local input (local, YYYY-MM-DDTHH:mm) */
+export function formatEventTimestampForInput(iso: string | null | undefined): string {
+  if (!iso) return '';
+  try {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '';
+    const y = date.getFullYear();
+    const m = (date.getMonth() + 1).toString().padStart(2, '0');
+    const d = date.getDate().toString().padStart(2, '0');
+    const h = date.getHours().toString().padStart(2, '0');
+    const min = date.getMinutes().toString().padStart(2, '0');
+    return `${y}-${m}-${d}T${h}:${min}`;
+  } catch {
+    return '';
+  }
+}
+
 export interface AssetMetaHeaderProps {
   asset: AssetRead;
   className?: string;
   
+  /** Inline edit: pencil / save in header; title + event time edited here; body text in parent */
+  inlineEdit?: {
+    active: boolean;
+    draftTitle: string;
+    draftEventTimestamp: string;
+    onDraftTitleChange: (value: string) => void;
+    onDraftEventTimestampChange: (value: string) => void;
+    onStart: () => void;
+    onSave: () => void;
+    onCancel: () => void;
+    isSaving: boolean;
+  };
+
   // Actions
-  onEdit?: () => void;
   onDelete?: () => void;
   onDownload?: () => void;
   onShare?: () => void;
@@ -151,7 +183,7 @@ function sortFragments(
 export default function AssetMetaHeader({
   asset,
   className,
-  onEdit,
+  inlineEdit,
   onDelete,
   onDownload,
   onShare,
@@ -189,27 +221,67 @@ export default function AssetMetaHeader({
   
   return (
     <div className={cn("border-b ", className)}>
-      {/* Main Meta Row */}
-      <div className={cn(
-        "flex items-center gap-2 flex-wrap",
-        compactMode ? "px-3 py-2" : "px-4 py-3"
-      )}>
-        
+      {/* Main Meta: toolbar row; title edit is full-width below so it does not shrink in flex */}
+      <div
+        className={cn(
+          compactMode ? "px-3 py-2" : "px-4 py-3",
+          inlineEdit?.active && "flex flex-col gap-2"
+        )}
+      >
+        <div className="flex w-full min-w-0 items-center gap-2 flex-wrap">
         {/* Kind Badge - uses 'selector' context for colorful styling */}
         <Badge 
           variant="outline" 
           className={cn(
-            "flex items-center h-6 gap-1.5",
+            "flex items-center h-6 gap-1.5 shrink-0",
             getAssetBadgeClass(asset.kind, 'selector')
           )}
         >
           {getAssetIcon(asset.kind, "h-3.5 w-3.5", 'selector')}
           {formatAssetKind(asset.kind)}
         </Badge>
-        <h1 className="text-md font-semibold truncate">{asset.title}</h1>
+        {!inlineEdit?.active && (
+          <h1 className="min-w-0 max-w-xl flex-1 basis-0 text-md font-semibold truncate">
+            {asset.title || 'Untitled'}
+          </h1>
+        )}
         {/* Core Metadata */}
         <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-          {/* Title */}
+          {inlineEdit?.active ? (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <Clock className="h-3.5 w-3.5 opacity-70" />
+              <span className="whitespace-nowrap">Event</span>
+              <input
+                type="datetime-local"
+                value={inlineEdit.draftEventTimestamp}
+                onChange={(e) => inlineEdit.onDraftEventTimestampChange(e.target.value)}
+                aria-label="Event time"
+                className={cn(
+                  'h-7 w-auto min-w-0 bg-transparent text-xs text-foreground',
+                  'm-0 border-0 p-0 shadow-none outline-none ring-0',
+                  'focus:border-0 focus:outline-none focus:ring-0 focus:ring-offset-0',
+                  'focus-visible:border-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0'
+                )}
+              />
+            </div>
+          ) : asset.event_timestamp ? (
+            <>
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="cursor-default flex items-center gap-1 shrink-0">
+                      <Clock className="h-3.5 w-3.5 opacity-70" />
+                      Event: {format(new Date(asset.event_timestamp), 'PPp')}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{asset.event_timestamp}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <span className="text-muted-foreground/50">•</span>
+            </>
+          ) : null}
           {/* ID */}
           <TooltipProvider delayDuration={1500}>
             <Tooltip>
@@ -245,24 +317,6 @@ export default function AssetMetaHeader({
             </Tooltip>
           </TooltipProvider>
           
-          {/* Updated Date (if different from created) */}
-          {asset.updated_at !== asset.created_at && (
-            <>
-              <span className="text-muted-foreground/50">•</span>
-              <TooltipProvider delayDuration={200}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="cursor-default">
-                      Updated: {formatDistanceToNowStrict(new Date(asset.updated_at), { addSuffix: true })}
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{format(new Date(asset.updated_at), 'PPpp')}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </>
-          )}
           
           {/* Kind-specific metadata */}
           {kindMeta.map((meta, idx) => (
@@ -272,7 +326,20 @@ export default function AssetMetaHeader({
             </React.Fragment>
           ))}
         </div>
-        
+
+        {/* Event Timestamp */}
+        { asset.event_timestamp && asset.event_timestamp !== '' && (
+          <>  
+          <span className="text-muted-foreground/50">•</span>
+          <span>Event: {format(new Date(asset.event_timestamp), 'PPp')}</span>
+          </>
+        )}
+        { asset.event_timestamp && asset.event_timestamp === '' && (
+          <>
+          <span className="text-muted-foreground/50">•</span>
+          <span>Event: N/A</span>
+          </>
+        )}
         
         {/* Spacer */}
         <div className="flex-1" />
@@ -301,25 +368,75 @@ export default function AssetMetaHeader({
               </TooltipProvider>
             )}
             
-            {/* Edit */}
-            {onEdit && (
-              <TooltipProvider delayDuration={200}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 w-7 p-0"
-                      onClick={onEdit}
-                    >
-                      <Edit2 className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Edit</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+            {/* Inline edit: pencil → save */}
+            {inlineEdit && (
+              <>
+                {inlineEdit.active ? (
+                  <>
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            onClick={inlineEdit.onSave}
+                            disabled={inlineEdit.isSaving}
+                            aria-label="Save changes"
+                          >
+                            {inlineEdit.isSaving ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Save className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Save</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            onClick={inlineEdit.onCancel}
+                            disabled={inlineEdit.isSaving}
+                            aria-label="Cancel editing"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Cancel</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </>
+                ) : (
+                  <TooltipProvider delayDuration={200}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          onClick={inlineEdit.onStart}
+                          aria-label="Edit asset"
+                        >
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>Edit title, event time, and text</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
+              </>
             )}
             
             {/* More Actions Menu */}
@@ -342,10 +459,6 @@ export default function AssetMetaHeader({
                     Share
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onClick={handleCopyId}>
-                  <Copy className="mr-2 h-4 w-4" />
-                  Copy UUID
-                </DropdownMenuItem>
                 {onDelete && (
                   <>
                     <Separator className="my-1" />
@@ -359,8 +472,26 @@ export default function AssetMetaHeader({
             </DropdownMenu>
           </div>
         )}
+        </div>
+
+        {inlineEdit?.active && (
+          <input
+            type="text"
+            value={inlineEdit.draftTitle}
+            onChange={(e) => inlineEdit.onDraftTitleChange(e.target.value)}
+            aria-label="Title"
+            autoFocus
+            className={cn(
+              'box-border block w-full min-w-0 bg-transparent',
+              'text-md font-semibold text-foreground',
+              'm-0 border-0 p-0 shadow-none outline-none ring-0',
+              'focus:border-0 focus:outline-none focus:ring-0 focus:ring-offset-0',
+              'focus-visible:border-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0'
+            )}
+          />
+        )}
       </div>
-      
+
       {/* Source Row (if source identifier is a path/url) */}
       {asset.source_identifier && (
         <div className={cn(

@@ -83,8 +83,44 @@ class SecurityHeadersMiddleware:
 
 app.add_middleware(SecurityHeadersMiddleware)
 
-# Mount the MCP server at its designated path.
-app.mount("/tools", mcp_asgi_app)
+# Mount the MCP server only when COMPUTE capability is in the deployment ceiling.
+# MCP exposes workspace search, annotation runs, and asset CRUD — all require compute.
+if "compute" in settings.deployment_capability_names:
+    app.mount("/tools", mcp_asgi_app)
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+
+# ─── Startup scope declaration validation ───
+# Every route using Requires() must declare scope= to prevent silent data leaks.
+# Currently warns; will become a hard crash once all routes are annotated.
+
+import logging as _logging
+_startup_logger = _logging.getLogger("app.startup")
+
+def _validate_scope_declarations(app_instance):
+    """Check that every route with Requires() has a scope declaration."""
+    from app.api.modules.identity_infospace_user.access import _SCOPE_UNSET
+    missing = []
+    for route in getattr(app_instance, "routes", []):
+        dependant = getattr(route, "dependant", None)
+        if dependant is None:
+            continue
+        for dep in getattr(dependant, "dependencies", []):
+            call = getattr(dep, "call", None)
+            if call is None:
+                continue
+            scope_decl = getattr(call, "_scope_declaration", None)
+            if scope_decl is _SCOPE_UNSET:
+                methods = getattr(route, "methods", {"?"})
+                path = getattr(route, "path", "?")
+                missing.append(f"  {methods} {path}")
+    if missing:
+        _startup_logger.warning(
+            f"Routes using Requires() without scope= declaration ({len(missing)}):\n"
+            + "\n".join(missing)
+            + "\n  Add scope='field_name' or scope=None to each Requires() call."
+        )
+
+_validate_scope_declarations(app)
 

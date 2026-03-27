@@ -29,8 +29,7 @@ def list_knowledge_graphs(
     """List knowledge graphs for an infospace."""
     infospace_id = access.infospace_id
     stmt = select(KnowledgeGraph).where(KnowledgeGraph.infospace_id == infospace_id)
-    if access.scope and access.scope.graph_ids:
-        stmt = stmt.where(KnowledgeGraph.id.in_(access.scope.graph_ids))
+    stmt = access.scope_filter(stmt, KnowledgeGraph.id, "graph_ids")
     graphs = db.exec(stmt).all()
     return list(graphs)
 
@@ -69,8 +68,7 @@ def get_knowledge_graph(
     graph = db.get(KnowledgeGraph, graph_id)
     if not graph or graph.infospace_id != infospace_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge graph not found")
-    if access.scope and access.scope.graph_ids and graph_id not in access.scope.graph_ids:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge graph not found")
+    access.require_in_scope("graph_ids", graph_id)
     return graph
 
 

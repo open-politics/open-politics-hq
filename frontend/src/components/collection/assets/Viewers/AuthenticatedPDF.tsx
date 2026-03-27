@@ -115,7 +115,7 @@ export const AuthenticatedPDF: React.FC<AuthenticatedPDFProps> = React.memo(
           className="w-full h-full border-0"
           style={{ minHeight: '400px' }}
         />
-        <div className="absolute top-2 right-2">
+        <div className="absolute -top-10 left-0">
           <Button variant="outline" size="sm" asChild className="bg-background/80 hover:bg-background">
             <a href={pdfSrc.split('#')[0]} target="_blank" rel="noopener noreferrer" download>
               <Download className="h-4 w-4 mr-2" />

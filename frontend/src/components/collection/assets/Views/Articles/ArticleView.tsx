@@ -11,17 +11,16 @@ import { cn } from '@/lib/utils';
 
 /**
  * ArticleView - Content view for articles
- * 
- * Note: Metadata and fragments are displayed in the parent's AssetMetaHeader.
- * This component focuses on title + content only.
+ *
+ * Title and metadata are in the parent's AssetMetaHeader; this is body + media.
  */
 export default function ArticleView({ 
   asset, 
   childAssets = [], 
-  onEdit, 
   onAssetClick,
   className,
-  enableHighlighting = false
+  enableHighlighting = false,
+  hideMainBody = false,
 }: ArticleViewProps) {
   const format = detectArticleFormat(asset);
   const metadata = getAssetMeta(asset) as ArticleMetadata;
@@ -71,11 +70,6 @@ export default function ArticleView({
       {/* Content */}
       <div className="flex-1 w-full overflow-y-auto">
         <div className="max-w-4xl mx-auto px-6 py-6">
-          {/* Prominent Title */}
-          <h1 className="text-2xl font-bold leading-tight mb-4 text-foreground break-words">
-            {asset.title || 'Untitled Article'}
-          </h1>
-          
           {/* Summary if available - hide when duplicated at start of content */}
           {metadata?.summary && (() => {
             const sum = (metadata.summary || '').trim();
@@ -101,7 +95,7 @@ export default function ArticleView({
           />
 
           {/* Article Content */}
-          {renderContent()}
+          {!hideMainBody && renderContent()}
 
           {/* Child Assets Gallery (images beyond featured) */}
           {childAssets.length > 1 && (

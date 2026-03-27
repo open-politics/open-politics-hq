@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { request } from '@/client/core/request';
 import { OpenAPI } from '@/client/core/OpenAPI';
-import type { AssetRead } from '@/client';
+import type { AssetRead, BundleRead } from '@/client';
 import type { ParsedQueryResponse } from '@/lib/query/asset_query_language';
 
 export interface QueryResult {
@@ -12,10 +12,23 @@ export interface QueryResult {
   highlight: string | null;
 }
 
+export interface NameMatches {
+  bundles: BundleRead[];
+  assets: QueryResult[];
+}
+
+export interface ChildResultGroup {
+  parent_asset_id: number;
+  parent_title: string;
+  matches: QueryResult[];
+}
+
 interface QueryResponse {
   query: string;
   parsed: ParsedQueryResponse;
+  name_matches: NameMatches;
   results: QueryResult[];
+  child_results: ChildResultGroup[];
   total: number;
   has_more: boolean;
   cursor_next: number | null;
@@ -24,15 +37,20 @@ interface QueryResponse {
 interface UseAssetQueryOptions {
   infospaceId: number;
   query: string;
+  parentAssetId?: number;
   sort?: string;
   limit?: number;
   enabled?: boolean;
 }
 
-export function useAssetQuery(options: UseAssetQueryOptions) {
-  const { infospaceId, query, sort = 'relevance', limit = 50, enabled = true } = options;
+const EMPTY_NAME_MATCHES: NameMatches = { bundles: [], assets: [] };
 
+export function useAssetQuery(options: UseAssetQueryOptions) {
+  const { infospaceId, query, parentAssetId, sort = 'relevance', limit = 50, enabled = true } = options;
+
+  const [nameMatches, setNameMatches] = useState<NameMatches>(EMPTY_NAME_MATCHES);
   const [results, setResults] = useState<QueryResult[]>([]);
+  const [childResults, setChildResults] = useState<ChildResultGroup[]>([]);
   const [parsed, setParsed] = useState<ParsedQueryResponse>({});
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -46,12 +64,15 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
 
   const fetchQuery = useCallback(
     async (q: string, append = false, cursor?: number | null, offset?: number) => {
-      if (!q.trim() || !infospaceId) return;
+      if (!infospaceId) return;
+      // Allow empty queries in browse mode (non-relevance sort) for feed/channel usage
+      if (!q.trim() && !parentAssetId && sort === 'relevance') return;
       setIsLoading(true);
       if (!append) setError(null);
 
       try {
         const body: Record<string, unknown> = { q, limit, sort };
+        if (parentAssetId) body.parent_asset_id = parentAssetId;
         if (append && sort === 'relevance' && offset) {
           body.offset = offset;
         } else if (append && cursor) {
@@ -72,7 +93,9 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
         if (append) {
           setResults((prev) => [...prev, ...response.results]);
         } else {
+          setNameMatches(response.name_matches ?? EMPTY_NAME_MATCHES);
           setResults(response.results);
+          setChildResults(response.child_results ?? []);
           setParsed(response.parsed);
         }
         setTotal(response.total);
@@ -86,13 +109,17 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
         setIsLoading(false);
       }
     },
-    [infospaceId, limit, sort],
+    [infospaceId, parentAssetId, limit, sort],
   );
 
   // Auto-search on query change
   useEffect(() => {
-    if (!enabled || !query.trim()) {
+    // Allow empty queries in browse mode (non-relevance sort) for feed/channel usage
+    const isEmpty = !query.trim() && !parentAssetId && sort === 'relevance';
+    if (!enabled || isEmpty) {
+      setNameMatches(EMPTY_NAME_MATCHES);
       setResults([]);
+      setChildResults([]);
       setParsed({});
       setTotal(0);
       setHasMore(false);
@@ -100,7 +127,7 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
       return;
     }
     fetchQuery(query);
-  }, [query, enabled, fetchQuery]);
+  }, [query, parentAssetId, sort, enabled, fetchQuery]);
 
   const search = useCallback(() => fetchQuery(query), [query, fetchQuery]);
 
@@ -109,5 +136,5 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
     fetchQuery(query, true, cursorNext, results.length);
   }, [hasMore, isLoading, query, cursorNext, results.length, fetchQuery]);
 
-  return { results, parsed, total, hasMore, isLoading, error, search, loadMore };
+  return { nameMatches, results, childResults, parsed, total, hasMore, isLoading, error, search, loadMore };
 }

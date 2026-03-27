@@ -27,6 +27,8 @@ from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires,
 )
 from app.api.modules.graph.resolution import resolve_entity
+from app.api.modules.graph.models import GraphEdge
+from app.api.modules.graph.schemas import CurateFragmentsRequest
 from app.api.modules.embedding.services import EmbeddingService
 from sqlmodel import select, func
 
@@ -87,8 +89,7 @@ def list_annotations(
         limit = min(limit, 500)
         # Build base query
         query = select(Annotation).where(Annotation.infospace_id == infospace_id)
-        if access.scope and access.scope.run_ids:
-            query = query.where(Annotation.run_id.in_(access.scope.run_ids))
+        query = access.scope_filter(query, Annotation.run_id, "run_ids")
         # Add filters if provided
         if source_id is not None:
             # source_id parameter is actually asset_id (legacy naming)
@@ -104,8 +105,7 @@ def list_annotations(
         
         # Get total count
         count_query = select(func.count(Annotation.id)).where(Annotation.infospace_id == infospace_id)
-        if access.scope and access.scope.run_ids:
-            count_query = count_query.where(Annotation.run_id.in_(access.scope.run_ids))
+        count_query = access.scope_filter(count_query, Annotation.run_id, "run_ids")
         if source_id is not None:
             # source_id parameter is actually asset_id (legacy naming)
             count_query = count_query.where(Annotation.asset_id == source_id)
@@ -141,8 +141,7 @@ def get_annotation(
         annotation = session.get(Annotation, annotation_id)
         if not annotation or annotation.infospace_id != infospace_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotation not found")
-        if access.scope and access.scope.run_ids and annotation.run_id not in access.scope.run_ids:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotation not found")
+        access.require_in_scope("run_ids", annotation.run_id)
         
         return AnnotationRead.model_validate(annotation)
     
@@ -367,29 +366,39 @@ def retry_single_annotation(
 
 
 def get_fragment_by_path(value: Dict[str, Any], path: str) -> Any:
-    """Extract a fragment from annotation value by path (e.g., 'triplets[0]')."""
+    """Extract a fragment from annotation value by path (e.g., 'triplets[0]').
+
+    Handles the common `{document: {triplets: [...]}}` nesting — looks in the
+    top-level dict first, then falls back to `value["document"]`.
+    """
     parts = path.split('[')
     if len(parts) != 2:
         raise ValueError(f"Invalid fragment path: {path}")
-    
+
     field_name = parts[0]
     index_str = parts[1].rstrip(']')
-    
+
     try:
         index = int(index_str)
     except ValueError:
         raise ValueError(f"Invalid index in fragment path: {path}")
-    
-    if field_name not in value:
-        raise ValueError(f"Field '{field_name}' not found in annotation value")
-    
-    field_value = value[field_name]
+
+    # Try top-level first, then nested under "document"
+    container = value
+    if field_name not in container:
+        doc = value.get("document")
+        if isinstance(doc, dict) and field_name in doc:
+            container = doc
+        else:
+            raise ValueError(f"Field '{field_name}' not found in annotation value")
+
+    field_value = container[field_name]
     if not isinstance(field_value, list):
         raise ValueError(f"Field '{field_name}' is not an array")
-    
+
     if index < 0 or index >= len(field_value):
         raise ValueError(f"Index {index} out of range for '{field_name}'")
-    
+
     return field_value[index]
 
 
@@ -405,107 +414,147 @@ async def curate_fragments(
     *,
     access: Access = Requires(Capability.ORGANIZE),
     annotation_id: int,
-    curation_request: dict,
+    curation_request: CurateFragmentsRequest,
     session: SessionDep,
 ) -> Any:
     """
-    Curate annotation fragments with entity resolution.
-    
-    Body: {
-        "fragment_paths": ["triplets[0]", "triplets[3]", ...],
-        "resolve": true,  # Whether to resolve entities
-        "status": "curated"  # "curated" or "rejected"
-    }
+    Curate selected annotation fragments into the knowledge graph.
+
+    Resolves entities, creates FragmentCuration records and materialized GraphEdge rows.
+    Nothing enters the persistent graph without this explicit action (or a flow step).
     """
     try:
         infospace_id = access.infospace_id
-        # Get annotation
         annotation = session.get(Annotation, annotation_id)
         if not annotation:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotation not found")
-
-        # Verify annotation belongs to infospace
         if annotation.infospace_id != infospace_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Annotation not found in this infospace"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotation not found in this infospace")
         access.require_in_scope("run_ids", annotation.run_id)
 
-        fragment_paths = curation_request.get("fragment_paths", [])
-        should_resolve = curation_request.get("resolve", True)
-        curation_status = curation_request.get("status", "curated")
-        
-        # Get embedding service if resolution is requested
-        embedding_service = None
-        if should_resolve:
-            embedding_service = EmbeddingService(session=session, user_id=access.user_id)
-        
+        # Derive graph_id: explicit request param > run's graph_config > None (infospace default)
+        graph_id = curation_request.graph_id
+        run = None
+        if annotation.run_id:
+            from app.api.modules.annotation.models import AnnotationRun
+            run = session.get(AnnotationRun, annotation.run_id)
+            if graph_id is None and run and run.graph_config and isinstance(run.graph_config, dict):
+                graph_id = run.graph_config.get("graph_id") or run.graph_config.get("target_graph_id")
+
+        # Build merge normalization: request-level merges override graph_config merges.
+        # This carries the user's manual merge decisions from the run-scoped graph panel.
+        merge_normalize: dict[str, str] = {}
+        merge_type_override: dict[str, str] = {}
+        # Base: graph_config merges (if any)
+        if run and run.graph_config and isinstance(run.graph_config, dict):
+            for group in run.graph_config.get("entity_merges", []):
+                keep = group.get("keep", "")
+                forced_type = group.get("type")
+                for name in group.get("names", []):
+                    if name.strip().lower() != keep.strip().lower():
+                        merge_normalize[name.strip().lower()] = keep
+                if forced_type:
+                    merge_type_override[keep.strip().lower()] = forced_type
+        # Override: request-level merges (user's ad-hoc decisions from the UI)
+        if curation_request.entity_merges:
+            for hint in curation_request.entity_merges:
+                for name in hint.names:
+                    if name.strip().lower() != hint.keep.strip().lower():
+                        merge_normalize[name.strip().lower()] = hint.keep
+                if hint.type:
+                    merge_type_override[hint.keep.strip().lower()] = hint.type
+
+        embedding_service = EmbeddingService(session=session, user_id=access.user_id)
         created_curations = []
-        
-        for path in fragment_paths:
+        created_edges = []
+
+        for path in curation_request.fragment_paths:
             try:
-                # Extract fragment from annotation value
                 fragment = get_fragment_by_path(annotation.value, path)
-                
+
                 subject_entity_id = None
                 object_entity_id = None
-                if should_resolve and is_triplet(fragment):
-                    # Resolve entities
+
+                if is_triplet(fragment):
+                    # Apply merge normalization before resolution
+                    sub_name = fragment["subject_name"]
+                    sub_type = fragment.get("subject_type", "UNKNOWN")
+                    obj_name = fragment["object_name"]
+                    obj_type = fragment.get("object_type", "UNKNOWN")
+                    sub_name = merge_normalize.get(sub_name.strip().lower(), sub_name)
+                    obj_name = merge_normalize.get(obj_name.strip().lower(), obj_name)
+                    sub_type = merge_type_override.get(sub_name.strip().lower(), sub_type)
+                    obj_type = merge_type_override.get(obj_name.strip().lower(), obj_type)
+
                     subject = await resolve_entity(
                         session, infospace_id,
-                        fragment["subject_name"], fragment.get("subject_type", "UNKNOWN"),
-                        embedding_service=embedding_service
+                        sub_name, sub_type,
+                        embedding_service=embedding_service,
                     )
                     object_entity = await resolve_entity(
                         session, infospace_id,
-                        fragment["object_name"], fragment.get("object_type", "UNKNOWN"),
-                        embedding_service=embedding_service
+                        obj_name, obj_type,
+                        embedding_service=embedding_service,
                     )
                     subject_entity_id = subject.id
                     object_entity_id = object_entity.id
-                
-                # Check if curation already exists
+
+                # Upsert FragmentCuration
                 existing = session.exec(
                     select(FragmentCuration).where(
                         FragmentCuration.annotation_id == annotation_id,
-                        FragmentCuration.fragment_path == path
+                        FragmentCuration.fragment_path == path,
                     )
                 ).first()
-                
+
                 if existing:
-                    # Update existing curation
-                    existing.status = curation_status
+                    existing.status = curation_request.status
                     existing.subject_entity_id = subject_entity_id
                     existing.object_entity_id = object_entity_id
                     existing.curated_by = access.user_id
                     session.add(existing)
+                    session.flush()
                     created_curations.append(existing.id)
                 else:
-                    # Create new curation record
-                    curation = FragmentCuration(
+                    fc = FragmentCuration(
                         annotation_id=annotation_id,
                         fragment_path=path,
-                        status=curation_status,
+                        status=curation_request.status,
                         subject_entity_id=subject_entity_id,
                         object_entity_id=object_entity_id,
-                        curated_by=access.user_id
+                        curated_by=access.user_id,
                     )
-                    session.add(curation)
+                    session.add(fc)
                     session.flush()
-                    created_curations.append(curation.id)
-                    
+                    created_curations.append(fc.id)
+
+                # Create materialized GraphEdge for triplets
+                if subject_entity_id and object_entity_id and is_triplet(fragment):
+                    edge = GraphEdge(
+                        subject_entity_id=subject_entity_id,
+                        object_entity_id=object_entity_id,
+                        predicate=fragment.get("predicate"),
+                        annotation_id=annotation_id,
+                        infospace_id=infospace_id,
+                        graph_id=graph_id,
+                    )
+                    session.add(edge)
+                    session.flush()
+                    created_edges.append(edge.id)
+
             except ValueError as ve:
-                logger.warning(f"Error curating fragment {path}: {ve}")
+                logger.warning(f"Skipping fragment {path}: {ve}")
                 continue
-        
+
         session.commit()
-        
+
         return {
-            "message": f"Curated {len(created_curations)} fragments",
-            "curation_ids": created_curations
+            "curated": len(created_curations),
+            "edges_created": len(created_edges),
+            "curation_ids": created_curations,
+            "edge_ids": created_edges,
         }
-        
+
     except HTTPException:
         session.rollback()
         raise
@@ -514,7 +563,7 @@ async def curate_fragments(
         logger.exception(f"Error curating fragments: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error curating fragments: {str(e)}"
+            detail=f"Error curating fragments: {str(e)}",
         )
 
 
@@ -535,19 +584,31 @@ def remove_curation(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotation not found")
         access.require_in_scope("run_ids", annotation.run_id)
 
-        # Find and delete curation
+        # Find and delete curation + associated GraphEdge
         curation = session.exec(
             select(FragmentCuration).where(
                 FragmentCuration.annotation_id == annotation_id,
-                FragmentCuration.fragment_path == fragment_path
+                FragmentCuration.fragment_path == fragment_path,
             )
         ).first()
-        
-        if curation:
-            session.delete(curation)
-            session.commit()
-        else:
+
+        if not curation:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Curation not found")
+
+        # Remove the materialized edge for this curation
+        if curation.subject_entity_id and curation.object_entity_id:
+            edge = session.exec(
+                select(GraphEdge).where(
+                    GraphEdge.annotation_id == annotation_id,
+                    GraphEdge.subject_entity_id == curation.subject_entity_id,
+                    GraphEdge.object_entity_id == curation.object_entity_id,
+                )
+            ).first()
+            if edge:
+                session.delete(edge)
+
+        session.delete(curation)
+        session.commit()
             
     except HTTPException:
         session.rollback()
@@ -565,16 +626,19 @@ def remove_curation(
 def get_curated_triplets(
     *,
     access: Access = Requires(),
+    graph_id: Optional[int] = Query(default=None, description="Filter to a specific knowledge graph"),
+    limit: int = Query(default=500, le=2000),
+    offset: int = Query(default=0, ge=0),
     session: SessionDep,
 ) -> Any:
     """
-    Get all curated triplets for an infospace.
+    Get curated triplets for an infospace, optionally filtered to a specific knowledge graph.
     Returns triplets with resolved entity information.
     """
     try:
         infospace_id = access.infospace_id
-        # Get all curated fragments that are triplets
         from sqlalchemy import or_
+
         stmt = (
             select(FragmentCuration, Annotation)
             .join(Annotation, FragmentCuration.annotation_id == Annotation.id)
@@ -584,34 +648,53 @@ def get_curated_triplets(
                 or_(
                     FragmentCuration.subject_entity_id.isnot(None),
                     FragmentCuration.object_entity_id.isnot(None),
-                )
+                ),
             )
         )
-        # Scope filter: restrict to runs/entities visible in package scope
-        if access.scope and access.scope.run_ids:
-            stmt = stmt.where(Annotation.run_id.in_(access.scope.run_ids))
+
+        # Filter by graph: join through GraphEdge which carries graph_id
+        if graph_id is not None:
+            stmt = stmt.join(
+                GraphEdge,
+                (GraphEdge.annotation_id == FragmentCuration.annotation_id)
+                & (GraphEdge.subject_entity_id == FragmentCuration.subject_entity_id)
+                & (GraphEdge.object_entity_id == FragmentCuration.object_entity_id),
+            ).where(GraphEdge.graph_id == graph_id)
+
+        stmt = access.scope_filter(stmt, Annotation.run_id, "run_ids")
+        stmt = stmt.offset(offset).limit(limit)
         curations = session.exec(stmt).all()
-        
-        # Get all canonical entities for this infospace
-        entities = session.exec(
-            select(EntityCanonical).where(EntityCanonical.infospace_id == infospace_id)
-        ).all()
+
+        # Build entity map — scoped to graph if filtering
+        entity_stmt = select(EntityCanonical).where(EntityCanonical.infospace_id == infospace_id)
+        if graph_id is not None:
+            entity_stmt = entity_stmt.where(EntityCanonical.graph_id == graph_id)
+        entities = session.exec(entity_stmt).all()
         entity_map = {e.id: e for e in entities}
-        
+
+        # Also load infospace-level entities (graph_id IS NULL) as fallback
+        if graph_id is not None:
+            fallback = session.exec(
+                select(EntityCanonical).where(
+                    EntityCanonical.infospace_id == infospace_id,
+                    EntityCanonical.graph_id.is_(None),
+                )
+            ).all()
+            for e in fallback:
+                entity_map.setdefault(e.id, e)
+
         curated_triplets = []
-        
+
         for curation, annotation in curations:
             try:
-                # Extract triplet from annotation
                 fragment = get_fragment_by_path(annotation.value, curation.fragment_path)
-                
+
                 if not is_triplet(fragment):
                     continue
-                
+
                 subject_id = curation.subject_entity_id
                 object_id = curation.object_entity_id
-                
-                # Build triplet with resolved entities
+
                 triplet_data = {
                     "id": curation.id,
                     "annotation_id": annotation.id,
@@ -622,29 +705,29 @@ def get_curated_triplets(
                         "raw_name": fragment["subject_name"],
                         "raw_type": fragment.get("subject_type"),
                         "canonical_id": subject_id,
-                        "canonical_name": entity_map.get(subject_id).canonical_name if subject_id and subject_id in entity_map else fragment["subject_name"],
+                        "canonical_name": entity_map[subject_id].canonical_name if subject_id and subject_id in entity_map else fragment["subject_name"],
                     },
                     "object": {
                         "raw_name": fragment["object_name"],
                         "raw_type": fragment.get("object_type"),
                         "canonical_id": object_id,
-                        "canonical_name": entity_map.get(object_id).canonical_name if object_id and object_id in entity_map else fragment["object_name"],
+                        "canonical_name": entity_map[object_id].canonical_name if object_id and object_id in entity_map else fragment["object_name"],
                     },
                     "properties": {k: v for k, v in fragment.items() if k not in ['subject_name', 'subject_type', 'predicate', 'object_name', 'object_type']},
                     "curated_at": curation.curated_at.isoformat() if curation.curated_at else None,
                 }
-                
+
                 curated_triplets.append(triplet_data)
-                
+
             except (ValueError, KeyError) as e:
                 logger.warning(f"Error processing curated triplet {curation.id}: {e}")
                 continue
-        
+
         return curated_triplets
-        
+
     except Exception as e:
         logger.exception(f"Error fetching curated triplets: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error fetching curated triplets"
+            detail="Error fetching curated triplets",
         )

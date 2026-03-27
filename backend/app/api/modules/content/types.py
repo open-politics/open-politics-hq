@@ -336,8 +336,8 @@ class ContentTypeRegistry:
         desc = self.by_kind(kind)
         if not desc or not desc.preview_builder_name:
             return None
-        # Lazy import to avoid circular dependency with content_tree_builder
-        from app.api.content_tree_builder import (
+        # Lazy import to avoid circular dependency with tree_renderer
+        from app.api.tree_renderer import (
             build_csv_preview,
             build_pdf_preview,
             build_article_preview,

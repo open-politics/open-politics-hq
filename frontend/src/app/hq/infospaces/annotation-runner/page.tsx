@@ -45,9 +45,9 @@ export default function AnnotationRunnerPage() {
     }
   }, [activeInfospace?.id, loadSchemas, fetchAllAssets]);
 
-  const fetchRunResults = useCallback(async (runId: number) => {
+  const fetchRunResults = useCallback(async (runId: number, silent = false) => {
     if (!activeInfospace?.id) return;
-    setIsLoadingResults(true);
+    if (!silent) setIsLoadingResults(true);
     try {
         const response = await AnnotationsService.getRunResults({
             infospaceId: activeInfospace.id,
@@ -57,9 +57,9 @@ export default function AnnotationRunnerPage() {
         const formatted = response.map(r => adaptEnhancedAnnotationToFormattedAnnotation(r));
         setRunResults(formatted);
     } catch (e: any) {
-        toast.error("Failed to load run results.", { description: e.body?.detail || e.message });
+        if (!silent) toast.error("Failed to load run results.", { description: e.body?.detail || e.message });
     } finally {
-        setIsLoadingResults(false);
+        if (!silent) setIsLoadingResults(false);
     }
   }, [activeInfospace?.id]);
 
@@ -142,14 +142,16 @@ export default function AnnotationRunnerPage() {
     // Only start polling if the run is actively processing
     if (activeRun && (activeRun.status === 'running' || activeRun.status === 'pending')) {
       const runId = activeRun.id; // Capture the run ID
-      const checkStatus = async () => {
-        await loadRuns(); 
+      const checkStatusAndResults = async () => {
+        await loadRuns();
+        // Stream results while processing — annotations are committed per-chunk
+        await fetchRunResults(runId, true);
       };
 
-      // Start the polling interval
-      pollIntervalRef.current = setInterval(checkStatus, 5000);
+      // Poll every 3s for snappy progress updates
+      pollIntervalRef.current = setInterval(checkStatusAndResults, 3000);
     } else {
-      // Handle completed runs
+      // Handle completed runs — final fetch to ensure we have everything
       if(activeRun?.status === 'completed' || activeRun?.status === 'completed_with_errors' || activeRun?.status === 'failed') {
           fetchRunResults(activeRun.id);
       }

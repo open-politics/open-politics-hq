@@ -8,7 +8,7 @@ import {
   UserOut,
   UsersService,
   OpenAPI,
-} from "../client"
+} from '@/client';
 
 type User = UserOut & {
   avatar?: string;

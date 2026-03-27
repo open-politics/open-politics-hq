@@ -6,7 +6,7 @@ import enum
 import uuid
 
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import CheckConstraint, Column, DateTime, Index, JSON, text
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Index, Integer, JSON, text
 
 from app.api.modules.identity_infospace_user.models import User, Infospace
 
@@ -183,14 +183,28 @@ class PackageItem(SQLModel, table=True):
     ``item.resource_type == "bundle"``).
     """
     id: Optional[int] = Field(default=None, primary_key=True)
-    package_id: int = Field(foreign_key="package.id", index=True, sa_column_kwargs={"ondelete": "CASCADE"})
+    package_id: int = Field(
+        sa_column=Column(Integer, ForeignKey("package.id", ondelete="CASCADE"), index=True, nullable=False)
+    )
     # Exactly one of these is non-null (CHECK constraint in migration)
-    bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id", sa_column_kwargs={"ondelete": "CASCADE"})
-    run_id: Optional[int] = Field(default=None, foreign_key="annotationrun.id", sa_column_kwargs={"ondelete": "CASCADE"})
-    graph_id: Optional[int] = Field(default=None, foreign_key="knowledgegraph.id", sa_column_kwargs={"ondelete": "CASCADE"})
-    schema_id: Optional[int] = Field(default=None, foreign_key="annotationschema.id", sa_column_kwargs={"ondelete": "CASCADE"})
-    asset_id: Optional[int] = Field(default=None, foreign_key="asset.id", sa_column_kwargs={"ondelete": "CASCADE"})
-    entity_canonical_id: Optional[int] = Field(default=None, foreign_key="entitycanonical.id", sa_column_kwargs={"ondelete": "CASCADE"})
+    bundle_id: Optional[int] = Field(
+        default=None, sa_column=Column(Integer, ForeignKey("bundle.id", ondelete="CASCADE"))
+    )
+    run_id: Optional[int] = Field(
+        default=None, sa_column=Column(Integer, ForeignKey("annotationrun.id", ondelete="CASCADE"))
+    )
+    graph_id: Optional[int] = Field(
+        default=None, sa_column=Column(Integer, ForeignKey("knowledgegraph.id", ondelete="CASCADE"))
+    )
+    schema_id: Optional[int] = Field(
+        default=None, sa_column=Column(Integer, ForeignKey("annotationschema.id", ondelete="CASCADE"))
+    )
+    asset_id: Optional[int] = Field(
+        default=None, sa_column=Column(Integer, ForeignKey("asset.id", ondelete="CASCADE"))
+    )
+    entity_canonical_id: Optional[int] = Field(
+        default=None, sa_column=Column(Integer, ForeignKey("entitycanonical.id", ondelete="CASCADE"))
+    )
     # Per-item permission overrides (NULL = use package default)
     allow_download: Optional[bool] = None
     allow_copy: Optional[bool] = None

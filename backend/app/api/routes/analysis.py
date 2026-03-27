@@ -8,8 +8,13 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.models import AnalysisAdapter, Annotation
-from app.api.dependency_injection import SessionDep, CurrentUser, AnalysisServiceDep
+from app.api.dependency_injection import SessionDep, CurrentUser, AnalysisServiceDep, get_current_active_superuser
 from app.api.modules.identity_infospace_user.access import Access, Requires
+
+# Allowlist for adapter module paths — never trust a DB string as a Python import path
+ALLOWED_ADAPTER_PREFIXES = (
+    "app.api.modules.analysis.",
+)
 from app.schemas import AnalysisAdapterRead, AnnotationRead # We'll need a Pydantic model for the response
 
 logger = logging.getLogger(__name__)
@@ -88,15 +93,16 @@ async def list_analysis_adapters(
     adapters = session.exec(select(AnalysisAdapter).where(AnalysisAdapter.is_active == True)).all()
     return adapters
 
-@router.post("/analysis/adapters/{adapter_name}/execute", tags=["Analysis Adapters"])
+@router.post("/analysis/adapters/{adapter_name}/execute", tags=["Analysis Adapters"],
+             dependencies=[Depends(get_current_active_superuser)])
 async def execute_analysis_adapter(
     *,
     session: SessionDep,
-    current_user: CurrentUser, # For authorization if needed / logging
+    current_user: CurrentUser,
     adapter_name: str = Path(..., description="The registered name of the adapter"),
     config: Dict[str, Any] = Body(...) # Configuration specific to the adapter
 ) -> Dict[str, Any]:
-    logger.info(f"Executing adapter: {adapter_name} with config: {config} for user {current_user.id if current_user else 'anonymous'}")
+    logger.info(f"Executing adapter: {adapter_name} with config: {config}")
 
     # 1. Fetch adapter details from DB
     adapter_record = session.exec(
@@ -105,7 +111,7 @@ async def execute_analysis_adapter(
 
     if not adapter_record:
         raise HTTPException(status_code=404, detail=f"Adapter '{adapter_name}' not found or not active.")
-    
+
     if not adapter_record.module_path:
         raise HTTPException(status_code=500, detail=f"Adapter '{adapter_name}' is not configured with a module path.")
 
@@ -115,6 +121,8 @@ async def execute_analysis_adapter(
     try:
         # 2. Dynamically import the adapter module and class
         module_name, class_name = adapter_record.module_path.rsplit('.', 1)
+        if not any(module_name.startswith(prefix) for prefix in ALLOWED_ADAPTER_PREFIXES):
+            raise HTTPException(status_code=400, detail=f"Adapter module '{module_name}' not in allowlist")
         adapter_module = importlib.import_module(module_name)
         AdapterClass = getattr(adapter_module, class_name)
 

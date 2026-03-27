@@ -13,12 +13,14 @@ import { curatedDataToGraphData } from './graphAdapters';
 
 interface CuratedGraphViewProps {
   infospaceId: number;
+  graphId?: number;
   initialGraphConfig?: Partial<GraphViewConfig>;
   onGraphConfigChange?: (config: GraphViewConfig) => void;
 }
 
-export function CuratedGraphView({ 
+export function CuratedGraphView({
   infospaceId,
+  graphId,
   initialGraphConfig,
   onGraphConfigChange,
 }: CuratedGraphViewProps) {
@@ -34,20 +36,22 @@ export function CuratedGraphView({
   }, [onGraphConfigChange]);
 
   const { data: curatedTriplets, isLoading, refetch } = useQuery({
-    queryKey: ['curated-triplets', infospaceId],
+    queryKey: ['curated-triplets', infospaceId, graphId],
     queryFn: async () => {
       return await AnnotationsService.getCuratedTriplets({
         infospaceId,
-      });
+        ...(graphId != null ? { graphId } : {}),
+      } as any);
     },
   });
 
   const { data: entities } = useQuery({
-    queryKey: ['canonical-entities', infospaceId],
+    queryKey: ['canonical-entities', infospaceId, graphId],
     queryFn: async () => {
       return await CanonicalEntitiesService.listEntities({
         infospaceId,
-      });
+        ...(graphId != null ? { graphId } : {}),
+      } as any);
     },
   });
 

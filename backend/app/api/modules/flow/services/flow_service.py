@@ -1032,12 +1032,8 @@ class FlowService:
                         if target_bundle_id:
                             filter_expr = self.filter_service.create_from_config({"expression": cond_expr})
                             if filter_expr.evaluate(context):
-                                self.bundle_service.add_asset_to_bundle(
-                                    bundle_id=target_bundle_id,
-                                    asset_id=asset_id,
-                                    infospace_id=flow.infospace_id,
-                                    user_id=flow.user_id
-                                )
+                                from app.core.tree import copy as tree_copy
+                                tree_copy(self.session, asset_ids=[asset_id], to=target_bundle_id)
                                 routed_count += 1
                                 routed_asset_ids.append(asset_id)
                                 matched = True
@@ -1046,12 +1042,8 @@ class FlowService:
                     elif condition.get("else") and not matched:
                         else_bundle_id = condition.get("bundle_id")
                         if else_bundle_id:
-                            self.bundle_service.add_asset_to_bundle(
-                                bundle_id=else_bundle_id,
-                                asset_id=asset_id,
-                                infospace_id=flow.infospace_id,
-                                user_id=flow.user_id
-                            )
+                            from app.core.tree import copy as tree_copy
+                            tree_copy(self.session, asset_ids=[asset_id], to=else_bundle_id)
                             routed_count += 1
                             routed_asset_ids.append(asset_id)
                             matched = True
@@ -1059,12 +1051,8 @@ class FlowService:
             # Simple routing to bundle(s)
             for asset_id in asset_ids:
                 for target_bundle_id in bundle_ids:
-                    self.bundle_service.add_asset_to_bundle(
-                        bundle_id=target_bundle_id,
-                        asset_id=asset_id,
-                        infospace_id=flow.infospace_id,
-                        user_id=flow.user_id
-                    )
+                    from app.core.tree import copy as tree_copy
+                    tree_copy(self.session, asset_ids=[asset_id], to=target_bundle_id)
                     routed_count += 1
                 routed_asset_ids.append(asset_id)
         

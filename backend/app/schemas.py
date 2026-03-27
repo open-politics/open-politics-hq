@@ -270,6 +270,7 @@ class AssetCreate(AssetBase):
     event_timestamp: Optional[datetime] = None
     processing_status: Optional[ProcessingStatus] = None
     content_hash: Optional[str] = None  # For deduplication
+    tags: Optional[List[str]] = None
 
 class AssetUpdate(SQLModel):
     title: Optional[str] = None
@@ -281,6 +282,7 @@ class AssetUpdate(SQLModel):
     facets: Optional[Dict[str, Any]] = None
     file_info: Optional[Dict[str, Any]] = None
     event_timestamp: Optional[datetime] = None
+    tags: Optional[List[str]] = None
 
 class AssetRead(AssetBase):
     id: int
@@ -305,6 +307,7 @@ class AssetRead(AssetBase):
     event_timestamp: Optional[datetime] = None
     processing_status: ProcessingStatus = ProcessingStatus.READY
     processing_error: Optional[str] = None
+    tags: List[str] = []
 
     # Helper flags
     @computed_field  # type: ignore[misc]
@@ -352,6 +355,13 @@ class BundleRead(BundleBase):
     bundle_metadata: Optional[Dict[str, Any]] = None
     parent_bundle_id: Optional[int] = None
     child_bundle_count: Optional[int] = None
+    sealed: bool = False
+
+    @field_validator("parent_bundle_id", mode="before")
+    @classmethod
+    def root_to_none(cls, v: Any) -> Optional[int]:
+        """Map ROOT (0) to None for API backward compat."""
+        return None if v == 0 else v
 
 class BundleMoveRequest(SQLModel):
     parent_bundle_id: Optional[int] = None  # None means move to root level
@@ -364,6 +374,11 @@ class BundleHierarchy(SQLModel):
     child_bundle_count: Optional[int] = None
     parent_bundle_id: Optional[int] = None
     children: List["BundleHierarchy"] = []
+
+    @field_validator("parent_bundle_id", mode="before")
+    @classmethod
+    def root_to_none(cls, v: Any) -> Optional[int]:
+        return None if v == 0 else v
 
 # ───────────────────────────────────── Annotation Schema ──── #
 
@@ -421,6 +436,8 @@ class AnnotationRunCreate(AnnotationRunBase):
     run_type: Optional[str] = "one_off"  # one_off | flow_step
     flow_execution_id: Optional[int] = None  # If created by a Flow
     tags: Optional[List[str]] = None
+    # ═══ GRAPH ═══
+    graph_config: Optional[Dict[str, Any]] = None  # {graph_id, entity_merges, ...}
     # ═══ LEGACY TRIGGER TRACKING (kept for backwards compatibility) ═══
     trigger_type: Optional[str] = "manual"  # AnnotationRunTrigger value
     trigger_context: Optional[Dict[str, Any]] = None
@@ -460,6 +477,9 @@ class AnnotationRunRead(AnnotationRunBase):
     monitor_id: Optional[int] = None
     source_bundle_id: Optional[int] = None  # NEW: For continuous runs watching a bundle
     graph_config: Optional[Dict[str, Any]] = None  # NEW: Graph configuration for Knowledge Graph schemas
+    # ═══ PROGRESS ═══
+    progress_total: Optional[int] = None
+    progress_current: Optional[int] = None
 
 
 class AnnotationRunsOut(SQLModel):
@@ -1248,8 +1268,14 @@ class TreeNode(SQLModel):
     asset_count: Optional[int] = None  # For bundles
     child_bundle_count: Optional[int] = None  # For bundles
     
+    # Sealed status for bundles
+    sealed: Optional[bool] = None
+
     # Processing status for assets
     processing_status: Optional[ProcessingStatus] = None
+
+    # Tags
+    tags: Optional[List[str]] = None
     
     # Stub flag for assets
     stub: Optional[bool] = None
@@ -1297,10 +1323,3 @@ class TreeChildrenResponse(SQLModel):
     has_more: bool
 
 
-class DeletionImpact(SQLModel):
-    """Preview of what a tree deletion would affect."""
-    bundles_to_delete: int
-    bundle_names: List[str]
-    assets_to_delete: int       # exclusive to deleted subtree — permanently deleted
-    assets_to_unlink: int       # shared with external bundles — survive, just unlinked
-    child_assets_to_delete: int # structural children of explicitly selected assets

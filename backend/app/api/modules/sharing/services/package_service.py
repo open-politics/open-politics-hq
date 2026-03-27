@@ -1633,12 +1633,9 @@ class PackageImporter:
             # Add bundle to each asset's bundle_ids array
             self.session.add(new_bundle)
             self.session.flush()  # Ensure new_bundle.id is assigned
-            for aid in local_asset_ids:
-                self.session.execute(
-                    text("UPDATE asset SET bundle_ids = array_append(COALESCE(bundle_ids, ARRAY[]::int[]), :bid) WHERE id = :aid AND (bundle_ids IS NULL OR NOT bundle_ids @> ARRAY[:bid]::int[])"),
-                    {"bid": new_bundle.id, "aid": aid},
-                )
-            new_bundle.asset_count = len(local_asset_ids)
+            from app.core.tree import copy as tree_copy
+            result = tree_copy(self.session, asset_ids=local_asset_ids, to=new_bundle.id)
+            new_bundle.asset_count = result.assets
 
         self.session.add(new_bundle)
         self.session.flush()
@@ -2034,12 +2031,9 @@ class PackageService:
                             if local_asset_id:
                                 linked_asset_ids.append(local_asset_id)
                     if linked_asset_ids:
-                        for aid in linked_asset_ids:
-                            self.session.execute(
-                                text("UPDATE asset SET bundle_ids = array_append(COALESCE(bundle_ids, ARRAY[]::int[]), :bid) WHERE id = :aid AND (bundle_ids IS NULL OR NOT bundle_ids @> ARRAY[:bid]::int[])"),
-                                {"bid": bundle.id, "aid": aid},
-                            )
-                        bundle.asset_count = len(linked_asset_ids)
+                        from app.core.tree import copy as tree_copy
+                        result = tree_copy(self.session, asset_ids=linked_asset_ids, to=bundle.id)
+                        bundle.asset_count = result.assets
                         self.session.add(bundle)
                 except Exception as e:
                     logger.error(f"Failed to link assets to bundle: {e}", exc_info=True)

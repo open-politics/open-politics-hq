@@ -62,28 +62,10 @@ def find_by_alias(
     if row:
         return session.get(EntityCanonical, row[0])
 
-    # 2. Substring match (LIKE) with minimum length guard; prefer longer matches.
-    # Substring matching disabled for names < 6 chars to avoid false merges (e.g. EU -> European Union).
-    if len(normalized_name) < 6:
-        return None
-    substr_sql = text(f"""
-        SELECT id FROM entitycanonical
-        WHERE infospace_id = :iid AND entity_type = :etype {graph_clause} {exclude_clause}
-        AND (
-            LOWER(TRIM(canonical_name)) LIKE '%' || :name || '%'
-            OR :name LIKE '%' || LOWER(TRIM(canonical_name)) || '%'
-            OR EXISTS (
-                SELECT 1 FROM jsonb_array_elements_text(COALESCE(aliases::jsonb, '[]'::jsonb)) AS elem
-                WHERE LOWER(TRIM(elem::text)) LIKE '%' || :name || '%'
-                   OR :name LIKE '%' || LOWER(TRIM(elem::text)) || '%'
-            )
-        )
-        ORDER BY LENGTH(canonical_name) DESC
-        LIMIT 1
-    """)
-    result = session.execute(substr_sql, params).fetchone()
-    if result:
-        return session.get(EntityCanonical, result[0])
+    # No substring matching — too many false merges (e.g. "Washington" matching
+    # "George Washington" and "Washington Post"). Embedding similarity handles
+    # the fuzzy cases; exact alias catches known names. When embedding resolution
+    # finds a match, it adds the raw name as an alias for future exact lookups.
     return None
 
 
@@ -376,5 +358,5 @@ async def resolve_entities_batch(
         session.flush()
         result[(raw_name, entity_type)] = canonical
 
-    session.commit()
+    # No commit here — caller owns the transaction boundary.
     return result

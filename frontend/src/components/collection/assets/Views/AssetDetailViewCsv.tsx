@@ -1,163 +1,125 @@
-// frontend/src/components/collection/infospaces/documents/AssetDetailViewCsv.tsx
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+// frontend/src/components/collection/assets/Views/AssetDetailViewCsv.tsx
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Input } from "@/components/ui/input";
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Loader2, Search, ArrowUp, ArrowDown, FileSpreadsheet, Table as TableIcon, List, X, Copy, Eye, HelpCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Loader2, Search, ArrowUp, ArrowDown, X, Copy, Eye, HelpCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { AssetRead } from '@/client';
-import { formatDistanceToNow, format } from 'date-fns';
+import { format } from 'date-fns';
 import { Separator } from "@/components/ui/separator";
 import { toast } from 'sonner';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { FragmentDisplay, FragmentSectionHeader, FragmentCountBadge } from './Fragments';
-import { getAssetMeta } from '@/lib/utils';
+import type { CsvRowListItem } from './AssetDetailView';
+
+function csvRowPreviewFromItem(item: CsvRowListItem, maxLen = 220): string {
+  const data = item.originalRowData;
+  if (!data || Object.keys(data).length === 0) return item.name || '';
+  const parts = Object.entries(data).map(([k, v]) => `${k}: ${v}`);
+  const full = parts.join(' · ');
+  return full.length > maxLen ? full.slice(0, maxLen) + '…' : full;
+}
 
 interface AssetDetailViewCsvProps {
   asset: AssetRead;
-  childAssets: AssetRead[];
-  isLoadingChildren: boolean;
+  items: CsvRowListItem[];
+  total: number;
+  hasMore: boolean;
+  isLoading: boolean;
   childrenError: string | null;
-  onChildAssetSelect?: (childAsset: AssetRead) => void;
+  onRowSelect: (item: CsvRowListItem) => void;
+  onLoadMore: () => void;
   selectedChildAsset?: AssetRead | null;
   highlightedAssetId?: number | null;
+  rowListSearchTerm: string;
+  onRowListSearchTermChange: (value: string) => void;
 }
 
 const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
   asset,
-  childAssets = [],
-  isLoadingChildren,
+  items = [],
+  total,
+  hasMore,
+  isLoading,
   childrenError,
-  onChildAssetSelect,
+  onRowSelect,
+  onLoadMore,
   selectedChildAsset,
   highlightedAssetId,
+  rowListSearchTerm,
+  onRowListSearchTermChange,
 }) => {
-  const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<string>('part_index');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
+  const [columnSearchTerm, setColumnSearchTerm] = useState('');
+  const [columnMatchIndex, setColumnMatchIndex] = useState(0);
+  const columnCardRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
+  const rowSearchTermRef = useRef(rowListSearchTerm);
+  rowSearchTermRef.current = rowListSearchTerm;
 
-  // Filter and sort child assets
-  const filteredAndSortedAssets = useMemo(() => {
-    let filtered = childAssets;
-
-    // Filter by search term
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      filtered = childAssets.filter(child => 
-        child.title?.toLowerCase().includes(term) ||
-        child.text_content?.toLowerCase().includes(term) ||
-        child.id.toString().includes(term) ||
-        JSON.stringify(getAssetMeta(child)).toLowerCase().includes(term)
-      );
-    }
-
-    // Sort
-    filtered.sort((a, b) => {
-      let aValue: any, bValue: any;
-
-      switch (sortField) {
-        case 'part_index':
-          aValue = a.part_index ?? 999999;
-          bValue = b.part_index ?? 999999;
-          break;
-        case 'title':
-          aValue = a.title || '';
-          bValue = b.title || '';
-          break;
-        case 'created_at':
-          aValue = new Date(a.created_at);
-          bValue = new Date(b.created_at);
-          break;
-        default:
-          aValue = a.id;
-          bValue = b.id;
-      }
-
-      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
-      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+  // Items come pre-filtered from backend; only do local sort
+  const sortedItems = useMemo(() => {
+    const sorted = [...items];
+    sorted.sort((a, b) => {
+      let aVal: string | number = sortField === 'part_index' ? a.partIndex : a.name;
+      let bVal: string | number = sortField === 'part_index' ? b.partIndex : b.name;
+      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
       return 0;
     });
-
-    return filtered;
-  }, [childAssets, searchTerm, sortField, sortDirection]);
+    return sorted;
+  }, [items, sortField, sortDirection]);
 
   const selectedIndex = useMemo(() => {
     if (!selectedChildAsset) return -1;
-    return filteredAndSortedAssets.findIndex(asset => asset.id === selectedChildAsset.id);
-  }, [selectedChildAsset, filteredAndSortedAssets]);
+    return sortedItems.findIndex(item => item.assetId === selectedChildAsset.id);
+  }, [selectedChildAsset, sortedItems]);
 
   const canGoToPrevious = selectedIndex > 0;
-  const canGoToNext = selectedIndex !== -1 && selectedIndex < filteredAndSortedAssets.length - 1;
+  const canGoToNext = selectedIndex !== -1 && selectedIndex < sortedItems.length - 1;
+
+  const isNavigatingRef = useRef(false);
 
   const handleGoToPrevious = () => {
     if (canGoToPrevious) {
       isNavigatingRef.current = true;
-      onChildAssetSelect?.(filteredAndSortedAssets[selectedIndex - 1]);
+      onRowSelect(sortedItems[selectedIndex - 1]);
     }
   };
 
   const handleGoToNext = () => {
     if (canGoToNext) {
       isNavigatingRef.current = true;
-      onChildAssetSelect?.(filteredAndSortedAssets[selectedIndex + 1]);
+      onRowSelect(sortedItems[selectedIndex + 1]);
     }
   };
 
-  // When a user selects a row, that should be the main highlight.
-  // The initial `highlightedAssetId` should only apply if nothing is selected.
   const isSelected = (assetId: number) => selectedChildAsset?.id === assetId;
-  const isHighlighted = (assetId: number) => 
+  const isHighlighted = (assetId: number) =>
     !selectedChildAsset && highlightedAssetId === assetId;
 
-  // Refs for scrolling to highlighted/selected rows - separate refs for different view modes
   const highlightedTableRowRef = useRef<HTMLTableRowElement>(null);
   const selectedTableRowRef = useRef<HTMLTableRowElement>(null);
-  const highlightedCardRef = useRef<HTMLDivElement>(null);
-  const selectedCardRef = useRef<HTMLDivElement>(null);
-  
-  // Track if navigation came from prev/next buttons to skip auto-scroll
-  const isNavigatingRef = useRef(false);
 
-  // Effect to scroll to highlighted asset
   useEffect(() => {
-    if (highlightedAssetId) {
-      const targetRef = viewMode === 'table' ? highlightedTableRowRef.current : highlightedCardRef.current;
-      if (targetRef) {
-        // Small delay to ensure rendering is complete
-        setTimeout(() => {
-          targetRef.scrollIntoView({
-            behavior: 'smooth',
-            block: 'center',
-          });
-        }, 100);
-      }
+    if (highlightedAssetId && highlightedTableRowRef.current) {
+      setTimeout(() => {
+        highlightedTableRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
     }
-  }, [highlightedAssetId, viewMode]);
+  }, [highlightedAssetId]);
 
-  // Effect to scroll to selected asset (skip if navigating via prev/next buttons)
   useEffect(() => {
     if (selectedChildAsset) {
-      // Skip scrolling if navigation came from prev/next buttons
-      if (isNavigatingRef.current) {
-        isNavigatingRef.current = false;
-        return;
-      }
-      
-      const targetRef = viewMode === 'table' ? selectedTableRowRef.current : selectedCardRef.current;
-      if (targetRef) {
-        // Small delay to ensure rendering is complete
+      if (isNavigatingRef.current) { isNavigatingRef.current = false; return; }
+      if (selectedTableRowRef.current) {
         setTimeout(() => {
-          targetRef.scrollIntoView({
-            behavior: 'smooth',
-            block: 'center',
-          });
+          selectedTableRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 100);
       }
     }
-  }, [selectedChildAsset, viewMode]);
+  }, [selectedChildAsset]);
 
   const handleSort = (field: string) => {
     if (sortField === field) {
@@ -168,27 +130,68 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
     }
   };
 
-  const handleRowClick = (childAsset: AssetRead) => {
-    onChildAssetSelect?.(childAsset);
-  };
-
   const renderSortIcon = (field: string) => {
     if (sortField !== field) return null;
     return sortDirection === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />;
   };
 
-  // Check if highlighted asset is in filtered results
-  const isHighlightedInView = highlightedAssetId 
-    ? filteredAndSortedAssets.some(asset => asset.id === highlightedAssetId)
-    : false;
-
-  // Effect to clear search when a new highlight is requested and not visible
+  // Carry over row search term to column search when a new row is selected
   useEffect(() => {
-    if (highlightedAssetId && !isHighlightedInView && searchTerm) {
-      setSearchTerm('');
-      toast.info('Search cleared to show highlighted row.');
+    if (selectedChildAsset?.id != null) {
+      setColumnSearchTerm(rowSearchTermRef.current);
+      setColumnMatchIndex(0);
     }
-  }, [highlightedAssetId, isHighlightedInView, searchTerm]);
+  }, [selectedChildAsset?.id]);
+
+  // Reset match index when column search changes
+  useEffect(() => { setColumnMatchIndex(0); }, [columnSearchTerm]);
+
+  // Compute matching column indices
+  const columnMatches = useMemo(() => {
+    if (!selectedChildAsset || !columnSearchTerm.trim()) return [];
+    const rowData = (selectedChildAsset.file_info?.original_row_data as Record<string, unknown>) || {};
+    const columns = Object.keys(rowData);
+    const term = columnSearchTerm.toLowerCase();
+    return columns.reduce<number[]>((acc, col, i) => {
+      if (col.toLowerCase().includes(term) || String(rowData[col] ?? '').toLowerCase().includes(term)) acc.push(i);
+      return acc;
+    }, []);
+  }, [selectedChildAsset, columnSearchTerm]);
+
+  // Scroll active column match into view
+  useEffect(() => {
+    if (columnMatches.length > 0) {
+      const el = columnCardRefs.current.get(columnMatches[columnMatchIndex]);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [columnMatchIndex, columnMatches]);
+
+  const highlightText = useCallback((text: string, term: string): React.ReactNode => {
+    if (!term.trim()) return text;
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+    return parts.map((part, i) =>
+      part.toLowerCase() === term.toLowerCase()
+        ? <mark key={i} className="bg-yellow-200 dark:bg-yellow-800 rounded-sm px-0.5">{part}</mark>
+        : part
+    );
+  }, []);
+
+  const handleColumnSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && columnMatches.length > 0) {
+      e.preventDefault();
+      setColumnMatchIndex((prev) => (prev + 1) % columnMatches.length);
+    }
+  }, [columnMatches]);
+
+  const handleRowSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && sortedItems.length > 0) {
+      e.preventDefault();
+      const nextIdx = selectedIndex === -1 ? 0 : (selectedIndex + 1) % sortedItems.length;
+      isNavigatingRef.current = true;
+      onRowSelect(sortedItems[nextIdx]);
+    }
+  }, [sortedItems, selectedIndex, onRowSelect]);
 
   const handleCopyRowData = (childAsset: AssetRead) => {
     const rowData = childAsset.file_info?.original_row_data as Record<string, unknown> | undefined;
@@ -202,66 +205,66 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
     }
   };
 
-  const renderTableView = () => (
-    <div className="max-h-40 md:max-h-80 w-full overflow-auto">
-      <table className="text-sm border-collapse w-full table-fixed" style={{ minWidth: '500px' }}>
-        <colgroup>
-          <col style={{ width: '50px' }} />
-          <col />
-        </colgroup>
-        <thead className="sticky top-0 bg-muted z-10">
+  const renderRowListTable = () => (
+    <div className="mt-2 w-full min-w-0 max-h-[min(22vh,11rem)] overflow-auto rounded-md border border-border bg-background sm:max-h-[min(26vh,13rem)] scrollbar-hide">
+      <table className="w-full border-collapse text-sm">
+        <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur supports-[backdrop-filter]:bg-muted/80">
           <tr>
-            <th 
-              className="px-2 py-2 text-left font-medium text-xs cursor-pointer hover:bg-muted-foreground/10 border-b"
+            <th
+              className="w-14 shrink-0 cursor-pointer whitespace-nowrap border-b px-2 py-2 text-left text-xs font-medium hover:bg-muted-foreground/10"
               onClick={() => handleSort('part_index')}
             >
-              <div className="flex items-center gap-1 truncate">
-                Row
+              <div className="flex items-center gap-1">
+                #
                 {renderSortIcon('part_index')}
               </div>
             </th>
-            <th className="px-2 py-2 text-left font-medium text-xs border-b"> Aggregated Text Content Preview</th>
+            <th className="min-w-0 border-b px-2 py-2 text-left text-xs font-medium">Row preview</th>
           </tr>
         </thead>
         <tbody>
-          {filteredAndSortedAssets.length > 0 ? (
-            filteredAndSortedAssets.map((childAsset) => {
-              const selected = isSelected(childAsset.id);
-              const highlighted = isHighlighted(childAsset.id);
-              
+          {sortedItems.length > 0 ? (
+            sortedItems.map((item) => {
+              const selected = isSelected(item.assetId);
+              const highlighted = isHighlighted(item.assetId);
+
               return (
                 <tr
-                  key={childAsset.id}
+                  key={item.assetId}
                   ref={
-                    selected ? selectedTableRowRef :
-                    highlighted ? highlightedTableRowRef : 
-                    undefined
+                    selected
+                      ? selectedTableRowRef
+                      : highlighted
+                        ? highlightedTableRowRef
+                        : undefined
                   }
-                  onClick={() => handleRowClick(childAsset)}
+                  onClick={() => onRowSelect(item)}
                   className={cn(
-                    "cursor-pointer hover:bg-muted/50 transition-colors border-b border-border/50",
-                    (selected || highlighted) && "bg-yellow-50 hover:bg-yellow-100 dark:bg-yellow-900 dark:hover:bg-yellow-800"
+                    'cursor-pointer border-b border-border/50 transition-colors hover:bg-muted/50',
+                    (selected || highlighted) &&
+                      'bg-yellow-50 hover:bg-yellow-100 dark:bg-yellow-900 dark:hover:bg-yellow-800'
                   )}
-                  style={(selected || highlighted) ? { boxShadow: 'inset 4px 0 0 0 rgb(250 204 21)' } : undefined}
+                  style={
+                    selected || highlighted
+                      ? { boxShadow: 'inset 4px 0 0 0 rgb(250 204 21)' }
+                      : undefined
+                  }
                 >
-                <td className="px-2 py-2 font-medium border-r border-border/70">
-                  <div className="flex items-center gap-1 min-w-0">
-                    <span className="truncate">{childAsset.part_index !== null ? childAsset.part_index + 1 : childAsset.id}</span>
-                    {selected && <Eye className="h-3 w-3 text-yellow-800 dark:text-yellow-300 flex-shrink-0" />}
-                    {childAsset.fragments && Object.keys(childAsset.fragments).length > 0 && (
-                      <FragmentCountBadge 
-                        count={Object.keys(childAsset.fragments).length}
-                        className="flex-shrink-0"
-                      />
-                    )}
-                  </div>
-                </td>
-                  <td className="px-2 py-2">
-                    <div className="w-full overflow-hidden">
-                      <div className="truncate" title={childAsset.text_content || 'No content'}>
-                        {childAsset.text_content || 
-                         (Object.keys(getAssetMeta(childAsset)).length > 0 ? JSON.stringify(getAssetMeta(childAsset)).substring(0, 150) + '...' : 'No content')}
-                      </div>
+                  <td className="w-14 shrink-0 whitespace-nowrap border-r border-border/50 px-2 py-2 font-medium">
+                    <div className="flex items-center gap-1">
+                      <span>{item.partIndex + 1}</span>
+                      {selected && (
+                        <Eye className="h-3 w-3 shrink-0 text-yellow-800 dark:text-yellow-300" />
+                      )}
+                    </div>
+                  </td>
+                  <td className="min-w-0 max-w-0 px-2 py-2">
+                    <div className="truncate text-muted-foreground" title={csvRowPreviewFromItem(item, 500)}>
+                      {item.highlight ? (
+                        <span dangerouslySetInnerHTML={{ __html: item.highlight }} />
+                      ) : (
+                        csvRowPreviewFromItem(item, 220)
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -269,99 +272,33 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
             })
           ) : (
             <tr>
-              <td colSpan={4} className="h-24 text-center text-muted-foreground italic px-2 py-2">
-                {searchTerm ? 'No rows found matching your search.' : 'No CSV rows found.'}
+              <td colSpan={2} className="h-24 px-2 py-2 text-center italic text-muted-foreground">
+                {rowListSearchTerm.trim() ? 'No rows found matching your search.' : 'No CSV rows found.'}
+              </td>
+            </tr>
+          )}
+          {/* Load more */}
+          {hasMore && (
+            <tr>
+              <td colSpan={2} className="px-2 py-2 text-center">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onLoadMore}
+                  disabled={isLoading}
+                  className="w-full"
+                >
+                  {isLoading ? (
+                    <><Loader2 className="h-3 w-3 animate-spin mr-1" /> Loading...</>
+                  ) : (
+                    `Load more (showing ${items.length} of ${total})`
+                  )}
+                </Button>
               </td>
             </tr>
           )}
         </tbody>
       </table>
-    </div>
-  );
-
-  const renderCardsView = () => (
-    <div className="w-full">
-      <div className="space-y-3 max-h-80 overflow-auto w-full">
-        {filteredAndSortedAssets.length > 0 ? (
-          filteredAndSortedAssets.map((childAsset) => {
-            const selected = isSelected(childAsset.id);
-            const highlighted = isHighlighted(childAsset.id);
-            
-            return (
-              <Card
-                key={childAsset.id}
-                ref={
-                  selected ? selectedCardRef :
-                  highlighted ? highlightedCardRef : 
-                  undefined
-                }
-                className={cn(
-                  "cursor-pointer transition-colors hover:bg-muted/50 w-full",
-                  selected && "border-yellow-500 border-2",
-                  highlighted && "border-yellow-400 border-l-4"
-                )}
-                onClick={() => handleRowClick(childAsset)}
-              >
-                <CardContent className="p-4">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className={cn(
-                      "w-8 h-8 rounded-full bg-muted flex items-center justify-center text-xs font-semibold flex-shrink-0",
-                      selected && "bg-yellow-400 text-yellow-900",
-                      highlighted && "bg-yellow-100 text-yellow-800"
-                    )}>
-                      {childAsset.part_index !== null ? childAsset.part_index + 1 : childAsset.id}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-medium truncate flex items-center gap-2">
-                        <span className="truncate">{childAsset.title || `Row ${childAsset.part_index !== null ? childAsset.part_index + 1 : childAsset.id}`}</span>
-                        {selected && <Eye className="h-4 w-4 text-yellow-800 flex-shrink-0" />}
-                      </h4>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground mt-1 flex-wrap">
-                        <Badge variant="outline" className="capitalize">{childAsset.kind}</Badge>
-                        <span className="whitespace-nowrap">ID: {childAsset.id}</span>
-                        <span className="truncate">{formatDistanceToNow(new Date(childAsset.created_at), { addSuffix: true })}</span>
-                        {childAsset.fragments && Object.keys(childAsset.fragments).length > 0 && (
-                          <FragmentCountBadge 
-                            count={Object.keys(childAsset.fragments).length}
-                          />
-                        )}
-                        {highlighted && (
-                          <Badge variant="outline" className="bg-yellow-100 text-yellow-800 border-yellow-400">
-                            Highlighted
-                          </Badge>
-                        )}
-                      </div>
-                      {childAsset.text_content && (
-                        <div className="mt-2 max-h-16 overflow-hidden">
-                          <p className="text-sm text-muted-foreground line-clamp-2 leading-relaxed break-words">
-                            {childAsset.text_content}
-                          </p>
-                        </div>
-                      )}
-                      {(() => {
-                        const meta = getAssetMeta(childAsset);
-                        return Object.keys(meta).length > 0 && (
-                        <div className="mt-2 min-w-0">
-                          <ScrollArea className="max-h-20 w-full">
-                            <pre className="text-xs bg-muted/50 p-2 rounded overflow-auto break-all">
-                              {JSON.stringify(meta, null, 2)}
-                            </pre>
-                          </ScrollArea>
-                        </div>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })
-        ) : (
-          <div className="text-center py-8 text-muted-foreground italic">
-            {searchTerm ? 'No rows found matching your search.' : 'No CSV rows found.'}
-          </div>
-        )}
-      </div>
     </div>
   );
 
@@ -372,81 +309,31 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
     const columnNames = Object.keys(rowData);
 
     return (
-      <Card className="mt-4 max-w-5xl mx-auto border-none">
-        <CardHeader className="pb-3">
+      <Card className="mx-auto border-none">
+        <CardHeader className="!p-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1 absolute bottom-3 right-4 z-10 bg-background/95 backdrop-blur-sm py-2 px-3 rounded-lg shadow-sm">
-              {/* Navigation */}
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-7 w-7"
-                onClick={handleGoToPrevious}
-                disabled={!canGoToPrevious}
-                title="Previous Row"
-              >
+              <Button variant="outline" size="icon" className="h-7 w-7" onClick={handleGoToPrevious} disabled={!canGoToPrevious} title="Previous Row">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-7 w-7"
-                onClick={handleGoToNext}
-                disabled={!canGoToNext}
-                title="Next Row"
-              >
+              <Button variant="outline" size="icon" className="h-7 w-7" onClick={handleGoToNext} disabled={!canGoToNext} title="Next Row">
                 <ChevronRight className="h-4 w-4" />
               </Button>
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleCopyRowData(selectedChildAsset)}
-                className="h-7 px-2"
-              >
+              <Button variant="outline" size="sm" onClick={() => handleCopyRowData(selectedChildAsset)} className="h-7 px-2">
                 <Copy className="h-3 w-3 mr-1" />
                 Copy
               </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => onChildAssetSelect?.(selectedChildAsset)}
-                className="h-7 w-7 text-muted-foreground"
-              >
+              <Button variant="ghost" size="icon" onClick={() => { /* deselect by clicking same row */ }} className="h-7 w-7 text-muted-foreground">
                 <X className="h-4 w-4" />
               </Button>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Basic Asset Information */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
-            <div className="min-w-0">
-              <strong className="text-muted-foreground">Asset ID:</strong>
-              <div className="font-mono truncate">{selectedChildAsset.id}</div>
-            </div>
-            <div className="min-w-0">
-              <strong className="text-muted-foreground">UUID:</strong>
-              <div className="font-mono text-xs truncate" title={selectedChildAsset.uuid}>{selectedChildAsset.uuid}</div>
-            </div>
-            <div className="min-w-0">
-              <strong className="text-muted-foreground">Kind:</strong>
-              <div><Badge variant="outline">{selectedChildAsset.kind}</Badge></div>
-            </div>
-            <div className="min-w-0">
-              <strong className="text-muted-foreground">Row Position:</strong>
-              <div className="font-semibold">{selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : 'N/A'}</div>
-            </div>
-          </div>
-
-
-
-
-          {/* Fragments Data */}
+        <CardContent className="space-y-4 !p-0">
           {selectedChildAsset.fragments && Object.keys(selectedChildAsset.fragments).length > 0 && (
             <div>
               <FragmentSectionHeader count={Object.keys(selectedChildAsset.fragments).length} />
-              <FragmentDisplay 
+              <FragmentDisplay
                 fragments={selectedChildAsset.fragments as Record<string, any>}
                 viewMode="full"
               />
@@ -455,39 +342,67 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
 
           <Separator />
 
-          {/* Column Data */}
           {columnNames.length > 0 && (
             <div>
-              <div className="grid gap-3 w-full">
-                {columnNames.map((columnName, index) => (
-                  <div key={index} className="border rounded-lg p-3 min-w-0">
-                    <div className="flex items-center justify-between mb-1 gap-2">
-                      <strong className="text-sm text-muted-foreground truncate flex-1 min-w-0" title={columnName}>{columnName}</strong>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          navigator.clipboard.writeText(String(rowData[columnName] || ''));
-                          toast.success(`Copied "${columnName}" value`);
-                        }}
-                        className="h-6 px-2 text-xs flex-shrink-0"
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
+              <div className="relative w-full min-w-0 max-w-full shrink-0 sm:max-w-md">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search columns…"
+                  value={columnSearchTerm}
+                  onChange={(e) => setColumnSearchTerm(e.target.value)}
+                  onKeyDown={handleColumnSearchKeyDown}
+                  className="h-9 bg-background pl-8 pr-16 shadow-none focus-visible:ring-0"
+                />
+                {columnSearchTerm.trim() && (
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                    {columnMatches.length > 0
+                      ? `${columnMatchIndex + 1}/${columnMatches.length}`
+                      : 'No matches'}
+                  </span>
+                )}
+              </div>
+              <div className="grid gap-3 w-full mt-3">
+                {columnNames.map((columnName, index) => {
+                  const isMatch = columnMatches.includes(index);
+                  const colTerm = columnSearchTerm.trim();
+
+                  return (
+                    <div
+                      key={index}
+                      ref={(el) => { columnCardRefs.current.set(index, el); }}
+                      className={cn(
+                        "border rounded-lg p-3 min-w-0 transition-all",
+                        colTerm && !isMatch && "opacity-40",
+                        isMatch && "border-yellow-400 dark:border-yellow-600 bg-yellow-50/50 dark:bg-yellow-900/20"
+                      )}
+                    >
+                      <div className="flex items-center justify-between mb-1 gap-2">
+                        <strong className="text-sm text-muted-foreground truncate flex-1 min-w-0" title={columnName}>
+                          {colTerm ? highlightText(columnName, colTerm) : columnName}
+                        </strong>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            navigator.clipboard.writeText(String(rowData[columnName] || ''));
+                            toast.success(`Copied "${columnName}" value`);
+                          }}
+                          className="h-6 px-2 text-xs flex-shrink-0"
+                        >
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <div className="text-sm bg-muted/30 p-2 rounded break-all w-full overflow-x-auto">
+                        {colTerm ? highlightText(String(rowData[columnName] || ''), colTerm) : String(rowData[columnName] || '')}
+                      </div>
                     </div>
-                    <div className="text-sm bg-muted/30 p-2 rounded font-mono break-all w-full overflow-x-auto">
-                      {String(rowData[columnName] || '')}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
 
-          
-
-          {/* Timestamps */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm px-2">
             <div className="min-w-0">
               <strong className="text-muted-foreground">Created:</strong>
               <div className="truncate" title={format(new Date(selectedChildAsset.created_at), "PPp")}>
@@ -518,8 +433,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
                         <HelpCircle className="h-3 w-3 flex-shrink-0" />
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>This field is the time reference point of what is discussed for this asset.
-                        It can be annotated with a timestamp, but it can also be a time reference point for the asset.</p>
+                        <p>This field is the time reference point of what is discussed for this asset.</p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -529,88 +443,43 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
               </div>
             )}
           </div>
-
-          {/* Raw Metadata */}
-          {(() => {
-            const meta = getAssetMeta(selectedChildAsset);
-            return Object.keys(meta).length > 0 && (
-            <div>
-              <h4 className="text-sm font-semibold mb-2 text-muted-foreground">Raw Metadata</h4>
-              <ScrollArea className="h-24 p-3 bg-muted/30 rounded">
-                <pre className="text-xs">
-                  {JSON.stringify(meta, null, 2)}
-                </pre>
-              </ScrollArea>
-            </div>
-            );
-          })()}
         </CardContent>
       </Card>
     );
   };
 
   return (
-    <div className="space-y-4 h-full flex flex-col max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-end gap-4">
-        <div className="flex items-center gap-2">
-          {selectedChildAsset && (
-            <Badge variant="default" className="bg-primary/10 text-primary border-primary">
-              Row {selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : selectedChildAsset.id} Selected
-            </Badge>
-          )}
-          {highlightedAssetId && (
-            <Badge variant="outline" className="bg-yellow-100 text-yellow-800 border-yellow-400">
-              Highlighting Row ID: {highlightedAssetId}
-            </Badge>
-          )}
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <Button
-            variant={viewMode === 'table' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setViewMode('table')}
-          >
-            <TableIcon className="h-4 w-4 mr-1" />
-            Table
-          </Button>
-          <Button
-            variant={viewMode === 'cards' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => setViewMode('cards')}
-          >
-            <List className="h-4 w-4 mr-1" />
-            Cards
-          </Button>
-        </div>
-      </div>
-
-      {/* Search */}
-      <div className="relative w-full max-w-md border border-primary/20 rounded-md p-1">
-        <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Search CSV rows..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="pl-8"
-        />
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto">
-        {isLoadingChildren ? (
-          <div className="flex items-center justify-center h-32">
+    <div className="flex h-full min-h-0 w-full min-w-0 max-w-full flex-col overflow-hidden">
+      <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
+        {isLoading && items.length === 0 ? (
+          <div className="flex h-32 items-center justify-center">
             <Loader2 className="h-6 w-6 animate-spin mr-2" />
             <span>Loading CSV rows...</span>
           </div>
         ) : childrenError ? (
-          <div className="text-center py-8 text-red-600">
+          <div className="py-8 text-center text-red-600">
             Error loading CSV rows: {childrenError}
           </div>
         ) : (
-          <div className="w-full max-w-full">
-            {viewMode === 'table' ? renderTableView() : renderCardsView()}
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-hide">
+            <div className="relative w-full min-w-0 max-w-full shrink-0 sm:max-w-md">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search rows…"
+                value={rowListSearchTerm}
+                onChange={(e) => onRowListSearchTermChange(e.target.value)}
+                onKeyDown={handleRowSearchKeyDown}
+                className="h-9 bg-background pl-8 shadow-none focus-visible:ring-0"
+              />
+            </div>
+            {total > 0 && (
+              <div className="mt-1 text-xs text-muted-foreground px-1">
+                {rowListSearchTerm.trim()
+                  ? `${total} result${total !== 1 ? 's' : ''} found`
+                  : `${items.length} of ${total} rows loaded`}
+              </div>
+            )}
+            {renderRowListTable()}
             {renderSelectedRowDetail()}
           </div>
         )}

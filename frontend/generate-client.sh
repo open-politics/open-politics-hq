@@ -16,15 +16,5 @@ jq '.paths |= map_values(map_values(if (.tags and (.tags | length > 0) and .oper
 
 bun run generate-client
 
-
-# Patch ApiRequestOptions.ts to include an optional responseType property
-sed -i "/readonly errors?: Record<number, string>;/a \\\    readonly responseType?: 'arraybuffer' | 'blob' | 'document' | 'json' | 'text' | 'stream';" ./src/client/core/ApiRequestOptions.ts
-
-# Patch request.ts to pass responseType from ApiRequestOptions to AxiosRequestConfig
-# This allows the responseType: 'blob' (set by the above sed command for services.ts) to actually take effect in axios.
-sed -i "/method: options.method,/i \\\    responseType: options.responseType as AxiosRequestConfig['responseType']," ./src/client/core/request.ts
-
-npx biome format --write ./src/client 
-echo "WARNING: YOU MAY SEE PRINTS OF DUPLICATE OPERATIONIDS DUE TO '/' COMPATIBILITY ISSUES. THESE LOGS ARE EXPECTED."
-echo "prestart.sh has been run successfully. OpenAPI client generated and corrected."
+echo "Client generated. Duplicate operationId warnings from package-token route variants are expected."
 

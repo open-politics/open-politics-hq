@@ -16,11 +16,15 @@ Syntax:
     after:2019-01                           # date range (event_timestamp -> created_at)
     before:2022-12
     bundle:"leaked docs"                    # bundle scope (name or ID)
+    asset:123                               # scope to children of asset (ID or title)
+    asset:"financial_data.csv"              # scope to children by asset title
     entity:"Angela Merkel"                  # exact entity (graph -> text fallback)
     entity:"A","B"                          # entity OR (either entity)
     entity:~politician                      # semantic entity (entity embeddings)
     entity:~politician>0.7                  # semantic entity with threshold
     -entity:"name"                          # exclude entity
+    tag:favorite                            # asset tag filter
+    tag:important,review                    # multiple tags (AND — all must be present)
     annotation:sentiment>=0.8              # annotation field filter
     annotation:category=="financial"       # annotation exact match
     annotation:doc.topics.0=="climate"     # nested JSONB path
@@ -61,14 +65,19 @@ class ParsedQuery:
     excluded_kinds: list[str] = field(default_factory=list)
     date_after: str | None = None
     date_before: str | None = None
-    bundle_ref: str | None = None
+    bundle_refs: list[str] = field(default_factory=list)
+    asset_refs: list[str] = field(default_factory=list)
     # Entities — inner list = OR, outer list = AND
     entities: list[list[str]] = field(default_factory=list)
     entity_negations: list[str] = field(default_factory=list)
     entity_semantic: SemanticClause | None = None
+    # Tags
+    tags: list[str] = field(default_factory=list)
     # Annotations
     annotations: list[AnnotationFilter] = field(default_factory=list)
     run_ids: list[int] = field(default_factory=list)
+    # Children display: None = default (3/parent), 0 = hide, N = up to N/parent
+    children_limit: int | None = None
 
     @property
     def has_text(self) -> bool:
@@ -82,8 +91,8 @@ class ParsedQuery:
     def has_filters(self) -> bool:
         return bool(
             self.kinds or self.excluded_kinds or self.date_after or self.date_before
-            or self.bundle_ref or self.entities or self.entity_negations
-            or self.entity_semantic or self.annotations or self.run_ids
+            or self.bundle_refs or self.asset_refs or self.entities or self.entity_negations
+            or self.entity_semantic or self.annotations or self.run_ids or self.tags
         )
 
     @property
@@ -105,14 +114,18 @@ class ParsedQuery:
             d["date_after"] = self.date_after
         if self.date_before:
             d["date_before"] = self.date_before
-        if self.bundle_ref:
-            d["bundle_ref"] = self.bundle_ref
+        if self.bundle_refs:
+            d["bundle_refs"] = self.bundle_refs
+        if self.asset_refs:
+            d["asset_refs"] = self.asset_refs
         if self.entities:
             d["entities"] = self.entities
         if self.entity_negations:
             d["entity_negations"] = self.entity_negations
         if self.entity_semantic:
             d["entity_semantic"] = _semantic_dict(self.entity_semantic)
+        if self.tags:
+            d["tags"] = self.tags
         if self.annotations:
             d["annotations"] = [
                 {"field": a.field, "op": a.op, "value": a.value, **({"negated": True} if a.negated else {})}
@@ -120,6 +133,8 @@ class ParsedQuery:
             ]
         if self.run_ids:
             d["run_ids"] = self.run_ids
+        if self.children_limit is not None:
+            d["children_limit"] = self.children_limit
         return d
 
 
@@ -160,7 +175,7 @@ _THRESHOLD_RE = re.compile(r'([><]=?)([\d.]+)$')
 _ANNOTATION_OP_RE = re.compile(r'^([a-zA-Z0-9_.]+)(==|!=|>=|>|<=|<)(.+)$')
 _PREFIX_RE = re.compile(r'^(-)?([a-z]+):(.+)$', re.DOTALL)
 
-_KNOWN_PREFIXES = frozenset({"kind", "after", "before", "bundle", "run", "entity", "annotation"})
+_KNOWN_PREFIXES = frozenset({"kind", "after", "before", "bundle", "asset", "run", "entity", "annotation", "children", "tag"})
 
 
 def _strip_quotes(s: str) -> str:
@@ -230,7 +245,25 @@ def parse(raw: str) -> ParsedQuery:
                 q.date_before = _strip_quotes(rest)
 
             elif prefix == 'bundle':
-                q.bundle_ref = _strip_quotes(rest)
+                q.bundle_refs.extend(_parse_comma_values(rest))
+
+            elif prefix == 'asset':
+                q.asset_refs.extend(_parse_comma_values(rest))
+
+            elif prefix == 'children':
+                val = _strip_quotes(rest).lower()
+                if val in ('none', '0'):
+                    q.children_limit = 0
+                elif val in ('show', 'all'):
+                    q.children_limit = -1  # -1 = unlimited
+                else:
+                    try:
+                        q.children_limit = max(0, int(val))
+                    except ValueError:
+                        pass
+
+            elif prefix == 'tag':
+                q.tags.extend(_parse_comma_values(rest))
 
             elif prefix == 'run':
                 try:

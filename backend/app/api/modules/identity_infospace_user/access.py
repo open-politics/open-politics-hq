@@ -76,6 +76,8 @@ class PackageScope:
     run_ids: Tuple[int, ...] = ()                   # explicit + derived from graphs (bounded)
     schema_ids: Tuple[int, ...] = ()                # explicit + derived from runs (bounded)
     entity_canonical_ids: Tuple[int, ...] = ()      # explicit standalone entities
+    downloadable_asset_ids: Tuple[int, ...] = ()    # subset of visible assets where download is allowed
+    copyable_asset_ids: Tuple[int, ...] = ()        # subset of visible assets where copy is allowed
 
 
 # ─── Access context ───
@@ -118,6 +120,18 @@ class Access:
         if not ids:
             return stmt.where(literal(False))
         return stmt.where(column.in_(ids))
+
+    def can_download(self, asset_id: int) -> bool:
+        """Check if an asset can be downloaded through the current access context."""
+        if self.scope is None:
+            return True  # owner/collaborator = full access
+        return asset_id in self.scope.downloadable_asset_ids
+
+    def can_copy(self, asset_id: int) -> bool:
+        """Check if an asset can be copied/imported through the current access context."""
+        if self.scope is None:
+            return True
+        return asset_id in self.scope.copyable_asset_ids
 
     def require_in_scope(self, scope_field: str, entity_id: int) -> None:
         """Point check — raises 404 if entity_id is outside the active scope.
@@ -284,15 +298,8 @@ def _resolve_package_token(
 
     # ── 1. Bundles → recursive expansion (child bundles) ──
     if bundle_ids:
-        rows = session.execute(sa_text("""
-            WITH RECURSIVE tree AS (
-                SELECT id FROM bundle WHERE id = ANY(:bids)
-                UNION ALL
-                SELECT b.id FROM bundle b JOIN tree ON b.parent_bundle_id = tree.id
-            )
-            SELECT id FROM tree
-        """), {"bids": list(bundle_ids)}).fetchall()
-        bundle_ids = {r[0] for r in rows}
+        from app.core.tree import subtree_ids
+        bundle_ids = subtree_ids(session, bundle_ids)
 
     # ── 2. Graphs → derive run_ids (bounded: graph has few runs) ──
     if graph_ids:
@@ -337,6 +344,66 @@ def _resolve_package_token(
         """), {"rids": list(run_ids)}).fetchall()
         asset_ids |= {r[0] for r in ancestor_rows}
 
+    # ── 5. Compute download/copy permission sets ──
+    #    Each asset inherits the permission of the PackageItem that grants it visibility.
+    #    When an asset is reachable through multiple items, allow wins (union semantics).
+    downloadable_asset_ids: set[int] = set()
+    copyable_asset_ids: set[int] = set()
+
+    for item in items:
+        dl = item.effective_allow_download()
+        cp = item.effective_allow_copy()
+        if not dl and not cp:
+            continue
+
+        if item.bundle_id is not None:
+            # All assets in this bundle's subtree inherit the item's permissions
+            from app.core.tree import subtree_ids as _subtree_ids
+            item_subtree = _subtree_ids(session, {item.bundle_id})
+            if item_subtree:
+                item_asset_rows = session.execute(sa_text(
+                    "SELECT id FROM asset WHERE bundle_ids && CAST(:bids AS int[])"
+                ), {"bids": list(item_subtree)}).fetchall()
+                item_asset_set = {r[0] for r in item_asset_rows}
+                if dl:
+                    downloadable_asset_ids |= item_asset_set
+                if cp:
+                    copyable_asset_ids |= item_asset_set
+
+        elif item.asset_id is not None:
+            if dl:
+                downloadable_asset_ids.add(item.asset_id)
+            if cp:
+                copyable_asset_ids.add(item.asset_id)
+
+        elif item.run_id is not None:
+            # Ancestor chain assets derived from this run inherit the item's permissions
+            run_asset_rows = session.execute(sa_text(
+                "SELECT DISTINCT asset_id FROM annotation WHERE run_id = :rid"
+            ), {"rid": item.run_id}).fetchall()
+            run_asset_set = {r[0] for r in run_asset_rows}
+            # Also include ancestor assets already computed
+            run_asset_set |= asset_ids  # ancestor chain was already built above
+            if dl:
+                downloadable_asset_ids |= run_asset_set
+            if cp:
+                copyable_asset_ids |= run_asset_set
+
+        elif item.graph_id is not None:
+            # Graph → annotations → assets
+            graph_asset_rows = session.execute(sa_text(
+                "SELECT DISTINCT a.asset_id FROM annotation a "
+                "JOIN graphedge ge ON ge.annotation_id = a.id "
+                "WHERE ge.graph_id = :gid"
+            ), {"gid": item.graph_id}).fetchall()
+            graph_asset_set = {r[0] for r in graph_asset_rows}
+            if dl:
+                downloadable_asset_ids |= graph_asset_set
+            if cp:
+                copyable_asset_ids |= graph_asset_set
+
+        # schema/entity items have no file blobs — skip
+
     return PackageScope(
         bundle_ids=tuple(bundle_ids),
         asset_ids=tuple(asset_ids),
@@ -344,6 +411,8 @@ def _resolve_package_token(
         run_ids=tuple(run_ids),
         schema_ids=tuple(schema_ids),
         entity_canonical_ids=tuple(entity_canonical_ids),
+        downloadable_asset_ids=tuple(downloadable_asset_ids),
+        copyable_asset_ids=tuple(copyable_asset_ids),
     )
 
 
@@ -380,27 +449,23 @@ def resolve_access(
 
 # ─── FastAPI dependency factory ───
 
-def Requires(*required_capabilities: Capability):
+_SCOPE_UNSET = object()
+
+def Requires(*required_capabilities: Capability, scope: str | None = _SCOPE_UNSET):
     """
     FastAPI dependency factory that resolves access and checks capabilities.
 
-    Usage in route signatures::
+    The ``scope`` parameter declares what scope field this route operates on:
+    - ``scope="run_ids"`` — list/get routes filtered by run_ids
+    - ``scope="bundle_ids"`` — routes filtered by bundle_ids
+    - ``scope="asset"`` — routes using AssetQuery.scope() directly
+    - ``scope=None`` — explicitly unscoped (blanket denial, auth-only, etc.)
+    - ``_SCOPE_UNSET`` (default) — startup validation will flag this as an error
 
-        from app.api.modules.identity_infospace_user.access import Access, Requires, Capability
-
-        @router.get("/infospaces/{infospace_id}/data")
-        def get_data(access: Access = Requires()):
-            ...
-
-        @router.post("/infospaces/{infospace_id}/bundles")
-        def create_bundle(access: Access = Requires(Capability.ORGANIZE)):
-            ...
-
-    Or use the convenience aliases (imported from this module)::
-
-        @router.get("/infospaces/{infospace_id}/data")
-        def get_data(access: Access = ViewAccess):
-            ...
+    The scope declaration drives:
+    1. **Mount-time** — route pruned via _required_capabilities metadata
+    2. **Startup-time** — scope validation catches missing declarations
+    3. **Runtime** — 403 if capability missing (defense in depth)
 
     See FOUNDATION.md § Access Control and OVERVIEW.md § Access Control.
     """
@@ -416,8 +481,25 @@ def Requires(*required_capabilities: Capability):
         x_package_token: Optional[str] = Header(None, alias="X-Package-Token"),
         package_token: Optional[str] = Query(None, alias="package_token"),
     ) -> Access:
+        from app.core.config import settings
+
         token = x_package_token or package_token
         access = _resolve_access(db, infospace_id, current_user, package_token=token)
+
+        # Intersect user capabilities with deployment ceiling
+        ceiling_names = settings.deployment_capability_names
+        if ceiling_names != frozenset({"organize", "ingest", "compute", "delete", "setup"}):
+            ceiling = frozenset(c for c in Capability if c.value in ceiling_names)
+            capped_capabilities = access.capabilities & ceiling
+            access = Access(
+                infospace_id=access.infospace_id,
+                infospace=access.infospace,
+                user_id=access.user_id,
+                is_owner=access.is_owner,
+                capabilities=capped_capabilities,
+                scope=access.scope,
+                role=access.role,
+            )
 
         for cap in required_capabilities:
             if cap not in access.capabilities:
@@ -427,6 +509,10 @@ def Requires(*required_capabilities: Capability):
                 )
 
         return access
+
+    # Metadata read by router manifest (mount-time pruning) and startup validator (scope check)
+    _dependency._required_capabilities = required_capabilities
+    _dependency._scope_declaration = scope
 
     return Depends(_dependency)
 

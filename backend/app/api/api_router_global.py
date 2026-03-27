@@ -1,79 +1,195 @@
-from fastapi import APIRouter
-from app.api.routes import (
-    admin,
-    analysis,
-    storage,
-    annotation_runs,
-    annotation_schemas,
-    annotations,
-    assets,
-    backups,
-    bundles,
-    chat,  # Intelligence chat routes
-    chat_history,  # Chat conversation history routes
-    chunking,
-    search_history,
-    ingestion_jobs,  # Content ingestion job tracking
-    datasets,
-    embeddings,
-    entities as canonical_entities,  # Graph canonical entities
-    knowledge_graphs,
-    filestorage,
-    filters,
-    flows,  # Unified Flow architecture (replaces monitors + pipelines)
-    healthcheck,
-    infospaces,
-    login,
-    packages,  # Package CRUD + discovery
-    providers,  # Provider discovery (models, capabilities)
-    query,  # Universal asset query (AQL)
-    search,
-    shareables,
-    sources,
-    sso,
-    tasks,
-    tree,  # Efficient tree navigation routes
-    user_backups,
-    users,
-    utils,
-)
-api_router = APIRouter()
+"""
+Declarative router manifest with two-level capability filtering.
 
-# Main APIs - Routes mounted under API_V1_STR (/api/v1)
-api_router.include_router(admin.router, tags=["admin"])
-api_router.include_router(analysis.router, tags=["Analysis Service"])
-api_router.include_router(annotation_runs.router, prefix="/annotation_jobs", tags=["annotation_jobs"])
-api_router.include_router(annotation_schemas.router, tags=["AnnotationSchemas"])
-api_router.include_router(annotations.router, prefix="/annotations", tags=["annotations"])
-api_router.include_router(assets.router, tags=["assets"])
-api_router.include_router(backups.router, tags=["Backups"])
-api_router.include_router(backups.general_router, tags=["Backups"])
-api_router.include_router(bundles.router, tags=["Bundles"])
-api_router.include_router(chat.router, prefix="/chat", tags=["Intelligence Chat"])  # NEW
-api_router.include_router(chat_history.router, prefix="/chat/conversations", tags=["Chat History"])  # NEW
-api_router.include_router(chunking.router, prefix="/chunking", tags=["chunking"])
-api_router.include_router(ingestion_jobs.router, tags=["Ingestion Jobs"])
-api_router.include_router(datasets.router, tags=["datasets"])
-api_router.include_router(embeddings.router, prefix="/embeddings", tags=["embeddings"])
-api_router.include_router(canonical_entities.router, tags=["Canonical Entities"])
-api_router.include_router(filestorage.router, prefix="/files", tags=["filestorage"])
-api_router.include_router(filters.router, prefix="/filters", tags=["filters"])
-api_router.include_router(flows.router, tags=["Flows"])  # NEW: Unified Flow architecture
-api_router.include_router(healthcheck.router, prefix="/healthz", tags=["app"])
-api_router.include_router(infospaces.router, prefix="/infospaces", tags=["Infospaces"])
-api_router.include_router(knowledge_graphs.router, tags=["Knowledge Graphs"])
-api_router.include_router(login.router, tags=["login"])
-api_router.include_router(packages.router, tags=["Packages"])
-api_router.include_router(providers.router, tags=["Providers"])
-api_router.include_router(query.router, tags=["Query"])
-api_router.include_router(search.router, prefix="/search", tags=["Search"])
-api_router.include_router(storage.router, tags=["Storage"])
-api_router.include_router(search_history.router, prefix="/search_history", tags=["Search History"])
-api_router.include_router(shareables.router, prefix="/shareables", tags=["sharing"])
-api_router.include_router(sources.router, tags=["Sources"])
-api_router.include_router(sso.router, tags=["sso"])
-api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
-api_router.include_router(tree.router, tags=["Tree Navigation"])
-api_router.include_router(user_backups.router, tags=["User Backups"])
-api_router.include_router(users.router, prefix="/users", tags=["users"])
-api_router.include_router(utils.router, tags=["utils"])
+Level 1 — Router-level: entire routers skipped when their required capabilities
+          exceed the deployment ceiling.
+Level 2 — Route-level: within mounted routers, individual endpoints pruned if
+          their Requires() declares capabilities not in the ceiling.
+
+Requires() is the single declaration that drives:
+  1. Mount-time pruning (here)
+  2. Startup-time scope validation (Phase 2.1)
+  3. Runtime 403 (defense in depth)
+"""
+import logging
+from dataclasses import dataclass, field
+from typing import Optional, Set
+
+from fastapi import APIRouter
+
+from app.api.modules.identity_infospace_user.access import Capability
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+# All capabilities — used to detect full-deployment fast path
+_ALL_CAPABILITY_NAMES = frozenset(c.value for c in Capability)
+
+
+@dataclass(frozen=True)
+class R:
+    """Router manifest entry."""
+    router: APIRouter
+    tags: list = field(default_factory=list)
+    prefix: str = ""
+    requires: Optional[Set[str]] = None  # capability VALUE strings; None = always mounted
+
+
+def _ceiling_caps() -> frozenset:
+    """Resolve deployment ceiling to frozenset of Capability enum members."""
+    names = settings.deployment_capability_names
+    return frozenset(c for c in Capability if c.value in names)
+
+
+def _extract_required_caps(route) -> frozenset:
+    """Read capability requirements from a route's Requires() dependency metadata."""
+    dependant = getattr(route, "dependant", None)
+    if dependant is None:
+        return frozenset()
+    for dep in getattr(dependant, "dependencies", []):
+        call = getattr(dep, "call", None)
+        if call is None:
+            continue
+        caps = getattr(call, "_required_capabilities", None)
+        if caps is not None:
+            return frozenset(caps)
+    return frozenset()
+
+
+def _mount_filtered(target: APIRouter, router: APIRouter, ceiling: frozenset, **kwargs):
+    """Mount router, pruning individual routes whose Requires() exceeds the ceiling."""
+    if ceiling == frozenset(Capability):
+        # Full deployment — mount everything, no introspection needed
+        target.include_router(router, **kwargs)
+        return
+
+    filtered = APIRouter()
+    for route in router.routes:
+        caps = _extract_required_caps(route)
+        if caps and not caps.issubset(ceiling):
+            path = getattr(route, "path", "?")
+            methods = getattr(route, "methods", set())
+            logger.info(f"Pruned route {methods} {kwargs.get('prefix', '')}{path} (requires {[c.value for c in caps]})")
+            continue
+        filtered.routes.append(route)
+    if filtered.routes:
+        target.include_router(filtered, **kwargs)
+
+
+def build_api_router() -> APIRouter:
+    """Build the API router from the manifest, filtered by deployment capabilities."""
+    from app.api.routes import (
+        admin,
+        analysis,
+        storage,
+        annotation_runs,
+        annotation_schemas,
+        annotations,
+        assets,
+        backups,
+        bundles,
+        chat,
+        chat_history,
+        chunking,
+        search_history,
+        ingestion_jobs,
+        datasets,
+        embeddings,
+        entities as canonical_entities,
+        knowledge_graphs,
+        filestorage,
+        filters,
+        flows,
+        healthcheck,
+        infospaces,
+        login,
+        packages,
+        providers,
+        query,
+        search,
+        shareables,
+        sources,
+        sso,
+        tasks,
+        tree,
+        user_backups,
+        users,
+        utils,
+    )
+
+    ceiling = _ceiling_caps()
+    ceiling_names = settings.deployment_capability_names
+    is_full = ceiling_names == _ALL_CAPABILITY_NAMES
+
+    # Manifest: (router, kwargs, required_capability_names_or_None)
+    # required=None → always mounted (individual routes still pruned by Requires())
+    MANIFEST = [
+        # --- Always mounted (read-only data serving + auth) ---
+        R(healthcheck.router, ["app"], "/healthz"),
+        R(login.router, ["login"]),
+        R(users.router, ["users"], "/users"),
+        R(sso.router, ["sso"]),
+        R(infospaces.router, ["Infospaces"], "/infospaces"),
+        R(assets.router, ["assets"]),
+        R(bundles.router, ["Bundles"]),
+        R(tree.router, ["Tree Navigation"]),
+        R(packages.router, ["Packages"]),
+        R(annotations.router, ["annotations"], "/annotations"),
+        R(annotation_runs.router, ["annotation_jobs"], "/annotation_jobs"),
+        R(annotation_schemas.router, ["AnnotationSchemas"]),
+        R(canonical_entities.router, ["Canonical Entities"]),
+        R(knowledge_graphs.router, ["Knowledge Graphs"]),
+        R(embeddings.router, ["embeddings"], "/embeddings"),
+        R(datasets.router, ["datasets"]),
+        R(query.router, ["Query"]),
+        R(providers.router, ["Providers"]),
+        # --- Capability-gated (entire router) ---
+        R(sources.router, ["Sources"], requires={"ingest"}),
+        R(ingestion_jobs.router, ["Ingestion Jobs"], requires={"ingest"}),
+        R(storage.router, ["Storage"], requires={"ingest"}),
+        R(utils.router, ["utils"], requires={"ingest"}),
+        R(filestorage.router, ["filestorage"], "/files", requires={"ingest"}),
+        R(flows.router, ["Flows"], requires={"compute"}),
+        R(tasks.router, ["tasks"], "/tasks", requires={"compute"}),
+        R(analysis.router, ["Analysis Service"], requires={"compute"}),
+        R(search.router, ["Search"], "/search", requires={"compute"}),
+        R(chat.router, ["Intelligence Chat"], "/chat", requires={"compute"}),
+        R(chat_history.router, ["Chat History"], "/chat/conversations", requires={"compute"}),
+        R(chunking.router, ["chunking"], "/chunking", requires={"compute"}),
+        R(filters.router, ["filters"], "/filters", requires={"compute"}),
+        R(search_history.router, ["Search History"], "/search_history", requires={"compute"}),
+        R(backups.router, ["Backups"], requires={"organize"}),
+        R(backups.general_router, ["Backups"], requires={"organize"}),
+        R(user_backups.router, ["User Backups"], requires={"setup"}),
+        R(shareables.router, ["sharing"], "/shareables", requires={"organize"}),
+        R(admin.router, ["admin"], requires={"setup"}),
+    ]
+
+    api_router = APIRouter()
+    mounted = 0
+    skipped = 0
+
+    for entry in MANIFEST:
+        kwargs = {"tags": entry.tags}
+        if entry.prefix:
+            kwargs["prefix"] = entry.prefix
+
+        # Level 1: router-level gating
+        if entry.requires is not None and not entry.requires.issubset(ceiling_names):
+            skipped += 1
+            logger.info(f"Skipped router {entry.tags} (requires {entry.requires})")
+            continue
+
+        # Level 2: per-route pruning within mounted routers
+        if is_full:
+            api_router.include_router(entry.router, **kwargs)
+        else:
+            _mount_filtered(api_router, entry.router, ceiling, **kwargs)
+        mounted += 1
+
+    logger.info(f"Router manifest: {mounted} mounted, {skipped} skipped (ceiling: {ceiling_names or 'readonly'})")
+    return api_router
+
+
+# Build on import — same lifecycle as before
+api_router = build_api_router()

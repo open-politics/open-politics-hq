@@ -84,3 +84,9 @@ def get_poll_handler(kind: str) -> Optional[Type[PollHandler]]:
 def registered_poll_kinds() -> List[str]:
     """Return all registered source kinds."""
     return list(_POLL_HANDLERS.keys())
+
+
+# Side-effect imports: each handler module runs @register_poll_handler on load.
+from . import inbox_poll_handler  # noqa: F401, E402
+from . import rss_poll_handler  # noqa: F401, E402
+from . import search_poll_handler  # noqa: F401, E402

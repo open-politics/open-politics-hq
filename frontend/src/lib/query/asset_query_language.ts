@@ -27,6 +27,9 @@
  *    after:2019-01                       → date range start (event_timestamp → created_at)
  *    before:2022-12                      → date range end
  *    bundle:"leaked docs"               → scope to bundle (name or ID)
+ *    bundle:42                           → scope to bundle by ID
+ *    tag:favorite                        → filter by asset tag
+ *    tag:important,review                → multiple tags (AND)
  *
  *  Entity search (graph-first with text fallback):
  *    entity:"Angela Merkel"              → exact match (canonical name + aliases)
@@ -93,10 +96,13 @@ export type PillType =
   | 'kind'
   | 'date'
   | 'bundle'
+  | 'asset'
   | 'entity'
   | 'entity_semantic'
+  | 'tag'
   | 'annotation'
-  | 'run';
+  | 'run'
+  | 'children';
 
 export interface QueryPill {
   type: PillType;
@@ -113,12 +119,15 @@ export interface ParsedQueryResponse {
   excluded_kinds?: string[];
   date_after?: string;
   date_before?: string;
-  bundle_ref?: string;
+  bundle_refs?: string[];
+  asset_refs?: string[];
+  tags?: string[];
   entities?: string[][];
   entity_negations?: string[];
   entity_semantic?: { text: string; threshold?: number; op?: string };
   annotations?: { field: string; op: string; value: string; negated?: boolean }[];
   run_ids?: number[];
+  children_limit?: number;
 }
 
 // ─── Available filter values ───
@@ -141,10 +150,13 @@ export const FILTER_PREFIXES = [
   { prefix: 'kind:', hint: 'Asset type', values: ASSET_KINDS },
   { prefix: 'after:', hint: 'Date from (ISO)', values: null },
   { prefix: 'before:', hint: 'Date until (ISO)', values: null },
-  { prefix: 'bundle:', hint: 'Bundle name or ID', values: null },
+  { prefix: 'bundle:', hint: 'Bundle name or ID, comma-separated', values: null },
+  { prefix: 'asset:', hint: 'Asset title(s), comma-separated', values: null },
+  { prefix: 'tag:', hint: 'Asset tag (e.g. favorite)', values: null },
   { prefix: 'entity:', hint: 'Entity name', values: null },
   { prefix: 'annotation:', hint: 'field==value', values: null },
   { prefix: 'run:', hint: 'Run ID', values: null },
+  { prefix: 'children:', hint: 'none | 3 | 10 | 50 — child match limit', values: null },
 ] as const;
 
 // ─── Example queries ───
@@ -163,6 +175,10 @@ export const QUERY_EXAMPLES = [
   // Filters
   { q: 'corruption kind:pdf after:2019', desc: 'Text + kind + date' },
   { q: 'kind:pdf,email after:2019 before:2022', desc: 'Multiple kinds + date range' },
+
+  // Tags
+  { q: 'tag:favorite', desc: 'Favorited assets' },
+  { q: 'tag:favorite kind:pdf', desc: 'Favorited PDFs' },
 
   // Entities
   { q: 'entity:"Angela Merkel"', desc: 'Entity search (graph → text fallback)' },
@@ -215,6 +231,10 @@ export function parseQueryToPills(query: string): QueryPill[] {
         pills.push({ type: 'date', label: 'Before', value: stripQuotes(rest), negated: false, raw: token });
       } else if (prefix === 'bundle') {
         pills.push({ type: 'bundle', label: 'Bundle', value: stripQuotes(rest), negated: false, raw: token });
+      } else if (prefix === 'asset') {
+        pills.push({ type: 'asset', label: 'Asset', value: stripQuotes(rest), negated: false, raw: token });
+      } else if (prefix === 'tag') {
+        pills.push({ type: 'tag', label: 'Tag', value: stripQuotes(rest), negated: false, raw: token });
       } else if (prefix === 'run') {
         pills.push({ type: 'run', label: 'Run', value: rest, negated: false, raw: token });
       } else if (prefix === 'entity') {
@@ -226,6 +246,8 @@ export function parseQueryToPills(query: string): QueryPill[] {
         }
       } else if (prefix === 'annotation') {
         pills.push({ type: 'annotation', label: 'Annotation', value: rest, negated, raw: token });
+      } else if (prefix === 'children') {
+        pills.push({ type: 'children', label: 'Children', value: stripQuotes(rest), negated: false, raw: token });
       }
       continue;
     }
@@ -278,9 +300,18 @@ export function parsedResponseToPills(parsed: ParsedQueryResponse): QueryPill[] 
   if (parsed.date_before) {
     pills.push({ type: 'date', label: 'Before', value: parsed.date_before, negated: false, raw: `before:${parsed.date_before}` });
   }
-  if (parsed.bundle_ref) {
-    const raw = /\s/.test(parsed.bundle_ref) ? `bundle:"${parsed.bundle_ref}"` : `bundle:${parsed.bundle_ref}`;
-    pills.push({ type: 'bundle', label: 'Bundle', value: parsed.bundle_ref, negated: false, raw });
+  if (parsed.bundle_refs?.length) {
+    const val = parsed.bundle_refs.join(', ');
+    const raw = 'bundle:' + parsed.bundle_refs.map((b) => (/\s/.test(b) ? `"${b}"` : b)).join(',');
+    pills.push({ type: 'bundle', label: 'Bundle', value: val, negated: false, raw });
+  }
+  if (parsed.asset_refs?.length) {
+    const val = parsed.asset_refs.join(', ');
+    const raw = 'asset:' + parsed.asset_refs.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(',');
+    pills.push({ type: 'asset', label: 'Asset', value: val, negated: false, raw });
+  }
+  for (const t of parsed.tags ?? []) {
+    pills.push({ type: 'tag', label: 'Tag', value: t, negated: false, raw: `tag:${t}` });
   }
   for (const group of parsed.entities ?? []) {
     const val = group.join(', ');
@@ -302,6 +333,10 @@ export function parsedResponseToPills(parsed: ParsedQueryResponse): QueryPill[] 
   }
   for (const id of parsed.run_ids ?? []) {
     pills.push({ type: 'run', label: 'Run', value: String(id), negated: false, raw: `run:${id}` });
+  }
+  if (parsed.children_limit != null) {
+    const val = parsed.children_limit === 0 ? 'none' : String(parsed.children_limit);
+    pills.push({ type: 'children', label: 'Children', value: val, negated: false, raw: `children:${val}` });
   }
 
   return pills;
@@ -381,6 +416,36 @@ export function setRunInQuery(query: string, runId: string): string {
     return (query ? query + ' ' : '') + `run:${runId}`;
   }
   return query;
+}
+
+/**
+ * Set, change, or clear the children: limit in the query.
+ * value: 'none' | '3' | '10' | '' (empty = remove token, back to default)
+ */
+export function setChildrenInQuery(query: string, value: string): string {
+  const pills = parseQueryToPills(query);
+  const idx = pills.findIndex((p) => p.type === 'children');
+  if (idx >= 0) {
+    if (value) {
+      pills[idx] = { ...pills[idx], value, raw: `children:${value}` };
+    } else {
+      pills.splice(idx, 1);
+    }
+    return pillsToQuery(pills);
+  }
+  if (value) {
+    return (query ? query + ' ' : '') + `children:${value}`;
+  }
+  return query;
+}
+
+/**
+ * Get the current children: value from the query, or empty string (= default).
+ */
+export function getChildrenFromQuery(query: string): string {
+  const pills = parseQueryToPills(query);
+  const pill = pills.find((p) => p.type === 'children');
+  return pill?.value ?? '';
 }
 
 /**

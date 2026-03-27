@@ -9,16 +9,24 @@ from an infospace with per-item download/copy controls.
 See FOUNDATION.md § Access Control and OVERVIEW.md § Access Control.
 """
 
+import asyncio
 import logging
+import mimetypes
+import os
+import tempfile
+from datetime import datetime
+from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.api import dependency_injection
 from app.api.modules.identity_infospace_user.access import (
-    Access, Capability, Requires,
+    Access, Capability, Requires, _resolve_package_token,
 )
 from app.api.modules.sharing.models import Package, PackageItem, PackageVisibility
 
@@ -47,6 +55,7 @@ class PackageCreate(BaseModel):
     visibility: str = Field(default="token", description="token, internal, or public")
     default_allow_download: bool = False
     default_allow_copy: bool = False
+    expires_at: Optional[datetime] = None
     items: List[PackageItemCreate] = []
 
 
@@ -57,6 +66,7 @@ class PackageUpdate(BaseModel):
     default_allow_download: Optional[bool] = None
     default_allow_copy: Optional[bool] = None
     is_active: Optional[bool] = None
+    expires_at: Optional[datetime] = None
 
 
 class PackageItemRead(BaseModel):
@@ -81,8 +91,8 @@ class PackageRead(BaseModel):
     default_allow_download: bool
     default_allow_copy: bool
     is_active: bool
-    expires_at: Optional[str]
-    created_at: str
+    expires_at: Optional[Any] = None
+    created_at: Any
     items: List[PackageItemRead] = []
 
     model_config = {"from_attributes": True}
@@ -119,6 +129,7 @@ def create_package(
         visibility=body.visibility,
         default_allow_download=body.default_allow_download,
         default_allow_copy=body.default_allow_copy,
+        expires_at=body.expires_at,
         infospace_id=infospace_id,
         user_id=access.user_id,
     )
@@ -377,13 +388,216 @@ def access_package_by_token(
         "name": pkg.name,
         "description": pkg.description,
         "infospace_id": pkg.infospace_id,
+        "infospace_name": pkg.infospace.name if pkg.infospace else None,
         "items": [
             {
                 "resource_type": item.resource_type,
                 "resource_id": item.resource_id,
-                "allow_download": item.allow_download if item.allow_download is not None else pkg.default_allow_download,
-                "allow_copy": item.allow_copy if item.allow_copy is not None else pkg.default_allow_copy,
+                "resource_name": _resolve_resource_name(db, item),
+                "allow_download": item.effective_allow_download(),
+                "allow_copy": item.effective_allow_copy(),
             }
             for item in items
         ],
     }
+
+
+def _resolve_resource_name(db: Session, item: PackageItem) -> Optional[str]:
+    """Resolve the display name for a PackageItem's target resource."""
+    _queries = {
+        "bundle": ("bundle", "name", "bundle_id"),
+        "run": ("annotationrun", "name", "run_id"),
+        "graph": ("knowledgegraph", "name", "graph_id"),
+        "schema": ("annotationschema", "name", "schema_id"),
+        "asset": ("asset", "title", "asset_id"),
+        "entity": ("entitycanonical", "name", "entity_canonical_id"),
+    }
+    rtype = item.resource_type
+    if rtype not in _queries:
+        return None
+    table, col, fk_attr = _queries[rtype]
+    rid = getattr(item, fk_attr)
+    if not rid:
+        return None
+    row = db.execute(text(f"SELECT {col} FROM {table} WHERE id = :id"), {"id": rid}).first()
+    return row[0] if row else None
+
+
+def _validate_package_token(db: Session, token: str) -> Package:
+    """Validate a package token: must be active and not expired. Returns the package."""
+    pkg = db.exec(
+        select(Package).where(Package.token == token, Package.is_active == True)
+    ).first()
+    if not pkg:
+        raise HTTPException(status_code=404, detail="Not found")
+    if pkg.is_expired:
+        raise HTTPException(status_code=410, detail="This package has expired")
+    return pkg
+
+
+# ─── Package file access (token-based) ───
+
+@router.get("/p/{token}/assets/{asset_id}/stream")
+async def stream_package_asset(
+    *,
+    token: str,
+    asset_id: int,
+    db: Session = Depends(dependency_injection.get_db),
+    storage_provider=Depends(dependency_injection.get_storage_provider_dependency),
+) -> StreamingResponse:
+    """Stream an asset file through a package token. Enforces allow_download."""
+    from app.api.modules.content.models import Asset
+
+    pkg = _validate_package_token(db, token)
+    scope = _resolve_package_token(db, pkg.infospace_id, token)
+    if scope is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Visibility check
+    if asset_id not in scope.asset_ids:
+        # Also check bundle-derived assets
+        bundle_asset = db.execute(
+            text("SELECT 1 FROM asset WHERE id = :aid AND bundle_ids && CAST(:bids AS int[])"),
+            {"aid": asset_id, "bids": list(scope.bundle_ids) if scope.bundle_ids else []},
+        ).first()
+        if not bundle_asset:
+            raise HTTPException(status_code=404, detail="Not found")
+
+    # Permission check
+    if asset_id not in scope.downloadable_asset_ids:
+        raise HTTPException(status_code=403, detail="Download not allowed for this item")
+
+    asset = db.get(Asset, asset_id)
+    if not asset or not asset.blob_path:
+        raise HTTPException(status_code=404, detail="Asset has no downloadable file")
+
+    try:
+        file_obj = await storage_provider.get_file(asset.blob_path)
+        filename = (asset.file_info or {}).get("original_filename") or \
+                   (asset.file_info or {}).get("filename") or \
+                   Path(asset.blob_path).name
+        media_type, _ = mimetypes.guess_type(filename)
+        media_type = media_type or "application/octet-stream"
+        return StreamingResponse(file_obj, media_type=media_type)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found in storage")
+    except Exception as e:
+        logger.error(f"Failed to stream package asset: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not retrieve file")
+
+
+@router.get("/p/{token}/assets/{asset_id}/download", response_class=FileResponse)
+async def download_package_asset(
+    *,
+    token: str,
+    asset_id: int,
+    db: Session = Depends(dependency_injection.get_db),
+    storage_provider=Depends(dependency_injection.get_storage_provider_dependency),
+    background_tasks: BackgroundTasks,
+) -> FileResponse:
+    """Download an asset file through a package token. Enforces allow_download."""
+    from app.api.modules.content.models import Asset
+
+    pkg = _validate_package_token(db, token)
+    scope = _resolve_package_token(db, pkg.infospace_id, token)
+    if scope is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Visibility check — asset must be in scope (direct, bundle, or run-derived)
+    if asset_id not in scope.asset_ids:
+        bundle_asset = db.execute(
+            text("SELECT 1 FROM asset WHERE id = :aid AND bundle_ids && CAST(:bids AS int[])"),
+            {"aid": asset_id, "bids": list(scope.bundle_ids) if scope.bundle_ids else []},
+        ).first()
+        if not bundle_asset:
+            raise HTTPException(status_code=404, detail="Not found")
+
+    # Permission check
+    if asset_id not in scope.downloadable_asset_ids:
+        raise HTTPException(status_code=403, detail="Download not allowed for this item")
+
+    asset = db.get(Asset, asset_id)
+    if not asset or not asset.blob_path:
+        raise HTTPException(status_code=404, detail="Asset has no downloadable file")
+
+    try:
+        file_obj = await storage_provider.get_file(asset.blob_path)
+        content = await asyncio.to_thread(file_obj.read)
+        if hasattr(file_obj, "close"):
+            await asyncio.to_thread(file_obj.close)
+
+        filename = (asset.file_info or {}).get("original_filename") or \
+                   (asset.file_info or {}).get("filename") or \
+                   Path(asset.blob_path).name
+
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=Path(filename).suffix)
+        tmp.write(content)
+        tmp.close()
+
+        background_tasks.add_task(os.unlink, tmp.name)
+        return FileResponse(path=tmp.name, filename=filename, media_type="application/octet-stream")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found in storage")
+    except Exception as e:
+        logger.error(f"Failed to download package asset: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not retrieve file")
+
+
+@router.get("/p/{token}/export", response_class=FileResponse)
+async def export_package(
+    *,
+    token: str,
+    db: Session = Depends(dependency_injection.get_db),
+    storage_provider=Depends(dependency_injection.get_storage_provider_dependency),
+    background_tasks: BackgroundTasks,
+) -> FileResponse:
+    """Export all downloadable assets in a package as a ZIP archive."""
+    import zipfile
+
+    pkg = _validate_package_token(db, token)
+    scope = _resolve_package_token(db, pkg.infospace_id, token)
+    if scope is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    if not scope.downloadable_asset_ids:
+        raise HTTPException(status_code=404, detail="No downloadable items in this package")
+
+    from app.api.modules.content.models import Asset
+
+    assets = db.exec(
+        select(Asset).where(Asset.id.in_(scope.downloadable_asset_ids))
+    ).all()
+    assets_with_blobs = [a for a in assets if a.blob_path]
+
+    if not assets_with_blobs:
+        raise HTTPException(status_code=404, detail="No files available for download")
+
+    tmp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp_zip.close()
+
+    try:
+        with zipfile.ZipFile(tmp_zip.name, "w", zipfile.ZIP_DEFLATED) as zf:
+            for asset in assets_with_blobs:
+                try:
+                    file_obj = await storage_provider.get_file(asset.blob_path)
+                    content = await asyncio.to_thread(file_obj.read)
+                    if hasattr(file_obj, "close"):
+                        await asyncio.to_thread(file_obj.close)
+
+                    filename = (asset.file_info or {}).get("original_filename") or \
+                               (asset.file_info or {}).get("filename") or \
+                               Path(asset.blob_path).name
+                    zf.writestr(filename, content)
+                except Exception as e:
+                    logger.warning(f"Skipping asset {asset.id} in export: {e}")
+
+        background_tasks.add_task(os.unlink, tmp_zip.name)
+        return FileResponse(
+            path=tmp_zip.name,
+            filename=f"{pkg.name or 'package'}.zip",
+            media_type="application/zip",
+        )
+    except Exception as e:
+        os.unlink(tmp_zip.name)
+        logger.error(f"Failed to export package: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not create export")

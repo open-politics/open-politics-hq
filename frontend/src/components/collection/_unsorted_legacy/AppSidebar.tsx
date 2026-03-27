@@ -21,6 +21,7 @@ import {
   Clipboard,
   FileText,
   LayoutDashboard,
+  Package,
   Send,
   Swords,
   Orbit,
@@ -36,11 +37,13 @@ import {
   Database,
   Search,
   DoorOpen,
-  GithubIcon,
   Asterisk,
   Workflow,
-  Terminal
+  Terminal,
+  type LucideIcon,
 } from "lucide-react"
+import Image from "next/image"
+import { useTheme } from "next-themes"
 
 import { NavMain } from "@/components/ui/nav-main"
 import { NavProjects } from "@/components/ui/nav-projects"
@@ -76,32 +79,42 @@ export const InfospaceItems = [
 
 interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {}
 
+type SidebarFooterLink =
+  | { title: string; url: string; icon: LucideIcon }
+  | { title: string; url: string; src: string }
+
 export function AppSidebar({ ...props }: AppSidebarProps) {
   const { user, isLoading } = useAuth()
+  const { resolvedTheme } = useTheme()
 
-
-  const links = [
-    {
-      title: "Landing Page",
-      url: "/",
-      icon: Asterisk,
-    },
-    {
-      title: "Documentation",
-      url: "https://docs.open-politics.org/pages/app/overview",
-      icon: BookOpen,
-    },
-    {
-      title: "Forum",
-      url: "https://forum.open-politics.org",
-      icon: Users,
-    },
-    {
-      title: "GitHub",
-      url: "https://github.com/open-politics/open-politics-hq",
-      icon: GithubIcon,
-    }
-  ]
+  const links = React.useMemo((): SidebarFooterLink[] => {
+    const githubSrc =
+      resolvedTheme === "dark"
+        ? "/providers/logos/github-dark.svg"
+        : "/providers/logos/github.svg"
+    return [
+      {
+        title: "Landing Page",
+        url: "/",
+        icon: Asterisk,
+      },
+      {
+        title: "Documentation",
+        url: "https://docs.open-politics.org/pages/app/overview",
+        icon: BookOpen,
+      },
+      {
+        title: "Forum",
+        url: "https://forum.open-politics.org",
+        icon: Users,
+      },
+      {
+        title: "GitHub",
+        url: "https://github.com/open-politics/open-politics-hq",
+        src: githubSrc,
+      },
+    ]
+  }, [resolvedTheme])
 
   const toolsNav = React.useMemo(() => [
     {
@@ -189,6 +202,16 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
     // },
   ], [])
   
+  const sharingNav = React.useMemo(() => [
+    {
+      title: "Packages",
+      url: "/hq/infospaces/packages",
+      icon: Package,
+      isActive: true,
+      colorClass: "sidebar-orange",
+    },
+  ], [])
+
   const settingsNav = React.useMemo(() => [
     {
       title: "Infospace Settings",
@@ -213,6 +236,8 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
         <SidebarSeparator />
         <NavMain title="Stores" items={storesNav} />  
         <SidebarSeparator />
+        <NavMain title="Sharing" items={sharingNav} />
+        <SidebarSeparator />
         <NavMain title="Settings" items={settingsNav} />
         {/* {user?.is_superuser && (
           <NavProjects projects={projects} />
@@ -224,7 +249,17 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
               <SidebarMenuItem key={link.title}>
                 <SidebarMenuButton asChild tooltip={link.title}>
                   <Link href={link.url}>
-                    <link.icon />
+                    {"src" in link ? (
+                      <Image
+                        src={link.src}
+                        alt={link.title}
+                        width={20}
+                        height={20}
+                        className="size-4 shrink-0"
+                      />
+                    ) : (
+                      <link.icon />
+                    )}
                     <span>{link.title}</span>
                   </Link>
                 </SidebarMenuButton>

@@ -89,8 +89,7 @@ def list_annotation_schemas(
         infospace_id = access.infospace_id
         # Build query for schemas
         query = select(AnnotationSchema).where(AnnotationSchema.infospace_id == infospace_id)
-        if access.scope and access.scope.schema_ids:
-            query = query.where(AnnotationSchema.id.in_(access.scope.schema_ids))
+        query = access.scope_filter(query, AnnotationSchema.id, "schema_ids")
 
         if not include_archived:
             query = query.where(AnnotationSchema.is_active == True)
@@ -104,8 +103,7 @@ def list_annotation_schemas(
         count_query = select(func.count(AnnotationSchema.id)).where(
             AnnotationSchema.infospace_id == infospace_id
         )
-        if access.scope and access.scope.schema_ids:
-            count_query = count_query.where(AnnotationSchema.id.in_(access.scope.schema_ids))
+        count_query = access.scope_filter(count_query, AnnotationSchema.id, "schema_ids")
         if not include_archived:
             count_query = count_query.where(AnnotationSchema.is_active == True)
 
@@ -163,8 +161,7 @@ def get_annotation_schema(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Annotation Schema not found in this infospace"
             )
-        if access.scope and access.scope.schema_ids and schema_id not in access.scope.schema_ids:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Annotation Schema not found")
+        access.require_in_scope("schema_ids", schema_id)
 
         # Convert to read model
         schema_read = AnnotationSchemaRead.model_validate(schema)

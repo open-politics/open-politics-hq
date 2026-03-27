@@ -2,11 +2,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { GithubIcon } from "lucide-react";
 import { Menu, X, ChevronRight, Sun, Moon } from "lucide-react";
 import { useTheme } from "next-themes";
 import useAuth from '@/hooks/useAuth';
-import { Code, Database } from "lucide-react";
 import { Mail, MessageSquare } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { useRouter } from 'next/navigation';
@@ -27,11 +25,12 @@ import {
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
-  SidebarTrigger,
   useSidebar
 } from "@/components/ui/sidebar"; 
 import { NavUser } from '../../ui/nav-user';
 import { RippleButton } from '@/components/ui/ripple-button';
+import Image from 'next/image';
+
 
 const Header = () => {
   const { theme, setTheme, systemTheme, resolvedTheme } = useTheme();
@@ -120,7 +119,12 @@ const Header = () => {
                         rel="noopener noreferrer" 
                         className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition-colors hover:bg-accent hover:text-accent-foreground"
                       >
-                        <GithubIcon className="h-4 w-4 shrink-0" />
+                        {/* Invert on dark mode */}
+                        {resolvedTheme === "dark" ? (
+                          <Image src="/providers/logos/github-dark.svg" alt="GitHub" width={20} height={20} />
+                        ) : (
+                          <Image src="/providers/logos/github.svg" alt="GitHub" width={20} height={20} />
+                        )}
                       </a>
                   </NavigationMenuLink>
 
@@ -223,7 +227,11 @@ const Header = () => {
                       <SidebarMenuItem>
                         <SidebarMenuButton asChild>
                           <a href="https://github.com/open-politics/open-politics" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
-                            <GithubIcon className="h-4 w-4 shrink-0" />
+                            {resolvedTheme === "dark" ? (
+                              <Image src="/providers/logos/github-dark.svg" alt="GitHub" width={20} height={20} />
+                            ) : (
+                              <Image src="/providers/logos/github.svg" alt="GitHub" width={20} height={20} />
+                            )}
                           </a>
                         </SidebarMenuButton>
                       </SidebarMenuItem>

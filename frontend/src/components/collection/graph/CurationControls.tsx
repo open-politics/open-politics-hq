@@ -46,7 +46,6 @@ export function CurationControls({
         annotationId,
         requestBody: {
           fragment_paths: Array.from(selectedPaths),
-          resolve: true,
           status: 'curated',
         },
       });

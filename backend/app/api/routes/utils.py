@@ -17,7 +17,7 @@ CurrentUser = get_current_user
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/utils", tags=["Utilities"])
+router = APIRouter(prefix="/utils", tags=["Utilities"], dependencies=[Depends(get_current_user)])
 
 
 @router.post(
@@ -36,19 +36,6 @@ def test_email(email_to: EmailStr) -> Message:
         html_content=email_data.html_content,
     )
     return Message(message="Test email sent")
-
-
-@router.get('/healthz')
-def healthz():
-    return {"status": "ok"}, 200
-
-@router.get('/healthz/readiness')
-def readyz():
-    return {"status": "ok"}, 200
-
-@router.get('/healthz/liveness')
-def liveness():
-    return {"status": "ok"}, 200
 
 @router.get('/rss-countries')
 def get_available_rss_countries():

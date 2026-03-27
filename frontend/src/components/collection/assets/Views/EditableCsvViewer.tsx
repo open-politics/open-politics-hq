@@ -1,12 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { Loader2, Save, X, Download, FileSpreadsheet, AlertCircle, Undo2, Type } from 'lucide-react';
+import { Loader2, Save, Download, FileSpreadsheet, Undo2, Search, ChevronUp, ChevronDown, Eye } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { toast } from 'sonner';
 import { AssetsService } from '@/client/sdk.gen';
+import type { AssetRead } from '@/client';
+import {
+  gridDataRowIndexToPartIndex,
+  isBackendNonEmptyCsvGridRow,
+  partIndexToGridDataRowIndex,
+} from './csvChildHelpers';
 
 interface EditableCsvViewerProps {
   blobPath: string;
@@ -16,6 +22,15 @@ interface EditableCsvViewerProps {
   className?: string;
   onSaveSuccess?: () => void;
   fetchMediaBlob: (blobPath: string) => Promise<string | null>;
+  /** csv_row children — used to scroll/highlight the grid row when opening from Rows tab (part_index ↔ data row index). */
+  rowChildAssets?: AssetRead[];
+  /** Backend `part_index` for the row’s csv_row child (non-empty data rows only; see CSV processor). */
+  onOpenCsvRow?: (partIndex: number) => void;
+  /**
+   * If set, must be a **csv_row child** id present in `rowChildAssets` (not the parent CSV id).
+   * Scrolls the grid to that row’s `part_index`.
+   */
+  workspaceHighlightChildId?: number | null;
 }
 
 interface ColumnDef {
@@ -31,7 +46,10 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
   infospaceId,
   className,
   onSaveSuccess,
-  fetchMediaBlob
+  fetchMediaBlob,
+  rowChildAssets = [],
+  onOpenCsvRow,
+  workspaceHighlightChildId = null,
 }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
@@ -42,10 +60,73 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [originalCsvText, setOriginalCsvText] = useState<string | null>(null);
-  const [showInfoAlert, setShowInfoAlert] = useState(true);
   const [selectedCell, setSelectedCell] = useState<{ rowIdx: number; columnKey: string } | null>(null);
   const [cellEditValue, setCellEditValue] = useState<string>('');
   const [editingCell, setEditingCell] = useState<{ rowIdx: number; columnKey: string } | null>(null);
+  /** Data row index for “Rows tab” when user clicks # column (no cell editor). */
+  const [workspaceRowIdx, setWorkspaceRowIdx] = useState<number | null>(null);
+  const [tableSearch, setTableSearch] = useState('');
+  const [matchCursor, setMatchCursor] = useState(0);
+  const rowRefs = useRef<Record<number, HTMLTableRowElement | null>>({});
+
+  const { matchRowIndices, matchColumnKeysByRow, matchCount } = useMemo(() => {
+    const q = tableSearch.trim().toLowerCase();
+    if (!q || rows.length === 0) {
+      return {
+        matchRowIndices: [] as number[],
+        matchColumnKeysByRow: {} as Record<number, string[]>,
+        matchCount: 0,
+      };
+    }
+    const dataCols = columns.filter((c) => c.key !== 'rowNum');
+    const indices: number[] = [];
+    const colByRow: Record<number, string[]> = {};
+    rows.forEach((row, rowIdx) => {
+      const matchingCols: string[] = [];
+      for (const c of dataCols) {
+        if (String(row[c.key] ?? '').toLowerCase().includes(q)) matchingCols.push(c.key);
+      }
+      if (matchingCols.length > 0) {
+        indices.push(rowIdx);
+        colByRow[rowIdx] = matchingCols;
+      }
+    });
+    return { matchRowIndices: indices, matchColumnKeysByRow: colByRow, matchCount: indices.length };
+  }, [rows, columns, tableSearch]);
+
+  useEffect(() => {
+    setMatchCursor(0);
+  }, [tableSearch]);
+
+  useEffect(() => {
+    if (matchRowIndices.length === 0) return;
+    const safe = Math.min(matchCursor, matchRowIndices.length - 1);
+    const rowIdx = matchRowIndices[safe];
+    rowRefs.current[rowIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [matchRowIndices, matchCursor]);
+
+  const rowEmptinessKey = useMemo(
+    () =>
+      rows
+        .map((r) => (isBackendNonEmptyCsvGridRow(r as Record<string, unknown>) ? '1' : '0'))
+        .join(''),
+    [rows]
+  );
+
+  useEffect(() => {
+    if (!workspaceHighlightChildId || rowChildAssets.length === 0 || rows.length === 0) return;
+    const child = rowChildAssets.find((c) => c.id === workspaceHighlightChildId);
+    if (!child || child.part_index == null) return;
+    const partIdx = Number(child.part_index);
+    if (!Number.isFinite(partIdx) || partIdx < 0) return;
+    const gridIdx = partIndexToGridDataRowIndex(rows as Record<string, unknown>[], partIdx);
+    if (gridIdx == null) return;
+    setWorkspaceRowIdx(gridIdx);
+    requestAnimationFrame(() => {
+      rowRefs.current[gridIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mapping uses only emptiness pattern; omit `rows` to avoid re-scroll on every cell edit
+  }, [workspaceHighlightChildId, rowChildAssets, rows.length, rowEmptinessKey]);
 
   // Load and parse CSV
   useEffect(() => {
@@ -165,13 +246,14 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
 
   // Handle cell selection
   const handleCellClick = useCallback((rowIdx: number, columnKey: string) => {
-    // Don't track row number column
+    setWorkspaceRowIdx(rowIdx);
+
     if (columnKey === 'rowNum') {
       setSelectedCell(null);
       setCellEditValue('');
       return;
     }
-    
+
     setSelectedCell({ rowIdx, columnKey });
     setCellEditValue(rows[rowIdx]?.[columnKey] || '');
   }, [rows]);
@@ -227,14 +309,13 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
       const blob = new Blob([newCsvText], { type: 'text/csv' });
       const file = new File([blob], title || 'updated.csv', { type: 'text/csv' });
 
-      // Call API to update asset content and reprocess
-      // SDK returns a promise that resolves directly to the response data
+      // OpenAPI schema types multipart `file` as string; client runtime accepts Blob/File (see request.ts getFormData).
       const result = await AssetsService.updateAssetContent({
         infospaceId,
         assetId,
         formData: {
-          file: file
-        }
+          file: file as unknown as string,
+        },
       });
       
       console.log('[EditableCsvViewer] Save successful:', result);
@@ -290,6 +371,26 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
     );
   }
 
+  const dataRowForWorkspace =
+    selectedCell?.rowIdx ?? workspaceRowIdx ?? null;
+  const showRowOpenColumn = !!onOpenCsvRow;
+
+  const currentMatchRowIdx =
+    matchRowIndices.length > 0
+      ? matchRowIndices[Math.min(matchCursor, matchRowIndices.length - 1)]
+      : null;
+  const currentMatchColumnKeys =
+    currentMatchRowIdx != null
+      ? matchColumnKeysByRow[currentMatchRowIdx] ?? []
+      : [];
+  /** Primary column for the current search match (first in grid order). */
+  const currentMatchPrimaryCol =
+    currentMatchColumnKeys.length > 0 && columns.length > 0
+      ? columns
+          .filter((c) => c.key !== 'rowNum')
+          .find((c) => currentMatchColumnKeys.includes(c.key))?.key ?? currentMatchColumnKeys[0]
+      : null;
+
   if (hasError || !csvText) {
     return (
       <div className={cn("flex flex-col items-center justify-center h-full text-muted-foreground p-8", className)}>
@@ -301,7 +402,7 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
   }
 
   return (
-    <div className={cn("relative w-full h-full flex flex-col", className)}>
+    <div className={cn('relative flex h-full min-h-0 w-full flex-col overflow-hidden', className)}>
       {/* Compact Header with actions */}
       <div className="flex-none px-3 py-2 bg-muted/30 border-b flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -315,7 +416,7 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
           )}
         </div>
         
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:flex-nowrap">
           <Button
             variant="outline"
             size="sm"
@@ -363,30 +464,76 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
         </div>
       </div>
 
-      {/* Dismissable Info alert - only shows when no changes and not dismissed */}
-      {!hasChanges && showInfoAlert && (
-        <div className="flex-none px-3 py-1.5 bg-blue-50 dark:bg-blue-950/30 border-b border-blue-200 dark:border-blue-800 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-xs text-blue-800 dark:text-blue-200">
-            <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-            <span>Click any cell to open the editor below • Double-click to edit inline</span>
+      {/* In-table search (same grid; highlights matches, does not duplicate row list) */}
+      {rows.length > 0 && (
+        <div className="flex-none border-b bg-muted/20 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[12rem] max-w-md flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={tableSearch}
+                onChange={(e) => setTableSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter' || matchCount === 0) return;
+                  e.preventDefault();
+                  setMatchCursor((c) => (c + 1) % matchCount);
+                }}
+                placeholder="Search in table…"
+                className="h-8 pl-8 text-xs"
+                aria-label="Search rows in CSV table"
+              />
+            </div>
+            {tableSearch.trim() && (
+              <>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {matchCount} match{matchCount !== 1 ? 'es' : ''}
+                </span>
+                <div className="flex items-center gap-0.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={matchCount === 0}
+                    onClick={() =>
+                      setMatchCursor((c) => (c - 1 + matchCount) % matchCount)
+                    }
+                    title="Previous match"
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={matchCount === 0}
+                    onClick={() => setMatchCursor((c) => (c + 1) % matchCount)}
+                    title="Next match"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowInfoAlert(false)}
-            className="h-5 w-5 p-0 hover:bg-blue-100 dark:hover:bg-blue-900"
-          >
-            <X className="h-3 w-3" />
-          </Button>
         </div>
       )}
 
       {/* Data Table */}
-      <div className={cn("overflow-auto", selectedCell ? "flex-none max-h-[25vh] md:max-h-[45vh]" : "flex-1")}>
+      <div className={cn("overflow-auto", selectedCell ? "flex-none max-h-[38vh] md:max-h-[52vh]" : "flex-1")}>
         <div className="min-w-full inline-block align-middle">
           <table className="min-w-full divide-y divide-border">
-            <thead className="bg-muted/50 sticky top-0 z-10">
+            <thead className="bg-muted/90 sticky top-0 z-10">
               <tr>
+                {showRowOpenColumn && (
+                  <th
+                    className="w-9 shrink-0 border-r border-border px-1 py-2 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+                    title="Open row in Rows tab"
+                  >
+                    <Eye className="mx-auto h-3.5 w-3.5 opacity-70" aria-hidden />
+                  </th>
+                )}
                 {columns.map((col) => (
                   <th
                     key={col.key}
@@ -399,16 +546,86 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
               </tr>
             </thead>
             <tbody className="bg-background divide-y divide-border">
-              {rows.map((row, rowIdx) => (
-                <tr key={rowIdx} className="hover:bg-muted/30">
-                  {columns.map((col) => (
+              {rows.map((row, rowIdx) => {
+                const isMatch =
+                  tableSearch.trim() &&
+                  matchRowIndices.includes(rowIdx);
+                const isCurrentMatch =
+                  isMatch &&
+                  matchRowIndices[matchCursor] === rowIdx;
+                const isWorkspaceRow = dataRowForWorkspace === rowIdx;
+                const rowMatchCols = matchColumnKeysByRow[rowIdx] ?? [];
+                return (
+                <tr
+                  key={rowIdx}
+                  ref={(el) => {
+                    rowRefs.current[rowIdx] = el;
+                  }}
+                  className={cn(
+                    'hover:bg-muted/30',
+                    isMatch && 'bg-amber-500/10',
+                    isCurrentMatch && 'ring-1 ring-inset ring-amber-500/60',
+                    isWorkspaceRow && !isCurrentMatch && 'bg-primary/5'
+                  )}
+                >
+                  {showRowOpenColumn && (
+                    <td className="w-9 shrink-0 border-r border-border px-0.5 py-0 text-center align-middle">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                        title="Open this row in Rows tab"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const partIdx = gridDataRowIndexToPartIndex(
+                            rows as Record<string, unknown>[],
+                            rowIdx
+                          );
+                          if (partIdx == null) {
+                            toast.message('No row asset for an all-blank line', {
+                              description: 'Add cell values or reprocess after editing.',
+                            });
+                            return;
+                          }
+                          onOpenCsvRow?.(partIdx);
+                        }}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                    </td>
+                  )}
+                  {columns.map((col) => {
+                    const cellMatches =
+                      col.key !== 'rowNum' &&
+                      tableSearch.trim() &&
+                      rowMatchCols.includes(col.key);
+                    const isPrimaryHit =
+                      isCurrentMatch &&
+                      cellMatches &&
+                      currentMatchPrimaryCol === col.key;
+                    return (
                     <td
                       key={`${rowIdx}-${col.key}`}
-                      className="px-2 py-1 text-sm border-r border-border whitespace-nowrap overflow-hidden"
+                      className={cn(
+                        'px-2 py-1 text-sm border-r border-border whitespace-nowrap overflow-hidden',
+                        cellMatches && 'bg-amber-500/15',
+                        cellMatches &&
+                          !isPrimaryHit &&
+                          'ring-1 ring-inset ring-amber-600/60 dark:ring-amber-400/45',
+                        isPrimaryHit &&
+                          'z-[1] ring-[3px] ring-inset ring-amber-700 dark:ring-amber-300'
+                      )}
                       style={{ maxWidth: col.width ? `${col.width}px` : undefined }}
                     >
                       {col.key === 'rowNum' ? (
-                        <div className="text-center text-muted-foreground font-medium">{row.rowNum}</div>
+                        <div
+                          className="cursor-pointer text-center font-medium text-muted-foreground hover:bg-muted/50 rounded px-1"
+                          onClick={() => handleCellClick(rowIdx, 'rowNum')}
+                          title="Select row for Rows tab"
+                        >
+                          {row.rowNum}
+                        </div>
                       ) : editingCell?.rowIdx === rowIdx && editingCell?.columnKey === col.key ? (
                         <Input
                           autoFocus
@@ -438,9 +655,11 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
                         </div>
                       )}
                     </td>
-                  ))}
+                    );
+                  })}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -448,38 +667,14 @@ const EditableCsvViewer: React.FC<EditableCsvViewerProps> = ({
 
       {/* Cell Editor Panel - shows when a cell is selected */}
       {selectedCell && (
-        <div className="flex-1 border-t bg-muted/20 flex flex-col min-h-0">
-          <div className="flex-none px-3 py-2 border-b bg-background flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Type className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">
-                Cell Editor
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Row {selectedCell.rowIdx + 1} • {columns.find(c => c.key === selectedCell.columnKey)?.name}
-              </span>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setSelectedCell(null);
-                setCellEditValue('');
-              }}
-              className="h-6 w-6 p-0"
-            >
-              <X className="h-3 w-3" />
-            </Button>
-          </div>
-          <div className="flex-1 p-3 overflow-auto">
-            <Textarea
+        <div className="flex flex-1 flex-col min-h-0 border-t bg-muted/20">
+          <Textarea
               value={cellEditValue}
               onChange={(e) => handleTextAreaChange(e.target.value)}
-              className="w-full h-full min-h-[100px] font-mono text-sm resize-none"
+              className="min-h-[7rem] w-full flex-1 resize-none font-mono text-sm !rounded-none !border-none !shadow-none"
               placeholder="Enter cell content..."
               autoFocus
             />
-          </div>
         </div>
       )}
 

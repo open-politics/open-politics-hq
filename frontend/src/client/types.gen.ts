@@ -89,14 +89,17 @@ export type AnnotationRunCreate = {
     views_config?: (Array<{
     [key: string]: unknown;
 }> | null);
-    schema_ids: Array<number>;
-    target_asset_ids?: (Array<number> | null);
+    schema_ids: Array<(number)>;
+    target_asset_ids?: (Array<(number)> | null);
     target_bundle_id?: (number | null);
     source_bundle_id?: (number | null);
     follow_on_version_change?: (boolean | null);
     run_type?: (string | null);
     flow_execution_id?: (number | null);
-    tags?: (Array<string> | null);
+    tags?: (Array<(string)> | null);
+    graph_config?: ({
+    [key: string]: unknown;
+} | null);
     trigger_type?: (string | null);
     trigger_context?: ({
     [key: string]: unknown;
@@ -150,14 +153,14 @@ export type AnnotationRunRead = {
     status: RunStatus;
     run_type?: string;
     flow_execution_id?: (number | null);
-    tags?: (Array<string> | null);
+    tags?: (Array<(string)> | null);
     created_at: string;
     updated_at: string;
     started_at: (string | null);
     completed_at: (string | null);
     error_message: (string | null);
     annotation_count?: (number | null);
-    schema_ids?: (Array<number> | null);
+    schema_ids?: (Array<(number)> | null);
     trigger_type?: string;
     trigger_context?: ({
     [key: string]: unknown;
@@ -169,6 +172,8 @@ export type AnnotationRunRead = {
     graph_config?: ({
     [key: string]: unknown;
 } | null);
+    progress_total?: (number | null);
+    progress_current?: (number | null);
 };
 
 export type AnnotationRunsOut = {
@@ -276,8 +281,8 @@ export type app__api__routes__packages__PackageRead = {
     default_allow_download: boolean;
     default_allow_copy: boolean;
     is_active: boolean;
-    expires_at: (string | null);
-    created_at: string;
+    expires_at?: (unknown | null);
+    created_at: unknown;
     items?: Array<PackageItemRead>;
 };
 
@@ -296,7 +301,7 @@ export type ArticleComposition = {
     embedded_assets?: (Array<{
     [key: string]: unknown;
 }> | null);
-    referenced_bundles?: (Array<number> | null);
+    referenced_bundles?: (Array<(number)> | null);
     metadata?: ({
     [key: string]: unknown;
 } | null);
@@ -334,7 +339,7 @@ export type AssetCreate = {
     file_info?: ({
     [key: string]: unknown;
 } | null);
-    discovered_modalities?: (Array<string> | null);
+    discovered_modalities?: (Array<(string)> | null);
     event_timestamp?: (string | null);
     processing_status?: (ProcessingStatus | null);
     content_hash?: (string | null);
@@ -396,6 +401,7 @@ export type AssetRead = {
     event_timestamp?: (string | null);
     processing_status?: ProcessingStatus;
     processing_error?: (string | null);
+    tags?: Array<(string)>;
     /**
      * True if this asset can have child assets.
      */
@@ -408,7 +414,7 @@ export type AssetsOut = {
 };
 
 export type AssetTransferRequest = {
-    asset_ids: Array<number>;
+    asset_ids: Array<(number)>;
     source_infospace_id: number;
     target_infospace_id: number;
     should_copy?: boolean;
@@ -428,6 +434,7 @@ export type AssetUpdate = {
     [key: string]: unknown;
 } | null);
     event_timestamp?: (string | null);
+    tags?: (Array<(string)> | null);
 };
 
 /**
@@ -480,7 +487,7 @@ export type BatchGetAssetsRequest = {
     /**
      * List of asset IDs to fetch
      */
-    asset_ids: Array<number>;
+    asset_ids: Array<(number)>;
 };
 
 /**
@@ -494,12 +501,12 @@ export type BatchProcessResponse = {
 };
 
 export type Body_assets_add_files_to_bundle_background = {
-    files: Array<string>;
+    files: Array<(string)>;
     options?: string;
 };
 
 export type Body_assets_create_assets_background_bulk = {
-    files: Array<string>;
+    files: Array<(string)>;
     options?: string;
 };
 
@@ -583,11 +590,11 @@ export type Body_utils_extract_pdf_text = {
 };
 
 export type BulkDeleteBundlesRequest = {
-    bundle_ids: Array<number>;
+    bundle_ids: Array<(number)>;
 };
 
 export type BulkDeleteRequest = {
-    asset_ids: Array<number>;
+    asset_ids: Array<(number)>;
 };
 
 /**
@@ -599,7 +606,7 @@ export type BulkSearchResultIngestion = {
 };
 
 export type BulkUrlIngestion = {
-    urls: Array<string>;
+    urls: Array<(string)>;
     base_title?: (string | null);
     scrape_immediately?: boolean;
     bundle_id?: (number | null);
@@ -608,8 +615,8 @@ export type BulkUrlIngestion = {
 export type BundleCreate = {
     name: string;
     description?: (string | null);
-    tags?: (Array<string> | null);
-    asset_ids?: Array<number>;
+    tags?: (Array<(string)> | null);
+    asset_ids?: Array<(number)>;
     purpose?: (string | null);
     bundle_metadata?: ({
     [key: string]: unknown;
@@ -646,7 +653,7 @@ export type BundlePreview = {
 export type BundleRead = {
     name: string;
     description?: (string | null);
-    tags?: (Array<string> | null);
+    tags?: (Array<(string)> | null);
     id: number;
     infospace_id: number;
     created_at: string;
@@ -660,12 +667,13 @@ export type BundleRead = {
 } | null);
     parent_bundle_id?: (number | null);
     child_bundle_count?: (number | null);
+    sealed?: boolean;
 };
 
 export type BundleUpdate = {
     name?: (string | null);
     description?: (string | null);
-    tags?: (Array<string> | null);
+    tags?: (Array<(string)> | null);
     purpose?: (string | null);
     bundle_metadata?: ({
     [key: string]: unknown;
@@ -830,7 +838,7 @@ export type ChatRequest = {
     [key: string]: unknown;
 }> | null);
     api_keys?: ({
-    [key: string]: string;
+    [key: string]: (string);
 } | null);
     conversation_id?: (number | null);
     auto_save?: boolean;
@@ -839,7 +847,7 @@ export type ChatRequest = {
     [key: string]: unknown;
 }> | null);
     context_depth?: (string | null);
-    image_asset_ids?: (Array<number> | null);
+    image_asset_ids?: (Array<(number)> | null);
 };
 
 /**
@@ -869,8 +877,8 @@ export type ChunkAssetRequest = {
 };
 
 export type ChunkAssetsRequest = {
-    asset_ids?: (Array<number> | null);
-    asset_kinds?: (Array<string> | null);
+    asset_ids?: (Array<(number)> | null);
+    asset_kinds?: (Array<(string)> | null);
     infospace_id?: (number | null);
     strategy?: string;
     chunk_size?: number;
@@ -894,7 +902,7 @@ export type ChunkingStatsResponse = {
     average_chunk_size?: (number | null);
     assets_with_chunks?: (number | null);
     strategies_used?: ({
-    [key: string]: number;
+    [key: string]: (number);
 } | null);
 };
 
@@ -903,10 +911,20 @@ export type CreatePackageFromRunRequest = {
     description?: (string | null);
 };
 
+/**
+ * Request schema for curating annotation fragments into the knowledge graph.
+ */
+export type CurateFragmentsRequest = {
+    fragment_paths: Array<(string)>;
+    graph_id?: (number | null);
+    entity_merges?: (Array<EntityMergeHint> | null);
+    status?: string;
+};
+
 export type DatasetCreate = {
     name: string;
     description?: (string | null);
-    asset_ids?: Array<number>;
+    asset_ids?: Array<(number)>;
 };
 
 export type DatasetPackageEntitySummary = {
@@ -941,7 +959,7 @@ export type DatasetRead = {
     description?: (string | null);
     id: number;
     infospace_id: number;
-    asset_ids?: (Array<number> | null);
+    asset_ids?: (Array<(number)> | null);
     created_at: string;
     entity_uuid: string;
     user_id: number;
@@ -956,7 +974,7 @@ export type DatasetsOut = {
 export type DatasetUpdate = {
     name?: (string | null);
     description?: (string | null);
-    asset_ids?: (Array<number> | null);
+    asset_ids?: (Array<(number)> | null);
 };
 
 export type DeleteFragmentResponse = {
@@ -983,7 +1001,7 @@ export type DirectAssetCreationRequest = {
  */
 export type DirectoryImportRequest = {
     source_path: string;
-    file_extensions?: (Array<string> | null);
+    file_extensions?: (Array<(string)> | null);
     preserve_structure?: (boolean | null);
     copy_mode?: (boolean | null);
     reconcile_mode?: (boolean | null);
@@ -1000,7 +1018,7 @@ export type DiscoverModelsRequest = {
      * Runtime API keys for providers
      */
     api_keys?: ({
-    [key: string]: string;
+    [key: string]: (string);
 } | null);
 };
 
@@ -1069,7 +1087,7 @@ export type EnrichmentConfig = {
 export type EntityCanonicalCreate = {
     canonical_name: string;
     entity_type: string;
-    aliases?: (Array<string> | null);
+    aliases?: (Array<(string)> | null);
     properties?: ({
     [key: string]: unknown;
 } | null);
@@ -1085,12 +1103,12 @@ export type EntityCanonicalRead = {
     graph_id?: (number | null);
     canonical_name: string;
     entity_type: string;
-    aliases?: Array<string>;
-    embedding_384?: (Array<number> | null);
-    embedding_512?: (Array<number> | null);
-    embedding_768?: (Array<number> | null);
-    embedding_1024?: (Array<number> | null);
-    embedding_1536?: (Array<number> | null);
+    aliases?: Array<(string)>;
+    embedding_384?: (Array<(number)> | null);
+    embedding_512?: (Array<(number)> | null);
+    embedding_768?: (Array<(number)> | null);
+    embedding_1024?: (Array<(number)> | null);
+    embedding_1536?: (Array<(number)> | null);
     properties?: {
         [key: string]: unknown;
     };
@@ -1104,10 +1122,19 @@ export type EntityCanonicalRead = {
  */
 export type EntityCanonicalUpdate = {
     canonical_name?: (string | null);
-    aliases?: (Array<string> | null);
+    aliases?: (Array<(string)> | null);
     properties?: ({
     [key: string]: unknown;
 } | null);
+};
+
+/**
+ * A merge group from the run-scoped graph panel: names that should resolve to `keep`.
+ */
+export type EntityMergeHint = {
+    keep: string;
+    names: Array<(string)>;
+    type?: (string | null);
 };
 
 /**
@@ -1117,12 +1144,12 @@ export type EvidenceRigor = 'minimal' | 'standard' | 'thorough' | 'exhaustive';
 
 export type ExportBatchRequest = {
     resource_type: ResourceType;
-    resource_ids: Array<number>;
+    resource_ids: Array<(number)>;
 };
 
 export type ExportMixedBatchRequest = {
-    asset_ids?: Array<number>;
-    bundle_ids?: Array<number>;
+    asset_ids?: Array<(number)>;
+    bundle_ids?: Array<(number)>;
 };
 
 export type ExternalSearchRequest = {
@@ -1165,6 +1192,23 @@ export type FileUploadResponse = {
     object_name: string;
 };
 
+/**
+ * Request: find potential duplicates in a list of strings via embedding similarity.
+ */
+export type FindDuplicatesRequest = {
+    items: Array<(string)>;
+    threshold?: number;
+};
+
+/**
+ * Response from the deduplication endpoint.
+ */
+export type FindDuplicatesResponse = {
+    pairs: Array<SimilarPairRead>;
+    items_count: number;
+    unique_count: number;
+};
+
 export type FlowCreate = {
     name: string;
     description?: (string | null);
@@ -1178,12 +1222,12 @@ export type FlowCreate = {
     views_config?: (Array<{
     [key: string]: unknown;
 }> | null);
-    tags?: (Array<string> | null);
+    tags?: (Array<(string)> | null);
 };
 
 export type FlowExecutionCreate = {
-    asset_ids?: (Array<number> | null);
-    tags?: (Array<string> | null);
+    asset_ids?: (Array<(number)> | null);
+    tags?: (Array<(string)> | null);
 };
 
 export type FlowExecutionRead = {
@@ -1200,12 +1244,12 @@ export type FlowExecutionRead = {
     started_at?: (string | null);
     completed_at?: (string | null);
     error_message?: (string | null);
-    input_asset_ids?: Array<number>;
-    output_asset_ids?: Array<number>;
+    input_asset_ids?: Array<(number)>;
+    output_asset_ids?: Array<(number)>;
     step_outputs?: {
         [key: string]: unknown;
     };
-    tags?: (Array<string> | null);
+    tags?: (Array<(string)> | null);
     created_at: string;
 };
 
@@ -1227,7 +1271,7 @@ export type FlowRead = {
     views_config?: (Array<{
     [key: string]: unknown;
 }> | null);
-    tags?: (Array<string> | null);
+    tags?: (Array<(string)> | null);
     id: number;
     uuid: string;
     infospace_id: number;
@@ -1265,7 +1309,7 @@ export type FlowUpdate = {
     views_config?: (Array<{
     [key: string]: unknown;
 }> | null);
-    tags?: (Array<string> | null);
+    tags?: (Array<(string)> | null);
 };
 
 /**
@@ -1280,7 +1324,7 @@ export type GenerateAssetEmbeddingsRequest = {
      * Runtime API keys for cloud providers
      */
     api_keys?: ({
-    [key: string]: string;
+    [key: string]: (string);
 } | null);
 };
 
@@ -1295,12 +1339,12 @@ export type GenerateEmbeddingsRequest = {
     /**
      * Filter by asset types
      */
-    asset_kinds?: (Array<string> | null);
+    asset_kinds?: (Array<(string)> | null);
     /**
      * Runtime API keys for cloud providers
      */
     api_keys?: ({
-    [key: string]: string;
+    [key: string]: (string);
 } | null);
 };
 
@@ -1528,7 +1572,7 @@ export type MaterializeVfolderRequest = {
  * Request schema for merging entities.
  */
 export type MergeEntitiesRequest = {
-    entity_ids: Array<number>;
+    entity_ids: Array<(number)>;
     canonical_name?: (string | null);
     keep_id?: (number | null);
 };
@@ -1558,7 +1602,7 @@ export type ModelInfo = {
  */
 export type ModelListResponse = {
     models: Array<ModelInfo>;
-    providers: Array<string>;
+    providers: Array<(string)>;
 };
 
 export type NewPassword = {
@@ -1578,12 +1622,16 @@ export type PackageCreate = {
     items?: Array<PackageItemCreate>;
 };
 
+/**
+ * Exactly one of the ID fields must be set.
+ */
 export type PackageItemCreate = {
-    /**
-     * Type of resource: bundle, graph, run, schema
-     */
-    resource_type: string;
-    resource_id: number;
+    bundle_id?: (number | null);
+    run_id?: (number | null);
+    graph_id?: (number | null);
+    schema_id?: (number | null);
+    asset_id?: (number | null);
+    entity_canonical_id?: (number | null);
     allow_download?: (boolean | null);
     allow_copy?: (boolean | null);
 };
@@ -1713,7 +1761,7 @@ export type ProviderSelection = {
 
 export type QueryFieldsResponse = {
     schemas: Array<SchemaInfo>;
-    entity_types: Array<string>;
+    entity_types: Array<(string)>;
     runs: Array<RunInfo>;
 };
 
@@ -1722,6 +1770,10 @@ export type QueryRequest = {
      * AQL query string
      */
     q: string;
+    /**
+     * Scope search to children of this asset
+     */
+    parent_asset_id?: (number | null);
     /**
      * Last asset ID for cursor pagination
      */
@@ -1735,7 +1787,7 @@ export type QueryRequest = {
      */
     limit?: number;
     /**
-     * relevance | created_at_desc | created_at_asc | title
+     * relevance | created_at_desc | created_at_asc | title | part_index
      */
     sort?: string;
 };
@@ -1827,7 +1879,7 @@ export type RunInfo = {
     id: number;
     name: string;
     status: string;
-    schema_names: Array<string>;
+    schema_names: Array<(string)>;
 };
 
 export type RunStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'completed_with_errors';
@@ -1837,7 +1889,7 @@ export type RunStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'faile
  */
 export type SaveCredentialsRequest = {
     credentials: {
-        [key: string]: string;
+        [key: string]: (string);
     };
 };
 
@@ -1860,7 +1912,7 @@ export type SearchAndIngestResponse = {
     [key: string]: unknown;
 }> | null);
     assets_created?: number;
-    asset_ids?: Array<number>;
+    asset_ids?: Array<(number)>;
     status: string;
     message: string;
 };
@@ -1893,7 +1945,7 @@ export type SearchRequest = {
     query: string;
     limit?: number;
     provider?: string;
-    args?: Array<string>;
+    args?: Array<(string)>;
     kwargs?: {
         [key: string]: unknown;
     };
@@ -1935,7 +1987,7 @@ export type SearchResultsOut = {
  * Request for creating assets from specific search result URLs
  */
 export type SelectiveAssetCreationRequest = {
-    urls: Array<string>;
+    urls: Array<(string)>;
     infospace_id: number;
     bundle_id?: (number | null);
     scrape_content?: boolean;
@@ -1959,7 +2011,7 @@ export type SemanticSearchRequest = {
     /**
      * Filter by asset types
      */
-    asset_kinds?: (Array<string> | null);
+    asset_kinds?: (Array<(string)> | null);
     /**
      * Filter from date
      */
@@ -1984,7 +2036,7 @@ export type SemanticSearchRequest = {
      * Runtime API keys for cloud providers
      */
     api_keys?: ({
-    [key: string]: string;
+    [key: string]: (string);
 } | null);
 };
 
@@ -2032,7 +2084,7 @@ export type ShareableLinkStats = {
     active_links: number;
     expired_links: number;
     links_by_resource_type: {
-        [key: string]: number;
+        [key: string]: (number);
     };
     most_shared_resources: Array<{
         [key: string]: unknown;
@@ -2058,6 +2110,17 @@ export type SharedResourcePreview = {
     name: string;
     description?: (string | null);
     content: (AssetPreview | BundlePreview | AnnotationRunPreview);
+};
+
+/**
+ * A pair of items whose similarity meets the threshold.
+ */
+export type SimilarPairRead = {
+    a_index: number;
+    b_index: number;
+    a_item: string;
+    b_item: string;
+    similarity: number;
 };
 
 /**
@@ -2123,7 +2186,7 @@ export type SourcesOut = {
 };
 
 export type SourceTransferRequest = {
-    source_ids: Array<number>;
+    source_ids: Array<(number)>;
     target_infospace_id: number;
     target_user_id: number;
 };
@@ -2165,7 +2228,7 @@ export type StorageBrowseResponse = {
     current_path: string;
     parent_path?: (string | null);
     entries: Array<StorageBrowseEntry>;
-    allowed_roots: Array<string>;
+    allowed_roots: Array<(string)>;
     path_error?: (string | null);
 };
 
@@ -2270,7 +2333,7 @@ export type TreeChildrenResponse = {
 };
 
 export type TreeDeleteRequest = {
-    node_ids: Array<string>;
+    node_ids: Array<(string)>;
 };
 
 /**
@@ -2290,6 +2353,7 @@ export type TreeNode = {
     created_at?: (string | null);
     asset_count?: (number | null);
     child_bundle_count?: (number | null);
+    sealed?: (boolean | null);
     processing_status?: (ProcessingStatus | null);
     stub?: (boolean | null);
     facets?: ({
@@ -2314,6 +2378,7 @@ export type TreeNode = {
     job_status?: ({
     [key: string]: unknown;
 } | null);
+    tags?: (Array<(string)> | null);
 };
 
 /**
@@ -2562,7 +2627,9 @@ export type ExecuteAnalysisAdapterResponse = ({
 export type PromoteFragmentData = {
     assetId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: PromoteFragmentRequest;
+    xPackageToken?: (string | null);
 };
 
 export type PromoteFragmentResponse = (AnnotationRead);
@@ -2571,6 +2638,8 @@ export type DeleteFragmentData = {
     assetId: number;
     fragmentKey: string;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DeleteFragmentResponse2 = (DeleteFragmentResponse);
@@ -2897,9 +2966,7 @@ export type CurateFragmentsData = {
     annotationId: number;
     infospaceId: number;
     packageToken?: (string | null);
-    requestBody: {
-        [key: string]: unknown;
-    };
+    requestBody: CurateFragmentsRequest;
     xPackageToken?: (string | null);
 };
 
@@ -2911,9 +2978,7 @@ export type CurateFragments1Data = {
     annotationId: number;
     infospaceId: number;
     packageToken?: (string | null);
-    requestBody: {
-        [key: string]: unknown;
-    };
+    requestBody: CurateFragmentsRequest;
     xPackageToken?: (string | null);
 };
 
@@ -2942,7 +3007,13 @@ export type RemoveCuration1Data = {
 export type RemoveCuration1Response = (void);
 
 export type GetCuratedTripletsData = {
+    /**
+     * Filter to a specific knowledge graph
+     */
+    graphId?: (number | null);
     infospaceId: number;
+    limit?: number;
+    offset?: number;
     packageToken?: (string | null);
     xPackageToken?: (string | null);
 };
@@ -2952,7 +3023,13 @@ export type GetCuratedTripletsResponse = (Array<{
 }>);
 
 export type GetCuratedTriplets1Data = {
+    /**
+     * Filter to a specific knowledge graph
+     */
+    graphId?: (number | null);
     infospaceId: number;
+    limit?: number;
+    offset?: number;
     packageToken?: (string | null);
     xPackageToken?: (string | null);
 };
@@ -3402,6 +3479,24 @@ export type IngestSelectedArticles1Data = {
 
 export type IngestSelectedArticles1Response = (unknown);
 
+export type GetAssetData = {
+    assetId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type GetAssetResponse = (AssetRead);
+
+export type GetAsset1Data = {
+    assetId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type GetAsset1Response = (AssetRead);
+
 export type UpdateAssetData = {
     assetId: number;
     infospaceId: number;
@@ -3493,11 +3588,11 @@ export type TransferAssets1Data = {
 export type TransferAssets1Response = (Array<AssetRead>);
 
 export type GetSupportedContentTypesResponse = ({
-    [key: string]: Array<string>;
+    [key: string]: Array<(string)>;
 });
 
 export type GetSupportedContentTypes1Response = ({
-    [key: string]: Array<string>;
+    [key: string]: Array<(string)>;
 });
 
 export type CreateAssetsBackgroundBulkData = {
@@ -3624,7 +3719,9 @@ export type RetryAssetEnrichment1Response = (Message);
 
 export type CreateBackupData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: InfospaceBackupCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateBackupResponse = (InfospaceBackupRead);
@@ -3632,7 +3729,9 @@ export type CreateBackupResponse = (InfospaceBackupRead);
 export type ListBackupsData = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListBackupsResponse = (InfospaceBackupsOut);
@@ -3712,19 +3811,10 @@ export type TriggerBackupAllInfospacesResponse = (Message);
 
 export type TriggerBackupSpecificInfospacesData = {
     backupType?: string;
-    requestBody: Array<number>;
+    requestBody: Array<(number)>;
 };
 
 export type TriggerBackupSpecificInfospacesResponse = (Message);
-
-export type GetAssetData = {
-    assetId: number;
-    infospaceId: number;
-    packageToken?: (string | null);
-    xPackageToken?: (string | null);
-};
-
-export type GetAssetResponse = (AssetRead);
 
 export type MaterializeVirtualFolderData = {
     infospaceId: number;
@@ -3877,6 +3967,24 @@ export type GetBulkBundleAssetsResponse = ({
     [key: string]: unknown;
 });
 
+export type SealBundleData = {
+    bundleId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type SealBundleResponse = (Message);
+
+export type UnsealBundleData = {
+    bundleId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type UnsealBundleResponse = (Message);
+
 export type ListEntitiesData = {
     entityType?: (string | null);
     infospaceId: number;
@@ -3931,6 +4039,26 @@ export type TriggerResolutionData = {
 };
 
 export type TriggerResolutionResponse = (unknown);
+
+export type FindEntityDuplicatesData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: FindDuplicatesRequest;
+    xPackageToken?: (string | null);
+};
+
+export type FindEntityDuplicatesResponse = (FindDuplicatesResponse);
+
+export type GetEntityNeighborhoodData = {
+    depth?: number;
+    entityId: number;
+    infospaceId: number;
+    limit?: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type GetEntityNeighborhoodResponse = (unknown);
 
 export type ListConversationsData = {
     includeArchived?: boolean;
@@ -4024,7 +4152,9 @@ export type GetChunkingStatisticsResponse = (ChunkingStatsResponse);
 
 export type CreateDatasetData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: DatasetCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateDatasetResponse = (DatasetRead);
@@ -4032,14 +4162,18 @@ export type CreateDatasetResponse = (DatasetRead);
 export type ListDatasetsData = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListDatasetsResponse = (DatasetsOut);
 
 export type CreateDataset1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: DatasetCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateDataset1Response = (DatasetRead);
@@ -4047,7 +4181,9 @@ export type CreateDataset1Response = (DatasetRead);
 export type ListDatasets1Data = {
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
+    xPackageToken?: (string | null);
 };
 
 export type ListDatasets1Response = (DatasetsOut);
@@ -4055,6 +4191,8 @@ export type ListDatasets1Response = (DatasetsOut);
 export type GetDatasetData = {
     datasetId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetDatasetResponse = (DatasetRead);
@@ -4062,7 +4200,9 @@ export type GetDatasetResponse = (DatasetRead);
 export type UpdateDatasetData = {
     datasetId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: DatasetUpdate;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateDatasetResponse = (DatasetRead);
@@ -4070,6 +4210,8 @@ export type UpdateDatasetResponse = (DatasetRead);
 export type DeleteDatasetData = {
     datasetId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DeleteDatasetResponse = (Message);
@@ -4089,6 +4231,8 @@ export type ExportDatasetData = {
      */
     includeSourceFiles?: boolean;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ExportDatasetResponse = (unknown);
@@ -4100,6 +4244,8 @@ export type ImportDatasetData = {
     conflictStrategy?: string;
     formData: Body_datasets_import_dataset;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ImportDatasetResponse = (DatasetRead);
@@ -4118,17 +4264,21 @@ export type ImportDatasetFromTokenData = {
      */
     includeResults?: boolean;
     infospaceId: number;
+    packageToken?: (string | null);
     /**
      * Share token for the dataset
      */
     shareToken: string;
+    xPackageToken?: (string | null);
 };
 
 export type ImportDatasetFromTokenResponse = (DatasetRead);
 
 export type GenerateInfospaceEmbeddingsData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: GenerateEmbeddingsRequest;
+    xPackageToken?: (string | null);
 };
 
 export type GenerateInfospaceEmbeddingsResponse = (Message);
@@ -4142,19 +4292,25 @@ export type GenerateAssetEmbeddingsResponse = (Message);
 
 export type GetEmbeddingStatsData = {
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetEmbeddingStatsResponse = (EmbeddingStatsResponse);
 
 export type SemanticSearchData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: SemanticSearchRequest;
+    xPackageToken?: (string | null);
 };
 
 export type SemanticSearchResponse2 = (SemanticSearchResponse);
 
 export type ClearInfospaceEmbeddingsData = {
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ClearInfospaceEmbeddingsResponse = (Message);
@@ -4235,7 +4391,7 @@ export type CreateRangeFilterResponse = ({
 export type CreateKeywordFilterData = {
     field: string;
     matchAny?: boolean;
-    requestBody: Array<string>;
+    requestBody: Array<(string)>;
 };
 
 export type CreateKeywordFilterResponse = ({
@@ -4244,7 +4400,9 @@ export type CreateKeywordFilterResponse = ({
 
 export type CreateFlowData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: FlowCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateFlowResponse = (FlowRead);
@@ -4256,6 +4414,7 @@ export type ListFlowsData = {
      */
     inputType?: (string | null);
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
     /**
      * Filter by status
@@ -4265,13 +4424,16 @@ export type ListFlowsData = {
      * Comma-separated tags to filter by
      */
     tags?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListFlowsResponse = (FlowsOut);
 
 export type CreateFlow1Data = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: FlowCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateFlow1Response = (FlowRead);
@@ -4283,6 +4445,7 @@ export type ListFlows1Data = {
      */
     inputType?: (string | null);
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
     /**
      * Filter by status
@@ -4292,6 +4455,7 @@ export type ListFlows1Data = {
      * Comma-separated tags to filter by
      */
     tags?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListFlows1Response = (FlowsOut);
@@ -4299,6 +4463,8 @@ export type ListFlows1Response = (FlowsOut);
 export type GetFlowData = {
     flowId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetFlowResponse = (FlowRead);
@@ -4306,7 +4472,9 @@ export type GetFlowResponse = (FlowRead);
 export type UpdateFlowData = {
     flowId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: FlowUpdate;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateFlowResponse = (FlowRead);
@@ -4314,6 +4482,8 @@ export type UpdateFlowResponse = (FlowRead);
 export type DeleteFlowData = {
     flowId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DeleteFlowResponse = (void);
@@ -4321,6 +4491,8 @@ export type DeleteFlowResponse = (void);
 export type ActivateFlowData = {
     flowId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ActivateFlowResponse = (FlowRead);
@@ -4328,6 +4500,8 @@ export type ActivateFlowResponse = (FlowRead);
 export type PauseFlowData = {
     flowId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type PauseFlowResponse = (FlowRead);
@@ -4335,7 +4509,9 @@ export type PauseFlowResponse = (FlowRead);
 export type TriggerFlowExecutionData = {
     flowId: number;
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody?: (FlowExecutionCreate | null);
+    xPackageToken?: (string | null);
 };
 
 export type TriggerFlowExecutionResponse = (FlowExecutionRead);
@@ -4344,11 +4520,13 @@ export type ListFlowExecutionsData = {
     flowId: number;
     infospaceId: number;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
     /**
      * Filter by status
      */
     status?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListFlowExecutionsResponse = (FlowExecutionsOut);
@@ -4357,6 +4535,8 @@ export type GetFlowExecutionData = {
     executionId: number;
     flowId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetFlowExecutionResponse = (FlowExecutionRead);
@@ -4364,13 +4544,17 @@ export type GetFlowExecutionResponse = (FlowExecutionRead);
 export type GetPendingAssetsData = {
     flowId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
-export type GetPendingAssetsResponse = (Array<number>);
+export type GetPendingAssetsResponse = (Array<(number)>);
 
 export type ResetFlowCursorData = {
     flowId: number;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ResetFlowCursorResponse = (FlowRead);
@@ -4403,19 +4587,25 @@ export type ListInfospaces1Response = (InfospacesOut);
 
 export type GetInfospaceData = {
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetInfospaceResponse = (InfospaceRead);
 
 export type UpdateInfospaceData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: InfospaceUpdate;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateInfospaceResponse = (InfospaceRead);
 
 export type DeleteInfospaceData = {
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type DeleteInfospaceResponse = (void);
@@ -4426,29 +4616,37 @@ export type InviteCollaboratorData = {
      */
     email: string;
     infospaceId: number;
+    packageToken?: (string | null);
     /**
      * Role: owner, editor, viewer
      */
     role?: string;
+    xPackageToken?: (string | null);
 };
 
 export type InviteCollaboratorResponse = (unknown);
 
 export type ListCollaboratorsData = {
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListCollaboratorsResponse = (unknown);
 
 export type RemoveCollaboratorData = {
     infospaceId: number;
+    packageToken?: (string | null);
     userId: number;
+    xPackageToken?: (string | null);
 };
 
 export type RemoveCollaboratorResponse = (unknown);
 
 export type GetInfospaceStatsData = {
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetInfospaceStatsResponse = ({
@@ -4481,6 +4679,8 @@ export type ExportInfospaceData = {
      */
     includeSources?: boolean;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ExportInfospaceResponse = (unknown);
@@ -4834,13 +5034,17 @@ export type EnrichmentStatusResponse = ({
 
 export type QueryAssetsData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: QueryRequest;
+    xPackageToken?: (string | null);
 };
 
 export type QueryAssetsResponse = (QueryResponse);
 
 export type GetQueryFieldsData = {
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type GetQueryFieldsResponse = (QueryFieldsResponse);
@@ -4965,7 +5169,7 @@ export type ExportResourcesBatchData = {
     requestBody: ExportBatchRequest;
 };
 
-export type ExportResourcesBatchResponse = (Blob | File);
+export type ExportResourcesBatchResponse = ((Blob | File));
 
 export type ExportMixedBatchData = {
     infospaceId: number;
@@ -5218,7 +5422,7 @@ export type CompleteDiscourseSsoData = {
 };
 
 export type CompleteDiscourseSsoResponse = ({
-    [key: string]: string;
+    [key: string]: (string);
 });
 
 export type CompleteDiscourseSso1Data = {
@@ -5226,7 +5430,7 @@ export type CompleteDiscourseSso1Data = {
 };
 
 export type CompleteDiscourseSso1Response = ({
-    [key: string]: string;
+    [key: string]: (string);
 });
 
 export type BrowseStorageData = {
@@ -5246,32 +5450,31 @@ export type BrowseStorageData = {
 export type BrowseStorageResponse = (StorageBrowseResponse);
 
 export type CreateTaskData = {
-    args: unknown;
     infospaceId: number;
-    kwargs: unknown;
+    packageToken?: (string | null);
     requestBody: TaskCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateTaskResponse = (TaskRead);
 
 export type CreateTask1Data = {
-    args: unknown;
     infospaceId: number;
-    kwargs: unknown;
+    packageToken?: (string | null);
     requestBody: TaskCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateTask1Response = (TaskRead);
 
 export type ListTasksData = {
-    args: unknown;
     infospaceId: number;
     /**
      * Filter by is_enabled flag
      */
     isEnabled?: (boolean | null);
-    kwargs: unknown;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
     /**
      * Filter by task status
@@ -5281,19 +5484,19 @@ export type ListTasksData = {
      * Filter by task type
      */
     type?: (TaskType | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListTasksResponse = (TasksOut);
 
 export type ListTasks1Data = {
-    args: unknown;
     infospaceId: number;
     /**
      * Filter by is_enabled flag
      */
     isEnabled?: (boolean | null);
-    kwargs: unknown;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
     /**
      * Filter by task status
@@ -5303,37 +5506,37 @@ export type ListTasks1Data = {
      * Filter by task type
      */
     type?: (TaskType | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListTasks1Response = (TasksOut);
 
 export type CreateTask2Data = {
-    args: unknown;
     infospaceId: number;
-    kwargs: unknown;
+    packageToken?: (string | null);
     requestBody: TaskCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateTask2Response = (TaskRead);
 
 export type CreateTask3Data = {
-    args: unknown;
     infospaceId: number;
-    kwargs: unknown;
+    packageToken?: (string | null);
     requestBody: TaskCreate;
+    xPackageToken?: (string | null);
 };
 
 export type CreateTask3Response = (TaskRead);
 
 export type ListTasks2Data = {
-    args: unknown;
     infospaceId: number;
     /**
      * Filter by is_enabled flag
      */
     isEnabled?: (boolean | null);
-    kwargs: unknown;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
     /**
      * Filter by task status
@@ -5343,19 +5546,19 @@ export type ListTasks2Data = {
      * Filter by task type
      */
     type?: (TaskType | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListTasks2Response = (TasksOut);
 
 export type ListTasks3Data = {
-    args: unknown;
     infospaceId: number;
     /**
      * Filter by is_enabled flag
      */
     isEnabled?: (boolean | null);
-    kwargs: unknown;
     limit?: number;
+    packageToken?: (string | null);
     skip?: number;
     /**
      * Filter by task status
@@ -5365,71 +5568,72 @@ export type ListTasks3Data = {
      * Filter by task type
      */
     type?: (TaskType | null);
+    xPackageToken?: (string | null);
 };
 
 export type ListTasks3Response = (TasksOut);
 
 export type GetTaskData = {
-    args: unknown;
     infospaceId: number;
-    kwargs: unknown;
+    packageToken?: (string | null);
     taskId: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetTaskResponse = (TaskRead);
 
 export type GetTask1Data = {
-    args: unknown;
     infospaceId: number;
-    kwargs: unknown;
+    packageToken?: (string | null);
     taskId: number;
+    xPackageToken?: (string | null);
 };
 
 export type GetTask1Response = (TaskRead);
 
 export type UpdateTaskData = {
-    args: unknown;
     infospaceId: number;
-    kwargs: unknown;
+    packageToken?: (string | null);
     requestBody: TaskUpdate;
     taskId: number;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateTaskResponse = (TaskRead);
 
 export type UpdateTask1Data = {
-    args: unknown;
     infospaceId: number;
-    kwargs: unknown;
+    packageToken?: (string | null);
     requestBody: TaskUpdate;
     taskId: number;
+    xPackageToken?: (string | null);
 };
 
 export type UpdateTask1Response = (TaskRead);
 
 export type DeleteTaskData = {
-    args: unknown;
     infospaceId: number;
-    kwargs: unknown;
+    packageToken?: (string | null);
     taskId: number;
+    xPackageToken?: (string | null);
 };
 
 export type DeleteTaskResponse = (void);
 
 export type DeleteTask1Data = {
-    args: unknown;
     infospaceId: number;
-    kwargs: unknown;
+    packageToken?: (string | null);
     taskId: number;
+    xPackageToken?: (string | null);
 };
 
 export type DeleteTask1Response = (void);
 
 export type ExecuteTaskManuallyData = {
-    args: unknown;
     infospaceId: number;
-    kwargs: unknown;
+    packageToken?: (string | null);
     taskId: number;
+    xPackageToken?: (string | null);
 };
 
 export type ExecuteTaskManuallyResponse = ({
@@ -5437,10 +5641,10 @@ export type ExecuteTaskManuallyResponse = ({
 });
 
 export type ExecuteTaskManually1Data = {
-    args: unknown;
     infospaceId: number;
-    kwargs: unknown;
+    packageToken?: (string | null);
     taskId: number;
+    xPackageToken?: (string | null);
 };
 
 export type ExecuteTaskManually1Response = ({
@@ -5469,6 +5673,15 @@ export type GetTreeChildrenData = {
 
 export type GetTreeChildrenResponse = (TreeChildrenResponse);
 
+export type PreviewTreeDeletionData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: TreeDeleteRequest;
+    xPackageToken?: (string | null);
+};
+
+export type PreviewTreeDeletionResponse = (unknown);
+
 export type DeleteTreeNodesData = {
     infospaceId: number;
     packageToken?: (string | null);
@@ -5487,7 +5700,7 @@ export type GetFeedAssetsData = {
     /**
      * Filter by asset kinds
      */
-    kinds?: Array<string>;
+    kinds?: Array<(string)>;
     limit?: number;
     packageToken?: (string | null);
     /**
@@ -5622,7 +5835,7 @@ export type TriggerBackupAllUsersResponse = (Message);
 
 export type TriggerBackupSpecificUsersData = {
     backupType?: string;
-    requestBody: Array<number>;
+    requestBody: Array<(number)>;
 };
 
 export type TriggerBackupSpecificUsersResponse = (Message);
@@ -5673,7 +5886,7 @@ export type SaveCredentialsData = {
 
 export type SaveCredentialsResponse = (Message);
 
-export type ListCredentialProvidersResponse = (Array<string>);
+export type ListCredentialProvidersResponse = (Array<(string)>);
 
 export type DeleteCredentialData = {
     providerId: string;

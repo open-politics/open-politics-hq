@@ -280,12 +280,12 @@ export const useTreeStore = create<TreeState>((set, get) => ({
     }
     
     console.log('[TreeStore] Fetching full bundle data for:', bundleId);
-    
+
     try {
       // Import BundlesService dynamically
       const { BundlesService } = await import('@/client');
-      
-      const bundle = await BundlesService.getBundle({ bundleId });
+
+      const bundle = await BundlesService.getBundle({ bundleId, infospaceId: activeInfospace.id });
       
       // Cache it
       set(state => {

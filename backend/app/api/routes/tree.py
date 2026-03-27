@@ -19,8 +19,7 @@ from app.schemas import TreeResponse, TreeNode, TreeChildrenResponse, Message, A
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires, ViewAccess, DeleteAccess,
 )
-from app.schemas import DeletionImpact
-from app.api.content_tree_builder import (
+from app.api.tree_renderer import (
     build_root_tree_nodes,
     build_bundle_children_nodes,
     build_asset_children_nodes,
@@ -30,6 +29,7 @@ from app.api.content_tree_builder import (
     parse_tree_node_id,
     parse_vfolder_node_id,
 )
+from app.core.tree import ROOT, delete as tree_delete
 
 logger = logging.getLogger(__name__)
 
@@ -151,14 +151,14 @@ def get_infospace_tree(
         root_bundles = db.exec(
             select(Bundle)
             .where(Bundle.infospace_id == infospace_id)
-            .where(Bundle.parent_bundle_id.is_(None))
+            .where(Bundle.parent_bundle_id == ROOT)
             .order_by(Bundle.name)
         ).all()
         root_assets = db.exec(
             select(Asset)
             .where(Asset.infospace_id == infospace_id)
             .where(Asset.parent_asset_id.is_(None))
-            .where(Asset.bundle_ids.is_(None))
+            .where(text("bundle_ids = ARRAY[0]::int[]"))
             .order_by(Asset.updated_at.desc())
         ).all()
         tree_nodes = build_root_tree_nodes(root_bundles, root_assets, db)
@@ -178,7 +178,7 @@ def get_infospace_tree(
             explicit_root_bundles = db.exec(
                 select(Bundle)
                 .where(Bundle.id.in_(scope.bundle_ids))
-                .where(Bundle.parent_bundle_id.is_(None) | Bundle.parent_bundle_id.not_in(scope.bundle_ids))
+                .where((Bundle.parent_bundle_id == ROOT) | Bundle.parent_bundle_id.not_in(scope.bundle_ids))
                 .order_by(Bundle.name)
             ).all()
 
@@ -195,7 +195,7 @@ def get_infospace_tree(
                         SELECT DISTINCT asset_id FROM annotation
                         WHERE run_id = ANY(:rids) AND asset_id IS NOT NULL
                     )
-                ) AND bundle_ids IS NOT NULL
+                )
             """), {
                 "iid": infospace_id,
                 "aids": list(scope.asset_ids) if scope.asset_ids else [],
@@ -246,7 +246,7 @@ def get_infospace_tree(
                 select(Asset)
                 .where(Asset.id.in_(scope.asset_ids))
                 .where(Asset.parent_asset_id.is_(None))
-                .where(Asset.bundle_ids.is_(None))
+                .where(text("bundle_ids = ARRAY[0]::int[]"))
                 .order_by(Asset.updated_at.desc())
             ).all()
 
@@ -439,76 +439,31 @@ def get_tree_children(
     )
 
 
-def _expand_bundle_descendants(db: Session, bundle_ids: set[int]) -> set[int]:
-    """Recursive CTE: given root bundle IDs, return the full subtree including roots."""
-    if not bundle_ids:
-        return set()
-    rows = db.execute(text("""
-        WITH RECURSIVE tree AS (
-            SELECT id FROM bundle WHERE id = ANY(:bids)
-            UNION ALL
-            SELECT b.id FROM bundle b JOIN tree ON b.parent_bundle_id = tree.id
-        )
-        SELECT id FROM tree
-    """), {"bids": list(bundle_ids)}).fetchall()
-    return {r[0] for r in rows}
-
-
-def _analyze_deletion(
-    db: Session,
-    bundle_ids: set[int],
-    explicit_asset_ids: set[int],
-) -> DeletionImpact:
-    """Compute what a deletion of these bundles + assets would affect."""
-    # Bundle names
-    bundle_names = []
-    if bundle_ids:
-        rows = db.execute(
-            text("SELECT name FROM bundle WHERE id = ANY(:bids) ORDER BY name"),
-            {"bids": list(bundle_ids)},
-        ).fetchall()
-        bundle_names = [r[0] for r in rows]
-
-    # Assets in the bundle subtree: split into exclusive vs shared
-    exclusive_count = 0
-    shared_count = 0
-    if bundle_ids:
-        bids_list = list(bundle_ids)
-        asset_rows = db.execute(
-            text("SELECT id, bundle_ids FROM asset WHERE bundle_ids && :bids::int[]"),
-            {"bids": bids_list},
-        ).fetchall()
-        for row in asset_rows:
-            asset_id, bids = row
-            if asset_id in explicit_asset_ids:
-                continue  # counted separately
-            if bids and all(b in bundle_ids for b in bids):
-                exclusive_count += 1
-            else:
-                shared_count += 1
-
-    # Structural children of explicitly selected assets
-    child_asset_count = 0
-    if explicit_asset_ids:
-        child_asset_count = db.execute(
-            text("SELECT count(*) FROM asset WHERE parent_asset_id = ANY(:aids)"),
-            {"aids": list(explicit_asset_ids)},
-        ).scalar() or 0
-
-    return DeletionImpact(
-        bundles_to_delete=len(bundle_ids),
-        bundle_names=bundle_names,
-        assets_to_delete=exclusive_count + len(explicit_asset_ids),
-        assets_to_unlink=shared_count,
-        child_assets_to_delete=child_asset_count,
-    )
-
-
 class TreeDeleteRequest(BaseModel):
     node_ids: List[str]  # Format: ["bundle-123", "asset-456"]
 
 
-@router.post("/infospaces/{infospace_id}/tree/delete-preview", response_model=DeletionImpact)
+def _parse_delete_request(db: Session, infospace_id: int, node_ids: List[str]) -> tuple[list[int], list[int]]:
+    """Parse node IDs into validated bundle and asset ID lists."""
+    bundle_ids: list[int] = []
+    asset_ids: list[int] = []
+    for node_id in node_ids:
+        try:
+            node_type, node_numeric_id = parse_tree_node_id(node_id)
+            if node_type == "bundle":
+                bundle = db.get(Bundle, node_numeric_id)
+                if bundle and bundle.infospace_id == infospace_id:
+                    bundle_ids.append(bundle.id)
+            elif node_type == "asset":
+                asset = db.get(Asset, node_numeric_id)
+                if asset and asset.infospace_id == infospace_id:
+                    asset_ids.append(node_numeric_id)
+        except Exception:
+            continue
+    return bundle_ids, asset_ids
+
+
+@router.post("/infospaces/{infospace_id}/tree/delete-preview")
 def preview_tree_deletion(
     *,
     infospace_id: int,
@@ -518,33 +473,13 @@ def preview_tree_deletion(
 ) -> Any:
     """
     Preview the impact of deleting tree nodes without mutating anything.
-    Returns counts of bundles, exclusive assets, shared assets, and child assets.
+    Returns TreeResult with executed=False.
     """
     if not request.node_ids:
-        return DeletionImpact(
-            bundles_to_delete=0, bundle_names=[],
-            assets_to_delete=0, assets_to_unlink=0, child_assets_to_delete=0,
-        )
+        return tree_delete(db, out_of=ROOT, confirm=False)
 
-    raw_bundle_ids: set[int] = set()
-    explicit_asset_ids: set[int] = set()
-
-    for node_id in request.node_ids:
-        try:
-            node_type, node_numeric_id = parse_tree_node_id(node_id)
-            if node_type == "bundle":
-                bundle = db.get(Bundle, node_numeric_id)
-                if bundle and bundle.infospace_id == infospace_id:
-                    raw_bundle_ids.add(bundle.id)
-            elif node_type == "asset":
-                asset = db.get(Asset, node_numeric_id)
-                if asset and asset.infospace_id == infospace_id:
-                    explicit_asset_ids.add(node_numeric_id)
-        except Exception:
-            continue
-
-    expanded_bundle_ids = _expand_bundle_descendants(db, raw_bundle_ids)
-    return _analyze_deletion(db, expanded_bundle_ids, explicit_asset_ids)
+    bundle_ids, asset_ids = _parse_delete_request(db, infospace_id, request.node_ids)
+    return tree_delete(db, asset_ids=asset_ids, bundle_ids=bundle_ids, out_of=ROOT, confirm=False)
 
 
 @router.post("/infospaces/{infospace_id}/tree/delete", response_model=Message)
@@ -554,8 +489,6 @@ def delete_tree_nodes(
     request: TreeDeleteRequest,
     access: Access = DeleteAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    asset_service: dependency_injection.AssetServiceDep,
-    bundle_service: dependency_injection.BundleServiceDep,
 ) -> Any:
     """
     Delete tree nodes (bundles and/or assets).
@@ -565,58 +498,13 @@ def delete_tree_nodes(
     if not request.node_ids:
         return Message(message="No items to delete")
 
-    raw_bundle_ids: set[int] = set()
-    explicitly_selected_asset_ids: set[int] = set()
-    failed_count = 0
+    bundle_ids, asset_ids = _parse_delete_request(db, infospace_id, request.node_ids)
+    failed_count = len(request.node_ids) - len(bundle_ids) - len(asset_ids)
 
-    for node_id in request.node_ids:
-        try:
-            node_type, node_numeric_id = parse_tree_node_id(node_id)
-            if node_type == "bundle":
-                bundle = db.get(Bundle, node_numeric_id)
-                if not bundle or bundle.infospace_id != infospace_id:
-                    logger.warning(f"Bundle {node_numeric_id} not found or not in infospace")
-                    failed_count += 1
-                    continue
-                raw_bundle_ids.add(bundle.id)
-            elif node_type == "asset":
-                asset = db.get(Asset, node_numeric_id)
-                if not asset or asset.infospace_id != infospace_id:
-                    logger.warning(f"Asset {node_numeric_id} not found or not in infospace")
-                    failed_count += 1
-                    continue
-                explicitly_selected_asset_ids.add(node_numeric_id)
-        except Exception as e:
-            logger.error(f"Failed to parse/validate node {node_id}: {e}")
-            failed_count += 1
-
-    # Expand selected bundles to include all descendants
-    bundle_ids_to_delete = _expand_bundle_descendants(db, raw_bundle_ids)
-
-    asset_ids_to_delete = set(explicitly_selected_asset_ids)
-    if bundle_ids_to_delete:
-        # Find assets that are ONLY in the bundles being deleted (will be permanently deleted)
-        # Assets shared with bundles outside the delete set survive (just unlinked by DB trigger)
-        asset_rows = db.execute(
-            text("SELECT id, bundle_ids FROM asset WHERE bundle_ids && :bids::int[]"),
-            {"bids": list(bundle_ids_to_delete)},
-        ).fetchall()
-        for row in asset_rows:
-            asset_id, bids = row
-            if bids and all(b in bundle_ids_to_delete for b in bids):
-                asset_ids_to_delete.add(asset_id)
-        logger.info(f"Found {len(asset_ids_to_delete - explicitly_selected_asset_ids)} assets exclusively in deleted bundles")
-
-    deleted_assets = asset_service.cascade_delete(asset_ids_to_delete)
-    deleted_bundles = bundle_service.cascade_delete(bundle_ids_to_delete)
+    result = tree_delete(db, asset_ids=asset_ids, bundle_ids=bundle_ids, out_of=ROOT, confirm=True)
     db.commit()
 
-    message_parts = []
-    if deleted_bundles > 0:
-        message_parts.append(f"{deleted_bundles} bundle{'s' if deleted_bundles != 1 else ''}")
-    if deleted_assets > 0:
-        message_parts.append(f"{deleted_assets} asset{'s' if deleted_assets != 1 else ''}")
-    message = f"Deleted {' and '.join(message_parts)}" if message_parts else "No items deleted"
+    message = result.message
     if failed_count > 0:
         message += f" ({failed_count} failed)"
     return Message(message=message)
@@ -663,9 +551,9 @@ def get_feed_assets(
 
     # Scope filtering: restrict to scoped bundles if package token access
     if scope and scope.bundle_ids:
-        scope_cond = text("bundle_ids && :scope_ids::int[]").bindparams(scope_ids=list(scope.bundle_ids))
-        query = query.where(scope_cond)
-        count_query = count_query.where(scope_cond)
+        bids = list(scope.bundle_ids)
+        query = query.where(text("bundle_ids && CAST(:s AS int[])").bindparams(s=bids))
+        count_query = count_query.where(text("bundle_ids && CAST(:s AS int[])").bindparams(s=bids))
 
     if bundle_id is not None:
         # Verify bundle is accessible (exists + in scope if scoped)
@@ -743,7 +631,7 @@ def batch_get_assets(
     from app.api.modules.content.query import AssetQuery
     aq = AssetQuery(db, infospace_id).scope(access.scope)
     # Filter to only the requested IDs within scope
-    aq._query = aq._query.where(Asset.id.in_(request.asset_ids))
+    aq._conditions.append(Asset.id.in_(request.asset_ids))
     assets = aq.execute()
     
     # Return in the same order as requested IDs (preserve order)

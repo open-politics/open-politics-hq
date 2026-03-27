@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -32,6 +33,8 @@ import {
   RefreshCw,
   Layers,
   FolderInput,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -58,8 +61,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { BundleActivityIndicators } from './BundleActivityIndicators';
-import { useSemanticSearch } from '@/hooks/useSemanticSearch';
-import { useTextSearch } from '@/hooks/useTextSearch';
+import { useAssetQuery } from '@/hooks/useAssetQuery';
+import type { ChildResultGroup } from '@/hooks/useAssetQuery';
 import { useIngestionJobs } from '@/hooks/useIngestionJobs';
 import { 
   getAssetIcon, 
@@ -137,6 +140,8 @@ interface AssetSelectorProps {
     onMaterializeVfolder?: (params: { bundleId: number; pathPrefix: string; name: string }) => void;
     // Prop to allow parent component to provide actions for the dropdown menu
     renderItemActions?: (item: AssetTreeItem) => React.ReactNode;
+    /** Render context menu items for a tree item, or null for empty-space right-click */
+    renderContextMenu?: (item: AssetTreeItem | null) => React.ReactNode;
     // External search control
     initialSearchTerm?: string;
     onSearchTermChange?: (searchTerm: string) => void;
@@ -149,6 +154,8 @@ interface AssetSelectorProps {
     pathPrefix?: string | null;
     sortBy?: 'name' | 'updated_at' | 'created_at';
     sortOrder?: 'asc' | 'desc';
+    /** Render always-visible badge/icon after item name (e.g. favorite star) */
+    renderItemBadge?: (item: AssetTreeItem) => React.ReactNode;
 }
 
 export default function AssetSelector({
@@ -158,6 +165,8 @@ export default function AssetSelector({
     onItemDoubleClick,
     onMaterializeVfolder,
     renderItemActions,
+    renderContextMenu,
+    renderItemBadge,
     initialSearchTerm = '',
     onSearchTermChange,
     autoFocusSearch = false,
@@ -190,6 +199,8 @@ export default function AssetSelector({
     updateBundle,
     createBundle,
     moveBundleToParent,
+    sealBundle,
+    unsealBundle,
   } = useBundleStore();
 
   // Poll for active ingestion jobs
@@ -217,48 +228,38 @@ export default function AssetSelector({
   const [assetTypeFilter, setAssetTypeFilter] = useState<AssetKind | 'all'>('all');
   const [sortOption, setSortOption] = useState(`${sortBy}-${sortOrder}`);
   
-  // Search mode: semantic vs text
+  // Search mode: semantic (~prefix) vs text (plain FTS)
   const [useSemanticMode, setUseSemanticMode] = useState(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('assetSelector_searchMode');
       return stored === 'semantic';
     }
-    return true; // Default to semantic
+    return false;
   });
-  
-  // Semantic search hook
-  const semanticSearchEnabled = useSemanticMode && !!(activeInfospace?.enrichment_config as any)?.embedding?.model_name && debouncedSearchTerm.trim().length > 0;
-  const { 
-    results: semanticResults, 
-    isLoading: isSemanticSearching,
-    isAvailable: isSemanticAvailable,
-    error: semanticSearchError,
-  } = useSemanticSearch({
-    query: debouncedSearchTerm,
-    enabled: semanticSearchEnabled,
-    limit: 100,
-    bundleId: filterByBundleId || undefined,
-    assetKinds: assetTypeFilter !== 'all' ? [assetTypeFilter] : undefined,
-  });
-  
-  // Text search hook (enabled when NOT in semantic mode or semantic search has debouncedSearchTerm)
-  const textSearchEnabled = !useSemanticMode && debouncedSearchTerm.trim().length > 0;
+  const isSemanticAvailable = !!(activeInfospace?.enrichment_config as any)?.embedding?.model_name;
+
+  // Build AQL query: prepend ~ for semantic mode
+  const aqlQuery = useMemo(() => {
+    const term = debouncedSearchTerm.trim();
+    if (!term) return '';
+    return useSemanticMode && isSemanticAvailable ? `~${term}` : term;
+  }, [debouncedSearchTerm, useSemanticMode, isSemanticAvailable]);
+
+  // Unified search via AQL /query endpoint
   const {
-    results: textSearchResults,
-    isLoading: isTextSearching,
-    error: textSearchError,
-  } = useTextSearch({
-    query: debouncedSearchTerm,
-    enabled: textSearchEnabled,
-    limit: 100,
-    bundleId: filterByBundleId || undefined,
-    assetKinds: assetTypeFilter !== 'all' ? [assetTypeFilter] : undefined,
+    nameMatches,
+    results: queryResults,
+    childResults: queryChildResults,
+    isLoading: isSearching,
+    error: searchError,
+  } = useAssetQuery({
+    infospaceId: activeInfospace?.id || 0,
+    query: aqlQuery,
+    limit: 50,
+    enabled: aqlQuery.length > 0,
   });
-  
-  // Auto-fallback to text search if semantic search fails due to missing embeddings
-  const shouldUseTextSearch = useSemanticMode && semanticSearchError && 
-    semanticSearchError.toLowerCase().includes('not found in database');
-  
+  const isSearchActive = aqlQuery.length > 0;
+
   // Store preference in localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -285,11 +286,15 @@ export default function AssetSelector({
   // const [childAssets, setChildAssets] = useState<Map<number, AssetRead[]>>(new Map());
   // const [isLoadingChildren, setIsLoadingChildren] = useState<Set<number>>(new Set());
 
+  // Context menu state (item=null means empty-space right-click)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; item: AssetTreeItem | null } | null>(null);
+
   // Drag and drop state
   const [draggedOverBundleId, setDraggedOverBundleId] = useState<string | null>(null);
   const [isDraggedOverTopLevel, setIsDraggedOverTopLevel] = useState(false);
   const [draggedOverAssetId, setDraggedOverAssetId] = useState<string | null>(null);
   const [dragOverTimeout, setDragOverTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [sealRejectedId, setSealRejectedId] = useState<string | null>(null);
 
   // Refresh state
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -319,6 +324,24 @@ export default function AssetSelector({
       }
     };
   }, [dragOverTimeout]);
+
+  // Reset all drag state when any drag operation ends (drop, cancel, Escape)
+  // Empty deps — state setters are stable, no stale closure risk
+  useEffect(() => {
+    const resetDragState = () => {
+      setIsDraggedOverTopLevel(false);
+      setDraggedOverBundleId(null);
+      setDraggedOverAssetId(null);
+      setDragOverTimeout((prev) => { if (prev) clearTimeout(prev); return null; });
+    };
+    document.addEventListener('dragend', resetDragState);
+    // Also catch drops outside valid targets (fires on document)
+    document.addEventListener('drop', resetDragState);
+    return () => {
+      document.removeEventListener('dragend', resetDragState);
+      document.removeEventListener('drop', resetDragState);
+    };
+  }, []);
 
   // Sync initial search term and auto-focus
   useEffect(() => {
@@ -570,24 +593,19 @@ export default function AssetSelector({
     return Array.from(kinds).sort();
   }, [rootNodes, childrenCache]);
 
-  // Create map of search results (asset_id -> score) - works for both semantic and text search
+  // Create map of search results (asset_id -> score) from unified query
   const searchScoreMap = useMemo(() => {
     const map = new Map<number, number>();
-    
-    // Use semantic results if in semantic mode
-    if (useSemanticMode && semanticResults.length > 0) {
-      semanticResults.forEach(result => {
-        map.set(result.asset.id, result.score);
-      });
-    } else if (!useSemanticMode && textSearchResults.length > 0) {
-      // Use text search results if in text mode
-      textSearchResults.forEach(result => {
-        map.set(result.asset.id, result.score);
-      });
+    for (const r of nameMatches.assets) {
+      map.set(r.asset.id, (r.score ?? 0) * 100);
     }
-    
+    for (const r of queryResults) {
+      if (!map.has(r.asset.id)) {
+        map.set(r.asset.id, (r.score ?? 0) * 100);
+      }
+    }
     return map;
-  }, [useSemanticMode, semanticResults, textSearchResults]);
+  }, [nameMatches.assets, queryResults]);
 
   // OLD N+1 FETCHING LOGIC - REMOVED! 🎉
 
@@ -663,6 +681,7 @@ export default function AssetSelector({
         source_id: null,
         facets: node.facets || null,
         file_info: node.file_info || null,
+        tags: node.tags || [],
       } as AssetRead;
     } else if (node.type === 'bundle') {
       const bundleId = parseInt(node.id.replace('bundle-', ''));
@@ -676,6 +695,8 @@ export default function AssetSelector({
         created_at: node.created_at || node.updated_at,
         asset_count: node.asset_count || 0,
         child_bundle_count: node.child_bundle_count || 0,
+        sealed: node.sealed || false,
+        tags: node.tags || [],
         has_active_sources: node.has_active_sources,
         active_source_count: node.active_source_count,
         has_monitors: node.has_monitors,
@@ -813,74 +834,60 @@ export default function AssetSelector({
     return sortItemsRecursively(tree);
   }, [rootNodes, childrenCache, expandedItems, selectedItems, sortOption, filterByBundleId, pathPrefix, convertTreeNodeToTreeItem]);
   
-  // Convert semantic results to AssetTreeItems using existing conversion utilities
-  // Reuses: AssetRead -> TreeNode -> AssetTreeItem (same pattern as tree store)
-  const semanticTreeItems = useMemo(() => {
-    if (!useSemanticMode || !semanticSearchEnabled || semanticResults.length === 0) {
-      return [];
-    }
-    
-    // Filter by asset type
-    const filteredResults = semanticResults.filter(result => {
-      const typeMatch = assetTypeFilter === 'all' || result.asset.kind === assetTypeFilter;
-      return typeMatch;
-    });
-    
-    // Convert AssetRead -> TreeNode -> AssetTreeItem (reusing existing conversion)
-    return filteredResults.map(result => {
-      const treeNode = assetReadToTreeNode(result.asset);
+  // Convert query results to AssetTreeItems — tiered
+  const searchNameBundleItems = useMemo(() => {
+    if (!isSearchActive || nameMatches.bundles.length === 0) return [];
+    return nameMatches.bundles.map((b): AssetTreeItem => ({
+      id: `bundle-${b.id}`,
+      type: 'folder',
+      name: b.name,
+      level: 0,
+      isExpanded: false,
+      isSelected: selectedItems.has(`bundle-${b.id}`),
+      isContainer: true,
+      bundle: b as any,
+    }));
+  }, [isSearchActive, nameMatches.bundles, selectedItems]);
+
+  const searchNameAssetItems = useMemo(() => {
+    if (!isSearchActive || nameMatches.assets.length === 0) return [];
+    return nameMatches.assets.map(r => {
+      const treeNode = assetReadToTreeNode(r.asset);
       const treeItem = convertTreeNodeToTreeItem(treeNode, 0);
-      // Use full asset data we already have (more complete than minimal asset from TreeNode)
-      return { ...treeItem, asset: result.asset };
+      return { ...treeItem, asset: r.asset };
     });
-  }, [useSemanticMode, semanticSearchEnabled, semanticResults, assetTypeFilter, assetReadToTreeNode, convertTreeNodeToTreeItem]);
-  
-  // Convert text search results to AssetTreeItems (same pattern as semantic)
-  const textSearchTreeItems = useMemo(() => {
-    if (useSemanticMode || !textSearchEnabled || textSearchResults.length === 0) {
-      return [];
-    }
-    
-    // Filter by asset type (should already be filtered by backend, but double-check)
-    const filteredResults = textSearchResults.filter(result => {
-      const typeMatch = assetTypeFilter === 'all' || result.asset.kind === assetTypeFilter;
-      return typeMatch;
-    });
-    
-    // Convert AssetRead -> TreeNode -> AssetTreeItem
-    return filteredResults.map(result => {
-      const treeNode = assetReadToTreeNode(result.asset);
+  }, [isSearchActive, nameMatches.assets, assetReadToTreeNode, convertTreeNodeToTreeItem]);
+
+  const searchContentItems = useMemo(() => {
+    if (!isSearchActive || queryResults.length === 0) return [];
+    return queryResults.map(r => {
+      const treeNode = assetReadToTreeNode(r.asset);
       const treeItem = convertTreeNodeToTreeItem(treeNode, 0);
-      // Use full asset data we already have
-      return { ...treeItem, asset: result.asset };
+      return { ...treeItem, asset: r.asset };
     });
-  }, [useSemanticMode, textSearchEnabled, textSearchResults, assetTypeFilter, assetReadToTreeNode, convertTreeNodeToTreeItem]);
+  }, [isSearchActive, queryResults, assetReadToTreeNode, convertTreeNodeToTreeItem]);
 
   // Filter tree based on search and type
   const filteredTree = useMemo(() => {
-    // If semantic search is active and has results, return semantic results as flat list
-    if (useSemanticMode && semanticSearchEnabled && semanticTreeItems.length > 0) {
-      return semanticTreeItems;
+    // When search is active, the tiered results (searchNameBundleItems, searchNameAssetItems,
+    // searchContentItems, queryChildResults) are rendered directly in JSX — filteredTree
+    // only governs the non-search tree view.
+    if (isSearchActive) {
+      return assetTree; // unused in search mode, but keep stable reference
     }
-    
-    // If text search is active and has results, return text search results as flat list
-    if (!useSemanticMode && textSearchEnabled && textSearchTreeItems.length > 0) {
-      return textSearchTreeItems;
-    }
-    
-    // No search active - use client-side filtering on tree (legacy behavior when no query)
+
+    // No search active - use client-side filtering on tree
     const filterItems = (items: AssetTreeItem[]): AssetTreeItem[] => {
       return items.reduce((acc: AssetTreeItem[], item) => {
         const filteredChildren = item.children ? filterItems(item.children) : undefined;
-        const searchMatch = !debouncedSearchTerm.trim() || item.name.toLowerCase().includes(debouncedSearchTerm.toLowerCase());
+        const typeMatch = assetTypeFilter === 'all' || item.type === 'folder' || item.asset?.kind === assetTypeFilter;
         let keepItem = false;
         if (item.type === 'folder') {
-          if ((filteredChildren && filteredChildren.length > 0) || (searchMatch && assetTypeFilter === 'all')) {
+          if ((filteredChildren && filteredChildren.length > 0) || (typeMatch && assetTypeFilter === 'all')) {
             keepItem = true;
           }
         } else {
-          const typeMatch = assetTypeFilter === 'all' || item.asset?.kind === assetTypeFilter;
-          if (searchMatch && typeMatch) {
+          if (typeMatch) {
             keepItem = true;
           }
         }
@@ -889,7 +896,7 @@ export default function AssetSelector({
       }, []);
     };
     return filterItems(assetTree);
-  }, [assetTree, debouncedSearchTerm, assetTypeFilter, useSemanticMode, semanticSearchEnabled, semanticTreeItems, textSearchEnabled, textSearchTreeItems]);
+  }, [assetTree, assetTypeFilter, isSearchActive]);
 
   // NEW: Lazy load children when expanding nodes - optimized
   const toggleExpanded = useCallback(async (itemId: string) => {
@@ -1053,17 +1060,11 @@ export default function AssetSelector({
       // Expand/collapse folder on double-click
       toggleExpanded(item.id);
     } else if (onItemView) {
-      // Fetch full data for view
-      if (item.type === 'asset' && item.asset) {
+      // Folders are handled above (toggle expand); here `item` is always an asset.
+      if (item.asset) {
         const fullAsset = await useTreeStore.getState().getFullAsset(item.asset.id);
         if (fullAsset) {
           onItemView({ ...item, asset: fullAsset });
-          return;
-        }
-      } else if (item.type === 'folder' && item.bundle) {
-        const fullBundle = await useTreeStore.getState().getFullBundle(item.bundle.id);
-        if (fullBundle) {
-          onItemView({ ...item, bundle: fullBundle });
           return;
         }
       }
@@ -1110,10 +1111,19 @@ export default function AssetSelector({
   }, [selectedItems, collectAllDescendantIds]);
 
   const handleDropOnBundle = useCallback(async (bundleItem: AssetTreeItem, e: React.DragEvent) => {
+    // Always reset all drag visual state immediately
+    setDraggedOverBundleId(null);
+    setDraggedOverAssetId(null);
+    setIsDraggedOverTopLevel(false);
     // Extract bundle ID from node ID (format: "bundle-123")
     if (!bundleItem.id.startsWith('bundle-')) return;
+    if (bundleItem.bundle?.sealed) {
+      toast.error('Cannot drop into a sealed bundle.');
+      setSealRejectedId(bundleItem.id);
+      setTimeout(() => setSealRejectedId(null), 600);
+      return;
+    }
     const destinationBundleId = parseInt(bundleItem.id.replace('bundle-', ''));
-    setDraggedOverBundleId(null);
     const data = e.dataTransfer.getData('application/json');
     if (!data) return;
     try {
@@ -1181,6 +1191,8 @@ export default function AssetSelector({
   }, [addAssetToBundle, moveBundleToParent, fetchRootTree]);
 
   const handleDropOnTopLevel = useCallback(async (e: React.DragEvent) => {
+    setDraggedOverBundleId(null);
+    setDraggedOverAssetId(null);
     setIsDraggedOverTopLevel(false);
     const data = e.dataTransfer.getData('application/json');
     if (!data) return;
@@ -1235,11 +1247,13 @@ export default function AssetSelector({
   }, [moveBundleToParent, fetchRootTree]);
 
   const handleDropOnAsset = useCallback(async (targetItem: AssetTreeItem, e: React.DragEvent) => {
+    // Always reset all drag visual state immediately
+    setDraggedOverBundleId(null);
+    setDraggedOverAssetId(null);
+    setIsDraggedOverTopLevel(false);
     // Extract asset ID from node ID (format: "asset-123")
     if (!targetItem.id.startsWith('asset-')) return;
     const targetAssetId = parseInt(targetItem.id.replace('asset-', ''));
-    
-    setDraggedOverAssetId(null);
     const data = e.dataTransfer.getData('application/json');
     if (!data) return;
     
@@ -1302,6 +1316,52 @@ export default function AssetSelector({
     return undefined;
   }, [getJob, activeJobs]);
 
+  // Check if an item (or any selected item) belongs to a sealed bundle
+  const isItemSealed = useCallback((item: AssetTreeItem): boolean => {
+    // Bundle itself is sealed
+    if (item.bundle?.sealed) return true;
+    // Child of a sealed bundle — look up parent
+    if (item.parentId?.startsWith('bundle-')) {
+      const findInTree = (items: AssetTreeItem[], id: string): AssetTreeItem | undefined => {
+        for (const i of items) {
+          if (i.id === id) return i;
+          if (i.children) { const found = findInTree(i.children, id); if (found) return found; }
+        }
+        return undefined;
+      };
+      const parent = findInTree(filteredTree, item.parentId);
+      if (parent?.bundle?.sealed) return true;
+    }
+    return false;
+  }, [filteredTree]);
+
+  // Seal / unseal handlers
+  const handleSealBundle = useCallback(async (bundle: BundleRead) => {
+    const success = await sealBundle(bundle.id);
+    if (success) { await useTreeStore.getState().clearCache(); await fetchRootTree(); }
+  }, [sealBundle, fetchRootTree]);
+
+  const handleUnsealBundle = useCallback(async (bundle: BundleRead) => {
+    const success = await unsealBundle(bundle.id);
+    if (success) { await useTreeStore.getState().clearCache(); await fetchRootTree(); }
+  }, [unsealBundle, fetchRootTree]);
+
+  // Context menu handler (item=null for empty-space right-click)
+  const handleContextMenu = useCallback((e: React.MouseEvent, item: AssetTreeItem | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, item });
+  }, []);
+
+  // Close context menu on click anywhere
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    window.addEventListener('click', close);
+    window.addEventListener('contextmenu', close);
+    return () => { window.removeEventListener('click', close); window.removeEventListener('contextmenu', close); };
+  }, [contextMenu]);
+
   const renderTreeItem = useCallback((item: AssetTreeItem, itemIndex?: number) => {
     const hasChildren = item.children && item.children.length > 0;
     const canExpand = hasChildren || item.isContainer;
@@ -1310,6 +1370,7 @@ export default function AssetSelector({
     const isEditing = editingItem?.id === item.id;
     const isDragOver = draggedOverBundleId === item.id;
     const isDragOverAsset = draggedOverAssetId === item.id;
+    const isSealRejected = sealRejectedId === item.id;
     const isFocused = itemIndex !== undefined && itemIndex === focusedIndex;
     
     if (item.type === 'folder' && item.bundle) {
@@ -1322,9 +1383,10 @@ export default function AssetSelector({
         <div key={item.id}>
           <div
             data-item-index={itemIndex}
-            className={cn("group flex items-center mb-0.5 justify-between gap-2 rounded-md hover:bg-muted cursor-pointer transition-colors border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 w-full overflow-hidden", compact ? "py-1 px-2" : "py-2 px-3", (isFullySelected || item.isSelected) && "bg-blue-100 dark:bg-blue-900/80 border-blue-500 !border-y-blue-500/50", isDragOver && "bg-blue-100 dark:bg-blue-900 ring-1 ring-blue-500", isFocused && "ring-1 ring-inset ring-primary")}
+            className={cn("group flex items-center mb-0.5 justify-between gap-2 rounded-md hover:bg-muted cursor-pointer transition-colors border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 w-full overflow-hidden", compact ? "py-1 px-2" : "py-2 px-3", (isFullySelected || item.isSelected) && "bg-blue-100 dark:bg-blue-900/80 border-blue-500 !border-y-blue-500/50", isDragOver && !item.bundle?.sealed && "bg-blue-100 dark:bg-blue-900", isDragOver && item.bundle?.sealed && "bg-red-100 dark:bg-red-900/50 border-red-400", isSealRejected && "animate-shake bg-red-100 dark:bg-red-900/50 border-red-400", isFocused && "ring-1 ring-inset ring-primary")}
             style={getIndentationStyle(item.level)}
-            onClick={(e) => { 
+            onContextMenu={(e) => handleContextMenu(e, item)}
+            onClick={(e) => {
               e.stopPropagation();
               // Delay single-click to distinguish from double-click
               if (bundleClickTimeoutRef.current) {
@@ -1363,6 +1425,11 @@ export default function AssetSelector({
             draggable
             onDragStart={(e) => {
               e.stopPropagation();
+              if (isItemSealed(item)) {
+                e.preventDefault();
+                toast.error('Cannot move items from a sealed bundle.');
+                return;
+              }
               // Use simplified drag data with IDs and types
               const bundleId = parseInt(item.id.replace('bundle-', ''));
               
@@ -1395,6 +1462,7 @@ export default function AssetSelector({
               {canExpand && <Button variant="ghost" size="sm" className="h-4 w-4 p-0" onClick={(e) => {e.stopPropagation(); toggleExpanded(item.id);}}> {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <motion.div animate={{ rotate: item.isExpanded ? 90 : 0 }} transition={{ type: "spring", stiffness: 400, damping: 30 }}><ChevronRight className="h-3 w-3" /></motion.div>} </Button>}
             </div>
             <Checkbox checked={isFullySelected || isPartiallySelected} onCheckedChange={(checked) => toggleBundleSelection(bundleId, !!checked)} onClick={(e) => e.stopPropagation()} className={cn("h-4 w-4 rounded-sm shrink-0 border-gray-300 border-thin data-[state=checked]:bg-secondary data-[state=checked]:text-secondary-foreground", isPartiallySelected && !isFullySelected && "data-[state=checked]:bg-primary/50")} title={isFullySelected ? "Deselect all" : "Select all"} />
+            {renderItemBadge?.(item)}
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1427,10 +1495,20 @@ export default function AssetSelector({
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="right">
-                  <p>Bundle — real collection. Supports flows, monitoring, annotation runs.</p>
+                  <p>Bundle — data collection. Use to curation data, as recurrent ingestion target or as entrypoint for analysis and flows. Can be sealed to prevent modification.</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
+            {item.bundle?.sealed && 
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Lock className="h-3 w-3 text-blue-500 shrink-0" />
+                  </TooltipTrigger>
+                  <TooltipContent side="right"><p>Sealed — contents cannot be modified</p></TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            }
             <div className="flex-1 min-w-0 overflow-hidden" onClick={(e) => { if (e.detail === 3) { e.stopPropagation(); handleEditItem(item); } }}>
               <div className="flex items-center gap-2 min-w-0 overflow-hidden">
                 {isEditing ? (
@@ -1473,10 +1551,12 @@ export default function AssetSelector({
                 )}
               </div>
             </div>
-            {/* Actions - always at the end */}
+            {/* Actions (hover) */}
             <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
               {renderItemActions ? renderItemActions(item) : (
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
+                item.type === 'folder' && (
+                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
+                )
               )}
             </div>
           </div>
@@ -1500,7 +1580,7 @@ export default function AssetSelector({
                     opacity: { duration: 0.1 }
                   }
                 }}
-                className="overflow-hidden max-h-72 overflow-y-auto scrollbar-hide"
+                className="overflow-hidden overflow-y-auto scrollbar-hide"
               >
                 <div className="ml-0  pl-0 space-y-0.5 pb-2 pt-1">
                   <div className="space-y-0.5">
@@ -1593,7 +1673,7 @@ export default function AssetSelector({
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: "auto", opacity: 1, transition: { height: { type: "spring", stiffness: 400, damping: 35, mass: 0.6 }, opacity: { duration: 0.1 } } }}
                 exit={{ height: 0, opacity: 0, transition: { height: { type: "spring", stiffness: 400, damping: 35, mass: 0.6 }, opacity: { duration: 0.1 } } }}
-                className="overflow-hidden max-h-72 overflow-y-auto scrollbar-hide"
+                className="overflow-hidden overflow-y-auto scrollbar-hide"
               >
                 <div className="ml-0 pl-0 space-y-0.5 pb-2 pt-1">
                   <div className="space-y-0.5">
@@ -1618,13 +1698,14 @@ export default function AssetSelector({
       <div key={item.id}>
         <div
           data-item-index={itemIndex}
-          className={cn("group flex items-center justify-between gap-2 hover:bg-muted/50 cursor-pointer transition-colors rounded-md w-full overflow-hidden", compact ? "py-1 px-2" : "py-1.5 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 rounded-none border-blue-500", isDragOverAsset && "bg-green-100 dark:bg-green-900 ring-1 ring-green-500", isFocused && "ring-1 ring-inset ring-primary", isJobActive && "bg-blue-50/50 dark:bg-blue-900/30")}
+          className={cn("group flex items-center justify-between gap-2 hover:bg-muted/50 cursor-pointer transition-colors rounded-md w-full overflow-hidden", compact ? "py-1 px-2" : "py-1.5 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 rounded-none border-blue-500", isDragOverAsset && "bg-green-100 dark:bg-green-900", isFocused && "ring-1 ring-inset ring-primary", isJobActive && "bg-blue-50/50 dark:bg-blue-900/30")}
           style={getIndentationStyle(item.level)}
+          onContextMenu={(e) => handleContextMenu(e, item)}
           onClick={() => handleItemClick(item)}
           onDoubleClick={() => handleItemDoubleClickInternal(item)}
-          onDragOver={(e) => { 
-            e.preventDefault(); 
-            e.stopPropagation(); 
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
             setDraggedOverAssetId(item.id);
             setIsDraggedOverTopLevel(false);
             if (dragOverTimeout) {
@@ -1644,6 +1725,11 @@ export default function AssetSelector({
           }}
           draggable onDragStart={(e) => {
             e.stopPropagation();
+            if (isItemSealed(item)) {
+              e.preventDefault();
+              toast.error('Cannot move items from a sealed bundle.');
+              return;
+            }
             // Use simplified drag data with IDs
             const assetId = parseInt(item.id.replace(/^(asset-|child-)/, ''));
             
@@ -1688,6 +1774,7 @@ export default function AssetSelector({
             )}
           </div>
           <Checkbox checked={item.isSelected} onCheckedChange={() => toggleSelected(item.id, true)} onClick={(e) => e.stopPropagation()} className="h-4 w-4 rounded-sm shrink-0 border-secondart data-[state=checked]:bg-secondart data-[state=checked]:text-secondart-foreground" />
+          {renderItemBadge?.(item)}
           {/* Relevance score badge - between checkbox and icon (works for both semantic and text search) */}
           {item.asset && searchScoreMap.has(item.asset.id) && (
             <RelevanceBadge 
@@ -1740,9 +1827,9 @@ export default function AssetSelector({
             )}
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               {renderItemActions ? renderItemActions(item) : (
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details">
-                  <Eye className="h-4 w-4" />
-                </Button>
+                item.type === 'folder' && (
+                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
+                )
               )}
             </div>
           </div>
@@ -1767,7 +1854,7 @@ export default function AssetSelector({
                   opacity: { duration: 0.1 }
                 }
               }}
-              className="overflow-hidden max-h-72 overflow-y-auto scrollbar-hide"
+              className="overflow-hidden overflow-y-auto scrollbar-hide"
             >
               <div className="ml-0 border-l-2 border-slate-200 dark:border-slate-700 pl-2 space-y-1 pb-2 pt-1">
                 <div className="space-y-1">
@@ -1782,7 +1869,7 @@ export default function AssetSelector({
         </AnimatePresence>
       </div>
     );
-  }, [toggleSelected, toggleExpanded, handleItemClick, handleItemDoubleClickInternal, handleEditItem, handleSaveEditing, handleCancelEdit, isLoadingChildren, toggleBundleSelection, isBundleFullySelected, isBundlePartiallySelected, editingItem, draggedOverBundleId, draggedOverAssetId, handleDropOnBundle, handleDropOnAsset, renderItemActions, focusedIndex, getJobInfo, activeJobs]);
+  }, [toggleSelected, toggleExpanded, handleItemClick, handleItemDoubleClickInternal, handleEditItem, handleSaveEditing, handleCancelEdit, isLoadingChildren, toggleBundleSelection, isBundleFullySelected, isBundlePartiallySelected, editingItem, draggedOverBundleId, draggedOverAssetId, handleDropOnBundle, handleDropOnAsset, renderItemActions, focusedIndex, getJobInfo, activeJobs, isItemSealed, sealRejectedId]);
 
   // Get flat list of visible items for keyboard navigation (respecting hierarchy/expansion)
   const flattenedItems = useMemo(() => {
@@ -1903,16 +1990,17 @@ export default function AssetSelector({
   }, [focusedIndex]);
 
   return (
-    <div 
-      className={cn("h-full w-full flex flex-col overflow-hidden min-w-0", compact && "gap-0")}
+    <>
+    <div
+      className={cn("h-full w-full flex flex-col overflow-hidden min-w-0 bg-background", compact && "gap-0")}
     >
         {/* Compact search bar - minimal design for inline usage */}
         {compact && (
-          <div className="flex-none p-2 border-b">
+          <div className="flex-none p-2 border-b bg-background">
             <div className="flex items-center gap-2">
               <InputGroup className="flex-grow">
                 <InputGroupAddon>
-                  {(isSemanticSearching || isTextSearching) ? (
+                  {isSearching ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <Search className="h-3.5 w-3.5" />
@@ -1948,7 +2036,7 @@ export default function AssetSelector({
                     id="semantic-toggle-compact"
                     checked={useSemanticMode}
                     onCheckedChange={setUseSemanticMode}
-                    disabled={isSemanticSearching}
+                    disabled={isSearching}
                     className="scale-75"
                   />
                   <Label 
@@ -1987,17 +2075,17 @@ export default function AssetSelector({
               />
               <InputGroup className="flex-grow h-8 ml-1 sm:ml-2">
                 <InputGroupAddon>
-                  {(isSemanticSearching || isTextSearching) ? (
+                  {isSearching ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
                     <Search className="h-3 w-3" />
                   )}
                 </InputGroupAddon>
-                <InputGroupInput 
-                  ref={searchInputRef} 
-                  placeholder={useSemanticMode && isSemanticAvailable ? "Semantic search..." : "Text search..."} 
-                  value={searchTerm} 
-                  onChange={(e) => setSearchTerm(e.target.value)} 
+                <InputGroupInput
+                  ref={searchInputRef}
+                  placeholder={useSemanticMode && isSemanticAvailable ? "Semantic search..." : "Search..."}
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </InputGroup>
               {/* Semantic search toggle - only show if available */}
@@ -2007,7 +2095,7 @@ export default function AssetSelector({
                     id="semantic-toggle"
                     checked={useSemanticMode}
                     onCheckedChange={setUseSemanticMode}
-                    disabled={isSemanticSearching}
+                    disabled={isSearching}
                     className="scale-90 sm:scale-100"
                   />
                   <Label 
@@ -2103,7 +2191,7 @@ export default function AssetSelector({
 
         {/* Asset Tree */}
         <div 
-          className={cn("flex-1 min-h-0 overflow-hidden relative min-w-0 max-w-full", isDraggedOverTopLevel && !draggedOverBundleId && !draggedOverAssetId && "bg-blue-50 dark:bg-blue-900/50 ring-2 ring-blue-500 ring-inset")}
+          className={cn("flex-1 min-h-0 overflow-hidden relative min-w-0 max-w-full", isDraggedOverTopLevel && !draggedOverBundleId && !draggedOverAssetId && "bg-blue-50 dark:bg-blue-900/50")}
           onDragOver={(e) => { 
             e.preventDefault(); 
             // Clear any existing timeout
@@ -2120,29 +2208,34 @@ export default function AssetSelector({
             
             setDragOverTimeout(timeout);
           }}
-          onDragLeave={(e) => { 
+          onDragLeave={(e) => {
             // Clear timeout
             if (dragOverTimeout) {
               clearTimeout(dragOverTimeout);
               setDragOverTimeout(null);
             }
-            
-            // Only set to false if we're leaving the container itself, not a child
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-              setIsDraggedOverTopLevel(false); 
+
+            // Reset when leaving the container (relatedTarget null = left the window)
+            if (!e.relatedTarget || !e.currentTarget.contains(e.relatedTarget as Node)) {
+              setIsDraggedOverTopLevel(false);
+              setDraggedOverBundleId(null);
+              setDraggedOverAssetId(null);
             }
           }}
-          onDrop={(e) => { 
-            e.preventDefault(); 
+          onDrop={(e) => {
+            e.preventDefault();
             // Clear timeout
             if (dragOverTimeout) {
               clearTimeout(dragOverTimeout);
               setDragOverTimeout(null);
             }
-            
+
+            // Always reset top-level state on any drop
+            setIsDraggedOverTopLevel(false);
+
             // Only handle top level drop if we're not over a specific item
             if (!draggedOverBundleId && !draggedOverAssetId) {
-              handleDropOnTopLevel(e); 
+              handleDropOnTopLevel(e);
             }
           }}
         >
@@ -2162,10 +2255,11 @@ export default function AssetSelector({
                 </div>
               </div>
             )}
-            <div 
-              className="w-full overflow-hidden"
-              style={{ 
-                transform: `translateY(${pullOffset}px)`, 
+            <div
+              className="w-full overflow-hidden min-h-full"
+              onContextMenu={(e) => handleContextMenu(e, null)}
+              style={{
+                transform: `translateY(${pullOffset}px)`,
                 transition: isDragging.current ? 'none' : 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
                 willChange: isDragging.current ? 'transform' : 'auto'
               }}
@@ -2198,13 +2292,110 @@ export default function AssetSelector({
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 <span className="ml-2 text-muted-foreground">Loading...</span>
               </div>
+            ) : isSearchActive ? (
+              /* ── Tiered search results ── */
+              (() => {
+                const hasNameMatches = searchNameBundleItems.length > 0 || searchNameAssetItems.length > 0;
+                const hasContentResults = searchContentItems.length > 0;
+                const hasChildResults = queryChildResults.length > 0;
+                const hasAnyResults = hasNameMatches || hasContentResults || hasChildResults;
+
+                if (isSearching && !hasAnyResults) {
+                  return (
+                    <div className="flex items-center justify-center h-32">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                      <span className="ml-2 text-muted-foreground">Searching...</span>
+                    </div>
+                  );
+                }
+
+                if (!hasAnyResults) {
+                  return (
+                    <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
+                      <FolderOpen className="h-8 w-8 mb-2 opacity-50" />
+                      <h3 className="text-lg font-medium mb-2">No results</h3>
+                      <p className="text-sm text-center">
+                        No items match &quot;{debouncedSearchTerm}&quot;
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div ref={containerRef} className="px-2 md:px-0 mt-2 w-full overflow-hidden">
+                    {/* Tier 1: Name matches (bundles + title hits) */}
+                    {hasNameMatches && (
+                      <div className="mb-1">
+                        <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                          Name matches
+                        </div>
+                        <div className="space-y-0.5">
+                          {searchNameBundleItems.map(item => renderTreeItem(item))}
+                          {searchNameAssetItems.map(item => renderTreeItem(item))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tier 2: Content matches (FTS/semantic, top-level only) */}
+                    {hasContentResults && (
+                      <div className="mb-1">
+                        {hasNameMatches && (
+                          <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                            Content matches
+                          </div>
+                        )}
+                        <div className="space-y-0.5">
+                          {searchContentItems.map(item => renderTreeItem(item))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tier 3: Child/page matches (collapsed groups) */}
+                    {hasChildResults && (
+                      <div className="mb-1">
+                        <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                          Page matches
+                        </div>
+                        <div className="space-y-0.5">
+                          {queryChildResults.map(group => {
+                            const isExpanded = expandedItems.has(`child-group-${group.parent_asset_id}`);
+                            return (
+                              <div key={`child-group-${group.parent_asset_id}`}>
+                                <button
+                                  className="flex items-center gap-1.5 w-full px-2 py-1 text-xs text-muted-foreground hover:bg-accent/50 rounded-sm"
+                                  onClick={() => {
+                                    const key = `child-group-${group.parent_asset_id}`;
+                                    const next = new Set(expandedItems);
+                                    if (next.has(key)) next.delete(key); else next.add(key);
+                                    setExpandedItems(next);
+                                  }}
+                                >
+                                  {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                  <Layers className="h-3 w-3" />
+                                  <span className="truncate">{group.parent_title}</span>
+                                  <Badge variant="secondary" className="ml-auto text-[9px] px-1 py-0">
+                                    {group.matches.length} page{group.matches.length !== 1 ? 's' : ''}
+                                  </Badge>
+                                </button>
+                                {isExpanded && group.matches.map(m => {
+                                  const treeNode = assetReadToTreeNode(m.asset);
+                                  const treeItem = convertTreeNodeToTreeItem(treeNode, 1);
+                                  return renderTreeItem({ ...treeItem, asset: m.asset });
+                                })}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()
             ) : filteredTree.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
                 <FolderOpen className="h-8 w-8 mb-2 opacity-50" />
                 <h3 className="text-lg font-medium mb-2">No items found</h3>
-                <p className="text-sm text-center">
-                  {debouncedSearchTerm ? `No items match "${debouncedSearchTerm}"` : "No items available."}
-                </p>
+                <p className="text-sm text-center">No items available.</p>
               </div>
             ) : (
               <div ref={containerRef} className="px-2 md:px-0 mt-2 space-y-0.5 w-full overflow-hidden">
@@ -2218,5 +2409,36 @@ export default function AssetSelector({
           </ScrollArea >
         </div>
       </div>
+
+      {/* Right-click context menu — portaled to body so fixed + clientX/Y match the cursor
+          (ancestors with transform/filter e.g. resizable panels, backdrop-blur break fixed positioning). */}
+      {contextMenu &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="fixed z-50 min-w-[180px] rounded-md border bg-popover p-1 text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+            onClick={() => setContextMenu(null)}
+          >
+            {renderContextMenu ? renderContextMenu(contextMenu.item) : contextMenu.item && (
+              <>
+                <button
+                  className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+                  onClick={() => handleItemClick(contextMenu.item!)}
+                >
+                  <Eye className="mr-2 h-4 w-4" /> View Details
+                </button>
+                <button
+                  className="relative flex w-full cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
+                  onClick={() => handleEditItem(contextMenu.item!)}
+                >
+                  <Edit3 className="mr-2 h-4 w-4" /> Rename
+                </button>
+              </>
+            )}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 } 

@@ -32,9 +32,11 @@ def build_tree_node_from_bundle(bundle: Bundle, session: Optional[Session] = Non
         children_count=(bundle.asset_count or 0) + (bundle.child_bundle_count or 0),
         asset_count=bundle.asset_count,
         child_bundle_count=bundle.child_bundle_count,
-        parent_id=f"bundle-{bundle.parent_bundle_id}" if bundle.parent_bundle_id else None,
+        sealed=bundle.sealed,
+        parent_id=f"bundle-{bundle.parent_bundle_id}" if bundle.parent_bundle_id != 0 else None,
         updated_at=bundle.updated_at,
         created_at=bundle.created_at,
+        tags=bundle.tags or None,
     )
     
     if session:
@@ -147,6 +149,7 @@ def build_tree_node_from_asset(asset: Asset, parent_type: str = None, parent_id:
         created_at=asset.created_at,
         facets=facets,
         file_info=file_info,
+        tags=asset.tags or None,
     )
 
 

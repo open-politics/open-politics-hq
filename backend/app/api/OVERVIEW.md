@@ -38,6 +38,7 @@ app/
     tasks.py                    # @task decorator, TaskDescriptor, TaskContext, task registry, cached_resolve
     dispatch.py                 # Dispatcher: dispatch_tasks beat task, kick_tasks on-demand, per-task scheduling
     events.py                   # Celery-based event bus for lifecycle transitions (subscriber registry + send_task dispatch)
+    grove.py                    # Tree operations: copy (structural fork + asset link), move (relocation), delete (cascade removal)
     redis.py                    # Shared Redis client (connection pool)
     task_utils.py               # run_async_in_celery, pydantic model from JSON schema
 
@@ -135,7 +136,7 @@ app/
 
     routes/                     # HTTP surface (33 route files)
     dependency_injection.py     # FastAPI DI wiring (provider deps, service deps, ingestion context factory)
-    content_tree_builder.py     # Tree building (pure presentation logic)
+    tree_renderer.py     # Tree building (pure presentation logic)
     asset_context_builder.py   # build_asset_context() — model-introspected evaluation context for flow FILTER/ROUTE steps
 
   models.py                     # RE-EXPORT HUB: from all domain models
@@ -206,7 +207,7 @@ One registration, everything derives. Never branch on kind/type with if/elif —
 
 Composables combine primitives into operations. If you need to create assets, query assets, or build context — use a composable, don't write new logic.
 
-**`ingest(context, locator, bundle_id=...)`** — Single entry point for all asset creation. Calls `resolve_handler()` to find the right handler for the locator type, calls the handler, assigns assets to a bundle via `bundle_service.add_assets_to_bundle()`. 68 lines. If a route creates assets, it should go through `ingest()` or compose Handler + `bundle_service` directly (legitimate when `resolve_handler()` doesn't accept the locator type, e.g., `SearchResult`).
+**`ingest(context, locator, bundle_id=...)`** — Single entry point for all asset creation. Calls `resolve_handler()` to find the right handler for the locator type, calls the handler, assigns assets to a bundle via `grove.copy()`. 68 lines. If a route creates assets, it should go through `ingest()` or compose Handler + `grove.copy()` directly (legitimate when `resolve_handler()` doesn't accept the locator type, e.g., `SearchResult`).
 
 **`AssetQuery`** — Composable builder for all asset access. Every service, route, or task that queries assets should use this instead of raw SQL:
 ```
@@ -268,6 +269,7 @@ For assets, `AssetQuery.scope()` provides the full visibility predicate (three-b
 | Create sources, upload assets, import | ingest |
 | Run annotations, flows, enrichments | compute |
 | Delete assets, bundles, remove from bundles | delete |
+| Seal/unseal bundles | delete |
 | Infospace settings, collaborators, enrichment config | setup |
 
 **Routes** — HTTP entry points. Thin dispatchers: validate input, call composable or service, return response.
@@ -320,9 +322,9 @@ Domains own their models, services, tasks, and reactions. Each domain is a bound
 | Domain | Layer | Owns | Key Primitives |
 |---|---|---|---|
 | Foundation Providers | L0 | 7 protocols, implementations, registry resolve() | StorageProvider, WebSearchProvider, OcrProvider, etc. Resolved via `resolve()`. |
-| Core Infrastructure | L0 | DB, Celery, dispatch, events, @task | `@task`, `kick_tasks()`, `emit()`, `cached_resolve()` |
+| Core Infrastructure | L0 | DB, Celery, dispatch, events, @task, grove | `@task`, `kick_tasks()`, `emit()`, `cached_resolve()`, `grove.copy()`, `grove.move()`, `grove.delete()`, `grove.subtree_ids()` |
 | Identity / Infospace | L1 | User, Infospace, access control | `Requires()`, `resolve_access()`, `Access`, `PackageScope` |
-| Content | L2 | Asset, Bundle, Source, handlers, processors, enrichers | ContentTypeRegistry, `ingest()`, AssetQuery, AssetBuilder. Bundle deletion: `_expand_bundle_descendants()` (recursive CTE) collects subtree, `_analyze_deletion()` splits assets into exclusive (delete) vs shared (unlink). Preview via `POST /tree/delete-preview`. `BundleService.get_descendant_ids()` for service-level cascade. |
+| Content | L2 | Asset, Bundle, Source, handlers, processors, enrichers | ContentTypeRegistry, `ingest()`, AssetQuery, AssetBuilder. Tree operations via `core/grove.py`: `copy()` (structural fork for bundles, membership link for assets), `move()` (relocation, always has destination), `delete()` (contextual removal with cascade). `subtree_ids()` for scope resolution. Sealed bundles: immutable membership, protects source data from curator modifications. |
 | Embedding | L2.5 | AssetChunk, HNSW indexes | EmbeddingService, ChunkingService, VectorSearchService |
 | Annotation | L3 | AnnotationSchema, AnnotationRun, Annotation | LLM pipeline (`annotate.py`), version_gap @task |
 | Search | L3 | SearchHistory | SearchService (FTS, semantic, tree multi-phase) |
@@ -625,7 +627,7 @@ The acid test: "The VPS deployment with 400GB+ of drifting PDFs should require z
 
 **Remaining implementation gaps:**
 
-- **Kind checks outside registries** — `strategy.py`, `annotate.py`, `content_tree_builder.py` contain direct `AssetKind` comparisons. **→ Step 6** (deferred).
+- **Kind checks outside registries** — `strategy.py`, `annotate.py`, `tree_renderer.py` contain direct `AssetKind` comparisons. **→ Step 6** (deferred).
 
 **Resolved gaps (for record):**
 - ~~Provider system fragmentation~~ — Unified into `registry.py` (ProviderDescriptor + `resolve()` function). `model_registry.py`, `embedding_registry.py`, `unified_registry.py`, `resolver.py` deleted.
@@ -841,7 +843,7 @@ Targeted fixes, some auto-resolved by the event bus:
 - ~~`annotate.py` line 1154: resume_flow_execution import~~ — Resolved. `process_annotation_run` emits `annotation_run.completed` event; `resume_waiting_flows` @task subscribes to it.
 - **`strategy.py` kind checks:** Replace `asset.kind == AssetKind.WEB` with `registry.by_kind(asset.kind).is_heavy_processing`. Absorbed when handler registry is built.
 - **`annotate.py` kind checks (lines 1909-1982):** Replace `asset.kind == AssetKind.PDF` with `registry.by_kind(asset.kind).is_container` for demultiplexing logic.
-- **`content_tree_builder.py` line 475:** `asset.kind == AssetKind.WEB` used to decide whether to include `url` in asset preview. Replace with a `ContentTypeDescriptor` property (e.g., `descriptor.has_web_url`) or a generic check on `asset.source_identifier` presence (if only WEB assets have a meaningful `source_identifier`, the kind check is redundant with a null check). This is the only kind check in the tree builder and should not survive when every other kind check in the codebase has been eliminated.
+- **`tree_renderer.py` line 475:** `asset.kind == AssetKind.WEB` used to decide whether to include `url` in asset preview. Replace with a `ContentTypeDescriptor` property (e.g., `descriptor.has_web_url`) or a generic check on `asset.source_identifier` presence (if only WEB assets have a meaningful `source_identifier`, the kind check is redundant with a null check). This is the only kind check in the tree builder and should not survive when every other kind check in the codebase has been eliminated.
 
 ---
 

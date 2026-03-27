@@ -45,9 +45,12 @@ import useAuth from '@/hooks/useAuth';
 import { Textarea } from "@/components/ui/textarea"
 import Link from 'next/link';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
+import { useTreeStore } from '@/zustand_stores/storeTree';
 import { useMediaBlobStore } from '@/zustand_stores/storeMediaBlobs';
+import { useAssetQuery, type QueryResult } from '@/hooks/useAssetQuery';
+import type { TreeNode } from '@/client';
 import { toast } from 'sonner';
-import { ExternalLink, Info, Edit2, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, PlusCircle, Save, X, CheckCircle, AlertCircle, ArrowUp, ArrowDown, Files, Type, Loader2, Table as TableIcon, Layers, Image as ImageIcon, Globe, Video, Music, FileSpreadsheet, Settings, Copy } from 'lucide-react';
+import { ExternalLink, Info, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, X, CheckCircle, AlertCircle, ArrowUp, ArrowDown, Files, Type, Loader2, Table as TableIcon, Layers, Image as ImageIcon, Globe, Video, Music, FileSpreadsheet, Settings, Copy } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useTextSpanHighlight, useTextSpanHighlightSafe } from '@/components/collection/contexts/TextSpanHighlightContext';
@@ -62,7 +65,7 @@ import { ArticleView } from './Articles';
 import TextContentRenderer from './Articles/TextContentRenderer';
 import EditableCsvViewer from './EditableCsvViewer';
 import { FragmentInlineList } from './Fragments';
-import AssetMetaHeader from './AssetMetaHeader';
+import AssetMetaHeader, { formatEventTimestampForInput } from './AssetMetaHeader';
 import { useFragmentCuration } from '@/hooks/useFragmentCuration';
 import { getAssetIcon, getAssetKindConfig } from '@/components/collection/assets/assetKindConfig';
 import { getAssetMeta } from '@/lib/utils';
@@ -76,13 +79,37 @@ import type { AssetFeedItem } from '../Feed/types';
 // Define Sort Direction type
 type SortDirection = 'asc' | 'desc' | null;
 
-// ---> ADDED: State for inline editing <---
-interface EditState {
+// Normalized CSV row item — works for both tree browse and query search
+export interface CsvRowListItem {
   assetId: number;
-  field: 'title' | 'event_timestamp';
-  value: string;
+  name: string;
+  partIndex: number;
+  originalRowData?: Record<string, any>;
+  highlight?: string | null;
+  score?: number | null;
 }
-// ---> END ADDED <---
+
+function treeNodeToCsvRow(node: TreeNode): CsvRowListItem {
+  const fi = node.file_info as Record<string, any> | null | undefined;
+  return {
+    assetId: parseInt(node.id.replace('asset-', ''), 10),
+    name: node.name,
+    partIndex: (fi?.data_row_index as number) ?? 0,
+    originalRowData: fi?.original_row_data as Record<string, any> | undefined,
+  };
+}
+
+function queryResultToCsvRow(result: QueryResult): CsvRowListItem {
+  const fi = result.asset.file_info as Record<string, any> | null | undefined;
+  return {
+    assetId: result.asset.id,
+    name: result.asset.title,
+    partIndex: result.asset.part_index ?? (fi?.data_row_index as number) ?? 0,
+    originalRowData: fi?.original_row_data as Record<string, any> | undefined,
+    highlight: result.highlight,
+    score: result.score,
+  };
+}
 
 interface AssetDetailViewProps {
   onEdit: (item: AssetRead) => void;
@@ -101,21 +128,69 @@ const AssetDetailView = ({
   onLoadIntoRunner,
   enableHighlighting = false
 }: AssetDetailViewProps) => {
+  // --- Stores ---
+  const { activeInfospace } = useInfospaceStore();
+  const { getAssetById, updateAsset, fetchChildAssets, reprocessAsset } = useAssetStore();
+  const { deleteFragment } = useFragmentCuration();
+
   // --- State Hooks ---
   const [asset, setAsset] = useState<AssetRead | null>(null);
   const [isLoadingAsset, setIsLoadingAsset] = useState(false);
   const [assetError, setAssetError] = useState<string | null>(null);
-  const [editingAsset, setEditingAsset] = useState<EditState | null>(null);
-  const [isSavingEdit, setIsSavingEdit] = useState(false);
-  
-  // Child assets state
+  const [inlineEditActive, setInlineEditActive] = useState(false);
+  const [draftTitle, setDraftTitle] = useState('');
+  const [draftEventTimestamp, setDraftEventTimestamp] = useState('');
+  const [draftTextContent, setDraftTextContent] = useState('');
+  const [isSavingInline, setIsSavingInline] = useState(false);
+
+  // Child assets state (used for non-CSV children + CsvOverviewContent grid mapping)
   const [childAssets, setChildAssets] = useState<AssetRead[]>([]);
   const [isLoadingChildren, setIsLoadingChildren] = useState(false);
   const [childrenError, setChildrenError] = useState<string | null>(null);
   const [selectedChildAsset, setSelectedChildAsset] = useState<AssetRead | null>(null);
   const [childSearchTerm, setChildSearchTerm] = useState('');
+  const [debouncedCsvSearch, setDebouncedCsvSearch] = useState('');
 
-  // Text span highlighting 
+  // Debounce CSV search term (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedCsvSearch(childSearchTerm), 300);
+    return () => clearTimeout(timer);
+  }, [childSearchTerm]);
+
+  // CSV-specific: tree browse + query search
+  const [csvBrowseItems, setCsvBrowseItems] = useState<CsvRowListItem[]>([]);
+  const [csvBrowseTotal, setCsvBrowseTotal] = useState(0);
+  const [csvBrowseHasMore, setCsvBrowseHasMore] = useState(false);
+  const [csvBrowseLoading, setCsvBrowseLoading] = useState(false);
+  const isCsvAsset = asset?.kind === 'csv';
+  const csvSearchActive = isCsvAsset && debouncedCsvSearch.trim().length > 0;
+
+  const { fetchChildren: treeFetchChildren, getFullAsset: treeGetFullAsset } = useTreeStore();
+
+  // CSV search via query endpoint (only active when searching within a CSV)
+  const csvSearchQuery = useAssetQuery({
+    infospaceId: activeInfospace?.id || 0,
+    query: debouncedCsvSearch,
+    parentAssetId: isCsvAsset ? asset?.id : undefined,
+    sort: debouncedCsvSearch.trim() ? 'relevance' : 'part_index',
+    limit: 200,
+    enabled: csvSearchActive && !!asset?.id,
+  });
+
+  // Normalized CSV items: browse mode uses tree, search mode uses query
+  const csvItems: CsvRowListItem[] = useMemo(() => {
+    if (!isCsvAsset) return [];
+    if (csvSearchActive) {
+      return csvSearchQuery.results.map(queryResultToCsvRow);
+    }
+    return csvBrowseItems;
+  }, [isCsvAsset, csvSearchActive, csvSearchQuery.results, csvBrowseItems]);
+
+  const csvTotal = csvSearchActive ? csvSearchQuery.total : csvBrowseTotal;
+  const csvHasMore = csvSearchActive ? csvSearchQuery.hasMore : csvBrowseHasMore;
+  const csvIsLoading = csvSearchActive ? csvSearchQuery.isLoading : csvBrowseLoading;
+
+  // Text span highlighting
   const { getSpansForAsset } = useTextSpanHighlight();
 
   // Media blob URLs are now managed by Zustand store (storeMediaBlobs)
@@ -135,10 +210,6 @@ const AssetDetailView = ({
   // Force refresh trigger to ensure UI updates
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  const { activeInfospace } = useInfospaceStore();
-  const { getAssetById, updateAsset, fetchChildAssets, reprocessAsset } = useAssetStore();
-  const { deleteFragment } = useFragmentCuration();
-  
   // Semantic search for related assets
   // Memoize the query to prevent unnecessary re-searches
   const relatedAssetsQuery = useMemo(() => {
@@ -212,35 +283,68 @@ const AssetDetailView = ({
     }
   }, [selectedAssetId, activeInfospace?.id, getAssetById]);
 
+  // Fetch CSV children via tree (paginated, sorted by part_index)
+  const fetchCsvChildrenFromTree = useCallback(async (parentId: number, append = false) => {
+    setCsvBrowseLoading(true);
+    try {
+      const skip = append ? csvBrowseItems.length : 0;
+      const { TreeNavigationService } = await import('@/client');
+      const response = await TreeNavigationService.getTreeChildren({
+        infospaceId: activeInfospace!.id,
+        parentId: `asset-${parentId}`,
+        skip,
+        limit: 200,
+      });
+      const items = response.children
+        .filter((n: TreeNode) => n.kind === 'csv_row')
+        .map(treeNodeToCsvRow);
+      if (append) {
+        setCsvBrowseItems(prev => [...prev, ...items]);
+      } else {
+        setCsvBrowseItems(items);
+      }
+      setCsvBrowseTotal(response.total_children);
+      setCsvBrowseHasMore(response.has_more);
+    } catch (err: any) {
+      console.error('[AssetDetailView] CSV tree fetch error:', err);
+      setChildrenError(err.message || 'Failed to load CSV rows');
+    } finally {
+      setCsvBrowseLoading(false);
+    }
+  }, [activeInfospace?.id, csvBrowseItems.length]);
+
+  const handleCsvLoadMore = useCallback(() => {
+    if (!asset?.id || csvIsLoading) return;
+    if (csvSearchActive) {
+      csvSearchQuery.loadMore();
+    } else {
+      fetchCsvChildrenFromTree(asset.id, true);
+    }
+  }, [asset?.id, csvIsLoading, csvSearchActive, csvSearchQuery, fetchCsvChildrenFromTree]);
+
+  // Fetch children: CSV uses tree, others use asset store
   const fetchChildren = useCallback(async (parentId: number, parentAsset: AssetRead) => {
     console.log(`[AssetDetailView] Fetching children for parent asset ID: ${parentId}`);
     setIsLoadingChildren(true);
     setChildrenError(null);
-    
-    // Clear existing children first to force UI update
     setChildAssets([]);
     setSelectedChildAsset(null);
-    
+
+    // CSV: use tree endpoint (paginated, part_index sorted)
+    if (parentAsset.kind === 'csv') {
+      setIsLoadingChildren(false);
+      await fetchCsvChildrenFromTree(parentId);
+      return;
+    }
+
+    // Non-CSV: use existing asset store path
     try {
       const children = await fetchChildAssets(parentId);
-      console.log(`[AssetDetailView] API Response - Fetched ${children?.length || 0} child assets for parent ${parentId}:`, children);
-      
       if (children && children.length > 0) {
         setChildAssets(children);
-        console.log(`[AssetDetailView] State updated with ${children.length} child assets`);
-        
-        // Force UI refresh by incrementing trigger
-        setRefreshTrigger(prev => {
-          const newTrigger = prev + 1;
-          console.log(`[AssetDetailView] Incrementing refresh trigger: ${prev} -> ${newTrigger}`);
-          return newTrigger;
-        });
-        
-        // Remove automatic tab switching - always stay on content tab
-        // Users can manually switch to children tab if they want to see the child assets
+        setRefreshTrigger(prev => prev + 1);
       } else {
         setChildAssets([]);
-        console.log(`[AssetDetailView] No child assets returned or empty array`);
       }
     } catch (err: any) {
       console.error("Error fetching child assets:", err);
@@ -249,7 +353,78 @@ const AssetDetailView = ({
     } finally {
       setIsLoadingChildren(false);
     }
-  }, [fetchChildAssets]);
+  }, [fetchChildAssets, fetchCsvChildrenFromTree]);
+
+  const pdfDraftTextFromAsset = useCallback((a: AssetRead, children: AssetRead[]) => {
+    if (a.text_content?.trim()) return a.text_content;
+    if (children.length > 0) {
+      const sorted = [...children].sort((x, y) => (x.part_index ?? 0) - (y.part_index ?? 0));
+      return sorted.map((c) => c.text_content || '').join('\n\n');
+    }
+    return a.text_content ?? '';
+  }, []);
+
+  const resetInlineEditDrafts = useCallback(
+    (a: AssetRead | null, children: AssetRead[] = []) => {
+      if (!a) return;
+      setDraftTitle(a.title ?? '');
+      setDraftEventTimestamp(formatEventTimestampForInput(a.event_timestamp));
+      setDraftTextContent(a.kind === 'pdf' ? pdfDraftTextFromAsset(a, children) : (a.text_content ?? ''));
+    },
+    [pdfDraftTextFromAsset]
+  );
+
+  const handleStartInlineEdit = useCallback(() => {
+    if (!asset) return;
+    resetInlineEditDrafts(asset, childAssets);
+    setInlineEditActive(true);
+  }, [asset, childAssets, resetInlineEditDrafts]);
+
+  const handleCancelInlineEdit = useCallback(() => {
+    setInlineEditActive(false);
+    if (asset) resetInlineEditDrafts(asset, childAssets);
+  }, [asset, childAssets, resetInlineEditDrafts]);
+
+  const handleSaveInlineEdit = useCallback(async () => {
+    if (!asset || !activeInfospace?.id) return;
+    setIsSavingInline(true);
+    const updatePayload: AssetUpdate = {
+      title: draftTitle,
+      text_content: draftTextContent,
+    };
+    if (draftEventTimestamp.trim()) {
+      const parsed = new Date(draftEventTimestamp);
+      if (Number.isNaN(parsed.getTime())) {
+        toast.error('Invalid event time.');
+        setIsSavingInline(false);
+        return;
+      }
+      updatePayload.event_timestamp = parsed.toISOString();
+    } else {
+      updatePayload.event_timestamp = null;
+    }
+    const updated = await updateAsset(asset.id, updatePayload);
+    setIsSavingInline(false);
+    if (updated) {
+      setAsset(updated);
+      setInlineEditActive(false);
+      resetInlineEditDrafts(updated, childAssets);
+      toast.success('Asset updated.');
+    }
+  }, [asset, activeInfospace?.id, draftTitle, draftEventTimestamp, draftTextContent, updateAsset, resetInlineEditDrafts, childAssets]);
+
+  useEffect(() => {
+    setInlineEditActive(false);
+  }, [selectedAssetId]);
+
+  useEffect(() => {
+    if (!inlineEditActive) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleCancelInlineEdit();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [inlineEditActive, handleCancelInlineEdit]);
 
   // fetchMediaBlob is now handled by Zustand store (storeMediaBlobs)
   // Access via: useMediaBlobStore.getState().getBlobUrl(blobPath)
@@ -267,7 +442,7 @@ const AssetDetailView = ({
     );
   }, [childAssets, childSearchTerm, refreshTrigger]);
 
-  const hasChildren = useMemo(() => childAssets.length > 0, [childAssets, refreshTrigger]);
+  const hasChildren = useMemo(() => childAssets.length > 0 || csvBrowseItems.length > 0, [childAssets, csvBrowseItems, refreshTrigger]);
   const isHierarchicalAsset = useMemo(() => {
     if (!asset) return false;
     const config = getAssetKindConfig(asset.kind);
@@ -285,20 +460,13 @@ const AssetDetailView = ({
   }, [selectedAssetId]);
 
   useEffect(() => {
-    // This effect synchronizes the view based on a requested highlighted child asset.
-    if (highlightAssetIdOnOpen && childAssets.length > 0) {
-      const assetToSelect = childAssets.find(c => c.id === highlightAssetIdOnOpen);
-      if (assetToSelect) {
-        // When a child is highlighted, select it and switch to the children tab.
-        setSelectedChildAsset(assetToSelect);
-        if (activeTab !== 'children') {
-          setActiveTab('children');
-        }
-      }
-      // If the asset isn't found in the current children, do nothing and wait.
-    }
-    // REMOVED: The automatic switch back to content tab that was preventing manual tab switching
-  }, [highlightAssetIdOnOpen, childAssets]); // REMOVED: activeTab dependency to prevent loops
+    if (!highlightAssetIdOnOpen || childAssets.length === 0) return;
+    const assetToSelect = childAssets.find((c) => c.id === highlightAssetIdOnOpen);
+    if (!assetToSelect) return;
+    setSelectedChildAsset(assetToSelect);
+    setChildSearchTerm('');
+    setActiveTab('children');
+  }, [highlightAssetIdOnOpen, childAssets]);
 
   // Blob URL cleanup is now handled by Zustand store
 
@@ -469,65 +637,6 @@ const AssetDetailView = ({
   }, []);
 
   // --- Helper functions ---
-  const getFormattedTimestamp = (isoString: string | null | undefined): string => {
-    if (!isoString) return '';
-    try {
-    const date = new Date(isoString);
-      if (isNaN(date.getTime())) return '';
-      const year = date.getFullYear();
-      const month = (date.getMonth() + 1).toString().padStart(2, '0');
-      const day = date.getDate().toString().padStart(2, '0');
-      const hours = date.getHours().toString().padStart(2, '0');
-      const minutes = date.getMinutes().toString().padStart(2, '0');
-      return `${year}-${month}-${day}T${hours}:${minutes}`;
-    } catch (e) {
-      console.error("Error formatting timestamp:", e);
-      return '';
-    }
-  };
-
-
-  const renderEditableField = (asset: AssetRead | null, field: 'title' | 'event_timestamp') => {
-    if (!asset) return null;
-
-    const isEditingThisField = editingAsset?.assetId === asset.id && editingAsset?.field === field;
-    const displayValue = field === 'title' ? asset.title : asset.event_timestamp;
-    const inputType = field === 'event_timestamp' ? 'datetime-local' : 'text';
-    const label = field === 'title' ? 'Title' : 'Timestamp';
-
-    const currentDisplayValue = field === 'event_timestamp' ? getFormattedTimestamp(displayValue) : (displayValue || 'N/A');
-
-    return (
-      <div className="flex items-center gap-2 text-sm mb-1">
-        <strong className="w-28 shrink-0">{label}:</strong>
-        {isEditingThisField ? (
-          <div className="flex items-center gap-1 flex-grow min-w-0">
-            <Input
-              type={inputType}
-              value={editingAsset.value}
-              onChange={(e) => setEditingAsset({ ...editingAsset, value: e.target.value })}
-              className="h-7 text-xs px-1 py-0.5 flex-grow"
-              autoFocus
-            />
-            <Button variant="ghost" size="icon" className="h-6 w-6 text-green-600 hover:bg-green-100" onClick={handleSaveEdit} disabled={isSavingEdit}>
-              {isSavingEdit ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-            </Button>
-            
-          </div>
-        ) : (
-          <div className="flex items-center gap-1 flex-grow min-w-0">
-            <span className="truncate flex-grow" title={typeof currentDisplayValue === 'string' ? currentDisplayValue : undefined}>
-              {currentDisplayValue}
-            </span>
-            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground" onClick={() => startEditing(asset.id, field, field === 'event_timestamp' ? getFormattedTimestamp(displayValue) : displayValue)}>
-              <Edit2 className="h-3 w-3" />
-            </Button>
-          </div>
-        )}
-      </div>
-    );
-  };
-
   // Helper function to detect if content is HTML
   const isHtmlContent = (text: string): boolean => {
     // Check for common HTML tags
@@ -581,55 +690,82 @@ const AssetDetailView = ({
     );
   };
 
-  const handleSaveEdit = async () => {
-    if (!editingAsset || !activeInfospace?.id) return;
-    setIsSavingEdit(true);
-
-    const updatePayload: AssetUpdate = {};
-    if (editingAsset.field === 'title') {
-      updatePayload.title = editingAsset.value;
-    } else if (editingAsset.field === 'event_timestamp') {
-      try {
-        const parsedDate = new Date(editingAsset.value);
-        if (isNaN(parsedDate.getTime())) {
-          throw new Error("Invalid date format");
-        }
-        updatePayload.event_timestamp = parsedDate.toISOString();
-      } catch (e) {
-        toast.error("Invalid timestamp format. Use YYYY-MM-DDTHH:mm format.");
-        setIsSavingEdit(false);
-        return;
-      }
-    }
-
-    const updatedAsset = await updateAsset(editingAsset.assetId, updatePayload);
-
-    setIsSavingEdit(false);
-    if (updatedAsset) {
-      setEditingAsset(null);
-      setAsset(updatedAsset);
-      toast.success("Asset updated.");
-    }
-  };
-
-  const handleCancelEdit = () => {
-    setEditingAsset(null);
-  };
-
-  const startEditing = (assetId: number, field: 'title' | 'event_timestamp', currentValue: string | null | undefined) => {
-    setEditingAsset({ assetId, field, value: currentValue || '' });
-  };
-
   const handleChildAssetClick = (childAsset: AssetRead) => {
     console.log(`[AssetDetailView] Page clicked: Asset ID ${childAsset.id}, part_index: ${childAsset.part_index}, calculated page: ${(childAsset.part_index || 0) + 1}`);
-    
+
     setSelectedChildAsset(selectedChildAsset?.id === childAsset.id ? null : childAsset);
-    
+
     // If clicking a child asset from the content tab previews, switch to children tab
     if (activeTab === 'content' && childAsset) {
       setActiveTab('children');
     }
   };
+
+  // CSV row click: fetch full AssetRead for the detail panel
+  const handleCsvRowSelect = useCallback(async (item: CsvRowListItem) => {
+    // Toggle off if same row clicked
+    if (selectedChildAsset?.id === item.assetId) {
+      setSelectedChildAsset(null);
+      return;
+    }
+    try {
+      const full = await treeGetFullAsset(item.assetId);
+      setSelectedChildAsset(full);
+    } catch (err) {
+      console.error('[AssetDetailView] Failed to load CSV row detail:', err);
+      setSelectedChildAsset(null);
+    }
+  }, [selectedChildAsset?.id, treeGetFullAsset]);
+
+  const openCsvRowByPartIndex = useCallback(async (partIndex: number) => {
+    setChildSearchTerm('');
+
+    // If the row is already loaded, just select it
+    const loaded = csvBrowseItems.find(r => r.partIndex === partIndex);
+    if (loaded) {
+      try {
+        const full = await treeGetFullAsset(loaded.assetId);
+        setSelectedChildAsset(full);
+      } catch { setSelectedChildAsset(null); }
+      setActiveTab('children');
+      return;
+    }
+
+    // Row not in loaded page — load a page that contains it, then select
+    try {
+      const { TreeNavigationService } = await import('@/client');
+      const pageSize = 200;
+      const skip = Math.max(0, partIndex - 20); // some context above the target
+      const resp = await TreeNavigationService.getTreeChildren({
+        infospaceId: activeInfospace!.id,
+        parentId: `asset-${asset!.id}`,
+        skip,
+        limit: pageSize,
+      });
+
+      // Replace browse items with this page
+      const items = resp.children
+        .filter((n: TreeNode) => n.kind === 'csv_row')
+        .map(treeNodeToCsvRow);
+      setCsvBrowseItems(items);
+      setCsvBrowseTotal(resp.total_children);
+      setCsvBrowseHasMore(resp.has_more);
+
+      // Find the target row in the new page and select it
+      const target = items.find((r: CsvRowListItem) => r.partIndex === partIndex);
+      if (target) {
+        const full = await treeGetFullAsset(target.assetId);
+        setSelectedChildAsset(full);
+      } else {
+        setSelectedChildAsset(null);
+        toast.message('No row asset for this line', { description: 'Reprocess the CSV if rows are missing.' });
+      }
+    } catch {
+      setSelectedChildAsset(null);
+      toast.message('No row asset for this line', { description: 'Reprocess the CSV if rows are missing.' });
+    }
+    setActiveTab('children');
+  }, [csvBrowseItems, treeGetFullAsset, activeInfospace?.id, asset?.id]);
 
   const handleReprocessAsset = useCallback(async (useCustomOptions: boolean = false) => {
     if (!asset) return;
@@ -680,71 +816,7 @@ const AssetDetailView = ({
 
   // --- Helper Components for Asset Content ---
 
-  const ArticleAssetContent = ({ asset, renderEditableField, hasChildren, childAssets, setActiveTab, handleChildAssetClick, renderTextDisplay }: { asset: AssetRead, renderEditableField: any, hasChildren: boolean, childAssets: AssetRead[], setActiveTab: any, handleChildAssetClick: any, renderTextDisplay: any }) => (
-    <div className="p-4 h-full w-full flex flex-col overflow-hidden min-w-0 max-w-full">
-      {/* Prominent Title */}
-      <div className="mb-4">
-        {renderEditableField(asset, 'title')}
-      </div>
-      {asset.text_content && (
-        <div className="flex-1 overflow-y-auto">
-          <h4 className="text-sm font-semibold mb-2 text-muted-foreground">Article Content</h4>
-          <div className="bg-background rounded p-4">
-            <TextContentRenderer content={asset.text_content} />
-          </div>
-        </div>
-      )}
-      {hasChildren && (
-        <div className="mt-4 space-y-2">
-          <div className="flex items-center justify-between">
-            <Badge variant="secondary" className="text-xs">
-              <Layers className="h-3 w-3 mr-1" />
-              {childAssets.length} Related Assets
-            </Badge>
-            <Button variant="outline" size="sm" onClick={() => setActiveTab('children')}>
-              <Eye className="h-4 w-4 mr-2" />
-              View Related Assets
-            </Button>
-          </div>
-          <div className="grid grid-cols-2 gap-2 mt-2">
-            {childAssets.slice(0, 4).map((childAsset, index) => (
-              <div key={childAsset.id} className="rounded p-2 hover:bg-muted/50 cursor-pointer text-xs" onClick={() => handleChildAssetClick(childAsset)}>
-                <div className="flex items-center gap-1">
-                  {getAssetIcon(childAsset.kind, "h-3 w-3")}
-                  <span className="truncate">{childAsset.title}</span>
-        </div>
-                {childAsset.text_content && <p className="truncate text-muted-foreground mt-1">{childAsset.text_content.substring(0, 30)}...</p>}
-              </div>
-            ))}
-            {childAssets.length > 4 && <div className="rounded p-2 text-xs text-muted-foreground flex items-center justify-center">+{childAssets.length - 4} more</div>}
-          </div>
-              </div>
-            )}
-      {(() => {
-        const meta = getAssetMeta(asset);
-        return Object.keys(meta).length > 0 && (
-          <div className="mt-3 pt-3 border-t">
-            <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">Article Metadata</h4>
-            <pre className="text-xs bg-background p-2 rounded overflow-auto max-h-32">{JSON.stringify(meta, null, 2)}</pre>
-          </div>
-        );
-      })()}
-      {/* Summary if available */}
-      {(() => {
-        const summary = asset.facets?.summary ?? asset.file_info?.summary;
-        return summary && typeof summary === 'string' ? (
-          <div className="mt-4 p-3 bg-muted/30 rounded-lg border-l-4 border-primary">
-            <p className="text-sm text-muted-foreground italic">
-              Summary:
-              {summary}
-            </p>
-          </div>
-        ) : null;
-      })()}
-      </div>
-    );
-
-  const ImageAssetContent = ({ asset, renderEditableField, AuthenticatedImage }: { asset: AssetRead, renderEditableField: any, AuthenticatedImage: any }) => {
+  const ImageAssetContent = ({ asset, AuthenticatedImage }: { asset: AssetRead; AuthenticatedImage: React.ComponentType<{ blobPath: string; alt: string; className?: string }> }) => {
     const [sourceFailed, setSourceFailed] = React.useState(false);
 
     React.useEffect(() => {
@@ -756,10 +828,6 @@ const AssetDetailView = ({
 
       return (
       <div className="p-4 h-full flex flex-col">
-        {/* Prominent Title */}
-        <div className="mb-4">
-          {renderEditableField(asset, 'title')}
-        </div>
         <div className="flex-1 flex items-center justify-center bg-muted/20 rounded p-4">
           <div className="max-w-full max-h-full overflow-auto">
             {showExternalImage && (
@@ -791,24 +859,16 @@ const AssetDetailView = ({
 
   // PdfAssetContent is now imported from './PdfAssetContent'
 
-const VideoAssetContent = ({ asset, renderEditableField, AuthenticatedVideo }: { asset: AssetRead, renderEditableField: any, AuthenticatedVideo: any }) => (
+const VideoAssetContent = ({ asset, AuthenticatedVideo }: { asset: AssetRead; AuthenticatedVideo: React.ComponentType<{ blobPath: string; className?: string }> }) => (
     <div className="p-4 h-full flex flex-col">
-        {/* Prominent Title */}
-        <div className="mb-4">
-            {renderEditableField(asset, 'title')}
-        </div>
         <div className="flex-1 bg-muted/20 rounded overflow-hidden flex items-center justify-center">
             {asset.blob_path && <AuthenticatedVideo blobPath={asset.blob_path} className="max-w-full max-h-96" />}
         </div>
         </div>
       );
 
-const AudioAssetContent = ({ asset, renderEditableField, AuthenticatedAudio }: { asset: AssetRead, renderEditableField: any, AuthenticatedAudio: any }) => (
+const AudioAssetContent = ({ asset, AuthenticatedAudio }: { asset: AssetRead; AuthenticatedAudio: React.ComponentType<{ blobPath: string; className?: string }> }) => (
     <div className="p-4 h-full flex flex-col">
-        {/* Prominent Title */}
-        <div className="mb-4">
-            {renderEditableField(asset, 'title')}
-        </div>
         <div className="flex-1 flex items-center justify-center">
             <div className="bg-muted/20 rounded p-6 w-full max-w-md">
                 {asset.blob_path && <AuthenticatedAudio blobPath={asset.blob_path} className="w-full" />}
@@ -817,7 +877,7 @@ const AudioAssetContent = ({ asset, renderEditableField, AuthenticatedAudio }: {
         </div>
       );
 
-const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren, childAssets, setActiveTab, handleChildAssetClick, AuthenticatedImage, enableHighlighting = false }: { asset: AssetRead, renderEditableField: any, renderTextDisplay: any, hasChildren: boolean, childAssets: AssetRead[], setActiveTab: any, handleChildAssetClick: any, AuthenticatedImage: any, enableHighlighting?: boolean }) => {
+const WebContent = ({ asset, hasChildren, childAssets, setActiveTab, handleChildAssetClick, AuthenticatedImage, enableHighlighting = false, hideMainText = false }: { asset: AssetRead; hasChildren: boolean; childAssets: AssetRead[]; setActiveTab: (tab: 'content' | 'children') => void; handleChildAssetClick: (a: AssetRead) => void; AuthenticatedImage: React.ComponentType<{ blobPath: string; alt: string; className?: string }>; enableHighlighting?: boolean; hideMainText?: boolean }) => {
   // Add state for featured image swapping
   const [currentFeaturedImage, setCurrentFeaturedImage] = React.useState<AssetRead | null>(null);
 
@@ -870,11 +930,6 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
       {/* Article Content */}
       <div className="flex-1 w-full overflow-y-auto min-w-0 max-w-full overflow-x-hidden">
         <div className="max-w-4xl mx-auto px-6 py-6 w-full min-w-0 max-w-full overflow-hidden">
-          {/* Prominent Title */}
-          <h1 className="text-2xl font-bold leading-tight mb-4 text-foreground break-words overflow-wrap-anywhere">
-            {asset.title || 'Untitled Article'}
-          </h1>
-          
           {/* Summary if available */}
           {(() => {
             const summary = asset.facets?.summary ?? asset.file_info?.summary;
@@ -991,7 +1046,7 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
           )}
 
           {/* Article Text Content */}
-          {asset.text_content && (
+          {asset.text_content && !hideMainText && (
             <div className="w-full min-w-0 max-w-full overflow-hidden">
               {shouldHighlightWeb ? (
                 <div className="prose prose-sm md:prose-base dark:prose-invert max-w-none w-full min-w-0 max-w-full overflow-hidden break-words">
@@ -1090,24 +1145,17 @@ const WebContent = ({ asset, renderEditableField, renderTextDisplay, hasChildren
   );
 };
 
-const CsvOverviewContent = React.memo(({ asset, renderEditableField, hasChildren, childAssets, isReprocessing, handleReprocessAsset, setIsReprocessDialogOpen, setSelectedChildAsset, isLoadingChildren, childrenError, isHierarchicalAsset, fetchChildren, renderTextDisplay, setActiveTab, activeInfospace, getAssetById }: any) => {
-    const handleRowSelect = (childAsset: AssetRead) => {
-      setSelectedChildAsset(childAsset);
-      setActiveTab('children');
-    };
+const CsvOverviewContent = React.memo(({ asset, hasChildren, childAssets, csvBrowseItems, csvBrowseTotal, isReprocessing, handleReprocessAsset, setIsReprocessDialogOpen, activeInfospace, getAssetById, fetchChildren, onOpenCsvRow, highlightAssetIdOnOpen }: any) => {
+    const rowCount = csvBrowseTotal || childAssets?.length || 0;
 
     const handleSaveSuccess = async () => {
-      // Refresh the asset and its children after successful save
       console.log('[CsvOverviewContent] Save success callback triggered, refreshing asset:', asset?.id);
       if (asset) {
         try {
-          // First, refetch the parent asset to get updated metadata
           const updatedAsset = await getAssetById(asset.id);
           if (updatedAsset) {
             console.log('[CsvOverviewContent] Parent asset refreshed');
           }
-
-          // Then fetch children (this should now show the new rows)
           await fetchChildren(asset.id, asset);
           console.log('[CsvOverviewContent] Children refetched');
         } catch (error) {
@@ -1117,32 +1165,58 @@ const CsvOverviewContent = React.memo(({ asset, renderEditableField, hasChildren
     };
 
     const handleMaterializeCSV = () => {
-      // Just use the existing reprocess mechanism - it will auto-materialize if needed
       handleReprocessAsset(false);
     };
 
+    /** `highlightAssetIdOnOpen` is often the parent CSV id; only forward row child ids to the grid. */
+    const csvWorkspaceHighlightChildId = useMemo(() => {
+      if (highlightAssetIdOnOpen == null) return null;
+      // Check browse items (from tree) first, then fall back to childAssets
+      const isBrowseChild = (csvBrowseItems || []).some((r: CsvRowListItem) => r.assetId === highlightAssetIdOnOpen);
+      if (isBrowseChild) return highlightAssetIdOnOpen;
+      const isChildRow = (childAssets || []).some((c: AssetRead) => c.id === highlightAssetIdOnOpen);
+      return isChildRow ? highlightAssetIdOnOpen : null;
+    }, [highlightAssetIdOnOpen, csvBrowseItems, childAssets]);
+
+    // Build minimal rowChildAssets for EditableCsvViewer highlight lookup
+    // (only needs id + part_index for the workspaceHighlightChildId feature)
+    const rowChildAssetsForGrid = useMemo(() => {
+      if (childAssets && childAssets.length > 0) return childAssets;
+      // Synthesize minimal AssetRead-like objects from csvBrowseItems
+      return (csvBrowseItems || []).map((r: CsvRowListItem) => ({
+        id: r.assetId,
+        part_index: r.partIndex,
+        title: r.name,
+      }));
+    }, [childAssets, csvBrowseItems]);
+
     return (
-      <div className="p-4 pt-0 h-full flex flex-col w-full max-w-full min-w-0">
+      <div className="flex h-full min-h-0 w-full min-w-0 max-w-full flex-col ">
           {asset.blob_path && typeof asset.blob_path === 'string' && activeInfospace?.id ? (
-              <div className="flex-1 bg-background rounded overflow-hidden w-full max-w-full min-w-0">
-                  <EditableCsvViewer 
-                    blobPath={asset.blob_path} 
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="flex h-full min-h-[min(72vh,760px)] flex-1 flex-col overflow-hidden rounded-md border bg-background shadow-sm">
+                  <EditableCsvViewer
+                    blobPath={asset.blob_path}
                     title={asset.title || 'CSV File'}
                     assetId={asset.id}
                     infospaceId={activeInfospace.id}
-                    className="w-full h-full border-0 max-w-full"
+                    className="h-full min-h-0 flex-1 border-0"
                     onSaveSuccess={handleSaveSuccess}
                     fetchMediaBlob={(blobPath: string) => useMediaBlobStore.getState().getBlobUrl(blobPath)}
+                    rowChildAssets={rowChildAssetsForGrid}
+                    onOpenCsvRow={onOpenCsvRow}
+                    workspaceHighlightChildId={csvWorkspaceHighlightChildId}
                   />
+                </div>
               </div>
           ) : (
-              <div className="flex-1 bg-background rounded overflow-hidden flex flex-col items-center justify-center text-muted-foreground p-6">
+              <div className="flex min-h-[8rem] shrink-0 flex-col items-center justify-center overflow-hidden rounded-md border bg-background p-6 text-muted-foreground">
                   <FileSpreadsheet className="h-12 w-12 mb-4" />
                   <div className="text-center mb-4">
                     <p className="font-medium mb-1">No CSV file available</p>
                     <p className="text-xs">This CSV was created via chat and has no underlying file</p>
                   </div>
-                  {hasChildren && childAssets.length > 0 && (
+                  {hasChildren && rowCount > 0 && (
                     <Button
                       onClick={handleMaterializeCSV}
                       disabled={isReprocessing}
@@ -1156,7 +1230,7 @@ const CsvOverviewContent = React.memo(({ asset, renderEditableField, hasChildren
                       ) : (
                         <>
                           <FileSpreadsheet className="h-4 w-4" />
-                          Generate & Load CSV File ({childAssets.length} rows)
+                          Generate & Load CSV File ({rowCount} rows)
                         </>
                       )}
                     </Button>
@@ -1167,7 +1241,7 @@ const CsvOverviewContent = React.memo(({ asset, renderEditableField, hasChildren
               </div>
           )}
 
-          {!hasChildren && kindConfig?.childrenComponent === 'csv' && (
+          {!hasChildren && asset?.kind === 'csv' && (
             <div className="mt-4 p-3 bg-yellow-50 border-yellow-200 rounded w-full max-w-full">
               <div className="flex items-center gap-2 mb-2">
                 <AlertCircle className="h-4 w-4 text-yellow-600 flex-shrink-0" />
@@ -1192,17 +1266,12 @@ const CsvOverviewContent = React.memo(({ asset, renderEditableField, hasChildren
 });
 
 // CSV Row Content - displays structured column data for CSV row assets
-const CsvRowContent = ({ asset, renderEditableField }: { asset: AssetRead, renderEditableField: any }) => {
+const CsvRowContent = ({ asset }: { asset: AssetRead }) => {
   const rowData = (asset.file_info as Record<string, unknown>)?.original_row_data as Record<string, unknown> || {};
   const columnNames = Object.keys(rowData);
 
   return (
     <div className="p-4 space-y-4">
-      {/* Prominent Title */}
-      <div className="mb-4">
-        {renderEditableField(asset, 'title')}
-      </div>
-
       {/* Row Position */}
       <div className="text-sm text-muted-foreground mb-4">
         Row Position: <span className="font-semibold text-foreground">{asset.part_index !== null ? asset.part_index + 1 : 'N/A'}</span>
@@ -1254,15 +1323,10 @@ const CsvRowContent = ({ asset, renderEditableField }: { asset: AssetRead, rende
   );
 };
 
-const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: { asset: AssetRead, renderEditableField: any, renderTextDisplay: any }) => (
+const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = false }: { asset: AssetRead; renderTextDisplay: (text: string | null, assetId?: number, assetUuid?: string) => React.ReactNode; suppressTextBody?: boolean }) => (
     <div className="p-4 h-full w-full flex flex-col overflow-hidden min-w-0 max-w-full">
-        {/* Prominent Title */}
-        <div className="mb-4">
-            {renderEditableField(asset, 'title')}
-        </div>
-        
         <div className="flex-1 space-y-4 w-full min-w-0 max-w-full overflow-hidden">
-            {asset.text_content && (
+            {asset.text_content && !suppressTextBody && (
                 <div>
                     <h4 className="text-xs font-semibold mb-1.5 text-muted-foreground">Text Content</h4>
                     {renderTextDisplay(asset.text_content, asset.id, asset.uuid)}
@@ -1284,47 +1348,109 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
   // --- Render functions ---
   const renderContent = () => {
     if (!asset) return <div className="p-8 text-center text-muted-foreground">No asset selected.</div>;
-    if (isLoadingAsset) return <div className="p-8 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading asset...</div>;
+    if (isLoadingAsset) return <div className="p-8 flex items-center justify-center mt-10"><Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading asset...</div>;
     if (assetError) return <div className="p-8 text-red-600 text-center">{assetError}</div>;
 
+    let main: React.ReactNode;
     switch (asset.kind) {
       case 'article':
-        // Use unified ArticleView for all article types
-        return (
+        main = (
           <ArticleView
             asset={asset}
             childAssets={childAssets}
-            onEdit={onEdit}
             onAssetClick={handleChildAssetClick}
             enableHighlighting={enableHighlighting}
+            hideMainBody={inlineEditActive}
           />
         );
+        break;
       case 'image':
-        return <ImageAssetContent asset={asset} renderEditableField={renderEditableField} AuthenticatedImage={AuthenticatedImage} />;
+        main = <ImageAssetContent asset={asset} AuthenticatedImage={AuthenticatedImage} />;
+        break;
       case 'pdf':
-        return (
+        main = (
           <PdfAssetContent
             asset={asset}
-            renderEditableField={renderEditableField}
             hasChildren={hasChildren}
             childAssets={childAssets}
             setActiveTab={setActiveTab}
             handleChildAssetClick={handleChildAssetClick}
+            textDraft={
+              inlineEditActive
+                ? { active: true, value: draftTextContent, onChange: setDraftTextContent }
+                : undefined
+            }
           />
         );
+        break;
       case 'video':
-        return <VideoAssetContent asset={asset} renderEditableField={renderEditableField} AuthenticatedVideo={AuthenticatedVideo} />;
+        main = <VideoAssetContent asset={asset} AuthenticatedVideo={AuthenticatedVideo} />;
+        break;
       case 'audio':
-        return <AudioAssetContent asset={asset} renderEditableField={renderEditableField} AuthenticatedAudio={AuthenticatedAudio} />;
+        main = <AudioAssetContent asset={asset} AuthenticatedAudio={AuthenticatedAudio} />;
+        break;
       case 'web':
-        return <WebContent asset={asset} renderEditableField={renderEditableField} renderTextDisplay={renderTextDisplay} hasChildren={hasChildren} childAssets={childAssets} setActiveTab={setActiveTab} handleChildAssetClick={handleChildAssetClick} AuthenticatedImage={AuthenticatedImage} enableHighlighting={enableHighlighting} />;
+        main = (
+          <WebContent
+            asset={asset}
+            hasChildren={hasChildren}
+            childAssets={childAssets}
+            setActiveTab={setActiveTab}
+            handleChildAssetClick={handleChildAssetClick}
+            AuthenticatedImage={AuthenticatedImage}
+            enableHighlighting={enableHighlighting}
+            hideMainText={inlineEditActive}
+          />
+        );
+        break;
       case 'csv':
-        return <CsvOverviewContent asset={asset} renderEditableField={renderEditableField} hasChildren={hasChildren} childAssets={childAssets} isReprocessing={isReprocessing} handleReprocessAsset={handleReprocessAsset} setIsReprocessDialogOpen={setIsReprocessDialogOpen} setSelectedChildAsset={setSelectedChildAsset} isLoadingChildren={isLoadingChildren} childrenError={childrenError} isHierarchicalAsset={isHierarchicalAsset} fetchChildren={fetchChildren} renderTextDisplay={renderTextDisplay} setActiveTab={setActiveTab} activeInfospace={activeInfospace} getAssetById={getAssetById} />;
+        main = (
+          <CsvOverviewContent
+            asset={asset}
+            hasChildren={hasChildren}
+            childAssets={childAssets}
+            csvBrowseItems={csvBrowseItems}
+            csvBrowseTotal={csvBrowseTotal}
+            isReprocessing={isReprocessing}
+            handleReprocessAsset={handleReprocessAsset}
+            setIsReprocessDialogOpen={setIsReprocessDialogOpen}
+            activeInfospace={activeInfospace}
+            getAssetById={getAssetById}
+            fetchChildren={fetchChildren}
+            onOpenCsvRow={openCsvRowByPartIndex}
+            highlightAssetIdOnOpen={highlightAssetIdOnOpen}
+          />
+        );
+        break;
       case 'csv_row':
-        return <CsvRowContent asset={asset} renderEditableField={renderEditableField} />;
+        main = <CsvRowContent asset={asset} />;
+        break;
       default:
-        return <DefaultAssetContent asset={asset} renderEditableField={renderEditableField} renderTextDisplay={renderTextDisplay} />;
+        main = <DefaultAssetContent asset={asset} renderTextDisplay={renderTextDisplay} suppressTextBody={inlineEditActive} />;
     }
+
+    if (!inlineEditActive) return main;
+
+    /* PDF: text edits live inside PdfAssetContent (same panel as read-only) */
+    if (asset.kind === 'pdf') return main;
+
+    return (
+      <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
+        <div className="min-h-0 flex-1 min-w-0 overflow-y-auto overflow-x-hidden">{main}</div>
+        <div className="shrink-0 border-t bg-muted/30 p-4 space-y-2 shadow-[0_-4px_12px_-4px_rgba(0,0,0,0.08)]">
+          <Label htmlFor="asset-inline-text" className="text-xs font-medium text-muted-foreground">
+            Edit text content
+          </Label>
+          <Textarea
+            id="asset-inline-text"
+            value={draftTextContent}
+            onChange={(e) => setDraftTextContent(e.target.value)}
+            className="min-h-[160px] max-h-[min(40vh,420px)] resize-y text-sm leading-relaxed"
+            spellCheck={false}
+          />
+        </div>
+      </div>
+    );
   };
 
   const renderChildAssets = () => {
@@ -1702,10 +1828,10 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
     const sortedPages = [...filteredChildAssets].sort((a, b) => (a.part_index || 0) - (b.part_index || 0));
 
     return (
-      <div className="space-y-4">
+      <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
         {/* Search and stats header */}
-        <div className="flex items-center gap-2 sticky top-0 bg-background z-10 pb-2">
-          <div className="relative flex-grow max-w-md">
+        <div className="flex shrink-0 items-center gap-2 bg-background pb-0 z-10">
+          <div className="relative max-w-md flex-grow">
             <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search PDF pages..."
@@ -1719,8 +1845,17 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
           </Badge>
         </div>
 
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
         {/* PDF Pages Grid - Compact thumbnails */}
-        <div className="grid gap-3 max-h-96 overflow-y-auto p-2" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
+        <div
+          className={cn(
+            'grid min-h-0 gap-3 overflow-y-auto p-2',
+            selectedChildAsset
+              ? 'max-h-[min(42vh,22rem)] shrink-0'
+              : 'flex-1'
+          )}
+          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}
+        >
           {sortedPages.map((pageAsset, index) => (
             <Card
               key={pageAsset.id}
@@ -1761,42 +1896,41 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
 
         {/* Selected Page Detailed View */}
         {selectedChildAsset && (
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <FileText className="h-5 w-5 text-red-600" />
-                PDF Page {((selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : 'Unknown'))} Details
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="ml-auto"
-                  onClick={() => {
-                    // Open parent PDF with specific page in new tab
-                    if (asset?.blob_path) {
-                      const pageNum = (selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : 1);
-                      const viewUrl = `/api/v1/files/stream/${encodeURIComponent(asset.blob_path)}#page=${pageNum}`;
-                      window.open(viewUrl, '_blank');
-                    } else {
-                      // Fallback: switch to content tab
-                      setActiveTab('content');
-                    }
-                  }}
-                >
-                  <ExternalLink className="h-4 w-4 mr-2" />
-                  Open Page in New Tab
-                </Button>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <div className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-lg font-semibold">
+              Page {selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : 'Unknown'}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto"
+                onClick={() => {
+                  if (asset?.blob_path) {
+                    const pageNum = (selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : 1);
+                    const viewUrl = `/api/v1/files/stream/${encodeURIComponent(asset.blob_path)}#page=${pageNum}`;
+                    window.open(viewUrl, '_blank');
+                  } else {
+                    setActiveTab('content');
+                  }
+                }}
+              >
+                <ExternalLink className="h-4 w-4 mr-2" />
+                Open Page in New Tab
+              </Button>
+            </div>
+            {/* Main Content */}
+            <div className="flex min-h-0 flex-1 flex-col space-y-4 overflow-y-auto py-2">
               {/* Page Text Content */}
-              <div className="space-y-3">
-                <h4 className="font-semibold text-sm">Extracted Text Content</h4>
+              <div className="flex min-h-0 flex-1 flex-col space-y-3">
+                <h4 className="shrink-0 font-semibold text-sm">Extracted Text Content</h4>
                 {selectedChildAsset.text_content ? (
-                  <ScrollArea className="h-96 w-full border rounded-lg p-4 bg-background">
+                  <ScrollArea className="min-h-[12rem] w-full flex-1 border rounded-lg bg-background p-4">
                     <TextContentRenderer content={selectedChildAsset.text_content} />
                   </ScrollArea>
                 ) : (
-                  <div className="h-96 w-full border rounded-lg flex items-center justify-center bg-muted/10">
+                  <div className="flex min-h-[12rem] flex-1 w-full items-center justify-center rounded-lg border bg-muted/10">
                     <div className="text-center text-muted-foreground">
                       <Type className="h-8 w-8 mx-auto mb-2" />
                       <p className="text-sm">No text content extracted</p>
@@ -1805,52 +1939,18 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                 )}
               </div>
 
-              {/* Page Metadata */}
-              <div className="pt-4 border-t">
-                <h4 className="font-semibold text-sm mb-3">Page Information</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                  <div className="space-y-2">
-                    <div><strong>Page Number:</strong> {(selectedChildAsset.part_index !== null ? selectedChildAsset.part_index + 1 : 'Unknown')}</div>
-                    <div><strong>Asset ID:</strong> {selectedChildAsset.id}</div>
-                    <div><strong>UUID:</strong> <code className="text-xs">{selectedChildAsset.uuid}</code></div>
-                  </div>
-                  <div className="space-y-2">
-                    {selectedChildAsset.created_at && (
-                      <div><strong>Created:</strong> {format(new Date(selectedChildAsset.created_at), "PPp")}</div>
-                    )}
-                    {selectedChildAsset.event_timestamp && (
-                      <div><strong>Event Time:</strong> {format(new Date(selectedChildAsset.event_timestamp), "PPp")}</div>
-                    )}
-                    {selectedChildAsset.text_content && (
-                      <div><strong>Text Length:</strong> {selectedChildAsset.text_content.length.toLocaleString()} characters</div>
-                    )}
-                  </div>
-                </div>
-                
-                {/* Page Metadata */}
-                {(() => {
-                  const meta = getAssetMeta(selectedChildAsset);
-                  return Object.keys(meta).length > 0 && (
-                  <div className="mt-4">
-                    <strong className="text-sm">Page Metadata:</strong>
-                    <pre className="text-xs bg-muted/50 p-3 rounded mt-2 overflow-auto max-h-32">
-                      {JSON.stringify(meta, null, 2)}
-                    </pre>
-                  </div>
-                  );
-                })()}
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         )}
+        </div>
       </div>
     );
   };
 
   return (
-    <div className="asset-detail-view w-full h-full flex flex-col max-w-full">
+    <div className="asset-detail-view flex h-full min-h-0 w-full max-w-full flex-col overflow-hidden">
       {isLoadingAsset ? (
-        <div className="flex items-center justify-center h-full">
+        <div className="flex items-center justify-center h-full mt-10">
           <Loader2 className="h-6 w-6 animate-spin mr-2" />
           <span>Loading asset...</span>
         </div>
@@ -1867,9 +1967,20 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
       ) : (
         <>
           {/* Unified Meta Header */}
+          <div className="shrink-0">
           <AssetMetaHeader 
             asset={asset}
-            onEdit={() => onEdit(asset)}
+            inlineEdit={{
+              active: inlineEditActive,
+              draftTitle,
+              draftEventTimestamp,
+              onDraftTitleChange: setDraftTitle,
+              onDraftEventTimestampChange: setDraftEventTimestamp,
+              onStart: handleStartInlineEdit,
+              onSave: handleSaveInlineEdit,
+              onCancel: handleCancelInlineEdit,
+              isSaving: isSavingInline,
+            }}
             onFragmentDelete={async (key) => {
               if (!asset?.id) return;
               
@@ -1890,13 +2001,14 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
             showActions={true}
             showFragments={true}
           />
+          </div>
 
           {/* Main Content Area */}
-          <div className="flex-1 min-h-0 overflow-y-auto min-w-0 max-w-full">
+          <div className="flex min-h-0 flex-1 flex-col max-w-full overflow-hidden">
             {isHierarchicalAsset && hasChildren ? (
               /* Tabs only when there are children */
-              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'content' | 'children')} className="w-full h-full flex flex-col min-w-0 max-w-full overflow-hidden">
-                <TabsList className="grid grid-cols-2 w-full flex-none sticky top-0 z-10 px-4 pt-2 mb-1 min-w-0">
+              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'content' | 'children')} className="w-full h-full flex flex-col min-w-0 !px-1 max-w-full overflow-hidden">
+                <TabsList className="grid grid-cols-2 w-full flex-none sticky top-0 z-10 m-1 min-w-0 !px-0">
                   <TabsTrigger value="content">
                     {(() => {
                       switch (asset?.kind) {
@@ -1909,11 +2021,11 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                     })()}
                   </TabsTrigger>
                   <TabsTrigger value="children" className="flex items-center gap-2">
-                    <TableIcon className="h-4 w-4" />
+                    <List className="h-4 w-4" />
                     {(() => {
                       switch (asset?.kind) {
-                        case 'csv': return `${childAssets.length} rows`;
-                        case 'pdf': return `${childAssets.length} pages`;
+                        case 'csv': return `Row Detail`;
+                        case 'pdf': return `pages (${childAssets.length})`;
                         case 'article': return `${childAssets.length} related`;
                         case 'mbox': return `${childAssets.length} emails`;
                         case 'web': {
@@ -1964,12 +2076,17 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
                   {kindConfig?.childrenComponent === 'csv' ? (
                     <AssetDetailViewCsv
                       asset={asset}
-                      childAssets={childAssets}
-                      isLoadingChildren={isLoadingChildren}
+                      items={csvItems}
+                      total={csvTotal}
+                      hasMore={csvHasMore}
+                      isLoading={csvIsLoading}
                       childrenError={childrenError}
-                      onChildAssetSelect={handleChildAssetClick}
+                      onRowSelect={handleCsvRowSelect}
+                      onLoadMore={handleCsvLoadMore}
                       selectedChildAsset={selectedChildAsset}
                       highlightedAssetId={highlightAssetIdOnOpen}
+                      rowListSearchTerm={childSearchTerm}
+                      onRowListSearchTermChange={setChildSearchTerm}
                     />
                   ) : kindConfig?.childrenComponent === 'pdf' ? (
                     renderPdfChildAssets()
@@ -1980,7 +2097,7 @@ const DefaultAssetContent = ({ asset, renderEditableField, renderTextDisplay }: 
               </Tabs>
             ) : (
               /* No tabs - just render content directly */
-              <div className="h-full overflow-y-auto p-4 min-w-0 max-w-full overflow-x-hidden">
+              <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 min-w-0 max-w-full">
                 {renderContent()}
               </div>
             )}

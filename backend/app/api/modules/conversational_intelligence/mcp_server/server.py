@@ -639,13 +639,14 @@ async def _navigate_tree_root(services: Dict, ctx: Context) -> ToolResult:
     """Navigate tree root - shows hierarchical structure of bundles and standalone assets."""
     from sqlmodel import select
     from app.models import Asset, Bundle
-    from app.api.content_tree_builder import build_root_tree_nodes, get_bundled_asset_ids
-    
+    from app.api.tree_renderer import build_root_tree_nodes, get_bundled_asset_ids
+    from app.core.tree import ROOT
+
     # Get root bundles (no parent)
     root_bundles = services["session"].exec(
         select(Bundle)
         .where(Bundle.infospace_id == services["infospace_id"])
-        .where(Bundle.parent_bundle_id.is_(None))
+        .where(Bundle.parent_bundle_id == ROOT)
         .order_by(Bundle.name)
     ).all()
     
@@ -747,7 +748,7 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
     - CSV rows: 5 (df.head() style)
     - Bundles/containers: limit parameter (typically 10)
     """
-    from app.api.content_tree_builder import (
+    from app.api.tree_renderer import (
         parse_tree_node_id, 
         build_bundle_children_nodes, 
         build_asset_children_nodes,
@@ -906,7 +907,7 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
         total_row_count = parent_preview.get('row_count') if parent_preview else None
         
         if columns and parent_preview and parent_preview.get('sample_rows'):
-            from app.api.content_tree_builder import format_csv_as_table
+            from app.api.tree_renderer import format_csv_as_table
             
             sample_rows = parent_preview['sample_rows']
             
@@ -1117,7 +1118,7 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
                     
                     # Walk up through parent bundles
                     current_bundle = bundle
-                    while current_bundle.parent_bundle_id and current_bundle.parent_bundle_id not in visited:
+                    while current_bundle.parent_bundle_id != 0 and current_bundle.parent_bundle_id not in visited:
                         visited.add(current_bundle.parent_bundle_id)
                         parent_bundle = session.get(Bundle, current_bundle.parent_bundle_id)
                         if parent_bundle:
@@ -1617,15 +1618,11 @@ async def _organize_create(services: Dict, ctx: Context, name: Optional[str],
     )
 
     assets_added = 0
-    children_added = 0
     if asset_ids:
         try:
-            assets_added, children_added = bundle_service.add_assets_to_bundle_validated(
-                bundle_id=bundle.id,
-                asset_ids=asset_ids,
-                infospace_id=services["infospace_id"],
-                include_children=True,
-            )
+            from app.core.tree import copy as tree_copy
+            result = tree_copy(services["session"], asset_ids=asset_ids, to=bundle.id)
+            assets_added = result.assets
         except Exception as e:
             logger.warning(f"Failed to add assets: {e}")
     
@@ -1674,19 +1671,14 @@ async def _organize_add(services: Dict, ctx: Context, bundle_id: Optional[int],
             }
         )
     
-    bundle_service = services["bundle_service"]
     try:
-        assets_added, children_added = bundle_service.add_assets_to_bundle_validated(
-            bundle_id=bundle_id,
-            asset_ids=asset_ids,
-            infospace_id=services["infospace_id"],
-            include_children=True,
-        )
-        
-        total_added = assets_added + children_added
+        from app.core.tree import copy as tree_copy
+        result = tree_copy(services["session"], asset_ids=asset_ids, to=bundle_id)
+
+        total_added = result.assets
         await ctx.info(f"Added {total_added} assets to bundle #{bundle_id}")
-        
-        summary = f"✅ Added {assets_added} assets to bundle #{bundle_id}"
+
+        summary = f"Added {result.assets} assets to bundle #{bundle_id}"
         if children_added:
             summary += f" (+{children_added} children)"
         
@@ -1722,17 +1714,13 @@ async def _organize_remove(services: Dict, ctx: Context, bundle_id: Optional[int
             structured_content={"error": "bundle_id and asset_ids required"}
         )
     
-    bundle_service = services["bundle_service"]
     try:
-        removed_count = bundle_service.remove_assets_from_bundle_validated(
-            bundle_id=bundle_id,
-            asset_ids=asset_ids,
-            infospace_id=services["infospace_id"],
-        )
-        
-        await ctx.info(f"Removed {removed_count} assets from bundle #{bundle_id}")
-        
-        summary = f"✅ Removed {removed_count} assets from bundle #{bundle_id}"
+        from app.core.tree import delete as tree_delete
+        result = tree_delete(services["session"], asset_ids=asset_ids, out_of=bundle_id, confirm=True)
+
+        await ctx.info(f"Removed {result.unlinked + result.destroyed_assets} assets from bundle #{bundle_id}")
+
+        summary = f"Removed {result.unlinked + result.destroyed_assets} assets from bundle #{bundle_id}"
         
         return ToolResult(
             content=[TextContent(type="text", text=summary)],
@@ -1818,18 +1806,21 @@ async def _organize_delete(services: Dict, ctx: Context, bundle_id: Optional[int
             structured_content={"error": "bundle_id is required"}
         )
     
-    bundle_service = services["bundle_service"]
     try:
-        bundle_name = bundle_service.delete_bundle_returning_name(
-            bundle_id=bundle_id,
-            infospace_id=services["infospace_id"],
-            user_id=services["user_id"],
-        )
-        
+        from app.models import Bundle
+        bundle = services["session"].get(Bundle, bundle_id)
+        if not bundle or bundle.infospace_id != services["infospace_id"]:
+            raise ValueError(f"Bundle {bundle_id} not found")
+        bundle_name = bundle.name
+
+        from app.core.tree import delete as tree_delete
+        tree_delete(services["session"], bundle_ids=[bundle_id], out_of=bundle.parent_bundle_id, confirm=True)
+        services["session"].commit()
+
         await ctx.info(f"Deleted bundle #{bundle_id}")
-        
+
         return ToolResult(
-            content=[TextContent(type="text", text=f"✅ Deleted bundle '{bundle_name}' (ID: {bundle_id})")],
+            content=[TextContent(type="text", text=f"Deleted bundle '{bundle_name}' (ID: {bundle_id})")],
             structured_content={
                 "operation": "delete",
                 "bundle_id": bundle_id,

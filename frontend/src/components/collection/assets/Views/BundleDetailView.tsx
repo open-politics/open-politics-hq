@@ -154,8 +154,8 @@ export default function BundleDetailView({
   // If viewing a specific asset, show asset detail view
   if (selectedAssetId) {
     return (
-      <div className="h-full flex flex-col">
-        <div className="flex-none p-2 sm:p-3 border-b">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="flex-none border-b p-2 sm:p-3">
           <div className="flex items-center gap-2 min-w-0">
             <Button 
               variant="ghost" 
@@ -172,7 +172,7 @@ export default function BundleDetailView({
             </span>
           </div>
         </div>
-        <div className="flex-1 min-h-0">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <AssetDetailView
             selectedAssetId={selectedAssetId}
             highlightAssetIdOnOpen={highlightAssetId}
@@ -211,7 +211,7 @@ export default function BundleDetailView({
 
   // Main bundle view with tree
   return (
-    <div className="h-full flex flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {/* Bundle Header */}
       <div className="flex-none p-2 px-4 sm:p-4 border-b">
         <div className="flex items-start justify-between gap-2 sm:gap-4 mb-2 sm:mb-3">

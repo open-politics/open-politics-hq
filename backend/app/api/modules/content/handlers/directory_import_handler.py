@@ -91,9 +91,10 @@ class DirectoryImportHandler(BaseHandler):
         self, dataset_name: str, source_path: str, options: Dict[str, Any]
     ) -> Bundle:
         """Get or create root Bundle for dataset."""
+        from app.core.tree import ROOT
         stmt = select(Bundle).where(
             Bundle.infospace_id == self.infospace_id,
-            Bundle.parent_bundle_id.is_(None),
+            Bundle.parent_bundle_id == ROOT,
             Bundle.name == dataset_name,
         )
         existing = self.session.exec(stmt).first()

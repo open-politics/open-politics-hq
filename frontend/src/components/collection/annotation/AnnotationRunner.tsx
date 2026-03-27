@@ -65,6 +65,7 @@ import { AnnotationMapControls } from './AnnotationMapControls';
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
+import { Progress } from "@/components/ui/progress";
 import { adaptEnhancedAnnotationToFormattedAnnotation } from '@/lib/annotations/adapters';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import Link from 'next/link';
@@ -495,6 +496,14 @@ export default function AnnotationRunner({
                     {(isActuallyProcessing || activeRun?.status === 'running' || activeRun?.status === 'pending') && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
                     {(activeRun?.status ?? '').replace(/_/g, ' ')}
                   </Badge>
+                )}
+                {(activeRun?.status === 'running' || activeRun?.status === 'pending') && activeRun?.progress_total != null && activeRun.progress_total > 0 && (
+                  <div className="flex items-center gap-2 min-w-[140px]">
+                    <Progress value={((activeRun.progress_current ?? 0) / activeRun.progress_total) * 100} className="h-1.5 flex-1" />
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {activeRun.progress_current ?? 0}/{activeRun.progress_total}
+                    </span>
+                  </div>
                 )}
                 {(activeRun?.status === 'failed' || activeRun?.status === 'completed_with_errors') && (
                   <TooltipProvider delayDuration={100}>
