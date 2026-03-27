@@ -69,6 +69,16 @@ services:
     networks:
       - default
 
+  searxng:
+    image: searxng/searxng:latest
+    volumes:
+      - ./.config/searxng:/etc/searxng:ro
+      - searxng_data:/var/cache/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+    networks:
+      - default
+
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
