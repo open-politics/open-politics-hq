@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { request } from '@/client/core/request';
-import { OpenAPI } from '@/client/core/OpenAPI';
+import { connectSSE } from '@/lib/sse';
 import type { AssetRead, BundleRead } from '@/client';
 import type { ParsedQueryResponse } from '@/lib/query/asset_query_language';
 
@@ -21,6 +20,7 @@ export interface ChildResultGroup {
   parent_asset_id: number;
   parent_title: string;
   matches: QueryResult[];
+  total_matches: number;
 }
 
 interface QueryResponse {
@@ -65,46 +65,85 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
   const fetchQuery = useCallback(
     async (q: string, append = false, cursor?: number | null, offset?: number) => {
       if (!infospaceId) return;
-      // Allow empty queries in browse mode (non-relevance sort) for feed/channel usage
       if (!q.trim() && !parentAssetId && sort === 'relevance') return;
       setIsLoading(true);
       if (!append) setError(null);
 
+      const body: Record<string, unknown> = { q, limit, sort };
+      if (parentAssetId) body.parent_asset_id = parentAssetId;
+      if (append && sort === 'relevance' && offset) {
+        body.offset = offset;
+      } else if (append && cursor) {
+        body.cursor = cursor;
+      }
+
+      const url = `/api/v1/infospaces/${infospaceId}/query`;
+      const controller = new AbortController();
+
       try {
-        const body: Record<string, unknown> = { q, limit, sort };
-        if (parentAssetId) body.parent_asset_id = parentAssetId;
-        if (append && sort === 'relevance' && offset) {
-          body.offset = offset;
-        } else if (append && cursor) {
-          body.cursor = cursor;
-        }
-
-        const response: QueryResponse = await request(OpenAPI, {
+        await connectSSE({
+          url,
           method: 'POST',
-          url: '/api/v1/infospaces/{infospace_id}/query',
-          path: { infospace_id: infospaceId },
           body,
-          mediaType: 'application/json',
+          signal: controller.signal,
+          onEvent: (event) => {
+            if (activeQuery.current !== q) {
+              controller.abort();
+              return;
+            }
+
+            if (event.type === 'error') {
+              try {
+                const err = JSON.parse(event.data);
+                setError(err.detail ?? 'Query failed');
+              } catch {
+                setError('Query failed');
+              }
+              return;
+            }
+
+            let phase: Partial<QueryResponse>;
+            try {
+              phase = JSON.parse(event.data);
+            } catch {
+              return;
+            }
+
+            if (event.type === 'results') {
+              if (append) {
+                setResults((prev) => [...prev, ...(phase.results ?? [])]);
+              } else {
+                setNameMatches(phase.name_matches ?? EMPTY_NAME_MATCHES);
+                setResults(phase.results ?? []);
+                setChildResults(phase.child_results ?? []);
+                setParsed(phase.parsed ?? {});
+              }
+              if (phase.total !== undefined && phase.total >= 0) {
+                setTotal(phase.total);
+              }
+              if (phase.has_more !== undefined) setHasMore(phase.has_more);
+              if (phase.cursor_next !== undefined) setCursorNext(phase.cursor_next);
+            }
+
+            if (event.type === 'count') {
+              if (phase.total !== undefined) setTotal(phase.total);
+              if (phase.has_more !== undefined) setHasMore(phase.has_more);
+              if (phase.cursor_next !== undefined) setCursorNext(phase.cursor_next);
+            }
+
+            if (event.type === 'children') {
+              if (phase.child_results) setChildResults(phase.child_results);
+            }
+          },
+          onError: (err) => {
+            if (activeQuery.current !== q) return;
+            setError(err.message);
+          },
         });
-
-        // Guard against stale responses
-        if (activeQuery.current !== q) return;
-
-        if (append) {
-          setResults((prev) => [...prev, ...response.results]);
-        } else {
-          setNameMatches(response.name_matches ?? EMPTY_NAME_MATCHES);
-          setResults(response.results);
-          setChildResults(response.child_results ?? []);
-          setParsed(response.parsed);
-        }
-        setTotal(response.total);
-        setHasMore(response.has_more);
-        setCursorNext(response.cursor_next);
       } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
         if (activeQuery.current !== q) return;
-        const msg = err instanceof Error ? err.message : 'Query failed';
-        setError(msg);
+        setError(err instanceof Error ? err.message : 'Query failed');
       } finally {
         setIsLoading(false);
       }
@@ -114,7 +153,6 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
 
   // Auto-search on query change
   useEffect(() => {
-    // Allow empty queries in browse mode (non-relevance sort) for feed/channel usage
     const isEmpty = !query.trim() && !parentAssetId && sort === 'relevance';
     if (!enabled || isEmpty) {
       setNameMatches(EMPTY_NAME_MATCHES);
@@ -136,5 +174,9 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
     fetchQuery(query, true, cursorNext, results.length);
   }, [hasMore, isLoading, query, cursorNext, results.length, fetchQuery]);
 
-  return { nameMatches, results, childResults, parsed, total, hasMore, isLoading, error, search, loadMore };
+  // total === -1 is the sentinel meaning "count still running".
+  const isCounting = total === -1;
+  const resolvedTotal = isCounting ? null : total;
+
+  return { nameMatches, results, childResults, parsed, total: resolvedTotal, isCounting, hasMore, isLoading, error, search, loadMore };
 }

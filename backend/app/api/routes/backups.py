@@ -41,7 +41,7 @@ def create_backup(
     *,
     backup_data: InfospaceBackupCreate,
     backup_service: BackupService = Depends(get_backup_service),
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
 ) -> Any:
     """
     Create a new backup of an infospace.
@@ -65,7 +65,7 @@ def list_backups(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     backup_service: BackupService = Depends(get_backup_service),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> Any:
     """
     List backups for an infospace.

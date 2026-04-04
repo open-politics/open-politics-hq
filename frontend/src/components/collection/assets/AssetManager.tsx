@@ -45,6 +45,7 @@ import {
   Star,
   Lock,
   Unlock,
+  ScanEye,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict } from 'date-fns';
@@ -214,26 +215,22 @@ function ChannelForm({
       </div>
       <div className="space-y-1">
         <label className="text-xs font-medium text-foreground">Bundles</label>
-        <div className="flex flex-wrap gap-1.5 p-2 rounded-md border bg-muted/30 max-h-[120px] overflow-y-auto">
-          {availableBundles.length === 0 ? (
-            <p className="text-[10px] text-muted-foreground">No bundles yet</p>
-          ) : (
-            availableBundles.map((b: { id: number; name: string }) => (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => toggleBundle(b.id)}
-                className={cn(
-                  'rounded-full px-2.5 py-0.5 text-xs transition-colors border',
-                  selectedBundleIds.has(b.id)
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'bg-background text-muted-foreground border-border hover:bg-muted'
-                )}
-              >
-                {b.name}
-              </button>
-            ))
-          )}
+        <div className="rounded-md border bg-muted/30 max-h-[200px] overflow-hidden">
+          <AssetSelector
+            compact
+            bundlesOnly
+            selectedItems={new Set(Array.from(selectedBundleIds).map(id => `bundle-${id}`))}
+            onSelectionChange={(ids) => {
+              const bundleIds = new Set<number>();
+              ids.forEach(id => {
+                if (id.startsWith('bundle-')) {
+                  bundleIds.add(parseInt(id.replace('bundle-', '')));
+                }
+              });
+              setSelectedBundleIds(bundleIds);
+            }}
+            onItemView={() => {}}
+          />
         </div>
         <p className="text-[10px] text-muted-foreground">Select which bundles this channel draws from. None selected = all.</p>
       </div>
@@ -319,6 +316,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   const {
     deleteAsset,
     updateAsset,
+    requestEnrichment,
   } = useAssetStore();
   
   const {
@@ -1074,8 +1072,8 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
 
   // Build AssetTreeItem[] from selection for sharing
   const buildShareItems = useCallback((clickedItem?: AssetTreeItem): AssetTreeItem[] => {
-    // If multiple items selected, share all of them
-    if (selectedItems.size > 1) {
+    // If items are selected (1 or more), share all of them
+    if (selectedItems.size >= 1) {
       const items: AssetTreeItem[] = [];
       selectedItems.forEach(itemId => {
         const node = rootNodes.find(n => n.id === itemId) ||
@@ -1095,9 +1093,9 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
           asset: !isBundle ? { id: numericId, title: node.name } as any : undefined,
         });
       });
-      return items;
+      if (items.length > 0) return items;
     }
-    // Single item — use the clicked item
+    // Fallback: use the clicked item (context menu share without selection)
     if (clickedItem) return [clickedItem];
     return [];
   }, [selectedItems, rootNodes, childrenCache]);
@@ -1211,6 +1209,10 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
             {item.asset.kind === 'article' && (
               <DropdownMenuItem onClick={() => handleEditArticle(item.asset!)}><FileText className="mr-2 h-4 w-4" /> Edit Article</DropdownMenuItem>
             )}
+            <DropdownMenuItem onClick={() => requestEnrichment(item.asset!.id, 'ocr')}>
+              <ScanEye className="mr-2 h-4 w-4" />
+              {item.asset.enrichment_resolved?.includes('ocr') ? 'Re-run OCR' : 'Run OCR'}
+            </DropdownMenuItem>
           </>
         )}
         <DropdownMenuItem onClick={() => handleToggleFavorite(item)}>
@@ -1676,6 +1678,8 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                             onEditChannel={(ch) => { setEditingChannel(ch); setIsChannelDialogOpen(true); }}
                             favoritesView={preferences.favorites_view ?? 'list'}
                             onCycleFavoritesView={cycleFavoritesView}
+                            defaultChannelId={preferences.default_channel_id}
+                            onSetDefault={async (id) => { await useUserPreferencesStore.getState().updatePreference('default_channel_id', id); }}
                           />
                         </div>
                         <div className="flex-1 min-h-0 overflow-hidden">
@@ -1799,6 +1803,8 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                           onEditChannel={(ch) => { setEditingChannel(ch); setIsChannelDialogOpen(true); }}
                           favoritesView={preferences.favorites_view ?? 'list'}
                           onCycleFavoritesView={cycleFavoritesView}
+                          defaultChannelId={preferences.default_channel_id}
+                          onSetDefault={async (id) => { await useUserPreferencesStore.getState().updatePreference('default_channel_id', id); }}
                         />
                       </div>
                       {/* Feed content */}

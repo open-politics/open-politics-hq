@@ -67,6 +67,7 @@ import EditableCsvViewer from './EditableCsvViewer';
 import { FragmentInlineList } from './Fragments';
 import AssetMetaHeader, { formatEventTimestampForInput } from './AssetMetaHeader';
 import { useFragmentCuration } from '@/hooks/useFragmentCuration';
+import { useToggleFavorite } from '@/hooks/useToggleFavorite';
 import { getAssetIcon, getAssetKindConfig } from '@/components/collection/assets/assetKindConfig';
 import { getAssetMeta } from '@/lib/utils';
 import { AssetFeedView } from '../Feed/AssetFeedView';
@@ -130,11 +131,14 @@ const AssetDetailView = ({
 }: AssetDetailViewProps) => {
   // --- Stores ---
   const { activeInfospace } = useInfospaceStore();
-  const { getAssetById, updateAsset, fetchChildAssets, reprocessAsset } = useAssetStore();
+  const { getAssetById, updateAsset, fetchChildAssets, reprocessAsset, requestEnrichment } = useAssetStore();
   const { deleteFragment } = useFragmentCuration();
 
   // --- State Hooks ---
   const [asset, setAsset] = useState<AssetRead | null>(null);
+
+  // Favorite toggle
+  const { isFavorited, toggleFavorite } = useToggleFavorite({ asset });
   const [isLoadingAsset, setIsLoadingAsset] = useState(false);
   const [assetError, setAssetError] = useState<string | null>(null);
   const [inlineEditActive, setInlineEditActive] = useState(false);
@@ -1998,6 +2002,12 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
                 toast.error('Failed to delete fragment');
               }
             }}
+            onRequestEnrichment={async (enricherName) => {
+              if (!asset?.id) return;
+              await requestEnrichment(asset.id, enricherName);
+            }}
+            isFavorited={isFavorited}
+            onToggleFavorite={toggleFavorite}
             showActions={true}
             showFragments={true}
           />

@@ -21,6 +21,7 @@ import AssetDetailView from "@/components/collection/assets/Views/AssetDetailVie
 import BundleDetailView from "@/components/collection/assets/Views/BundleDetailView"
 import { TextSpanHighlightProvider } from "@/components/collection/contexts/TextSpanHighlightContext"
 import { ArrowLeft, Menu as MenuIcon, ExternalLink, X } from "lucide-react"
+import { InvitationInbox } from "@/components/collaboration/InvitationInbox"
 import { useEffect, useState, useRef } from 'react';
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
@@ -280,6 +281,9 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
             </Breadcrumb>
           </div>
           
+          {/* Invitation inbox */}
+          <InvitationInbox />
+
           {/* Docs Banner - Desktop */}
           {!preferences.docs_banner_dismissed && (
             <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-500 rounded-md flex-shrink-0">

@@ -110,7 +110,7 @@ def _reset_embedding_for_assets(session: Session, asset_ids: list[int]):
 async def generate_infospace_embeddings(
     request: GenerateEmbeddingsRequest,
     session: SessionDep,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ):
     """
     Generate embeddings for all assets in an infospace.
@@ -174,7 +174,7 @@ async def generate_asset_embeddings(
 @router.get("/infospaces/{infospace_id}/embeddings/stats", response_model=EmbeddingStatsResponse)
 async def get_embedding_stats(
     session: SessionDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ):
     """Get statistics about embedding coverage in an infospace."""
     # Stats are infospace-wide aggregates — not meaningful for scoped access
@@ -194,7 +194,7 @@ async def get_embedding_stats(
 async def semantic_search(
     request: SemanticSearchRequest,
     session: SessionDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ):
     """
     Perform semantic search within an infospace using vector embeddings.
@@ -240,7 +240,7 @@ async def semantic_search(
 @router.delete("/infospaces/{infospace_id}/embeddings", response_model=Message)
 async def clear_infospace_embeddings(
     session: SessionDep,
-    access: Access = Requires(Capability.SETUP),
+    access: Access = Requires(Capability.SETUP, scope=None),
 ):
     """
     Clear all embeddings for an infospace.

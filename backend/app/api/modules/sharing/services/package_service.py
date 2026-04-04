@@ -179,19 +179,25 @@ class DataPackage:
                     raise
 
                 if self.files and temp_files_dir:
+                    _ALLOWED_PREFIXES = ("files/", "assets/", "analysis_results/", "schemas/", "provenance/")
+                    _ALLOWED_ROOT = ("explore.py",)
                     for zip_internal_path, content_bytes in self.files.items():
-                        if not zip_internal_path.startswith("files/"):
-                            logger.warning(f"Skipping file with invalid path for zip: {zip_internal_path}")
+                        if (
+                            not any(zip_internal_path.startswith(p) for p in _ALLOWED_PREFIXES)
+                            and zip_internal_path not in _ALLOWED_ROOT
+                        ):
+                            logger.warning(f"Skipping file with unexpected path for zip: {zip_internal_path}")
                             continue
-                        
-                        actual_filename = os.path.basename(zip_internal_path)
-                        temp_file_local_path = Path(temp_files_dir) / actual_filename
-                        
+
+                        # Use a unique temp name to avoid collisions across directories
+                        safe_name = zip_internal_path.replace("/", "__")
+                        temp_file_local_path = Path(temp_files_dir) / safe_name
+
                         with open(temp_file_local_path, 'wb') as f_temp:
                             f_temp.write(content_bytes)
-                        
+
                         zf.write(temp_file_local_path, arcname=zip_internal_path)
-                        logger.debug(f"Added file {actual_filename} to zip as {zip_internal_path}")
+                        logger.debug(f"Added file to zip as {zip_internal_path}")
             
             logger.info(f"Successfully created package zip: {output_path}")
 
@@ -872,6 +878,307 @@ class PackageBuilder:
         )
         
         return DataPackage(metadata=package_metadata, content=content, files=self.files)
+
+    # ─── Structured package export ───
+
+    async def build_package_export(
+        self,
+        package,
+        scope,
+        *,
+        include_csvs: bool = True,
+        include_explore_script: bool = True,
+        include_justifications: bool = True,
+        batch_size: int = 500,
+    ) -> DataPackage:
+        """Build a self-contained intelligence product from a Package.
+
+        Produces a ZIP with:
+        - manifest.json   — full HQ-native data for round-trip import
+        - files/           — original source documents
+        - data/*.csv       — human-readable analysis results
+        - provenance/      — audit trail
+        - explore.py       — self-documenting script
+
+        Args:
+            package: Package model with items loaded.
+            scope: Pre-resolved PackageScope (route is the gatekeeper).
+            include_csvs: Whether to generate the data/ and provenance/ CSVs.
+            include_explore_script: Whether to embed explore.py.
+            include_justifications: Whether to include justification text.
+            batch_size: DB query batch size for annotations.
+        """
+        from app.api.modules.sharing.serializers import (
+            serialize_asset, serialize_annotation, serialize_schema,
+            serialize_run, serialize_bundle, _resolve_original_filename,
+            _make_asset_ref, _make_schema_ref,
+        )
+        from app.api.modules.sharing.csv_writers import (
+            build_assets_csv, build_annotations_csv, build_schemas_csv,
+            build_lineage_csv, safe_csv_filename,
+        )
+
+        # ── Phase 1: Collect & dedup into UUID-keyed registries ──
+
+        schema_registry: dict[str, AnnotationSchema] = {}  # uuid → model
+        run_registry: dict[str, AnnotationRun] = {}
+        bundle_registry: dict[str, Bundle] = {}
+        asset_registry: dict[str, Asset] = {}
+
+        for item in package.items:
+            if item.schema_id and item.schema_id in (scope.schema_ids or ()):
+                schema = self.session.get(AnnotationSchema, item.schema_id)
+                if schema:
+                    schema_registry.setdefault(str(schema.uuid), schema)
+
+            if item.run_id and item.run_id in (scope.run_ids or ()):
+                run = self.session.get(AnnotationRun, item.run_id)
+                if run:
+                    run_registry.setdefault(str(run.uuid), run)
+                    # Pull schemas from this run
+                    for s in (run.target_schemas or []):
+                        schema_registry.setdefault(str(s.uuid), s)
+
+            if item.bundle_id and item.bundle_id in (scope.bundle_ids or ()):
+                bundle = self.session.get(Bundle, item.bundle_id)
+                if bundle:
+                    bundle_registry.setdefault(str(bundle.uuid), bundle)
+
+            if item.asset_id and item.asset_id in (scope.asset_ids or ()):
+                asset = self.session.get(Asset, item.asset_id)
+                if asset:
+                    asset_registry.setdefault(str(asset.uuid), asset)
+
+        # Collect assets from bundles
+        for bundle_uuid, bundle in bundle_registry.items():
+            bundle_assets = list(self.session.execute(
+                select(Asset).where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle.id))
+            ).scalars().all())
+            for asset in bundle_assets:
+                asset_registry.setdefault(str(asset.uuid), asset)
+                # Also collect child assets (PDF pages, CSV rows, etc.)
+                if hasattr(asset, 'is_container') and asset.is_container:
+                    children = list(self.session.execute(
+                        select(Asset)
+                        .where(Asset.parent_asset_id == asset.id)
+                        .order_by(Asset.part_index)
+                    ).scalars().all())
+                    for child in children:
+                        asset_registry.setdefault(str(child.uuid), child)
+
+        # Collect assets from runs (via annotations)
+        run_annotations: dict[str, list] = {}  # run_uuid → [Annotation, ...]
+        visible_asset_ids = set(scope.downloadable_asset_ids or ()) | set(scope.asset_ids or ())
+
+        for run_uuid, run in run_registry.items():
+            annotations: list[Annotation] = []
+            offset = 0
+            while True:
+                # Use execute+scalars to guarantee ORM model instances (not Row objects)
+                batch = list(self.session.execute(
+                    select(Annotation)
+                    .where(Annotation.run_id == run.id)
+                    .order_by(Annotation.id)
+                    .offset(offset)
+                    .limit(batch_size)
+                ).scalars().all())
+                if not batch:
+                    break
+                annotations.extend(batch)
+                offset += batch_size
+
+            run_annotations[run_uuid] = annotations
+
+            for ann in annotations:
+                if ann.asset_id in visible_asset_ids:
+                    asset = self.session.get(Asset, ann.asset_id)
+                    if asset:
+                        asset_registry.setdefault(str(asset.uuid), asset)
+                        # Include parent asset for hierarchy preservation
+                        if asset.parent_asset_id:
+                            parent = self.session.get(Asset, asset.parent_asset_id)
+                            if parent:
+                                asset_registry.setdefault(str(parent.uuid), parent)
+
+        # ── Phase 2: Determine which assets get their blobs included ──
+        # Assets in downloadable_asset_ids get their files. Assets not in
+        # that set still get metadata in the manifest/CSV but no blob.
+
+        downloadable_ids = set(scope.downloadable_asset_ids or ())
+        # If scope has no downloadable restrictions (e.g. owner export), include all
+        if not downloadable_ids:
+            downloadable_ids = {a.id for a in asset_registry.values()}
+
+        # Build parent lookup from registry for hierarchy context
+        _id_to_asset = {a.id: a for a in asset_registry.values()}
+
+        # ── Phase 3: Resolve blobs and serialize assets ──
+
+        serialized_assets: list[dict] = []
+        for asset_uuid, asset in asset_registry.items():
+            blob_ref = None
+
+            if asset.id in downloadable_ids and asset.blob_path:
+                file_bytes = await self._fetch_file_content_from_storage(asset.blob_path)
+                if file_bytes:
+                    filename = _resolve_original_filename(asset)
+                    blob_ref = self._add_file_to_package(filename, file_bytes)
+
+            # Resolve parent for hierarchy context in CSV
+            parent = _id_to_asset.get(asset.parent_asset_id) if asset.parent_asset_id else None
+
+            serialized_assets.append(serialize_asset(
+                asset, blob_ref=blob_ref, parent_asset=parent,
+            ))
+
+        # ── Phase 4: Serialize schemas, runs, bundles ──
+
+        serialized_schemas = [serialize_schema(s) for s in schema_registry.values()]
+
+        serialized_runs = []
+        # annotations_by_run_schema: (run_uuid, schema_uuid) → [annotation_dict]
+        annotations_by_run_schema: dict[tuple[str, str], list[dict]] = {}
+
+        for run_uuid, run in run_registry.items():
+            schema_dicts = [
+                serialize_schema(s) for s in (run.target_schemas or [])
+            ]
+            serialized_runs.append(serialize_run(run, schema_dicts=schema_dicts))
+
+            # Serialize this run's annotations grouped by schema
+            for ann in run_annotations.get(run_uuid, []):
+                schema = self.session.get(AnnotationSchema, ann.schema_id)
+                asset = self.session.get(Asset, ann.asset_id)
+                s_uuid = str(schema.uuid) if schema else "unknown"
+
+                # Fetch justifications if needed
+                justifications = None
+                if include_justifications:
+                    justifications = (
+                        ann.justifications
+                        if hasattr(ann, "justifications") and ann.justifications
+                        else list(self.session.execute(
+                            select(Justification).where(Justification.annotation_id == ann.id)
+                        ).scalars().all())
+                    )
+
+                ann_dict = serialize_annotation(
+                    ann,
+                    include_justifications=include_justifications,
+                    justifications=justifications,
+                    asset_ref=_make_asset_ref(asset) if asset else None,
+                    schema_ref=_make_schema_ref(schema) if schema else None,
+                )
+
+                key = (run_uuid, s_uuid)
+                annotations_by_run_schema.setdefault(key, []).append(ann_dict)
+
+            # Attach annotations to the run dict
+            all_run_anns = []
+            for (ru, _), anns in annotations_by_run_schema.items():
+                if ru == run_uuid:
+                    all_run_anns.extend(anns)
+            serialized_runs[-1]["annotations"] = all_run_anns
+            serialized_runs[-1]["assets"] = [
+                a for a in serialized_assets
+                if any(
+                    ann.get("asset_reference", {}).get("uuid") == a.get("uuid")
+                    for ann in all_run_anns
+                )
+            ]
+
+        serialized_bundles = []
+        for bundle_uuid, bundle in bundle_registry.items():
+            assets_in_bundle = list(self.session.execute(
+                select(Asset).where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle.id))
+            ).scalars().all())
+            refs = [_make_asset_ref(a) for a in assets_in_bundle]
+            serialized_bundles.append(serialize_bundle(bundle, asset_refs=refs))
+
+        # ── Phase 5: Build manifest content ──
+
+        manifest_content = {
+            "assets": serialized_assets,
+            "bundles": serialized_bundles,
+            "annotation_runs": serialized_runs,
+            "annotation_schemas": serialized_schemas,
+        }
+
+        # ── Phase 6: Generate structured output ──
+        #
+        # ZIP layout:
+        #   assets/           — asset inventory CSV
+        #   analysis_results/ — per-(run, schema) annotation CSVs
+        #   files/            — original source documents
+        #   schemas/          — index CSV + individual JSON definitions
+        #   provenance/       — lineage CSV
+        #   manifest.json     — full HQ-native data
+        #   explore.py        — self-documenting script
+
+        if include_csvs:
+            if serialized_assets:
+                self.files["assets/assets.csv"] = build_assets_csv(serialized_assets)
+
+            if serialized_schemas:
+                self.files["schemas/schemas.csv"] = build_schemas_csv(serialized_schemas)
+                for s in serialized_schemas:
+                    s_name = s.get("name", "unnamed")
+                    s_version = s.get("version", "0")
+                    fname = safe_csv_filename(f"{s_name}_v{s_version}", ".json")
+                    schema_json = json.dumps(s, indent=2, default=str).encode("utf-8")
+                    self.files[f"schemas/{fname}"] = schema_json
+
+            # One CSV per (run, schema) pair
+            for (run_uuid, schema_uuid), anns in annotations_by_run_schema.items():
+                run_obj = run_registry.get(run_uuid)
+                schema_obj = schema_registry.get(schema_uuid)
+                run_name = run_obj.name if run_obj else run_uuid[:8]
+                schema_name = schema_obj.name if schema_obj else schema_uuid[:8]
+                fname = safe_csv_filename(f"{run_name}__{schema_name}")
+                self.files[f"analysis_results/{fname}"] = build_annotations_csv(
+                    anns,
+                    include_justifications=include_justifications,
+                )
+
+            # Lineage CSV
+            lineage_entries = []
+            for ann_list in annotations_by_run_schema.values():
+                for ann in ann_list:
+                    lineage_entries.append({
+                        "entity_type": "annotation",
+                        "entity_uuid": ann.get("uuid"),
+                        "entity_name": ann.get("asset_reference", {}).get("title", ""),
+                        "action": "annotated",
+                        "timestamp": ann.get("timestamp"),
+                        "source_run": ann.get("run_id"),
+                        "source_schema": ann.get("schema_reference", {}).get("name", ""),
+                        "model_name": ann.get("model_name", ""),
+                    })
+            if lineage_entries:
+                self.files["provenance/lineage.csv"] = build_lineage_csv(lineage_entries)
+
+        # ── Phase 7: Embed explore.py ──
+
+        if include_explore_script:
+            try:
+                script_path = Path(__file__).parent.parent / "static" / "explore.py"
+                if script_path.exists():
+                    self.files["explore.py"] = script_path.read_bytes()
+            except Exception as e:
+                logger.warning(f"Could not embed explore.py: {e}")
+
+        # ── Phase 8: Assemble DataPackage ──
+
+        metadata = PackageMetadata(
+            package_type=ResourceType.PACKAGE,
+            source_entity_uuid=str(package.uuid),
+            source_entity_id=package.id,
+            source_entity_name=package.name,
+            source_instance_id=self.source_instance_id,
+            description=f"Package export: {package.name}",
+        )
+        return DataPackage(metadata=metadata, content=manifest_content, files=self.files)
+
 
 class PackageImporter:
     """
@@ -1669,6 +1976,84 @@ class PackageImporter:
         
         logger.info(f"Imported {len(imported_entities['assets'])} assets and {len(imported_entities['bundles'])} bundles from mixed package.")
         return imported_entities
+
+    async def import_package_export(
+        self, package: DataPackage, conflict_strategy: str = "skip"
+    ) -> Dict[str, List[Any]]:
+        """Import a structured package export (ResourceType.PACKAGE).
+
+        Import order matters for FK resolution:
+        1. Schemas first (dedup by UUID/name+version)
+        2. Bundles (dedup by UUID)
+        3. Assets with blobs (dedup by UUID, hierarchy preserved)
+        4. Runs with annotations + justifications (resolve refs via UUID map)
+        """
+        if package.metadata.package_type not in (ResourceType.PACKAGE, ResourceType.MIXED):
+            raise ValueError(f"Unexpected package type: {package.metadata.package_type}")
+
+        imported = {"schemas": [], "bundles": [], "assets": [], "runs": []}
+
+        # 1. Schemas
+        for schema_data in package.content.get("annotation_schemas", []):
+            try:
+                meta = PackageMetadata(
+                    package_type=ResourceType.SCHEMA,
+                    source_entity_uuid=str(schema_data.get("uuid")),
+                )
+                temp_pkg = DataPackage(metadata=meta, content={"annotation_schema": schema_data}, files={})
+                schema = await self.import_annotation_schema_package(temp_pkg, conflict_strategy)
+                if schema:
+                    imported["schemas"].append(schema)
+            except Exception as e:
+                logger.error(f"Failed to import schema from package export: {e}", exc_info=True)
+
+        # 2. Bundles
+        for bundle_data in package.content.get("bundles", []):
+            try:
+                meta = PackageMetadata(
+                    package_type=ResourceType.BUNDLE,
+                    source_entity_uuid=str(bundle_data.get("uuid")),
+                )
+                temp_pkg = DataPackage(metadata=meta, content={"bundle": bundle_data}, files=package.files)
+                bundle = await self.import_bundle_package(temp_pkg, conflict_strategy)
+                if bundle:
+                    imported["bundles"].append(bundle)
+            except Exception as e:
+                logger.error(f"Failed to import bundle from package export: {e}", exc_info=True)
+
+        # 3. Assets
+        for asset_data in package.content.get("assets", []):
+            try:
+                asset = await self._import_asset_data(asset_data, package.files, parent_source_id=None)
+                if asset:
+                    imported["assets"].append(asset)
+            except Exception as e:
+                logger.error(f"Failed to import asset from package export: {e}", exc_info=True)
+
+        # 4. Runs (with annotations)
+        for run_data in package.content.get("annotation_runs", []):
+            try:
+                meta = PackageMetadata(
+                    package_type=ResourceType.RUN,
+                    source_entity_uuid=str(run_data.get("uuid")),
+                )
+                # Build a run-shaped content dict for import_annotation_run_package
+                run_content = dict(run_data)
+                temp_pkg = DataPackage(
+                    metadata=meta,
+                    content={"annotation_run": run_content},
+                    files=package.files,
+                )
+                run = await self.import_annotation_run_package(temp_pkg, conflict_strategy)
+                if run:
+                    imported["runs"].append(run)
+            except Exception as e:
+                logger.error(f"Failed to import run from package export: {e}", exc_info=True)
+
+        total = sum(len(v) for v in imported.values())
+        logger.info(f"Imported {total} entities from package export: {', '.join(f'{k}={len(v)}' for k, v in imported.items())}")
+        return imported
+
 
 class PackageService:
     def __init__(

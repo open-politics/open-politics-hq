@@ -263,6 +263,14 @@ def curate_annotated(ctx: TaskContext, ids: list[int]):
             curate_annotation_batch, session, ids,
         )
         session.commit()
-    ctx.stat("curated", result.get("curated", 0))
+    curated = result.get("curated", 0)
+    ctx.stat("curated", curated)
     ctx.stat("skipped", result.get("skipped", 0))
     ctx.stat("failed", result.get("failed", 0))
+    # Presence: notify watching graph panels of new curated edges
+    if curated > 0:
+        ctx.send("knowledge_graph", "curations", "edges_curated", {
+            "curated": curated,
+            "skipped": result.get("skipped", 0),
+            "annotation_ids": ids,
+        })

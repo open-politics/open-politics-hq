@@ -343,6 +343,7 @@ export type AssetCreate = {
     event_timestamp?: (string | null);
     processing_status?: (ProcessingStatus | null);
     content_hash?: (string | null);
+    tags?: (Array<(string)> | null);
 };
 
 export type AssetKind = 'pdf' | 'web' | 'image' | 'video' | 'audio' | 'text' | 'csv' | 'csv_row' | 'mbox' | 'email' | 'pdf_page' | 'text_chunk' | 'image_region' | 'video_scene' | 'audio_segment' | 'article' | 'rss_feed' | 'file';
@@ -402,6 +403,8 @@ export type AssetRead = {
     processing_status?: ProcessingStatus;
     processing_error?: (string | null);
     tags?: Array<(string)>;
+    enrichment_resolved?: (Array<(string)> | null);
+    discovered_modalities?: (Array<(string)> | null);
     /**
      * True if this asset can have child assets.
      */
@@ -869,6 +872,12 @@ export type ChatResponse = {
     finish_reason?: (string | null);
 };
 
+export type ChildResultGroup = {
+    parent_asset_id: number;
+    parent_title: string;
+    matches: Array<QueryResult>;
+};
+
 export type ChunkAssetRequest = {
     strategy?: string;
     chunk_size?: number;
@@ -905,6 +914,20 @@ export type ChunkingStatsResponse = {
     [key: string]: (number);
 } | null);
 };
+
+/**
+ * Collaborator in an infospace with role and profile info.
+ */
+export type CollaboratorOut = {
+    user_id: number;
+    handle?: (string | null);
+    full_name?: (string | null);
+    profile_picture_url?: (string | null);
+    role: string;
+    is_owner?: boolean;
+};
+
+export type CollaboratorRole = 'owner' | 'analyst' | 'curator' | 'viewer' | 'editor';
 
 export type CreatePackageFromRunRequest = {
     name: string;
@@ -1166,9 +1189,6 @@ export type ExternalSearchRequest = {
 } | null);
 };
 
-/**
- * Response for the feed assets endpoint
- */
 export type FeedAssetsResponse = {
     assets: Array<AssetRead>;
     total: number;
@@ -1348,6 +1368,21 @@ export type GenerateEmbeddingsRequest = {
 } | null);
 };
 
+/**
+ * Handle availability check result.
+ */
+export type HandleCheck = {
+    handle: string;
+    available: boolean;
+};
+
+/**
+ * Update a user's handle.
+ */
+export type HandleUpdate = {
+    handle: string;
+};
+
 export type HTTPValidationError = {
     detail?: Array<ValidationError>;
 };
@@ -1441,6 +1476,8 @@ export type InfospaceRead = {
     chunk_overlap?: (number | null);
     chunk_strategy?: (string | null);
     enrichment_config?: (EnrichmentConfig | null);
+    current_user_role?: (string | null);
+    is_owner?: boolean;
 };
 
 export type InfospacesOut = {
@@ -1504,6 +1541,31 @@ export type IngestionJobRead = {
 };
 
 export type IngestionStatus = 'pending' | 'downloading' | 'extracting' | 'processing' | 'completed' | 'failed' | 'cancelled';
+
+/**
+ * Invite someone by handle or email.
+ */
+export type InvitationCreate = {
+    identifier: string;
+    role?: CollaboratorRole;
+};
+
+/**
+ * Invitation as seen by owner (infospace view) or invitee (inbox view).
+ */
+export type InvitationOut = {
+    id: number;
+    infospace_id: number;
+    infospace_name: string;
+    inviter_name?: (string | null);
+    inviter_handle?: (string | null);
+    invitee_user_id?: (number | null);
+    invitee_handle?: (string | null);
+    invitee_email?: (string | null);
+    role: string;
+    status: string;
+    created_at: string;
+};
 
 /**
  * Request schema for creating a KnowledgeGraph.
@@ -1605,6 +1667,11 @@ export type ModelListResponse = {
     providers: Array<(string)>;
 };
 
+export type NameMatches = {
+    bundles?: Array<BundleRead>;
+    assets?: Array<QueryResult>;
+};
+
 export type NewPassword = {
     token: string;
     new_password: string;
@@ -1619,6 +1686,7 @@ export type PackageCreate = {
     visibility?: string;
     default_allow_download?: boolean;
     default_allow_copy?: boolean;
+    expires_at?: (string | null);
     items?: Array<PackageItemCreate>;
 };
 
@@ -1640,8 +1708,12 @@ export type PackageItemRead = {
     id: number;
     resource_type: string;
     resource_id: number;
+    resource_name?: (string | null);
+    resource_kind?: (string | null);
     allow_download: (boolean | null);
     allow_copy: (boolean | null);
+    derived_from_item_id?: (number | null);
+    derivation_type?: (string | null);
 };
 
 /**
@@ -1663,6 +1735,7 @@ export type PackageUpdate = {
     default_allow_download?: (boolean | null);
     default_allow_copy?: (boolean | null);
     is_active?: (boolean | null);
+    expires_at?: (string | null);
 };
 
 export type Paginated = {
@@ -1797,7 +1870,9 @@ export type QueryResponse = {
     parsed: {
         [key: string]: unknown;
     };
+    name_matches?: NameMatches;
     results: Array<QueryResult>;
+    child_results?: Array<ChildResultGroup>;
     total: number;
     has_more: boolean;
     cursor_next?: (number | null);
@@ -2232,6 +2307,14 @@ export type StorageBrowseResponse = {
     path_error?: (string | null);
 };
 
+export type StreamStats = {
+    stream_sent?: number;
+    stream_dropped?: number;
+    stream_queue_full?: number;
+    stream_active_connections?: number;
+    stream_reconnects?: number;
+};
+
 export type TaskCreate = {
     name: string;
     type: TaskType;
@@ -2355,6 +2438,7 @@ export type TreeNode = {
     child_bundle_count?: (number | null);
     sealed?: (boolean | null);
     processing_status?: (ProcessingStatus | null);
+    tags?: (Array<(string)> | null);
     stub?: (boolean | null);
     facets?: ({
     [key: string]: unknown;
@@ -2378,7 +2462,6 @@ export type TreeNode = {
     job_status?: ({
     [key: string]: unknown;
 } | null);
-    tags?: (Array<(string)> | null);
 };
 
 /**
@@ -2466,6 +2549,7 @@ export type UserBackupUpdate = {
 export type UserCreate = {
     email: string;
     full_name?: (string | null);
+    handle?: (string | null);
     tier?: UserTier;
     profile_picture_url?: (string | null);
     bio?: (string | null);
@@ -2480,6 +2564,7 @@ export type UserCreateOpen = {
     email: string;
     password: string;
     full_name?: (string | null);
+    handle?: (string | null);
     profile_picture_url?: (string | null);
     bio?: (string | null);
     description?: (string | null);
@@ -2488,6 +2573,7 @@ export type UserCreateOpen = {
 export type UserOut = {
     email: string;
     full_name?: (string | null);
+    handle?: (string | null);
     tier?: UserTier;
     profile_picture_url?: (string | null);
     bio?: (string | null);
@@ -2535,11 +2621,22 @@ export type UserProfileUpdate = {
  */
 export type UserPublicProfile = {
     id: number;
+    handle?: (string | null);
     full_name?: (string | null);
     profile_picture_url?: (string | null);
     bio?: (string | null);
     description?: (string | null);
     created_at: string;
+};
+
+/**
+ * Lightweight user result for invite autocomplete.
+ */
+export type UserSearchResult = {
+    id: number;
+    handle?: (string | null);
+    full_name?: (string | null);
+    profile_picture_url?: (string | null);
 };
 
 export type UsersOut = {
@@ -2607,6 +2704,8 @@ export type WatchStatusResponse = {
 };
 
 export type GetRegistrationStatsResponse = (RegistrationStats);
+
+export type GetStreamStatsResponse = (StreamStats);
 
 export type ListAnalysisAdaptersResponse = (Array<AnalysisAdapterRead>);
 
@@ -4610,21 +4709,31 @@ export type DeleteInfospaceData = {
 
 export type DeleteInfospaceResponse = (void);
 
-export type InviteCollaboratorData = {
-    /**
-     * Email of user to invite
-     */
-    email: string;
+export type SendInvitationData = {
     infospaceId: number;
     packageToken?: (string | null);
-    /**
-     * Role: owner, editor, viewer
-     */
-    role?: string;
+    requestBody: InvitationCreate;
     xPackageToken?: (string | null);
 };
 
-export type InviteCollaboratorResponse = (unknown);
+export type SendInvitationResponse = (InvitationOut);
+
+export type ListInvitationsData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type ListInvitationsResponse = (Array<InvitationOut>);
+
+export type RevokeInvitationRouteData = {
+    infospaceId: number;
+    invitationId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type RevokeInvitationRouteResponse = (unknown);
 
 export type ListCollaboratorsData = {
     infospaceId: number;
@@ -4632,7 +4741,28 @@ export type ListCollaboratorsData = {
     xPackageToken?: (string | null);
 };
 
-export type ListCollaboratorsResponse = (unknown);
+export type ListCollaboratorsResponse = (Array<CollaboratorOut>);
+
+export type ChangeCollaboratorRoleData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    /**
+     * New role
+     */
+    role: CollaboratorRole;
+    userId: number;
+    xPackageToken?: (string | null);
+};
+
+export type ChangeCollaboratorRoleResponse = (unknown);
+
+export type LeaveInfospaceData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type LeaveInfospaceResponse = (unknown);
 
 export type RemoveCollaboratorData = {
     infospaceId: number;
@@ -4906,6 +5036,21 @@ export type DeleteKnowledgeGraphData = {
 
 export type DeleteKnowledgeGraphResponse = (void);
 
+export type SubscribeStreamData = {
+    infospaceId: number;
+    lastEventId?: (string | null);
+    packageToken?: (string | null);
+    /**
+     * JSON-encoded view parameters
+     */
+    params?: (string | null);
+    resourceId: string;
+    topic: string;
+    xPackageToken?: (string | null);
+};
+
+export type SubscribeStreamResponse = (string);
+
 export type LoginAccessTokenData = {
     formData: Body_login_login_access_token;
 };
@@ -5012,6 +5157,26 @@ export type AccessPackageByTokenData = {
 };
 
 export type AccessPackageByTokenResponse = (unknown);
+
+export type StreamPackageAssetData = {
+    assetId: number;
+    token: string;
+};
+
+export type StreamPackageAssetResponse = (unknown);
+
+export type DownloadPackageAssetData = {
+    assetId: number;
+    token: string;
+};
+
+export type DownloadPackageAssetResponse = (unknown);
+
+export type ExportPackageData = {
+    token: string;
+};
+
+export type ExportPackageResponse = (unknown);
 
 export type DiscoverModelsData = {
     /**
@@ -5153,6 +5318,8 @@ export type GetSharingStatsResponse = (ShareableLinkStats);
 export type ExportResourceData = {
     formData: Body_sharing_export_resource;
     infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
 };
 
 export type ExportResourceResponse = (unknown);
@@ -5166,14 +5333,18 @@ export type ImportResourceResponse = (unknown);
 
 export type ExportResourcesBatchData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: ExportBatchRequest;
+    xPackageToken?: (string | null);
 };
 
 export type ExportResourcesBatchResponse = ((Blob | File));
 
 export type ExportMixedBatchData = {
     infospaceId: number;
+    packageToken?: (string | null);
     requestBody: ExportMixedBatchRequest;
+    xPackageToken?: (string | null);
 };
 
 export type ExportMixedBatchResponse = (unknown);
@@ -5350,10 +5521,6 @@ export type GetStreamStatsData = {
     sourceId: number;
     xPackageToken?: (string | null);
 };
-
-export type GetStreamStatsResponse = ({
-    [key: string]: unknown;
-});
 
 export type GetPollHistoryData = {
     infospaceId: number;
@@ -5893,6 +6060,43 @@ export type DeleteCredentialData = {
 };
 
 export type DeleteCredentialResponse = (Message);
+
+export type CheckHandleData = {
+    handle: string;
+};
+
+export type CheckHandleResponse = (HandleCheck);
+
+export type SearchUsersByHandleData = {
+    limit?: number;
+    q: string;
+};
+
+export type SearchUsersByHandleResponse = (Array<UserSearchResult>);
+
+export type UpdateMyHandleData = {
+    requestBody: HandleUpdate;
+};
+
+export type UpdateMyHandleResponse = (UserOut);
+
+export type ListMyInvitationsResponse = (Array<InvitationOut>);
+
+export type CountMyInvitationsResponse = ({
+    [key: string]: unknown;
+});
+
+export type AcceptInvitationRouteData = {
+    invitationId: number;
+};
+
+export type AcceptInvitationRouteResponse = (unknown);
+
+export type DeclineInvitationRouteData = {
+    invitationId: number;
+};
+
+export type DeclineInvitationRouteResponse = (unknown);
 
 export type UploadProfilePictureData = {
     formData: Body_users_upload_profile_picture;

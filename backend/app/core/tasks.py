@@ -147,6 +147,21 @@ class TaskContext:
         except Exception as e:
             logger.warning("item_failed redis error: %s", e)
 
+    def send(self, topic: str, resource_id: int | str, event: str, data: Any = None) -> bool:
+        """Push a presence update to browsers watching this resource.
+
+        Fire-and-forget. Never raises. Returns True on success.
+        Same pattern as stat() and item_failed() — optional side-channel
+        that doesn't affect task execution.
+        """
+        try:
+            from app.core.stream import stream_key, StreamWriter
+            key = stream_key(self.infospace_id, topic, resource_id)
+            return StreamWriter(key).send(event, data)
+        except Exception as e:
+            logger.warning("ctx.send failed: %s", e)
+            return False
+
 
 # Set default context_cls on TaskDescriptor after TaskContext is defined
 TaskDescriptor.context_cls = TaskContext  # type: ignore

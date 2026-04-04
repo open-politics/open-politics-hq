@@ -45,6 +45,7 @@ interface AssetState {
   getAssetById: (assetId: number) => Promise<AssetRead | null>;
   fetchChildAssets: (parentId: number) => Promise<AssetRead[] | null>;
   reprocessAsset: (assetId: number, options?: { delimiter?: string; skip_rows?: number; encoding?: string }) => Promise<boolean>;
+  requestEnrichment: (assetId: number, enricherName: string) => Promise<boolean>;
 
   // Import/Export actions
   exportAsset: (assetId: number) => Promise<void>;
@@ -391,6 +392,26 @@ export const useAssetStore = create<AssetState>((set, get) => ({
       const errorMsg = err.message || "Failed to reprocess asset";
       set({ error: errorMsg, isLoading: false });
       toast.error(errorMsg);
+      return false;
+    }
+  },
+
+  requestEnrichment: async (assetId: number, enricherName: string): Promise<boolean> => {
+    const { activeInfospace } = useInfospaceStore.getState();
+    if (!activeInfospace?.id) {
+      toast.error("No active infospace selected");
+      return false;
+    }
+    try {
+      const result = await AssetsService.retryAssetEnrichment({
+        infospaceId: activeInfospace.id,
+        assetId,
+        enricherName,
+      });
+      toast.success(result.message || `${enricherName} triggered`);
+      return true;
+    } catch (err: any) {
+      toast.error(err.body?.detail || err.message || `Failed to trigger ${enricherName}`);
       return false;
     }
   },

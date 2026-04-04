@@ -110,6 +110,7 @@ def build_api_router() -> APIRouter:
         shareables,
         sources,
         sso,
+        stream,
         tasks,
         tree,
         user_backups,
@@ -142,6 +143,7 @@ def build_api_router() -> APIRouter:
         R(embeddings.router, ["embeddings"], "/embeddings"),
         R(datasets.router, ["datasets"]),
         R(query.router, ["Query"]),
+        R(stream.router, ["Live Streams"]),
         R(providers.router, ["Providers"]),
         # --- Capability-gated (entire router) ---
         R(sources.router, ["Sources"], requires={"ingest"}),

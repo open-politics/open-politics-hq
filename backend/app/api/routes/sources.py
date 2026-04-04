@@ -54,7 +54,7 @@ class RssSourceCreateRequest(BaseModel):
 @router.post("/", response_model=SourceRead, status_code=status.HTTP_201_CREATED)
 def create_source(
     *,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     infospace_id: int,
     source_in: SourceCreateRequest,
     session: SessionDep,
@@ -126,7 +126,7 @@ def create_source(
 @router.get("/", response_model=SourcesOut)
 def list_sources(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     infospace_id: int,
     skip: int = 0,
     limit: int = 100,
@@ -186,7 +186,7 @@ def list_sources(
 @router.get("/{source_id}", response_model=SourceRead)
 def get_source(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     infospace_id: int,
     source_id: int,
     include_counts: bool = Query(True, description="Include counts of assets"),
@@ -236,7 +236,7 @@ def get_source(
 @router.patch("/{source_id}", response_model=SourceRead)
 def update_source(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     infospace_id: int,
     source_id: int,
     source_in: SourceUpdate,
@@ -298,7 +298,7 @@ def update_source(
 @router.delete("/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_source(
     *,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
@@ -348,7 +348,7 @@ def delete_source(
 @router.post("/{source_id}/process", status_code=status.HTTP_202_ACCEPTED)
 def trigger_source_processing(
     *,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
@@ -487,7 +487,7 @@ def transfer_sources(
 async def create_rss_source(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     infospace_id: int,
     request: RssSourceCreateRequest,
     bundle_service: BundleServiceDep,
@@ -586,7 +586,7 @@ async def create_rss_source(
 @router.post("/{source_id}/activate", response_model=SourceRead, operation_id="Sources-activate_stream")
 def activate_stream(
     *,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
@@ -601,7 +601,7 @@ def activate_stream(
 @router.post("/{source_id}/pause", response_model=SourceRead, operation_id="Sources-pause_stream")
 def pause_stream(
     *,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
@@ -616,7 +616,7 @@ def pause_stream(
 @router.post("/{source_id}/poll", status_code=status.HTTP_202_ACCEPTED, operation_id="Sources-poll_source")
 async def poll_source(
     *,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
@@ -639,7 +639,7 @@ async def poll_source(
 @router.get("/{source_id}/stats", operation_id="Sources-get_stream_stats")
 def get_stream_stats(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     infospace_id: int,
     source_id: int,
     session: SessionDep,
@@ -654,7 +654,7 @@ def get_stream_stats(
 @router.get("/{source_id}/poll-history", operation_id="Sources-get_poll_history")
 def get_poll_history(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     infospace_id: int,
     source_id: int,
     session: SessionDep,

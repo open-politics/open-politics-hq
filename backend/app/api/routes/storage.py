@@ -64,7 +64,7 @@ def browse_storage(
         True,
         description="Include file_count, importable_count, size_bytes for directories (expensive on large trees)",
     ),
-    access: Access = Requires(Capability.INGEST),  # browsing storage for import = ingest capability
+    access: Access = Requires(Capability.INGEST, scope=None),  # browsing storage for import = ingest capability
     db=dependency_injection.Depends(dependency_injection.get_db),
 ) -> StorageBrowseResponse:
     """

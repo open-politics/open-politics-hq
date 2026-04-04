@@ -6,24 +6,26 @@ Endpoints for efficient tree-based navigation of bundles and assets.
 Returns minimal metadata for fast initial rendering and lazy-loads children on demand.
 """
 
+import asyncio
 import logging
 from typing import Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 from sqlmodel import Session, select
-from sqlalchemy import or_, func, text
+from sqlalchemy import func, text
 from pydantic import BaseModel, Field
 
 from app.api import dependency_injection
 from app.models import Asset, Bundle, AssetKind
-from app.schemas import TreeResponse, TreeNode, TreeChildrenResponse, Message, AssetRead
+from app.schemas import TreeResponse, TreeNode, TreeChildrenResponse, Message, AssetRead, SSEError
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires, ViewAccess, DeleteAccess,
 )
 from app.api.tree_renderer import (
     build_root_tree_nodes,
     build_bundle_children_nodes,
+    build_bundle_nodes,
     build_asset_children_nodes,
-    build_tree_node_from_bundle,
     build_tree_node_from_asset,
     build_tree_node_from_vfolder,
     parse_tree_node_id,
@@ -127,27 +129,21 @@ def _get_virtual_folder_children(
     return nodes, total_children
 
 
-@router.get("/infospaces/{infospace_id}/tree", response_model=TreeResponse)
-def get_infospace_tree(
-    *,
-    infospace_id: int,
-    access: Access = ViewAccess,
-    db: Session = dependency_injection.Depends(dependency_injection.get_db),
-) -> Any:
-    """
-    Get the root-level tree structure for an infospace.
+# ─── SSE phase models for tree ───
 
-    Returns minimal metadata for bundles and assets:
-    - Root bundles (no parent_bundle_id)
-    - Root assets (no parent_asset_id, not in any bundle)
+class TreePhase(BaseModel):
+    nodes: list[TreeNode]
+    total_bundles: int  # -1 sentinel
+    total_assets: int   # -1 sentinel
+    total_nodes: int
 
-    When accessed via package token, only scoped bundles are returned.
-    See FOUNDATION.md § Access Control.
-    """
-    scope = access.scope  # None = full access, PackageScope = restricted
+class TreeCountsPhase(BaseModel):
+    total_bundles: int
+    total_assets: int
 
+def _build_tree_nodes(db, infospace_id, scope):
+    """Build tree nodes + bundle count. Returns (nodes, n_bundles)."""
     if not scope:
-        # ── Full access: all root bundles + unorganized assets ──
         root_bundles = db.exec(
             select(Bundle)
             .where(Bundle.infospace_id == infospace_id)
@@ -161,18 +157,9 @@ def get_infospace_tree(
             .where(text("bundle_ids = ARRAY[0]::int[]"))
             .order_by(Asset.updated_at.desc())
         ).all()
-        tree_nodes = build_root_tree_nodes(root_bundles, root_assets, db)
-        total_bundles = db.exec(
-            select(func.count(Bundle.id)).where(Bundle.infospace_id == infospace_id)
-        ).one() or 0
-        total_assets = db.exec(
-            select(func.count(Asset.id)).where(Asset.infospace_id == infospace_id)
-        ).one() or 0
+        nodes = build_root_tree_nodes(root_bundles, root_assets, db)
+        return nodes, None  # None = count not yet computed
     else:
-        # ── Package scope: explicit bundles + derived bundles (ancestor rule) ──
-        from app.api.modules.content.query import AssetQuery
-
-        # Explicitly granted bundles at root level
         explicit_root_bundles = []
         if scope.bundle_ids:
             explicit_root_bundles = db.exec(
@@ -182,9 +169,6 @@ def get_infospace_tree(
                 .order_by(Bundle.name)
             ).all()
 
-        # Derived bundles: bundles containing visible assets but not explicitly granted.
-        # Discover from visible assets' bundle_ids, then apply the ancestor rule:
-        # only show if the bundle has its own visible content.
         derived_bundle_ids: set[int] = set()
         if scope.run_ids or scope.asset_ids:
             visible_bids_rows = db.execute(text("""
@@ -204,16 +188,12 @@ def get_infospace_tree(
             all_visible_bids = {r[0] for r in visible_bids_rows}
             derived_bundle_ids = all_visible_bids - set(scope.bundle_ids)
 
-        # Ancestor rule: a derived bundle appears only if it has its own visible
-        # assets.  Ancestors without content → children promoted to root.
         visible_derived_bundles = []
-        promoted_bundles = []  # bundles promoted to root because ancestor has no content
         if derived_bundle_ids:
             for bid in derived_bundle_ids:
                 bundle = db.get(Bundle, bid)
                 if not bundle or bundle.infospace_id != infospace_id:
                     continue
-                # Check if this bundle has its own visible content
                 has_content = db.execute(text("""
                     SELECT EXISTS(
                         SELECT 1 FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[]
@@ -233,13 +213,10 @@ def get_infospace_tree(
                 }).scalar()
                 if has_content:
                     visible_derived_bundles.append(bundle)
-                # If no content, children that ARE in derived_bundle_ids will be
-                # promoted to root on their own iteration
 
         all_root_bundles = explicit_root_bundles + visible_derived_bundles
         all_root_bundles.sort(key=lambda b: b.name or "")
 
-        # Scoped root assets: visible assets not in any bundle (unbundled direct grants)
         scoped_root_assets = []
         if scope.asset_ids:
             scoped_root_assets = db.exec(
@@ -250,19 +227,77 @@ def get_infospace_tree(
                 .order_by(Asset.updated_at.desc())
             ).all()
 
-        tree_nodes = build_root_tree_nodes(all_root_bundles, scoped_root_assets, db)
-        total_bundles = len(all_root_bundles)
-        total_assets = 0
-        if scope.bundle_ids or scope.asset_ids or scope.run_ids:
-            aq = AssetQuery(db, infospace_id).scope(scope)
-            total_assets = aq.count()
+        nodes = build_root_tree_nodes(all_root_bundles, scoped_root_assets, db)
+        return nodes, len(all_root_bundles)
 
-    return TreeResponse(
-        nodes=tree_nodes,
-        total_bundles=total_bundles,
-        total_assets=total_assets,
-        total_nodes=len(tree_nodes),
+
+def _tree_counts(db, infospace_id, scope):
+    """Compute total bundles + assets. Can be slow on large datasets."""
+    from app.api.modules.content.query import AssetQuery
+    if not scope:
+        tb = db.exec(
+            select(func.count(Bundle.id)).where(Bundle.infospace_id == infospace_id)
+        ).one() or 0
+        ta = db.exec(
+            select(func.count(Asset.id)).where(Asset.infospace_id == infospace_id)
+        ).one() or 0
+        return tb, ta
+    else:
+        n_bundles = 0  # scoped path already knows bundle count from _build_tree_nodes
+        ta = 0
+        if scope.bundle_ids or scope.asset_ids or scope.run_ids:
+            ta = AssetQuery(db, infospace_id).scope(scope).count()
+        return n_bundles, ta
+
+
+@router.get(
+    "/infospaces/{infospace_id}/tree",
+    response_class=EventSourceResponse,
+    response_model=TreeResponse,
+    responses={200: {"content": {"text/event-stream": {}}}},
+)
+async def get_infospace_tree(
+    *,
+    infospace_id: int,
+    access: Access = ViewAccess,
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+):
+    """
+    Get the root-level tree structure for an infospace.
+
+    Native SSE — tree nodes stream first, counts arrive later.
+    Keepalive pings survive nginx proxy_read_timeout.
+    """
+    scope = access.scope
+
+    try:
+        tree_nodes, n_bundles = await asyncio.to_thread(_build_tree_nodes, db, infospace_id, scope)
+    except Exception as e:
+        logger.exception("Tree build error")
+        yield ServerSentEvent(data=SSEError(detail=str(e)), event="error")
+        return
+
+    yield ServerSentEvent(
+        data=TreePhase(
+            nodes=tree_nodes,
+            total_bundles=n_bundles if n_bundles is not None else -1,
+            total_assets=-1,
+            total_nodes=len(tree_nodes),
+        ),
+        event="tree",
     )
+
+    try:
+        total_bundles, total_assets = await asyncio.to_thread(_tree_counts, db, infospace_id, scope)
+        if n_bundles is not None:
+            total_bundles = n_bundles
+        yield ServerSentEvent(
+            data=TreeCountsPhase(total_bundles=total_bundles, total_assets=total_assets),
+            event="counts",
+        )
+    except Exception as e:
+        logger.exception("Tree count error")
+        yield ServerSentEvent(data=SSEError(detail=str(e)), event="error")
 
 
 @router.get("/infospaces/{infospace_id}/tree/children", response_model=TreeChildrenResponse)
@@ -320,7 +355,7 @@ def get_tree_children(
                 .where(Bundle.parent_bundle_id == parent_numeric_id)
                 .order_by(Bundle.name)
             ).all()
-            child_bundle_nodes = [build_tree_node_from_bundle(b, db) for b in child_bundles]
+            child_bundle_nodes = build_bundle_nodes(child_bundles, infospace_id, db)
             n_bundles = len(child_bundle_nodes)
             vfolder_skip = max(0, skip - n_bundles)
             vfolder_limit = max(0, limit - max(0, n_bundles - skip))
@@ -468,7 +503,7 @@ def preview_tree_deletion(
     *,
     infospace_id: int,
     request: TreeDeleteRequest,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ) -> Any:
     """
@@ -510,34 +545,25 @@ def delete_tree_nodes(
     return Message(message=message)
 
 
+# ─── SSE phase models for feed ───
+
+class FeedPhase(BaseModel):
+    assets: List[AssetRead]
+    total: int  # -1 sentinel
+    has_more: bool
+
+class FeedCountPhase(BaseModel):
+    total: int
+    has_more: bool
+
 class FeedAssetsResponse(BaseModel):
-    """Response for the feed assets endpoint"""
     assets: List[AssetRead]
     total: int
     has_more: bool
 
 
-@router.get("/infospaces/{infospace_id}/tree/feed", response_model=FeedAssetsResponse)
-def get_feed_assets(
-    *,
-    infospace_id: int,
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-    kinds: List[str] = Query(None, description="Filter by asset kinds"),
-    sort_by: str = Query("updated_at", description="Sort field: created_at, updated_at, name"),
-    sort_order: str = Query("desc", description="Sort order: asc, desc"),
-    bundle_id: Optional[int] = Query(None, description="Filter to assets in this bundle (for Bundle detail)"),
-    path_filter: Optional[str] = Query(None, description="Filter by logical_path prefix (for virtual folder)"),
-    access: Access = ViewAccess,
-    db: Session = dependency_injection.Depends(dependency_injection.get_db),
-) -> Any:
-    """
-    Get a feed of recent assets sorted by date.
-    Scope-aware: package token access restricts to scoped bundles.
-    """
-    scope = access.scope
-
-    # Base query: assets in this infospace, no parent asset
+def _build_feed_queries(db, infospace_id, scope, access, bundle_id, path_filter, kinds, sort_by, sort_order, skip, limit):
+    """Build the main query and count query for feed. Returns (query, count_query)."""
     query = (
         select(Asset)
         .where(Asset.infospace_id == infospace_id)
@@ -549,68 +575,100 @@ def get_feed_assets(
         .where(Asset.parent_asset_id.is_(None))
     )
 
-    # Scope filtering: restrict to scoped bundles if package token access
     if scope and scope.bundle_ids:
         bids = list(scope.bundle_ids)
         query = query.where(text("bundle_ids && CAST(:s AS int[])").bindparams(s=bids))
         count_query = count_query.where(text("bundle_ids && CAST(:s AS int[])").bindparams(s=bids))
 
     if bundle_id is not None:
-        # Verify bundle is accessible (exists + in scope if scoped)
         bundle = db.get(Bundle, bundle_id)
         if not bundle or bundle.infospace_id != infospace_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Bundle {bundle_id} not found"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Bundle {bundle_id} not found")
         if scope and scope.bundle_ids and bundle_id not in scope.bundle_ids:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
         bundle_cond = text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id)
         query = query.where(bundle_cond)
         count_query = count_query.where(bundle_cond)
         if path_filter:
-            # logical_path LIKE 'path_prefix%' (path_prefix can be "politics/eu/" or "politics/eu")
             like_prefix = f"{path_filter}%" if path_filter else "%"
             path_cond = (Asset.logical_path.is_not(None)) & (Asset.logical_path.like(like_prefix))
             query = query.where(path_cond)
             count_query = count_query.where(path_cond)
-    elif not scope:
-        # No bundle filter and no scope — show user's unscoped assets
-        if access.user_id:
-            query = query.where(Asset.user_id == access.user_id)
-            count_query = count_query.where(Asset.user_id == access.user_id)
-    
-    # Filter by kinds if specified
+    # No extra filter needed — infospace_id constraint is the data boundary,
+    # access was already validated by Requires(). All collaborators see all assets.
+
     if kinds:
         query = query.where(Asset.kind.in_(kinds))
         count_query = count_query.where(Asset.kind.in_(kinds))
-    total = db.exec(count_query).one() or 0
-    
-    # Apply sorting
+
     if sort_by == "created_at":
         order_col = Asset.created_at
     elif sort_by == "name":
         order_col = Asset.title
     else:
         order_col = Asset.updated_at
-    
+
     if sort_order == "asc":
         query = query.order_by(order_col.asc())
     else:
         query = query.order_by(order_col.desc())
-    
-    # Apply pagination
+
     query = query.offset(skip).limit(limit)
-    
-    assets = db.exec(query).all()
-    
-    logger.info(f"Feed: returned {len(assets)} assets (total: {total}) for infospace {infospace_id}")
-    
-    return FeedAssetsResponse(
-        assets=[AssetRead.model_validate(a) for a in assets],
-        total=total,
-        has_more=(skip + len(assets)) < total
+    return query, count_query
+
+
+@router.get(
+    "/infospaces/{infospace_id}/tree/feed",
+    response_class=EventSourceResponse,
+    response_model=FeedAssetsResponse,
+    responses={200: {"content": {"text/event-stream": {}}}},
+)
+async def get_feed_assets(
+    *,
+    infospace_id: int,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    kinds: List[str] = Query(None, description="Filter by asset kinds"),
+    sort_by: str = Query("updated_at", description="Sort field: created_at, updated_at, name"),
+    sort_order: str = Query("desc", description="Sort order: asc, desc"),
+    bundle_id: Optional[int] = Query(None, description="Filter to assets in this bundle (for Bundle detail)"),
+    path_filter: Optional[str] = Query(None, description="Filter by logical_path prefix (for virtual folder)"),
+    access: Access = ViewAccess,
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+):
+    """
+    Get a feed of recent assets sorted by date.
+
+    Native SSE — assets stream first, count arrives later.
+    Keepalive pings survive nginx proxy_read_timeout.
+    """
+    scope = access.scope
+    query, count_query = _build_feed_queries(
+        db, infospace_id, scope, access, bundle_id, path_filter, kinds, sort_by, sort_order, skip, limit,
     )
+
+    try:
+        assets = list(await asyncio.to_thread(lambda: db.exec(query).all()))
+        asset_reads = [AssetRead.model_validate(a) for a in assets]
+    except Exception as e:
+        logger.exception("Feed query error")
+        yield ServerSentEvent(data=SSEError(detail=str(e)), event="error")
+        return
+
+    yield ServerSentEvent(
+        data=FeedPhase(assets=asset_reads, total=-1, has_more=False),
+        event="feed",
+    )
+
+    try:
+        total = await asyncio.to_thread(lambda: db.exec(count_query).one() or 0)
+        yield ServerSentEvent(
+            data=FeedCountPhase(total=total, has_more=(skip + len(assets)) < total),
+            event="count",
+        )
+    except Exception as e:
+        logger.exception("Feed count error")
+        yield ServerSentEvent(data=SSEError(detail=str(e)), event="error")
 
 
 class BatchGetAssetsRequest(BaseModel):

@@ -663,7 +663,6 @@ async def _navigate_tree_root(services: Dict, ctx: Context) -> ToolResult:
         select(Asset)
         .where(Asset.infospace_id == services["infospace_id"])
         .where(Asset.parent_asset_id.is_(None))
-        .where(Asset.user_id == services["user_id"])
         .order_by(Asset.updated_at.desc())
     )
     

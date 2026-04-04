@@ -24,7 +24,7 @@ function csvRowPreviewFromItem(item: CsvRowListItem, maxLen = 220): string {
 interface AssetDetailViewCsvProps {
   asset: AssetRead;
   items: CsvRowListItem[];
-  total: number;
+  total: number | null;
   hasMore: boolean;
   isLoading: boolean;
   childrenError: string | null;
@@ -291,7 +291,7 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
                   {isLoading ? (
                     <><Loader2 className="h-3 w-3 animate-spin mr-1" /> Loading...</>
                   ) : (
-                    `Load more (showing ${items.length} of ${total})`
+                    `Load more (showing ${items.length}${total != null ? ` of ${total}` : ''})`
                   )}
                 </Button>
               </td>
@@ -472,11 +472,13 @@ const AssetDetailViewCsv: React.FC<AssetDetailViewCsvProps> = ({
                 className="h-9 bg-background pl-8 shadow-none focus-visible:ring-0"
               />
             </div>
-            {total > 0 && (
+            {(total == null || total > 0) && (
               <div className="mt-1 text-xs text-muted-foreground px-1">
-                {rowListSearchTerm.trim()
-                  ? `${total} result${total !== 1 ? 's' : ''} found`
-                  : `${items.length} of ${total} rows loaded`}
+                {total == null
+                  ? `${items.length} rows loaded...`
+                  : rowListSearchTerm.trim()
+                    ? `${total} result${total !== 1 ? 's' : ''} found`
+                    : `${items.length} of ${total} rows loaded`}
               </div>
             )}
             {renderRowListTable()}

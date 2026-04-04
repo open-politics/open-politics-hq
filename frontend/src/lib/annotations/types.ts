@@ -246,14 +246,17 @@ export interface GraphFieldConfig {
     typeDescription?: string;  // Natural language guidance on how to categorize entities
     typeConstrained?: boolean;  // Whether to enforce enum or allow free-form types
     typeColors?: Record<string, string>;  // Custom hex colors per entity type (e.g., { "PERSON": "#3B82F6" })
+    typeIcons?: Record<string, string>;  // HeroIcon names per entity type (e.g., { "PERSON": "UserIcon" })
   };
-  
+
   // Relationship/predicate configuration
   relationshipSchema: {
     predicateEnum?: string[];  // Allowed predicates (e.g., ['works_for', 'located_in', 'met_with'])
     predicateDescription?: string;  // Natural language guidance on how to define relationships
     predicateConstrained?: boolean;  // Whether to enforce enum or allow free-form predicates
     predicateColors?: Record<string, string>;  // Custom hex colors per predicate (e.g., { "works_for": "#6366F1" })
+    predicateIcons?: Record<string, string>;  // HeroIcon names per predicate (e.g., { "works_for": "BriefcaseIcon" })
+    predicateArrows?: Record<string, 'forward' | 'backward' | 'both' | 'none'>;  // Arrow direction per predicate
     optionalFields: AdvancedSchemeField[];  // Additional triplet fields (e.g., context, confidence)
   };
   

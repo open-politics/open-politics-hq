@@ -21,6 +21,12 @@ from app.api.modules.identity_infospace_user.schemas import (
     UserProfileUpdate,
     UserProfileStats,
     UserUIPreferences,
+    HandleUpdate,
+    HandleCheck,
+    UserSearchResult,
+    InvitationCreate,
+    InvitationOut,
+    CollaboratorOut,
     InfospaceBase,
     InfospaceCreate,
     InfospaceRead,
@@ -40,7 +46,7 @@ from typing import Any, Dict, List, Optional, Literal, Union, Set
 from dataclasses import dataclass
 
 from sqlmodel import SQLModel, Field
-from pydantic import computed_field, ConfigDict, field_validator
+from pydantic import BaseModel, computed_field, ConfigDict, field_validator
 
 from .models import (
     AssetKind,
@@ -56,6 +62,12 @@ from .models import (
     Modality,
     ProcessingStatus,
 )
+
+# ─────────────────────────────────────────────── SSE ──── #
+
+class SSEError(BaseModel):
+    """Error payload for SSE streaming endpoints."""
+    detail: str
 
 # ────────────────────────────────────────────── User & Auth ──── #
 
@@ -308,6 +320,13 @@ class AssetRead(AssetBase):
     processing_status: ProcessingStatus = ProcessingStatus.READY
     processing_error: Optional[str] = None
     tags: List[str] = []
+    enrichment_resolved: Optional[List[str]] = None
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _coerce_tags(cls, v):
+        return v if v is not None else []
+    discovered_modalities: Optional[List[str]] = None
 
     # Helper flags
     @computed_field  # type: ignore[misc]

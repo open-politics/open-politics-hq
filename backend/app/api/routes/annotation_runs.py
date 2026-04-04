@@ -1,9 +1,13 @@
 """Routes for annotation runs."""
+import asyncio
 import logging
-from typing import Any, Optional, Dict
+from typing import Any, AsyncIterable, Optional, Dict, Union
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
+from fastapi.sse import ServerSentEvent
+from app.core.sse import SSEResponse
+from pydantic import BaseModel
 import csv
 import io
 
@@ -22,6 +26,7 @@ from app.schemas import (
     Message,
     PackageRead,
     CreatePackageFromRunRequest,
+    SSEError,
 )
 from app.api.dependency_injection import (
     SessionDep,
@@ -47,7 +52,7 @@ router = APIRouter(
 @router.post("/", response_model=AnnotationRunRead, status_code=status.HTTP_201_CREATED)
 def create_run(
     *,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
     run_in: AnnotationRunCreate,
     session: SessionDep,
     annotation_service: AnnotationService = Depends(get_annotation_service)
@@ -73,73 +78,123 @@ def create_run(
         logger.exception(f"Route: Unexpected error creating run: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
-@router.get("", response_model=AnnotationRunsOut)
-@router.get("/", response_model=AnnotationRunsOut)
-def list_runs(
+# ─── SSE phase models for run list ───
+
+class RunsPhase(BaseModel):
+    data: list[AnnotationRunRead]
+    count: int  # -1 = still counting
+
+class RunsCountPhase(BaseModel):
+    count: int
+
+
+def _wants_sse(request: Request) -> bool:
+    return "text/event-stream" in request.headers.get("accept", "")
+
+
+def _fetch_runs(session, access, infospace_id: int, skip: int, limit: int, include_counts: bool):
+    """Fetch runs + batch annotation counts. Returns (result_runs, counts_by_run)."""
+    query = (
+        select(AnnotationRun)
+        .where(AnnotationRun.infospace_id == infospace_id)
+    )
+    query = access.scope_filter(query, AnnotationRun.id, "run_ids")
+    query = query.offset(skip).limit(limit)
+    runs = list(session.exec(query).all())
+
+    # Batch annotation counts via GROUP BY (replaces N+1 per-run COUNT)
+    run_ids = [r.id for r in runs]
+    counts_by_run: dict[int, int] = {}
+    if include_counts and run_ids:
+        count_rows = session.exec(
+            select(Annotation.run_id, func.count(Annotation.id))
+            .where(Annotation.run_id.in_(run_ids))
+            .group_by(Annotation.run_id)
+        ).all()
+        counts_by_run = dict(count_rows)
+
+    result_runs = []
+    for run in runs:
+        run_read = AnnotationRunRead.model_validate(run.model_dump(exclude_none=False))
+        run_read.schema_ids = [s.id for s in run.target_schemas] if run.target_schemas else []
+        if include_counts:
+            run_read.annotation_count = counts_by_run.get(run.id, 0)
+        result_runs.append(run_read)
+
+    return result_runs
+
+
+@router.get(
+    "",
+    response_model=AnnotationRunsOut,
+    responses={200: {"content": {"text/event-stream": {}}}},
+)
+@router.get(
+    "/",
+    response_model=AnnotationRunsOut,
+    responses={200: {"content": {"text/event-stream": {}}}},
+)
+async def list_runs(
     *,
-    access: Access = Requires(),
+    request: Request,
+    access: Access = Requires(scope=None),
     skip: int = 0,
     limit: int = 100,
     include_counts: bool = Query(True, description="Include counts of annotations and assets"),
     session: SessionDep,
-) -> Any:
+):
     """
     Retrieve Runs for the infospace.
+
+    JSON by default. SSE (Accept: text/event-stream) delivers runs fast
+    with annotation counts, then streams total count later.
     """
-    try:
-        infospace_id = access.infospace_id
-        # Build query for runs
-        query = (
-            select(AnnotationRun)
-            .where(AnnotationRun.infospace_id == infospace_id)
+    infospace_id = access.infospace_id
+
+    if not _wants_sse(request):
+        # JSON path: fetch everything, return merged response
+        result_runs = await asyncio.to_thread(
+            _fetch_runs, session, access, infospace_id, skip, limit, include_counts,
         )
-        query = access.scope_filter(query, AnnotationRun.id, "run_ids")
-        query = query.offset(skip).limit(limit)
-        
-        # Execute query
-        runs = session.exec(query).all()
-        
-        # Get total count
         count_query = select(func.count(AnnotationRun.id)).where(
             AnnotationRun.infospace_id == infospace_id
         )
         count_query = access.scope_filter(count_query, AnnotationRun.id, "run_ids")
-        total_count = session.exec(count_query).one()
-        
-        # Convert to read models and add counts if requested
-        result_runs = []
-        for run in runs:
-            run_read = AnnotationRunRead.model_validate(run.model_dump(exclude_none=False))
-            
-            # Populate schema_ids from target_schemas relationship
-            run_read.schema_ids = [schema.id for schema in run.target_schemas] if run.target_schemas else []
-            
-            # Add counts if requested
-            if include_counts:
-                # Count annotations for this run
-                annotations_count_query = select(func.count(Annotation.id)).where(
-                    Annotation.run_id == run.id
-                )
-                run_read.annotation_count = session.exec(annotations_count_query).one() or 0
-            
-            result_runs.append(run_read)
-            
+        total_count = await asyncio.to_thread(lambda: session.exec(count_query).one())
         return AnnotationRunsOut(data=result_runs, count=total_count)
-    
-    except ValueError as ve:
-        # Should not happen if validation is correct
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve))
-    except HTTPException as he:
-        # Re-raise HTTP exceptions
-        raise he
-    except Exception as e:
-        logger.exception(f"Route: Error listing runs: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+    # SSE path: runs fast, count deferred
+    async def generate():
+        try:
+            result_runs = await asyncio.to_thread(
+                _fetch_runs, session, access, infospace_id, skip, limit, include_counts,
+            )
+            yield ServerSentEvent(
+                data=RunsPhase(data=result_runs, count=-1).model_dump_json(),
+                event="runs",
+            )
+
+            count_query = select(func.count(AnnotationRun.id)).where(
+                AnnotationRun.infospace_id == infospace_id
+            )
+            count_query = access.scope_filter(count_query, AnnotationRun.id, "run_ids")
+            total_count = await asyncio.to_thread(
+                lambda: session.exec(count_query).one()
+            )
+            yield ServerSentEvent(
+                data=RunsCountPhase(count=total_count).model_dump_json(),
+                event="count",
+            )
+        except Exception as e:
+            logger.exception("SSE list_runs error")
+            yield ServerSentEvent(data=SSEError(detail=str(e)).model_dump_json(), event="error")
+
+    return SSEResponse(generate())
 
 @router.get("/{run_id}", response_model=AnnotationRunRead)
 def get_run(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     run_id: int,
     include_counts: bool = Query(True, description="Include counts of annotations and assets"),
     session: SessionDep,
@@ -195,7 +250,7 @@ def get_run(
 @router.patch("/{run_id}", response_model=AnnotationRunRead)
 def update_run(
     *,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
     run_id: int,
     run_in: AnnotationRunUpdate,
     session: SessionDep,
@@ -268,7 +323,7 @@ def update_run(
 @router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_run(
     *,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     run_id: int,
     session: SessionDep,
 ) -> None:
@@ -321,7 +376,7 @@ def delete_run(
 @router.post("/{run_id}/retry_failures", response_model=Message, status_code=status.HTTP_202_ACCEPTED)
 def retry_failed_annotations(
     *,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
     run_id: int,
     session: SessionDep,
     service: AnnotationService = Depends(get_annotation_service),
@@ -371,7 +426,7 @@ def retry_failed_annotations(
 @router.post("/{run_id}/create_package", response_model=PackageRead, status_code=status.HTTP_201_CREATED)
 async def create_package_from_run_endpoint(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     run_id: int,
     request_data: CreatePackageFromRunRequest,
     session: SessionDep,
@@ -407,38 +462,13 @@ async def create_package_from_run_endpoint(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error while creating package from run")
 
 
-def _flatten_dict(d: Dict[str, Any], parent_key: str = '', sep: str = '.') -> Dict[str, Any]:
-    """
-    Flatten nested dict into dot-notation keys for CSV export.
-    
-    Examples:
-        {"name": "John", "address": {"city": "NYC"}} 
-        -> {"name": "John", "address.city": "NYC"}
-        
-        {"tags": ["a", "b"]} -> {"tags": "a|b"}
-        {"items": [{"id": 1}, {"id": 2}]} -> {"items[0].id": 1, "items[1].id": 2}
-    """
-    items = []
-    for k, v in d.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict):
-            items.extend(_flatten_dict(v, new_key, sep=sep).items())
-        elif isinstance(v, list):
-            # Handle lists by indexing if they contain dicts, otherwise join
-            if v and isinstance(v[0], dict):
-                for i, item in enumerate(v):
-                    items.extend(_flatten_dict(item, f"{new_key}[{i}]", sep=sep).items())
-            else:
-                items.append((new_key, "|".join(map(str, v))))
-        else:
-            items.append((new_key, v))
-    return dict(items)
+from app.api.modules.sharing.csv_writers import flatten_dict as _flatten_dict
 
 
 @router.get("/{run_id}/export/csv")
 def export_run_annotations_csv(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     run_id: int,
     session: SessionDep,
     annotation_service: AnnotationService = Depends(get_annotation_service),

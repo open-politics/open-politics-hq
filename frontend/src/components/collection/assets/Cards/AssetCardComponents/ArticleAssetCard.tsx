@@ -122,6 +122,8 @@ export function ArticleAssetCard({
   showMeta = true,
   className,
   fetchBlobUrl,
+  isFavorited,
+  onToggleFavorite,
 }: ArticleAssetCardProps) {
   // Check metadata image synchronously (no loading state needed)
   const metadataImage = getMetadataImage(asset);
@@ -193,6 +195,8 @@ export function ArticleAssetCard({
         size={size}
         orientation="horizontal"
         className={className}
+        isFavorited={isFavorited}
+        onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(asset) : undefined}
       >
         {/* Image/Fallback section - left side */}
         <div className={cn(
@@ -306,6 +310,8 @@ export function ArticleAssetCard({
       size={size}
       orientation="vertical"
       className={className}
+      isFavorited={isFavorited}
+      onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(asset) : undefined}
     >
       <div className="flex flex-col h-full">
         {/* Featured Image or Text Hero Fallback */}

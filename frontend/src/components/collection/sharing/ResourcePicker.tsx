@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { FolderOpen, Microscope, Network, Play } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { FileText, FolderOpen, Microscope, Network, Play } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from '@/components/ui/dialog';
@@ -12,11 +12,12 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 import {
-  BundlesService, AnnotationSchemasService, RunsService,
+  AnnotationSchemasService, RunsService,
   KnowledgeGraphsService,
 } from '@/client';
 import { usePackageStore } from '@/zustand_stores/storePackages';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
+import AssetSelector, { type AssetTreeItem } from '@/components/collection/assets/AssetSelector';
 
 type ResourceEntry = { id: number; name: string; type: string };
 
@@ -30,11 +31,11 @@ export default function ResourcePicker({ open, onOpenChange, packageId }: Props)
   const { addItem } = usePackageStore();
   const infospaceId = useInfospaceStore((s) => s.activeInfospace?.id);
 
-  const [bundles, setBundles] = useState<ResourceEntry[]>([]);
   const [runs, setRuns] = useState<ResourceEntry[]>([]);
   const [schemas, setSchemas] = useState<ResourceEntry[]>([]);
   const [graphs, setGraphs] = useState<ResourceEntry[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [assetSelection, setAssetSelection] = useState<Set<string>>(new Set());
   const [allowDownload, setAllowDownload] = useState<string>('inherit');
   const [allowCopy, setAllowCopy] = useState<string>('inherit');
   const [isLoading, setIsLoading] = useState(false);
@@ -42,21 +43,17 @@ export default function ResourcePicker({ open, onOpenChange, packageId }: Props)
   useEffect(() => {
     if (!open || !infospaceId) return;
     setSelected(new Set());
+    setAssetSelection(new Set());
 
     const load = async () => {
       setIsLoading(true);
       try {
-        const [bundleRes, runRes, schemaRes, graphRes] = await Promise.allSettled([
-          BundlesService.getBundles({ infospaceId }),
+        const [runRes, schemaRes, graphRes] = await Promise.allSettled([
           RunsService.listRuns({ infospaceId }),
           AnnotationSchemasService.listAnnotationSchemas({ infospaceId }),
           KnowledgeGraphsService.listKnowledgeGraphs({ infospaceId }),
         ]);
 
-        if (bundleRes.status === 'fulfilled') {
-          const data = bundleRes.value as any[];
-          setBundles(data.map((b: any) => ({ id: b.id, name: b.name, type: 'bundle' })));
-        }
         if (runRes.status === 'fulfilled') {
           const result = runRes.value as any;
           const data = Array.isArray(result) ? result : result.data ?? [];
@@ -87,14 +84,16 @@ export default function ResourcePicker({ open, onOpenChange, packageId }: Props)
     });
   };
 
+  const totalSelected = selected.size + assetSelection.size;
+
   const handleAdd = async () => {
+    // Add resource-tab items (runs, schemas, graphs)
     for (const key of selected) {
       const [type, idStr] = key.split(':');
       const id = parseInt(idStr, 10);
       const itemData: Record<string, any> = {};
 
-      if (type === 'bundle') itemData.bundle_id = id;
-      else if (type === 'run') itemData.run_id = id;
+      if (type === 'run') itemData.run_id = id;
       else if (type === 'schema') itemData.schema_id = id;
       else if (type === 'graph') itemData.graph_id = id;
 
@@ -103,6 +102,25 @@ export default function ResourcePicker({ open, onOpenChange, packageId }: Props)
 
       await addItem(packageId, itemData);
     }
+
+    // Add asset-tab items (bundles and individual assets from AssetSelector)
+    for (const itemId of assetSelection) {
+      const itemData: Record<string, any> = {};
+
+      if (itemId.startsWith('bundle-')) {
+        itemData.bundle_id = parseInt(itemId.replace('bundle-', ''), 10);
+      } else if (itemId.startsWith('asset-') || itemId.startsWith('child-')) {
+        itemData.asset_id = parseInt(itemId.replace(/^(asset-|child-)/, ''), 10);
+      } else {
+        continue;
+      }
+
+      if (allowDownload !== 'inherit') itemData.allow_download = allowDownload === 'yes';
+      if (allowCopy !== 'inherit') itemData.allow_copy = allowCopy === 'yes';
+
+      await addItem(packageId, itemData);
+    }
+
     onOpenChange(false);
   };
 
@@ -136,23 +154,31 @@ export default function ResourcePicker({ open, onOpenChange, packageId }: Props)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl max-h-[85vh]">
         <DialogHeader>
           <DialogTitle>Add Items to Package</DialogTitle>
-          <DialogDescription>Select resources to include in this package.</DialogDescription>
+          <DialogDescription>Select bundles, assets, or other resources to include.</DialogDescription>
         </DialogHeader>
 
         {isLoading ? (
           <div className="text-sm text-muted-foreground p-4 text-center">Loading resources...</div>
         ) : (
-          <Tabs defaultValue="bundles">
+          <Tabs defaultValue="assets">
             <TabsList className="grid grid-cols-4 w-full">
-              <TabsTrigger value="bundles">Bundles</TabsTrigger>
+              <TabsTrigger value="assets">Assets</TabsTrigger>
               <TabsTrigger value="runs">Runs</TabsTrigger>
               <TabsTrigger value="schemas">Schemas</TabsTrigger>
               <TabsTrigger value="graphs">Graphs</TabsTrigger>
             </TabsList>
-            <TabsContent value="bundles">{renderList(bundles, FolderOpen)}</TabsContent>
+            <TabsContent value="assets">
+              <div className="h-72">
+                <AssetSelector
+                  selectedItems={assetSelection}
+                  onSelectionChange={setAssetSelection}
+                  compact
+                />
+              </div>
+            </TabsContent>
             <TabsContent value="runs">{renderList(runs, Play)}</TabsContent>
             <TabsContent value="schemas">{renderList(schemas, Microscope)}</TabsContent>
             <TabsContent value="graphs">{renderList(graphs, Network)}</TabsContent>
@@ -188,8 +214,8 @@ export default function ResourcePicker({ open, onOpenChange, packageId }: Props)
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleAdd} disabled={selected.size === 0}>
-            Add {selected.size} item{selected.size !== 1 ? 's' : ''}
+          <Button onClick={handleAdd} disabled={totalSelected === 0}>
+            Add {totalSelected} item{totalSelected !== 1 ? 's' : ''}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -38,7 +38,7 @@ def create_dataset(
     *,
     dataset_in: DatasetCreate,
     service: DatasetServiceDep,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
 ) -> DatasetRead:
     """
     Create a new dataset within a specific infospace.
@@ -67,7 +67,7 @@ def list_datasets(
     skip: int = 0,
     limit: int = Query(default=100, le=200),
     service: DatasetServiceDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> DatasetsOut:
     """
     Retrieve datasets within a specific infospace.
@@ -97,7 +97,7 @@ def get_dataset(
     *,
     dataset_id: int,
     service: DatasetServiceDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> DatasetRead:
     """
     Get a specific dataset by ID.
@@ -129,7 +129,7 @@ def update_dataset(
     dataset_id: int,
     dataset_in: DatasetUpdate,
     service: DatasetServiceDep,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
 ) -> DatasetRead:
     """
     Update a dataset.
@@ -160,7 +160,7 @@ def delete_dataset(
     *,
     dataset_id: int,
     service: DatasetServiceDep,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
 ) -> Message:
     """
     Delete a dataset.
@@ -186,11 +186,11 @@ def delete_dataset(
 
 
 # --- NEW EXPORT ENDPOINT ---
-@router.post("/{dataset_id}/export", response_class=FileResponse)
+@router.post("/{dataset_id}/export", response_class=FileResponse, status_code=200)
 async def export_dataset(
     *,
     dataset_id: int,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     include_content: bool = Query(False, description="Include full text content of data records"),
     include_results: bool = Query(False, description="Include associated classification results"),
     include_source_files: bool = Query(True, description="Include original source files (PDFs, CSVs, etc.)"),
@@ -249,7 +249,7 @@ async def import_dataset(
     file: UploadFile = File(..., description="Dataset Package file (.zip)"),
     conflict_strategy: str = Query('skip', description="How to handle conflicts"),
     service: DatasetServiceDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
 ) -> DatasetRead:
     """
     Import a dataset from an exported Dataset Package file.
@@ -286,7 +286,7 @@ async def import_dataset(
 async def import_dataset_from_token(
     *,
     share_token: str = Query(..., description="Share token for the dataset"),
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     include_content: bool = Query(False, description="Include full text content if available"),
     include_results: bool = Query(False, description="Include classification results if available"),
     conflict_strategy: str = Query('skip', description="How to handle conflicts"),

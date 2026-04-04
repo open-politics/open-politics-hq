@@ -4,7 +4,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 
-from app.models import EntityCanonical, EntityEditLog, FragmentCuration, KnowledgeGraph
+from app.models import EntityCanonical, EntityEditLog, FragmentCuration, GraphEdge, KnowledgeGraph
 from app.api.modules.graph.schemas import (
     EntityCanonicalRead,
     EntityCanonicalCreate,
@@ -33,7 +33,7 @@ router = APIRouter(
 @router.get("", response_model=List[EntityCanonicalRead])
 def list_entities(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     entity_type: Optional[str] = None,
     db: Session = Depends(get_db)
 ) -> Any:
@@ -54,7 +54,7 @@ def list_entities(
 @router.post("", response_model=EntityCanonicalRead, status_code=status.HTTP_201_CREATED)
 async def create_entity(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     entity_in: EntityCanonicalCreate,
     db: Session = Depends(get_db)
 ) -> Any:
@@ -125,7 +125,7 @@ async def create_entity(
 @router.put("/{entity_id}", response_model=EntityCanonicalRead)
 def update_entity(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     entity_id: int,
     entity_in: EntityCanonicalUpdate,
     db: Session = Depends(get_db)
@@ -168,13 +168,23 @@ def update_entity(
     db.commit()
     db.refresh(entity)
 
+    # Presence: notify watching graph panels of the edit
+    if entity.graph_id:
+        from app.core.stream import stream_key, StreamWriter
+        StreamWriter(stream_key(infospace_id, "knowledge_graph", entity.graph_id)).send(
+            "entity_updated", {
+                "entity_id": entity.id,
+                "canonical_name": entity.canonical_name,
+                "graph_id": entity.graph_id,
+            })
+
     return entity
 
 
 @router.delete("/{entity_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_entity(
     *,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     entity_id: int,
     db: Session = Depends(get_db)
 ) -> None:
@@ -200,7 +210,7 @@ def delete_entity(
 @router.post("/merge", response_model=EntityCanonicalRead)
 async def merge_entities(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     merge_request: MergeEntitiesRequest,
     db: Session = Depends(get_db)
 ) -> Any:
@@ -316,13 +326,25 @@ async def merge_entities(
         db.add(log)
     db.commit()
     db.refresh(keep_entity)
+
+    # Presence: notify watching graph panels of the merge
+    if keep_entity.graph_id:
+        from app.core.stream import stream_key, StreamWriter
+        StreamWriter(stream_key(infospace_id, "knowledge_graph", keep_entity.graph_id)).send(
+            "entity_merged", {
+                "canonical_id": keep_entity.id,
+                "canonical_name": keep_entity.canonical_name,
+                "merged_ids": list(merged_ids),
+                "graph_id": keep_entity.graph_id,
+            })
+
     return keep_entity
 
 
 @router.post("/resolve")
 async def trigger_resolution(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     resolve_request: ResolveEntitiesRequest,
     db: Session = Depends(get_db)
 ) -> Any:
@@ -365,7 +387,7 @@ async def trigger_resolution(
 @router.post("/find-duplicates")
 async def find_entity_duplicates(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     request: FindDuplicatesRequest,
     db: Session = Depends(get_db),
 ) -> FindDuplicatesResponse:
@@ -424,7 +446,7 @@ async def find_entity_duplicates(
 @router.get("/{entity_id}/neighborhood")
 def get_entity_neighborhood(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     entity_id: int,
     depth: int = Query(default=1, ge=1, le=3),
     limit: int = Query(default=50, ge=1, le=500),

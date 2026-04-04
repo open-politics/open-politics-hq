@@ -97,36 +97,59 @@ class InfospaceService:
         infospace = self.session.get(Infospace, infospace_id)
         return infospace
 
-    def list_infospaces( # Renamed from get_user_infospaces for consistency
+    def list_infospaces(
         self,
         user_id: int,
         skip: int = 0,
         limit: int = 100
-    ) -> Tuple[List[Infospace], int]:
-        """Get all infospaces for a user (owned or collaborated)."""
+    ) -> Tuple[List[Tuple[Infospace, str, bool]], int]:
+        """Get all infospaces for a user (owned or collaborated) with role context.
+
+        Returns:
+            ([(infospace, role_str, is_owner), ...], total_count)
+        """
         logger.debug(f"Service: Listing infospaces for user {user_id}")
-        # Infospaces where user is owner OR collaborator
-        collab_infospace_ids = select(InfospaceCollaborator.infospace_id).where(
-            InfospaceCollaborator.user_id == user_id
+
+        # Single LEFT JOIN — owned infospaces have NULL collab row, collaborated have one.
+        _filter = (
+            (Infospace.owner_id == user_id)
+            | (InfospaceCollaborator.id.isnot(None))
         )
         statement = (
-            select(Infospace)
-            .where(
-                (Infospace.owner_id == user_id) | (Infospace.id.in_(collab_infospace_ids))
+            select(Infospace, InfospaceCollaborator.role)
+            .outerjoin(
+                InfospaceCollaborator,
+                (InfospaceCollaborator.infospace_id == Infospace.id)
+                & (InfospaceCollaborator.user_id == user_id),
             )
+            .where(_filter)
             .offset(skip)
             .limit(limit)
             .order_by(Infospace.name)
         )
-        infospaces = list(self.session.exec(statement).all())
+        rows = list(self.session.exec(statement).all())
 
-        count_statement = select(func.count(Infospace.id)).where(
-            (Infospace.owner_id == user_id) | (Infospace.id.in_(collab_infospace_ids))
+        results: List[Tuple[Infospace, str, bool]] = []
+        for infospace, collab_role in rows:
+            is_owner = infospace.owner_id == user_id
+            role = "owner" if is_owner else (
+                collab_role.value if hasattr(collab_role, "value") else collab_role
+            )
+            results.append((infospace, role, is_owner))
+
+        count_statement = (
+            select(func.count(Infospace.id))
+            .outerjoin(
+                InfospaceCollaborator,
+                (InfospaceCollaborator.infospace_id == Infospace.id)
+                & (InfospaceCollaborator.user_id == user_id),
+            )
+            .where(_filter)
         )
         total_count = self.session.exec(count_statement).one_or_none() or 0
 
-        logger.debug(f"Service: Found {len(infospaces)} infospaces (total {total_count}) for user {user_id}.")
-        return infospaces, total_count
+        logger.debug(f"Service: Found {len(results)} infospaces (total {total_count}) for user {user_id}.")
+        return results, total_count
 
     def update_infospace(
         self,
@@ -503,6 +526,56 @@ class InfospaceService:
                 raise ValueError("Only owner or editor can remove collaborators")
             if collab.role.value != "viewer":
                 raise ValueError("Editors can only remove viewers")
+        self.session.delete(collab)
+        self.session.commit()
+        return True
+
+    def change_collaborator_role(
+        self,
+        infospace_id: int,
+        changer_user_id: int,
+        target_user_id: int,
+        new_role: CollaboratorRole,
+    ) -> InfospaceCollaborator:
+        """Change a collaborator's role. Only owner/setup capability can do this."""
+        infospace = self.get_infospace(infospace_id, changer_user_id)
+        if not infospace:
+            raise ValueError("Infospace not found")
+        if target_user_id == infospace.owner_id:
+            raise ValueError("Cannot change the owner's role")
+        collab = self.session.exec(
+            select(InfospaceCollaborator).where(
+                InfospaceCollaborator.infospace_id == infospace_id,
+                InfospaceCollaborator.user_id == target_user_id,
+            )
+        ).first()
+        if not collab:
+            raise ValueError("User is not a collaborator")
+        collab.role = new_role
+        self.session.add(collab)
+        self.session.commit()
+        self.session.refresh(collab)
+        return collab
+
+    def leave_infospace(
+        self,
+        infospace_id: int,
+        user_id: int,
+    ) -> bool:
+        """Self-removal from an infospace. Owner cannot leave."""
+        infospace = self.get_infospace(infospace_id, user_id)
+        if not infospace:
+            raise ValueError("Infospace not found")
+        if user_id == infospace.owner_id:
+            raise ValueError("Owner cannot leave the infospace. Transfer ownership or delete it instead.")
+        collab = self.session.exec(
+            select(InfospaceCollaborator).where(
+                InfospaceCollaborator.infospace_id == infospace_id,
+                InfospaceCollaborator.user_id == user_id,
+            )
+        ).first()
+        if not collab:
+            raise ValueError("You are not a collaborator of this infospace")
         self.session.delete(collab)
         self.session.commit()
         return True

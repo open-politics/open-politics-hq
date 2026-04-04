@@ -3,7 +3,7 @@
 import type { CancelablePromise } from './core/CancelablePromise';
 import { OpenAPI } from './core/OpenAPI';
 import { request as __request } from './core/request';
-import type { GetRegistrationStatsResponse, ListAnalysisAdaptersResponse, ExecuteAnalysisAdapterData, ExecuteAnalysisAdapterResponse, PromoteFragmentData, PromoteFragmentResponse, DeleteFragmentData, DeleteFragmentResponse2, CreateRunData, CreateRunResponse, ListRunsData, ListRunsResponse, CreateRun1Data, CreateRun1Response, ListRuns1Data, ListRuns1Response, GetRunData, GetRunResponse, UpdateRunData, UpdateRunResponse, DeleteRunData, DeleteRunResponse, RetryFailedAnnotationsData, RetryFailedAnnotationsResponse, CreatePackageFromRunEndpointData, CreatePackageFromRunEndpointResponse, ExportRunAnnotationsCsvData, ExportRunAnnotationsCsvResponse, CreateAnnotationData, CreateAnnotationResponse, CreateAnnotation1Data, CreateAnnotation1Response, ListAnnotationsData, ListAnnotationsResponse, ListAnnotations1Data, ListAnnotations1Response, CreateAnnotation2Data, CreateAnnotation2Response, CreateAnnotation3Data, CreateAnnotation3Response, ListAnnotations2Data, ListAnnotations2Response, ListAnnotations3Data, ListAnnotations3Response, GetAnnotationData, GetAnnotationResponse, GetAnnotation1Data, GetAnnotation1Response, UpdateAnnotationData, UpdateAnnotationResponse, UpdateAnnotation1Data, UpdateAnnotation1Response, DeleteAnnotationData, DeleteAnnotationResponse, DeleteAnnotation1Data, DeleteAnnotation1Response, CreateBatchAnnotationsData, CreateBatchAnnotationsResponse, CreateBatchAnnotations1Data, CreateBatchAnnotations1Response, GetRunResultsData, GetRunResultsResponse, GetRunResults1Data, GetRunResults1Response, RetrySingleAnnotationData, RetrySingleAnnotationResponse, RetrySingleAnnotation1Data, RetrySingleAnnotation1Response, CurateFragmentsData, CurateFragmentsResponse, CurateFragments1Data, CurateFragments1Response, RemoveCurationData, RemoveCurationResponse, RemoveCuration1Data, RemoveCuration1Response, GetCuratedTripletsData, GetCuratedTripletsResponse, GetCuratedTriplets1Data, GetCuratedTriplets1Response, CreateAnnotationSchemaData, CreateAnnotationSchemaResponse, ListAnnotationSchemasData, ListAnnotationSchemasResponse, CreateAnnotationSchema1Data, CreateAnnotationSchema1Response, ListAnnotationSchemas1Data, ListAnnotationSchemas1Response, GetAnnotationSchemaData, GetAnnotationSchemaResponse, UpdateAnnotationSchemaData, UpdateAnnotationSchemaResponse, DeleteAnnotationSchemaData, DeleteAnnotationSchemaResponse, RestoreAnnotationSchemaData, RestoreAnnotationSchemaResponse, ReadyzResponse, LivenessResponse, HealthzResponse, CreateAssetData, CreateAssetResponse, CreateAsset1Data, CreateAsset1Response, ListAssetsData, ListAssetsResponse, ListAssets1Data, ListAssets1Response, CreateAsset2Data, CreateAsset2Response, CreateAsset3Data, CreateAsset3Response, ListAssets2Data, ListAssets2Response, ListAssets3Data, ListAssets3Response, BatchCreateAssetsData, BatchCreateAssetsResponse, BatchCreateAssets1Data, BatchCreateAssets1Response, UploadFileData, UploadFileResponse, UploadFile1Data, UploadFile1Response, IngestUrlData, IngestUrlResponse, IngestUrl1Data, IngestUrl1Response, IngestTextData, IngestTextResponse, IngestText1Data, IngestText1Response, ComposeArticleData, ComposeArticleResponse, ComposeArticle1Data, ComposeArticle1Response, BulkIngestUrlsData, BulkIngestUrlsResponse, BulkIngestUrls1Data, BulkIngestUrls1Response, IngestSearchResultsData, IngestSearchResultsResponse, IngestSearchResults1Data, IngestSearchResults1Response, MaterializeCsvFromRowsData, MaterializeCsvFromRowsResponse, MaterializeCsvFromRows1Data, MaterializeCsvFromRows1Response, ReprocessAssetData, ReprocessAssetResponse, ReprocessAsset1Data, ReprocessAsset1Response, UpdateAssetContentData, UpdateAssetContentResponse, UpdateAssetContent1Data, UpdateAssetContent1Response, DiscoverRssFeedsData, DiscoverRssFeedsResponse, DiscoverRssFeeds1Data, DiscoverRssFeeds1Response, PreviewRssFeedData, PreviewRssFeedResponse, PreviewRssFeed1Data, PreviewRssFeed1Response, IngestSelectedArticlesData, IngestSelectedArticlesResponse, IngestSelectedArticles1Data, IngestSelectedArticles1Response, GetAssetData, GetAssetResponse, GetAsset1Data, GetAsset1Response, UpdateAssetData, UpdateAssetResponse, UpdateAsset1Data, UpdateAsset1Response, DeleteAssetData, DeleteAssetResponse, DeleteAsset1Data, DeleteAsset1Response, GetAssetChildrenData, GetAssetChildrenResponse, GetAssetChildren1Data, GetAssetChildren1Response, BulkDeleteAssetsData, BulkDeleteAssetsResponse, BulkDeleteAssets1Data, BulkDeleteAssets1Response, TransferAssetsData, TransferAssetsResponse, TransferAssets1Data, TransferAssets1Response, GetSupportedContentTypesResponse, GetSupportedContentTypes1Response, CreateAssetsBackgroundBulkData, CreateAssetsBackgroundBulkResponse, CreateAssetsBackgroundBulk1Data, CreateAssetsBackgroundBulk1Response, CreateAssetsBackgroundUrlsData, CreateAssetsBackgroundUrlsResponse, CreateAssetsBackgroundUrls1Data, CreateAssetsBackgroundUrls1Response, AddFilesToBundleBackgroundData, AddFilesToBundleBackgroundResponse, AddFilesToBundleBackground1Data, AddFilesToBundleBackground1Response, GetTaskStatusData, GetTaskStatusResponse, GetTaskStatus1Data, GetTaskStatus1Response, IngestRssFeedsFromAwesomeData, IngestRssFeedsFromAwesomeResponse, IngestRssFeedsFromAwesome1Data, IngestRssFeedsFromAwesome1Response, RetryAssetEnrichmentData, RetryAssetEnrichmentResponse, RetryAssetEnrichment1Data, RetryAssetEnrichment1Response, CreateBackupData, CreateBackupResponse, ListBackupsData, ListBackupsResponse, ListAllUserBackupsData, ListAllUserBackupsResponse, GetBackupData, GetBackupResponse, UpdateBackupData, UpdateBackupResponse, DeleteBackupData, DeleteBackupResponse, RestoreBackupData, RestoreBackupResponse, CreateBackupShareLinkData, CreateBackupShareLinkResponse, DownloadSharedBackupData, DownloadSharedBackupResponse, CleanupExpiredBackupsResponse, GetInfospacesBackupOverviewData, GetInfospacesBackupOverviewResponse, TriggerBackupAllInfospacesData, TriggerBackupAllInfospacesResponse, TriggerBackupSpecificInfospacesData, TriggerBackupSpecificInfospacesResponse, MaterializeVirtualFolderData, MaterializeVirtualFolderResponse, CreateBundleData, CreateBundleResponse, GetBundlesData, GetBundlesResponse, GetBundleData, GetBundleResponse, UpdateBundleData, UpdateBundleResponse, DeleteBundleData, DeleteBundleResponse, BulkDeleteBundlesData, BulkDeleteBundlesResponse, AddAssetToBundleData, AddAssetToBundleResponse, RemoveAssetFromBundleData, RemoveAssetFromBundleResponse, GetAssetsInBundleData, GetAssetsInBundleResponse, TransferBundleData, TransferBundleResponse, MoveBundleToParentData, MoveBundleToParentResponse, GetBundleHierarchyData, GetBundleHierarchyResponse, GetRootBundlesData, GetRootBundlesResponse, GetBulkBundleAssetsData, GetBulkBundleAssetsResponse, SealBundleData, SealBundleResponse, UnsealBundleData, UnsealBundleResponse, ListEntitiesData, ListEntitiesResponse, CreateEntityData, CreateEntityResponse, UpdateEntityData, UpdateEntityResponse, DeleteEntityData, DeleteEntityResponse, MergeEntitiesData, MergeEntitiesResponse, TriggerResolutionData, TriggerResolutionResponse, FindEntityDuplicatesData, FindEntityDuplicatesResponse, GetEntityNeighborhoodData, GetEntityNeighborhoodResponse, ListConversationsData, ListConversationsResponse, CreateConversationData, CreateConversationResponse, GetConversationData, GetConversationResponse, UpdateConversationData, UpdateConversationResponse, DeleteConversationData, DeleteConversationResponse, AddMessageToConversationData, AddMessageToConversationResponse, GetConversationMessagesData, GetConversationMessagesResponse, ChunkSingleAssetData, ChunkSingleAssetResponse, ChunkMultipleAssetsData, ChunkMultipleAssetsResponse, GetAssetChunksData, GetAssetChunksResponse, RemoveAssetChunksData, RemoveAssetChunksResponse, GetChunkingStatisticsData, GetChunkingStatisticsResponse, CreateDatasetData, CreateDatasetResponse, ListDatasetsData, ListDatasetsResponse, CreateDataset1Data, CreateDataset1Response, ListDatasets1Data, ListDatasets1Response, GetDatasetData, GetDatasetResponse, UpdateDatasetData, UpdateDatasetResponse, DeleteDatasetData, DeleteDatasetResponse, ExportDatasetData, ExportDatasetResponse, ImportDatasetData, ImportDatasetResponse, ImportDatasetFromTokenData, ImportDatasetFromTokenResponse, GenerateInfospaceEmbeddingsData, GenerateInfospaceEmbeddingsResponse, GenerateAssetEmbeddingsData, GenerateAssetEmbeddingsResponse, GetEmbeddingStatsData, GetEmbeddingStatsResponse, SemanticSearchData, SemanticSearchResponse2, ClearInfospaceEmbeddingsData, ClearInfospaceEmbeddingsResponse, DiscoverEmbeddingModelsData, DiscoverEmbeddingModelsResponse, FileUploadData, FileUploadResponse2, FileDownloadData, FileDownloadResponse, ListFilesData, ListFilesResponse, DeleteFileData, DeleteFileResponse, StreamFileData, StreamFileResponse, TestFilterData, TestFilterResponse, GetBasicFilterExamplesResponse, GetAdvancedFilterExamplesResponse, CreateThresholdFilterData, CreateThresholdFilterResponse, CreateRangeFilterData, CreateRangeFilterResponse, CreateKeywordFilterData, CreateKeywordFilterResponse, CreateFlowData, CreateFlowResponse, ListFlowsData, ListFlowsResponse, CreateFlow1Data, CreateFlow1Response, ListFlows1Data, ListFlows1Response, GetFlowData, GetFlowResponse, UpdateFlowData, UpdateFlowResponse, DeleteFlowData, DeleteFlowResponse, ActivateFlowData, ActivateFlowResponse, PauseFlowData, PauseFlowResponse, TriggerFlowExecutionData, TriggerFlowExecutionResponse, ListFlowExecutionsData, ListFlowExecutionsResponse, GetFlowExecutionData, GetFlowExecutionResponse, GetPendingAssetsData, GetPendingAssetsResponse, ResetFlowCursorData, ResetFlowCursorResponse, CreateInfospaceData, CreateInfospaceResponse, ListInfospacesData, ListInfospacesResponse, CreateInfospace1Data, CreateInfospace1Response, ListInfospaces1Data, ListInfospaces1Response, GetInfospaceData, GetInfospaceResponse, UpdateInfospaceData, UpdateInfospaceResponse, DeleteInfospaceData, DeleteInfospaceResponse, InviteCollaboratorData, InviteCollaboratorResponse, ListCollaboratorsData, ListCollaboratorsResponse, RemoveCollaboratorData, RemoveCollaboratorResponse, GetInfospaceStatsData, GetInfospaceStatsResponse, ExportInfospaceData, ExportInfospaceResponse, ImportInfospaceData, ImportInfospaceResponse, CreateDirectoryImportJobData, CreateDirectoryImportJobResponse, TriggerProcessPendingData, TriggerProcessPendingResponse, TriggerEnrichData, TriggerEnrichResponse, GetProcessingStatusData, GetProcessingStatusResponse, ListIngestionJobsData, ListIngestionJobsResponse, GetIngestionJobStatusData, GetIngestionJobStatusResponse, DeleteIngestionJobData, DeleteIngestionJobResponse, GetIngestionJobByUuidData, GetIngestionJobByUuidResponse, CreateArchiveIngestionJobData, CreateArchiveIngestionJobResponse, CancelIngestionJobData, CancelIngestionJobResponse, ReconcileDirectoryData, ReconcileDirectoryResponse, EnableDirectoryWatchData, EnableDirectoryWatchResponse, GetWatchStatusData, GetWatchStatusResponse, GetPipelineStatsData, GetPipelineStatsResponse, IntelligenceChatData, IntelligenceChatResponse, ExecuteToolCallData, ExecuteToolCallResponse, ListAvailableModelsData, ListAvailableModelsResponse, ListUniversalToolsData, ListUniversalToolsResponse, GetInfospaceToolContextData, GetInfospaceToolContextResponse, ListKnowledgeGraphsData, ListKnowledgeGraphsResponse, CreateKnowledgeGraphData, CreateKnowledgeGraphResponse, GetKnowledgeGraphData, GetKnowledgeGraphResponse, UpdateKnowledgeGraphData, UpdateKnowledgeGraphResponse, DeleteKnowledgeGraphData, DeleteKnowledgeGraphResponse, LoginAccessTokenData, LoginAccessTokenResponse, TestTokenResponse, RecoverPasswordData, RecoverPasswordResponse, ResetPasswordData, ResetPasswordResponse, RecoverPasswordHtmlContentData, RecoverPasswordHtmlContentResponse, CreatePackageData, CreatePackageResponse, ListPackagesData, ListPackagesResponse, GetPackageData, GetPackageResponse, UpdatePackageData, UpdatePackageResponse, DeletePackageData, DeletePackageResponse, AddPackageItemData, AddPackageItemResponse, RemovePackageItemData, RemovePackageItemResponse, DiscoverPackagesData, DiscoverPackagesResponse, AccessPackageByTokenData, AccessPackageByTokenResponse, DiscoverModelsData, DiscoverModelsResponse, SystemCapabilitiesResponse, EnrichmentStatusResponse, QueryAssetsData, QueryAssetsResponse, GetQueryFieldsData, GetQueryFieldsResponse, SearchContentData, SearchContentResponse, SearchContent1Data, SearchContent1Response, SearchAndIngestData, SearchAndIngestResponse2, CreateAssetsFromUrlsData, CreateAssetsFromUrlsResponse, CreateAssetsFromResultsData, CreateAssetsFromResultsResponse, CreateSearchHistoryData, CreateSearchHistoryResponse, ReadSearchHistoriesData, ReadSearchHistoriesResponse, CreateShareableLinkData, CreateShareableLinkResponse, GetShareableLinksData, GetShareableLinksResponse, GetShareableLinkByTokenData, GetShareableLinkByTokenResponse, UpdateShareableLinkData, UpdateShareableLinkResponse, DeleteShareableLinkData, DeleteShareableLinkResponse, AccessSharedResourceData, AccessSharedResourceResponse, ViewSharedResourceData, ViewSharedResourceResponse, GetSharingStatsData, GetSharingStatsResponse, ExportResourceData, ExportResourceResponse, ImportResourceData, ImportResourceResponse, ExportResourcesBatchData, ExportResourcesBatchResponse, ExportMixedBatchData, ExportMixedBatchResponse, StreamSharedAssetFileData, StreamSharedAssetFileResponse, DownloadSharedBundleData, DownloadSharedBundleResponse, DownloadSharedAssetFileData, DownloadSharedAssetFileResponse, ViewDatasetPackageSummaryData, ViewDatasetPackageSummaryResponse, ImportResourceFromTokenData, ImportResourceFromTokenResponse, CreateSourceData, CreateSourceResponse, ListSourcesData, ListSourcesResponse, CreateSource1Data, CreateSource1Response, ListSources1Data, ListSources1Response, GetSourceData, GetSourceResponse, UpdateSourceData, UpdateSourceResponse, DeleteSourceData, DeleteSourceResponse, TriggerSourceProcessingData, TriggerSourceProcessingResponse, TransferSourcesData, TransferSourcesResponse, CreateRssSourceData, CreateRssSourceResponse, ActivateStreamData, ActivateStreamResponse, PauseStreamData, PauseStreamResponse, PollSourceData, PollSourceResponse, GetStreamStatsData, GetStreamStatsResponse, GetPollHistoryData, GetPollHistoryResponse, InitiateDiscourseLoginResponse, InitiateDiscourseLogin1Response, HandleDiscourseSsoData, HandleDiscourseSsoResponse, HandleDiscourseSso1Data, HandleDiscourseSso1Response, HandleDiscourseLogoutResponse, HandleDiscourseLogout1Response, GetDiscourseSsoInfoResponse, GetDiscourseSsoInfo1Response, SyncUserToDiscourseData, SyncUserToDiscourseResponse, SyncUserToDiscourse1Data, SyncUserToDiscourse1Response, CompleteDiscourseSsoData, CompleteDiscourseSsoResponse, CompleteDiscourseSso1Data, CompleteDiscourseSso1Response, BrowseStorageData, BrowseStorageResponse, CreateTaskData, CreateTaskResponse, CreateTask1Data, CreateTask1Response, ListTasksData, ListTasksResponse, ListTasks1Data, ListTasks1Response, CreateTask2Data, CreateTask2Response, CreateTask3Data, CreateTask3Response, ListTasks2Data, ListTasks2Response, ListTasks3Data, ListTasks3Response, GetTaskData, GetTaskResponse, GetTask1Data, GetTask1Response, UpdateTaskData, UpdateTaskResponse, UpdateTask1Data, UpdateTask1Response, DeleteTaskData, DeleteTaskResponse, DeleteTask1Data, DeleteTask1Response, ExecuteTaskManuallyData, ExecuteTaskManuallyResponse, ExecuteTaskManually1Data, ExecuteTaskManually1Response, GetInfospaceTreeData, GetInfospaceTreeResponse, GetTreeChildrenData, GetTreeChildrenResponse, PreviewTreeDeletionData, PreviewTreeDeletionResponse, DeleteTreeNodesData, DeleteTreeNodesResponse, GetFeedAssetsData, GetFeedAssetsResponse, BatchGetAssetsData, BatchGetAssetsResponse, TextSearchAssetsData, TextSearchAssetsResponse, CreateUserBackupData, CreateUserBackupResponse, ListUserBackupsData, ListUserBackupsResponse, GetUserBackupData, GetUserBackupResponse, UpdateUserBackupData, UpdateUserBackupResponse, DeleteUserBackupData, DeleteUserBackupResponse, RestoreUserBackupData, RestoreUserBackupResponse, CreateUserBackupShareLinkData, CreateUserBackupShareLinkResponse, DownloadSharedUserBackupData, DownloadSharedUserBackupResponse, CleanupExpiredUserBackupsResponse, GetUsersBackupOverviewData, GetUsersBackupOverviewResponse, TriggerBackupAllUsersData, TriggerBackupAllUsersResponse, TriggerBackupSpecificUsersData, TriggerBackupSpecificUsersResponse, ReadUsersData, ReadUsersResponse, CreateUserData, CreateUserResponse, ReadUsers1Data, ReadUsers1Response, CreateUser1Data, CreateUser1Response, ReadUserMeResponse, UpdateUserMeData, UpdateUserMeResponse, UpdatePasswordMeData, UpdatePasswordMeResponse, SaveCredentialsData, SaveCredentialsResponse, ListCredentialProvidersResponse, DeleteCredentialData, DeleteCredentialResponse, UploadProfilePictureData, UploadProfilePictureResponse, UploadBackgroundImageData, UploadBackgroundImageResponse, GetUserPublicProfileData, GetUserPublicProfileResponse, GetProfilePictureData, GetProfilePictureResponse, GetBackgroundImageData, GetBackgroundImageResponse, DeleteBackgroundImageResponse, ListUserProfilesData, ListUserProfilesResponse, GetUserProfileStatsData, GetUserProfileStatsResponse, UpdateUserProfileData, UpdateUserProfileResponse, CreateUserOpenData, CreateUserOpenResponse, ReadUserByIdData, ReadUserByIdResponse, UpdateUserData, UpdateUserResponse, DeleteUserData, DeleteUserResponse, VerifyEmailData, VerifyEmailResponse, ResendVerificationData, ResendVerificationResponse, TestEmailData, TestEmailResponse, GetAvailableRssCountriesResponse, DiscoverCuratedRssFeedsData, DiscoverCuratedRssFeedsResponse, ExtractPdfTextData, ExtractPdfTextResponse, ExtractPdfMetadataData, ExtractPdfMetadataResponse, ScrapeArticleData, ScrapeArticleResponse, AnalyzeSourceData, AnalyzeSourceResponse, DiscoverRssFeedsFromSiteData, DiscoverRssFeedsFromSiteResponse, BrowseRssFeedData, BrowseRssFeedResponse, GetUnifiedProvidersResponse, GetProvidersResponse, PullOllamaModelData, PullOllamaModelResponse, GetOllamaAvailableModelsData, GetOllamaAvailableModelsResponse, RemoveOllamaModelData, RemoveOllamaModelResponse, GetGeocodingProvidersResponse, GeocodeLocationData, GeocodeLocationResponse, GeocodeLocationWithProviderData, GeocodeLocationWithProviderResponse, GetCountryDataData, GetCountryDataResponse } from './types.gen';
+import type { GetRegistrationStatsResponse, GetStreamStatsResponse, ListAnalysisAdaptersResponse, ExecuteAnalysisAdapterData, ExecuteAnalysisAdapterResponse, PromoteFragmentData, PromoteFragmentResponse, DeleteFragmentData, DeleteFragmentResponse2, CreateRunData, CreateRunResponse, ListRunsData, ListRunsResponse, CreateRun1Data, CreateRun1Response, ListRuns1Data, ListRuns1Response, GetRunData, GetRunResponse, UpdateRunData, UpdateRunResponse, DeleteRunData, DeleteRunResponse, RetryFailedAnnotationsData, RetryFailedAnnotationsResponse, CreatePackageFromRunEndpointData, CreatePackageFromRunEndpointResponse, ExportRunAnnotationsCsvData, ExportRunAnnotationsCsvResponse, CreateAnnotationData, CreateAnnotationResponse, CreateAnnotation1Data, CreateAnnotation1Response, ListAnnotationsData, ListAnnotationsResponse, ListAnnotations1Data, ListAnnotations1Response, CreateAnnotation2Data, CreateAnnotation2Response, CreateAnnotation3Data, CreateAnnotation3Response, ListAnnotations2Data, ListAnnotations2Response, ListAnnotations3Data, ListAnnotations3Response, GetAnnotationData, GetAnnotationResponse, GetAnnotation1Data, GetAnnotation1Response, UpdateAnnotationData, UpdateAnnotationResponse, UpdateAnnotation1Data, UpdateAnnotation1Response, DeleteAnnotationData, DeleteAnnotationResponse, DeleteAnnotation1Data, DeleteAnnotation1Response, CreateBatchAnnotationsData, CreateBatchAnnotationsResponse, CreateBatchAnnotations1Data, CreateBatchAnnotations1Response, GetRunResultsData, GetRunResultsResponse, GetRunResults1Data, GetRunResults1Response, RetrySingleAnnotationData, RetrySingleAnnotationResponse, RetrySingleAnnotation1Data, RetrySingleAnnotation1Response, CurateFragmentsData, CurateFragmentsResponse, CurateFragments1Data, CurateFragments1Response, RemoveCurationData, RemoveCurationResponse, RemoveCuration1Data, RemoveCuration1Response, GetCuratedTripletsData, GetCuratedTripletsResponse, GetCuratedTriplets1Data, GetCuratedTriplets1Response, CreateAnnotationSchemaData, CreateAnnotationSchemaResponse, ListAnnotationSchemasData, ListAnnotationSchemasResponse, CreateAnnotationSchema1Data, CreateAnnotationSchema1Response, ListAnnotationSchemas1Data, ListAnnotationSchemas1Response, GetAnnotationSchemaData, GetAnnotationSchemaResponse, UpdateAnnotationSchemaData, UpdateAnnotationSchemaResponse, DeleteAnnotationSchemaData, DeleteAnnotationSchemaResponse, RestoreAnnotationSchemaData, RestoreAnnotationSchemaResponse, ReadyzResponse, LivenessResponse, HealthzResponse, CreateAssetData, CreateAssetResponse, CreateAsset1Data, CreateAsset1Response, ListAssetsData, ListAssetsResponse, ListAssets1Data, ListAssets1Response, CreateAsset2Data, CreateAsset2Response, CreateAsset3Data, CreateAsset3Response, ListAssets2Data, ListAssets2Response, ListAssets3Data, ListAssets3Response, BatchCreateAssetsData, BatchCreateAssetsResponse, BatchCreateAssets1Data, BatchCreateAssets1Response, UploadFileData, UploadFileResponse, UploadFile1Data, UploadFile1Response, IngestUrlData, IngestUrlResponse, IngestUrl1Data, IngestUrl1Response, IngestTextData, IngestTextResponse, IngestText1Data, IngestText1Response, ComposeArticleData, ComposeArticleResponse, ComposeArticle1Data, ComposeArticle1Response, BulkIngestUrlsData, BulkIngestUrlsResponse, BulkIngestUrls1Data, BulkIngestUrls1Response, IngestSearchResultsData, IngestSearchResultsResponse, IngestSearchResults1Data, IngestSearchResults1Response, MaterializeCsvFromRowsData, MaterializeCsvFromRowsResponse, MaterializeCsvFromRows1Data, MaterializeCsvFromRows1Response, ReprocessAssetData, ReprocessAssetResponse, ReprocessAsset1Data, ReprocessAsset1Response, UpdateAssetContentData, UpdateAssetContentResponse, UpdateAssetContent1Data, UpdateAssetContent1Response, DiscoverRssFeedsData, DiscoverRssFeedsResponse, DiscoverRssFeeds1Data, DiscoverRssFeeds1Response, PreviewRssFeedData, PreviewRssFeedResponse, PreviewRssFeed1Data, PreviewRssFeed1Response, IngestSelectedArticlesData, IngestSelectedArticlesResponse, IngestSelectedArticles1Data, IngestSelectedArticles1Response, GetAssetData, GetAssetResponse, GetAsset1Data, GetAsset1Response, UpdateAssetData, UpdateAssetResponse, UpdateAsset1Data, UpdateAsset1Response, DeleteAssetData, DeleteAssetResponse, DeleteAsset1Data, DeleteAsset1Response, GetAssetChildrenData, GetAssetChildrenResponse, GetAssetChildren1Data, GetAssetChildren1Response, BulkDeleteAssetsData, BulkDeleteAssetsResponse, BulkDeleteAssets1Data, BulkDeleteAssets1Response, TransferAssetsData, TransferAssetsResponse, TransferAssets1Data, TransferAssets1Response, GetSupportedContentTypesResponse, GetSupportedContentTypes1Response, CreateAssetsBackgroundBulkData, CreateAssetsBackgroundBulkResponse, CreateAssetsBackgroundBulk1Data, CreateAssetsBackgroundBulk1Response, CreateAssetsBackgroundUrlsData, CreateAssetsBackgroundUrlsResponse, CreateAssetsBackgroundUrls1Data, CreateAssetsBackgroundUrls1Response, AddFilesToBundleBackgroundData, AddFilesToBundleBackgroundResponse, AddFilesToBundleBackground1Data, AddFilesToBundleBackground1Response, GetTaskStatusData, GetTaskStatusResponse, GetTaskStatus1Data, GetTaskStatus1Response, IngestRssFeedsFromAwesomeData, IngestRssFeedsFromAwesomeResponse, IngestRssFeedsFromAwesome1Data, IngestRssFeedsFromAwesome1Response, RetryAssetEnrichmentData, RetryAssetEnrichmentResponse, RetryAssetEnrichment1Data, RetryAssetEnrichment1Response, CreateBackupData, CreateBackupResponse, ListBackupsData, ListBackupsResponse, ListAllUserBackupsData, ListAllUserBackupsResponse, GetBackupData, GetBackupResponse, UpdateBackupData, UpdateBackupResponse, DeleteBackupData, DeleteBackupResponse, RestoreBackupData, RestoreBackupResponse, CreateBackupShareLinkData, CreateBackupShareLinkResponse, DownloadSharedBackupData, DownloadSharedBackupResponse, CleanupExpiredBackupsResponse, GetInfospacesBackupOverviewData, GetInfospacesBackupOverviewResponse, TriggerBackupAllInfospacesData, TriggerBackupAllInfospacesResponse, TriggerBackupSpecificInfospacesData, TriggerBackupSpecificInfospacesResponse, MaterializeVirtualFolderData, MaterializeVirtualFolderResponse, CreateBundleData, CreateBundleResponse, GetBundlesData, GetBundlesResponse, GetBundleData, GetBundleResponse, UpdateBundleData, UpdateBundleResponse, DeleteBundleData, DeleteBundleResponse, BulkDeleteBundlesData, BulkDeleteBundlesResponse, AddAssetToBundleData, AddAssetToBundleResponse, RemoveAssetFromBundleData, RemoveAssetFromBundleResponse, GetAssetsInBundleData, GetAssetsInBundleResponse, TransferBundleData, TransferBundleResponse, MoveBundleToParentData, MoveBundleToParentResponse, GetBundleHierarchyData, GetBundleHierarchyResponse, GetRootBundlesData, GetRootBundlesResponse, GetBulkBundleAssetsData, GetBulkBundleAssetsResponse, SealBundleData, SealBundleResponse, UnsealBundleData, UnsealBundleResponse, ListEntitiesData, ListEntitiesResponse, CreateEntityData, CreateEntityResponse, UpdateEntityData, UpdateEntityResponse, DeleteEntityData, DeleteEntityResponse, MergeEntitiesData, MergeEntitiesResponse, TriggerResolutionData, TriggerResolutionResponse, FindEntityDuplicatesData, FindEntityDuplicatesResponse, GetEntityNeighborhoodData, GetEntityNeighborhoodResponse, ListConversationsData, ListConversationsResponse, CreateConversationData, CreateConversationResponse, GetConversationData, GetConversationResponse, UpdateConversationData, UpdateConversationResponse, DeleteConversationData, DeleteConversationResponse, AddMessageToConversationData, AddMessageToConversationResponse, GetConversationMessagesData, GetConversationMessagesResponse, ChunkSingleAssetData, ChunkSingleAssetResponse, ChunkMultipleAssetsData, ChunkMultipleAssetsResponse, GetAssetChunksData, GetAssetChunksResponse, RemoveAssetChunksData, RemoveAssetChunksResponse, GetChunkingStatisticsData, GetChunkingStatisticsResponse, CreateDatasetData, CreateDatasetResponse, ListDatasetsData, ListDatasetsResponse, CreateDataset1Data, CreateDataset1Response, ListDatasets1Data, ListDatasets1Response, GetDatasetData, GetDatasetResponse, UpdateDatasetData, UpdateDatasetResponse, DeleteDatasetData, DeleteDatasetResponse, ExportDatasetData, ExportDatasetResponse, ImportDatasetData, ImportDatasetResponse, ImportDatasetFromTokenData, ImportDatasetFromTokenResponse, GenerateInfospaceEmbeddingsData, GenerateInfospaceEmbeddingsResponse, GenerateAssetEmbeddingsData, GenerateAssetEmbeddingsResponse, GetEmbeddingStatsData, GetEmbeddingStatsResponse, SemanticSearchData, SemanticSearchResponse2, ClearInfospaceEmbeddingsData, ClearInfospaceEmbeddingsResponse, DiscoverEmbeddingModelsData, DiscoverEmbeddingModelsResponse, FileUploadData, FileUploadResponse2, FileDownloadData, FileDownloadResponse, ListFilesData, ListFilesResponse, DeleteFileData, DeleteFileResponse, StreamFileData, StreamFileResponse, TestFilterData, TestFilterResponse, GetBasicFilterExamplesResponse, GetAdvancedFilterExamplesResponse, CreateThresholdFilterData, CreateThresholdFilterResponse, CreateRangeFilterData, CreateRangeFilterResponse, CreateKeywordFilterData, CreateKeywordFilterResponse, CreateFlowData, CreateFlowResponse, ListFlowsData, ListFlowsResponse, CreateFlow1Data, CreateFlow1Response, ListFlows1Data, ListFlows1Response, GetFlowData, GetFlowResponse, UpdateFlowData, UpdateFlowResponse, DeleteFlowData, DeleteFlowResponse, ActivateFlowData, ActivateFlowResponse, PauseFlowData, PauseFlowResponse, TriggerFlowExecutionData, TriggerFlowExecutionResponse, ListFlowExecutionsData, ListFlowExecutionsResponse, GetFlowExecutionData, GetFlowExecutionResponse, GetPendingAssetsData, GetPendingAssetsResponse, ResetFlowCursorData, ResetFlowCursorResponse, CreateInfospaceData, CreateInfospaceResponse, ListInfospacesData, ListInfospacesResponse, CreateInfospace1Data, CreateInfospace1Response, ListInfospaces1Data, ListInfospaces1Response, GetInfospaceData, GetInfospaceResponse, UpdateInfospaceData, UpdateInfospaceResponse, DeleteInfospaceData, DeleteInfospaceResponse, SendInvitationData, SendInvitationResponse, ListInvitationsData, ListInvitationsResponse, RevokeInvitationRouteData, RevokeInvitationRouteResponse, ListCollaboratorsData, ListCollaboratorsResponse, ChangeCollaboratorRoleData, ChangeCollaboratorRoleResponse, LeaveInfospaceData, LeaveInfospaceResponse, RemoveCollaboratorData, RemoveCollaboratorResponse, GetInfospaceStatsData, GetInfospaceStatsResponse, ExportInfospaceData, ExportInfospaceResponse, ImportInfospaceData, ImportInfospaceResponse, CreateDirectoryImportJobData, CreateDirectoryImportJobResponse, TriggerProcessPendingData, TriggerProcessPendingResponse, TriggerEnrichData, TriggerEnrichResponse, GetProcessingStatusData, GetProcessingStatusResponse, ListIngestionJobsData, ListIngestionJobsResponse, GetIngestionJobStatusData, GetIngestionJobStatusResponse, DeleteIngestionJobData, DeleteIngestionJobResponse, GetIngestionJobByUuidData, GetIngestionJobByUuidResponse, CreateArchiveIngestionJobData, CreateArchiveIngestionJobResponse, CancelIngestionJobData, CancelIngestionJobResponse, ReconcileDirectoryData, ReconcileDirectoryResponse, EnableDirectoryWatchData, EnableDirectoryWatchResponse, GetWatchStatusData, GetWatchStatusResponse, GetPipelineStatsData, GetPipelineStatsResponse, IntelligenceChatData, IntelligenceChatResponse, ExecuteToolCallData, ExecuteToolCallResponse, ListAvailableModelsData, ListAvailableModelsResponse, ListUniversalToolsData, ListUniversalToolsResponse, GetInfospaceToolContextData, GetInfospaceToolContextResponse, ListKnowledgeGraphsData, ListKnowledgeGraphsResponse, CreateKnowledgeGraphData, CreateKnowledgeGraphResponse, GetKnowledgeGraphData, GetKnowledgeGraphResponse, UpdateKnowledgeGraphData, UpdateKnowledgeGraphResponse, DeleteKnowledgeGraphData, DeleteKnowledgeGraphResponse, SubscribeStreamData, SubscribeStreamResponse, LoginAccessTokenData, LoginAccessTokenResponse, TestTokenResponse, RecoverPasswordData, RecoverPasswordResponse, ResetPasswordData, ResetPasswordResponse, RecoverPasswordHtmlContentData, RecoverPasswordHtmlContentResponse, CreatePackageData, CreatePackageResponse, ListPackagesData, ListPackagesResponse, GetPackageData, GetPackageResponse, UpdatePackageData, UpdatePackageResponse, DeletePackageData, DeletePackageResponse, AddPackageItemData, AddPackageItemResponse, RemovePackageItemData, RemovePackageItemResponse, DiscoverPackagesData, DiscoverPackagesResponse, AccessPackageByTokenData, AccessPackageByTokenResponse, StreamPackageAssetData, StreamPackageAssetResponse, DownloadPackageAssetData, DownloadPackageAssetResponse, ExportPackageData, ExportPackageResponse, DiscoverModelsData, DiscoverModelsResponse, SystemCapabilitiesResponse, EnrichmentStatusResponse, QueryAssetsData, QueryAssetsResponse, GetQueryFieldsData, GetQueryFieldsResponse, SearchContentData, SearchContentResponse, SearchContent1Data, SearchContent1Response, SearchAndIngestData, SearchAndIngestResponse2, CreateAssetsFromUrlsData, CreateAssetsFromUrlsResponse, CreateAssetsFromResultsData, CreateAssetsFromResultsResponse, CreateSearchHistoryData, CreateSearchHistoryResponse, ReadSearchHistoriesData, ReadSearchHistoriesResponse, CreateShareableLinkData, CreateShareableLinkResponse, GetShareableLinksData, GetShareableLinksResponse, GetShareableLinkByTokenData, GetShareableLinkByTokenResponse, UpdateShareableLinkData, UpdateShareableLinkResponse, DeleteShareableLinkData, DeleteShareableLinkResponse, AccessSharedResourceData, AccessSharedResourceResponse, ViewSharedResourceData, ViewSharedResourceResponse, GetSharingStatsData, GetSharingStatsResponse, ExportResourceData, ExportResourceResponse, ImportResourceData, ImportResourceResponse, ExportResourcesBatchData, ExportResourcesBatchResponse, ExportMixedBatchData, ExportMixedBatchResponse, StreamSharedAssetFileData, StreamSharedAssetFileResponse, DownloadSharedBundleData, DownloadSharedBundleResponse, DownloadSharedAssetFileData, DownloadSharedAssetFileResponse, ViewDatasetPackageSummaryData, ViewDatasetPackageSummaryResponse, ImportResourceFromTokenData, ImportResourceFromTokenResponse, CreateSourceData, CreateSourceResponse, ListSourcesData, ListSourcesResponse, CreateSource1Data, CreateSource1Response, ListSources1Data, ListSources1Response, GetSourceData, GetSourceResponse, UpdateSourceData, UpdateSourceResponse, DeleteSourceData, DeleteSourceResponse, TriggerSourceProcessingData, TriggerSourceProcessingResponse, TransferSourcesData, TransferSourcesResponse, CreateRssSourceData, CreateRssSourceResponse, ActivateStreamData, ActivateStreamResponse, PauseStreamData, PauseStreamResponse, PollSourceData, PollSourceResponse, GetStreamStatsData, GetPollHistoryData, GetPollHistoryResponse, InitiateDiscourseLoginResponse, InitiateDiscourseLogin1Response, HandleDiscourseSsoData, HandleDiscourseSsoResponse, HandleDiscourseSso1Data, HandleDiscourseSso1Response, HandleDiscourseLogoutResponse, HandleDiscourseLogout1Response, GetDiscourseSsoInfoResponse, GetDiscourseSsoInfo1Response, SyncUserToDiscourseData, SyncUserToDiscourseResponse, SyncUserToDiscourse1Data, SyncUserToDiscourse1Response, CompleteDiscourseSsoData, CompleteDiscourseSsoResponse, CompleteDiscourseSso1Data, CompleteDiscourseSso1Response, BrowseStorageData, BrowseStorageResponse, CreateTaskData, CreateTaskResponse, CreateTask1Data, CreateTask1Response, ListTasksData, ListTasksResponse, ListTasks1Data, ListTasks1Response, CreateTask2Data, CreateTask2Response, CreateTask3Data, CreateTask3Response, ListTasks2Data, ListTasks2Response, ListTasks3Data, ListTasks3Response, GetTaskData, GetTaskResponse, GetTask1Data, GetTask1Response, UpdateTaskData, UpdateTaskResponse, UpdateTask1Data, UpdateTask1Response, DeleteTaskData, DeleteTaskResponse, DeleteTask1Data, DeleteTask1Response, ExecuteTaskManuallyData, ExecuteTaskManuallyResponse, ExecuteTaskManually1Data, ExecuteTaskManually1Response, GetInfospaceTreeData, GetInfospaceTreeResponse, GetTreeChildrenData, GetTreeChildrenResponse, PreviewTreeDeletionData, PreviewTreeDeletionResponse, DeleteTreeNodesData, DeleteTreeNodesResponse, GetFeedAssetsData, GetFeedAssetsResponse, BatchGetAssetsData, BatchGetAssetsResponse, TextSearchAssetsData, TextSearchAssetsResponse, CreateUserBackupData, CreateUserBackupResponse, ListUserBackupsData, ListUserBackupsResponse, GetUserBackupData, GetUserBackupResponse, UpdateUserBackupData, UpdateUserBackupResponse, DeleteUserBackupData, DeleteUserBackupResponse, RestoreUserBackupData, RestoreUserBackupResponse, CreateUserBackupShareLinkData, CreateUserBackupShareLinkResponse, DownloadSharedUserBackupData, DownloadSharedUserBackupResponse, CleanupExpiredUserBackupsResponse, GetUsersBackupOverviewData, GetUsersBackupOverviewResponse, TriggerBackupAllUsersData, TriggerBackupAllUsersResponse, TriggerBackupSpecificUsersData, TriggerBackupSpecificUsersResponse, ReadUsersData, ReadUsersResponse, CreateUserData, CreateUserResponse, ReadUsers1Data, ReadUsers1Response, CreateUser1Data, CreateUser1Response, ReadUserMeResponse, UpdateUserMeData, UpdateUserMeResponse, UpdatePasswordMeData, UpdatePasswordMeResponse, SaveCredentialsData, SaveCredentialsResponse, ListCredentialProvidersResponse, DeleteCredentialData, DeleteCredentialResponse, CheckHandleData, CheckHandleResponse, SearchUsersByHandleData, SearchUsersByHandleResponse, UpdateMyHandleData, UpdateMyHandleResponse, ListMyInvitationsResponse, CountMyInvitationsResponse, AcceptInvitationRouteData, AcceptInvitationRouteResponse, DeclineInvitationRouteData, DeclineInvitationRouteResponse, UploadProfilePictureData, UploadProfilePictureResponse, UploadBackgroundImageData, UploadBackgroundImageResponse, GetUserPublicProfileData, GetUserPublicProfileResponse, GetProfilePictureData, GetProfilePictureResponse, GetBackgroundImageData, GetBackgroundImageResponse, DeleteBackgroundImageResponse, ListUserProfilesData, ListUserProfilesResponse, GetUserProfileStatsData, GetUserProfileStatsResponse, UpdateUserProfileData, UpdateUserProfileResponse, CreateUserOpenData, CreateUserOpenResponse, ReadUserByIdData, ReadUserByIdResponse, UpdateUserData, UpdateUserResponse, DeleteUserData, DeleteUserResponse, VerifyEmailData, VerifyEmailResponse, ResendVerificationData, ResendVerificationResponse, TestEmailData, TestEmailResponse, GetAvailableRssCountriesResponse, DiscoverCuratedRssFeedsData, DiscoverCuratedRssFeedsResponse, ExtractPdfTextData, ExtractPdfTextResponse, ExtractPdfMetadataData, ExtractPdfMetadataResponse, ScrapeArticleData, ScrapeArticleResponse, AnalyzeSourceData, AnalyzeSourceResponse, DiscoverRssFeedsFromSiteData, DiscoverRssFeedsFromSiteResponse, BrowseRssFeedData, BrowseRssFeedResponse, GetUnifiedProvidersResponse, GetProvidersResponse, PullOllamaModelData, PullOllamaModelResponse, GetOllamaAvailableModelsData, GetOllamaAvailableModelsResponse, RemoveOllamaModelData, RemoveOllamaModelResponse, GetGeocodingProvidersResponse, GeocodeLocationData, GeocodeLocationResponse, GeocodeLocationWithProviderData, GeocodeLocationWithProviderResponse, GetCountryDataData, GetCountryDataResponse } from './types.gen';
 
 export class AdminService {
     /**
@@ -17,6 +17,19 @@ export class AdminService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/v1/admin/registration/stats'
+        });
+    }
+    
+    /**
+     * Get Stream Stats
+     * Live primitives observability: stream counters from Redis.
+     * @returns StreamStats Successful Response
+     * @throws ApiError
+     */
+    public static getStreamStats(): CancelablePromise<GetStreamStatsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/admin/stream-stats'
         });
     }
     
@@ -204,6 +217,9 @@ export class AnnotationJobsService {
     /**
      * List Runs
      * Retrieve Runs for the infospace.
+     *
+     * JSON by default. SSE (Accept: text/event-stream) delivers runs fast
+     * with annotation counts, then streams total count later.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.skip
@@ -271,6 +287,9 @@ export class AnnotationJobsService {
     /**
      * List Runs
      * Retrieve Runs for the infospace.
+     *
+     * JSON by default. SSE (Accept: text/event-stream) delivers runs fast
+     * with annotation counts, then streams total count later.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.skip
@@ -3657,7 +3676,7 @@ export class AssetsService {
     
     /**
      * Retry Asset Enrichment
-     * Clear enrichment state for an asset so it is eligible for re-enrichment.
+     * Clear enrichment state and kick the enricher for an asset (or its children).
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.assetId
@@ -3690,7 +3709,7 @@ export class AssetsService {
     
     /**
      * Retry Asset Enrichment
-     * Clear enrichment state for an asset so it is eligible for re-enrichment.
+     * Clear enrichment state and kick the enricher for an asset (or its children).
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.assetId
@@ -6827,7 +6846,7 @@ export class InfospacesService {
     
     /**
      * List Infospaces
-     * Retrieve Infospaces for the current user.
+     * Retrieve Infospaces for the current user (owned + collaborated, with role context).
      * @param data The data for the request.
      * @param data.skip
      * @param data.limit
@@ -6870,7 +6889,7 @@ export class InfospacesService {
     
     /**
      * List Infospaces
-     * Retrieve Infospaces for the current user.
+     * Retrieve Infospaces for the current user (owned + collaborated, with role context).
      * @param data The data for the request.
      * @param data.skip
      * @param data.limit
@@ -6893,7 +6912,7 @@ export class InfospacesService {
     
     /**
      * Get Infospace
-     * Retrieve a specific Infospace by its ID.
+     * Retrieve a specific Infospace by its ID (with role context for the current user).
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.packageToken
@@ -6982,21 +7001,20 @@ export class InfospacesService {
     }
     
     /**
-     * Invite Collaborator
-     * Invite a user to collaborate on an infospace. Only owner or editor can invite.
+     * Send Invitation
+     * Invite a user by handle or email to collaborate on this infospace.
      * @param data The data for the request.
      * @param data.infospaceId
-     * @param data.email Email of user to invite
-     * @param data.role Role: owner, editor, viewer
+     * @param data.requestBody
      * @param data.packageToken
      * @param data.xPackageToken
-     * @returns unknown Successful Response
+     * @returns InvitationOut Successful Response
      * @throws ApiError
      */
-    public static inviteCollaborator(data: InviteCollaboratorData): CancelablePromise<InviteCollaboratorResponse> {
+    public static sendInvitation(data: SendInvitationData): CancelablePromise<SendInvitationResponse> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/v1/infospaces/{infospace_id}/collaborators/invite',
+            url: '/api/v1/infospaces/{infospace_id}/invitations',
             path: {
                 infospace_id: data.infospaceId
             },
@@ -7004,8 +7022,68 @@ export class InfospacesService {
                 'X-Package-Token': data.xPackageToken
             },
             query: {
-                email: data.email,
-                role: data.role,
+                package_token: data.packageToken
+            },
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * List Invitations
+     * List all invitations for this infospace (owner/setup view).
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns InvitationOut Successful Response
+     * @throws ApiError
+     */
+    public static listInvitations(data: ListInvitationsData): CancelablePromise<ListInvitationsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/invitations',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Revoke Invitation Route
+     * Revoke a pending invitation.
+     * @param data The data for the request.
+     * @param data.invitationId
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static revokeInvitationRoute(data: RevokeInvitationRouteData): CancelablePromise<RevokeInvitationRouteResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/infospaces/{infospace_id}/invitations/{invitation_id}',
+            path: {
+                invitation_id: data.invitationId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
                 package_token: data.packageToken
             },
             errors: {
@@ -7021,13 +7099,75 @@ export class InfospacesService {
      * @param data.infospaceId
      * @param data.packageToken
      * @param data.xPackageToken
-     * @returns unknown Successful Response
+     * @returns CollaboratorOut Successful Response
      * @throws ApiError
      */
     public static listCollaborators(data: ListCollaboratorsData): CancelablePromise<ListCollaboratorsResponse> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/v1/infospaces/{infospace_id}/collaborators',
+            path: {
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Change Collaborator Role
+     * Change a collaborator's role. Only owner/setup can do this.
+     * @param data The data for the request.
+     * @param data.userId
+     * @param data.infospaceId
+     * @param data.role New role
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static changeCollaboratorRole(data: ChangeCollaboratorRoleData): CancelablePromise<ChangeCollaboratorRoleResponse> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/api/v1/infospaces/{infospace_id}/collaborators/{user_id}/role',
+            path: {
+                user_id: data.userId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                role: data.role,
+                package_token: data.packageToken
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Leave Infospace
+     * Leave an infospace (self-removal). Owner cannot leave.
+     * @param data The data for the request.
+     * @param data.infospaceId
+     * @param data.packageToken
+     * @param data.xPackageToken
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static leaveInfospace(data: LeaveInfospaceData): CancelablePromise<LeaveInfospaceResponse> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/v1/infospaces/{infospace_id}/collaborators/me',
             path: {
                 infospace_id: data.infospaceId
             },
@@ -7974,6 +8114,51 @@ export class KnowledgeGraphsService {
     
 }
 
+export class LiveStreamsService {
+    /**
+     * Subscribe Stream
+     * Subscribe to a presence stream via SSE.
+     *
+     * Events are pushed by ctx.send() from background tasks or by StreamWriter
+     * from route handlers. Pings every 3s keep the connection alive through
+     * proxies. Connection closes after 30 minutes (client should reconnect
+     * with Last-Event-ID).
+     * @param data The data for the request.
+     * @param data.topic
+     * @param data.resourceId
+     * @param data.infospaceId
+     * @param data.params JSON-encoded view parameters
+     * @param data.packageToken
+     * @param data.lastEventId
+     * @param data.xPackageToken
+     * @returns string Successful Response
+     * @throws ApiError
+     */
+    public static subscribeStream(data: SubscribeStreamData): CancelablePromise<SubscribeStreamResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/infospaces/{infospace_id}/stream/{topic}/{resource_id}',
+            path: {
+                topic: data.topic,
+                resource_id: data.resourceId,
+                infospace_id: data.infospaceId
+            },
+            headers: {
+                'Last-Event-ID': data.lastEventId,
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                params: data.params,
+                package_token: data.packageToken
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+}
+
 export class LoginService {
     /**
      * Login Access Token
@@ -8348,6 +8533,80 @@ export class PackagesService {
         });
     }
     
+    /**
+     * Stream Package Asset
+     * Stream an asset file through a package token. Enforces allow_download.
+     * @param data The data for the request.
+     * @param data.token
+     * @param data.assetId
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static streamPackageAsset(data: StreamPackageAssetData): CancelablePromise<StreamPackageAssetResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/p/{token}/assets/{asset_id}/stream',
+            path: {
+                token: data.token,
+                asset_id: data.assetId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Download Package Asset
+     * Download an asset file through a package token. Enforces allow_download.
+     * @param data The data for the request.
+     * @param data.token
+     * @param data.assetId
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static downloadPackageAsset(data: DownloadPackageAssetData): CancelablePromise<DownloadPackageAssetResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/p/{token}/assets/{asset_id}/download',
+            path: {
+                token: data.token,
+                asset_id: data.assetId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Export Package
+     * Export a package as a self-contained intelligence product.
+     *
+     * Produces a ZIP with:
+     * - manifest.json — full HQ-native data for round-trip import
+     * - files/ — original source documents
+     * - data*.csv — human-readable analysis results
+     * - provenance/lineage.csv — audit trail
+     * - explore.py — self-documenting script
+     * @param data The data for the request.
+     * @param data.token
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static exportPackage(data: ExportPackageData): CancelablePromise<ExportPackageResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/p/{token}/export',
+            path: {
+                token: data.token
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
 }
 
 export class ProvidersService {
@@ -8412,6 +8671,10 @@ export class ProvidersService {
 export class QueryService {
     /**
      * Query Assets
+     * Search assets via AQL query string.
+     *
+     * JSON by default (pagination always JSON). SSE (Accept: text/event-stream)
+     * delivers results fast, then streams count and children later.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
@@ -8508,6 +8771,9 @@ export class RunsService {
     /**
      * List Runs
      * Retrieve Runs for the infospace.
+     *
+     * JSON by default. SSE (Accept: text/event-stream) delivers runs fast
+     * with annotation counts, then streams total count later.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.skip
@@ -8575,6 +8841,9 @@ export class RunsService {
     /**
      * List Runs
      * Retrieve Runs for the infospace.
+     *
+     * JSON by default. SSE (Accept: text/event-stream) delivers runs fast
+     * with annotation counts, then streams total count later.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.skip
@@ -9174,10 +9443,12 @@ export class SharingService {
     /**
      * Export Resource
      * Export a resource from a specific infospace to a file.
-     * Returns a file download.
+     * Returns a file download. Requires organize capability.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.formData
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -9187,6 +9458,12 @@ export class SharingService {
             url: '/api/v1/shareables/{infospace_id}/export',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             formData: data.formData,
             mediaType: 'application/x-www-form-urlencoded',
@@ -9198,7 +9475,7 @@ export class SharingService {
     
     /**
      * Import Resource
-     * Import a resource from a file into a specific infospace.
+     * Import a resource from a file into a specific infospace. Requires ingest capability.
      * @param data The data for the request.
      * @param data.targetInfospaceId
      * @param data.formData
@@ -9222,10 +9499,12 @@ export class SharingService {
     
     /**
      * Export Resources Batch
-     * Export multiple resources of the same type to a ZIP archive.
+     * Export multiple resources of the same type to a ZIP archive. Requires organize capability.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns binary Successful batch export, returns a ZIP archive.
      * @throws ApiError
      */
@@ -9235,6 +9514,12 @@ export class SharingService {
             url: '/api/v1/shareables/export-batch/{infospace_id}',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -9249,10 +9534,12 @@ export class SharingService {
     
     /**
      * Export Mixed Batch
-     * Export a mix of assets and bundles to a single ZIP archive.
+     * Export a mix of assets and bundles to a single ZIP archive. Requires organize capability.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
+     * @param data.packageToken
+     * @param data.xPackageToken
      * @returns unknown Successful Response
      * @throws ApiError
      */
@@ -9262,6 +9549,12 @@ export class SharingService {
             url: '/api/v1/shareables/export-mixed-batch/{infospace_id}',
             path: {
                 infospace_id: data.infospaceId
+            },
+            headers: {
+                'X-Package-Token': data.xPackageToken
+            },
+            query: {
+                package_token: data.packageToken
             },
             body: data.requestBody,
             mediaType: 'application/json',
@@ -9366,6 +9659,7 @@ export class SharingService {
     /**
      * Import Resource From Token
      * Import a shared resource into the current user's specified infospace.
+     * Requires ingest capability on the target infospace.
      * @param data The data for the request.
      * @param data.token
      * @param data.requestBody
@@ -10686,12 +10980,8 @@ export class TreeNavigationService {
      * Get Infospace Tree
      * Get the root-level tree structure for an infospace.
      *
-     * Returns minimal metadata for bundles and assets:
-     * - Root bundles (no parent_bundle_id)
-     * - Root assets (no parent_asset_id, not in any bundle)
-     *
-     * When accessed via package token, only scoped bundles are returned.
-     * See FOUNDATION.md § Access Control.
+     * JSON by default. SSE (Accept: text/event-stream) delivers tree nodes
+     * fast, then streams total counts later.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.packageToken
@@ -10827,7 +11117,9 @@ export class TreeNavigationService {
     /**
      * Get Feed Assets
      * Get a feed of recent assets sorted by date.
-     * Scope-aware: package token access restricts to scoped bundles.
+     *
+     * JSON by default. SSE (Accept: text/event-stream) delivers assets fast,
+     * then streams count later.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.skip
@@ -11401,6 +11693,138 @@ export class UsersService {
             url: '/api/v1/users/me/credentials/{provider_id}',
             path: {
                 provider_id: data.providerId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Check Handle
+     * Check if a handle is available. Public endpoint for registration/settings.
+     * @param data The data for the request.
+     * @param data.handle
+     * @returns HandleCheck Successful Response
+     * @throws ApiError
+     */
+    public static checkHandle(data: CheckHandleData): CancelablePromise<CheckHandleResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/users/handles/check',
+            query: {
+                handle: data.handle
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Search Users By Handle
+     * Search users by handle or name for invite autocomplete.
+     * @param data The data for the request.
+     * @param data.q
+     * @param data.limit
+     * @returns UserSearchResult Successful Response
+     * @throws ApiError
+     */
+    public static searchUsersByHandle(data: SearchUsersByHandleData): CancelablePromise<SearchUsersByHandleResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/users/handles/search',
+            query: {
+                q: data.q,
+                limit: data.limit
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Update My Handle
+     * Set or change own handle.
+     * @param data The data for the request.
+     * @param data.requestBody
+     * @returns UserOut Successful Response
+     * @throws ApiError
+     */
+    public static updateMyHandle(data: UpdateMyHandleData): CancelablePromise<UpdateMyHandleResponse> {
+        return __request(OpenAPI, {
+            method: 'PATCH',
+            url: '/api/v1/users/me/handle',
+            body: data.requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * List My Invitations
+     * List my pending invitations.
+     * @returns InvitationOut Successful Response
+     * @throws ApiError
+     */
+    public static listMyInvitations(): CancelablePromise<ListMyInvitationsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/users/me/invitations'
+        });
+    }
+    
+    /**
+     * Count My Invitations
+     * Count of pending invitations (for badge display).
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static countMyInvitations(): CancelablePromise<CountMyInvitationsResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/v1/users/me/invitations/count'
+        });
+    }
+    
+    /**
+     * Accept Invitation Route
+     * Accept a pending invitation.
+     * @param data The data for the request.
+     * @param data.invitationId
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static acceptInvitationRoute(data: AcceptInvitationRouteData): CancelablePromise<AcceptInvitationRouteResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/users/me/invitations/{invitation_id}/accept',
+            path: {
+                invitation_id: data.invitationId
+            },
+            errors: {
+                422: 'Validation Error'
+            }
+        });
+    }
+    
+    /**
+     * Decline Invitation Route
+     * Decline a pending invitation.
+     * @param data The data for the request.
+     * @param data.invitationId
+     * @returns unknown Successful Response
+     * @throws ApiError
+     */
+    public static declineInvitationRoute(data: DeclineInvitationRouteData): CancelablePromise<DeclineInvitationRouteResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/v1/users/me/invitations/{invitation_id}/decline',
+            path: {
+                invitation_id: data.invitationId
             },
             errors: {
                 422: 'Validation Error'

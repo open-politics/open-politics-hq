@@ -13,32 +13,40 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import { TreeNavigationService, AssetRead, BundleRead } from '@/client';
-import type { TreeNode, TreeResponse, TreeChildrenResponse } from '@/client';
+import type { TreeNode, TreeChildrenResponse } from '@/client';
+import { connectSSE } from '@/lib/sse';
 import { useInfospaceStore } from './storeInfospace';
+
+interface FetchChildrenResult {
+  children: TreeNode[];
+  hasMore: boolean;
+}
 
 interface TreeState {
   // Tree structure (minimal data)
   rootNodes: TreeNode[];
-  childrenCache: Map<string, TreeNode[]>;  // parent_id -> children
-  
+  childrenCache: Map<string, TreeNode[]>;  // parent_id -> children (accumulated across pages)
+  hasMoreChildren: Map<string, boolean>;   // parent_id -> has_more flag from backend
+
   // Loading states
   isLoadingRoot: boolean;
   isLoadingChildren: Set<string>;  // parent IDs currently loading
-  pendingChildrenRequests: Map<string, Promise<TreeNode[]>>;  // Deduplication map
-  
+  pendingChildrenRequests: Map<string, Promise<FetchChildrenResult>>;  // Deduplication map
+
   // Full data cache (only loaded when needed)
   fullAssetsCache: Map<number, AssetRead>;  // asset_id -> full asset
   fullBundlesCache: Map<number, BundleRead>;  // bundle_id -> full bundle
-  
+
   // Metadata
   totalBundles: number;
   totalAssets: number;
+  isCounting: boolean;
   error: string | null;
   lastFetchedInfospaceId: number | null;
-  
+
   // Actions
   fetchRootTree: () => Promise<void>;
-  fetchChildren: (parentId: string) => Promise<TreeNode[]>;
+  fetchChildren: (parentId: string, skip?: number, limit?: number) => Promise<FetchChildrenResult>;
   getFullAsset: (assetId: number) => Promise<AssetRead>;
   getFullBundle: (bundleId: number) => Promise<BundleRead>;
   batchGetAssets: (assetIds: number[]) => Promise<AssetRead[]>;
@@ -50,6 +58,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
   // Initial state
   rootNodes: [],
   childrenCache: new Map(),
+  hasMoreChildren: new Map(),
   isLoadingRoot: false,
   isLoadingChildren: new Set(),
   pendingChildrenRequests: new Map(),
@@ -57,11 +66,12 @@ export const useTreeStore = create<TreeState>((set, get) => ({
   fullBundlesCache: new Map(),
   totalBundles: 0,
   totalAssets: 0,
+  isCounting: false,
   error: null,
   lastFetchedInfospaceId: null,
   
   /**
-   * Fetch the root tree structure (fast, minimal data)
+   * Fetch the root tree structure via SSE (progressive: nodes fast, counts later)
    */
   fetchRootTree: async () => {
     const { activeInfospace } = useInfospaceStore.getState();
@@ -69,51 +79,63 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       set({ error: 'No active infospace' });
       return;
     }
-    
+
     const state = get();
-    
-    // Skip if already loading
-    if (state.isLoadingRoot) {
-      console.log('[TreeStore] Already loading root tree, skipping duplicate request');
-      return;
-    }
-    
-    // Skip if already loaded for this infospace (unless forced refresh)
-    if (state.lastFetchedInfospaceId === activeInfospace.id && state.rootNodes.length > 0) {
-      console.log('[TreeStore] Root tree already loaded for this infospace');
-      return;
-    }
-    
-    console.log('[TreeStore] Fetching root tree for infospace:', activeInfospace.id);
-    set({ isLoadingRoot: true, error: null });
-    
+
+    if (state.isLoadingRoot) return;
+    if (state.lastFetchedInfospaceId === activeInfospace.id && state.rootNodes.length > 0) return;
+
+    set({ isLoadingRoot: true, error: null, isCounting: true });
+    const url = `/api/v1/infospaces/${activeInfospace.id}/tree`;
+    const controller = new AbortController();
+
     try {
-      const response: TreeResponse = await TreeNavigationService.getInfospaceTree({
-        infospaceId: activeInfospace.id,
+      await connectSSE({
+        url,
+        method: 'GET',
+        signal: controller.signal,
+        onEvent: (event) => {
+          if (event.type === 'error') {
+            try {
+              const err = JSON.parse(event.data);
+              set({ error: err.detail ?? 'Failed to load tree', isLoadingRoot: false, isCounting: false });
+            } catch {
+              set({ error: 'Failed to load tree', isLoadingRoot: false, isCounting: false });
+            }
+            return;
+          }
+
+          let phase: any;
+          try { phase = JSON.parse(event.data); } catch { return; }
+
+          if (event.type === 'tree') {
+            set({
+              rootNodes: phase.nodes,
+              totalBundles: phase.total_bundles >= 0 ? phase.total_bundles : 0,
+              totalAssets: phase.total_assets >= 0 ? phase.total_assets : 0,
+              isCounting: phase.total_bundles === -1 || phase.total_assets === -1,
+              lastFetchedInfospaceId: activeInfospace.id,
+              isLoadingRoot: false,
+              error: null,
+            });
+          }
+
+          if (event.type === 'counts') {
+            set({
+              totalBundles: phase.total_bundles,
+              totalAssets: phase.total_assets,
+              isCounting: false,
+            });
+          }
+        },
+        onError: (err) => {
+          set({ error: err.message, isLoadingRoot: false, isCounting: false });
+        },
       });
-      
-      console.log('[TreeStore] Root tree loaded:', {
-        nodes: response.nodes.length,
-        totalBundles: response.total_bundles,
-        totalAssets: response.total_assets,
-      });
-      
-      set({
-        rootNodes: response.nodes,
-        totalBundles: response.total_bundles,
-        totalAssets: response.total_assets,
-        lastFetchedInfospaceId: activeInfospace.id,
-        isLoadingRoot: false,
-        error: null,
-      });
-    } catch (err: any) {
-      console.error('[TreeStore] Failed to fetch root tree:', err);
-      const errorMsg = err.message || 'Failed to load tree structure';
-      set({ 
-        error: errorMsg, 
-        isLoadingRoot: false,
-        rootNodes: [],
-      });
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      const errorMsg = err instanceof Error ? err.message : 'Failed to load tree structure';
+      set({ error: errorMsg, isLoadingRoot: false, isCounting: false, rootNodes: [] });
       toast.error(errorMsg);
     }
   },
@@ -122,99 +144,93 @@ export const useTreeStore = create<TreeState>((set, get) => ({
    * Fetch children of a node (lazy loading)
    * Uses promise deduplication to prevent concurrent duplicate requests
    */
-  fetchChildren: async (parentId: string): Promise<TreeNode[]> => {
+  fetchChildren: async (parentId: string, skip: number = 0, limit: number = 50): Promise<FetchChildrenResult> => {
     const { activeInfospace } = useInfospaceStore.getState();
     if (!activeInfospace?.id) {
       throw new Error('No active infospace');
     }
-    
+
     const state = get();
-    
-    // Check cache first
-    const cached = state.childrenCache.get(parentId);
-    if (cached) {
-      console.log('[TreeStore] Returning cached children for:', parentId);
-      return cached;
+
+    // On first page (skip=0), check cache — return all accumulated children
+    if (skip === 0) {
+      const cached = state.childrenCache.get(parentId);
+      if (cached) {
+        return { children: cached, hasMore: state.hasMoreChildren.get(parentId) ?? false };
+      }
+
+      // Deduplicate concurrent first-page requests
+      const pending = state.pendingChildrenRequests.get(parentId);
+      if (pending) return pending;
     }
-    
-    // Check if there's already a pending request for these children
-    const pending = state.pendingChildrenRequests.get(parentId);
-    if (pending) {
-      console.log('[TreeStore] Reusing pending request for children:', parentId);
-      return pending;
-    }
-    
-    console.log('[TreeStore] Fetching children for:', parentId);
-    
+
     // Create the fetch promise
     const fetchPromise = (async () => {
-      // Mark as loading
       set(state => ({
         isLoadingChildren: new Set([...state.isLoadingChildren, parentId]),
       }));
-      
+
       try {
         const response: TreeChildrenResponse = await TreeNavigationService.getTreeChildren({
           infospaceId: activeInfospace.id,
-          parentId: parentId,
-          limit: 500,  // High limit for now, we can paginate later
+          parentId,
+          skip,
+          limit,
         });
-        
-        console.log('[TreeStore] Children loaded for', parentId, ':', {
-          count: response.children.length,
-          total: response.total_children,
-          hasMore: response.has_more,
-        });
-        
-        // Update cache and cleanup
+
+        // Update cache: replace on first page, append on subsequent pages
         set(state => {
           const newCache = new Map(state.childrenCache);
-          newCache.set(parentId, response.children);
-          
+          if (skip === 0) {
+            newCache.set(parentId, response.children);
+          } else {
+            newCache.set(parentId, [...(state.childrenCache.get(parentId) ?? []), ...response.children]);
+          }
+
+          const newHasMore = new Map(state.hasMoreChildren);
+          newHasMore.set(parentId, response.has_more);
+
           const newLoadingSet = new Set(state.isLoadingChildren);
           newLoadingSet.delete(parentId);
-          
+
           const newPendingRequests = new Map(state.pendingChildrenRequests);
           newPendingRequests.delete(parentId);
-          
+
           return {
             childrenCache: newCache,
+            hasMoreChildren: newHasMore,
             isLoadingChildren: newLoadingSet,
             pendingChildrenRequests: newPendingRequests,
           };
         });
-        
-        return response.children;
+
+        return { children: response.children, hasMore: response.has_more };
       } catch (err: any) {
         console.error('[TreeStore] Failed to fetch children:', err);
-        
-        // Remove from loading set and pending requests
+
         set(state => {
           const newLoadingSet = new Set(state.isLoadingChildren);
           newLoadingSet.delete(parentId);
-          
           const newPendingRequests = new Map(state.pendingChildrenRequests);
           newPendingRequests.delete(parentId);
-          
-          return { 
-            isLoadingChildren: newLoadingSet,
-            pendingChildrenRequests: newPendingRequests,
-          };
+          return { isLoadingChildren: newLoadingSet, pendingChildrenRequests: newPendingRequests };
         });
-        
+
         const errorMsg = err.message || 'Failed to load children';
         toast.error(errorMsg);
         throw err;
       }
     })();
-    
-    // Store the pending promise
-    set(state => {
-      const newPendingRequests = new Map(state.pendingChildrenRequests);
-      newPendingRequests.set(parentId, fetchPromise);
-      return { pendingChildrenRequests: newPendingRequests };
-    });
-    
+
+    // Store pending promise for deduplication (first page only)
+    if (skip === 0) {
+      set(state => {
+        const newPendingRequests = new Map(state.pendingChildrenRequests);
+        newPendingRequests.set(parentId, fetchPromise);
+        return { pendingChildrenRequests: newPendingRequests };
+      });
+    }
+
     return fetchPromise;
   },
   
@@ -377,6 +393,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
     console.log('[TreeStore] Clearing all caches');
     set({
       childrenCache: new Map(),
+      hasMoreChildren: new Map(),
       fullAssetsCache: new Map(),
       fullBundlesCache: new Map(),
       lastFetchedInfospaceId: null,
@@ -391,6 +408,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
     set({
       rootNodes: [],
       childrenCache: new Map(),
+      hasMoreChildren: new Map(),
       isLoadingRoot: false,
       isLoadingChildren: new Set(),
       pendingChildrenRequests: new Map(),
@@ -398,6 +416,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       fullBundlesCache: new Map(),
       totalBundles: 0,
       totalAssets: 0,
+      isCounting: false,
       error: null,
       lastFetchedInfospaceId: null,
     });

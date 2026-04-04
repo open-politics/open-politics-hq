@@ -14,12 +14,21 @@ import {
   Pencil,
   X,
   FolderOpen,
+  Pin,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useAssetQuery, type QueryResult } from '@/hooks/useAssetQuery';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
+import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { useUserPreferencesStore, type Channel } from '@/zustand_stores/storeUserPreferences';
 import { useTreeStore } from '@/zustand_stores/storeTree';
+import { toast } from 'sonner';
 import { AssetCard, CardGrid } from '../Cards';
 import {
   DISPLAYABLE_ASSET_KINDS,
@@ -39,9 +48,11 @@ interface ChannelTabsProps {
   onEditChannel: (channel: Channel) => void;
   favoritesView: string;
   onCycleFavoritesView: () => void;
+  defaultChannelId?: string | null;
+  onSetDefault?: (id: string | null) => void;
 }
 
-export function ChannelTabs({ channels, activeChannelId, onSelect, onAddChannel, onEditChannel, favoritesView, onCycleFavoritesView }: ChannelTabsProps) {
+export function ChannelTabs({ channels, activeChannelId, onSelect, onAddChannel, onEditChannel, favoritesView, onCycleFavoritesView, defaultChannelId, onSetDefault }: ChannelTabsProps) {
   return (
     <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide px-1">
       {/* "All" tab — always present */}
@@ -69,18 +80,39 @@ export function ChannelTabs({ channels, activeChannelId, onSelect, onAddChannel,
         >
           <Star className="h-3 w-3" />
           Favorites
+          {defaultChannelId === '__favorites__' && (
+            <Pin className="h-2.5 w-2.5 text-primary" />
+          )}
         </button>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onCycleFavoritesView();
-          }}
-          className="absolute right-1 opacity-0 group-hover/tab:opacity-100 transition-opacity p-0.5 rounded text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground"
-          title={`View: ${favoritesView}`}
-        >
-          <Pencil className="h-2.5 w-2.5" />
-        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              onClick={(e) => e.stopPropagation()}
+              className="absolute right-1 opacity-0 group-hover/tab:opacity-100 transition-opacity p-0.5 rounded text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground"
+            >
+              <Pencil className="h-2.5 w-2.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-[140px]">
+            <DropdownMenuItem onClick={onCycleFavoritesView}>
+              View: {favoritesView}
+            </DropdownMenuItem>
+            {onSetDefault && (
+              defaultChannelId === '__favorites__' ? (
+                <DropdownMenuItem onClick={() => onSetDefault(null)}>
+                  <Pin className="mr-2 h-3 w-3" />
+                  Unpin as default
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem onClick={() => onSetDefault('__favorites__')}>
+                  <Pin className="mr-2 h-3 w-3" />
+                  Pin as default
+                </DropdownMenuItem>
+              )
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {/* User channels */}
       {channels.map((ch) => (
@@ -96,14 +128,39 @@ export function ChannelTabs({ channels, activeChannelId, onSelect, onAddChannel,
           >
             {ch.icon && <IconRenderer icon={ch.icon} className="h-3 w-3" />}
             {ch.name}
+            {defaultChannelId === ch.id && (
+              <Pin className="h-2.5 w-2.5 text-primary" />
+            )}
           </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onEditChannel(ch); }}
-            className="absolute right-1 opacity-0 group-hover/tab:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted-foreground/20"
-            title="Edit channel"
-          >
-            <Pencil className="h-2.5 w-2.5 hover:invert" />
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                onClick={(e) => e.stopPropagation()}
+                className="absolute right-1 opacity-0 group-hover/tab:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted-foreground/20"
+              >
+                <Pencil className="h-2.5 w-2.5 hover:invert" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[140px]">
+              <DropdownMenuItem onClick={() => onEditChannel(ch)}>
+                <Pencil className="mr-2 h-3 w-3" />
+                Edit channel
+              </DropdownMenuItem>
+              {onSetDefault && (
+                defaultChannelId === ch.id ? (
+                  <DropdownMenuItem onClick={() => onSetDefault(null)}>
+                    <Pin className="mr-2 h-3 w-3" />
+                    Unpin as default
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem onClick={() => onSetDefault(ch.id)}>
+                    <Pin className="mr-2 h-3 w-3" />
+                    Pin as default
+                  </DropdownMenuItem>
+                )
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       ))}
       {/* Add channel */}
@@ -159,7 +216,8 @@ export function ChannelFeedContent({ channelId, channels, onAssetClick, onBundle
   const { activeInfospace } = useInfospaceStore();
   const infospaceId = activeInfospace?.id;
   const { preferences } = useUserPreferencesStore();
-  const { rootNodes } = useTreeStore();
+  const { rootNodes, clearCache, fetchRootTree } = useTreeStore();
+  const { updateAsset } = useAssetStore();
 
   // Resolve the active channel config
   const channel = useMemo(() => {
@@ -215,6 +273,20 @@ export function ChannelFeedContent({ channelId, channels, onAssetClick, onBundle
     limit: 50,
     enabled: !!infospaceId,
   });
+
+  const handleToggleFavorite = useCallback(async (asset: AssetRead) => {
+    const tags = (asset.tags ?? []) as string[];
+    const isFav = tags.includes('favorite');
+    const newTags = isFav ? tags.filter((t: string) => t !== 'favorite') : [...tags, 'favorite'];
+    try {
+      await updateAsset(asset.id, { tags: newTags });
+      clearCache();
+      fetchRootTree();
+      search();
+    } catch {
+      toast.error('Failed to update favorite');
+    }
+  }, [updateAsset, clearCache, fetchRootTree, search]);
 
   if (!infospaceId) return null;
 
@@ -280,6 +352,8 @@ export function ChannelFeedContent({ channelId, channels, onAssetClick, onBundle
                     size="md"
                     isFeatured={view === 'bento' && i % 3 === 0}
                     orientation={view === 'list' ? 'horizontal' : 'vertical'}
+                    isFavorited={((result.asset.tags ?? []) as string[]).includes('favorite')}
+                    onToggleFavorite={handleToggleFavorite}
                   />
                 </motion.div>
               ))}

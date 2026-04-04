@@ -18,6 +18,7 @@ import { InfospaceRead, InfospaceBackupRead, InfospaceBackupCreate } from '@/cli
 import { BackupsService } from '@/client';
 import { toast } from 'sonner';
 import useAuth from '@/hooks/useAuth';
+import { CollaboratorList } from '@/components/collaboration/CollaboratorList';
 import { RowSelectionState } from '@tanstack/react-table';
 import {
   Dialog,
@@ -282,6 +283,9 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
                     <div className="min-w-0">
                       <span className="inline-block h-2.5 w-2.5 rounded-full bg-green-500 mr-1" title="Active infospace"></span>
                       <span className="text-sm font-medium truncate">{activeInfospace.name}</span>
+                      {activeInfospace.current_user_role && (
+                        <Badge variant="secondary" className="ml-2 text-[10px] capitalize">{activeInfospace.current_user_role}</Badge>
+                      )}
                       {activeInfospace.description && (
                         <span className="ml-2 text-[11px] text-muted-foreground truncate">"{activeInfospace.description}"</span>
                       )}
@@ -345,6 +349,13 @@ export default function InfospaceManager({ activeInfospace }: InfospaceManagerPr
                   onInfospaceUpdate={(updated) => {
                     useInfospaceStore.getState().fetchInfospaceById(updated.id);
                   }}
+                />
+
+                <Separator className="my-2" />
+
+                <CollaboratorList
+                  infospaceId={activeInfospace.id}
+                  isOwner={activeInfospace.is_owner ?? activeInfospace.owner_id === user?.id}
                 />
               </div>
             </section>

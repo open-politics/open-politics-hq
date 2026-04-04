@@ -8,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import useAuth from "@/hooks/useAuth";
-import { Shield, User, Key, Trash2, Camera, Upload, CheckCircle2, XCircle, Sparkles, Image as ImageIcon, X, RotateCcw } from 'lucide-react';
+import { Shield, User, Key, Trash2, Camera, Upload, CheckCircle2, XCircle, Sparkles, Image as ImageIcon, X, RotateCcw, AtSign, Check, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { UsersService } from '@/client';
 import { useUserPreferencesStore } from '@/zustand_stores/storeUserPreferences';
@@ -19,6 +19,8 @@ export default function AccountSettingsPage() {
   const { user, isLoading } = useAuth();
   const [hydrated, setHydrated] = useState(false);
   const [fullName, setFullName] = useState(user?.full_name || '');
+  const [handle, setHandle] = useState((user as any)?.handle || '');
+  const [handleStatus, setHandleStatus] = useState<'idle' | 'checking' | 'available' | 'taken' | 'invalid'>('idle');
   const [email, setEmail] = useState(user?.email || '');
   const [bio, setBio] = useState(user?.bio || '');
   const [description, setDescription] = useState(user?.description || '');
@@ -38,6 +40,7 @@ export default function AccountSettingsPage() {
     setHydrated(true);
     if (user) {
       setFullName(user.full_name || '');
+      setHandle((user as any)?.handle || '');
       setEmail(user.email || '');
       setBio(user.bio || '');
       setDescription(user.description || '');
@@ -53,6 +56,49 @@ export default function AccountSettingsPage() {
     setStatusBanner({ type, message });
     if (autoHideMs && autoHideMs > 0) {
       window.setTimeout(() => setStatusBanner(null), autoHideMs);
+    }
+  };
+
+  // Handle availability check (debounced)
+  const handleCheckRef = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (handleCheckRef.current) clearTimeout(handleCheckRef.current);
+    const currentHandle = (user as any)?.handle || '';
+    if (!handle || handle === currentHandle) {
+      setHandleStatus('idle');
+      return;
+    }
+    setHandleStatus('checking');
+    handleCheckRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/v1/users/handles/check?handle=${encodeURIComponent(handle)}`);
+        const data = await res.json();
+        setHandleStatus(data.available ? 'available' : 'taken');
+      } catch {
+        setHandleStatus('invalid');
+      }
+    }, 300);
+    return () => { if (handleCheckRef.current) clearTimeout(handleCheckRef.current); };
+  }, [handle, user]);
+
+  const handleSaveHandle = async () => {
+    if (handleStatus !== 'available') return;
+    showStatus('loading', 'Updating handle...');
+    try {
+      const token = localStorage.getItem('access_token');
+      const res = await fetch('/api/v1/users/me/handle', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ handle }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || 'Failed to update handle');
+      }
+      showStatus('success', 'Handle updated!', 2000);
+      setHandleStatus('idle');
+    } catch (err: any) {
+      showStatus('error', err.message || 'Failed to update handle', 4000);
     }
   };
 
@@ -300,6 +346,40 @@ export default function AccountSettingsPage() {
               />
             </div>
             
+            <div className="space-y-2">
+              <Label htmlFor="handle">Handle</Label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="handle"
+                    value={handle}
+                    onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+                    placeholder="your-handle"
+                    maxLength={40}
+                    className="pl-9"
+                    disabled={hydrated ? isLoading : false}
+                  />
+                  {handleStatus === 'checking' && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />}
+                  {handleStatus === 'available' && <Check className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-green-500" />}
+                  {handleStatus === 'taken' && <XCircle className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-red-500" />}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={handleStatus !== 'available'}
+                  onClick={handleSaveHandle}
+                >
+                  Save
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Letters, numbers, hyphens, underscores. 3-40 characters.
+                {handleStatus === 'taken' && <span className="text-red-500 ml-1">Already taken</span>}
+              </p>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input

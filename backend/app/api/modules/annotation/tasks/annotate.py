@@ -1180,6 +1180,12 @@ def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
                             run.updated_at = datetime.now(timezone.utc)
                             session.add(run)
                             session.commit()
+                            # Presence: push failure to watching browsers
+                            ctx.send("annotation_run", run_id, "failed", {
+                                "run_id": run_id,
+                                "status": "failed",
+                                "error": str(e),
+                            })
                     except Exception as db_exc:
                         logger.error("Could not update run %d to FAILED: %s", run_id, db_exc)
                 ctx.item_failed(run_id)
@@ -2277,6 +2283,14 @@ async def _process_annotation_run_async(
                 session.add(run)
                 session.commit()
                 logger.info(f"Task: Run {run.id} chunk {chunk_idx + 1}/{len(chunks)} committed {len(chunk_annotations)} annotations (progress: {run.progress_current}/{run.progress_total})")
+                # Presence: push progress to watching browsers
+                from app.core.stream import stream_key, StreamWriter
+                StreamWriter(stream_key(run.infospace_id, "annotation_run", run.id)).send("progress", {
+                    "run_id": run.id,
+                    "progress_current": run.progress_current,
+                    "progress_total": run.progress_total,
+                    "status": run.status.value if hasattr(run.status, "value") else str(run.status),
+                })
                 all_created_annotations.extend(chunk_annotations)
                 all_created_justifications.extend(chunk_justifications)
 
@@ -2307,6 +2321,16 @@ async def _process_annotation_run_async(
             run.updated_at = datetime.now(timezone.utc)
             session.add(run)
             session.commit()
+            # Presence: push terminal status to watching browsers
+            from app.core.stream import stream_key, StreamWriter
+            _sw = StreamWriter(stream_key(run.infospace_id, "annotation_run", run.id))
+            _sw.send("completed" if run.status == RunStatus.COMPLETED else "completed_with_errors", {
+                "run_id": run.id,
+                "status": run.status.value if hasattr(run.status, "value") else str(run.status),
+                "progress_current": run.progress_current,
+                "progress_total": run.progress_total,
+            })
+            _sw.expire(3600)
 
             # Compute aggregates for this run and update monitor aggregates if applicable
             try:
@@ -2338,6 +2362,11 @@ async def _process_annotation_run_async(
                         run_to_fail.completed_at = datetime.now(timezone.utc)
                         fail_session.add(run_to_fail)
                         fail_session.commit()
+                        # Presence: push failure to watching browsers
+                        from app.core.stream import stream_key, StreamWriter
+                        _sw = StreamWriter(stream_key(run_to_fail.infospace_id, "annotation_run", run_id))
+                        _sw.send("failed", {"run_id": run_id, "status": "failed", "error": str(e_task_critical)})
+                        _sw.expire(3600)
             except Exception as db_exc:
                 logger.error(f"Task: Could not update run {run_id} to FAILED status: {db_exc}", exc_info=True)
 

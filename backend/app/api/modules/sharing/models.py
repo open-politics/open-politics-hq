@@ -210,6 +210,19 @@ class PackageItem(SQLModel, table=True):
     allow_copy: Optional[bool] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    # Provenance: if this item was auto-derived from another item.
+    # Both NULL = top-level (explicit). Both non-NULL = derived.
+    # derivation_type values: "bundle_subtree", "run_schema", "graph_run"
+    derived_from_item_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            ForeignKey("packageitem.id", ondelete="CASCADE"),
+            index=True,
+        ),
+    )
+    derivation_type: Optional[str] = Field(default=None, max_length=32)
+
     package: Optional[Package] = Relationship(back_populates="items")
 
     __table_args__ = (
@@ -219,7 +232,16 @@ class PackageItem(SQLModel, table=True):
             "(asset_id IS NOT NULL)::int + (entity_canonical_id IS NOT NULL)::int = 1",
             name="ck_packageitem_exactly_one_fk",
         ),
+        CheckConstraint(
+            "(derived_from_item_id IS NULL AND derivation_type IS NULL) OR "
+            "(derived_from_item_id IS NOT NULL AND derivation_type IS NOT NULL)",
+            name="ck_packageitem_derivation_consistency",
+        ),
     )
+
+    @property
+    def is_derived(self) -> bool:
+        return self.derived_from_item_id is not None
 
     @property
     def resource_type(self) -> str:

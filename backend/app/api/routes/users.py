@@ -22,7 +22,13 @@ from app.models import (
     Asset,
     Annotation,
 )
-from app.schemas import Message, UserCreate, UserOut, UserUpdate, UserUpdateMe, UserCreateOpen, UsersOut, UpdatePassword, UserPublicProfile, UserProfileUpdate, UserProfileStats
+from app.schemas import (
+    Message, UserCreate, UserOut, UserUpdate, UserUpdateMe, UserCreateOpen,
+    UsersOut, UpdatePassword, UserPublicProfile, UserProfileUpdate,
+    UserProfileStats, HandleUpdate, HandleCheck, UserSearchResult,
+    InvitationOut,
+)
+from app.api.modules.identity_infospace_user.services import invitation_service
 from pydantic import BaseModel
 from typing import Dict
 from app.api.modules.identity_infospace_user.services import (
@@ -218,6 +224,89 @@ def delete_credential(
     session.commit()
     
     return Message(message=f"Credential for {provider_id} deleted")
+
+
+# ============================================================================
+# HANDLE MANAGEMENT
+# ============================================================================
+
+@router.get("/handles/check", response_model=HandleCheck)
+def check_handle(*, session: SessionDep, handle: str) -> HandleCheck:
+    """Check if a handle is available. Public endpoint for registration/settings."""
+    available = crud.check_handle_available(session, handle)
+    return HandleCheck(handle=handle.strip().lower(), available=available)
+
+
+@router.get("/handles/search", response_model=list[UserSearchResult])
+def search_users_by_handle(
+    *, session: SessionDep, current_user: CurrentUser, q: str, limit: int = 10
+) -> list[UserSearchResult]:
+    """Search users by handle or name for invite autocomplete."""
+    users = crud.search_users(session, query=q, limit=min(limit, 25))
+    return [
+        UserSearchResult(
+            id=u.id, handle=u.handle, full_name=u.full_name,
+            profile_picture_url=u.profile_picture_url,
+        )
+        for u in users
+        if u.id != current_user.id  # exclude self from results
+    ]
+
+
+@router.patch("/me/handle", response_model=UserOut)
+def update_my_handle(
+    *, session: SessionDep, current_user: CurrentUser, body: HandleUpdate
+) -> Any:
+    """Set or change own handle."""
+    try:
+        user = crud.set_handle(session, current_user, body.handle)
+        return user
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============================================================================
+# INVITATION INBOX
+# ============================================================================
+
+@router.get("/me/invitations", response_model=list[InvitationOut])
+def list_my_invitations(*, session: SessionDep, current_user: CurrentUser) -> Any:
+    """List my pending invitations."""
+    invitations = invitation_service.list_user_invitations(session, current_user.id)
+    return [InvitationOut.from_db(inv, session) for inv in invitations]
+
+
+@router.get("/me/invitations/count")
+def count_my_invitations(*, session: SessionDep, current_user: CurrentUser) -> dict:
+    """Count of pending invitations (for badge display)."""
+    count = invitation_service.count_user_invitations(session, current_user.id)
+    return {"count": count}
+
+
+@router.post("/me/invitations/{invitation_id}/accept")
+def accept_invitation_route(
+    *, invitation_id: int, session: SessionDep, current_user: CurrentUser
+) -> Any:
+    """Accept a pending invitation."""
+    try:
+        collab = invitation_service.accept_invitation(session, invitation_id, current_user.id)
+        return {"message": "Invitation accepted", "infospace_id": collab.infospace_id, "role": collab.role.value}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/me/invitations/{invitation_id}/decline")
+def decline_invitation_route(
+    *, invitation_id: int, session: SessionDep, current_user: CurrentUser
+) -> Any:
+    """Decline a pending invitation."""
+    try:
+        invitation_service.decline_invitation(session, invitation_id, current_user.id)
+        return {"message": "Invitation declined"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 
 
 @router.get("/me", response_model=UserOut)
@@ -678,11 +767,22 @@ def create_user_open(session: SessionDep, user_in: UserCreateOpen) -> Any:
             detail="Description must be 2000 characters or less"
         )
     
+    # Validate handle if provided
+    if user_in.handle:
+        from app.api.modules.identity_infospace_user.handle_gen import validate_handle
+        try:
+            validated = validate_handle(user_in.handle)
+            if not crud.check_handle_available(session, validated):
+                raise HTTPException(status_code=400, detail=f"Handle '{validated}' is already taken")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
     # Create user with verification fields (converting from UserCreateOpen to UserCreate)
     user_create = UserCreate(
         email=user_in.email,
         password=user_in.password,
         full_name=user_in.full_name,
+        handle=user_in.handle,
         profile_picture_url=user_in.profile_picture_url,
         bio=user_in.bio,
         description=user_in.description,
@@ -695,7 +795,10 @@ def create_user_open(session: SessionDep, user_in: UserCreateOpen) -> Any:
         user_create.is_active = False
     
     user = crud.create_user(session=session, user_create=user_create)
-    
+
+    # Link any pending email-keyed invitations to this new user
+    invitation_service.link_email_invitations(session, user)
+
     # Handle email verification
     print(f"🔧 EMAIL DEBUG:")
     print(f"  - REQUIRE_EMAIL_VERIFICATION: {settings.REQUIRE_EMAIL_VERIFICATION}")

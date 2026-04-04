@@ -720,6 +720,314 @@
         }
       }
     },
+    "/api/v1/users/handles/check": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Check Handle",
+        "description": "Check if a handle is available. Public endpoint for registration/settings.",
+        "operationId": "check_handle",
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Handle"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandleCheck"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/handles/search": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Search Users By Handle",
+        "description": "Search users by handle or name for invite autocomplete.",
+        "operationId": "search_users_by_handle",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserSearchResult"
+                  },
+                  "title": "Response Users-Search Users By Handle"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/me/handle": {
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Update My Handle",
+        "description": "Set or change own handle.",
+        "operationId": "update_my_handle",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandleUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/me/invitations": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "List My Invitations",
+        "description": "List my pending invitations.",
+        "operationId": "list_my_invitations",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InvitationOut"
+                  },
+                  "type": "array",
+                  "title": "Response Users-List My Invitations"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/me/invitations/count": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Count My Invitations",
+        "description": "Count of pending invitations (for badge display).",
+        "operationId": "count_my_invitations",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Users-Count My Invitations"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/me/invitations/{invitation_id}/accept": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Accept Invitation Route",
+        "description": "Accept a pending invitation.",
+        "operationId": "accept_invitation_route",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "invitation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Invitation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Users-Accept Invitation Route"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/me/invitations/{invitation_id}/decline": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Decline Invitation Route",
+        "description": "Decline a pending invitation.",
+        "operationId": "decline_invitation_route",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "invitation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Invitation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Users-Decline Invitation Route"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/me/upload-profile-picture": {
       "post": {
         "tags": [
@@ -1705,7 +2013,7 @@
           "Infospaces"
         ],
         "summary": "List Infospaces",
-        "description": "Retrieve Infospaces for the current user.",
+        "description": "Retrieve Infospaces for the current user (owned + collaborated, with role context).",
         "operationId": "list_infospaces",
         "security": [
           {
@@ -1811,7 +2119,7 @@
           "Infospaces"
         ],
         "summary": "List Infospaces",
-        "description": "Retrieve Infospaces for the current user.",
+        "description": "Retrieve Infospaces for the current user (owned + collaborated, with role context).",
         "operationId": "list_infospaces",
         "security": [
           {
@@ -1871,7 +2179,7 @@
           "Infospaces"
         ],
         "summary": "Get Infospace",
-        "description": "Retrieve a specific Infospace by its ID.",
+        "description": "Retrieve a specific Infospace by its ID (with role context for the current user).",
         "operationId": "get_infospace",
         "security": [
           {
@@ -2106,15 +2414,15 @@
         }
       }
     },
-    "/api/v1/infospaces/{infospace_id}/collaborators/invite": {
+    "/api/v1/infospaces/{infospace_id}/invitations": {
       "post": {
         "tags": [
           "Infospaces",
           "Infospaces"
         ],
-        "summary": "Invite Collaborator",
-        "description": "Invite a user to collaborate on an infospace. Only owner or editor can invite.",
-        "operationId": "invite_collaborator",
+        "summary": "Send Invitation",
+        "description": "Invite a user by handle or email to collaborate on this infospace.",
+        "operationId": "send_invitation",
         "security": [
           {
             "OAuth2PasswordBearer": []
@@ -2131,27 +2439,93 @@
             }
           },
           {
-            "name": "email",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "Email of user to invite",
-              "title": "Email"
-            },
-            "description": "Email of user to invite"
-          },
-          {
-            "name": "role",
+            "name": "package_token",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "description": "Role: owner, editor, viewer",
-              "default": "viewer",
-              "title": "Role"
-            },
-            "description": "Role: owner, editor, viewer"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Token"
+            }
+          },
+          {
+            "name": "X-Package-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Package-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Infospaces",
+          "Infospaces"
+        ],
+        "summary": "List Invitations",
+        "description": "List all invitations for this infospace (owner/setup view).",
+        "operationId": "list_invitations",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
           },
           {
             "name": "package_token",
@@ -2192,7 +2566,101 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "title": "Response Infospaces-Invite Collaborator"
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InvitationOut"
+                  },
+                  "title": "Response Infospaces-List Invitations"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/invitations/{invitation_id}": {
+      "delete": {
+        "tags": [
+          "Infospaces",
+          "Infospaces"
+        ],
+        "summary": "Revoke Invitation Route",
+        "description": "Revoke a pending invitation.",
+        "operationId": "revoke_invitation_route",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "invitation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Invitation Id"
+            }
+          },
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "package_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Token"
+            }
+          },
+          {
+            "name": "X-Package-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Package-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Infospaces-Revoke Invitation Route"
                 }
               }
             }
@@ -2273,7 +2741,192 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CollaboratorOut"
+                  },
                   "title": "Response Infospaces-List Collaborators"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/collaborators/{user_id}/role": {
+      "patch": {
+        "tags": [
+          "Infospaces",
+          "Infospaces"
+        ],
+        "summary": "Change Collaborator Role",
+        "description": "Change a collaborator's role. Only owner/setup can do this.",
+        "operationId": "change_collaborator_role",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "role",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/CollaboratorRole",
+              "description": "New role"
+            },
+            "description": "New role"
+          },
+          {
+            "name": "package_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Token"
+            }
+          },
+          {
+            "name": "X-Package-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Package-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Infospaces-Change Collaborator Role"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/collaborators/me": {
+      "delete": {
+        "tags": [
+          "Infospaces",
+          "Infospaces"
+        ],
+        "summary": "Leave Infospace",
+        "description": "Leave an infospace (self-removal). Owner cannot leave.",
+        "operationId": "leave_infospace",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "package_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Token"
+            }
+          },
+          {
+            "name": "X-Package-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Package-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Infospaces-Leave Infospace"
                 }
               }
             }
@@ -5414,7 +6067,7 @@
           "Assets"
         ],
         "summary": "Retry Asset Enrichment",
-        "description": "Clear enrichment state for an asset so it is eligible for re-enrichment.",
+        "description": "Clear enrichment state and kick the enricher for an asset (or its children).",
         "operationId": "retry_asset_enrichment",
         "security": [
           {
@@ -7149,7 +7802,7 @@
           "Tree Navigation"
         ],
         "summary": "Get Infospace Tree",
-        "description": "Get the root-level tree structure for an infospace.\n\nReturns minimal metadata for bundles and assets:\n- Root bundles (no parent_bundle_id)\n- Root assets (no parent_asset_id, not in any bundle)\n\nWhen accessed via package token, only scoped bundles are returned.\nSee FOUNDATION.md § Access Control.",
+        "description": "Get the root-level tree structure for an infospace.\n\nJSON by default. SSE (Accept: text/event-stream) delivers tree nodes\nfast, then streams total counts later.",
         "operationId": "get_infospace_tree",
         "security": [
           {
@@ -7207,7 +7860,8 @@
                 "schema": {
                   "$ref": "#/components/schemas/TreeResponse"
                 }
-              }
+              },
+              "text/event-stream": {}
             }
           },
           "422": {
@@ -7523,7 +8177,7 @@
           "Tree Navigation"
         ],
         "summary": "Get Feed Assets",
-        "description": "Get a feed of recent assets sorted by date.\nScope-aware: package token access restricts to scoped bundles.",
+        "description": "Get a feed of recent assets sorted by date.\n\nJSON by default. SSE (Accept: text/event-stream) delivers assets fast,\nthen streams count later.",
         "operationId": "get_feed_assets",
         "security": [
           {
@@ -7678,7 +8332,8 @@
                 "schema": {
                   "$ref": "#/components/schemas/FeedAssetsResponse"
                 }
-              }
+              },
+              "text/event-stream": {}
             }
           },
           "422": {
@@ -8657,6 +9312,137 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/p/{token}/assets/{asset_id}/stream": {
+      "get": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Stream Package Asset",
+        "description": "Stream an asset file through a package token. Enforces allow_download.",
+        "operationId": "stream_package_asset",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/p/{token}/assets/{asset_id}/download": {
+      "get": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Download Package Asset",
+        "description": "Download an asset file through a package token. Enforces allow_download.",
+        "operationId": "download_package_asset",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/p/{token}/export": {
+      "get": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Export Package",
+        "description": "Export a package as a self-contained intelligence product.\n\nProduces a ZIP with:\n- manifest.json — full HQ-native data for round-trip import\n- files/ — original source documents\n- data/*.csv — human-readable analysis results\n- provenance/lineage.csv — audit trail\n- explore.py — self-documenting script",
+        "operationId": "export_package",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -10109,7 +10895,7 @@
           "Runs"
         ],
         "summary": "List Runs",
-        "description": "Retrieve Runs for the infospace.",
+        "description": "Retrieve Runs for the infospace.\n\nJSON by default. SSE (Accept: text/event-stream) delivers runs fast\nwith annotation counts, then streams total count later.",
         "operationId": "list_runs",
         "security": [
           {
@@ -10199,7 +10985,8 @@
                 "schema": {
                   "$ref": "#/components/schemas/AnnotationRunsOut"
                 }
-              }
+              },
+              "text/event-stream": {}
             }
           },
           "422": {
@@ -10311,7 +11098,7 @@
           "Runs"
         ],
         "summary": "List Runs",
-        "description": "Retrieve Runs for the infospace.",
+        "description": "Retrieve Runs for the infospace.\n\nJSON by default. SSE (Accept: text/event-stream) delivers runs fast\nwith annotation counts, then streams total count later.",
         "operationId": "list_runs",
         "security": [
           {
@@ -10401,7 +11188,8 @@
                 "schema": {
                   "$ref": "#/components/schemas/AnnotationRunsOut"
                 }
-              }
+              },
+              "text/event-stream": {}
             }
           },
           "422": {
@@ -14479,6 +15267,7 @@
           "Query"
         ],
         "summary": "Query Assets",
+        "description": "Search assets via AQL query string.\n\nJSON by default (pagination always JSON). SSE (Accept: text/event-stream)\ndelivers results fast, then streams count and children later.",
         "operationId": "query_assets",
         "security": [
           {
@@ -14546,7 +15335,8 @@
                 "schema": {
                   "$ref": "#/components/schemas/QueryResponse"
                 }
-              }
+              },
+              "text/event-stream": {}
             }
           },
           "422": {
@@ -14626,6 +15416,139 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/QueryFieldsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/stream/{topic}/{resource_id}": {
+      "get": {
+        "tags": [
+          "Live Streams",
+          "Live Streams"
+        ],
+        "summary": "Subscribe Stream",
+        "description": "Subscribe to a presence stream via SSE.\n\nEvents are pushed by ctx.send() from background tasks or by StreamWriter\nfrom route handlers. Pings every 3s keep the connection alive through\nproxies. Connection closes after 30 minutes (client should reconnect\nwith Last-Event-ID).",
+        "operationId": "subscribe_stream",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Topic"
+            }
+          },
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Resource Id"
+            }
+          },
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "params",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "JSON-encoded view parameters",
+              "title": "Params"
+            },
+            "description": "JSON-encoded view parameters"
+          },
+          {
+            "name": "package_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Token"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          },
+          {
+            "name": "X-Package-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Package-Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -24960,7 +25883,7 @@
           "sharing"
         ],
         "summary": "Export Resource",
-        "description": "Export a resource from a specific infospace to a file.\nReturns a file download.",
+        "description": "Export a resource from a specific infospace to a file.\nReturns a file download. Requires organize capability.",
         "operationId": "export_resource",
         "security": [
           {
@@ -24975,6 +25898,38 @@
             "schema": {
               "type": "integer",
               "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "package_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Token"
+            }
+          },
+          {
+            "name": "X-Package-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Package-Token"
             }
           }
         ],
@@ -25011,7 +25966,7 @@
           "sharing"
         ],
         "summary": "Import Resource",
-        "description": "Import a resource from a file into a specific infospace.",
+        "description": "Import a resource from a file into a specific infospace. Requires ingest capability.",
         "operationId": "import_resource",
         "security": [
           {
@@ -25067,7 +26022,7 @@
           "sharing"
         ],
         "summary": "Export Resources Batch",
-        "description": "Export multiple resources of the same type to a ZIP archive.",
+        "description": "Export multiple resources of the same type to a ZIP archive. Requires organize capability.",
         "operationId": "export_resources_batch",
         "security": [
           {
@@ -25082,6 +26037,38 @@
             "schema": {
               "type": "integer",
               "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "package_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Token"
+            }
+          },
+          {
+            "name": "X-Package-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Package-Token"
             }
           }
         ],
@@ -25128,7 +26115,7 @@
           "sharing"
         ],
         "summary": "Export Mixed Batch",
-        "description": "Export a mix of assets and bundles to a single ZIP archive.",
+        "description": "Export a mix of assets and bundles to a single ZIP archive. Requires organize capability.",
         "operationId": "export_mixed_batch",
         "security": [
           {
@@ -25143,6 +26130,38 @@
             "schema": {
               "type": "integer",
               "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "package_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Token"
+            }
+          },
+          {
+            "name": "X-Package-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Package-Token"
             }
           }
         ],
@@ -25358,7 +26377,7 @@
           "sharing"
         ],
         "summary": "Import Resource From Token",
-        "description": "Import a shared resource into the current user's specified infospace.",
+        "description": "Import a shared resource into the current user's specified infospace.\nRequires ingest capability on the target infospace.",
         "operationId": "import_resource_from_token",
         "security": [
           {
@@ -25423,6 +26442,33 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RegistrationStats"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/stream-stats": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Stream Stats",
+        "description": "Live primitives observability: stream counters from Redis.",
+        "operationId": "get_stream_stats",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StreamStats"
                 }
               }
             }
@@ -27134,6 +28180,20 @@
               }
             ],
             "title": "Content Hash"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
           }
         },
         "type": "object",
@@ -27460,6 +28520,42 @@
             ],
             "title": "Processing Error"
           },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "default": []
+          },
+          "enrichment_resolved": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrichment Resolved"
+          },
+          "discovered_modalities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovered Modalities"
+          },
           "is_container": {
             "type": "boolean",
             "title": "Is Container",
@@ -27616,6 +28712,20 @@
               }
             ],
             "title": "Event Timestamp"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
           }
         },
         "type": "object",
@@ -29602,6 +30712,32 @@
         "title": "ChatResponse",
         "description": "Response from intelligence analysis chat."
       },
+      "ChildResultGroup": {
+        "properties": {
+          "parent_asset_id": {
+            "type": "integer",
+            "title": "Parent Asset Id"
+          },
+          "parent_title": {
+            "type": "string",
+            "title": "Parent Title"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/QueryResult"
+            },
+            "type": "array",
+            "title": "Matches"
+          }
+        },
+        "type": "object",
+        "required": [
+          "parent_asset_id",
+          "parent_title",
+          "matches"
+        ],
+        "title": "ChildResultGroup"
+      },
       "ChunkAssetRequest": {
         "properties": {
           "strategy": {
@@ -29790,6 +30926,74 @@
           "total_chunks"
         ],
         "title": "ChunkingStatsResponse"
+      },
+      "CollaboratorOut": {
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handle"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "profile_picture_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Picture Url"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "is_owner": {
+            "type": "boolean",
+            "title": "Is Owner",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "role"
+        ],
+        "title": "CollaboratorOut",
+        "description": "Collaborator in an infospace with role and profile info."
+      },
+      "CollaboratorRole": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "analyst",
+          "curator",
+          "viewer",
+          "editor"
+        ],
+        "title": "CollaboratorRole"
       },
       "CreatePackageFromRunRequest": {
         "properties": {
@@ -30987,8 +32191,7 @@
           "total",
           "has_more"
         ],
-        "title": "FeedAssetsResponse",
-        "description": "Response for the feed assets endpoint"
+        "title": "FeedAssetsResponse"
       },
       "FieldJustificationConfig": {
         "properties": {
@@ -31798,6 +33001,39 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HandleCheck": {
+        "properties": {
+          "handle": {
+            "type": "string",
+            "title": "Handle"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          }
+        },
+        "type": "object",
+        "required": [
+          "handle",
+          "available"
+        ],
+        "title": "HandleCheck",
+        "description": "Handle availability check result."
+      },
+      "HandleUpdate": {
+        "properties": {
+          "handle": {
+            "type": "string",
+            "title": "Handle"
+          }
+        },
+        "type": "object",
+        "required": [
+          "handle"
+        ],
+        "title": "HandleUpdate",
+        "description": "Update a user's handle."
+      },
       "ImportFromTokenRequest": {
         "properties": {
           "target_infospace_id": {
@@ -32337,6 +33573,22 @@
                 "type": "null"
               }
             ]
+          },
+          "current_user_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current User Role"
+          },
+          "is_owner": {
+            "type": "boolean",
+            "title": "Is Owner",
+            "default": false
           }
         },
         "type": "object",
@@ -32707,6 +33959,119 @@
           "cancelled"
         ],
         "title": "IngestionStatus"
+      },
+      "InvitationCreate": {
+        "properties": {
+          "identifier": {
+            "type": "string",
+            "title": "Identifier"
+          },
+          "role": {
+            "$ref": "#/components/schemas/CollaboratorRole",
+            "default": "viewer"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identifier"
+        ],
+        "title": "InvitationCreate",
+        "description": "Invite someone by handle or email."
+      },
+      "InvitationOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "infospace_id": {
+            "type": "integer",
+            "title": "Infospace Id"
+          },
+          "infospace_name": {
+            "type": "string",
+            "title": "Infospace Name"
+          },
+          "inviter_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inviter Name"
+          },
+          "inviter_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inviter Handle"
+          },
+          "invitee_user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invitee User Id"
+          },
+          "invitee_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invitee Handle"
+          },
+          "invitee_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invitee Email"
+          },
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "infospace_id",
+          "infospace_name",
+          "role",
+          "status",
+          "created_at"
+        ],
+        "title": "InvitationOut",
+        "description": "Invitation as seen by owner (infospace view) or invitee (inbox view)."
       },
       "KnowledgeGraphCreate": {
         "properties": {
@@ -33080,6 +34445,28 @@
         "title": "ModelListResponse",
         "description": "Response listing available models."
       },
+      "NameMatches": {
+        "properties": {
+          "bundles": {
+            "items": {
+              "$ref": "#/components/schemas/BundleRead"
+            },
+            "type": "array",
+            "title": "Bundles",
+            "default": []
+          },
+          "assets": {
+            "items": {
+              "$ref": "#/components/schemas/QueryResult"
+            },
+            "type": "array",
+            "title": "Assets",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "NameMatches"
+      },
       "NewPassword": {
         "properties": {
           "token": {
@@ -33130,6 +34517,18 @@
             "type": "boolean",
             "title": "Default Allow Copy",
             "default": false
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
           },
           "items": {
             "items": {
@@ -33255,6 +34654,28 @@
             "type": "integer",
             "title": "Resource Id"
           },
+          "resource_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Name"
+          },
+          "resource_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Kind"
+          },
           "allow_download": {
             "anyOf": [
               {
@@ -33276,6 +34697,28 @@
               }
             ],
             "title": "Allow Copy"
+          },
+          "derived_from_item_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derived From Item Id"
+          },
+          "derivation_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Derivation Type"
           }
         },
         "type": "object",
@@ -33401,6 +34844,18 @@
               }
             ],
             "title": "Is Active"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
           }
         },
         "type": "object",
@@ -33826,6 +35281,18 @@
             "title": "Q",
             "description": "AQL query string"
           },
+          "parent_asset_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Asset Id",
+            "description": "Scope search to children of this asset"
+          },
           "cursor": {
             "anyOf": [
               {
@@ -33855,7 +35322,7 @@
           "sort": {
             "type": "string",
             "title": "Sort",
-            "description": "relevance | created_at_desc | created_at_asc | title",
+            "description": "relevance | created_at_desc | created_at_asc | title | part_index",
             "default": "relevance"
           }
         },
@@ -33876,12 +35343,23 @@
             "type": "object",
             "title": "Parsed"
           },
+          "name_matches": {
+            "$ref": "#/components/schemas/NameMatches"
+          },
           "results": {
             "items": {
               "$ref": "#/components/schemas/QueryResult"
             },
             "type": "array",
             "title": "Results"
+          },
+          "child_results": {
+            "items": {
+              "$ref": "#/components/schemas/ChildResultGroup"
+            },
+            "type": "array",
+            "title": "Child Results",
+            "default": []
           },
           "total": {
             "type": "integer",
@@ -35779,6 +37257,37 @@
         "title": "StorageBrowseResponse",
         "description": "Response for storage browse endpoint."
       },
+      "StreamStats": {
+        "properties": {
+          "stream_sent": {
+            "type": "integer",
+            "title": "Stream Sent",
+            "default": 0
+          },
+          "stream_dropped": {
+            "type": "integer",
+            "title": "Stream Dropped",
+            "default": 0
+          },
+          "stream_queue_full": {
+            "type": "integer",
+            "title": "Stream Queue Full",
+            "default": 0
+          },
+          "stream_active_connections": {
+            "type": "integer",
+            "title": "Stream Active Connections",
+            "default": 0
+          },
+          "stream_reconnects": {
+            "type": "integer",
+            "title": "Stream Reconnects",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "StreamStats"
+      },
       "TaskCreate": {
         "properties": {
           "name": {
@@ -36270,6 +37779,17 @@
             ],
             "title": "Child Bundle Count"
           },
+          "sealed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sealed"
+          },
           "processing_status": {
             "anyOf": [
               {
@@ -36279,6 +37799,20 @@
                 "type": "null"
               }
             ]
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
           },
           "stub": {
             "anyOf": [
@@ -36881,6 +38415,17 @@
             ],
             "title": "Full Name"
           },
+          "handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handle"
+          },
           "tier": {
             "$ref": "#/components/schemas/UserTier",
             "default": "tier_0"
@@ -36966,6 +38511,17 @@
             ],
             "title": "Full Name"
           },
+          "handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handle"
+          },
           "profile_picture_url": {
             "anyOf": [
               {
@@ -37023,6 +38579,17 @@
               }
             ],
             "title": "Full Name"
+          },
+          "handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handle"
           },
           "tier": {
             "$ref": "#/components/schemas/UserTier",
@@ -37215,6 +38782,17 @@
             "type": "integer",
             "title": "Id"
           },
+          "handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handle"
+          },
           "full_name": {
             "anyOf": [
               {
@@ -37272,6 +38850,53 @@
         ],
         "title": "UserPublicProfile",
         "description": "Public user profile (no sensitive information)."
+      },
+      "UserSearchResult": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handle"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "profile_picture_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Picture Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "UserSearchResult",
+        "description": "Lightweight user result for invite autocomplete."
       },
       "UserTier": {
         "type": "string",

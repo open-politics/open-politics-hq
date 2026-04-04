@@ -484,9 +484,10 @@ export function getAssetIconClass(kind: AssetKind, context: StyleContext = 'defa
  * Format asset kind as human-readable label
  */
 export function formatAssetKind(kind: AssetKind): string {
+  if (!kind) return 'Unknown';
   const config = ASSET_KIND_CONFIG[kind];
   if (config) return config.label;
-  
+
   // Fallback formatting
   return kind
     .replace(/_/g, ' ')

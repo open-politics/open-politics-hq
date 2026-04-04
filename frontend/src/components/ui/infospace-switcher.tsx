@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ChevronsUpDown, Plus, Settings } from "lucide-react"
+import { ChevronsUpDown, Plus, Settings, Users } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useTheme } from "next-themes"
 import Link from "next/link"
@@ -124,6 +124,12 @@ export function InfospaceSwitcher() {
                   <span className="truncate font-semibold">
                     {activeInfospace?.name || "Select Infospace"}
                   </span>
+                  {activeInfospace && !activeInfospace.is_owner && activeInfospace.current_user_role && (
+                    <span className="flex items-center gap-1 text-[9px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded capitalize shrink-0">
+                      <Users className="size-2.5" />
+                      {activeInfospace.current_user_role}
+                    </span>
+                  )}
                 </div>
               </div>
             </SidebarMenuButton>
@@ -146,8 +152,13 @@ export function InfospaceSwitcher() {
                 {infospace.icon && (
                   <IconRenderer className="size-4 text-secondary-500" icon={infospace.icon} />
                 )}
-                <span>{infospace.name}</span>
-                <DropdownMenuShortcut>⌘{infospace.id}</DropdownMenuShortcut>
+                <span className="flex-1 truncate">{infospace.name}</span>
+                {!infospace.is_owner && infospace.current_user_role && (
+                  <span className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded capitalize shrink-0">
+                    <Users className="size-2.5" />
+                    {infospace.current_user_role}
+                  </span>
+                )}
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />

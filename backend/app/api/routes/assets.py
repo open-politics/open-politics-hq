@@ -105,7 +105,7 @@ class BatchAssetCreateRequest(BaseModel):
 async def create_asset(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     ingestion_context_factory: IngestionContextFactoryDep,
     processing_service: ProcessingServiceDep,
     infospace_id: int,
@@ -189,7 +189,7 @@ async def create_asset(
 def batch_create_assets(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     asset_service: AssetServiceDep,
     infospace_id: int,
     request: BatchAssetCreateRequest,
@@ -219,7 +219,7 @@ def batch_create_assets(
 async def upload_file(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     _: CheckUploadSizeDep,
@@ -255,7 +255,7 @@ async def upload_file(
 async def ingest_url(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     url: str,
@@ -292,7 +292,7 @@ async def ingest_url(
 async def ingest_text(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     text_content: str,
@@ -328,7 +328,7 @@ async def ingest_text(
 async def compose_article(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     infospace_id: int,
     composition: ArticleComposition
 ) -> Any:
@@ -364,7 +364,7 @@ async def compose_article(
 async def bulk_ingest_urls(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     ingestion_context_factory: IngestionContextFactoryDep,
     infospace_id: int,
     bulk_request: BulkUrlIngestion
@@ -428,7 +428,7 @@ async def bulk_ingest_urls(
 async def ingest_search_results(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     bundle_service: BundleServiceDep,
     infospace_id: int,
     bulk_request: BulkSearchResultIngestion
@@ -511,7 +511,7 @@ async def ingest_search_results(
 async def materialize_csv_from_rows(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
     infospace_id: int,
     asset_id: int,
     storage_provider: StorageProviderDep,
@@ -556,7 +556,7 @@ async def materialize_csv_from_rows(
 async def reprocess_asset(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
     processing_service: ProcessingServiceDep,
     infospace_id: int,
     asset_id: int,
@@ -597,7 +597,7 @@ async def reprocess_asset(
 async def update_asset_content(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     storage_provider: StorageProviderDep,
     processing_service: ProcessingServiceDep,
     infospace_id: int,
@@ -683,7 +683,7 @@ async def update_asset_content(
 @router.get("/", response_model=AssetsOut)
 def list_assets(
     session: SessionDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     infospace_id: int = 0,
     skip: int = 0,
     limit: int = 100,
@@ -694,7 +694,7 @@ def list_assets(
     """
     if parent_asset_id is not None:
         parent_asset = session.get(Asset, parent_asset_id)
-        if not parent_asset or parent_asset.infospace_id != infospace_id or parent_asset.user_id != access.user_id:
+        if not parent_asset or parent_asset.infospace_id != infospace_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Parent asset not found"
@@ -706,7 +706,7 @@ def list_assets(
         AssetQuery(session, infospace_id)
         .scope(access.scope)
         .parent_asset(parent_asset_id)
-        .user_id(access.user_id if parent_asset_id is None else None)
+        .user_id(None)  # all infospace assets visible to any collaborator
         .sort("created_at_desc")
         .offset(skip)
         .paginate(cursor=None, limit=limit)
@@ -723,7 +723,7 @@ def list_assets(
 async def discover_rss_feeds(
     *,
     session: SessionDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     infospace_id: int,
     country: Optional[str] = None,
     category: Optional[str] = None,
@@ -766,7 +766,7 @@ async def discover_rss_feeds(
 async def preview_rss_feed(
     *,
     session: SessionDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     infospace_id: int,
     feed_url: str,
     max_items: int = 20
@@ -792,7 +792,7 @@ async def preview_rss_feed(
 async def ingest_selected_articles(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     ingestion_context_factory: IngestionContextFactoryDep,
     infospace_id: int,
     feed_url: str,
@@ -864,7 +864,7 @@ async def ingest_selected_articles(
 @router.get("/{asset_id}", response_model=AssetRead)
 def get_asset(
     session: SessionDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     infospace_id: int = 0,
     asset_id: int = 0,
 ) -> Any:
@@ -889,7 +889,7 @@ def get_asset(
 @router.get("/{asset_id}/children", response_model=List[AssetRead])
 def get_asset_children(
     session: SessionDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     infospace_id: int = 0,
     asset_id: int = 0,
     skip: int = 0,
@@ -922,7 +922,7 @@ def get_asset_children(
 def update_asset(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     infospace_id: int,
     asset_id: int,
     asset_in: AssetUpdate
@@ -951,7 +951,7 @@ def update_asset(
 @router.delete("/{asset_id}", response_model=Message)
 def delete_asset(
     session: SessionDep,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     infospace_id: int = 0,
     asset_id: int = 0,
 ) -> Any:
@@ -1005,7 +1005,7 @@ class BulkDeleteRequest(BaseModel):
 def bulk_delete_assets(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     infospace_id: int,
     request: BulkDeleteRequest
 ) -> Any:
@@ -1108,7 +1108,7 @@ async def create_assets_background_bulk(
     infospace_id: int,
     files: List[UploadFile] = File(...),
     options: str = Form("{}"),
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
 ):
     """
     Upload multiple files as individual assets using background processing.
@@ -1192,7 +1192,7 @@ async def create_assets_background_urls(
     *,
     infospace_id: int,
     request: BulkUrlIngestion,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     session: SessionDep,
 ):
     """
@@ -1237,7 +1237,7 @@ async def add_files_to_bundle_background(
     _: CheckUploadSizeDep,
     files: List[UploadFile] = File(...),
     options: str = Form("{}"),
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
 ):
     """
     Add files to existing bundle using background processing.
@@ -1374,7 +1374,7 @@ async def get_task_status(
 async def ingest_rss_feeds_from_awesome(
     *,
     session: SessionDep,
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
     make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     request: RSSDiscoveryRequest
@@ -1423,9 +1423,24 @@ async def retry_asset_enrichment(
     asset_id: int,
     enricher_name: str,
     session: SessionDep,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ):
-    """Clear enrichment state for an asset so it is eligible for re-enrichment."""
+    """Clear enrichment state and kick the enricher for an asset (or its children)."""
+    from app.api.modules.content.enrichers import (
+        retry_enrichment,
+        enrich_ocr, enrich_geocoding, enrich_hash,
+        enrich_language, enrich_quality_score, enrich_embedding,
+    )
+
+    _ENRICHER_FNS = {
+        "ocr": enrich_ocr, "geocoding": enrich_geocoding,
+        "hash": enrich_hash, "language_detection": enrich_language,
+        "quality_score": enrich_quality_score, "embedding": enrich_embedding,
+    }
+
+    fn = _ENRICHER_FNS.get(enricher_name)
+    if not fn:
+        raise HTTPException(status_code=404, detail=f"Unknown enricher '{enricher_name}'")
 
     asset = session.get(Asset, asset_id)
     if not asset:
@@ -1433,8 +1448,24 @@ async def retry_asset_enrichment(
     if asset.infospace_id != infospace_id:
         raise HTTPException(status_code=404, detail="Asset not in this infospace")
 
-    from app.api.modules.content.enrichers import retry_enrichment
-    retry_enrichment(session, asset_id, enricher_name)
+    # For container assets (e.g. PDF), target children instead
+    target_ids = []
+    if asset.is_container:
+        from sqlmodel import select
+        children = session.exec(
+            select(Asset.id).where(Asset.parent_asset_id == asset_id)
+        ).all()
+        target_ids = list(children)
+    else:
+        target_ids = [asset_id]
+
+    for tid in target_ids:
+        retry_enrichment(session, tid, enricher_name)
     session.commit()
 
-    return Message(message=f"Enrichment '{enricher_name}' reset for asset {asset_id}")
+    # Kick the enricher via @task direct invocation
+    if target_ids:
+        fn.delay(target_ids, infospace_id)
+
+    count = len(target_ids)
+    return Message(message=f"Enrichment '{enricher_name}' triggered for {count} asset(s)")

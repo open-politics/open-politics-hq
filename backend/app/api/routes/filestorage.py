@@ -110,6 +110,7 @@ async def file_upload(
 @router.get(
     "/download",
     response_class=FileResponse,
+    status_code=200,
     responses={ # Add responses dict
         status.HTTP_401_UNAUTHORIZED: {"description": "Unauthorized"},
         status.HTTP_404_NOT_FOUND: {"description": "Not Found"},
@@ -301,6 +302,7 @@ def _validate_user_file_access(current_user: CurrentUser, file_path: str) -> str
 @router.get(
     "/stream/{file_path:path}",
     response_class=StreamingResponse,
+    status_code=200,
     responses={
         status.HTTP_401_UNAUTHORIZED: {"description": "Unauthorized"},
         status.HTTP_404_NOT_FOUND: {"description": "Not Found"},

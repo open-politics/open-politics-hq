@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { X, ChevronsUp, ChevronsDownUp, ChevronsUpDown, Grip, Edit, Check, XCircle, RotateCcw, Maximize2, Minimize2, Copy, Edit2, Settings, GripVertical } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -1169,13 +1169,13 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
       
       case 'graph':
         return (
-          <div className="h-full flex flex-col space-y-2 overflow-y-auto">
+          <div className="h-full flex flex-col space-y-2 overflow-hidden">
             {!isCollapsed && (
               <div className="flex-shrink-0">
                 {/* Removed embedded VariableSplittingControls */}
               </div>
             )}
-            <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="flex-1 min-h-0 overflow-hidden">
               <AssetDetailProvider annotationResults={allResults} schemas={allSchemas} activeRunId={activeRunId}>
                 <AnnotationResultsGraph
                   results={filteredResults}
@@ -1326,134 +1326,149 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         </div>
       )}
 
-      <CardHeader className="flex flex-row items-start justify-between border-b p-2 pb-1 space-y-0 flex-shrink-0">
-        <div className="flex-1 space-y-1 min-w-0">
-          {/* Editable Name */}
-          <div className="flex items-center gap-2 min-w-0">
-            {isEditingName ? (
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <Input
-                  value={editingName}
-                  onChange={(e) => setEditingName(e.target.value)}
-                  onKeyDown={handleNameKeyDown}
-                  className="text-sm font-semibold h-7 flex-1 min-w-0"
-                  placeholder="Panel name"
-                  autoFocus
-                />
-                <Button size="icon" variant="ghost" className="h-6 w-6 flex-shrink-0" onClick={handleSaveName}>
-                  <Check className="h-3 w-3" />
-                </Button>
-                <Button size="icon" variant="ghost" className="h-6 w-6 flex-shrink-0" onClick={handleCancelNameEdit}>
-                  <XCircle className="h-3 w-3" />
-                </Button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 flex-1 group min-w-0">
-                  <CardTitle className="text-sm flex-1 truncate">{panel.name}</CardTitle>
-                <Button 
-                  size="icon" 
-                  variant="ghost" 
-                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" 
-                  onClick={() => setIsEditingName(true)}
-                >
-                  <Edit2 className="h-3 w-3" />
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {/* Editable Description - ONLY show if has content or is editing */}
-          {(panel.description || isEditingDescription) && (
-            <div className="flex items-start gap-2 min-w-0">
-              {isEditingDescription ? (
-                <div className="flex items-start gap-2 flex-1 min-w-0">
-                  <Textarea
-                    value={editingDescription}
-                    onChange={(e) => setEditingDescription(e.target.value)}
-                    onKeyDown={handleDescriptionKeyDown}
-                    className="text-xs min-h-[50px] flex-1 min-w-0"
-                    placeholder="Panel description (optional)"
-                    autoFocus
-                  />
-                  <div className="flex flex-col gap-1 flex-shrink-0">
-                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleSaveDescription}>
-                      <Check className="h-3 w-3" />
-                    </Button>
-                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleCancelDescriptionEdit}>
-                      <XCircle className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-start gap-2 flex-1 group min-w-0">
-                  <CardDescription className="text-xs flex-1 truncate">{panel.description}</CardDescription>
-                  <Button 
-                    size="icon" 
-                    variant="ghost" 
-                    className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" 
-                    onClick={() => setIsEditingDescription(true)}
-                  >
-                    <Edit2 className="h-3 w-3" />
-                  </Button>
-                </div>
-              )}
+      <CardHeader className="flex flex-row items-center justify-between border-b px-2 py-1 space-y-0 flex-shrink-0">
+        {/* Panel Name */}
+        <div className="flex items-center gap-1.5 min-w-0 flex-shrink-1">
+          {isEditingName ? (
+            <div className="flex items-center gap-1 min-w-0">
+              <Input
+                value={editingName}
+                onChange={(e) => setEditingName(e.target.value)}
+                onKeyDown={handleNameKeyDown}
+                className="text-xs font-semibold h-6 w-32 min-w-0"
+                placeholder="Panel name"
+                autoFocus
+              />
+              <Button size="icon" variant="ghost" className="h-5 w-5 flex-shrink-0" onClick={handleSaveName}>
+                <Check className="h-2.5 w-2.5" />
+              </Button>
+              <Button size="icon" variant="ghost" className="h-5 w-5 flex-shrink-0" onClick={handleCancelNameEdit}>
+                <XCircle className="h-2.5 w-2.5" />
+              </Button>
             </div>
+          ) : (
+            <div className="flex items-center gap-1 group min-w-0">
+              <CardTitle className="text-xs truncate">{panel.name}</CardTitle>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                onClick={() => setIsEditingName(true)}
+              >
+                <Edit2 className="h-2.5 w-2.5" />
+              </Button>
+            </div>
+          )}
+          {/* Inline description hint */}
+          {panel.description && !isEditingDescription && (
+            <span className="text-[10px] text-muted-foreground truncate max-w-[120px] hidden sm:inline" title={panel.description}>
+              — {panel.description}
+            </span>
           )}
         </div>
 
-        {/* Panel Controls */}
-        <div className="flex items-start gap-1 ml-1 sm:ml-2 flex-shrink-0">
+        {/* Description editing overlay */}
+        {isEditingDescription && (
+          <div className="absolute top-8 left-2 right-2 z-20 bg-background border rounded-md shadow-lg p-2">
+            <div className="flex items-start gap-2">
+              <Textarea
+                value={editingDescription}
+                onChange={(e) => setEditingDescription(e.target.value)}
+                onKeyDown={handleDescriptionKeyDown}
+                className="text-xs min-h-[50px] flex-1 min-w-0"
+                placeholder="Panel description (optional)"
+                autoFocus
+              />
+              <div className="flex flex-col gap-1 flex-shrink-0">
+                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleSaveDescription}>
+                  <Check className="h-3 w-3" />
+                </Button>
+                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleCancelDescriptionEdit}>
+                  <XCircle className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Inline Filters + Panel Controls */}
+        <div className="flex items-center gap-1 ml-1 flex-shrink-0">
+          {/* Filters inline */}
+          {!isCollapsed && (
+            <UnifiedFilterControls
+              filterSet={panel.filters || { logic: 'and', rules: [] }}
+              onFilterSetChange={handleFilterChange}
+              timeAxisConfig={panel.settings?.timeAxisConfig || null}
+              onTimeAxisConfigChange={(config) => {
+                handlePanelSettingsUpdate({ timeAxisConfig: config });
+              }}
+              showTimeControls={true}
+              allSchemas={allSchemas}
+            />
+          )}
+
+          {/* Description edit trigger */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 opacity-40 hover:opacity-100"
+            onClick={() => setIsEditingDescription(true)}
+            title="Edit description"
+          >
+            <Edit2 className="h-2.5 w-2.5" />
+          </Button>
+
           {/* Collapse/Expand Toggle */}
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="h-6 w-6 opacity-60 hover:opacity-100" 
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-5 w-5 opacity-60 hover:opacity-100"
             onClick={handleToggleCollapse}
           >
-            {isCollapsed ? <ChevronsDownUp className="h-3 w-3" /> : <ChevronsUpDown className="h-3 w-3" />}
+            {isCollapsed ? <ChevronsDownUp className="h-2.5 w-2.5" /> : <ChevronsUpDown className="h-2.5 w-2.5" />}
           </Button>
 
           {/* Layout Controls */}
           <Popover open={showLayoutControls} onOpenChange={setShowLayoutControls}>
             <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-6 w-6 opacity-60 hover:opacity-100">
-                <Settings className="h-3 w-3" />
+              <Button variant="ghost" size="icon" className="h-5 w-5 opacity-60 hover:opacity-100">
+                <Settings className="h-2.5 w-2.5" />
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-80 p-3" align="end" side="bottom">
-              <div className="space-y-4">
+            <PopoverContent className="w-72 p-3" align="end" side="bottom">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <h4 className="font-medium text-sm">Panel Layout</h4>
-                  <span className="text-xs text-muted-foreground">
-                    {panel.gridPos.w} × {panel.gridPos.h} grid units
+                  <h4 className="font-medium text-xs">Panel Layout</h4>
+                  <span className="text-[10px] text-muted-foreground">
+                    {panel.gridPos.w} × {panel.gridPos.h}
                   </span>
                 </div>
-                
+
                 {/* Quick Size Buttons */}
                 <div>
-                  <Label className="text-xs text-muted-foreground mb-2 block">Quick Sizes</Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button size="sm" variant="outline" onClick={() => handleQuickSize('small')}>
+                  <Label className="text-[10px] text-muted-foreground mb-1.5 block">Quick Sizes</Label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleQuickSize('small')}>
                       Small (4×3)
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => handleQuickSize('medium')}>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleQuickSize('medium')}>
                       Medium (6×4)
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => handleQuickSize('large')}>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleQuickSize('large')}>
                       Large (8×5)
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => handleQuickSize('full')}>
-                      Full Width (12×6)
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleQuickSize('full')}>
+                      Full (12×6)
                     </Button>
                   </div>
                 </div>
 
                 {/* Manual Size Controls */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <Label htmlFor="panel-width" className="text-xs text-muted-foreground">Width</Label>
+                    <Label htmlFor="panel-width" className="text-[10px] text-muted-foreground">Width</Label>
                     <Select value={panel.gridPos.w.toString()} onValueChange={(v) => handleWidthChange(parseInt(v))}>
-                      <SelectTrigger className="h-8">
+                      <SelectTrigger className="h-7 text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1466,9 +1481,9 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                     </Select>
                   </div>
                   <div>
-                    <Label htmlFor="panel-height" className="text-xs text-muted-foreground">Height</Label>
+                    <Label htmlFor="panel-height" className="text-[10px] text-muted-foreground">Height</Label>
                     <Select value={panel.gridPos.h.toString()} onValueChange={(v) => handleHeightChange(parseInt(v))}>
-                      <SelectTrigger className="h-8">
+                      <SelectTrigger className="h-7 text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1483,44 +1498,28 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                 </div>
 
                 {/* Reset Button */}
-                <Button 
-                  size="sm" 
-                  variant="outline" 
-                  className="w-full"
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full h-7 text-xs"
                   onClick={handleResetLayout}
                 >
-                  <RotateCcw className="h-3 w-3 mr-2" />
-                  Reset Layout
+                  <RotateCcw className="h-2.5 w-2.5 mr-1.5" />
+                  Reset
                 </Button>
               </div>
             </PopoverContent>
           </Popover>
 
           {/* Remove Panel */}
-          <Button variant="ghost" size="icon" className="h-6 w-6 opacity-60 hover:opacity-100" onClick={() => onRemovePanel(panel.id)}>
-            <X className="h-4 w-4" />
+          <Button variant="ghost" size="icon" className="h-5 w-5 opacity-60 hover:opacity-100" onClick={() => onRemovePanel(panel.id)}>
+            <X className="h-3 w-3" />
           </Button>
         </div>
       </CardHeader>
-      
-      <CardContent className="flex-1 flex flex-col gap-1.5 p-1.5 min-h-0 overflow-y-auto">
-        {/* Unified Filters & Settings Section - Only this collapses */}
-        {!isCollapsed && (
-          <div className="border-b pb-1.5 flex-shrink-0">
-            <UnifiedFilterControls 
-              filterSet={panel.filters || { logic: 'and', rules: [] }}
-              onFilterSetChange={handleFilterChange}
-              timeAxisConfig={panel.settings?.timeAxisConfig || null}
-              onTimeAxisConfigChange={(config) => {
-                handlePanelSettingsUpdate({ timeAxisConfig: config });
-              }}
-              showTimeControls={true}
-              allSchemas={allSchemas}
-            />
-          </div>
-        )}
-        
-        {/* Main Content - Always visible with proper overflow handling */}
+
+      <CardContent className="flex-1 flex flex-col p-1.5 min-h-0 overflow-y-auto">
+        {/* Main Content */}
         <div className="flex-1 min-h-0 overflow-y-auto">
           {renderPanelContent()}
         </div>

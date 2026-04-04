@@ -48,7 +48,7 @@ async def create_flow(
     *,
     session: SessionDep,
     flow_in: FlowCreate,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ) -> FlowRead:
     """
     Create a new Flow.
@@ -75,7 +75,7 @@ async def create_flow(
 @router.get("/", response_model=FlowsOut)
 async def list_flows(
     session: SessionDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     status: Optional[str] = Query(None, description="Filter by status"),
@@ -112,7 +112,7 @@ async def list_flows(
 async def get_flow(
     session: SessionDep,
     flow_id: int,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> FlowRead:
     """Get a specific Flow by ID."""
     if access.scope:
@@ -139,7 +139,7 @@ async def update_flow(
     session: SessionDep,
     flow_id: int,
     flow_in: FlowUpdate,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ) -> FlowRead:
     """Update a Flow."""
     flow_service = get_flow_service(session)
@@ -167,7 +167,7 @@ async def update_flow(
 async def delete_flow(
     session: SessionDep,
     flow_id: int,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
 ) -> None:
     """Delete a Flow and all its executions."""
     flow_service = get_flow_service(session)
@@ -193,7 +193,7 @@ async def delete_flow(
 async def activate_flow(
     session: SessionDep,
     flow_id: int,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ) -> FlowRead:
     """
     Activate a Flow for processing.
@@ -224,7 +224,7 @@ async def activate_flow(
 async def pause_flow(
     session: SessionDep,
     flow_id: int,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ) -> FlowRead:
     """Pause a Flow."""
     flow_service = get_flow_service(session)
@@ -253,7 +253,7 @@ async def trigger_flow_execution(
     session: SessionDep,
     flow_id: int,
     execution_in: Optional[FlowExecutionCreate] = None,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ) -> FlowExecutionRead:
     """
     Trigger a Flow execution manually.
@@ -281,7 +281,7 @@ async def trigger_flow_execution(
 async def list_flow_executions(
     session: SessionDep,
     flow_id: int,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     status: Optional[str] = Query(None, description="Filter by status"),
@@ -311,7 +311,7 @@ async def get_flow_execution(
     session: SessionDep,
     flow_id: int,
     execution_id: int,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> FlowExecutionRead:
     """Get a specific Flow execution."""
     flow_service = get_flow_service(session)
@@ -339,7 +339,7 @@ async def get_flow_execution(
 async def get_pending_assets(
     session: SessionDep,
     flow_id: int,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> List[int]:
     """
     Get the list of asset IDs that would be processed on the next execution.
@@ -367,7 +367,7 @@ async def get_pending_assets(
 async def reset_flow_cursor(
     session: SessionDep,
     flow_id: int,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ) -> FlowRead:
     """
     Reset the Flow's cursor state, allowing it to reprocess all assets.

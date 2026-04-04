@@ -526,31 +526,31 @@ class _AccessAliases:
 
     @staticmethod
     def _view():
-        return Requires()
+        return Requires(scope=None)
 
     @staticmethod
     def _organize():
-        return Requires(Capability.ORGANIZE)
+        return Requires(Capability.ORGANIZE, scope=None)
 
     @staticmethod
     def _ingest():
-        return Requires(Capability.INGEST)
+        return Requires(Capability.INGEST, scope=None)
 
     @staticmethod
     def _compute():
-        return Requires(Capability.COMPUTE)
+        return Requires(Capability.COMPUTE, scope=None)
 
     @staticmethod
     def _delete():
-        return Requires(Capability.DELETE)
+        return Requires(Capability.DELETE, scope=None)
 
     @staticmethod
     def _setup():
-        return Requires(Capability.SETUP)
+        return Requires(Capability.SETUP, scope=None)
 
     @staticmethod
     def _organize_delete():
-        return Requires(Capability.ORGANIZE, Capability.DELETE)
+        return Requires(Capability.ORGANIZE, Capability.DELETE, scope=None)
 
 
 # These are callables, not Depends instances.

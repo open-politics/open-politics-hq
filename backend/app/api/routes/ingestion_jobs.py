@@ -83,7 +83,7 @@ def create_directory_import_job(
     infospace_id: int,
     request: DirectoryImportRequest,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
 ) -> Any:
     """
     Import files from a local directory.
@@ -200,7 +200,7 @@ def trigger_process_pending(
     bundle_id: int,
     batch_size: int = Query(100, ge=1, le=500),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ) -> Any:
     """
     Trigger batch processing of PENDING assets in a bundle.
@@ -237,7 +237,7 @@ def trigger_enrich(
     bundle_id: int,
     request: BatchEnrichRequest,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ) -> Any:
     """
     Trigger batch enrichment for assets in a bundle missing a facet.
@@ -280,7 +280,7 @@ def get_processing_status(
     infospace_id: int,
     bundle_id: int,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> Any:
     """
     Get processing status counts for assets in a bundle.
@@ -333,7 +333,7 @@ def list_ingestion_jobs(
     source_id: Optional[int] = Query(None, description="Filter by source ID (jobs created by this source poll)"),
     limit: int = Query(50, ge=1, le=100),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> Any:
     """
     List ingestion jobs for an infospace.
@@ -377,7 +377,7 @@ def get_ingestion_job_status(
     *,
     job_id: int,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> Any:
     """
     Get status of a specific ingestion job.
@@ -406,7 +406,7 @@ def get_ingestion_job_by_uuid(
     *,
     job_uuid: str,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> Any:
     """
     Get job status by UUID (useful when only UUID is known).
@@ -437,7 +437,7 @@ async def create_archive_ingestion_job(
     infospace_id: int,
     request: IngestionJobCreate,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
 ) -> Any:
     """
     Create a new archive ingestion job.
@@ -515,7 +515,7 @@ def cancel_ingestion_job(
     *,
     job_id: int,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ) -> Any:
     """
     Cancel a running ingestion job.
@@ -558,7 +558,7 @@ def delete_ingestion_job(
     *,
     job_id: int,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
 ) -> Any:
     """
     Delete an ingestion job record.
@@ -594,7 +594,7 @@ async def reconcile_directory(
     infospace_id: int,
     request: ReconcileDirectoryRequest,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(Capability.INGEST),
+    access: Access = Requires(Capability.INGEST, scope=None),
 ) -> Any:
     """
     Run on-demand directory reconcile.
@@ -706,7 +706,7 @@ def enable_directory_watch(
     infospace_id: int,
     request: EnableWatchRequest,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(Capability.SETUP),
+    access: Access = Requires(Capability.SETUP, scope=None),
     source_service: dependency_injection.SourceServiceDep,
 ) -> Any:
     """
@@ -768,7 +768,7 @@ def get_watch_status(
     infospace_id: int,
     bundle_id: Optional[int] = Query(None),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> Any:
     """
     Get watch / inbox status for directories in an infospace.
@@ -837,7 +837,7 @@ def get_task_status(
     *,
     infospace_id: int,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> Any:
     """Per-task stats for an infospace. Reads from Redis — no DB queries."""
     if access.scope:
@@ -872,7 +872,7 @@ def get_pipeline_stats(
     *,
     job_id: int,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> Any:
     """Asset processing breakdown for a completed ingestion job."""
     if access.scope:

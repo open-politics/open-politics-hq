@@ -40,7 +40,7 @@ class MaterializeVfolderRequest(BaseModel):
 def materialize_virtual_folder(
     *,
     request: MaterializeVfolderRequest,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Bundle:
     """Create a real bundle from a virtual folder (path prefix within a source bundle)."""
@@ -61,7 +61,7 @@ def materialize_virtual_folder(
 def create_bundle(
     *,
     bundle_in: BundleCreate,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> Bundle:
     """Create a new bundle in an infospace."""
@@ -89,7 +89,7 @@ def create_bundle(
 @router.get("/infospaces/{infospace_id}/bundles/{bundle_id}", response_model=BundleRead)
 def get_bundle(
     bundle_id: int,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     db: Session = Depends(dependency_injection.get_db),
 ) -> Bundle:
     """Get a bundle by ID."""
@@ -103,7 +103,7 @@ def get_bundle(
 def get_bundles(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> List[Bundle]:
     """Get bundles for an infospace."""
@@ -123,7 +123,7 @@ def update_bundle(
     *,
     bundle_id: int,
     bundle_in: BundleUpdate,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
     service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Bundle:
@@ -145,7 +145,7 @@ def update_bundle(
 @router.delete("/infospaces/{infospace_id}/bundles/{bundle_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_bundle(
     bundle_id: int,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
     service: BundleService = Depends(dependency_injection.get_bundle_service),
 ):
@@ -167,7 +167,7 @@ class BulkDeleteBundlesRequest(BaseModel):
 def bulk_delete_bundles(
     *,
     request: BulkDeleteBundlesRequest,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
     service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Message:
@@ -205,7 +205,7 @@ def add_asset_to_bundle(
     *,
     bundle_id: int,
     asset_id: int,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
     service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Bundle:
@@ -230,7 +230,7 @@ def remove_asset_from_bundle(
     *,
     bundle_id: int,
     asset_id: int,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
     service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Bundle:
@@ -250,7 +250,7 @@ def remove_asset_from_bundle(
 @router.get("/infospaces/{infospace_id}/bundles/{bundle_id}/assets", response_model=List[AssetRead])
 def get_assets_in_bundle(
     bundle_id: int,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     service: BundleService = Depends(dependency_injection.get_bundle_service),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
@@ -275,7 +275,7 @@ def transfer_bundle(
     bundle_id: int,
     target_infospace_id: int,
     copy: bool = True,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
     service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Bundle:
@@ -310,7 +310,7 @@ def move_bundle_to_parent(
     *,
     bundle_id: int,
     move_request: BundleMoveRequest,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
     service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Bundle:
@@ -333,7 +333,7 @@ def get_bundle_hierarchy(
     *,
     bundle_id: int,
     max_depth: int = Query(default=10, ge=1, le=20),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     db: Session = Depends(dependency_injection.get_db),
     service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> BundleHierarchy:
@@ -355,7 +355,7 @@ def get_bundle_hierarchy(
 @router.get("/infospaces/{infospace_id}/bundles/root", response_model=List[BundleRead])
 def get_root_bundles(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> List[Bundle]:
     """Get all top-level bundles (those without parent bundles) in an infospace."""
@@ -374,7 +374,7 @@ def get_bulk_bundle_assets(
     bundle_ids: str = Query(..., description="Comma-separated list of bundle IDs"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     db: Session = Depends(dependency_injection.get_db),
     service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> dict:
@@ -438,7 +438,7 @@ def get_bulk_bundle_assets(
 def seal_bundle(
     *,
     bundle_id: int,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
 ) -> Message:
     """Seal a bundle and all descendants. Immutable membership after sealing."""
@@ -454,7 +454,7 @@ def seal_bundle(
 def unseal_bundle(
     *,
     bundle_id: int,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
 ) -> Message:
     """Unseal a bundle and all descendants. Rejects if active packages reference the subtree."""

@@ -286,6 +286,7 @@ const Header = () => {
                     {isLoggedIn && !isLoggingOut && (
                       <NavUser user={{
                         name: user?.full_name || 'User',
+                        handle: (user as any)?.handle || undefined,
                         email: user?.email || '',
                         avatar: user?.avatar || '',
                         profile_picture_url: user?.profile_picture_url || '',

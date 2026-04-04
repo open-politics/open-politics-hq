@@ -18,7 +18,7 @@ import { MoreHorizontal, Pencil, Trash, Download, Share2, Archive, ArrowRightCir
 import { InfospaceRead } from '@/client';
 import { formatDistanceToNowStrict } from 'date-fns';
 
-export type InfospaceRowData = Pick<InfospaceRead, 'id' | 'name' | 'description' | 'icon' | 'created_at'> & {
+export type InfospaceRowData = Pick<InfospaceRead, 'id' | 'name' | 'description' | 'icon' | 'created_at' | 'current_user_role' | 'is_owner'> & {
   sources_display?: string;
 };
 
@@ -46,6 +46,15 @@ export const columns = ({ onEdit, onDelete, onExport, onShare, onBackup, onSwitc
       const description = row.original.description;
       return <div className="truncate max-w-[200px] text-xs text-muted-foreground" title={description || ''}>{description || '—'}</div>;
     }
+  },
+  {
+    accessorKey: 'current_user_role',
+    header: 'Role',
+    cell: ({ row }) => {
+      const role = row.original.current_user_role;
+      if (!role) return <span className="text-xs text-muted-foreground">—</span>;
+      return <span className="text-xs capitalize text-muted-foreground">{role}</span>;
+    },
   },
   {
     accessorKey: 'created_at',

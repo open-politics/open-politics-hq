@@ -512,6 +512,19 @@ class AssetQuery:
         stmt = select(func.count(Asset.id)).where(and_(*self._conditions))
         return self.session.exec(stmt).one() or 0
 
+    def count_by_parent(self) -> dict[int, int]:
+        """Return {parent_asset_id: count} for matching children.
+
+        Cheap GROUP BY on indexed columns — no row fetch.
+        Ignores limit/offset/cursor.
+        """
+        stmt = (
+            select(Asset.parent_asset_id, func.count(Asset.id))
+            .where(and_(*self._conditions))
+            .group_by(Asset.parent_asset_id)
+        )
+        return {pid: cnt for pid, cnt in self.session.exec(stmt).all() if pid is not None}
+
     def execute(self) -> List[Asset]:
         """Execute and return list of Asset."""
         stmt = self._build_base_select()

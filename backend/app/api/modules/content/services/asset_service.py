@@ -2,6 +2,7 @@ import logging
 from typing import Optional, List, Dict, Any, Union
 from sqlmodel import Session, select, delete
 from sqlalchemy import update
+from pydantic import BaseModel
 import asyncio
 
 from app.models import Asset, AssetChunk, Annotation, AssetKind, ProcessingStatus
@@ -128,18 +129,17 @@ class AssetService:
         return asset
 
     def list_assets(
-        self, 
-        infospace_id: int, 
-        user_id: int,
-        skip: int = 0, 
+        self,
+        infospace_id: int,
+        user_id: Optional[int] = None,
+        skip: int = 0,
         limit: int = 100,
         filter_kind: Optional[AssetKind] = None,
         parent_asset_id: Optional[int] = None
     ) -> List[Asset]:
-        """List assets with optional filtering."""
+        """List assets with optional filtering. infospace_id is the data boundary."""
         query = select(Asset).where(
             Asset.infospace_id == infospace_id,
-            Asset.user_id == user_id
         )
         
         if filter_kind:
@@ -281,12 +281,11 @@ class AssetService:
         else:
             raise ValueError(f"Unknown search method: {search_method}")
 
-    def count_assets_by_infospace(self, infospace_id: int, user_id: int) -> int:
-        """Count total assets in an infospace for a user."""
+    def count_assets_by_infospace(self, infospace_id: int, user_id: Optional[int] = None) -> int:
+        """Count total assets in an infospace."""
         return self.session.exec(
             select(Asset).where(
                 Asset.infospace_id == infospace_id,
-                Asset.user_id == user_id
             )
         ).count()
 

@@ -14,13 +14,6 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -44,11 +37,6 @@ import {
   Table2,
   Rss,
   File,
-  Hash,
-  Braces,
-  Tag,
-  Plus,
-  BookOpen,
   Sparkles,
   FolderPlus,
   Crosshair,
@@ -59,7 +47,6 @@ import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAssetQuery, type ChildResultGroup } from '@/hooks/useAssetQuery';
-import { useQueryFields } from '@/hooks/useQueryFields';
 import { useFeedAssets } from '@/components/collection/assets/Feed/useFeedAssets';
 import { useAssetDetail } from '@/components/collection/assets/Views/AssetDetailProvider';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
@@ -77,7 +64,6 @@ import {
   isKindActive,
   setDateInQuery,
   getDateFromQuery,
-  setRunInQuery,
   setChildrenInQuery,
   getChildrenFromQuery,
   insertToken,
@@ -88,7 +74,6 @@ import {
 import { request } from '@/client/core/request';
 import { OpenAPI } from '@/client/core/OpenAPI';
 import type { AssetRead } from '@/client';
-import type { SchemaInfo, RunInfo } from '@/hooks/useQueryFields';
 import AssetSelector from '@/components/collection/assets/AssetSelector';
 import type { AssetTreeItem } from '@/components/collection/assets/AssetSelector';
 
@@ -118,13 +103,6 @@ const KIND_BUTTONS: { kind: string; label: string; icon: React.ReactNode }[] = [
   { kind: 'text', label: 'Text', icon: <File className="h-3.5 w-3.5" /> },
   { kind: 'rss_feed', label: 'RSS', icon: <Rss className="h-3.5 w-3.5" /> },
 ];
-
-const FIELD_TYPE_ICONS: Record<string, React.ReactNode> = {
-  string: <Tag className="h-3 w-3" />,
-  number: <Hash className="h-3 w-3" />,
-  array: <Braces className="h-3 w-3" />,
-  object: <Braces className="h-3 w-3" />,
-};
 
 /** Short label for the nested-results (children:) control trigger */
 function nestedResultsTriggerSuffix(query: string): string {
@@ -337,111 +315,6 @@ function Section({
 // Annotation field browser
 // ---------------------------------------------------------------------------
 
-function AnnotationFieldBrowser({
-  schemas,
-  onInsertField,
-}: {
-  schemas: SchemaInfo[];
-  onInsertField: (field: string, type: string) => void;
-}) {
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
-
-  const toggleSchema = (id: number) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  if (schemas.length === 0) {
-    return <p className="text-[11px] text-muted-foreground/60 italic pl-1">No annotation schemas configured</p>;
-  }
-
-  return (
-    <div className="space-y-0.5">
-      {schemas.map((schema) => (
-        <div key={schema.id}>
-          <button
-            type="button"
-            onClick={() => toggleSchema(schema.id)}
-            className="flex items-center gap-1.5 w-full text-left px-1.5 py-1 rounded hover:bg-muted/60 transition-colors text-xs"
-          >
-            <ChevronRight className={cn('h-3 w-3 text-muted-foreground/50 transition-transform duration-150', expanded.has(schema.id) && 'rotate-90')} />
-            <BookOpen className="h-3 w-3 text-orange-500/70" />
-            <span className="truncate font-medium flex-1">{schema.name}</span>
-            <span className="text-[9px] text-muted-foreground/40 tabular-nums">{schema.fields.length}</span>
-          </button>
-          {expanded.has(schema.id) && (
-            <div className="ml-5 mt-0.5 space-y-0">
-              {schema.fields.map((field) => (
-                <Tooltip key={field.key}>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => onInsertField(field.key, field.type)}
-                      className="flex items-center gap-1.5 w-full text-left px-1.5 py-1 rounded hover:bg-muted/60 transition-colors group"
-                    >
-                      {FIELD_TYPE_ICONS[field.type] || <Tag className="h-3 w-3" />}
-                      <code className="text-[10px] font-mono text-foreground/80 group-hover:text-foreground truncate flex-1">
-                        {field.key}
-                      </code>
-                      <Plus className="h-3 w-3 opacity-0 group-hover:opacity-40 transition-opacity flex-shrink-0" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">Insert annotation:{field.key}==</TooltipContent>
-                </Tooltip>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Run picker
-// ---------------------------------------------------------------------------
-
-function RunPicker({
-  runs,
-  onSelectRun,
-}: {
-  runs: RunInfo[];
-  onSelectRun: (runId: string) => void;
-}) {
-  if (runs.length === 0) {
-    return <p className="text-[11px] text-muted-foreground/60 italic pl-1">No annotation runs yet</p>;
-  }
-
-  return (
-    <Select onValueChange={onSelectRun}>
-      <SelectTrigger className="h-8 text-xs">
-        <SelectValue placeholder="Select a run..." />
-      </SelectTrigger>
-      <SelectContent>
-        {runs.map((run) => (
-          <SelectItem key={run.id} value={String(run.id)} className="text-xs">
-            <div className="flex items-center gap-2">
-              <span className="font-medium">{run.name}</span>
-              <Badge variant="outline" className="text-[9px] py-0 px-1 h-4">
-                {run.status}
-              </Badge>
-            </div>
-            {run.schema_names.length > 0 && (
-              <span className="text-[10px] text-muted-foreground block">
-                {run.schema_names.join(', ')}
-              </span>
-            )}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Create bundle dialog
 // ---------------------------------------------------------------------------
@@ -590,8 +463,6 @@ export default function AssetExplorer() {
     sortOrder: sortOption === 'created_at_asc' ? 'asc' : 'desc',
   });
 
-  const { fields } = useQueryFields(infospaceId);
-
   // Pills
   const pills: QueryPill[] = useMemo(() => {
     if (Object.keys(querySearch.parsed).length > 0) return parsedResponseToPills(querySearch.parsed);
@@ -633,33 +504,29 @@ export default function AssetExplorer() {
   const groupedResults = useMemo(() => {
     if (childResults.length === 0) return null;
 
-    // Build parent→children map from backend child_results
+    // Build parent→children + total_matches maps from backend child_results
     const childMap = new Map<number, ExplorerResult[]>();
+    const totalMap = new Map<number, number>();
     for (const group of childResults) {
       childMap.set(group.parent_asset_id, group.matches.map((m) => ({
         asset: m.asset,
         score: m.score ?? undefined,
         highlight: m.highlight,
       })));
+      totalMap.set(group.parent_asset_id, group.total_matches);
     }
 
     // Build grouped list: parent row with its children underneath
-    type GroupedEntry = { parent: ExplorerResult; children: ExplorerResult[] };
+    type GroupedEntry = { parent: ExplorerResult; children: ExplorerResult[]; totalMatches: number };
     const grouped: GroupedEntry[] = [];
     const seenParents = new Set<number>();
     for (const r of results) {
-      grouped.push({ parent: r, children: childMap.get(r.asset.id) ?? [] });
+      grouped.push({
+        parent: r,
+        children: childMap.get(r.asset.id) ?? [],
+        totalMatches: totalMap.get(r.asset.id) ?? 0,
+      });
       seenParents.add(r.asset.id);
-    }
-
-    // Parents from child_results not in main results — append as header + children
-    for (const group of childResults) {
-      if (!seenParents.has(group.parent_asset_id)) {
-        grouped.push({
-          parent: { asset: { id: group.parent_asset_id, title: group.parent_title } as AssetRead },
-          children: childMap.get(group.parent_asset_id) ?? [],
-        });
-      }
     }
 
     return grouped;
@@ -670,6 +537,7 @@ export default function AssetExplorer() {
   const hasMore = isSearching ? querySearch.hasMore : feed.hasMore;
   const loadMore = isSearching ? querySearch.loadMore : feed.loadMore;
   const totalCount = isSearching ? querySearch.total : feed.totalCount;
+  const isCounting = isSearching ? querySearch.isCounting : false;
 
   // Handlers
   const handleAssetClick = useCallback(
@@ -685,13 +553,6 @@ export default function AssetExplorer() {
   // Helper panel
   const handleKindToggle = useCallback((kind: string) => setQuery((q) => toggleKindInQuery(q, kind)), []);
   const handleDateChange = useCallback((which: 'after' | 'before', value: string) => setQuery((q) => setDateInQuery(q, which, value)), []);
-  const handleRunSelect = useCallback((runId: string) => setQuery((q) => setRunInQuery(q, runId)), []);
-
-  const handleInsertAnnotation = useCallback((field: string, type: string) => {
-    const op = type === 'number' ? '>=' : '==';
-    setQuery((q) => insertToken(q, `annotation:${field}${op}`));
-    inputRef.current?.focus();
-  }, []);
 
   const handleBundleCreated = useCallback((name: string) => {
     setQuery((q) => insertToken(q, `bundle:"${name}"`));
@@ -812,8 +673,6 @@ export default function AssetExplorer() {
 
   const dateAfterValue = useMemo(() => getDateFromQuery(query, 'after'), [query]);
   const dateBeforeValue = useMemo(() => getDateFromQuery(query, 'before'), [query]);
-
-  const hasEntities = (fields?.entity_types.length ?? 0) > 0;
 
   // Infinite scroll
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -1072,10 +931,8 @@ export default function AssetExplorer() {
                   </span>
                 );
               }
-              const childHitCount = childResults.reduce((sum, g) => sum + g.matches.length, 0);
-              const assetCount = results.length + (groupedResults
-                ? childResults.filter((g) => !results.some((r) => r.asset.id === g.parent_asset_id)).length
-                : 0);
+              const childHitCount = childResults.reduce((sum, g) => sum + g.total_matches, 0);
+              const assetCount = results.length;
               const totalHits = results.length + childHitCount;
               return (
                 <span className="text-xs text-muted-foreground tabular-nums">
@@ -1084,14 +941,21 @@ export default function AssetExplorer() {
                       <span className="font-semibold text-foreground">{totalHits.toLocaleString()}</span>
                       <span className="text-muted-foreground/60"> hit{totalHits !== 1 ? 's' : ''} in </span>
                       <span className="font-semibold text-foreground">{assetCount.toLocaleString()}</span>
+                      {isCounting ? (
+                        <span className="text-muted-foreground/60 animate-pulse"> of ...</span>
+                      ) : totalCount != null && totalCount > assetCount ? (
+                        <span className="text-muted-foreground/60"> of {totalCount.toLocaleString()}</span>
+                      ) : null}
                       <span className="text-muted-foreground/60"> asset{assetCount !== 1 ? 's' : ''}</span>
                     </>
                   ) : (
                     <>
                       <span className="font-semibold text-foreground">{results.length.toLocaleString()}</span>
-                      {totalCount != null && totalCount > results.length && (
+                      {isCounting ? (
+                        <span className="text-muted-foreground/60 animate-pulse"> of ...</span>
+                      ) : totalCount != null && totalCount > results.length ? (
                         <span className="text-muted-foreground/60"> of {totalCount.toLocaleString()}</span>
-                      )}
+                      ) : null}
                       <span className="text-muted-foreground/60"> asset{results.length !== 1 ? 's' : ''}</span>
                     </>
                   )}
@@ -1223,45 +1087,6 @@ export default function AssetExplorer() {
                 </div>
               </Section>
 
-              {/* Annotation run */}
-              <Section title="Annotation run" count={fields?.runs.length}>
-                <RunPicker runs={fields?.runs ?? []} onSelectRun={handleRunSelect} />
-                <p className="text-[10px] text-muted-foreground/50 mt-1.5">
-                  Scope annotation: filters to results from a specific run.
-                </p>
-              </Section>
-
-              {/* Annotation fields */}
-              <Section title="Annotation fields" count={fields?.schemas.length} defaultOpen={false}>
-                <AnnotationFieldBrowser
-                  schemas={fields?.schemas ?? []}
-                  onInsertField={handleInsertAnnotation}
-                />
-                <p className="text-[10px] text-muted-foreground/50 mt-2">
-                  Click a field to add an annotation filter to your query.
-                </p>
-              </Section>
-
-              {/* Entity search — only show when entities exist */}
-              {hasEntities && (
-                <Section title="Entity types" count={fields?.entity_types.length}>
-                  <div className="flex flex-wrap gap-1">
-                    {fields!.entity_types.map((et) => (
-                      <Badge
-                        key={et}
-                        variant="outline"
-                        className="text-[10px] py-0 px-1.5 font-medium cursor-default"
-                      >
-                        {et}
-                      </Badge>
-                    ))}
-                  </div>
-                  <p className="text-[10px] text-muted-foreground/50 mt-1.5">
-                    Use <code className="font-mono bg-muted/80 px-0.5 rounded">entity:&quot;Name&quot;</code> to search by entity.
-                  </p>
-                </Section>
-              )}
-
               {/* Syntax */}
               <Section title="Syntax" defaultOpen={false}>
                 <div className="space-y-1.5 text-[11px]">
@@ -1382,7 +1207,7 @@ export default function AssetExplorer() {
             {/* Grouped results — parents as rows, child matches as tiles underneath */}
             {groupedResults && groupedResults.length > 0 && layout === 'results' && (
               <div ref={resultListRef} className="space-y-1">
-                {groupedResults.map(({ parent, children }) => (
+                {groupedResults.map(({ parent, children, totalMatches }) => (
                   <div key={parent.asset.id}>
                     <SearchResultRow
                       result={parent}
@@ -1390,42 +1215,55 @@ export default function AssetExplorer() {
                       onClick={handleAssetClick}
                       isActive={parent.asset.id === activeAssetId}
                     />
-                    {children.length > 0 && (
-                      <div className="ml-8 mt-1 mb-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                        {children.map((c) => {
-                          const config = getAssetKindConfig(c.asset.kind);
-                          const Icon = config.icon;
-                          const preview = c.highlight || c.asset.text_content?.slice(0, 200) || null;
-                          const pct = c.score != null && maxScore > 0 ? Math.round((c.score / maxScore) * 100) : null;
-                          return (
-                            <button
-                              key={c.asset.id}
-                              type="button"
-                              onClick={() => handleAssetClick(c.asset)}
-                              className={cn(
-                                'flex flex-col gap-1 p-3 rounded-lg border text-left transition-all duration-150',
-                                c.asset.id === activeAssetId
-                                  ? 'bg-accent/60 border-border/50 shadow-sm'
-                                  : 'bg-muted/20 border-border/20 hover:bg-muted/50 hover:border-border/40',
-                              )}
-                            >
-                              <div className="flex items-center gap-1.5">
-                                <Icon className={cn('h-3.5 w-3.5 shrink-0', config.iconColor)} />
-                                <span className="text-xs font-medium truncate flex-1">{c.asset.title || 'Untitled'}</span>
-                                {pct != null && (
-                                  <span className={cn('text-[10px] tabular-nums font-medium shrink-0', pct >= 60 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground/60')}>
-                                    {pct}%
-                                  </span>
-                                )}
-                              </div>
-                              {preview && (
-                                <div className="text-[11px] leading-relaxed text-muted-foreground line-clamp-3">
-                                  {c.highlight ? <ServerHighlight html={c.highlight} /> : preview}
-                                </div>
-                              )}
-                            </button>
-                          );
-                        })}
+                    {(children.length > 0 || totalMatches > 0) && (
+                      <div className="ml-8 mt-1 mb-3">
+                        {children.length > 0 && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                            {children.map((c) => {
+                              const config = getAssetKindConfig(c.asset.kind);
+                              const Icon = config.icon;
+                              const preview = c.highlight || c.asset.text_content?.slice(0, 200) || null;
+                              const pct = c.score != null && maxScore > 0 ? Math.round((c.score / maxScore) * 100) : null;
+                              return (
+                                <button
+                                  key={c.asset.id}
+                                  type="button"
+                                  onClick={() => handleAssetClick(c.asset)}
+                                  className={cn(
+                                    'flex flex-col gap-1 p-3 rounded-lg border text-left transition-all duration-150',
+                                    c.asset.id === activeAssetId
+                                      ? 'bg-accent/60 border-border/50 shadow-sm'
+                                      : 'bg-muted/20 border-border/20 hover:bg-muted/50 hover:border-border/40',
+                                  )}
+                                >
+                                  <div className="flex items-center gap-1.5">
+                                    <Icon className={cn('h-3.5 w-3.5 shrink-0', config.iconColor)} />
+                                    <span className="text-xs font-medium truncate flex-1">{c.asset.title || 'Untitled'}</span>
+                                    {pct != null && (
+                                      <span className={cn('text-[10px] tabular-nums font-medium shrink-0', pct >= 60 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground/60')}>
+                                        {pct}%
+                                      </span>
+                                    )}
+                                  </div>
+                                  {preview && (
+                                    <div className="text-[11px] leading-relaxed text-muted-foreground line-clamp-3">
+                                      {c.highlight ? <ServerHighlight html={c.highlight} /> : preview}
+                                    </div>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {totalMatches > children.length && (
+                          <button
+                            type="button"
+                            onClick={() => handleAssetClick(parent.asset)}
+                            className="mt-1.5 text-[11px] text-muted-foreground/70 hover:text-foreground transition-colors"
+                          >
+                            + {totalMatches - children.length} more page {totalMatches - children.length === 1 ? 'match' : 'matches'}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

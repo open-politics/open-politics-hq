@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlmodel import Session, select, func, and_, desc
 
 from app.api.dependency_injection import CurrentUser, SessionDep
+from app.api.modules.identity_infospace_user.access import resolve_access
 from app.models import ChatConversation, ChatConversationMessage, User
 from app.schemas import (
     ChatConversationCreate,
@@ -109,6 +110,10 @@ async def create_conversation(
     
     Optionally include initial messages.
     """
+    # Verify user has access to the infospace
+    if conversation_data.infospace_id:
+        resolve_access(session, conversation_data.infospace_id, current_user)
+
     try:
         # Create conversation
         conversation = ChatConversation(

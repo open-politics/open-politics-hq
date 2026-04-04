@@ -75,10 +75,12 @@ export function DeskSidebar() {
         {user && (
           <NavUser user={{
             name: user.full_name || 'User',
+            handle: (user as any)?.handle || undefined,
             email: user.email || '',
             avatar: user.avatar || '',
             is_superuser: user.is_superuser || false,
-            full_name: user.full_name || 'User'
+            full_name: user.full_name || 'User',
+            profile_picture_url: (user as any)?.profile_picture_url || undefined,
           }} />
         )}
       </SidebarFooter>

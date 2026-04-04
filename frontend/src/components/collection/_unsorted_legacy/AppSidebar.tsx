@@ -277,9 +277,10 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
          {/* <HistoryList userId={user?.id} /> */}
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={{ 
-          name: user?.full_name || "User", 
-          email: user?.email || "user@example.com", 
+        <NavUser user={{
+          name: user?.full_name || "User",
+          handle: (user as any)?.handle || undefined,
+          email: user?.email || "user@example.com",
           avatar: user?.avatar || undefined,
           is_superuser: user?.is_superuser || false,
           full_name: user?.full_name || "User",

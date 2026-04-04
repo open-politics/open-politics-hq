@@ -63,12 +63,14 @@ def extract_pdf_metadata(
     with doc:
         page_count = doc.page_count
         total_chars = 0
+        total_images = 0
         to_sample = min(sample_pages, page_count)
         for i in range(to_sample):
             try:
                 page = doc.load_page(i)
                 text = page.get_text("text").replace("\x00", "").strip()
                 total_chars += len(text)
+                total_images += len(page.get_images())
             except Exception:
                 pass
         avg_chars = total_chars / max(1, to_sample)
@@ -77,7 +79,7 @@ def extract_pdf_metadata(
             "page_count": page_count,
             "text_layer_chars": total_chars,
             "is_image_only": is_image_only,
-            "embedded_images": 0,  # PyMuPDF would need image list; use chars heuristic for now
+            "embedded_images": total_images,
         }
 
 
@@ -129,13 +131,12 @@ class PDFProcessor(BaseProcessor):
         
         # Per Foundation: "A PDF with scanned pages is still a PDF. Processing discovers
         # that its pages are image-dominant; it does not reclassify the PDF."
-        # We store discovered_modalities as first-class column for queryable OCR/multimodal routing.
-        is_image_only = metadata.get('is_image_only', False)
+        # Parent modalities = union of all child page modalities.
         asset.file_info = asset.file_info or {}
         asset.file_info.update(metadata)
-        asset.discovered_modalities = ['image'] if is_image_only else ['text']
-        if is_image_only:
-            logger.info(f"PDF {asset.id} is image-dominant (no extractable text). Kept as PDF, set discovered_modalities=['image'].")
+        asset.discovered_modalities = metadata.get('modality_union') or ['text']
+        if metadata.get('is_image_only'):
+            logger.info(f"PDF {asset.id} is image-dominant (no extractable text). Kept as PDF, set discovered_modalities={asset.discovered_modalities}.")
         
         asset.text_content = full_text
         if metadata.get('extracted_title') and (not asset.title or not asset.title.startswith('Uploaded')):
@@ -182,33 +183,45 @@ class PDFProcessor(BaseProcessor):
         full_text = ""
         child_assets = []
         total_chars_extracted = 0
+        all_modalities: set[str] = set()
 
         with doc:
             page_count = doc.page_count
             pdf_title = None
-            
+
             if doc.metadata and doc.metadata.get('title'):
                 pdf_title = doc.metadata['title'].strip()
-            
+
             pages_to_process = min(page_count, max_pages) if max_pages > 0 else page_count
-            
+
             # Sample first few pages to detect image-only PDFs
             sample_pages = min(3, pages_to_process)  # Check first 3 pages
-            
+
             for page_num in range(pages_to_process):
                 try:
                     page = doc.load_page(page_num)
                     text = page.get_text("text").replace('\x00', '').strip()
-                    
+                    images = page.get_images()
+
+                    # Honest modality tagging: check both text layer and embedded images
+                    page_modalities = []
                     if text:
+                        page_modalities.append('text')
                         full_text += text + "\n\n"
                         total_chars_extracted += len(text)
-                        page_modalities = ['text']
-                        page_metadata = {'page_number': page_num + 1, 'char_count': len(text)}
-                    else:
-                        page_modalities = ['image']
-                        page_metadata = {'page_number': page_num + 1, 'char_count': 0}
-                    
+                    if images:
+                        page_modalities.append('image')
+                    if not page_modalities:
+                        page_modalities = ['image']  # blank/vector-only page
+
+                    all_modalities.update(page_modalities)
+
+                    page_metadata = {
+                        'page_number': page_num + 1,
+                        'char_count': len(text),
+                        'image_count': len(images),
+                    }
+
                     child_asset_create = AssetCreate(
                         title=f"Page {page_num + 1}",
                         kind=AssetKind.PDF_PAGE,
@@ -221,24 +234,24 @@ class PDFProcessor(BaseProcessor):
                         discovered_modalities=page_modalities,
                     )
                     child_assets.append(child_asset_create)
-                        
+
                 except Exception as e:
                     logger.error(f"Error processing PDF page {page_num + 1}: {e}")
                     continue
-            
+
             # Determine if this is an image-only PDF
             # Heuristic: If we extracted very little text relative to page count,
             # it's likely an image-only (scanned) document
             avg_chars_per_page = total_chars_extracted / max(1, sample_pages)
             is_image_only = avg_chars_per_page < 50  # Less than 50 chars per page avg
-            
+
             if is_image_only:
                 logger.info(
                     f"Detected image-only PDF: {page_count} pages, "
                     f"{total_chars_extracted} chars extracted, "
                     f"{avg_chars_per_page:.1f} chars/page average"
                 )
-            
+
             metadata = {
                 'page_count': page_count,
                 'processed_pages': len(child_assets),
@@ -246,8 +259,9 @@ class PDFProcessor(BaseProcessor):
                 'total_chars_extracted': total_chars_extracted,
                 'avg_chars_per_page': avg_chars_per_page,
                 'is_image_only': is_image_only,
+                'modality_union': sorted(all_modalities),
                 'processing_options': self.context.options
             }
-            
+
         return full_text.strip(), child_assets, metadata
 

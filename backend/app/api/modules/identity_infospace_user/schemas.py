@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlmodel import SQLModel, Field
 
-from app.api.modules.identity_infospace_user.models import UserBase, UserTier
+from app.api.modules.identity_infospace_user.models import UserBase, UserTier, CollaboratorRole
 from app.api.modules.foundation_service_providers.base import ProviderDefaults, EnrichmentConfig
 
 
@@ -15,6 +15,7 @@ from app.api.modules.foundation_service_providers.base import ProviderDefaults, 
 
 class UserOut(UserBase):
     id: int
+    handle: Optional[str] = None
     is_active: bool = True
     is_superuser: bool = False
     ui_preferences: Optional[Dict[str, Any]] = None
@@ -26,6 +27,7 @@ class UserOut(UserBase):
 class UserPublicProfile(SQLModel):
     """Public user profile (no sensitive information)."""
     id: int
+    handle: Optional[str] = None
     full_name: Optional[str] = None
     profile_picture_url: Optional[str] = None
     bio: Optional[str] = None
@@ -49,6 +51,7 @@ class UserCreateOpen(SQLModel):
     email: str
     password: str
     full_name: Optional[str] = None
+    handle: Optional[str] = None
     profile_picture_url: Optional[str] = None
     bio: Optional[str] = None
     description: Optional[str] = None
@@ -102,6 +105,79 @@ class UserUIPreferences(SQLModel):
     custom_background_url: Optional[str] = None
 
 
+class HandleUpdate(SQLModel):
+    """Update a user's handle."""
+    handle: str
+
+
+class HandleCheck(SQLModel):
+    """Handle availability check result."""
+    handle: str
+    available: bool
+
+
+class UserSearchResult(SQLModel):
+    """Lightweight user result for invite autocomplete."""
+    id: int
+    handle: Optional[str] = None
+    full_name: Optional[str] = None
+    profile_picture_url: Optional[str] = None
+
+
+# ─── Invitation schemas ───
+
+class InvitationCreate(SQLModel):
+    """Invite someone by handle or email."""
+    identifier: str  # handle or email — backend resolves which
+    role: CollaboratorRole = CollaboratorRole.VIEWER
+
+
+class InvitationOut(SQLModel):
+    """Invitation as seen by owner (infospace view) or invitee (inbox view)."""
+    id: int
+    infospace_id: int
+    infospace_name: str
+    inviter_name: Optional[str] = None
+    inviter_handle: Optional[str] = None
+    invitee_user_id: Optional[int] = None
+    invitee_handle: Optional[str] = None
+    invitee_email: Optional[str] = None
+    role: str
+    status: str
+    created_at: datetime
+
+    @staticmethod
+    def from_db(inv, session) -> "InvitationOut":
+        """Build from an Invitation model + session for relationship lookups."""
+        from app.api.modules.identity_infospace_user.models import Infospace, User
+        infospace = session.get(Infospace, inv.infospace_id)
+        inviter = session.get(User, inv.inviter_id)
+        invitee = session.get(User, inv.invitee_user_id) if inv.invitee_user_id else None
+        return InvitationOut(
+            id=inv.id,
+            infospace_id=inv.infospace_id,
+            infospace_name=infospace.name if infospace else "Unknown",
+            inviter_name=inviter.full_name if inviter else None,
+            inviter_handle=inviter.handle if inviter else None,
+            invitee_user_id=inv.invitee_user_id,
+            invitee_handle=invitee.handle if invitee else None,
+            invitee_email=inv.invitee_email,
+            role=inv.role.value if hasattr(inv.role, "value") else inv.role,
+            status=inv.status.value if hasattr(inv.status, "value") else inv.status,
+            created_at=inv.created_at,
+        )
+
+
+class CollaboratorOut(SQLModel):
+    """Collaborator in an infospace with role and profile info."""
+    user_id: int
+    handle: Optional[str] = None
+    full_name: Optional[str] = None
+    profile_picture_url: Optional[str] = None
+    role: str
+    is_owner: bool = False
+
+
 # ─── Infospace schemas ───
 
 class InfospaceBase(SQLModel):
@@ -128,6 +204,9 @@ class InfospaceRead(InfospaceBase):
     chunk_overlap: Optional[int] = None
     chunk_strategy: Optional[str] = None
     enrichment_config: Optional[EnrichmentConfig] = None
+    # Per-request context: the authenticated user's role in this infospace
+    current_user_role: Optional[str] = None   # owner | analyst | curator | viewer
+    is_owner: bool = False
 
 
 class InfospaceUpdate(SQLModel):

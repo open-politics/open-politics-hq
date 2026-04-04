@@ -177,3 +177,36 @@ class FindDuplicatesResponse(BaseModel):
     pairs: List[SimilarPairRead]
     items_count: int
     unique_count: int
+
+
+# ── Predicate / Entity-type batch operations ─────────────────────────────────
+
+
+class RenamePredicateRequest(BaseModel):
+    """Rename (merge) predicates: all edges with `old_predicates` become `new_predicate`."""
+
+    old_predicates: List[str]
+    new_predicate: str
+    graph_id: Optional[int] = None
+
+
+class RenameEntityTypeRequest(BaseModel):
+    """Rename (merge) entity types: all entities with `old_types` become `new_type`."""
+
+    old_types: List[str]
+    new_type: str
+    graph_id: Optional[int] = None
+
+
+class PredicateSummary(BaseModel):
+    """Summary of a predicate across graph edges."""
+
+    predicate: str
+    count: int
+
+
+class EntityTypeSummary(BaseModel):
+    """Summary of an entity type across canonical entities."""
+
+    entity_type: str
+    count: int

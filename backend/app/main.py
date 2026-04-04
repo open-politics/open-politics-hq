@@ -4,6 +4,10 @@ from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
+# SSE keepalive: 3s pings to survive nginx proxy_read_timeout=5s (default is 15s)
+import fastapi.sse
+fastapi.sse._PING_INTERVAL = 3.0
+
 # Import celery app early to initialize Redis connection for task queueing
 from app.core.celery_app import celery  # noqa: F401
 from app.core.config import settings
@@ -116,7 +120,7 @@ def _validate_scope_declarations(app_instance):
                 path = getattr(route, "path", "?")
                 missing.append(f"  {methods} {path}")
     if missing:
-        _startup_logger.warning(
+        raise RuntimeError(
             f"Routes using Requires() without scope= declaration ({len(missing)}):\n"
             + "\n".join(missing)
             + "\n  Add scope='field_name' or scope=None to each Requires() call."

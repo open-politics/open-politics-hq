@@ -16,16 +16,22 @@ from app.schemas import (
     InfospaceCreate,
     InfospaceUpdate,
     InfospacesOut,
+    InvitationCreate,
+    InvitationOut,
+    CollaboratorOut,
 )
 from app.api.dependency_injection import (
     CurrentUser,
+    SessionDep,
     get_infospace_service,
     PackageServiceDep,
 )
 from app.api.modules.identity_infospace_user.services import InfospaceService
+from app.api.modules.identity_infospace_user.services import invitation_service
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires,
 )
+from app.api.modules.identity_infospace_user.models import CollaboratorRole
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -66,20 +72,22 @@ def list_infospaces(
     infospace_service: InfospaceService = Depends(get_infospace_service)
 ) -> Any:
     """
-    Retrieve Infospaces for the current user.
+    Retrieve Infospaces for the current user (owned + collaborated, with role context).
     """
     try:
-        infospaces, total_count = infospace_service.list_infospaces(
+        rows, total_count = infospace_service.list_infospaces(
             user_id=current_user.id,
             skip=skip,
             limit=limit
         )
-        
-        result_infospaces = [
-            InfospaceRead.model_validate(infospace)
-            for infospace in infospaces
-        ]
-        
+
+        result_infospaces = []
+        for infospace, role, is_owner in rows:
+            item = InfospaceRead.model_validate(infospace)
+            item.current_user_role = role
+            item.is_owner = is_owner
+            result_infospaces.append(item)
+
         return InfospacesOut(data=result_infospaces, count=total_count)
     except Exception as e:
         logger.exception(f"Route: Error listing infospaces: {e}")
@@ -88,19 +96,22 @@ def list_infospaces(
 @router.get("/{infospace_id}", response_model=InfospaceRead)
 def get_infospace(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> Any:
     """
-    Retrieve a specific Infospace by its ID.
+    Retrieve a specific Infospace by its ID (with role context for the current user).
     """
-    return InfospaceRead.model_validate(access.infospace)
+    item = InfospaceRead.model_validate(access.infospace)
+    item.current_user_role = access.role.value if access.role else None
+    item.is_owner = access.is_owner
+    return item
 
 @router.patch("/{infospace_id}", response_model=InfospaceRead)
 def update_infospace(
     *,
     infospace_in: InfospaceUpdate,
     infospace_service: InfospaceService = Depends(get_infospace_service),
-    access: Access = Requires(Capability.SETUP),
+    access: Access = Requires(Capability.SETUP, scope=None),
 ) -> Any:
     """
     Update an Infospace.
@@ -130,7 +141,7 @@ def update_infospace(
 def delete_infospace(
     *,
     infospace_service: InfospaceService = Depends(get_infospace_service),
-    access: Access = Requires(Capability.SETUP),
+    access: Access = Requires(Capability.SETUP, scope=None),
 ) -> None:
     """
     Delete an Infospace.
@@ -153,51 +164,131 @@ def delete_infospace(
         logger.exception(f"Route: Unexpected error deleting infospace {access.infospace_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error during deletion")
 
-@router.post("/{infospace_id}/collaborators/invite")
-def invite_collaborator(
+# ============================================================================
+# INVITATIONS
+# ============================================================================
+
+@router.post("/{infospace_id}/invitations", response_model=InvitationOut, status_code=status.HTTP_201_CREATED)
+def send_invitation(
     *,
-    email: str = Query(..., description="Email of user to invite"),
-    role: str = Query("viewer", description="Role: owner, editor, viewer"),
-    infospace_service: InfospaceService = Depends(get_infospace_service),
-    access: Access = Requires(Capability.SETUP),
+    body: InvitationCreate,
+    session: SessionDep,
+    access: Access = Requires(Capability.SETUP, scope=None),
 ) -> Any:
-    """Invite a user to collaborate on an infospace. Only owner or editor can invite."""
+    """Invite a user by handle or email to collaborate on this infospace."""
     try:
-        collab = infospace_service.invite_collaborator(
+        inv = invitation_service.create_invitation(
+            session=session,
             infospace_id=access.infospace_id,
-            inviter_user_id=access.user_id,
-            invitee_email=email,
-            role=role,
+            inviter_id=access.user_id,
+            identifier=body.identifier,
+            role=body.role,
         )
-        return {"id": collab.id, "user_id": collab.user_id, "role": collab.role.value if hasattr(collab.role, "value") else collab.role}
+        return InvitationOut.from_db(inv, session)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-@router.get("/{infospace_id}/collaborators")
+
+@router.get("/{infospace_id}/invitations", response_model=list[InvitationOut])
+def list_invitations(
+    *,
+    session: SessionDep,
+    access: Access = Requires(Capability.SETUP, scope=None),
+) -> Any:
+    """List all invitations for this infospace (owner/setup view)."""
+    invitations = invitation_service.list_infospace_invitations(session, access.infospace_id)
+    return [InvitationOut.from_db(inv, session) for inv in invitations]
+
+
+@router.delete("/{infospace_id}/invitations/{invitation_id}")
+def revoke_invitation_route(
+    *,
+    invitation_id: int,
+    session: SessionDep,
+    access: Access = Requires(Capability.SETUP, scope=None),
+) -> Any:
+    """Revoke a pending invitation."""
+    try:
+        invitation_service.revoke_invitation(session, invitation_id, access.infospace_id)
+        return {"message": "Invitation revoked"}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+# ============================================================================
+# COLLABORATORS
+# ============================================================================
+
+@router.get("/{infospace_id}/collaborators", response_model=list[CollaboratorOut])
 def list_collaborators(
     *,
     infospace_service: InfospaceService = Depends(get_infospace_service),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> Any:
     """List collaborators for an infospace."""
+    collabs = infospace_service.list_collaborators(
+        infospace_id=access.infospace_id,
+        user_id=access.user_id,
+    )
+    return [
+        CollaboratorOut(
+            user_id=u.id,
+            handle=u.handle,
+            full_name=u.full_name,
+            profile_picture_url=u.profile_picture_url,
+            role=role,
+            is_owner=(role == "owner"),
+        )
+        for c, u, role in collabs
+    ]
+
+
+@router.patch("/{infospace_id}/collaborators/{user_id}/role")
+def change_collaborator_role(
+    *,
+    user_id: int,
+    role: CollaboratorRole = Query(..., description="New role"),
+    infospace_service: InfospaceService = Depends(get_infospace_service),
+    access: Access = Requires(Capability.SETUP, scope=None),
+) -> Any:
+    """Change a collaborator's role. Only owner/setup can do this."""
+    if role == CollaboratorRole.OWNER:
+        raise HTTPException(status_code=400, detail="Cannot assign owner role via this endpoint")
     try:
-        collabs = infospace_service.list_collaborators(
+        infospace_service.change_collaborator_role(
+            infospace_id=access.infospace_id,
+            changer_user_id=access.user_id,
+            target_user_id=user_id,
+            new_role=role,
+        )
+        return {"message": "Role updated"}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.delete("/{infospace_id}/collaborators/me")
+def leave_infospace(
+    *,
+    infospace_service: InfospaceService = Depends(get_infospace_service),
+    access: Access = Requires(scope=None),
+) -> Any:
+    """Leave an infospace (self-removal). Owner cannot leave."""
+    try:
+        infospace_service.leave_infospace(
             infospace_id=access.infospace_id,
             user_id=access.user_id,
         )
-        return [
-            {"id": c.id if c else None, "user_id": u.id, "email": u.email, "full_name": u.full_name, "role": role}
-            for c, u, role in collabs
-        ]
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        return {"message": "Left infospace"}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
 
 @router.delete("/{infospace_id}/collaborators/{user_id}")
 def remove_collaborator(
     *,
     user_id: int,
     infospace_service: InfospaceService = Depends(get_infospace_service),
-    access: Access = Requires(Capability.SETUP),
+    access: Access = Requires(Capability.SETUP, scope=None),
 ) -> Any:
     """Remove a collaborator from an infospace."""
     try:
@@ -210,11 +301,13 @@ def remove_collaborator(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+
+
 @router.get("/{infospace_id}/stats", response_model=dict)
 def get_infospace_stats(
     *,
     infospace_service: InfospaceService = Depends(get_infospace_service),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> Any:
     """
     Get statistics about an Infospace.
@@ -232,11 +325,11 @@ def get_infospace_stats(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
 
-@router.post("/{infospace_id}/export", response_class=FileResponse)
+@router.post("/{infospace_id}/export", response_class=FileResponse, status_code=200)
 async def export_infospace(
     *,
     include_sources: bool = Query(True, description="Include sources and their assets"),
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     include_schemas: bool = Query(True, description="Include annotation schemas"),
     include_runs: bool = Query(True, description="Include annotation runs"),
     include_datasets: bool = Query(True, description="Include datasets"),

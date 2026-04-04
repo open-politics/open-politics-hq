@@ -45,6 +45,8 @@ dependencies = [
     "beautifulsoup4>=4.12",
 
     # --- LLM / AI providers ---
+    "anthropic>=0.40",
+    "openai>=1.60",
     "google-genai>=1.5",
 
     # --- search & scraping ---

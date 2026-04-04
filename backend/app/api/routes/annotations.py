@@ -44,7 +44,7 @@ router = APIRouter(
 @router.post("/", response_model=AnnotationRead, status_code=status.HTTP_201_CREATED)
 def create_annotation(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     annotation_in: AnnotationCreate,
     session: SessionDep,
     annotation_service: AnnotationServiceDep
@@ -73,7 +73,7 @@ def create_annotation(
 @router.get("/", response_model=AnnotationsOut)
 def list_annotations(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     skip: int = 0,
     limit: int = 100,
     source_id: Optional[int] = None,
@@ -129,7 +129,7 @@ def list_annotations(
 @router.get("/{annotation_id}", response_model=AnnotationRead)
 def get_annotation(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     annotation_id: int,
     session: SessionDep,
 ) -> Any:
@@ -154,7 +154,7 @@ def get_annotation(
 @router.patch("/{annotation_id}", response_model=AnnotationRead)
 def update_annotation(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     annotation_id: int,
     annotation_in: AnnotationUpdate,
     session: SessionDep,
@@ -218,7 +218,7 @@ def update_annotation(
 @router.delete("/{annotation_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_annotation(
     *,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     annotation_id: int,
     session: SessionDep,
 ) -> None:
@@ -264,7 +264,7 @@ def delete_annotation(
 @router.post("/batch", response_model=Message, status_code=status.HTTP_202_ACCEPTED)
 def create_batch_annotations(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     annotations: List[AnnotationCreate],
     annotation_service: AnnotationServiceDep
 ) -> Message:
@@ -300,7 +300,7 @@ def create_batch_annotations(
 @router.get("/run/{run_id}/results", response_model=List[AnnotationRead])
 def get_run_results(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     run_id: int,
     skip: int = 0,
     limit: int = 100,
@@ -332,7 +332,7 @@ def get_run_results(
 @router.post("/{annotation_id}/retry", response_model=AnnotationRead)
 def retry_single_annotation(
     *,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
     annotation_id: int,
     annotation_retry_request: AnnotationRetryRequest,
     session: SessionDep,
@@ -412,7 +412,7 @@ def is_triplet(fragment: Any) -> bool:
 @router.post("/{annotation_id}/curate", response_model=dict, status_code=status.HTTP_201_CREATED)
 async def curate_fragments(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     annotation_id: int,
     curation_request: CurateFragmentsRequest,
     session: SessionDep,
@@ -570,7 +570,7 @@ async def curate_fragments(
 @router.delete("/{annotation_id}/curate/{fragment_path:path}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_curation(
     *,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     annotation_id: int,
     fragment_path: str,
     session: SessionDep,
@@ -625,7 +625,7 @@ def remove_curation(
 @router.get("/curated/triplets", response_model=List[dict])
 def get_curated_triplets(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     graph_id: Optional[int] = Query(default=None, description="Filter to a specific knowledge graph"),
     limit: int = Query(default=500, le=2000),
     offset: int = Query(default=0, ge=0),

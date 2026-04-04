@@ -12,107 +12,143 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 from app.models import Asset, Bundle, AssetKind, Source, Flow, FlowStatus, Task, TaskStatus, IngestionJob, IngestionStatus
 from app.schemas import TreeNode, TreeNodeType
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 
-def build_tree_node_from_bundle(bundle: Bundle, session: Optional[Session] = None) -> TreeNode:
+
+def build_bundle_nodes(
+    bundles: List[Bundle],
+    infospace_id: int,
+    session: Session,
+) -> List[TreeNode]:
+    """Build TreeNodes for a list of bundles with activity indicators.
+
+    Fetches all activity data (sources, flows, jobs) in 4 batch queries
+    regardless of how many bundles are passed. This is the only way to
+    build bundle nodes — there is no per-bundle variant.
     """
-    Convert a Bundle to a TreeNode with minimal data and activity indicators.
-    
-    Args:
-        bundle: The bundle to convert
-        session: Optional database session for querying relationships
-    """
-    node = TreeNode(
-        id=f"bundle-{bundle.id}",
-        type=TreeNodeType.BUNDLE,
-        name=bundle.name,
-        has_children=(bundle.asset_count or 0) > 0 or (bundle.child_bundle_count or 0) > 0,
-        children_count=(bundle.asset_count or 0) + (bundle.child_bundle_count or 0),
-        asset_count=bundle.asset_count,
-        child_bundle_count=bundle.child_bundle_count,
-        sealed=bundle.sealed,
-        parent_id=f"bundle-{bundle.parent_bundle_id}" if bundle.parent_bundle_id != 0 else None,
-        updated_at=bundle.updated_at,
-        created_at=bundle.created_at,
-        tags=bundle.tags or None,
-    )
-    
-    if session:
-        # Query active sources outputting to this bundle
-        active_sources = session.exec(
-            select(Source)
-            .where(Source.output_bundle_id == bundle.id)
-            .where(Source.is_active == True)
-        ).all()
-        node.has_active_sources = len(active_sources) > 0
-        node.active_source_count = len(active_sources)
-        
-        # Query active Flows watching this bundle as input
-        active_flows_input = session.exec(
-            select(Flow)
-            .where(Flow.input_bundle_id == bundle.id)
-            .where(Flow.status == FlowStatus.ACTIVE)
-        ).all()
-        node.has_monitors = len(active_flows_input) > 0  # Legacy field name for UI compatibility
-        node.monitor_count = len(active_flows_input)
-        
-        # This bundle is a flow input if any active flow watches it
-        node.is_pipeline_input = len(active_flows_input) > 0
-        node.pipeline_input_count = len(active_flows_input)
-        
-        # Query Flows routing TO this bundle (ROUTE steps with bundle_id matching)
-        all_flows = session.exec(
-            select(Flow)
-            .where(Flow.infospace_id == bundle.infospace_id)
-            .where(Flow.status == FlowStatus.ACTIVE)
-        ).all()
-        
-        # Filter flows that have a ROUTE step targeting this bundle
-        matching_output_flows = []
-        for flow in all_flows:
-            if flow.steps:
-                for step in flow.steps:
-                    if step.get("type") == "ROUTE":
-                        # Check bundle_id or bundle_ids in step config
-                        if step.get("bundle_id") == bundle.id:
-                            matching_output_flows.append(flow)
-                            break
-                        if bundle.id in (step.get("bundle_ids") or []):
-                            matching_output_flows.append(flow)
-                            break
-        
-        node.is_pipeline_output = len(matching_output_flows) > 0
-        node.pipeline_output_count = len(matching_output_flows)
-        
-        # Query active IngestionJobs populating this bundle
-        active_jobs = session.exec(
-            select(IngestionJob)
-            .where(IngestionJob.root_bundle_id == bundle.id)
-            .where(IngestionJob.status.in_([
-                IngestionStatus.PENDING,
-                IngestionStatus.DOWNLOADING,
-                IngestionStatus.EXTRACTING,
-                IngestionStatus.PROCESSING
-            ]))
-        ).all()
-        node.has_active_jobs = len(active_jobs) > 0
-        node.active_job_count = len(active_jobs)
-        
-        # If there's an active job, add its progress to node metadata
-        if active_jobs:
-            job = active_jobs[0]  # Show first active job
-            node.job_status = {
-                'status': job.status.value,
-                'stage': job.cursor_state.get('stage', 'processing'),
-                'message': job.cursor_state.get('message', 'Processing...'),
-                'progress_pct': job.cursor_state.get('progress_pct', 0),
-                'processed_files': job.processed_files,
-                'total_files': job.total_files
-            }
-    
-    return node
+    if not bundles:
+        return []
+
+    bids = [b.id for b in bundles]
+    enrichments: Dict[int, Dict[str, Any]] = {bid: {} for bid in bids}
+
+    # 1. Active sources per bundle
+    source_rows = session.execute(
+        text("""
+            SELECT output_bundle_id, COUNT(*)
+            FROM source
+            WHERE output_bundle_id = ANY(:bids) AND is_active = true
+            GROUP BY output_bundle_id
+        """),
+        {"bids": bids},
+    ).fetchall()
+    for bid, cnt in source_rows:
+        enrichments[bid]["active_source_count"] = cnt
+
+    # 2. Active flows watching bundles as input
+    input_flow_rows = session.execute(
+        text("""
+            SELECT input_bundle_id, COUNT(*)
+            FROM flow
+            WHERE input_bundle_id = ANY(:bids) AND status = 'ACTIVE'::flowstatus
+            GROUP BY input_bundle_id
+        """),
+        {"bids": bids},
+    ).fetchall()
+    for bid, cnt in input_flow_rows:
+        enrichments[bid]["input_flow_count"] = cnt
+
+    # 3. Route-target flows: load all active flows ONCE, scan steps for target bundle_ids
+    all_active_flows = session.execute(
+        text("SELECT id, steps FROM flow WHERE infospace_id = :iid AND status = 'ACTIVE'::flowstatus"),
+        {"iid": infospace_id},
+    ).fetchall()
+    bid_set = set(bids)
+    output_flow_counts: Dict[int, int] = defaultdict(int)
+    for _flow_id, steps in all_active_flows:
+        if not steps:
+            continue
+        for step in steps:
+            if step.get("type") != "ROUTE":
+                continue
+            target_bid = step.get("bundle_id")
+            if target_bid in bid_set:
+                output_flow_counts[target_bid] += 1
+            for target_bid in (step.get("bundle_ids") or []):
+                if target_bid in bid_set:
+                    output_flow_counts[target_bid] += 1
+            break  # one ROUTE per flow is enough
+    for bid, cnt in output_flow_counts.items():
+        enrichments[bid]["output_flow_count"] = cnt
+
+    # 4. Active ingestion jobs per bundle
+    active_statuses = [
+        IngestionStatus.PENDING.name,
+        IngestionStatus.DOWNLOADING.name,
+        IngestionStatus.EXTRACTING.name,
+        IngestionStatus.PROCESSING.name,
+    ]
+    job_rows = session.execute(
+        text("""
+            SELECT root_bundle_id, id, status, cursor_state, processed_files, total_files
+            FROM ingestionjob
+            WHERE root_bundle_id = ANY(:bids) AND status = ANY(CAST(:statuses AS ingestionstatus[]))
+            ORDER BY root_bundle_id, id
+        """),
+        {"bids": bids, "statuses": active_statuses},
+    ).fetchall()
+    jobs_by_bundle: Dict[int, list] = defaultdict(list)
+    for row in job_rows:
+        jobs_by_bundle[row[0]].append(row)
+    for bid, jobs in jobs_by_bundle.items():
+        enrichments[bid]["active_job_count"] = len(jobs)
+        first = jobs[0]
+        cursor_state = first[3] or {}
+        enrichments[bid]["job_status"] = {
+            "status": first[2],
+            "stage": cursor_state.get("stage", "processing"),
+            "message": cursor_state.get("message", "Processing..."),
+            "progress_pct": cursor_state.get("progress_pct", 0),
+            "processed_files": first[4],
+            "total_files": first[5],
+        }
+
+    # Build nodes from bundles + enrichments
+    nodes = []
+    for bundle in bundles:
+        e = enrichments.get(bundle.id, {})
+        asc = e.get("active_source_count", 0)
+        ifc = e.get("input_flow_count", 0)
+        ofc = e.get("output_flow_count", 0)
+        ajc = e.get("active_job_count", 0)
+        nodes.append(TreeNode(
+            id=f"bundle-{bundle.id}",
+            type=TreeNodeType.BUNDLE,
+            name=bundle.name,
+            has_children=(bundle.asset_count or 0) > 0 or (bundle.child_bundle_count or 0) > 0,
+            children_count=(bundle.asset_count or 0) + (bundle.child_bundle_count or 0),
+            asset_count=bundle.asset_count,
+            child_bundle_count=bundle.child_bundle_count,
+            sealed=bundle.sealed,
+            parent_id=f"bundle-{bundle.parent_bundle_id}" if bundle.parent_bundle_id != 0 else None,
+            updated_at=bundle.updated_at,
+            created_at=bundle.created_at,
+            tags=bundle.tags or None,
+            has_active_sources=asc > 0,
+            active_source_count=asc or None,
+            has_monitors=ifc > 0,
+            monitor_count=ifc or None,
+            is_pipeline_input=ifc > 0,
+            pipeline_input_count=ifc or None,
+            is_pipeline_output=ofc > 0,
+            pipeline_output_count=ofc or None,
+            has_active_jobs=ajc > 0,
+            active_job_count=ajc or None,
+            job_status=e.get("job_status"),
+        ))
+    return nodes
 
 
 def build_tree_node_from_asset(asset: Asset, parent_type: str = None, parent_id: int = None) -> TreeNode:
@@ -173,29 +209,13 @@ def get_bundled_asset_ids(bundles: List[Bundle], session: Optional[Session] = No
 def build_root_tree_nodes(
     root_bundles: List[Bundle],
     root_assets: List[Asset],
-    session: Optional[Session] = None,
+    session: Session,
 ) -> List[TreeNode]:
-    """
-    Build tree nodes for root level (no parents).
-    
-    Args:
-        root_bundles: Bundles with no parent_bundle_id
-        root_assets: Assets with no parent_asset_id and not in any bundle
-        session: Optional database session for querying relationships
-    
-    Returns:
-        List of TreeNode objects for the root level
-    """
-    nodes = []
-    
-    # Add bundle nodes
-    for bundle in root_bundles:
-        nodes.append(build_tree_node_from_bundle(bundle, session))
-    
-    # Add standalone asset nodes
+    """Build tree nodes for root level (bundles + standalone assets)."""
+    infospace_id = root_bundles[0].infospace_id if root_bundles else 0
+    nodes = build_bundle_nodes(root_bundles, infospace_id, session)
     for asset in root_assets:
         nodes.append(build_tree_node_from_asset(asset))
-    
     return nodes
 
 
@@ -203,30 +223,12 @@ def build_bundle_children_nodes(
     bundle: Bundle,
     child_bundles: List[Bundle],
     bundle_assets: List[Asset],
-    session: Optional[Session] = None,
+    session: Session,
 ) -> List[TreeNode]:
-    """
-    Build tree nodes for children of a specific bundle.
-    
-    Args:
-        bundle: Parent bundle
-        child_bundles: Nested bundles within this bundle
-        bundle_assets: Assets directly in this bundle (not their children)
-        session: Optional database session for querying relationships
-    
-    Returns:
-        List of TreeNode objects for bundle children
-    """
-    nodes = []
-    
-    # Add child bundles first
-    for child_bundle in child_bundles:
-        nodes.append(build_tree_node_from_bundle(child_bundle, session))
-    
-    # Add bundle's direct assets
+    """Build tree nodes for children of a specific bundle."""
+    nodes = build_bundle_nodes(child_bundles, bundle.infospace_id, session)
     for asset in bundle_assets:
         nodes.append(build_tree_node_from_asset(asset, parent_type="bundle", parent_id=bundle.id))
-    
     return nodes
 
 

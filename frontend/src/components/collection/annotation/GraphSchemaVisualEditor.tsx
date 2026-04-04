@@ -40,6 +40,8 @@ import {
   GraphConfig,
 } from "@/lib/annotations/types";
 import { DEFAULT_ENTITY_COLORS, getEntityColorSet, resolveEntityColor } from "@/lib/annotations/colors";
+import { IconPickerDialog } from "@/components/collection/utilities/icons/IconPickerOverlay";
+import { IconRenderer } from "@/components/collection/utilities/icons/icon-picker";
 
 // =============================================================================
 // CONSTANTS & COLOR SYSTEM
@@ -655,6 +657,45 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
     });
   };
 
+  // Entity type icons
+  const handleEntityTypeIconChange = (type: string, iconKey: string) => {
+    updateGraphConfig({
+      entityTypes: {
+        ...graphConfig.entityTypes,
+        typeIcons: {
+          ...(graphConfig.entityTypes.typeIcons || {}),
+          [type]: iconKey,
+        },
+      },
+    });
+  };
+
+  // Predicate icons
+  const handlePredicateIconChange = (predicate: string, iconKey: string) => {
+    updateGraphConfig({
+      relationshipSchema: {
+        ...graphConfig.relationshipSchema,
+        predicateIcons: {
+          ...(graphConfig.relationshipSchema.predicateIcons || {}),
+          [predicate]: iconKey,
+        },
+      },
+    });
+  };
+
+  // Predicate arrow direction
+  const handlePredicateArrowChange = (predicate: string, direction: 'forward' | 'backward' | 'both' | 'none') => {
+    updateGraphConfig({
+      relationshipSchema: {
+        ...graphConfig.relationshipSchema,
+        predicateArrows: {
+          ...(graphConfig.relationshipSchema.predicateArrows || {}),
+          [predicate]: direction,
+        },
+      },
+    });
+  };
+
   // Optional fields
   const addOptionalField = () => {
     const newField: AdvancedSchemeField = {
@@ -756,6 +797,33 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
               onColorChange={handleEntityTypeColorChange}
             />
 
+            {/* Entity type icons */}
+            {entityTypes.length > 0 && !disabled && (
+              <div className="mt-3 pt-3 border-t border-blue-200/30 dark:border-blue-800/20">
+                <Label className="text-xs font-semibold">Entity Icons</Label>
+                <p className="text-[10px] text-muted-foreground mt-0.5 mb-2">Assign icons to entity types for graph visualization</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {entityTypes.map((type) => {
+                    const currentIcon = graphConfig.entityTypes.typeIcons?.[type];
+                    return (
+                      <div key={type} className="flex items-center gap-2 px-2 py-1.5 rounded-md border text-xs">
+                        {currentIcon ? (
+                          <IconRenderer icon={currentIcon} className="h-4 w-4 flex-shrink-0" />
+                        ) : (
+                          <div className="h-4 w-4 rounded-full bg-muted flex-shrink-0" />
+                        )}
+                        <span className="truncate flex-1">{type}</span>
+                        <IconPickerDialog
+                          onIconSelect={(icon) => handleEntityTypeIconChange(type, icon)}
+                          defaultIcon={currentIcon}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Constrain toggle */}
             <div className="flex items-center justify-between mt-3 pt-3 border-t border-blue-200/30 dark:border-blue-800/20">
               <div>
@@ -815,7 +883,49 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
               })}
               label="Relationship Predicates"
               description="Define how entities connect to each other (e.g., works_for, located_in, met_with)"
+              showColorPicker={!disabled}
+              colorOverrides={graphConfig.relationshipSchema.predicateColors}
+              onColorChange={handlePredicateColorChange}
             />
+
+            {/* Predicate icons & arrow direction */}
+            {predicates.length > 0 && !disabled && (
+              <div className="mt-3 pt-3 border-t border-green-200/30 dark:border-green-800/20">
+                <Label className="text-xs font-semibold">Edge Icons & Direction</Label>
+                <p className="text-[10px] text-muted-foreground mt-0.5 mb-2">Assign icons and arrow direction per edge type</p>
+                <div className="space-y-1.5">
+                  {predicates.map((pred) => {
+                    const currentIcon = graphConfig.relationshipSchema.predicateIcons?.[pred];
+                    const currentArrow = graphConfig.relationshipSchema.predicateArrows?.[pred] || 'forward';
+                    return (
+                      <div key={pred} className="flex items-center gap-2 px-2 py-1.5 rounded-md border text-xs">
+                        {currentIcon ? (
+                          <IconRenderer icon={currentIcon} className="h-4 w-4 flex-shrink-0" />
+                        ) : (
+                          <div className="h-4 w-4 rounded bg-muted flex-shrink-0" />
+                        )}
+                        <span className="truncate flex-1 font-mono">{pred}</span>
+                        <select
+                          value={currentArrow}
+                          onChange={(e) => handlePredicateArrowChange(pred, e.target.value as any)}
+                          className="h-6 text-[10px] rounded border bg-background px-1"
+                          title="Arrow direction"
+                        >
+                          <option value="forward">{'\u2192'}</option>
+                          <option value="backward">{'\u2190'}</option>
+                          <option value="both">{'\u2194'}</option>
+                          <option value="none">{'\u2014'}</option>
+                        </select>
+                        <IconPickerDialog
+                          onIconSelect={(icon) => handlePredicateIconChange(pred, icon)}
+                          defaultIcon={currentIcon}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Constrain toggle */}
             <div className="flex items-center justify-between mt-3 pt-3 border-t border-green-200/30 dark:border-green-800/20">

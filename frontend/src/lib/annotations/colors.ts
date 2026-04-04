@@ -152,6 +152,8 @@ export interface ColorOverrides {
   infospaceColors?: Record<string, string>;
   /** Schema-level color overrides (mid priority) */
   schemaColors?: Record<string, string>;
+  /** Predicate color overrides for edge coloring */
+  predicateColors?: Record<string, string>;
 }
 
 /**
@@ -186,6 +188,57 @@ export function resolveEntityColor(
   return generateColorFromHash(normalizedType);
 }
 
+function pickPredicateOverride(
+  rec: Record<string, string> | undefined,
+  predicate: string,
+  normalized: string
+): string | undefined {
+  if (!rec) return undefined;
+  return rec[normalized] ?? rec[predicate];
+}
+
+/**
+ * Resolve predicate (edge) color with fallback chain:
+ * 1. Infospace-level override
+ * 2. Schema-level override
+ * 3. Explicit predicateColors on overrides
+ * 4. Default palette
+ * 5. Hash-based fallback for unknown predicates
+ */
+export function resolvePredicateColor(
+  predicate: string,
+  overrides?: ColorOverrides
+): string {
+  const normalized = predicate.toLowerCase();
+
+  const fromInfospace = pickPredicateOverride(
+    overrides?.infospaceColors,
+    predicate,
+    normalized
+  );
+  if (fromInfospace) return fromInfospace;
+
+  const fromSchema = pickPredicateOverride(
+    overrides?.schemaColors,
+    predicate,
+    normalized
+  );
+  if (fromSchema) return fromSchema;
+
+  if (overrides?.predicateColors?.[normalized]) {
+    return overrides.predicateColors[normalized];
+  }
+  if (overrides?.predicateColors?.[predicate]) {
+    return overrides.predicateColors[predicate];
+  }
+
+  if (DEFAULT_PREDICATE_COLORS[normalized]) {
+    return DEFAULT_PREDICATE_COLORS[normalized];
+  }
+
+  return generateColorFromHash(normalized);
+}
+
 /**
  * Get full entity color set (bg, text, border, hex) for badge rendering.
  */
@@ -212,35 +265,6 @@ export function getEntityColorSet(
     ...defaultSet,
     hex,
   };
-}
-
-/**
- * Resolve predicate/edge color with fallback chain.
- */
-export function resolvePredicateColor(
-  predicate: string,
-  overrides?: {
-    infospaceColors?: Record<string, string>;
-    schemaColors?: Record<string, string>;
-  }
-): string {
-  // Priority 1: Infospace-level override
-  if (overrides?.infospaceColors?.[predicate]) {
-    return overrides.infospaceColors[predicate];
-  }
-  
-  // Priority 2: Schema-level override
-  if (overrides?.schemaColors?.[predicate]) {
-    return overrides.schemaColors[predicate];
-  }
-  
-  // Priority 3: Default palette
-  if (DEFAULT_PREDICATE_COLORS[predicate]) {
-    return DEFAULT_PREDICATE_COLORS[predicate];
-  }
-  
-  // Priority 4: Default muted gray for unknown predicates
-  return "#9B9B9B";
 }
 
 /**

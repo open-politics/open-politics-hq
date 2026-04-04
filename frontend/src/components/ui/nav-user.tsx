@@ -31,6 +31,7 @@ import Link from "next/link"
 export interface NavUserProps {
   user: {
     name: string | undefined;
+    handle: string | undefined;
     profile_picture_url: string | undefined;
     email: string | undefined;
     avatar: string | undefined;
@@ -77,8 +78,8 @@ export function NavUser({ user }: NavUserProps) {
                 >
                   {user?.name}
                 </span>
-                <span className="truncatetransition-opacity duration-300" style={{ opacity }}>
-                  {user?.email?.split('@')[0]}@...
+                <span className="truncate text-muted-foreground transition-opacity duration-300" style={{ opacity }}>
+                  {user?.handle ? `@${user.handle}` : user?.email?.split('@')[0]}
                 </span>
               </div>
             </SidebarMenuButton>

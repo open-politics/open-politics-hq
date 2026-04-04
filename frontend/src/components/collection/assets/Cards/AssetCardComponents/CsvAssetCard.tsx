@@ -50,6 +50,8 @@ export function CsvAssetCard({
   isFeatured = false,
   showMeta = true,
   className,
+  isFavorited,
+  onToggleFavorite,
 }: CsvAssetCardProps) {
   const fi = asset.file_info as CsvMetadata | null;
   const fragmentCount = asset.fragments ? Object.keys(asset.fragments).length : 0;
@@ -118,6 +120,8 @@ export function CsvAssetCard({
         size={size}
         orientation="horizontal"
         className={className}
+        isFavorited={isFavorited}
+        onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(asset) : undefined}
       >
         {/* Left side - Mini table preview */}
         <div className={cn(
@@ -271,6 +275,8 @@ export function CsvAssetCard({
         onClick={onClick ? () => onClick(asset) : undefined}
         size={size}
         className={className}
+        isFavorited={isFavorited}
+        onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(asset) : undefined}
       >
         <div className="flex flex-col h-full">
           {/* Fallback Hero */}
@@ -336,6 +342,8 @@ export function CsvAssetCard({
       onClick={onClick ? () => onClick(asset) : undefined}
       size={size}
       className={className}
+      isFavorited={isFavorited}
+      onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(asset) : undefined}
     >
       <div className="flex flex-col h-full">
         {/* Mini Table Preview - Hero Area */}

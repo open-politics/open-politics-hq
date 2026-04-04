@@ -7,13 +7,11 @@ from sqlmodel import SQLModel, Session, select, text
 
 from app.core.config import settings
 from app.core.db import engine
-from app.core.initial_data import INITIAL_ASSETS, INITIAL_SCHEMAS
+from app.core.initial_data import INITIAL_SCHEMAS
 from app.core.security import get_password_hash
 from app.models import (
     AnalysisAdapter,
     AnnotationSchema,
-    Asset,
-    AssetKind,
     Infospace,
     User,
 )
@@ -24,10 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def init_db(session: Session) -> None:
-    """
-    Seed the database with initial data: superuser, default infospace,
-    annotation schemas, analysis adapters, and initial assets.
-    """
+    """Seed superuser, default infospace, annotation schemas, and analysis adapters."""
     # Call the factory function with settings
     try:
         storage_provider = get_storage_provider(settings)
@@ -161,37 +156,4 @@ def init_db(session: Session) -> None:
         else:
             logger.info(f"{name} adapter already registered")
 
-    session.commit()
-
-    # --- Create Initial Assets from initial_data.py (Only for the default infospace) ---
-    for asset_data in INITIAL_ASSETS:
-        try:
-            asset_kind_enum = AssetKind(asset_data.kind)
-        except ValueError:
-            logger.error(f"Invalid AssetKind '{asset_data.kind}' in INITIAL_ASSETS for title '{asset_data.title}'. Skipping asset.")
-            continue
-
-        existing_asset = session.exec(
-            select(Asset).where(
-                Asset.infospace_id == infospace.id,
-                Asset.title == asset_data.title,
-                Asset.kind == asset_kind_enum
-            )
-        ).first()
-
-        if not existing_asset:
-            new_asset = Asset(
-                title=asset_data.title,
-                kind=asset_kind_enum,
-                text_content=asset_data.text_content,
-                blob_path=asset_data.blob_path,
-                facets=asset_data.facets,
-                file_info=asset_data.file_info,
-                infospace_id=infospace.id,
-                user_id=user.id
-            )
-            session.add(new_asset)
-            logger.info(f"Creating initial asset: {new_asset.title}")
-        else:
-            logger.info(f"Initial asset '{asset_data.title}' already exists.")
     session.commit()

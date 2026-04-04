@@ -40,6 +40,10 @@ export interface AssetCardBaseProps {
   showMeta?: boolean;
   /** Additional CSS classes */
   className?: string;
+  /** Whether the asset is favorited */
+  isFavorited?: boolean;
+  /** Toggle favorite callback */
+  onToggleFavorite?: (asset: AssetRead) => void;
 }
 
 /**

@@ -67,9 +67,12 @@ const buildJsonSchemaProperties = (fields: AdvancedSchemeField[]): { properties:
                 if (graphConfig.entityTypes.typeConstrained && graphConfig.entityTypes.typeEnum && graphConfig.entityTypes.typeEnum.length > 0) {
                     subjectTypeSchema.enum = graphConfig.entityTypes.typeEnum.filter(t => t.trim() !== '');
                 }
-                // Store entity type colors as custom metadata
+                // Store entity type colors/icons as custom metadata
                 if (graphConfig.entityTypes.typeColors && Object.keys(graphConfig.entityTypes.typeColors).length > 0) {
                     subjectTypeSchema['x-entityTypeColors'] = graphConfig.entityTypes.typeColors;
+                }
+                if (graphConfig.entityTypes.typeIcons && Object.keys(graphConfig.entityTypes.typeIcons).length > 0) {
+                    subjectTypeSchema['x-entityTypeIcons'] = graphConfig.entityTypes.typeIcons;
                 }
                 tripletProperties.subject_type = subjectTypeSchema;
                 
@@ -81,9 +84,15 @@ const buildJsonSchemaProperties = (fields: AdvancedSchemeField[]): { properties:
                 if (graphConfig.relationshipSchema.predicateConstrained && graphConfig.relationshipSchema.predicateEnum && graphConfig.relationshipSchema.predicateEnum.length > 0) {
                     predicateSchema.enum = graphConfig.relationshipSchema.predicateEnum.filter(p => p.trim() !== '');
                 }
-                // Store predicate colors as custom metadata
+                // Store predicate colors/icons/arrows as custom metadata
                 if (graphConfig.relationshipSchema.predicateColors && Object.keys(graphConfig.relationshipSchema.predicateColors).length > 0) {
                     predicateSchema['x-predicateColors'] = graphConfig.relationshipSchema.predicateColors;
+                }
+                if (graphConfig.relationshipSchema.predicateIcons && Object.keys(graphConfig.relationshipSchema.predicateIcons).length > 0) {
+                    predicateSchema['x-predicateIcons'] = graphConfig.relationshipSchema.predicateIcons;
+                }
+                if (graphConfig.relationshipSchema.predicateArrows && Object.keys(graphConfig.relationshipSchema.predicateArrows).length > 0) {
+                    predicateSchema['x-predicateArrows'] = graphConfig.relationshipSchema.predicateArrows;
                 }
                 tripletProperties.predicate = predicateSchema;
                 
@@ -99,9 +108,12 @@ const buildJsonSchemaProperties = (fields: AdvancedSchemeField[]): { properties:
                 if (graphConfig.entityTypes.typeConstrained && graphConfig.entityTypes.typeEnum && graphConfig.entityTypes.typeEnum.length > 0) {
                     objectTypeSchema.enum = graphConfig.entityTypes.typeEnum.filter(t => t.trim() !== '');
                 }
-                // Store entity type colors as custom metadata (same as subject_type)
+                // Store entity type colors/icons as custom metadata (same as subject_type)
                 if (graphConfig.entityTypes.typeColors && Object.keys(graphConfig.entityTypes.typeColors).length > 0) {
                     objectTypeSchema['x-entityTypeColors'] = graphConfig.entityTypes.typeColors;
+                }
+                if (graphConfig.entityTypes.typeIcons && Object.keys(graphConfig.entityTypes.typeIcons).length > 0) {
+                    objectTypeSchema['x-entityTypeIcons'] = graphConfig.entityTypes.typeIcons;
                 }
                 tripletProperties.object_type = objectTypeSchema;
                 
@@ -291,6 +303,7 @@ const parseJsonSchemaProperties = (properties: any = {}, required: string[] = []
         const typeConstrained = !!typeEnum && typeEnum.length > 0;
         const typeDescription = subjectTypeSchema.description || undefined;
         const typeColors = subjectTypeSchema['x-entityTypeColors'] || undefined;
+        const typeIcons = subjectTypeSchema['x-entityTypeIcons'] || undefined;
 
         // Extract predicate constraints
         const predicateSchema = tripletProps.predicate || {};
@@ -298,6 +311,8 @@ const parseJsonSchemaProperties = (properties: any = {}, required: string[] = []
         const predicateConstrained = !!predicateEnum && predicateEnum.length > 0;
         const predicateDescription = predicateSchema.description || undefined;
         const predicateColors = predicateSchema['x-predicateColors'] || undefined;
+        const predicateIcons = predicateSchema['x-predicateIcons'] || undefined;
+        const predicateArrows = predicateSchema['x-predicateArrows'] || undefined;
 
         // Extract optional fields (everything except the 5 required triplet fields)
         const requiredTripletFields = ['subject_name', 'subject_type', 'predicate', 'object_name', 'object_type'];
@@ -317,13 +332,16 @@ const parseJsonSchemaProperties = (properties: any = {}, required: string[] = []
                     typeEnum: typeEnum,
                     typeConstrained: typeConstrained,
                     typeDescription: typeDescription,
-                    typeColors: typeColors
+                    typeColors: typeColors,
+                    typeIcons: typeIcons,
                 },
                 relationshipSchema: {
                     predicateEnum: predicateEnum,
                     predicateConstrained: predicateConstrained,
                     predicateDescription: predicateDescription,
                     predicateColors: predicateColors,
+                    predicateIcons: predicateIcons,
+                    predicateArrows: predicateArrows,
                     optionalFields: optionalFields
                 },
                 graphConfig: {

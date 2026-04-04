@@ -31,7 +31,7 @@ async def promote_fragment(
     asset_id: int,
     request: PromoteFragmentRequest,
     analysis_service: AnalysisServiceDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ):
     """
     Promote a fragment of information to a permanent feature of an asset.
@@ -59,7 +59,7 @@ async def delete_fragment(
     asset_id: int,
     fragment_key: str,
     analysis_service: AnalysisServiceDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ):
     """
     Delete a curated fragment from an asset.

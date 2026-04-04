@@ -100,8 +100,8 @@ class SearchService:
     def search_assets_tree_text(
         self,
         infospace_id: int,
-        user_id: int,
-        query: str,
+        user_id: Optional[int] = None,
+        query: str = "",
         limit: int = 100,
         asset_kinds: Optional[List[AssetKind]] = None,
         bundle_id: Optional[int] = None,
@@ -126,7 +126,6 @@ class SearchService:
         base_query = (
             select(Asset)
             .where(Asset.infospace_id == infospace_id)
-            .where(Asset.user_id == user_id)
         )
 
         if asset_kinds:
@@ -159,7 +158,6 @@ class SearchService:
                     select(Asset)
                     .where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle.id))
                     .where(Asset.infospace_id == infospace_id)
-                    .where(Asset.user_id == user_id)
                 )
                 if asset_kinds:
                     bundle_asset_query = bundle_asset_query.where(Asset.kind.in_(asset_kinds))

@@ -108,6 +108,7 @@ def reset_password(session: SessionDep, body: NewPassword) -> Message:
     "/password-recovery-html-content/{email}",
     dependencies=[Depends(get_current_active_superuser)],
     response_class=HTMLResponse,
+    status_code=200,
 )
 def recover_password_html_content(email: str, session: SessionDep) -> Any:
     """

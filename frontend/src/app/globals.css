@@ -38,6 +38,12 @@
   --sidebar-border: oklch(0.914 0.005 264.542);
   --sidebar-ring: oklch(0.705 0.015 286.067);
   --main-styled-text: oklch(0.7702 0.1213 194.93);
+  --graph-node-stroke: #ffffff;
+  --graph-node-label: #333333;
+  --graph-edge-stroke: #999999;
+  --graph-edge-label: #666666;
+  --graph-label-halo: rgba(255, 255, 255, 0.75);
+  --graph-svg-border: #e0e0e0;
 }
 
 .dark {
@@ -73,6 +79,12 @@
   --sidebar-border: oklch(1 0 0 / 20%);
   --sidebar-ring: oklch(0.552 0.016 285.938);
   --main-styled-text: oklch(0.985 0 0);
+  --graph-node-stroke: oklch(0.3 0.02 230);
+  --graph-node-label: oklch(0.9 0.005 0);
+  --graph-edge-stroke: oklch(0.55 0.01 0);
+  --graph-edge-label: oklch(0.65 0.01 0);
+  --graph-label-halo: oklch(0.15 0.02 230 / 75%);
+  --graph-svg-border: oklch(1 0 0 / 20%);
 }
 
 /* Define color gradients */

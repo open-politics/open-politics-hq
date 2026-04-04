@@ -2,7 +2,7 @@
 
 import React from 'react';
 import type { AssetCardProps, CardOrientation } from './types';
-import type { AssetKind } from '@/client';
+import type { AssetKind, AssetRead } from '@/client';
 import { 
   DefaultAssetCard, 
   ArticleAssetCard, 
@@ -52,6 +52,10 @@ interface ExtendedAssetCardProps extends AssetCardProps {
   orientation?: CardOrientation;
   /** Whether this card is featured (e.g., in bento layout) - shows more content */
   isFeatured?: boolean;
+  /** Whether the asset is favorited */
+  isFavorited?: boolean;
+  /** Toggle favorite callback */
+  onToggleFavorite?: (asset: AssetRead) => void;
 }
 
 export function AssetCard({
@@ -65,6 +69,8 @@ export function AssetCard({
   showMeta = true,
   className,
   customRenderer: CustomRenderer,
+  isFavorited,
+  onToggleFavorite,
 }: ExtendedAssetCardProps) {
   // Featured cards get larger size for more text content
   const effectiveSize = isFeatured ? 'lg' : size;
@@ -100,6 +106,8 @@ export function AssetCard({
       isFeatured={isFeatured}
       showMeta={showMeta}
       className={className}
+      isFavorited={isFavorited}
+      onToggleFavorite={onToggleFavorite}
     />
   );
 }

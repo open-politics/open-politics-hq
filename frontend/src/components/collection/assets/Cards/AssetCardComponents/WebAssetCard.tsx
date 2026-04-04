@@ -125,6 +125,8 @@ export function WebAssetCard({
   showMeta = true,
   className,
   fetchBlobUrl,
+  isFavorited,
+  onToggleFavorite,
 }: WebAssetCardProps) {
   // Check metadata image synchronously
   const metadataImage = getMetadataImage(asset);
@@ -193,6 +195,8 @@ export function WebAssetCard({
         size={size}
         orientation="horizontal"
         className={className}
+        isFavorited={isFavorited}
+        onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(asset) : undefined}
       >
         {/* Image/Fallback section */}
         <div className={cn(
@@ -314,6 +318,8 @@ export function WebAssetCard({
       size={size}
       orientation="vertical"
       className={className}
+      isFavorited={isFavorited}
+      onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(asset) : undefined}
     >
       <div className="flex flex-col h-full">
         {/* Featured Image or Text Hero Fallback */}

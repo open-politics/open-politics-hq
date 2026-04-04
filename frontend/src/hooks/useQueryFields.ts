@@ -24,7 +24,6 @@ export interface RunInfo {
 
 export interface QueryFields {
   schemas: SchemaInfo[];
-  entity_types: string[];
   runs: RunInfo[];
 }
 

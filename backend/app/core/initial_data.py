@@ -160,7 +160,6 @@ HIERARCHICAL_TOPIC_SCHEMA = AnnotationSchemaCreate(
 
 # ==================================================================================================
 # 3. LISTS FOR DB INITIALIZATION
-# These lists are imported by db.py to populate the database on first run.
 # ==================================================================================================
 
 INITIAL_SCHEMAS: List[AnnotationSchemaCreate] = [
@@ -171,52 +170,8 @@ INITIAL_SCHEMAS: List[AnnotationSchemaCreate] = [
     # Add other general-purpose, pre-configured schemas here
 ]
 
-SAMPLE_ARTICLE_TEXT_1: str = """
-Senator John Martinez announced his new healthcare reform proposal today, focusing on expanding Medicare coverage to include mental health services and prescription drug benefits. The legislation would also address climate change through a carbon tax system and increased funding for renewable energy infrastructure. Martinez emphasized that this bipartisan effort aims to tackle both healthcare costs and environmental protection simultaneously.
-"""
-
-# Add more sample articles that would match political categories
-SAMPLE_ARTICLE_TEXT_2: str = """
-The Department of Education released new guidelines for public school funding, proposing increased investment in STEM education and teacher training programs. Secretary Williams noted that improving educational outcomes is crucial for national competitiveness. The proposal also includes provisions for expanding access to higher education through enhanced financial aid programs.
-"""
-
-SAMPLE_ARTICLE_TEXT_3: str = """
-Congress debates new immigration reform legislation that would provide pathways to citizenship for undocumented workers while strengthening border security measures. The bill addresses both humanitarian concerns and economic impacts of immigration policy. Representatives from both parties acknowledged the need for comprehensive reform that balances security with civil rights protections.
-"""
-
-INITIAL_ASSETS: List[AssetCreate] = [
-    AssetCreate(
-        title="Healthcare and Climate Policy Announcement",
-        kind=AssetKind.TEXT,
-        text_content=SAMPLE_ARTICLE_TEXT_1,
-        file_info={"origin": "db_init", "description": "A sample political article covering healthcare and environmental policy for testing political categories."}
-    ),
-    AssetCreate(
-        title="Education Funding Reform Proposal",
-        kind=AssetKind.TEXT,
-        text_content=SAMPLE_ARTICLE_TEXT_2,
-        file_info={"origin": "db_init", "description": "A sample political article covering education policy for testing political categories."}
-    ),
-    AssetCreate(
-        title="Immigration Reform Legislation Debate",
-        kind=AssetKind.TEXT,
-        text_content=SAMPLE_ARTICLE_TEXT_3,
-        file_info={"origin": "db_init", "description": "A sample political article covering immigration and civil rights for testing political categories."}
-    ),
-    AssetCreate(
-        title="Placeholder Image Asset",
-        kind=AssetKind.IMAGE,
-        text_content="This is a placeholder for an image asset. Its actual binary content would be in a blob store.",
-        blob_path="placeholders/generic_image.png", # Conceptual path
-        file_info={"origin": "db_init", "description": "A generic placeholder for image assets."}
-    )
-    # Add other general-purpose, pre-configured assets here
-] 
-
 # ==================================================================================================
 # 4. DEMO SCENARIO DATA
-# This data is used by db.py to create a rich, interactive demo environment.
-# It is kept separate from the core initial data for clarity.
 # ==================================================================================================
 
 # --- Scenario-Specific Schema ---

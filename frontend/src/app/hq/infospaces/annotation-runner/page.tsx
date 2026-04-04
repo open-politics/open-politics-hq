@@ -8,6 +8,7 @@ import { AnnotationRunRead, AnnotationRunCreate, AnnotationSchemaRead, AssetRead
 import { toast } from "sonner";
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace";
 import { useAnnotationSystem } from "@/hooks/useAnnotationSystem";
+import { useStream, type StreamEvent } from "@/hooks/useStream";
 import { useAssetStore } from "@/zustand_stores/storeAssets";
 import { AnnotationsService } from "@/client";
 import { adaptEnhancedAnnotationToFormattedAnnotation } from "@/lib/annotations/adapters";
@@ -132,29 +133,47 @@ export default function AnnotationRunnerPage() {
     }
   }, [activeRun?.id, fetchRunResults]);
   
+  // Presence: subscribe to annotation run stream for live progress
+  const isRunActive = activeRun?.status === 'running' || activeRun?.status === 'pending';
+  const { isConnected: streamConnected } = useStream<{
+    run_id: number;
+    progress_current?: number;
+    progress_total?: number;
+    status?: string;
+    error?: string;
+  }>({
+    infospaceId: activeInfospace?.id ?? 0,
+    topic: 'annotation_run',
+    resourceId: activeRun?.id ?? 0,
+    enabled: !!activeInfospace?.id && !!activeRun?.id && !!isRunActive,
+    onEvent: (event) => {
+      if (event.type === 'progress') {
+        // Refresh run list to pick up progress_current/total
+        loadRuns();
+      }
+      if (event.type === 'completed' || event.type === 'completed_with_errors' || event.type === 'failed') {
+        // Terminal event: refresh everything
+        loadRuns();
+        if (activeRun?.id) fetchRunResults(activeRun.id);
+      }
+    },
+  });
+
+  // Fallback polling: if SSE stream fails to connect, poll every 5s
   useEffect(() => {
-    // Clear any existing interval first
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
 
-    // Only start polling if the run is actively processing
-    if (activeRun && (activeRun.status === 'running' || activeRun.status === 'pending')) {
-      const runId = activeRun.id; // Capture the run ID
-      const checkStatusAndResults = async () => {
+    if (isRunActive && !streamConnected) {
+      const runId = activeRun!.id;
+      pollIntervalRef.current = setInterval(async () => {
         await loadRuns();
-        // Stream results while processing — annotations are committed per-chunk
         await fetchRunResults(runId, true);
-      };
-
-      // Poll every 3s for snappy progress updates
-      pollIntervalRef.current = setInterval(checkStatusAndResults, 3000);
-    } else {
-      // Handle completed runs — final fetch to ensure we have everything
-      if(activeRun?.status === 'completed' || activeRun?.status === 'completed_with_errors' || activeRun?.status === 'failed') {
-          fetchRunResults(activeRun.id);
-      }
+      }, 5000);
+    } else if (activeRun?.status === 'completed' || activeRun?.status === 'completed_with_errors' || activeRun?.status === 'failed') {
+      fetchRunResults(activeRun.id);
     }
 
     return () => {
@@ -163,7 +182,7 @@ export default function AnnotationRunnerPage() {
         pollIntervalRef.current = null;
       }
     };
-  }, [activeRun?.id, activeRun?.status, loadRuns, fetchRunResults]);
+  }, [activeRun?.id, activeRun?.status, streamConnected, loadRuns, fetchRunResults]);
 
   const handleSelectRunFromHistory = (runId: number) => {
     const runToLoad = runs.find(r => r.id === runId);

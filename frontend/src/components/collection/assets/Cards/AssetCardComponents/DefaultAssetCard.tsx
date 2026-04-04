@@ -42,6 +42,8 @@ export function DefaultAssetCard({
   isFeatured = false,
   showMeta = true,
   className,
+  isFavorited,
+  onToggleFavorite,
 }: DefaultAssetCardProps) {
   const badgeClass = getAssetBadgeClass(asset.kind, 'card');
   
@@ -68,6 +70,8 @@ export function DefaultAssetCard({
         onClick={onClick ? () => onClick(asset) : undefined}
         size={size}
         orientation="horizontal"
+        isFavorited={isFavorited}
+        onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(asset) : undefined}
         className={className}
       >
         {/* Hero section - left side */}
@@ -157,6 +161,8 @@ export function DefaultAssetCard({
       size={size}
       orientation="vertical"
       className={className}
+      isFavorited={isFavorited}
+      onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(asset) : undefined}
     >
       <div className="flex flex-col h-full">
         {/* Text Hero area */}

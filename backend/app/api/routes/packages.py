@@ -32,6 +32,144 @@ from app.api.modules.sharing.models import Package, PackageItem, PackageVisibili
 
 logger = logging.getLogger(__name__)
 
+
+# ─── Item FK validation ───
+# Maps each PackageItem FK field to its (model_class, infospace_fk_attr) pair.
+# All six resource models carry infospace_id directly.
+
+_ITEM_FK_VALIDATORS: dict[str, tuple] = {}  # populated lazily to avoid circular imports
+
+
+def _get_item_fk_validators() -> dict[str, tuple]:
+    """Lazy-load the FK validator mapping to avoid circular imports at module level."""
+    global _ITEM_FK_VALIDATORS
+    if _ITEM_FK_VALIDATORS:
+        return _ITEM_FK_VALIDATORS
+    from app.api.modules.content.models import Asset, Bundle
+    from app.api.modules.annotation.models import AnnotationRun, AnnotationSchema
+    from app.api.modules.graph.models import EntityCanonical, KnowledgeGraph
+    _ITEM_FK_VALIDATORS = {
+        "bundle_id": (Bundle, "infospace_id"),
+        "run_id": (AnnotationRun, "infospace_id"),
+        "schema_id": (AnnotationSchema, "infospace_id"),
+        "asset_id": (Asset, "infospace_id"),
+        "graph_id": (KnowledgeGraph, "infospace_id"),
+        "entity_canonical_id": (EntityCanonical, "infospace_id"),
+    }
+    return _ITEM_FK_VALIDATORS
+
+
+def _validate_item_belongs_to_infospace(
+    db: Session, body, infospace_id: int
+) -> None:
+    """Assert that the referenced resource exists and belongs to the infospace.
+
+    Raises HTTPException(404) if the resource is missing or from another infospace.
+    """
+    for fk_field, (model_cls, iid_attr) in _get_item_fk_validators().items():
+        resource_id = getattr(body, fk_field, None)
+        if resource_id is None:
+            continue
+        entity = db.get(model_cls, resource_id)
+        if not entity or getattr(entity, iid_attr) != infospace_id:
+            resource_label = fk_field.replace("_id", "").replace("_", " ").title()
+            raise HTTPException(status_code=404, detail=f"{resource_label} not found in this infospace")
+
+# ─── Derived item expansion ───
+# When a user adds a run/bundle/graph, structural dependencies are auto-materialized
+# as derived PackageItems with provenance. Only structural items (not assets).
+
+
+class DerivationType:
+    BUNDLE_SUBTREE = "bundle_subtree"
+    RUN_SCHEMA = "run_schema"
+    GRAPH_RUN = "graph_run"
+
+
+def _derived_exists(
+    db: Session, package_id: int, derived_from: int, **fk_kwargs
+) -> bool:
+    """Check if a derived item already exists for this parent+resource combination."""
+    q = select(PackageItem.id).where(
+        PackageItem.package_id == package_id,
+        PackageItem.derived_from_item_id == derived_from,
+    )
+    for fk_name, fk_val in fk_kwargs.items():
+        q = q.where(getattr(PackageItem, fk_name) == fk_val)
+    return db.exec(q).first() is not None
+
+
+def _expand_derived_items(db: Session, parent_item: PackageItem) -> list:
+    """Compute and insert derived items for a newly-persisted PackageItem.
+
+    Derivation rules (structural only — not individual assets):
+      bundle → child bundles via subtree_ids
+      run    → schemas via RunSchemaLink
+      graph  → runs via GraphEdge→Annotation, then chain run→schemas
+    """
+    derived = []
+
+    if parent_item.bundle_id is not None:
+        from app.core.tree import subtree_ids
+        all_ids = subtree_ids(db, {parent_item.bundle_id})
+        child_ids = all_ids - {parent_item.bundle_id}
+        for bid in child_ids:
+            if not _derived_exists(db, parent_item.package_id, parent_item.id, bundle_id=bid):
+                item = PackageItem(
+                    package_id=parent_item.package_id,
+                    bundle_id=bid,
+                    derived_from_item_id=parent_item.id,
+                    derivation_type=DerivationType.BUNDLE_SUBTREE,
+                )
+                db.add(item)
+                derived.append(item)
+
+    elif parent_item.run_id is not None:
+        from app.api.modules.annotation.models import RunSchemaLink
+        schema_rows = db.exec(
+            select(RunSchemaLink.schema_id).where(RunSchemaLink.run_id == parent_item.run_id)
+        ).all()
+        for sid in schema_rows:
+            if not _derived_exists(db, parent_item.package_id, parent_item.id, schema_id=sid):
+                item = PackageItem(
+                    package_id=parent_item.package_id,
+                    schema_id=sid,
+                    derived_from_item_id=parent_item.id,
+                    derivation_type=DerivationType.RUN_SCHEMA,
+                )
+                db.add(item)
+                derived.append(item)
+
+    elif parent_item.graph_id is not None:
+        from app.api.modules.graph.models import GraphEdge
+        from app.api.modules.annotation.models import Annotation, RunSchemaLink
+        run_rows = db.exec(
+            select(Annotation.run_id).where(
+                Annotation.id.in_(
+                    select(GraphEdge.annotation_id).where(
+                        GraphEdge.graph_id == parent_item.graph_id
+                    )
+                )
+            ).distinct()
+        ).all()
+        run_ids = {r for r in run_rows if r is not None}
+        for rid in run_ids:
+            if not _derived_exists(db, parent_item.package_id, parent_item.id, run_id=rid):
+                run_item = PackageItem(
+                    package_id=parent_item.package_id,
+                    run_id=rid,
+                    derived_from_item_id=parent_item.id,
+                    derivation_type=DerivationType.GRAPH_RUN,
+                )
+                db.add(run_item)
+                db.flush()  # need run_item.id for chained expansion
+                derived.append(run_item)
+                # Chain: derived run → schemas
+                derived.extend(_expand_derived_items(db, run_item))
+
+    return derived
+
+
 router = APIRouter()
 
 
@@ -73,8 +211,12 @@ class PackageItemRead(BaseModel):
     id: int
     resource_type: str
     resource_id: int
+    resource_name: Optional[str] = None
+    resource_kind: Optional[str] = None
     allow_download: Optional[bool]
     allow_copy: Optional[bool]
+    derived_from_item_id: Optional[int] = None
+    derivation_type: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -119,7 +261,7 @@ def create_package(
     *,
     infospace_id: int,
     body: PackageCreate,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
 ) -> Any:
     """Create a new package in an infospace. Requires organize capability (curator+)."""
@@ -136,30 +278,34 @@ def create_package(
     db.add(pkg)
     db.flush()
 
-    for item in body.items:
-        db.add(PackageItem(
+    for item_body in body.items:
+        _validate_item_belongs_to_infospace(db, item_body, infospace_id)
+        pkg_item = PackageItem(
             package_id=pkg.id,
-            bundle_id=item.bundle_id,
-            run_id=item.run_id,
-            graph_id=item.graph_id,
-            schema_id=item.schema_id,
-            asset_id=item.asset_id,
-            entity_canonical_id=item.entity_canonical_id,
-            allow_download=item.allow_download,
-            allow_copy=item.allow_copy,
-        ))
+            bundle_id=item_body.bundle_id,
+            run_id=item_body.run_id,
+            graph_id=item_body.graph_id,
+            schema_id=item_body.schema_id,
+            asset_id=item_body.asset_id,
+            entity_canonical_id=item_body.entity_canonical_id,
+            allow_download=item_body.allow_download,
+            allow_copy=item_body.allow_copy,
+        )
+        db.add(pkg_item)
+        db.flush()
+        _expand_derived_items(db, pkg_item)
 
     db.commit()
     db.refresh(pkg)
     logger.info(f"Package '{pkg.name}' created (id={pkg.id}, token={pkg.token[:8]}...)")
-    return pkg
+    return _enrich_package(db, pkg)
 
 
 @router.get("/infospaces/{infospace_id}/packages", response_model=List[PackageRead])
 def list_packages(
     *,
     infospace_id: int,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     db: Session = Depends(dependency_injection.get_db),
 ) -> Any:
     """List packages in an infospace. Scoped users cannot enumerate packages."""
@@ -170,7 +316,7 @@ def list_packages(
         .where(Package.infospace_id == infospace_id, Package.is_active == True)
         .order_by(Package.created_at.desc())
     ).all()
-    return list(packages)
+    return [_enrich_package(db, pkg) for pkg in packages]
 
 
 @router.get("/infospaces/{infospace_id}/packages/{package_id}", response_model=PackageRead)
@@ -178,7 +324,7 @@ def get_package(
     *,
     infospace_id: int,
     package_id: int,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     db: Session = Depends(dependency_injection.get_db),
 ) -> Any:
     """Get a package by ID. Scoped users cannot view package details."""
@@ -187,7 +333,7 @@ def get_package(
     pkg = db.get(Package, package_id)
     if not pkg or pkg.infospace_id != infospace_id:
         raise HTTPException(status_code=404, detail="Package not found")
-    return pkg
+    return _enrich_package(db, pkg)
 
 
 @router.put("/infospaces/{infospace_id}/packages/{package_id}", response_model=PackageRead)
@@ -196,7 +342,7 @@ def update_package(
     infospace_id: int,
     package_id: int,
     body: PackageUpdate,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
 ) -> Any:
     """Update a package. Requires organize capability."""
@@ -211,7 +357,7 @@ def update_package(
     db.add(pkg)
     db.commit()
     db.refresh(pkg)
-    return pkg
+    return _enrich_package(db, pkg)
 
 
 @router.delete(
@@ -222,7 +368,7 @@ def delete_package(
     *,
     infospace_id: int,
     package_id: int,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
 ) -> None:
     """Delete a package. Requires delete capability."""
@@ -246,13 +392,15 @@ def add_package_item(
     infospace_id: int,
     package_id: int,
     body: PackageItemCreate,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
 ) -> Any:
     """Add an item to a package. Requires organize capability."""
     pkg = db.get(Package, package_id)
     if not pkg or pkg.infospace_id != infospace_id:
         raise HTTPException(status_code=404, detail="Package not found")
+
+    _validate_item_belongs_to_infospace(db, body, infospace_id)
 
     item = PackageItem(
         package_id=pkg.id,
@@ -266,6 +414,8 @@ def add_package_item(
         allow_copy=body.allow_copy,
     )
     db.add(item)
+    db.flush()
+    _expand_derived_items(db, item)
     db.commit()
     db.refresh(item)
     return item
@@ -280,7 +430,7 @@ def remove_package_item(
     infospace_id: int,
     package_id: int,
     item_id: int,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
 ) -> None:
     """Remove an item from a package."""
@@ -391,11 +541,15 @@ def access_package_by_token(
         "infospace_name": pkg.infospace.name if pkg.infospace else None,
         "items": [
             {
+                "id": item.id,
                 "resource_type": item.resource_type,
                 "resource_id": item.resource_id,
                 "resource_name": _resolve_resource_name(db, item),
+                "resource_kind": _resolve_resource_kind(db, item),
                 "allow_download": item.effective_allow_download(),
                 "allow_copy": item.effective_allow_copy(),
+                "derived_from_item_id": item.derived_from_item_id,
+                "derivation_type": item.derivation_type,
             }
             for item in items
         ],
@@ -421,6 +575,47 @@ def _resolve_resource_name(db: Session, item: PackageItem) -> Optional[str]:
         return None
     row = db.execute(text(f"SELECT {col} FROM {table} WHERE id = :id"), {"id": rid}).first()
     return row[0] if row else None
+
+
+def _resolve_resource_kind(db: Session, item: PackageItem) -> Optional[str]:
+    """Resolve the asset kind for asset-type PackageItems. Returns None for non-assets."""
+    if item.resource_type != "asset" or not item.asset_id:
+        return None
+    row = db.execute(text("SELECT kind FROM asset WHERE id = :id"), {"id": item.asset_id}).first()
+    return row[0] if row else None
+
+
+def _enrich_package(db: Session, pkg: Package) -> dict:
+    """Convert a Package ORM object to a response dict with resolved resource names."""
+    items = []
+    for item in (pkg.items or []):
+        items.append({
+            "id": item.id,
+            "resource_type": item.resource_type,
+            "resource_id": item.resource_id,
+            "resource_name": _resolve_resource_name(db, item),
+            "resource_kind": _resolve_resource_kind(db, item),
+            "allow_download": item.allow_download,
+            "allow_copy": item.allow_copy,
+            "derived_from_item_id": item.derived_from_item_id,
+            "derivation_type": item.derivation_type,
+        })
+    return {
+        "id": pkg.id,
+        "uuid": pkg.uuid,
+        "name": pkg.name,
+        "description": pkg.description,
+        "token": pkg.token,
+        "visibility": pkg.visibility,
+        "infospace_id": pkg.infospace_id,
+        "user_id": pkg.user_id,
+        "default_allow_download": pkg.default_allow_download,
+        "default_allow_copy": pkg.default_allow_copy,
+        "is_active": pkg.is_active,
+        "expires_at": str(pkg.expires_at) if pkg.expires_at else None,
+        "created_at": str(pkg.created_at) if pkg.created_at else None,
+        "items": items,
+    }
 
 
 def _validate_package_token(db: Session, token: str) -> Package:
@@ -486,7 +681,7 @@ async def stream_package_asset(
         raise HTTPException(status_code=500, detail="Could not retrieve file")
 
 
-@router.get("/p/{token}/assets/{asset_id}/download", response_class=FileResponse)
+@router.get("/p/{token}/assets/{asset_id}/download", response_class=FileResponse, status_code=200)
 async def download_package_asset(
     *,
     token: str,
@@ -543,61 +738,46 @@ async def download_package_asset(
         raise HTTPException(status_code=500, detail="Could not retrieve file")
 
 
-@router.get("/p/{token}/export", response_class=FileResponse)
+@router.get("/p/{token}/export", response_class=FileResponse, status_code=200)
 async def export_package(
     *,
     token: str,
     db: Session = Depends(dependency_injection.get_db),
     storage_provider=Depends(dependency_injection.get_storage_provider_dependency),
+    settings: dependency_injection.SettingsDep,
     background_tasks: BackgroundTasks,
 ) -> FileResponse:
-    """Export all downloadable assets in a package as a ZIP archive."""
-    import zipfile
+    """Export a package as a self-contained intelligence product.
+
+    Produces a ZIP with:
+    - manifest.json — full HQ-native data for round-trip import
+    - files/ — original source documents
+    - data/*.csv — human-readable analysis results
+    - provenance/lineage.csv — audit trail
+    - explore.py — self-documenting script
+    """
+    from app.api.modules.sharing.services.package_service import PackageBuilder
 
     pkg = _validate_package_token(db, token)
     scope = _resolve_package_token(db, pkg.infospace_id, token)
     if scope is None:
         raise HTTPException(status_code=404, detail="Not found")
 
-    if not scope.downloadable_asset_ids:
-        raise HTTPException(status_code=404, detail="No downloadable items in this package")
+    builder = PackageBuilder(db, storage_provider, settings.INSTANCE_ID, settings)
+    data_package = await builder.build_package_export(pkg, scope)
 
-    from app.api.modules.content.models import Asset
-
-    assets = db.exec(
-        select(Asset).where(Asset.id.in_(scope.downloadable_asset_ids))
-    ).all()
-    assets_with_blobs = [a for a in assets if a.blob_path]
-
-    if not assets_with_blobs:
-        raise HTTPException(status_code=404, detail="No files available for download")
-
-    tmp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-    tmp_zip.close()
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    tmp.close()
 
     try:
-        with zipfile.ZipFile(tmp_zip.name, "w", zipfile.ZIP_DEFLATED) as zf:
-            for asset in assets_with_blobs:
-                try:
-                    file_obj = await storage_provider.get_file(asset.blob_path)
-                    content = await asyncio.to_thread(file_obj.read)
-                    if hasattr(file_obj, "close"):
-                        await asyncio.to_thread(file_obj.close)
-
-                    filename = (asset.file_info or {}).get("original_filename") or \
-                               (asset.file_info or {}).get("filename") or \
-                               Path(asset.blob_path).name
-                    zf.writestr(filename, content)
-                except Exception as e:
-                    logger.warning(f"Skipping asset {asset.id} in export: {e}")
-
-        background_tasks.add_task(os.unlink, tmp_zip.name)
+        data_package.to_zip(tmp.name)
+        background_tasks.add_task(os.unlink, tmp.name)
         return FileResponse(
-            path=tmp_zip.name,
+            path=tmp.name,
             filename=f"{pkg.name or 'package'}.zip",
             media_type="application/zip",
         )
     except Exception as e:
-        os.unlink(tmp_zip.name)
+        os.unlink(tmp.name)
         logger.error(f"Failed to export package: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Could not create export")

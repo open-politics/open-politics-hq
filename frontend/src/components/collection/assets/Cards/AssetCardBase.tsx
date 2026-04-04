@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Card } from '@/components/ui/card';
+import { Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { CardSize, CardOrientation } from './types';
 
@@ -28,6 +29,10 @@ interface AssetCardBaseProps {
   className?: string;
   /** Whether the card is in a loading state */
   isLoading?: boolean;
+  /** Whether the asset is favorited */
+  isFavorited?: boolean;
+  /** Toggle favorite callback */
+  onToggleFavorite?: () => void;
 }
 
 export function AssetCardBase({
@@ -37,6 +42,8 @@ export function AssetCardBase({
   orientation = 'vertical',
   className,
   isLoading = false,
+  isFavorited,
+  onToggleFavorite,
 }: AssetCardBaseProps) {
   // Min-height classes for vertical orientation (used as fallback)
   const verticalSizeClasses = {
@@ -56,7 +63,7 @@ export function AssetCardBase({
   return (
     <Card
       className={cn(
-        'group overflow-hidden transition-all duration-200',
+        'group relative overflow-hidden transition-all duration-200',
         'hover:shadow-lg hover:border-primary/20',
         onClick && 'cursor-pointer',
         // Base flex direction
@@ -74,6 +81,24 @@ export function AssetCardBase({
       )}
       onClick={onClick}
     >
+      {onToggleFavorite !== undefined && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleFavorite(); }}
+          className={cn(
+            "absolute top-2 right-2 z-10 p-1 rounded-full transition-opacity",
+            isFavorited
+              ? "opacity-100"
+              : "opacity-0 group-hover:opacity-100"
+          )}
+        >
+          <Star className={cn(
+            "h-4 w-4",
+            isFavorited
+              ? "fill-yellow-400 text-yellow-500"
+              : "text-white/80 hover:text-yellow-400 drop-shadow-md"
+          )} />
+        </button>
+      )}
       {children}
     </Card>
   );

@@ -42,7 +42,7 @@ async def create_task(
     *,
     task_in: TaskCreate,
     task_service: TaskServiceDep,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ) -> TaskRead:
     """
     Create a new Recurring Task in the specified infospace.
@@ -65,7 +65,7 @@ async def create_task(
 @router.get("/", response_model=TasksOut)
 async def list_tasks(
     task_service: TaskServiceDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     skip: int = 0,
     limit: int = 100,
     status: Optional[TaskStatus] = Query(None, description="Filter by task status"),
@@ -97,7 +97,7 @@ async def list_tasks(
 async def get_task(
     task_id: int,
     task_service: TaskServiceDep,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
 ) -> TaskRead:
     """
     Retrieve a specific Task by its ID from the infospace.
@@ -118,7 +118,7 @@ async def update_task(
     task_id: int,
     task_in: TaskUpdate,
     task_service: TaskServiceDep,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ) -> TaskRead:
     """
     Update a Task in the infospace.
@@ -144,7 +144,7 @@ async def update_task(
 async def delete_task(
     task_id: int,
     task_service: TaskServiceDep,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
 ) -> None:
     """
     Delete a Task from the infospace.
@@ -169,7 +169,7 @@ async def delete_task(
 async def execute_task_manually(
     task_id: int,
     task_service: TaskServiceDep,
-    access: Access = Requires(Capability.COMPUTE),
+    access: Access = Requires(Capability.COMPUTE, scope=None),
 ) -> dict:
     """
     Manually trigger the execution of a specific task.

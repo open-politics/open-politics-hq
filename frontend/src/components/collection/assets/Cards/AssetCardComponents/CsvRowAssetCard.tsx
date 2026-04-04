@@ -40,6 +40,8 @@ export function CsvRowAssetCard({
   isFeatured = false,
   showMeta = true,
   className,
+  isFavorited,
+  onToggleFavorite,
 }: CsvRowAssetCardProps) {
   const fragmentCount = asset.fragments ? Object.keys(asset.fragments).length : 0;
   
@@ -75,6 +77,8 @@ export function CsvRowAssetCard({
         size={size}
         orientation="horizontal"
         className={className}
+        isFavorited={isFavorited}
+        onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(asset) : undefined}
       >
         {/* Left side - Field preview area */}
         <div className={cn(
@@ -195,6 +199,8 @@ export function CsvRowAssetCard({
       onClick={onClick ? () => onClick(asset) : undefined}
       size={size}
       className={className}
+      isFavorited={isFavorited}
+      onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(asset) : undefined}
     >
       <div className="flex flex-col h-full">
         {/* CSV Row Preview - takes most space */}

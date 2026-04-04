@@ -6,7 +6,7 @@ import { ChatRequest, ChatResponse, ToolCallRequest } from '@/client'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
 import { useProvidersStore } from '@/zustand_stores/storeProviders'
 import { toast } from 'sonner'
-import { OpenAPI } from '@/client/core/OpenAPI'
+import { connectSSE } from '@/lib/sse'
 
 export interface ToolExecution {
   id: string
@@ -123,71 +123,41 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
       } as ChatRequest
       
       if (chatRequest.stream) {
-        // Manual streaming using fetch to handle SSE-like responses
         const controller = new AbortController()
         abortControllerRef.current = controller
         try {
-          const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' }
-          try {
-            // Prefer generated client's HEADERS resolver (used across the app)
-            const maybeHeaders = (OpenAPI.HEADERS as any)
-            const resolved = typeof maybeHeaders === 'function' ? await maybeHeaders({} as any) : maybeHeaders
-            if (resolved && typeof resolved === 'object') {
-              Object.assign(headers, resolved)
-            }
-            // Fallback to localStorage token if resolver not configured
-            if (!headers['Authorization'] && typeof window !== 'undefined') {
-              const token = localStorage.getItem('access_token')
-              if (token) headers['Authorization'] = `Bearer ${token}`
-            }
-          } catch {}
-          const resp = await fetch('/api/v1/chat/chat', {
-            method: 'POST',
-            headers,
-            credentials: 'include',
-            body: JSON.stringify(chatRequest),
-            signal: controller.signal
-          })
-          if (!resp.ok || !resp.body) {
-            throw new Error(`Streaming request failed: ${resp.status}`)
-          }
-          const reader = resp.body.getReader()
-          const decoder = new TextDecoder('utf-8')
-          let acc = ''
           let current: ChatMessage = {
             id: `assistant-${Date.now()}`,
             role: 'assistant',
             content: '',
             timestamp: new Date()
           }
-          // Track if message was added to UI yet (only add once there's actual content)
           let messageAddedToUI = false
-          
-          while (true) {
-            const { value, done } = await reader.read()
-            if (done) break
-            acc += decoder.decode(value, { stream: true })
-            const lines = acc.split('\n')
-            acc = lines.pop() || ''
-            for (const raw of lines) {
-              if (!raw) continue
-              const line = raw.trim()
-              if (!line.startsWith('data: ')) continue
-              const payload = line.slice(6).trim()
-              if (payload === '[DONE]') continue
+
+          await connectSSE({
+            url: '/api/v1/chat/chat',
+            method: 'POST',
+            body: chatRequest,
+            signal: controller.signal,
+            onEvent: (event) => {
+              if (event.type === 'error') {
+                try {
+                  const err = JSON.parse(event.data)
+                  console.error('[useIntelligenceChat] SSE error:', err.detail)
+                } catch { /* ignore parse errors */ }
+                return
+              }
+              if (event.type !== 'chunk') return
+
               try {
-                const obj = JSON.parse(payload)
+                const obj = JSON.parse(event.data)
                 let updated = false
-                
-                const contentDelta = obj.content as string | undefined
-                if (contentDelta !== undefined) {
-                  // The backend sends accumulated content, not deltas
-                  current = { ...current, content: contentDelta }
+
+                if (obj.content !== undefined) {
+                  current = { ...current, content: obj.content }
                   updated = true
                 }
                 if (obj.tool_executions && Array.isArray(obj.tool_executions) && obj.tool_executions.length > 0) {
-                  // Server-side executed tools with results
-                  // Extract structured_content from each execution
                   const enrichedExecutions = (obj.tool_executions as ToolExecution[]).map(exec => ({
                     ...exec,
                     structured_content: exec.structured_content || exec.result,
@@ -197,7 +167,6 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
                   updated = true
                 }
                 if (obj.tool_calls) {
-                  // Tool calls that need execution (shouldn't happen with our setup)
                   current = { ...current, tool_calls: obj.tool_calls }
                   processToolCallsForExecution(obj.tool_calls, current.id)
                   updated = true
@@ -206,45 +175,33 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
                   current = { ...current, thinking_trace: obj.thinking_trace }
                   updated = true
                 }
-                
-                // Only update state if something changed
+
                 if (updated) {
-                  // Check if message has actual content worth displaying
-                  const hasContent = current.content.trim().length > 0 || 
-                                    current.thinking_trace || 
+                  const hasContent = current.content.trim().length > 0 ||
+                                    current.thinking_trace ||
                                     (current.tool_executions && current.tool_executions.length > 0) ||
                                     (current.tool_calls && current.tool_calls.length > 0)
-                  
+
                   if (!messageAddedToUI && hasContent) {
-                    // First time we have content - add message to UI
                     setMessages(prev => [...prev, current])
                     messageAddedToUI = true
                   } else if (messageAddedToUI) {
-                    // Message already in UI - update it
                     setMessages(prev => prev.map(m => m.id === current.id ? current : m))
                   }
-                  // If no content yet, don't show anything (no empty bubble)
                 }
               } catch (e) {
                 console.error('[useIntelligenceChat] Failed to parse streaming chunk:', e)
               }
-            }
-          }
-          
-          // Ensure message is added at the end if we somehow got through the stream without adding it
-          // (edge case: stream completes but we never got content - still add the message)
+            },
+          })
+
           if (!messageAddedToUI) {
             setMessages(prev => [...prev, current])
           }
-          
-          // Ensure final message is saved even if connection drops
-          console.log('[useIntelligenceChat] Stream complete, final message:', current)
-          // Important: Set loading to false and clear abort controller BEFORE returning for streaming
           setIsLoading(false)
           abortControllerRef.current = null
           return current
         } catch (e: any) {
-          // Re-throw to let outer catch/finally handle it
           throw e
         }
       } else {

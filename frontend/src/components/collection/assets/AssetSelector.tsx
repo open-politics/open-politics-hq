@@ -156,6 +156,8 @@ interface AssetSelectorProps {
     sortOrder?: 'asc' | 'desc';
     /** Render always-visible badge/icon after item name (e.g. favorite star) */
     renderItemBadge?: (item: AssetTreeItem) => React.ReactNode;
+    /** Only show bundle nodes (hide standalone assets). Useful for bundle pickers. */
+    bundlesOnly?: boolean;
 }
 
 export default function AssetSelector({
@@ -175,6 +177,7 @@ export default function AssetSelector({
     pathPrefix = null,
     sortBy = 'name',
     sortOrder = 'asc',
+    bundlesOnly = false,
 }: AssetSelectorProps) {
   const { activeInfospace } = useInfospaceStore();
   
@@ -182,6 +185,7 @@ export default function AssetSelector({
   const {
     rootNodes,
     childrenCache,
+    hasMoreChildren,
     isLoadingRoot,
     isLoadingChildren,
     fetchRootTree,
@@ -654,7 +658,10 @@ export default function AssetSelector({
     if (isExpanded) {
       const cachedChildren = childrenCache.get(node.id) || previousChildrenCacheRef.current.get(node.id);
       if (cachedChildren && cachedChildren.length > 0) {
-        children = cachedChildren.map(child => convertTreeNodeToTreeItem(child, level + 1));
+        const relevantChildren = bundlesOnly
+          ? cachedChildren.filter(c => c.type === 'bundle')
+          : cachedChildren;
+        children = relevantChildren.map(child => convertTreeNodeToTreeItem(child, level + 1));
       }
     }
     
@@ -730,7 +737,7 @@ export default function AssetSelector({
       asset,
       bundle,
     };
-  }, [expandedItems, selectedItems, childrenCache, activeInfospace]);
+  }, [expandedItems, selectedItems, childrenCache, activeInfospace, bundlesOnly]);
 
   // Helper: Convert AssetRead to TreeNode (reusing tree builder pattern from backend)
   const assetReadToTreeNode = useCallback((asset: AssetRead): TreeNode => {
@@ -771,7 +778,10 @@ export default function AssetSelector({
     }
     
     // Reuse the shared conversion function
-    const tree = nodesToRender.map(node => convertTreeNodeToTreeItem(node, 0));
+    const filteredNodesToRender = bundlesOnly
+      ? nodesToRender.filter(n => n.type === 'bundle')
+      : nodesToRender;
+    const tree = filteredNodesToRender.map(node => convertTreeNodeToTreeItem(node, 0));
     console.log('[AssetSelector] Generated', tree.length, 'tree items');
 
     // Parse sort option - supports both "key-direction" and "primary-secondary-direction" formats
@@ -1589,6 +1599,23 @@ export default function AssetSelector({
                       return renderTreeItem(child, childIndex >= 0 ? childIndex : undefined);
                     })}
                   </div>
+                  {hasMoreChildren.get(item.id) && (
+                    <div className="flex justify-center py-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-xs text-muted-foreground"
+                        disabled={isLoadingChildren.has(item.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          fetchChildren(item.id, childrenCache.get(item.id)?.length ?? 0);
+                        }}
+                      >
+                        {isLoadingChildren.has(item.id) && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                        Load more…
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </motion.div>
             )}
@@ -1682,6 +1709,23 @@ export default function AssetSelector({
                       return renderTreeItem(child, childIndex >= 0 ? childIndex : undefined);
                     })}
                   </div>
+                  {hasMoreChildren.get(item.id) && (
+                    <div className="flex justify-center py-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-xs text-muted-foreground"
+                        disabled={isLoadingChildren.has(item.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          fetchChildren(item.id, childrenCache.get(item.id)?.length ?? 0);
+                        }}
+                      >
+                        {isLoadingChildren.has(item.id) && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                        Load more…
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </motion.div>
             )}
@@ -1689,7 +1733,7 @@ export default function AssetSelector({
         </div>
       );
     }
-    
+
     // Check for dataset ingestion job
     const jobInfo = getJobInfo(item);
     const isJobActive = jobInfo && ['pending', 'downloading', 'extracting', 'processing'].includes(jobInfo.status);
@@ -1863,13 +1907,30 @@ export default function AssetSelector({
                     return renderTreeItem(child, childIndex >= 0 ? childIndex : undefined);
                   })}
                 </div>
+                {hasMoreChildren.get(item.id) && (
+                  <div className="flex justify-center py-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs text-muted-foreground"
+                      disabled={isLoadingChildren.has(item.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        fetchChildren(item.id, childrenCache.get(item.id)?.length ?? 0);
+                      }}
+                    >
+                      {isLoadingChildren.has(item.id) && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                      Load more…
+                    </Button>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
     );
-  }, [toggleSelected, toggleExpanded, handleItemClick, handleItemDoubleClickInternal, handleEditItem, handleSaveEditing, handleCancelEdit, isLoadingChildren, toggleBundleSelection, isBundleFullySelected, isBundlePartiallySelected, editingItem, draggedOverBundleId, draggedOverAssetId, handleDropOnBundle, handleDropOnAsset, renderItemActions, focusedIndex, getJobInfo, activeJobs, isItemSealed, sealRejectedId]);
+  }, [toggleSelected, toggleExpanded, handleItemClick, handleItemDoubleClickInternal, handleEditItem, handleSaveEditing, handleCancelEdit, isLoadingChildren, toggleBundleSelection, isBundleFullySelected, isBundlePartiallySelected, editingItem, draggedOverBundleId, draggedOverAssetId, handleDropOnBundle, handleDropOnAsset, renderItemActions, focusedIndex, getJobInfo, activeJobs, isItemSealed, sealRejectedId, hasMoreChildren, childrenCache, fetchChildren]);
 
   // Get flat list of visible items for keyboard navigation (respecting hierarchy/expansion)
   const flattenedItems = useMemo(() => {

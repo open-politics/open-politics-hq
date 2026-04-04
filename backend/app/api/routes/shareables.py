@@ -5,7 +5,7 @@ from typing import List, Optional, Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Query, status, Form, Body, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.api import dependency_injection
 from app.api.dependency_injection import CurrentUser, ShareableServiceDep, OptionalUser, SessionDep, get_shareable_service
@@ -27,10 +27,48 @@ from app.schemas import (
 )
 
 from app.api.modules.sharing.services import ShareableService
+from app.api.modules.identity_infospace_user.access import (
+    Access, Capability, Requires, ROLE_CAPABILITIES,
+)
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _assert_capability_on_infospace(
+    db: Session, user_id: int, infospace_id: int, capability: Capability
+) -> None:
+    """Manually assert a user has a capability on an infospace.
+
+    Used for routes where infospace_id comes from the request body (not path),
+    so the standard Requires() dependency can't resolve it automatically.
+    """
+    from app.api.modules.identity_infospace_user.models import Collaborator, CollaboratorRole
+
+    infospace = db.get(Infospace, infospace_id)
+    if not infospace:
+        raise HTTPException(status_code=404, detail="Infospace not found")
+
+    # Owner has all capabilities
+    if infospace.user_id == user_id:
+        return
+
+    collaborator = db.exec(
+        select(Collaborator).where(
+            Collaborator.infospace_id == infospace_id,
+            Collaborator.user_id == user_id,
+        )
+    ).first()
+    if not collaborator:
+        raise HTTPException(status_code=403, detail="Not a member of this infospace")
+
+    role_caps = ROLE_CAPABILITIES.get(collaborator.role, frozenset())
+    if capability not in role_caps:
+        raise HTTPException(
+            status_code=403,
+            detail=f"This action requires the '{capability.value}' capability.",
+        )
 
 
 # --- Request Model for Batch Export ---
@@ -186,22 +224,22 @@ def get_sharing_stats(
     return stats
 
 
-@router.post("/{infospace_id}/export", response_class=FileResponse)
+@router.post("/{infospace_id}/export", response_class=FileResponse, status_code=200)
 async def export_resource(
     infospace_id: int,
-    current_user: CurrentUser,
     background_tasks: BackgroundTasks,
     service: ShareableServiceDep,
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     resource_type: ResourceType = Form(...),
     resource_id: int = Form(...),
 ):
     """
     Export a resource from a specific infospace to a file.
-    Returns a file download.
+    Returns a file download. Requires organize capability.
     """
     try:
         filepath, filename = await service.export_resource(
-            user_id=current_user.id,
+            user_id=access.user_id,
             resource_type=resource_type,
             resource_id=resource_id,
             infospace_id=infospace_id
@@ -225,11 +263,14 @@ async def import_resource(
     target_infospace_id: int,
     current_user: CurrentUser,
     service: ShareableServiceDep,
+    db: Session = Depends(dependency_injection.get_db),
     file: UploadFile = File(...)
 ):
     """
-    Import a resource from a file into a specific infospace.
+    Import a resource from a file into a specific infospace. Requires ingest capability.
     """
+    _assert_capability_on_infospace(db, current_user.id, target_infospace_id, Capability.INGEST)
+
     if not file.filename or not (file.filename.lower().endswith(".json") or file.filename.lower().endswith(".zip")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file type. Only JSON or ZIP files are supported for this endpoint.")
 
@@ -254,6 +295,7 @@ async def import_resource(
 @router.post(
     "/export-batch/{infospace_id}",
     response_class=FileResponse,
+    status_code=200,
     responses={
         200: {
             "description": "Successful batch export, returns a ZIP archive.",
@@ -268,14 +310,14 @@ async def import_resource(
 async def export_resources_batch(
     infospace_id: int,
     request_data: ExportBatchRequest,
-    current_user: CurrentUser,
     service: ShareableServiceDep,
     background_tasks: BackgroundTasks,
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
 ):
-    """Export multiple resources of the same type to a ZIP archive."""
+    """Export multiple resources of the same type to a ZIP archive. Requires organize capability."""
     try:
         temp_zip_path, zip_filename = await service.export_resources_batch(
-            user_id=current_user.id,
+            user_id=access.user_id,
             rt=request_data.resource_type,
             r_ids=request_data.resource_ids,
             inf_id=infospace_id
@@ -292,18 +334,18 @@ async def export_resources_batch(
         logger.error(f"Batch export failed for {request_data.resource_type}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export resources batch: {str(e)}")
 
-@router.post("/export-mixed-batch/{infospace_id}", response_class=FileResponse)
+@router.post("/export-mixed-batch/{infospace_id}", response_class=FileResponse, status_code=200)
 async def export_mixed_batch(
     infospace_id: int,
     request_data: ExportMixedBatchRequest,
-    current_user: CurrentUser,
     service: ShareableServiceDep,
     background_tasks: BackgroundTasks,
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
 ):
-    """Export a mix of assets and bundles to a single ZIP archive."""
+    """Export a mix of assets and bundles to a single ZIP archive. Requires organize capability."""
     try:
         temp_zip_path, zip_filename = await service.export_mixed_batch(
-            user_id=current_user.id,
+            user_id=access.user_id,
             infospace_id=infospace_id,
             asset_ids=request_data.asset_ids,
             bundle_ids=request_data.bundle_ids
@@ -343,7 +385,7 @@ async def stream_shared_asset_file(
         logger.error(f"Failed to stream shared asset file for token {token[:6]}... asset {asset_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Could not process file stream.")
 
-@router.get("/download-bundle/{token}", response_class=FileResponse)
+@router.get("/download-bundle/{token}", response_class=FileResponse, status_code=200)
 async def download_shared_bundle(
     token: str,
     service: ShareableServiceDep,
@@ -373,7 +415,7 @@ async def download_shared_bundle(
         logger.error(f"Failed to download shared bundle for token {token[:6]}...: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Could not process bundle download.")
 
-@router.get("/download/{token}/{asset_id}", response_class=FileResponse)
+@router.get("/download/{token}/{asset_id}", response_class=FileResponse, status_code=200)
 async def download_shared_asset_file(
     token: str,
     asset_id: int,
@@ -444,10 +486,16 @@ async def import_resource_from_token(
     request_data: ImportFromTokenRequest,
     current_user: CurrentUser,
     service: ShareableServiceDep,
+    db: Session = Depends(dependency_injection.get_db),
 ):
     """
     Import a shared resource into the current user's specified infospace.
+    Requires ingest capability on the target infospace.
     """
+    _assert_capability_on_infospace(
+        db, current_user.id, request_data.target_infospace_id, Capability.INGEST
+    )
+
     try:
         result = await service.import_resource_from_token(
             token=token,

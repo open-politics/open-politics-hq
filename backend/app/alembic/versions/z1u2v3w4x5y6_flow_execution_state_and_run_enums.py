@@ -32,9 +32,10 @@ def upgrade() -> None:
     )
 
     # Add WAITING to runstatus enum (use DO block for older PostgreSQL)
+    # NOTE: Must be uppercase to match existing enum values (PENDING, RUNNING, etc.)
     op.execute("""
         DO $$ BEGIN
-            ALTER TYPE runstatus ADD VALUE 'waiting';
+            ALTER TYPE runstatus ADD VALUE 'WAITING';
         EXCEPTION WHEN duplicate_object THEN null;
         END $$;
     """)

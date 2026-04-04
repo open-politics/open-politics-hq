@@ -2,8 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
-import { SlidersHorizontal, ChevronDown, ChevronUp, Clock, Database, FileJson, Calendar, Filter, X, Plus, Info, HelpCircle } from 'lucide-react';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { SlidersHorizontal, Clock, Database, FileJson, Calendar, Filter, X, Plus, Info, HelpCircle } from 'lucide-react';
 import { TimeAxisConfig } from '@/lib/annotations/types';
 import { AnnotationSchemaRead } from '@/client';
 import { Separator } from '@/components/ui/separator';
@@ -288,41 +287,35 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
     };
 
     return (
-        <Collapsible open={isOpen} onOpenChange={setIsOpen} className="rounded-lg border">
-            <CollapsibleTrigger asChild>
-                <div className="flex items-center justify-between p-1.5 cursor-pointer bg-muted/30 hover:bg-muted/60">
-                    <div className="flex items-center gap-1.5">
-                        <SlidersHorizontal className="h-3.5 w-3.5" />
-                        <span className="font-medium text-xs">Filters</span>
-                        {activeFilterCount > 0 && (<span className="text-[10px] bg-primary text-primary-foreground rounded-full h-4 w-4 flex items-center justify-center">{activeFilterCount}</span>)}
-                        {timeAxisConfig?.timeFrame?.enabled && (<span className="text-[10px] bg-secondary text-secondary-foreground rounded-md px-1.5 py-0.5">Time</span>)}
-                    </div>
-                    <div className="flex items-center gap-1">
-                        {hasActiveFilters && (
-                            <TooltipProvider delayDuration={100}>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <Button 
-                                            variant="ghost" 
-                                            size="sm" 
-                                            className="h-6 px-2 hover:bg-destructive/10 hover:text-destructive"
-                                            onClick={handleClearAll}
-                                        >
-                                            <X className="h-3 w-3" />
-                                            <span className="sr-only">Clear all filters</span>
-                                        </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        <p className="text-xs">Clear all filters</p>
-                                    </TooltipContent>
-                                </Tooltip>
-                            </TooltipProvider>
-                        )}
-                        <Button variant="ghost" size="sm" className="w-7 h-6 p-0">{isOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}<span className="sr-only">Toggle Filters</span></Button>
-                    </div>
+        <Popover open={isOpen} onOpenChange={setIsOpen}>
+            <PopoverTrigger asChild>
+                <Button
+                    variant={hasActiveFilters ? "secondary" : "ghost"}
+                    size="sm"
+                    className={cn("h-6 px-2 text-xs gap-1", hasActiveFilters && "border border-primary/20")}
+                >
+                    <SlidersHorizontal className="h-3 w-3" />
+                    Filters
+                    {activeFilterCount > 0 && (<span className="text-[10px] bg-primary text-primary-foreground rounded-full h-4 w-4 flex items-center justify-center">{activeFilterCount}</span>)}
+                    {timeAxisConfig?.timeFrame?.enabled && (<span className="text-[10px] bg-secondary text-secondary-foreground rounded-md px-1 py-0.5 leading-none">T</span>)}
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[420px] max-h-[70vh] overflow-y-auto p-3" align="end" side="bottom">
+                <div className="space-y-3">
+                <div className="flex items-center justify-between mb-1">
+                    <h4 className="font-semibold text-xs">Filters & Time</h4>
+                    {hasActiveFilters && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-[10px] hover:bg-destructive/10 hover:text-destructive"
+                            onClick={handleClearAll}
+                        >
+                            <X className="h-3 w-3 mr-1" />
+                            Clear all
+                        </Button>
+                    )}
                 </div>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="p-2 space-y-3">
                 {/* --- Start of JSX from AnnotationResultFilters --- */}
                 <div className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -447,7 +440,8 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
                         {/* --- End of JSX from AnnotationTimeAxisControls --- */}
                     </>
                 )}
-            </CollapsibleContent>
-        </Collapsible>
+                </div>
+            </PopoverContent>
+        </Popover>
     );
 }; 

@@ -6,6 +6,7 @@ Re-export hub: imports from domain models. Alembic and existing code use from ap
 from app.api.modules.identity_infospace_user.models import (
     User, Infospace, InfospaceCollaborator, InfospaceVisibility,
     CollaboratorRole, UserBase, UserTier,
+    Invitation, InvitationStatus,
 )
 # Access module imported lazily to avoid circular import with dependency_injection.
 # Use: from app.api.modules.identity_infospace_user.access import Access, Requires, ...

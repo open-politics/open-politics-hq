@@ -73,4 +73,31 @@ def get_registration_stats(
         last_registration=last_registration
     )
 
- 
+
+class StreamStats(BaseModel):
+    stream_sent: int = 0
+    stream_dropped: int = 0
+    stream_queue_full: int = 0
+    stream_active_connections: int = 0
+    stream_reconnects: int = 0
+
+
+@router.get("/admin/stream-stats", response_model=StreamStats)
+def get_stream_stats(
+    current_user: CurrentUser,
+) -> StreamStats:
+    """Live primitives observability: stream counters from Redis."""
+    from app.core.redis import get_redis
+    r = get_redis()
+
+    def _get(key: str) -> int:
+        val = r.get(key)
+        return int(val) if val else 0
+
+    return StreamStats(
+        stream_sent=_get("stream:sent"),
+        stream_dropped=_get("stream:dropped"),
+        stream_queue_full=_get("stream:queue_full"),
+        stream_active_connections=_get("stream:active_connections"),
+        stream_reconnects=_get("stream:reconnects"),
+    )

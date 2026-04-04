@@ -7,10 +7,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2, GitMerge, Database } from 'lucide-react';
-import { AnnotationSchemaRead, AssetRead, KnowledgeGraphRead } from '@/client';
+import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2, GitMerge, Database, Sparkles, Check } from 'lucide-react';
+import { AnnotationSchemaRead, AssetRead, KnowledgeGraphRead, SimilarPairRead } from '@/client';
 import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
-import { AnalysisAdaptersService, KnowledgeGraphsService, AnnotationsService } from '@/client';
+import { AnalysisAdaptersService, KnowledgeGraphsService, AnnotationsService, CanonicalEntitiesService } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
 import { VariableSplittingConfig, applySplittingToResults } from './VariableSplittingControls';
@@ -22,7 +22,8 @@ import {
   getGraphEditsCount,
 } from '@/lib/annotations/utils';
 import type { GraphEdits } from '@/lib/annotations/types';
-import { D3ForceGraph, GraphNode, GraphEdge, aggregatorResponseToGraphData, GraphViewConfig, defaultGraphViewConfig, GraphSettingsPopover } from '@/components/collection/graph';
+import { D3ForceGraph, GraphNode, GraphEdge, aggregatorResponseToGraphData, GraphViewConfig, defaultGraphViewConfig, GraphSettingsPopover, GraphFilterPanel } from '@/components/collection/graph';
+import { resolveEntityColor } from '@/lib/annotations/colors';
 
 /** Radix Select forbids `value=""` on items; use this for “infospace default” instead of clearing the select. */
 const CURATE_TARGET_GRAPH_INFOSPACE_DEFAULT = '__infospace_default__';
@@ -130,9 +131,14 @@ export default function AnnotationResultsGraph({
     persistedGraphConfig ? { ...defaultGraphViewConfig, ...persistedGraphConfig } : defaultGraphViewConfig
   );
   
+  // Filter state
+  const [hiddenEntityTypes, setHiddenEntityTypes] = useState<Set<string>>(new Set());
+  const [hiddenPredicates, setHiddenPredicates] = useState<Set<string>>(new Set());
+
   // New state for search and highlighting
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedEdgeDetail, setSelectedEdgeDetail] = useState<GraphEdge | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [showDetailPanel, setShowDetailPanel] = useState(false);
 
@@ -146,6 +152,12 @@ export default function AnnotationResultsGraph({
   const [isCurating, setIsCurating] = useState(false);
   const [availableGraphs, setAvailableGraphs] = useState<KnowledgeGraphRead[]>([]);
   const [targetGraphId, setTargetGraphId] = useState<string>(CURATE_TARGET_GRAPH_INFOSPACE_DEFAULT);
+
+  // Dedup suggestions state
+  const [dedupPairs, setDedupPairs] = useState<SimilarPairRead[]>([]);
+  const [dedupDismissed, setDedupDismissed] = useState<Set<string>>(new Set());
+  const [isDedupLoading, setIsDedupLoading] = useState(false);
+  const [showDedupPanel, setShowDedupPanel] = useState(false);
 
   // NEW: Apply time frame filtering and variable splitting
   const assetsMap = useMemo(() => new Map(assets.map(asset => [asset.id, asset])), [assets]);
@@ -267,6 +279,50 @@ export default function AnnotationResultsGraph({
     }
   }, [graphSchemas, selectedSchemaId, onSettingsChange]);
 
+  // Extract schema-level graph config (typeColors, typeIcons, predicateColors)
+  const schemaGraphFieldConfig = useMemo(() => {
+    if (!selectedSchemaId) return null;
+    const schema = [...schemas, ...(allSchemas || [])].find(s => s.id.toString() === selectedSchemaId);
+    if (!schema?.output_contract) return null;
+    const props = (schema.output_contract as any)?.properties;
+    if (!props) return null;
+    // Find the graph field (type === 'graph' or has graphConfig)
+    const findGraphConfig = (obj: any): any => {
+      if (!obj || typeof obj !== 'object') return null;
+      for (const val of Object.values(obj)) {
+        if (val && typeof val === 'object') {
+          const v = val as any;
+          if (v.graphConfig) return v.graphConfig;
+          if (v.properties) {
+            const nested = findGraphConfig(v.properties);
+            if (nested) return nested;
+          }
+        }
+      }
+      return null;
+    };
+    return findGraphConfig(props);
+  }, [selectedSchemaId, schemas, allSchemas]);
+
+  const schemaColorOverrides = useMemo(() => {
+    if (!schemaGraphFieldConfig) return undefined;
+    const colors: Record<string, string> = {};
+    let hasAny = false;
+    if (schemaGraphFieldConfig.entityTypes?.typeColors) {
+      Object.assign(colors, schemaGraphFieldConfig.entityTypes.typeColors);
+      hasAny = true;
+    }
+    return hasAny ? { schemaColors: colors, predicateColors: schemaGraphFieldConfig.relationshipSchema?.predicateColors } : undefined;
+  }, [schemaGraphFieldConfig]);
+
+  const schemaTypeIcons = useMemo(() => {
+    return schemaGraphFieldConfig?.entityTypes?.typeIcons || undefined;
+  }, [schemaGraphFieldConfig]);
+
+  const schemaPredicateArrows = useMemo(() => {
+    return schemaGraphFieldConfig?.relationshipSchema?.predicateArrows || undefined;
+  }, [schemaGraphFieldConfig]);
+
   // Handle schema selection change
   const handleSchemaChange = useCallback((newSchemaId: string) => {
     setSelectedSchemaId(newSchemaId);
@@ -350,6 +406,7 @@ export default function AnnotationResultsGraph({
   // Handle node selection
   const handleNodeSelect = useCallback((node: GraphNode) => {
     setSelectedNodeId(node.id);
+    setSelectedEdgeDetail(null);
     setShowDetailPanel(true);
   }, []);
 
@@ -697,6 +754,53 @@ export default function AnnotationResultsGraph({
   }, [activeInfospace?.id, curationData, buildEntityMerges, targetGraphId]);
 
   // Get connected node IDs for highlighting
+  // Find potential duplicate entities via embedding similarity
+  const handleFindDuplicates = useCallback(async () => {
+    if (!activeInfospace?.id || nodes.length < 2) return;
+    setIsDedupLoading(true);
+    try {
+      const entityNames = nodes.map(n => n.label);
+      const response = await CanonicalEntitiesService.findEntityDuplicates({
+        infospaceId: activeInfospace.id,
+        requestBody: { items: entityNames, threshold: 0.85 },
+      });
+      const pairs = (response as any).pairs || [];
+      setDedupPairs(pairs);
+      setDedupDismissed(new Set());
+      if (pairs.length > 0) {
+        setShowDedupPanel(true);
+        toast.success(`Found ${pairs.length} potential duplicate${pairs.length === 1 ? '' : 's'}`);
+      } else {
+        toast.info('No duplicates found above threshold');
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to find duplicates');
+    } finally {
+      setIsDedupLoading(false);
+    }
+  }, [activeInfospace?.id, nodes]);
+
+  // Accept a dedup suggestion → stage as merge
+  const handleAcceptDedup = useCallback((pair: SimilarPairRead) => {
+    const nodeA = nodes.find(n => n.label === pair.a_item);
+    const nodeB = nodes.find(n => n.label === pair.b_item);
+    if (!nodeA || !nodeB) return;
+    // Pick the higher-frequency node as the keep target
+    const keep = (nodeA.frequency || 1) >= (nodeB.frequency || 1) ? nodeA : nodeB;
+    const merge = keep.id === nodeA.id ? nodeB : nodeA;
+    setMergeSelectedIds([keep.id, merge.id]);
+    setMergeKeepId(keep.id);
+    setMergeKeepType(keep.type);
+    // Dismiss this pair
+    const key = `${pair.a_index}-${pair.b_index}`;
+    setDedupDismissed(prev => new Set(prev).add(key));
+    toast.info(`Staged merge: "${merge.label}" → "${keep.label}". Click Merge to confirm.`);
+  }, [nodes]);
+
+  const activeDedupPairs = useMemo(() => {
+    return dedupPairs.filter(p => !dedupDismissed.has(`${p.a_index}-${p.b_index}`));
+  }, [dedupPairs, dedupDismissed]);
+
   const connectedNodeIds = useMemo(() => {
     if (!selectedNodeId) return [];
     return getConnectedNodeIds(selectedNodeId);
@@ -721,104 +825,85 @@ export default function AnnotationResultsGraph({
 
   return (
     <div className="h-full flex flex-col">
-      {/* Enhanced Controls */}
-      <div className="flex items-center gap-4 p-4 border-b bg-muted/20">
+      {/* Toolbar */}
+      <div className="flex items-center gap-2 px-2 py-1.5 border-b bg-muted/20">
         {/* Schema Selection */}
-        <div className="flex items-center gap-2">
-          <Label htmlFor="schema-select" className="text-sm font-medium">Schema:</Label>
-          <Select value={selectedSchemaId} onValueChange={handleSchemaChange}>
-            <SelectTrigger id="schema-select" className="w-[200px]">
-              <SelectValue placeholder="Select a graph schema" />
-            </SelectTrigger>
-            <SelectContent>
-              {graphSchemas.map(schema => (
-                <SelectItem key={schema.id} value={schema.id.toString()}>
-                  {schema.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <Select value={selectedSchemaId} onValueChange={handleSchemaChange}>
+          <SelectTrigger className="w-[180px] h-7 text-xs">
+            <SelectValue placeholder="Graph schema..." />
+          </SelectTrigger>
+          <SelectContent>
+            {graphSchemas.map(schema => (
+              <SelectItem key={schema.id} value={schema.id.toString()}>
+                {schema.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
-        {/* Search Bar */}
-        <div className="relative flex items-center gap-2">
-          <Label htmlFor="node-search" className="text-sm font-medium">Search:</Label>
-          <div className="relative">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <Input
-                id="node-search"
-                type="text"
-                placeholder="Search nodes..."
-                value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value);
-                  setShowSuggestions(true);
-                }}
-                onFocus={() => setShowSuggestions(true)}
-                onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                className="pl-10 pr-10 w-[200px]"
-              />
-              {searchTerm && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearSelection}
-                  className="absolute right-1 top-1/2 transform -translate-y-1/2 h-6 w-6 p-0"
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+          <Input
+            type="text"
+            placeholder="Search nodes..."
+            value={searchTerm}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              setShowSuggestions(true);
+            }}
+            onFocus={() => setShowSuggestions(true)}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+            className="h-7 text-xs pl-7 pr-7 w-[160px]"
+          />
+          {searchTerm && (
+            <button
+              onClick={clearSelection}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+
+          {/* Search Suggestions */}
+          {showSuggestions && searchSuggestions.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-popover text-popover-foreground border rounded-md shadow-lg z-50 max-h-48 overflow-y-auto">
+              {searchSuggestions.map((suggestion) => (
+                <div
+                  key={suggestion.id}
+                  className="px-2 py-1.5 hover:bg-accent cursor-pointer border-b last:border-b-0"
+                  onClick={() => handleSearchSelect(suggestion)}
                 >
-                  <X className="h-3 w-3" />
-                </Button>
-              )}
-            </div>
-
-            {/* Search Suggestions */}
-            {showSuggestions && searchSuggestions.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white border rounded-md shadow-lg z-50 max-h-64 overflow-y-auto">
-                {searchSuggestions.map((suggestion) => (
-                  <div
-                    key={suggestion.id}
-                    className="px-3 py-2 hover:bg-gray-100 cursor-pointer border-b last:border-b-0"
-                    onClick={() => handleSearchSelect(suggestion)}
-                  >
-                    <div className="font-medium text-sm">{suggestion.label}</div>
-                    <div className="text-xs text-gray-500">
-                      {suggestion.type} • {suggestion.frequency}x
-                    </div>
+                  <div className="font-medium text-xs">{suggestion.label}</div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {suggestion.type} • {suggestion.frequency}x
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* View Controls */}
         <Button
           variant="outline"
           size="sm"
+          className="h-7 text-xs"
           onClick={() => setShowDetailPanel(!showDetailPanel)}
           disabled={!selectedNodeId}
         >
-          {showDetailPanel ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+          {showDetailPanel ? <EyeOff className="h-3 w-3 mr-1" /> : <Eye className="h-3 w-3 mr-1" />}
           Details
         </Button>
 
         <Button
           variant="outline"
           size="sm"
-          onClick={clearSelection}
-          disabled={!selectedNodeId}
-        >
-          <X className="h-4 w-4 mr-2" />
-          Clear
-        </Button>
-
-        <Button
-          variant="outline"
-          size="sm"
+          className="h-7 text-xs"
           onClick={aggregateGraph}
           disabled={isLoading || !selectedSchemaId}
         >
-          <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`h-3 w-3 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
           Refresh
         </Button>
 
@@ -826,9 +911,10 @@ export default function AnnotationResultsGraph({
         <Button
           variant="outline"
           size="sm"
+          className="h-7 text-xs"
           onClick={handleExportGraph}
         >
-          <Download className="h-4 w-4 mr-2" />
+          <Download className="h-3 w-3 mr-1" />
           Export
         </Button>
         )}
@@ -837,10 +923,25 @@ export default function AnnotationResultsGraph({
         <Button
           variant="default"
           size="sm"
+          className="h-7 text-xs"
           onClick={() => setShowCuratePanel(true)}
         >
-          <Database className="h-4 w-4 mr-2" />
+          <Database className="h-3 w-3 mr-1" />
           Curate ({curationData.totalTriplets})
+        </Button>
+        )}
+
+        {/* Dedup Suggestions */}
+        {nodes.length >= 2 && (
+        <Button
+          variant={activeDedupPairs.length > 0 ? "secondary" : "outline"}
+          size="sm"
+          className="h-7 text-xs"
+          onClick={activeDedupPairs.length > 0 ? () => setShowDedupPanel(!showDedupPanel) : handleFindDuplicates}
+          disabled={isDedupLoading}
+        >
+          {isDedupLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
+          {activeDedupPairs.length > 0 ? `Dedup (${activeDedupPairs.length})` : 'Dedup'}
         </Button>
         )}
 
@@ -849,15 +950,33 @@ export default function AnnotationResultsGraph({
           config={graphConfig}
           onConfigChange={handleGraphConfigChange}
           defaultConfig={defaultGraphViewConfig}
+          availableEdgeFields={Array.from(new Set(edges.flatMap(e => Object.keys(e.properties || {}))))}
         />
+
+        {/* Filter Panel */}
+        {nodes.length > 0 && (
+          <GraphFilterPanel
+            entityTypes={Array.from(new Map(nodes.map(n => [n.type.toUpperCase(), n])).entries()).map(([type]) => {
+              const count = nodes.filter(n => n.type.toUpperCase() === type).length;
+              return { type, color: resolveEntityColor(type), count };
+            }).sort((a, b) => b.count - a.count)}
+            hiddenEntityTypes={hiddenEntityTypes}
+            onHiddenEntityTypesChange={setHiddenEntityTypes}
+            predicateTypes={Array.from(edges.reduce((m, e) => m.set(e.predicate, (m.get(e.predicate) ?? 0) + 1), new Map<string, number>()).entries())
+              .sort((a, b) => b[1] - a[1])
+              .map(([predicate, count]) => ({ predicate, count }))}
+            hiddenPredicates={hiddenPredicates}
+            onHiddenPredicatesChange={setHiddenPredicates}
+          />
+        )}
 
         {/* Stats */}
         {graphData && (
-          <div className="text-sm text-muted-foreground ml-auto">
-            {graphData.metadata.total_nodes} nodes, {graphData.metadata.total_edges} edges
+          <div className="text-xs text-muted-foreground ml-auto">
+            {graphData.metadata.total_nodes}n {graphData.metadata.total_edges}e
             {selectedNodeId && selectedNodeDetails && (
-              <span className="ml-2 text-blue-600">
-                • {selectedNodeDetails.totalConnections} connections
+              <span className="ml-1.5 text-blue-600">
+                • {selectedNodeDetails.totalConnections}c
               </span>
             )}
           </div>
@@ -897,13 +1016,27 @@ export default function AnnotationResultsGraph({
               mergeSelectedNodeIds={mergeSelectedIds}
               onNodeClick={handleNodeSelect}
               onNodeShiftClick={handleNodeShiftClick}
+              onEdgeClick={(edge) => { setSelectedEdgeDetail(edge); setSelectedNodeId(null); setShowDetailPanel(true); }}
               autoResize={true}
               config={graphConfig}
+              colorOverrides={schemaColorOverrides}
+              typeIcons={schemaTypeIcons}
+              predicateArrows={schemaPredicateArrows}
+              hiddenEntityTypes={hiddenEntityTypes}
+              hiddenPredicates={hiddenPredicates}
+              onToggleEntityType={(type) => {
+                setHiddenEntityTypes(prev => {
+                  const next = new Set(prev);
+                  if (next.has(type)) next.delete(type);
+                  else next.add(type);
+                  return next;
+                });
+              }}
             />
             
             {/* Merge Selection Bar */}
             {mergeSelectedIds.length > 0 && (
-              <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-amber-50/95 px-4 py-3 rounded-lg shadow-lg border border-amber-300 z-20 max-w-lg">
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-amber-50/95 dark:bg-amber-950/95 px-4 py-3 rounded-lg shadow-lg border border-amber-300 dark:border-amber-700 z-20 max-w-lg">
                 <div className="flex items-center gap-2 mb-2">
                   <GitMerge className="h-4 w-4 text-amber-600" />
                   <span className="text-sm font-medium text-amber-800">
@@ -922,8 +1055,8 @@ export default function AnnotationResultsGraph({
                         key={id}
                         className={`flex items-center gap-1.5 px-2 py-1 rounded border cursor-pointer text-xs transition-colors ${
                           isKeep
-                            ? 'bg-amber-200 border-amber-400 font-semibold'
-                            : 'bg-white border-amber-200 hover:bg-amber-100'
+                            ? 'bg-amber-200 dark:bg-amber-800 border-amber-400 dark:border-amber-600 font-semibold'
+                            : 'bg-background border-amber-200 dark:border-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900'
                         }`}
                       >
                         <input
@@ -952,8 +1085,8 @@ export default function AnnotationResultsGraph({
                             key={t}
                             className={`flex items-center gap-1.5 px-2 py-1 rounded border cursor-pointer text-xs transition-colors ${
                               mergeKeepType === t
-                                ? 'bg-amber-200 border-amber-400 font-semibold'
-                                : 'bg-white border-amber-200 hover:bg-amber-100'
+                                ? 'bg-amber-200 dark:bg-amber-800 border-amber-400 dark:border-amber-600 font-semibold'
+                                : 'bg-background border-amber-200 dark:border-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900'
                             }`}
                           >
                             <input
@@ -997,7 +1130,7 @@ export default function AnnotationResultsGraph({
 
             {/* Graph Editing Controls */}
             {selectedNodeId && onGraphEditsChange && (
-              <div className="absolute top-2 left-2 bg-white/95 p-3 rounded-lg shadow-lg border z-10">
+              <div className="absolute top-2 left-2 bg-background/95 p-3 rounded-lg shadow-lg border z-10">
                 <div className="space-y-2">
                   <div className="text-xs font-semibold text-muted-foreground mb-2">
                     Edit Graph
@@ -1037,7 +1170,7 @@ export default function AnnotationResultsGraph({
             
             {/* Graph Edit Status */}
             {hasGraphEdits(graphEdits) && (
-              <div className="absolute bottom-2 right-2 bg-blue-50/95 px-3 py-2 rounded-lg shadow border border-blue-200 z-10">
+              <div className="absolute bottom-2 right-2 bg-blue-50/95 dark:bg-blue-950/95 px-3 py-2 rounded-lg shadow border border-blue-200 dark:border-blue-800 z-10">
                 <div className="flex items-center gap-2">
                   <Settings2 className="h-3 w-3 text-blue-600" />
                   <span className="text-xs font-medium text-blue-700">
@@ -1063,28 +1196,51 @@ export default function AnnotationResultsGraph({
           </div>
 
           {/* Detail Panel */}
-          {showDetailPanel && selectedNodeDetails && (
-            <div className="w-1/3 border-l bg-white p-4 overflow-y-auto">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm flex items-center justify-between">
-                    Node Details
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowDetailPanel(false)}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {/* Basic Info - More Compact */}
-                  <div className="border-b border-gray-200 pb-3">
+          {showDetailPanel && (selectedNodeDetails || selectedEdgeDetail) && (
+            <div className="w-80 border-l bg-background p-4 overflow-y-auto">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold">{selectedNodeDetails ? 'Node Details' : 'Edge Details'}</h3>
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => { setShowDetailPanel(false); setSelectedEdgeDetail(null); }}>
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+              <div className="space-y-3">
+                  {/* Edge Detail */}
+                  {selectedEdgeDetail && !selectedNodeDetails && (
+                    <div className="space-y-3">
+                      <div className="border-b border-border pb-3">
+                        <div className="text-sm space-y-1">
+                          <p className="font-medium text-foreground">{nodes.find(n => n.id === selectedEdgeDetail.sourceId)?.label}</p>
+                          <p className="text-muted-foreground italic">{selectedEdgeDetail.predicate}</p>
+                          <p className="font-medium text-foreground">{nodes.find(n => n.id === selectedEdgeDetail.targetId)?.label}</p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        {selectedEdgeDetail.weight != null && <div><span className="font-medium">Weight:</span> {selectedEdgeDetail.weight}</div>}
+                        {selectedEdgeDetail.confidence != null && <div><span className="font-medium">Confidence:</span> {selectedEdgeDetail.confidence}</div>}
+                        {selectedEdgeDetail.frequency != null && <div><span className="font-medium">Frequency:</span> {selectedEdgeDetail.frequency}</div>}
+                        {selectedEdgeDetail.date && <div><span className="font-medium">Date:</span> {selectedEdgeDetail.date}</div>}
+                      </div>
+                      {selectedEdgeDetail.context && (
+                        <div className="text-xs">
+                          <div className="font-medium text-muted-foreground mb-0.5">Context</div>
+                          <p className="text-foreground bg-muted/50 p-2 rounded text-[11px] leading-relaxed">{selectedEdgeDetail.context}</p>
+                        </div>
+                      )}
+                      {selectedEdgeDetail.properties && Object.keys(selectedEdgeDetail.properties).length > 0 && (
+                        <div>
+                          <div className="text-xs font-medium text-muted-foreground mb-1">Properties</div>
+                          <pre className="text-xs bg-muted p-2 rounded overflow-x-auto">{JSON.stringify(selectedEdgeDetail.properties, null, 2)}</pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {/* Node Detail - Basic Info */}
+                  {selectedNodeDetails && (<><div className="border-b border-border pb-3">
                     <h4 className="font-semibold text-base mb-2 truncate" title={selectedNodeDetails.label}>
                       {selectedNodeDetails.label}
                     </h4>
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-600">
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
                       <div><span className="font-medium">Type:</span> {selectedNodeDetails.type}</div>
                       <div><span className="font-medium">Frequency:</span> {selectedNodeDetails.frequency || 1}</div>
                       <div><span className="font-medium">Sources:</span> {selectedNodeDetails.sourceAssetCount || 0}</div>
@@ -1093,7 +1249,7 @@ export default function AnnotationResultsGraph({
                     {/* Show source asset IDs if available */}
                     {selectedNodeDetails.sourceAssetIds && selectedNodeDetails.sourceAssetIds.length > 0 && (
                       <div className="mt-2">
-                        <div className="text-xs font-medium text-gray-600 mb-1">Appears in documents:</div>
+                        <div className="text-xs font-medium text-muted-foreground mb-1">Appears in documents:</div>
                         <div className="flex flex-wrap gap-1">
                           {selectedNodeDetails.sourceAssetIds.slice(0, 10).map((assetId) => {
                             const asset = assetsMap.get(assetId);
@@ -1107,7 +1263,7 @@ export default function AnnotationResultsGraph({
                                     onResultSelect(result);
                                   }
                                 }}
-                                className="text-xs px-2 py-1 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 cursor-pointer"
+                                className="text-xs px-2 py-1 bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded border border-blue-200 dark:border-blue-800 cursor-pointer"
                                 title={asset?.title || `Asset ${assetId}`}
                               >
                                 {asset?.title || `#${assetId}`}
@@ -1115,12 +1271,68 @@ export default function AnnotationResultsGraph({
                             );
                           })}
                           {selectedNodeDetails.sourceAssetIds.length > 10 && (
-                            <span className="text-xs text-gray-500">+{selectedNodeDetails.sourceAssetIds.length - 10} more</span>
+                            <span className="text-xs text-muted-foreground">+{selectedNodeDetails.sourceAssetIds.length - 10} more</span>
                           )}
                         </div>
                       </div>
                     )}
                   </div>
+
+                  {/* Justifications from source annotations */}
+                  {selectedNodeDetails.sourceAssetIds && selectedNodeDetails.sourceAssetIds.length > 0 && (() => {
+                    // Extract justifications from annotations that mention this entity
+                    const entityLabel = selectedNodeDetails.label.toLowerCase();
+                    const justifications: Array<{ assetId: number; fieldKey: string; reasoning?: string; confidence?: number; spans?: Array<{ text_snippet: string }> }> = [];
+                    for (const result of results) {
+                      if (!selectedNodeDetails.sourceAssetIds!.includes(result.asset_id)) continue;
+                      if (!result.value || typeof result.value !== 'object') continue;
+                      for (const [key, val] of Object.entries(result.value as Record<string, any>)) {
+                        if (!key.endsWith('_justification') || !val) continue;
+                        const j = val as any;
+                        // Check if this justification mentions the entity
+                        const reasoning = j.reasoning || '';
+                        const spans = j.text_spans || [];
+                        const mentionsEntity = reasoning.toLowerCase().includes(entityLabel) ||
+                          spans.some((s: any) => s.text_snippet?.toLowerCase().includes(entityLabel));
+                        if (mentionsEntity || justifications.length < 2) {
+                          justifications.push({
+                            assetId: result.asset_id,
+                            fieldKey: key.replace('_justification', ''),
+                            reasoning: j.reasoning,
+                            confidence: j.confidence,
+                            spans: j.text_spans,
+                          });
+                        }
+                      }
+                      if (justifications.length >= 5) break;
+                    }
+                    if (justifications.length === 0) return null;
+                    return (
+                      <div className="border-b border-border pb-3">
+                        <h5 className="font-medium mb-2 text-xs">Evidence ({justifications.length})</h5>
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {justifications.map((j, i) => (
+                            <div key={i} className="p-2 bg-amber-50 dark:bg-amber-950/30 rounded text-[11px] border-l-2 border-amber-400">
+                              {j.reasoning && (
+                                <p className="text-foreground leading-relaxed mb-1">{j.reasoning.length > 200 ? j.reasoning.slice(0, 200) + '...' : j.reasoning}</p>
+                              )}
+                              {j.spans && j.spans.length > 0 && (
+                                <div className="space-y-0.5">
+                                  {j.spans.slice(0, 2).map((s, si) => (
+                                    <p key={si} className="text-muted-foreground italic">"{s.text_snippet?.length > 100 ? s.text_snippet.slice(0, 100) + '...' : s.text_snippet}"</p>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
+                                <span>{j.fieldKey}</span>
+                                {j.confidence != null && <span>confidence: {(j.confidence * 100).toFixed(0)}%</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Combined Connections View */}
                   <div className="flex-1">
@@ -1134,7 +1346,7 @@ export default function AnnotationResultsGraph({
                         return (
                           <div 
                             key={`out-${edge.id}`} 
-                            className="p-2 bg-blue-50 rounded text-xs cursor-pointer hover:bg-blue-100 transition-colors border-l-2 border-blue-400"
+                            className="p-2 bg-blue-50 dark:bg-blue-950/40 rounded text-xs cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors border-l-2 border-blue-400"
                             onClick={() => {
                               if (targetNode) handleNodeSelect(targetNode);
                             }}
@@ -1142,10 +1354,10 @@ export default function AnnotationResultsGraph({
                             <div className="flex items-center gap-2">
                               <span className="text-blue-600 font-medium">→</span>
                               <div className="flex-1">
-                                <div className="font-medium text-gray-800 truncate" title={targetNode?.label}>
+                                <div className="font-medium text-foreground truncate" title={targetNode?.label}>
                                   {targetNode?.label}
                                 </div>
-                                <div className="text-xs text-gray-500">{targetNode?.type}</div>
+                                <div className="text-xs text-muted-foreground">{targetNode?.type}</div>
                               </div>
                             </div>
                             <div className="mt-1 text-xs text-blue-700 truncate italic" title={edge.predicate}>
@@ -1161,7 +1373,7 @@ export default function AnnotationResultsGraph({
                         return (
                           <div 
                             key={`in-${edge.id}`} 
-                            className="p-2 bg-green-50 rounded text-xs cursor-pointer hover:bg-green-100 transition-colors border-l-2 border-green-400"
+                            className="p-2 bg-green-50 dark:bg-green-950/40 rounded text-xs cursor-pointer hover:bg-green-100 dark:hover:bg-green-900/40 transition-colors border-l-2 border-green-400"
                             onClick={() => {
                               if (sourceNode) handleNodeSelect(sourceNode);
                             }}
@@ -1169,10 +1381,10 @@ export default function AnnotationResultsGraph({
                             <div className="flex items-center gap-2">
                               <span className="text-green-600 font-medium">←</span>
                               <div className="flex-1">
-                                <div className="font-medium text-gray-800 truncate" title={sourceNode?.label}>
+                                <div className="font-medium text-foreground truncate" title={sourceNode?.label}>
                                   {sourceNode?.label}
                                 </div>
-                                <div className="text-xs text-gray-500">{sourceNode?.type}</div>
+                                <div className="text-xs text-muted-foreground">{sourceNode?.type}</div>
                               </div>
                             </div>
                             <div className="mt-1 text-xs text-green-700 truncate italic" title={edge.predicate}>
@@ -1184,14 +1396,14 @@ export default function AnnotationResultsGraph({
                       
                       {/* Empty State */}
                       {selectedNodeDetails.outgoingEdges.length === 0 && selectedNodeDetails.incomingEdges.length === 0 && (
-                        <div className="text-xs text-gray-500 text-center py-4">
+                        <div className="text-xs text-muted-foreground text-center py-4">
                           No connections found
                         </div>
                       )}
                     </div>
                   </div>
-                </CardContent>
-              </Card>
+                  </>)}
+              </div>
             </div>
           )}
         </div>
@@ -1254,6 +1466,64 @@ export default function AnnotationResultsGraph({
               </div>
             </CardContent>
           </Card>
+        </div>
+      )}
+
+      {/* Dedup Suggestions Panel */}
+      {showDedupPanel && activeDedupPairs.length > 0 && (
+        <div className="absolute top-12 right-2 z-20 w-80 bg-background/95 backdrop-blur border rounded-lg shadow-lg">
+          <div className="flex items-center justify-between px-3 py-2 border-b">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="h-3 w-3 text-amber-500" />
+              <span className="text-xs font-semibold">Duplicate Suggestions</span>
+              <span className="text-[10px] text-muted-foreground">({activeDedupPairs.length})</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 text-[10px] px-1.5"
+                onClick={handleFindDuplicates}
+                disabled={isDedupLoading}
+              >
+                <RefreshCw className={`h-2.5 w-2.5 ${isDedupLoading ? 'animate-spin' : ''}`} />
+              </Button>
+              <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setShowDedupPanel(false)}>
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          </div>
+          <div className="max-h-64 overflow-y-auto p-2 space-y-1.5">
+            {activeDedupPairs.map((pair, i) => (
+              <div key={`${pair.a_index}-${pair.b_index}`} className="flex items-center gap-2 p-2 rounded border bg-card text-xs">
+                <div className="flex-1 min-w-0">
+                  <div className="truncate font-medium">{pair.a_item}</div>
+                  <div className="truncate text-muted-foreground">≈ {pair.b_item}</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">{(pair.similarity * 100).toFixed(0)}% similar</div>
+                </div>
+                <div className="flex flex-col gap-1 flex-shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950/30"
+                    onClick={() => handleAcceptDedup(pair)}
+                    title="Stage merge"
+                  >
+                    <Check className="h-3 w-3" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                    onClick={() => setDedupDismissed(prev => new Set(prev).add(`${pair.a_index}-${pair.b_index}`))}
+                    title="Dismiss"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

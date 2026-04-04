@@ -6,10 +6,12 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi.sse import ServerSentEvent
+from app.core.sse import SSEResponse
 from sqlmodel import Session, select
 
 from app.api.dependency_injection import CurrentUser, ConversationServiceDep, SessionDep, StorageProviderDep
+from app.api.modules.identity_infospace_user.access import Capability, resolve_access
 from app.models import User, ChatConversation, ChatConversationMessage, Asset, AssetKind
 from app.schemas import (
     Message, 
@@ -46,6 +48,9 @@ async def intelligence_chat(
     
     Optional: Provide conversation_id to save messages to a conversation history.
     """
+    # Verify user has access to the infospace
+    resolve_access(session, request.infospace_id, current_user, Capability.COMPUTE)
+
     try:
         # Helper function to save messages to conversation
         async def save_message_to_conversation(
@@ -240,16 +245,12 @@ async def intelligence_chat(
                 model_name = 'gpt-5'
         
         if request.stream:
-            # For streaming, we need to handle it differently
-            # Track the final response for saving
             final_response = None
             final_usage_dict = None
-            
+
             async def generate_stream():
                 nonlocal final_response, final_usage_dict
-                
-                # SSE prelude to defeat proxy buffering
-                yield ": stream-start\n\n"
+
                 async for response in await conversation_service.intelligence_chat(
                     messages=messages,
                     model_name=model_name,
@@ -264,34 +265,30 @@ async def intelligence_chat(
                     provider_name=request.provider_name,
                     **kwargs
                 ):
-                    # Store for later saving
                     final_response = response
-                    
-                    # Convert usage to dict if it's an object
+
                     usage_dict = None
                     if response.usage:
                         if isinstance(response.usage, dict):
                             usage_dict = response.usage
                         else:
-                            # Convert object to dict
                             usage_dict = response.usage.__dict__ if hasattr(response.usage, '__dict__') else {}
                     final_usage_dict = usage_dict
-                    
-                    # response is a dataclass; serialize minimally for SSE
-                    payload = {
-                        "content": response.content,
-                        "model_used": response.model_used,
-                        "usage": usage_dict,
-                        "tool_calls": response.tool_calls,
-                        "tool_executions": response.tool_executions,
-                        "thinking_trace": response.thinking_trace,
-                        "finish_reason": response.finish_reason,
-                    }
-                    logger.debug(f"Streaming response: content='{response.content}', model={response.model_used}")
-                    import json as _json
-                    yield f"data: {_json.dumps(payload)}\n\n"
-                
-                # Save assistant response to conversation after streaming completes
+
+                    yield ServerSentEvent(
+                        data=ChatResponse(
+                            content=response.content,
+                            model_used=response.model_used,
+                            usage=usage_dict,
+                            tool_calls=response.tool_calls,
+                            tool_executions=response.tool_executions,
+                            thinking_trace=response.thinking_trace,
+                            finish_reason=response.finish_reason,
+                        ).model_dump_json(),
+                        event="chunk",
+                    )
+
+                # Save assistant response after streaming completes
                 if request.conversation_id and final_response:
                     await save_message_to_conversation(
                         request.conversation_id,
@@ -303,15 +300,8 @@ async def intelligence_chat(
                         tool_executions=final_response.tool_executions,
                         thinking_trace=final_response.thinking_trace
                     )
-                
-                yield "data: [DONE]\n\n"
-            
-            return StreamingResponse(generate_stream(), media_type="text/event-stream", headers={
-                "Cache-Control": "no-cache, no-transform",
-                "Pragma": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no"
-            })
+
+            return SSEResponse(generate_stream())
         
         else:
             # Non-streaming response
@@ -373,14 +363,16 @@ async def intelligence_chat(
 async def execute_tool_call(
     current_user: CurrentUser,
     request: ToolCallRequest,
-    conversation_service: ConversationServiceDep
+    conversation_service: ConversationServiceDep,
+    session: SessionDep,
 ):
     """
     Execute a tool call made by an AI model.
-    
+
     This endpoint is used when the AI model wants to interact with the intelligence platform
     through function calls (search assets, get annotations, etc.).
     """
+    resolve_access(session, request.infospace_id, current_user, Capability.COMPUTE)
     try:
         result = await conversation_service.execute_tool_call(
             tool_name=request.tool_name,
@@ -439,14 +431,16 @@ async def list_available_models(
 async def list_universal_tools(
     current_user: CurrentUser,
     conversation_service: ConversationServiceDep,
-    infospace_id: int = 1  # Default infospace for tool discovery
+    session: SessionDep,
+    infospace_id: int = 1,
 ):
     """
     List universal intelligence analysis tool definitions.
-    
+
     These are the capabilities available to AI models.
     FastMCP automatically generates schemas from function signatures.
     """
+    resolve_access(session, infospace_id, current_user)
     try:
         tools = await conversation_service.get_universal_tools(
             user_id=current_user.id,
@@ -471,7 +465,8 @@ async def list_universal_tools(
 async def get_infospace_tool_context(
     infospace_id: int,
     current_user: CurrentUser,
-    conversation_service: ConversationServiceDep
+    conversation_service: ConversationServiceDep,
+    session: SessionDep,
 ):
     """
     Get infospace-specific context for tools (what's actually available).
@@ -479,6 +474,7 @@ async def get_infospace_tool_context(
     This provides real data about available asset types, schemas, bundles, etc.
     to help AI models make better tool usage decisions.
     """
+    resolve_access(session, infospace_id, current_user)
     try:
         context = await conversation_service.get_infospace_tool_context(
             infospace_id=infospace_id,

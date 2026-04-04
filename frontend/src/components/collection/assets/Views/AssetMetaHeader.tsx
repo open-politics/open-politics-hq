@@ -17,13 +17,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { 
-  ExternalLink, 
-  MoreHorizontal, 
-  Download, 
-  Share2, 
-  Trash2, 
-  Copy, 
+import {
+  ExternalLink,
+  MoreHorizontal,
+  Download,
+  Share2,
+  Trash2,
+  Copy,
   Edit2,
   Save,
   X,
@@ -32,6 +32,8 @@ import {
   Clock,
   ChevronDown,
   ChevronUp,
+  ScanEye,
+  Star,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict, format } from 'date-fns';
@@ -89,8 +91,13 @@ export interface AssetMetaHeaderProps {
   onDelete?: () => void;
   onDownload?: () => void;
   onShare?: () => void;
+  onRequestEnrichment?: (enricherName: string) => void;
   onFragmentDelete?: (key: string) => void;
   
+  // Favorite
+  isFavorited?: boolean;
+  onToggleFavorite?: () => void;
+
   // Configuration
   showActions?: boolean;
   showFragments?: boolean;
@@ -187,7 +194,10 @@ export default function AssetMetaHeader({
   onDelete,
   onDownload,
   onShare,
+  onRequestEnrichment,
   onFragmentDelete,
+  isFavorited,
+  onToggleFavorite,
   showActions = true,
   showFragments = true,
   compactMode = false,
@@ -347,6 +357,31 @@ export default function AssetMetaHeader({
         {/* Actions */}
         {showActions && (
           <div className="flex items-center gap-1">
+            {/* Favorite toggle */}
+            {onToggleFavorite !== undefined && (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      onClick={onToggleFavorite}
+                    >
+                      <Star className={cn(
+                        "h-4 w-4",
+                        isFavorited
+                          ? "fill-yellow-400 text-yellow-500"
+                          : "text-muted-foreground hover:text-yellow-500"
+                      )} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{isFavorited ? 'Remove from favorites' : 'Add to favorites'}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
             {/* External Link */}
             {hasExternalLink && (
               <TooltipProvider delayDuration={200}>
@@ -447,6 +482,12 @@ export default function AssetMetaHeader({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {onRequestEnrichment && (
+                  <DropdownMenuItem onClick={() => onRequestEnrichment('ocr')}>
+                    <ScanEye className="mr-2 h-4 w-4" />
+                    {asset.enrichment_resolved?.includes('ocr') ? 'Re-run OCR' : 'Run OCR'}
+                  </DropdownMenuItem>
+                )}
                 {onDownload && (
                   <DropdownMenuItem onClick={onDownload}>
                     <Download className="mr-2 h-4 w-4" />

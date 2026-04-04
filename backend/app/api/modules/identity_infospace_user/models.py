@@ -24,6 +24,7 @@ class UserTier(str, enum.Enum):
 class UserBase(SQLModel):
     email: str
     full_name: Optional[str] = None
+    handle: Optional[str] = None
     tier: UserTier = UserTier.TIER_0
     profile_picture_url: Optional[str] = None
     bio: Optional[str] = None
@@ -37,6 +38,7 @@ class User(SQLModel, table=True):
     is_active: bool = True
     is_superuser: bool = False
     full_name: Optional[str] = None
+    handle: Optional[str] = Field(default=None, unique=True, index=True, max_length=40)
 
     profile_picture_url: Optional[str] = Field(default=None)
     bio: Optional[str] = Field(default=None, max_length=500)
@@ -105,6 +107,40 @@ class InfospaceCollaborator(SQLModel, table=True):
 
     infospace: Optional["Infospace"] = Relationship(back_populates="collaborators")
     user: Optional[User] = Relationship(back_populates="infospace_collaborations")
+
+
+class InvitationStatus(str, enum.Enum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DECLINED = "declined"
+    REVOKED = "revoked"
+
+
+class Invitation(SQLModel, table=True):
+    """Pending invitation to join an infospace. Becomes an InfospaceCollaborator on accept."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    infospace_id: int = Field(foreign_key="infospace.id", index=True)
+    inviter_id: int = Field(foreign_key="user.id")
+    role: CollaboratorRole = Field(default=CollaboratorRole.VIEWER)
+    status: InvitationStatus = Field(default=InvitationStatus.PENDING)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    resolved_at: Optional[datetime] = Field(default=None)
+    expires_at: Optional[datetime] = Field(default=None)
+
+    # Exactly one set: user_id if user exists, email if they don't yet
+    invitee_user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    invitee_email: Optional[str] = Field(default=None, index=True)
+
+    # Relationships (multiple FKs to User require explicit foreign_keys)
+    infospace: Optional["Infospace"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Invitation.infospace_id]"}
+    )
+    inviter: Optional["User"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Invitation.inviter_id]"}
+    )
+    invitee: Optional["User"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[Invitation.invitee_user_id]"}
+    )
 
 
 class InfospaceVisibility(str, enum.Enum):

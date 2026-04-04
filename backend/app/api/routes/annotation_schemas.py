@@ -33,7 +33,7 @@ router = APIRouter(
 @router.post("/", response_model=AnnotationSchemaRead, status_code=status.HTTP_201_CREATED)
 def create_annotation_schema(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     schema_in: AnnotationSchemaCreate,
     session: SessionDep,
     annotation_service: AnnotationService = Depends(get_annotation_service)
@@ -75,7 +75,7 @@ def create_annotation_schema(
 @router.get("/", response_model=AnnotationSchemasOut)
 def list_annotation_schemas(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     skip: int = 0,
     limit: int = 100,
     include_counts: bool = Query(True, description="Include counts of annotations using this schema"),
@@ -137,7 +137,7 @@ def list_annotation_schemas(
 @router.get("/{schema_id}", response_model=AnnotationSchemaRead)
 def get_annotation_schema(
     *,
-    access: Access = Requires(),
+    access: Access = Requires(scope=None),
     schema_id: int,
     include_counts: bool = Query(True, description="Include counts of annotations using this schema"),
     session: SessionDep,
@@ -185,7 +185,7 @@ def get_annotation_schema(
 @router.patch("/{schema_id}", response_model=AnnotationSchemaRead)
 def update_annotation_schema(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     schema_id: int,
     schema_in: AnnotationSchemaUpdate,
     session: SessionDep,
@@ -247,7 +247,7 @@ def update_annotation_schema(
 @router.delete("/{schema_id}", response_model=AnnotationSchemaRead, status_code=status.HTTP_200_OK)
 def delete_annotation_schema(
     *,
-    access: Access = Requires(Capability.DELETE),
+    access: Access = Requires(Capability.DELETE, scope=None),
     schema_id: int,
     session: SessionDep,
 ) -> AnnotationSchemaRead:
@@ -289,7 +289,7 @@ def delete_annotation_schema(
 @router.post("/{schema_id}/restore", response_model=AnnotationSchemaRead)
 def restore_annotation_schema(
     *,
-    access: Access = Requires(Capability.ORGANIZE),
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
     schema_id: int,
     session: SessionDep,
 ) -> AnnotationSchemaRead:

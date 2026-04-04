@@ -1,0 +1,9 @@
+"/root/open-politics-hq/frontend/openapi.json" is not a valid JSON Schema
+SyntaxError: "/root/open-politics-hq/frontend/openapi.json" is not a valid JSON Schema
+    at $RefParser.parse (/root/open-politics-hq/frontend/node_modules/@hey-api/json-schema-ref-parser/dist/lib/index.js:198:29)
+    at async $RefParser.bundle (/root/open-politics-hq/frontend/node_modules/@hey-api/json-schema-ref-parser/dist/lib/index.js:120:9)
+    at async uf (/root/open-politics-hq/frontend/node_modules/@hey-api/openapi-ts/dist/index.cjs:1328:8355)
+    at async n (/root/open-politics-hq/frontend/node_modules/@hey-api/openapi-ts/dist/index.cjs:1328:10270)
+    at async Promise.all (index 0)
+    at async nA (/root/open-politics-hq/frontend/node_modules/@hey-api/openapi-ts/dist/index.cjs:1328:11103)
+    at async start (/root/open-politics-hq/frontend/node_modules/@hey-api/openapi-ts/bin/index.cjs:113:21)

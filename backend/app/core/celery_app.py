@@ -136,7 +136,7 @@ def reset_db_pool_on_fork(**kwargs):
         registry = get_task_registry()
         names = sorted(registry.keys())
         if names:
-            logger.info("Registered tasks: %s", ", ".join(names))
+            logger.info("Registered tasks (%d):\n%s", len(names), "\n".join(f"  - {n}" for n in names))
         else:
             logger.info("Registered tasks: (none)")
     except Exception as e:

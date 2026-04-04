@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import KnowledgeGraphManager from '@/components/collection/graph/KnowledgeGraphManager';
 import EntityManager from '@/components/collection/graph/EntityManager';
+import PredicateManager from '@/components/collection/graph/PredicateManager';
 import { CuratedGraphView } from '@/components/collection/graph';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -24,7 +25,7 @@ export default function KnowledgeGraphsPage() {
           </TabsList>
         </div>
 
-        <TabsContent value="graph" className="flex-1 px-4 py-4">
+        <TabsContent value="graph" className="flex-1 min-h-0 overflow-hidden px-2 py-2">
           {activeInfospace?.id ? (
             <CuratedGraphView
               infospaceId={activeInfospace.id}
@@ -39,6 +40,9 @@ export default function KnowledgeGraphsPage() {
           <KnowledgeGraphManager />
           <div id="entities-section" className="px-4 pb-4">
             <EntityManager />
+          </div>
+          <div id="predicates-section" className="px-4 pb-4">
+            <PredicateManager />
           </div>
         </TabsContent>
       </Tabs>
