@@ -623,14 +623,19 @@ async def poll_source(
     source_service: SourceServiceDep,
 ) -> Dict[str, Any]:
     """Manually trigger a poll of a source."""
-    from app.core.security import decrypt_credentials
+    from app.core.security import decrypt_credentials, CredentialDecryptionError
     from app.api.modules.identity_infospace_user.models import User
 
     # Retrieve user's stored API keys for search providers
     api_keys = {}
     user = session.get(User, access.user_id)
     if user and user.encrypted_credentials:
-        api_keys = decrypt_credentials(user.encrypted_credentials)
+        try:
+            api_keys = decrypt_credentials(user.encrypted_credentials)
+        except CredentialDecryptionError as e:
+            # Never fall back to {} — a keyless poll would look "broken" instead
+            # of "blocked by a rotation/misconfig". Surface it.
+            raise HTTPException(status_code=503, detail=str(e)) from e
     result = await source_service.execute_poll(source_id, user_id=access.user_id, runtime_api_keys=api_keys)
     
     return result

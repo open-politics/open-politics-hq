@@ -15,7 +15,7 @@ from app.api.dependency_injection import (
     StorageProviderDep,
 )
 from app.core.config import settings
-from app.core.security import get_password_hash, verify_password, encrypt_credentials, decrypt_credentials
+from app.core.security import get_password_hash, verify_password, encrypt_credentials, decrypt_credentials, CredentialDecryptionError
 from app.models import (
     User,
     Infospace,
@@ -41,6 +41,9 @@ from app.core.security import (
     verify_email_verification_token,
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -110,26 +113,89 @@ def update_user_me(
             raise HTTPException(
                 status_code=409, detail="User with this email already exists"
             )
-    
+
     # Validate profile field lengths if provided
     if user_in.bio and len(user_in.bio) > 500:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="Bio must be 500 characters or less"
         )
-    
+
     if user_in.description and len(user_in.description) > 2000:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="Description must be 2000 characters or less"
         )
-    
+
+    # Capture the before-state so we can diff provider_defaults after the save.
+    # Downstream: any capability whose selection changed unblocks the matching
+    # enricher tasks across every infospace this user owns.
+    old_defaults = _defaults_dict(current_user.provider_defaults)
+
+    # Save-time completeness check — rejects incoming defaults with
+    # model_required=True providers missing a model_name. Read paths don't
+    # validate, so legacy rows deserialize unchanged.
+    if user_in.provider_defaults is not None:
+        from app.api.modules.foundation_service_providers.base import validate_provider_defaults
+        try:
+            validate_provider_defaults(user_in.provider_defaults)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
     user_data = user_in.model_dump(exclude_unset=True)
     current_user.sqlmodel_update(user_data)
     session.add(current_user)
     session.commit()
     session.refresh(current_user)
+
+    if "provider_defaults" in user_data:
+        new_defaults = _defaults_dict(current_user.provider_defaults)
+        changed_caps = _diff_default_capabilities(old_defaults, new_defaults)
+        if changed_caps:
+            _clear_blocks_for_user_caps(session, current_user.id, changed_caps)
+
     return current_user
+
+
+def _defaults_dict(v) -> dict:
+    """Normalize provider_defaults to a plain dict for diffing."""
+    if v is None:
+        return {}
+    if isinstance(v, dict):
+        return v
+    if hasattr(v, "model_dump"):
+        return v.model_dump(exclude_none=True)
+    return {}
+
+
+def _diff_default_capabilities(old: dict, new: dict) -> set[str]:
+    """Return the set of capability names whose selection changed.
+
+    ``language`` lives under ``LanguageDefaults`` with chat/annotation
+    overrides; we treat any change in that subtree as a language change.
+    """
+    caps = {"language", "embedding", "web_search", "ocr", "geocoding"}
+    changed = set()
+    for cap in caps:
+        if old.get(cap) != new.get(cap):
+            changed.add(cap)
+    return changed
+
+
+def _clear_blocks_for_user_caps(session, user_id: int, capabilities: set[str]) -> None:
+    """Clear structural blocks for the given capabilities across every infospace
+    this user owns. Saves rarely — fine to iterate."""
+    from sqlmodel import select
+    from app.api.modules.identity_infospace_user.models import Infospace
+    from app.core.tasks import clear_structural_blocks
+
+    ids = session.exec(select(Infospace.id).where(Infospace.owner_id == user_id)).all()
+    total = 0
+    for iid in ids:
+        for cap in capabilities:
+            total += clear_structural_blocks(iid, capability=cap)
+    if total:
+        logger.info("Cleared %d structural blocks for user %d (caps=%s)", total, user_id, capabilities)
 
 
 @router.patch("/me/password", response_model=Message)
@@ -172,21 +238,42 @@ def save_credentials(
 ) -> Any:
     """
     Save encrypted provider credentials for background tasks.
-    
-    Stores API keys encrypted with Fernet (AES-128 + HMAC) for use in 
+
+    Stores API keys encrypted with Fernet (AES-128 + HMAC) for use in
     scheduled tasks, recurring jobs, and background operations.
-    
+
     Runtime keys provided during immediate operations take precedence over stored keys.
+
+    When new provider keys arrive, any structural blocks for the capabilities
+    those providers implement are cleared across the user's infospaces — the
+    tasks that were waiting on credentials dispatch again on the next cycle.
     """
-    # Merge with existing credentials
-    existing = decrypt_credentials(current_user.encrypted_credentials)
+    # Merge with existing credentials. If the existing blob is undecryptable we
+    # MUST abort — encrypting request.credentials over an empty dict here would
+    # silently destroy every other provider key the user has stored.
+    try:
+        existing = decrypt_credentials(current_user.encrypted_credentials)
+    except CredentialDecryptionError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"{e} Save aborted to prevent overwriting existing credentials.",
+        ) from e
+    added_providers = {k for k in request.credentials.keys() if k not in existing or existing[k] != request.credentials[k]}
     existing.update(request.credentials)
-    
+
     # Encrypt and save
     current_user.encrypted_credentials = encrypt_credentials(existing)
     session.add(current_user)
     session.commit()
-    
+
+    if added_providers:
+        from app.core.tasks import capabilities_served_by_provider
+        caps: set[str] = set()
+        for pk in added_providers:
+            caps |= capabilities_served_by_provider(pk)
+        if caps:
+            _clear_blocks_for_user_caps(session, current_user.id, caps)
+
     return Message(message="Credentials saved securely")
 
 
@@ -197,7 +284,12 @@ def list_credential_providers(current_user: CurrentUser) -> List[str]:
     
     Returns provider IDs only, not actual keys.
     """
-    stored = decrypt_credentials(current_user.encrypted_credentials)
+    try:
+        stored = decrypt_credentials(current_user.encrypted_credentials)
+    except CredentialDecryptionError as e:
+        # Returning [] would falsely show "no keys" and lure the user into
+        # re-saving, which hits the save-credentials wipe hazard.
+        raise HTTPException(status_code=503, detail=str(e)) from e
     return list(stored.keys())
 
 
@@ -213,8 +305,14 @@ def delete_credential(
     
     Scheduled tasks using this provider will fail until new credential is provided.
     """
-    stored = decrypt_credentials(current_user.encrypted_credentials)
-    
+    try:
+        stored = decrypt_credentials(current_user.encrypted_credentials)
+    except CredentialDecryptionError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"{e} Delete aborted to prevent overwriting existing credentials.",
+        ) from e
+
     if provider_id not in stored:
         raise HTTPException(status_code=404, detail=f"No credential found for provider '{provider_id}'")
     
@@ -494,9 +592,9 @@ async def get_profile_picture(user_id: int, filename: str, session: SessionDep) 
     object_name = f"profile-pictures/{user_id}/{filename}"
     
     try:
-        # Get storage provider (we'll need to create this dependency)
-        from app.api.modules.foundation_service_providers.registry import get_storage_provider
-        storage_provider = get_storage_provider(settings)
+        # Get storage provider
+        from app.api.modules.foundation_service_providers import resolve
+        storage_provider = resolve("storage")
         
         # Get file stream from storage
         file_stream = await storage_provider.get_file(object_name)
@@ -553,8 +651,8 @@ async def get_background_image(user_id: int, filename: str, session: SessionDep,
     
     try:
         # Get storage provider
-        from app.api.modules.foundation_service_providers.registry import get_storage_provider
-        storage_provider = get_storage_provider(settings)
+        from app.api.modules.foundation_service_providers import resolve
+        storage_provider = resolve("storage")
         
         # Get file stream from storage
         file_stream = await storage_provider.get_file(object_name)

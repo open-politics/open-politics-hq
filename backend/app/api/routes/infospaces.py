@@ -115,8 +115,25 @@ def update_infospace(
 ) -> Any:
     """
     Update an Infospace.
+
+    When ``enrichment_config`` changes, structural blocks for any enricher
+    whose selection shifted are cleared for this infospace — targeted: an
+    embedding config change does not unblock OCR.
     """
     logger.info(f"Route: Updating Infospace {access.infospace_id}")
+
+    # Capture the before-state so we can diff enrichment_config after save.
+    old_config = _config_dict(access.infospace.enrichment_config)
+
+    # Save-time completeness check. Read paths don't validate — legacy rows
+    # with partial selections still need to deserialize.
+    if infospace_in.enrichment_config is not None:
+        from app.api.modules.foundation_service_providers.base import validate_enrichment_config
+        try:
+            validate_enrichment_config(infospace_in.enrichment_config)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
     try:
         infospace = infospace_service.update_infospace(
             infospace_id=access.infospace_id,
@@ -128,7 +145,6 @@ def update_infospace(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Infospace not found"
             )
-        return InfospaceRead.model_validate(infospace)
     except ValueError as ve:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except HTTPException as he:
@@ -136,6 +152,50 @@ def update_infospace(
     except Exception as e:
         logger.exception(f"Route: Error updating infospace {access.infospace_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+    # Diff enrichment_config at per-enricher granularity and clear only those blocks.
+    new_config = _config_dict(infospace.enrichment_config)
+    if old_config != new_config:
+        from app.core.tasks import clear_structural_blocks
+        changed_enrichers = _changed_enrichers(old_config, new_config)
+        if changed_enrichers:
+            cleared = clear_structural_blocks(
+                access.infospace_id, task_names=list(changed_enrichers),
+            )
+            if cleared:
+                logger.info(
+                    "Cleared %d structural blocks for infospace %d (enrichers=%s)",
+                    cleared, access.infospace_id, changed_enrichers,
+                )
+
+    return InfospaceRead.model_validate(infospace)
+
+
+def _config_dict(v) -> dict:
+    """Normalize enrichment_config to a plain dict for diffing."""
+    if v is None:
+        return {}
+    if isinstance(v, dict):
+        return v
+    if hasattr(v, "model_dump"):
+        return v.model_dump(exclude_none=True)
+    return {}
+
+
+_ENRICHER_FIELDS = ("ocr", "geocoding", "language_detection", "quality_score", "hash", "embedding")
+
+
+def _changed_enrichers(old: dict, new: dict) -> set[str]:
+    """Return the set of enricher names whose value changed between configs.
+
+    Only the fields that correspond to registered enricher tasks — exactly the
+    task names used as structural-block keys.
+    """
+    changed = set()
+    for field in _ENRICHER_FIELDS:
+        if old.get(field) != new.get(field):
+            changed.add(field)
+    return changed
 
 @router.delete("/{infospace_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_infospace(

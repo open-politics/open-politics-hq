@@ -47,14 +47,15 @@ def _get_item_fk_validators() -> dict[str, tuple]:
         return _ITEM_FK_VALIDATORS
     from app.api.modules.content.models import Asset, Bundle
     from app.api.modules.annotation.models import AnnotationRun, AnnotationSchema
-    from app.api.modules.graph.models import EntityCanonical, KnowledgeGraph
+    from app.api.modules.graph.models import Canon, Entity, KnowledgeGraph
     _ITEM_FK_VALIDATORS = {
         "bundle_id": (Bundle, "infospace_id"),
         "run_id": (AnnotationRun, "infospace_id"),
         "schema_id": (AnnotationSchema, "infospace_id"),
         "asset_id": (Asset, "infospace_id"),
         "graph_id": (KnowledgeGraph, "infospace_id"),
-        "entity_canonical_id": (EntityCanonical, "infospace_id"),
+        "entity_id": (Entity, "infospace_id"),
+        "canon_id": (Canon, "infospace_id"),
     }
     return _ITEM_FK_VALIDATORS
 
@@ -182,7 +183,8 @@ class PackageItemCreate(BaseModel):
     graph_id: Optional[int] = None
     schema_id: Optional[int] = None
     asset_id: Optional[int] = None
-    entity_canonical_id: Optional[int] = None
+    entity_id: Optional[int] = None
+    canon_id: Optional[int] = None
     allow_download: Optional[bool] = None
     allow_copy: Optional[bool] = None
 
@@ -287,7 +289,8 @@ def create_package(
             graph_id=item_body.graph_id,
             schema_id=item_body.schema_id,
             asset_id=item_body.asset_id,
-            entity_canonical_id=item_body.entity_canonical_id,
+            entity_id=item_body.entity_id,
+            canon_id=item_body.canon_id,
             allow_download=item_body.allow_download,
             allow_copy=item_body.allow_copy,
         )
@@ -409,7 +412,8 @@ def add_package_item(
         graph_id=body.graph_id,
         schema_id=body.schema_id,
         asset_id=body.asset_id,
-        entity_canonical_id=body.entity_canonical_id,
+        entity_id=body.entity_id,
+        canon_id=body.canon_id,
         allow_download=body.allow_download,
         allow_copy=body.allow_copy,
     )
@@ -564,7 +568,8 @@ def _resolve_resource_name(db: Session, item: PackageItem) -> Optional[str]:
         "graph": ("knowledgegraph", "name", "graph_id"),
         "schema": ("annotationschema", "name", "schema_id"),
         "asset": ("asset", "title", "asset_id"),
-        "entity": ("entitycanonical", "name", "entity_canonical_id"),
+        "entity": ("entity", "canonical_name", "entity_id"),
+        "canon": ("canon", "name", "canon_id"),
     }
     rtype = item.resource_type
     if rtype not in _queries:

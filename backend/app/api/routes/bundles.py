@@ -1,6 +1,7 @@
 import logging
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import text
 from sqlmodel import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
@@ -23,7 +24,7 @@ from app.api.modules.content.services import BundleService
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires,
 )
-from app.core.tree import ROOT, copy as tree_copy, move as tree_move, delete as tree_delete, seal_subtree, unseal_subtree
+from app.core.tree import ROOT, copy as tree_copy, move as tree_move, delete as tree_delete, seal_subtree, subtree_ids, unseal_subtree
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +268,55 @@ def get_assets_in_bundle(
         limit=limit
     )
     return assets
+
+
+@router.get(
+    "/infospaces/{infospace_id}/bundles/{bundle_id}/descendant-asset-ids",
+    response_model=List[int],
+)
+def get_bundle_descendant_asset_ids(
+    bundle_id: int,
+    access: Access = Requires(scope=None),
+    db: Session = Depends(dependency_injection.get_db),
+    recursive: bool = Query(True, description="Include assets in nested bundles"),
+):
+    """Return every top-level asset id reachable under a bundle.
+
+    Lean, id-only response. The UI uses this to expand a bundle-checkbox
+    selection into its asset members without paying for full ``AssetRead``
+    rows — e.g. picking "annotate this bundle" should surface the true
+    asset count even when the bundle has never been expanded in the tree.
+
+    ``parent_asset_id IS NULL`` filter mirrors what the annotation service
+    resolves when given a ``target_bundle_id``: only the top-level assets
+    are run, not csv rows / pdf pages / other child primitives.
+    """
+    access.require_in_scope("bundle_ids", bundle_id)
+    bundle = db.get(Bundle, bundle_id)
+    if not bundle or bundle.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bundle not found")
+
+    # Resolve which bundles to query: recursive walks the subtree via the
+    # canonical primitive in core/tree.py; non-recursive just uses this one.
+    bids = (
+        list(subtree_ids(db, {bundle_id})) if recursive else [bundle_id]
+    )
+    if not bids:
+        return []
+
+    rows = db.execute(
+        text(
+            """
+            SELECT a.id FROM asset a
+            WHERE a.infospace_id = :iid
+              AND a.parent_asset_id IS NULL
+              AND a.bundle_ids && CAST(:bids AS int[])
+            ORDER BY a.id
+            """
+        ),
+        {"iid": access.infospace_id, "bids": bids},
+    ).fetchall()
+    return [r[0] for r in rows]
 
 
 @router.post("/infospaces/{infospace_id}/bundles/{bundle_id}/transfer", response_model=BundleRead)

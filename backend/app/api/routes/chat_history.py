@@ -38,29 +38,66 @@ async def list_conversations(
     limit: int = Query(50, ge=1, le=100),
     include_archived: bool = Query(False),
     pinned_only: bool = Query(False),
+    agent_kind: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by agent persona. Empty/absent → workspace chats only "
+            "(no agent_kind set). 'dossier' / 'formula' → only conversations "
+            "from that surface. Pass 'any' to skip the filter entirely."
+        ),
+    ),
+    run_id: Optional[int] = Query(
+        None,
+        description=(
+            "When set with agent_kind in {'dossier','formula'}, restrict to "
+            "conversations that were authored against this annotation run."
+        ),
+    ),
 ):
     """
     List chat conversations for the current user.
-    
-    Query parameters:
-    - infospace_id: Filter by infospace
-    - skip: Number of records to skip (pagination)
-    - limit: Maximum number of records to return
-    - include_archived: Include archived conversations
-    - pinned_only: Return only pinned conversations
+
+    Agent-kind scoping ensures each chat surface only sees its own history:
+    - The default workspace chat lists conversations with no ``agent_kind``.
+    - DossierAgent / FormulaAgent overlays list their own conversations,
+      optionally further scoped to a specific ``run_id``.
     """
     try:
-        # Build query
+        from sqlalchemy import or_, cast
+        from sqlalchemy.dialects.postgresql import JSONB
+
+        # The column is declared as the generic SQLAlchemy ``JSON`` type, so
+        # ``.astext`` (a JSONB-only operator) isn't available directly. Casting
+        # to ``JSONB`` at query time gives us back the JSONB operators
+        # (``->>`` → ``.astext``) without needing a column-type migration.
+        meta_jsonb = cast(ChatConversation.conversation_metadata, JSONB)
+
         query = select(ChatConversation).where(ChatConversation.user_id == current_user.id)
-        
+
         if infospace_id:
             query = query.where(ChatConversation.infospace_id == infospace_id)
-        
+
         if not include_archived:
             query = query.where(ChatConversation.is_archived == False)
-        
+
         if pinned_only:
             query = query.where(ChatConversation.is_pinned == True)
+
+        # agent_kind filter — lives in conversation_metadata JSON. Default
+        # (None) means "workspace chats only" so the regular chat history is
+        # not polluted with dossier/formula side-conversations. Pass 'any'
+        # explicitly to see everything.
+        if agent_kind is None:
+            query = query.where(
+                or_(
+                    meta_jsonb["agent_kind"].astext.is_(None),
+                    meta_jsonb["agent_kind"].astext == "",
+                )
+            )
+        elif agent_kind != "any":
+            query = query.where(meta_jsonb["agent_kind"].astext == agent_kind)
+            if run_id is not None:
+                query = query.where(meta_jsonb["run_id"].astext == str(run_id))
         
         # Get total count
         count_query = select(func.count()).select_from(query.subquery())

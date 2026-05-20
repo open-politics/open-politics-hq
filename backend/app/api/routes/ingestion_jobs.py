@@ -67,6 +67,29 @@ class IngestionJobCreate(BaseModel):
     options: Optional[dict] = None
 
 
+class BatchIngestItem(BaseModel):
+    """One item inside a batch ingestion request."""
+    kind: str  # "web_url" | "archive_url"
+    locator: str
+    title: Optional[str] = None
+    options: Optional[dict] = None
+
+
+class BatchIngestRequest(BaseModel):
+    """Request to create a mixed-item batch ingestion job.
+
+    Destination semantics follow ``resolve_or_create_bundle``:
+    - ``bundle_name`` → create a new bundle (optionally under ``parent_bundle_id``)
+    - ``bundle_id`` → use an existing bundle
+    - Neither → items land at ROOT (flat, no container)
+    """
+    items: List[BatchIngestItem]
+    bundle_id: Optional[int] = None
+    bundle_name: Optional[str] = None
+    parent_bundle_id: Optional[int] = None
+    options: Optional[dict] = None
+
+
 class DirectoryImportRequest(BaseModel):
     """Request to import files from a local directory."""
     source_path: str
@@ -431,6 +454,88 @@ def get_ingestion_job_by_uuid(
     return IngestionJobRead(**job_dict)
 
 
+@router.post("/infospaces/{infospace_id}/ingestion-jobs/batch", response_model=IngestionJobRead)
+async def create_batch_ingestion_job(
+    *,
+    infospace_id: int,
+    request: BatchIngestRequest,
+    db: Session = dependency_injection.Depends(dependency_injection.get_db),
+    access: Access = Requires(Capability.INGEST, scope=None),
+) -> Any:
+    """Queue a batch ingestion job for a mix of web URLs and archive URLs.
+
+    The destination bundle is resolved synchronously (created if ``bundle_name``
+    was given, validated if ``bundle_id`` was given) so the user can navigate
+    to it before items land. The job kicks in the background via the
+    ``ingestion_job.created`` event and streams progress on
+    ``stream/ingestion_job/{job_id}``.
+    """
+    if not request.items:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="items must be non-empty",
+        )
+    valid_kinds = {"web_url", "archive_url"}
+    for i, item in enumerate(request.items):
+        if item.kind not in valid_kinds:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"items[{i}].kind must be one of {sorted(valid_kinds)}",
+            )
+        if not item.locator:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"items[{i}].locator is required",
+            )
+
+    from app.api.modules.content.destination import resolve_or_create_bundle
+    try:
+        destination = resolve_or_create_bundle(
+            db, infospace_id, access.user_id,
+            bundle_id=request.bundle_id,
+            bundle_name=request.bundle_name,
+            parent_bundle_id=request.parent_bundle_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    cursor_state = {
+        "stage": "queued",
+        "message": f"Queued {len(request.items)} items",
+        "progress_pct": 0,
+        "items": [item.model_dump() for item in request.items],
+        "options": request.options or {},
+        "total": len(request.items),
+        "processed": 0,
+        "failed": 0,
+    }
+
+    # Use the first locator as the job's canonical source_locator (cheap label).
+    job = IngestionJob(
+        infospace_id=infospace_id,
+        user_id=access.user_id,
+        source_locator=request.items[0].locator,
+        kind="batch",
+        root_bundle_id=destination.id if destination is not None else None,
+        status=IngestionStatus.PENDING,
+        total_files=len(request.items),
+        processed_files=0,
+        failed_files=0,
+        cursor_state=cursor_state,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    from app.core.events import emit
+    emit("ingestion_job.created", {"infospace_id": infospace_id})
+
+    job_dict = job.model_dump(mode="json")
+    job_dict["progress_pct"] = (job.cursor_state or {}).get("progress_pct", 0)
+    job_dict["stage_message"] = (job.cursor_state or {}).get("message", "")
+    return IngestionJobRead(**job_dict)
+
+
 @router.post("/infospaces/{infospace_id}/ingestion-jobs/ingest-archive", response_model=IngestionJobRead)
 async def create_archive_ingestion_job(
     *,
@@ -457,19 +562,16 @@ async def create_archive_ingestion_job(
     from app.core.config import settings
     from app.api.modules.content.handlers import IngestionContext
     from app.api.modules.content.ingest import ingest
-    from app.api.modules.foundation_service_providers.registry import (
-        get_storage_provider, get_scraping_provider, get_web_search_provider,
-    )
-    from app.api.modules.content.services.asset_service import AssetService
+    from app.api.modules.foundation_service_providers import resolve
     from app.api.modules.content.services.bundle_service import BundleService
 
     options = request.options or {}
     options['use_background'] = True  # Always use background for explicit job creation
 
-    storage = get_storage_provider(settings)
-    scraping = get_scraping_provider(settings)
+    storage = resolve("storage", session=db)
+    scraping = resolve("scraping", session=db)
     try:
-        search = get_web_search_provider(settings)
+        search = resolve("web_search", infospace_id=infospace_id, session=db)
     except Exception:
         search = None
 
@@ -478,7 +580,6 @@ async def create_archive_ingestion_job(
         storage_provider=storage,
         scraping_provider=scraping,
         search_provider=search,
-        asset_service=AssetService(db, storage),
         bundle_service=BundleService(db),
         user_id=access.user_id,
         infospace_id=infospace_id,
@@ -610,8 +711,7 @@ async def reconcile_directory(
         _get_dataset_name_from_path,
     )
     from app.api.modules.content.handlers.base import IngestionContext
-    from app.api.modules.foundation_service_providers.registry import get_storage_provider, get_scraping_provider
-    from app.api.modules.content.services.asset_service import AssetService
+    from app.api.modules.foundation_service_providers import resolve
     from app.api.modules.content.services.bundle_service import BundleService
 
     source = Path(request.source_path).resolve()
@@ -637,9 +737,8 @@ async def reconcile_directory(
             detail=f"Bundle {request.bundle_id} not found",
         )
 
-    storage_provider = get_storage_provider(settings)
-    scraping_provider = get_scraping_provider(settings)
-    asset_service = AssetService(db, storage_provider)
+    storage_provider = resolve("storage", session=db)
+    scraping_provider = resolve("scraping", session=db)
     bundle_service = BundleService(db)
     dataset_name = _get_dataset_name_from_path(str(source), settings.LOCAL_STORAGE_BASE_PATH)
 
@@ -648,7 +747,6 @@ async def reconcile_directory(
         storage_provider=storage_provider,
         scraping_provider=scraping_provider,
         search_provider=None,
-        asset_service=asset_service,
         bundle_service=bundle_service,
         user_id=access.user_id,
         infospace_id=infospace_id,

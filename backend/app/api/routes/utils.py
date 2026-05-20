@@ -7,6 +7,7 @@ import requests
 from datetime import datetime, timezone
 
 from app.api.dependency_injection import get_current_active_superuser, get_current_user, SessionDep, CurrentUser
+from app.api.modules.identity_infospace_user.access import Access, Requires
 from app.schemas import Message, ProviderInfo, ProviderModel, ProviderListResponse
 from app.api.modules.identity_infospace_user.services import generate_test_email, send_email
 from app.core.config import settings
@@ -176,16 +177,16 @@ async def extract_pdf_metadata(
 async def scrape_article(url: str):
     """
     Scrape article content from a URL using the configured scraping provider.
-    
+
     Args:
         url: The URL of the article to scrape
-        
+
     Returns:
         The scraped article content
     """
     try:
-        from app.api.modules.foundation_service_providers.registry import get_scraping_provider
-        scraping_provider = get_scraping_provider(settings)
+        from app.api.modules.foundation_service_providers import resolve
+        scraping_provider = resolve("scraping")
         
         article_data = await scraping_provider.scrape_url(url)
         
@@ -201,16 +202,16 @@ async def scrape_article(url: str):
 async def analyze_source(base_url: str):
     """
     Analyze a news source to discover RSS feeds, categories, and recent articles.
-    
+
     Args:
         base_url: The base URL of the news source to analyze
-        
+
     Returns:
         Source analysis results including RSS feeds, categories, and articles
     """
     try:
-        from app.api.modules.foundation_service_providers.registry import get_scraping_provider
-        scraping_provider = get_scraping_provider(settings)
+        from app.api.modules.foundation_service_providers import resolve
+        scraping_provider = resolve("scraping")
         
         analysis_result = await scraping_provider.analyze_source(base_url)
         
@@ -226,16 +227,16 @@ async def analyze_source(base_url: str):
 async def discover_rss_feeds_from_site(base_url: str):
     """
     Discover RSS feeds from a news source.
-    
+
     Args:
         base_url: The base URL of the news source
-        
+
     Returns:
         List of discovered RSS feed URLs
     """
     try:
-        from app.api.modules.foundation_service_providers.registry import get_scraping_provider
-        scraping_provider = get_scraping_provider(settings)
+        from app.api.modules.foundation_service_providers import resolve
+        scraping_provider = resolve("scraping")
         
         rss_feeds = await scraping_provider.discover_rss_feeds(base_url)
         
@@ -316,19 +317,15 @@ async def get_unified_providers():
     This provides metadata about requirements (API keys, local, etc.) and capabilities.
     """
     try:
-        from app.api.modules.foundation_service_providers.registry import list_providers
-        from app.api.modules.foundation_service_providers.base import (
-            StorageProvider, EmbeddingProvider, OcrProvider, LanguageModelProvider,
-            GeocodingProvider, WebSearchProvider, ScrapingProvider,
-        )
+        from app.api.modules.foundation_service_providers import list_providers
 
-        # Map protocol classes to capability names matching the old unified_registry format
+        # Capability names returned in response — mapped to registry capability strings.
         _CAPABILITY_MAP = {
-            LanguageModelProvider: "llm",
-            EmbeddingProvider: "embedding",
-            WebSearchProvider: "web_search",
-            GeocodingProvider: "geocoding",
-            OcrProvider: "ocr",
+            "llm":         "language",
+            "embedding":   "embedding",
+            "web_search":  "web_search",
+            "geocoding":   "geocoding",
+            "ocr":         "ocr",
         }
 
         # Human-readable display metadata per provider type_key
@@ -414,16 +411,27 @@ async def get_unified_providers():
         result = {}
         capabilities_list = []
 
-        for protocol, capability_name in _CAPABILITY_MAP.items():
-            descriptors = list_providers(protocol)
-            capabilities_list.append(capability_name)
-            result[capability_name] = []
+        for response_name, capability_key in _CAPABILITY_MAP.items():
+            descriptors = list_providers(capability_key)
+            capabilities_list.append(response_name)
+            result[response_name] = []
             for type_key, desc in descriptors:
                 display = _PROVIDER_DISPLAY.get(type_key, {})
                 has_env = False
                 if desc.api_key_setting:
                     has_env = bool(getattr(settings, desc.api_key_setting, None))
-                result[capability_name].append({
+                # Statically-declared models for this (capability, provider). Empty
+                # for providers whose model list is runtime-discovered (Ollama).
+                models_payload = [
+                    {
+                        "name": spec.name,
+                        "description": getattr(spec, "description", "") or "",
+                        "dimension": getattr(spec, "dimension", None),
+                        "max_sequence_length": getattr(spec, "max_sequence_length", None),
+                    }
+                    for spec in desc.models
+                ]
+                result[response_name].append({
                     "id": type_key,
                     "name": display.get("name", type_key),
                     "description": display.get("description", ""),
@@ -437,6 +445,8 @@ async def get_unified_providers():
                     "features": sorted(desc.contexts),
                     "rate_limited": None,
                     "rate_limit_info": None,
+                    "model_required": desc.model_required,
+                    "models": models_payload,
                 })
 
         return {
@@ -454,56 +464,34 @@ async def get_unified_providers():
 @router.get("/providers", response_model=ProviderListResponse, status_code=status.HTTP_200_OK)
 async def get_providers() -> ProviderListResponse:
     """
-    Returns a dynamic list of available LLM providers and their models,
-    grouped by provider type_key.
+    Returns statically-declared LLM providers and their models.
 
-    For providers with static model catalogs (OpenAI, Anthropic, Gemini, Mistral)
-    the catalog is returned directly. For dynamic-catalog providers (Ollama) the
-    running instance is queried via ``discover_models()``.
+    This is a deployment-level catalog — no credentials, no infospace context.
+    For runtime discovery of locally-installed models (Ollama), use
+    ``/providers/{infospace_id}/models?capability=language&provider_key=ollama``.
     """
-    logger.info("Route: Discovering LLM providers and models.")
+    logger.info("Route: Listing static LLM provider catalog.")
 
     try:
-        from app.api.modules.foundation_service_providers.base import LanguageModelProvider
-        from app.api.modules.foundation_service_providers.registry import list_providers, get_provider
+        from app.api.modules.foundation_service_providers import list_providers
 
-        descriptors = list_providers(LanguageModelProvider)
+        descriptors = list_providers("language")
         providers_list: List[ProviderInfo] = []
 
-        for type_key, desc in descriptors:
-            models: List[ProviderModel] = []
-
-            if desc.models:
-                # Static catalog (OpenAI, Anthropic, Gemini, Mistral)
-                for spec in desc.models:
-                    models.append(ProviderModel(
-                        name=spec.name,
-                        description=spec.description or spec.name,
-                    ))
-            else:
-                # Runtime discovery (Ollama) — await the async method directly
-                try:
-                    provider = get_provider(LanguageModelProvider, type_key, settings)
-                    discovered = await provider.discover_models()
-                    for m in discovered:
-                        name = m.name if hasattr(m, "name") else str(m)
-                        desc_str = (m.description if hasattr(m, "description") and m.description else name)
-                        models.append(ProviderModel(name=name, description=desc_str))
-                except Exception as e:
-                    logger.warning(f"Runtime LLM model discovery failed for {type_key}: {e}")
-
+        for provider_key, desc in descriptors:
+            models: List[ProviderModel] = [
+                ProviderModel(name=spec.name, description=spec.description or spec.name)
+                for spec in desc.models
+            ]
             if models:
-                providers_list.append(ProviderInfo(
-                    provider_name=type_key,
-                    models=models,
-                ))
+                providers_list.append(ProviderInfo(provider_name=provider_key, models=models))
 
         total = sum(len(p.models) for p in providers_list)
-        logger.info(f"Discovered {total} LLM models across {len(providers_list)} providers")
+        logger.info(f"Listed {total} LLM models across {len(providers_list)} providers")
         return ProviderListResponse(providers=providers_list)
 
     except Exception as e:
-        logger.error(f"Failed to discover providers: {e}")
+        logger.error(f"Failed to list providers: {e}")
         return ProviderListResponse(providers=[])
 
 
@@ -774,10 +762,9 @@ async def get_geocoding_providers():
     Helps frontend display provider options and understand what credentials are needed.
     Uses descriptor registry to dynamically discover providers.
     """
-    from app.api.modules.foundation_service_providers.registry import list_providers
-    from app.api.modules.foundation_service_providers.base import GeocodingProvider
+    from app.api.modules.foundation_service_providers import list_providers
 
-    descriptors = list_providers(GeocodingProvider)
+    descriptors = list_providers("geocoding")
 
     # Static metadata keyed by type_key, preserving the same response shape
     _GEOCODING_META = {
@@ -823,37 +810,32 @@ async def get_geocoding_providers():
     }
 
 
-@router.get("/geocode_location")
+@router.get("/{infospace_id}/geocode_location")
 async def geocode_location(
     location: str,
-    language: Optional[str] = 'en'
+    language: Optional[str] = 'en',
+    access: Access = Requires(scope=None),
+    session: SessionDep = None,
 ):
     """
-    Public geocoding endpoint - no authentication required.
-    
-    Uses local Nominatim container with automatic fallback to public Nominatim API.
-    For proprietary providers (Mapbox, etc.) use /geocode_location_with_provider endpoint.
-    
-    Strategy:
-    1. Try local Nominatim container first (fast, no rate limits)
-    2. If local fails, fallback to public Nominatim API (rate limited but reliable)
-    
-    Args:
-        location: Location name or address to geocode
-        language: Language code for results (default: 'en')
+    Geocode a location within an infospace. Uses the infospace's configured
+    geocoding provider (defaults to local Nominatim → public Nominatim fallback
+    when the owner hasn't configured anything explicitly).
+
+    Authenticated — any user with view access to the infospace can call this.
     """
-    from app.api.modules.foundation_service_providers.registry import get_provider
-    from app.api.modules.foundation_service_providers.base import GeocodingProvider
+    from app.api.modules.foundation_service_providers import resolve, ProviderError
 
-    logger.info(f"Geocoding location (public): {location}")
-
-    # Try providers in order: local Nominatim -> public Nominatim API (automatic fallback)
-    for provider_type_key in ["local", "nominatim_api"]:
+    # Try owner-configured + local + public fallback in order.
+    for provider_key in (None, "local", "nominatim_api"):
         try:
-            provider = get_provider(GeocodingProvider, provider_type_key, settings)
-            result = await provider.geocode(location, language=language)
+            p = resolve(
+                "geocoding", provider_key,
+                infospace_id=access.infospace_id,
+                session=session,
+            )
+            result = await p.geocode(location, language=language)
             if result:
-                result['provider'] = provider_type_key
                 return {
                     "coordinates": result['coordinates'],
                     "location_type": result['location_type'],
@@ -861,63 +843,50 @@ async def geocode_location(
                     "area": result.get('area'),
                     "display_name": result.get('display_name'),
                     "geometry": result.get('geometry'),
-                    "provider": result.get('provider')
+                    "provider": p.provider_key,
                 }
+        except ProviderError as e:
+            logger.debug("Geocoding provider %s not available: %s", provider_key, e)
         except Exception as e:
-            logger.warning(f"Geocoding provider '{provider_type_key}' failed for '{location}': {e}")
+            logger.warning(f"Geocoding provider {provider_key!r} failed for {location!r}: {e}")
 
-    # All providers failed
     logger.warning(f"Unable to geocode location: {location}")
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Unable to geocode location: {location}"
+        detail=f"Unable to geocode location: {location}",
     )
 
 
-@router.get("/geocode_location_with_provider")
+@router.get("/{infospace_id}/geocode_location_with_provider")
 async def geocode_location_with_provider(
     location: str,
     provider_type: str,
     api_key: Optional[str] = None,
     language: Optional[str] = 'en',
-    current_user: CurrentUser = Depends(get_current_user)
+    access: Access = Requires(scope=None),
+    session: SessionDep = None,
 ):
     """
-    Authenticated geocoding endpoint with custom provider selection.
-    Requires authentication to use proprietary providers with user's API keys.
-    
-    Supported providers:
-    - local: Local Nominatim container (no API key)
-    - nominatim_api: Public Nominatim API (no API key, rate limited)
-    - mapbox: Mapbox Geocoding API (requires api_key parameter)
-    
-    Args:
-        location: Location name or address to geocode
-        provider_type: Provider to use ('local', 'nominatim_api', 'mapbox')
-        api_key: API key for proprietary providers (required for 'mapbox')
-        language: Language code for results (default: 'en')
-        current_user: Authenticated user (injected)
-    """
-    from app.api.modules.foundation_service_providers.registry import get_provider
-    from app.api.modules.foundation_service_providers.base import GeocodingProvider
+    Geocode a location with an explicit provider choice (BYOK supported).
 
-    logger.info(f"Geocoding location (authenticated): {location} with provider: {provider_type} for user: {current_user.email}")
+    ``api_key`` is a runtime BYOK key — used for this call only. The infospace
+    owner's stored keys and deployment grants still work without it.
+    """
+    from app.api.modules.foundation_service_providers import resolve, ProviderError
 
     try:
-        provider = get_provider(
-            GeocodingProvider, provider_type, settings,
-            api_key_override=api_key,
+        p = resolve(
+            "geocoding", provider_type,
+            infospace_id=access.infospace_id,
+            runtime_key=api_key,
+            session=session,
         )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+    except ProviderError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    result = await provider.geocode(location, language=language)
+    result = await p.geocode(location, language=language)
 
     if result:
-        logger.info(f"Geocoded '{location}' using {provider_type}")
         return {
             "coordinates": result['coordinates'],
             "location_type": result['location_type'],
@@ -925,14 +894,12 @@ async def geocode_location_with_provider(
             "area": result.get('area'),
             "display_name": result.get('display_name'),
             "geometry": result.get('geometry'),
-            "provider": provider_type
+            "provider": p.provider_key,
         }
-    else:
-        logger.warning(f"Unable to geocode location: {location}")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Unable to geocode location: {location}"
-        )
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Unable to geocode location: {location}",
+    )
 
 @router.get("/get_country_data")
 def get_country_data(country):
