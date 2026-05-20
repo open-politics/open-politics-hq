@@ -11,6 +11,9 @@ CLAUDE.md
 node_modules/
 .vscode
 .cursor
+.claude/
+.env.bak.*
+.config/hq/
 frontend/.env
 frontend/.env.local
 frontend/.next/
@@ -32,5 +35,4 @@ docs/
 
 backend/logs/*
 scripts/
-
 
