@@ -39,6 +39,23 @@ DEFAULT_OPENAI_MODELS = {
 }
 
 
+def _replay_content(execution: Dict[str, Any]) -> Any:
+    """Pick the correct content for a function_call_output on replay.
+
+    Prefers ``model_view`` (the exact bytes the model saw on the original turn —
+    faithful replay). Falls back to ``structured_content`` / ``result`` for legacy
+    entries that pre-date ``model_view``. Returns ``None`` for entries with no
+    replayable content (e.g. failed tool calls).
+    """
+    mv = execution.get("model_view")
+    if mv is not None:
+        return mv
+    sc = execution.get("structured_content") or execution.get("result")
+    if sc is None:
+        return None
+    return sc if isinstance(sc, str) else json.dumps(sc, ensure_ascii=False)
+
+
 class OpenAILanguageModelProvider(LanguageModelProvider):
     """
     OpenAI implementation using the official OpenAI SDK.
@@ -228,20 +245,16 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
         return llm_content, frontend_data
     
     async def _stream_tool_loop_wrapper(self, request_params: Dict, tool_executor: Callable) -> AsyncIterator[GenerationResponse]:
-        """
-        Wrapper that executes the tool loop and yields the final result for streaming.
-        
-        The Responses API tool loop is not truly streaming - it executes all tool calls
-        synchronously and returns the final result. This wrapper makes it compatible with
-        streaming endpoints by yielding the final response.
+        """Streaming tool loop — delegates to the unified async-generator implementation.
+
+        ``_tool_loop_stream`` yields a partial ``GenerationResponse`` every time the
+        tool-execution state changes (tool started, tool completed) and a final one
+        when the model produces its assistant reply. The SSE route emits one
+        ``chunk`` event per yield, so the UI renders tool cards progressively.
         """
         try:
-            # Execute the entire tool loop
-            final_response = await self._tool_loop_generate_responses(request_params, tool_executor)
-            
-            # Yield the final response
-            yield final_response
-            
+            async for chunk in self._tool_loop_stream(request_params, tool_executor):
+                yield chunk
         except Exception as e:
             logger.error(f"Tool loop streaming wrapper error: {e}", exc_info=True)
             raise
@@ -324,213 +337,220 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
             raise RuntimeError(f"OpenAI generation failed: {str(e)}")
     
     async def _tool_loop_generate_responses(self, request_params: Dict, tool_executor: Callable) -> GenerationResponse:
-        """Execute a tool loop for the Responses API, handling tool calls until completion.
-        
-        This implements agentic behavior where the model can:
-        1. Make tool calls
-        2. Receive tool results
-        3. Make additional tool calls or provide a final response
-        
-        Returns structured tool execution history for frontend display.
+        """Non-streaming tool loop — drains the async-generator implementation and
+        returns the final ``GenerationResponse``. Intermediate snapshots are
+        discarded since this path is synchronous from the caller's perspective.
         """
-        import json
-        
-        max_iterations = 10  # Prevent infinite loops
+        final: Optional[GenerationResponse] = None
+        async for chunk in self._tool_loop_stream(request_params, tool_executor):
+            final = chunk
+        if final is None:
+            # Defensive: the generator always yields at least once (either the
+            # final reply or an error), but fall back to an empty response if it
+            # somehow exits without yielding.
+            return GenerationResponse(
+                content="",
+                model_used=request_params.get("model", ""),
+                tool_executions=None,
+            )
+        return final
+
+    async def _tool_loop_stream(self, request_params: Dict, tool_executor: Callable) -> AsyncIterator[GenerationResponse]:
+        """Agentic tool loop as an async generator.
+
+        Yields ``GenerationResponse`` snapshots at every state transition so the
+        SSE route can relay them to the UI in real time:
+
+        - one snapshot per tool call entering ``"running"`` state,
+        - one snapshot per tool call transitioning to ``"completed"``/``"failed"``,
+        - one final snapshot with the model's assistant content when no more
+          tool calls are produced (or when the iteration limit is hit).
+
+        Each snapshot carries the full current ``tool_executions`` list, because
+        the frontend replaces (not merges) the list on every chunk.
+        """
+        # Bumped from 10 → 20 in 2026-04: legitimate multi-tool workflows
+        # (schema list → get → update, batched task ops) were hitting the cap
+        # even when the model picked the right path.
+        max_iterations = 20
         iteration = 0
-        
+
         # Stateless mode: build conversation by appending function_call + function_call_output to input
         conversation_input = list(request_params.get("input", []))
-        
-        # Track all tool executions for the frontend
-        all_tool_executions = []
-        
+
+        # Track all tool executions for the frontend. Mutated in place so we can
+        # yield intermediate snapshots (running → completed) without reconstructing.
+        all_tool_executions: List[Dict[str, Any]] = []
+
+        def _snapshot(response_obj: Any = None, *, content: str = "", finish_reason: Optional[str] = None) -> GenerationResponse:
+            """Build a GenerationResponse reflecting the current tool_executions list."""
+            model_name = getattr(response_obj, "model", request_params.get("model", "")) if response_obj else request_params.get("model", "")
+            return GenerationResponse(
+                content=content,
+                model_used=model_name,
+                usage=(response_obj.usage.model_dump() if response_obj and hasattr(response_obj.usage, "model_dump") else (response_obj.usage if response_obj else None)),
+                thinking_trace=(self._extract_thinking_trace(response_obj) if response_obj else None),
+                finish_reason=finish_reason,
+                tool_calls=None,
+                tool_executions=[dict(e) for e in all_tool_executions] if all_tool_executions else None,
+                raw_response=(response_obj.model_dump() if response_obj and hasattr(response_obj, "model_dump") else None),
+            )
+
+        content = ""
+        response = None
+
         while iteration < max_iterations:
             iteration += 1
             logger.debug(f"Tool loop iteration {iteration}/{max_iterations}")
-            
-            # Prepare request for this iteration (stateless mode)
+
             loop_params = request_params.copy()
             loop_params["input"] = conversation_input
-            
-            # Log request structure
             logger.debug(f"Request has {len(conversation_input)} input items")
-            
-            # Make the API call
+
             response = await self.client.responses.create(**loop_params)
-            
-            # Check response status and handle errors
+
             logger.info(f"Tool loop iteration {iteration}: Response id={response.id}, status: {response.status}")
             if response.error:
                 logger.error(f"OpenAI API error in tool loop: {response.error}")
                 raise RuntimeError(f"OpenAI API returned error: {response.error}")
-            
             if response.status != "completed":
                 logger.warning(f"Response status is '{response.status}', not 'completed'")
                 if response.status in ["failed", "cancelled"]:
                     raise RuntimeError(f"Response generation {response.status}")
-            
-            # Extract content and tool calls
+
             content = ""
-            tool_calls = []
-            
+            tool_calls: List[Dict[str, Any]] = []
+
             logger.info(f"Tool loop iteration {iteration}: Response has {len(response.output)} output items")
-            
             for output_item in response.output:
-                
-                # Handle top-level function_call output items
                 if output_item.type == "function_call":
-                    # Use call_id (not id) - call_id is the function call identifier for matching
                     call_id = output_item.call_id or output_item.id or f"call_{output_item.name}"
                     logger.info(f"Tool loop: Found top-level function call: {output_item.name} with call_id={call_id}")
                     tool_calls.append({
                         "id": call_id,
                         "name": output_item.name,
-                        "arguments": output_item.arguments or "{}"
+                        "arguments": output_item.arguments or "{}",
                     })
-                # Handle message output items with content
                 elif output_item.type == "message" and output_item.role == "assistant":
                     for content_part in output_item.content:
                         if content_part.type == "output_text":
                             content = content_part.text
                         elif content_part.type == "function_call":
-                            # Use call_id (not id) for matching
                             call_id = content_part.call_id or content_part.id or f"call_{content_part.name}"
                             logger.info(f"Tool loop: Found function call in message content: {content_part.name} with call_id={call_id}")
                             tool_calls.append({
                                 "id": call_id,
                                 "name": content_part.name,
-                                "arguments": content_part.arguments or "{}"
+                                "arguments": content_part.arguments or "{}",
                             })
-            
-            # If no tool calls, we're done
+
+            # No more tool calls — this is the final assistant turn.
             if not tool_calls:
                 logger.info(f"Tool loop iteration {iteration}: No tool calls, completing with content length: {len(content)}")
                 if content:
                     logger.info(f"Response preview: {content[:100]}...")
                 else:
                     logger.warning("Response has no content and no tool calls")
-                return GenerationResponse(
-                    content=content,
-                    model_used=response.model,
-                    usage=response.usage.model_dump() if hasattr(response.usage, 'model_dump') else response.usage,
-                    thinking_trace=self._extract_thinking_trace(response),
-                    finish_reason=getattr(response, 'finish_reason', None),
-                    tool_calls=None,
-                    tool_executions=all_tool_executions if all_tool_executions else None,
-                    raw_response=response.model_dump() if hasattr(response, 'model_dump') else response,
-                )
-            
-            # Execute tool calls
+                yield _snapshot(response, content=content, finish_reason=getattr(response, "finish_reason", None))
+                return
+
             logger.info(f"Executing {len(tool_calls)} tool calls in iteration {iteration}")
-            tool_results = []
-            
+            tool_results: List[Dict[str, Any]] = []
+
             for tc in tool_calls:
+                name = tc["name"]
+                args_str = tc.get("arguments", "{}")
                 try:
-                    name = tc["name"]
-                    args_str = tc.get("arguments", "{}")
-                    
-                    # Parse arguments
-                    try:
-                        args = json.loads(args_str) if isinstance(args_str, str) else (args_str or {})
-                    except json.JSONDecodeError:
-                        logger.warning(f"Failed to parse tool arguments for {name}: {args_str}")
-                        args = {}
-                    
-                    # Execute the tool
+                    args = json.loads(args_str) if isinstance(args_str, str) else (args_str or {})
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse tool arguments for {name}: {args_str}")
+                    args = {}
+
+                # Emit a "running" entry BEFORE execution so the UI renders a
+                # loading card while the tool is in-flight.
+                running_entry = {
+                    "id": tc["id"],
+                    "tool_name": name,
+                    "arguments": args,
+                    "result": None,
+                    "structured_content": None,
+                    "error": None,
+                    "status": "running",
+                    "iteration": iteration,
+                }
+                all_tool_executions.append(running_entry)
+                yield _snapshot(response)
+
+                try:
                     logger.info(f"Executing tool: {name} with args: {args}")
                     tool_result = await tool_executor(name, args)
-                    
-                    # Extract separate streams for LLM and frontend
+
                     llm_content, frontend_data = self._extract_tool_result_streams(tool_result, name)
-                    
-                    # Check if tool execution failed
                     has_error = isinstance(tool_result, dict) and bool(tool_result.get("error"))
-                    
-                    # Send ONLY concise content to LLM
-                    tool_results.append({
-                        "call_id": tc["id"],
-                        "output": llm_content
-                    })
-                    
-                    # Record execution with FULL data for frontend
-                    # Include both result (for backward compatibility) and structured_content (for frontend renderers)
-                    all_tool_executions.append({
-                        "id": tc["id"],
-                        "tool_name": name,
-                        "arguments": args,
+
+                    tool_results.append({"call_id": tc["id"], "output": llm_content})
+
+                    # Replace the running entry in-place so the snapshot shows
+                    # the completed card with results. model_view is the exact llm_content
+                    # the model saw on this turn — persisted so we can reconstruct
+                    # function_call_output items on subsequent turns and stop the cross-turn drop.
+                    # Stored even on errors so the failure is visible on replay
+                    # (_extract_tool_result_streams returns the error JSON as llm_content).
+                    running_entry.update({
                         "result": frontend_data if not has_error else None,
-                        "structured_content": frontend_data if not has_error else None,  # Explicit structured_content for frontend
+                        "structured_content": frontend_data if not has_error else None,
+                        "model_view": llm_content,
                         "error": tool_result.get("error") if has_error and isinstance(tool_result, dict) else None,
                         "status": "failed" if has_error else "completed",
-                        "iteration": iteration
                     })
-                    
+
                     llm_chars = len(llm_content) if isinstance(llm_content, str) else 0
                     logger.info(f"Tool {name} executed - sent {llm_chars} chars to LLM")
-                    
                     if has_error:
                         logger.warning(f"Tool {name} returned error: {tool_result.get('error')}")
                     else:
                         logger.info(f"Tool {name} executed successfully")
-                    
+
                 except Exception as e:
                     logger.error(f"Tool execution failed for {name}: {e}", exc_info=True)
                     error_result = {"error": f"Tool execution failed: {str(e)}"}
-                    tool_results.append({
-                        "call_id": tc["id"],
-                        "output": error_result
-                    })
-                    
-                    # Record failed execution
-                    all_tool_executions.append({
-                        "id": tc["id"],
-                        "tool_name": name,
-                        "arguments": args,
+                    tool_results.append({"call_id": tc["id"], "output": error_result})
+                    # Persist model_view as the same error JSON the model saw so the
+                    # failure is visible on replay instead of being silently skipped.
+                    running_entry.update({
+                        "model_view": json.dumps(error_result),
                         "error": str(e),
                         "status": "failed",
-                        "iteration": iteration
                     })
-            
-            # Add tool results to the next request by appending them to the conversation
-            # The Responses API will use previous_response_id to continue the conversation
-            # and we'll need to add function_call_output items
-            
-            # Create a new input with tool results
-            tool_result_items = []
-            for result in tool_results:
-                tool_result_items.append({
-                    "type": "function_call_output",
-                    "call_id": result["call_id"],
-                    "output": json.dumps(result["output"])
-                })
-            
-            # Stateless mode: append function_call items from response.output
-            # followed by function_call_output items
-            # According to OpenAI docs: "function_call must be immediately followed by function_call_output"
+
+                yield _snapshot(response)
+
+            # Append function_call + function_call_output items to the conversation
+            # for the next iteration. OpenAI requires function_call to be
+            # immediately followed by its function_call_output.
             logger.info(f"Tool loop: Appending function_call items from response to conversation")
             for output_item in response.output:
                 if output_item.type == "function_call":
-                    # Convert SDK object to dict for proper serialization
                     func_call_dict = output_item.model_dump(exclude_none=True)
                     conversation_input.append(func_call_dict)
                     logger.info(f"  - Appended function_call: {func_call_dict.get('name')} with call_id={func_call_dict.get('call_id')}")
-            
-            logger.info(f"Tool loop: Appending {len(tool_result_items)} function_call_output items to conversation")
-            for item in tool_result_items:
+
+            logger.info(f"Tool loop: Appending {len(tool_results)} function_call_output items to conversation")
+            for result in tool_results:
+                item = {
+                    "type": "function_call_output",
+                    "call_id": result["call_id"],
+                    "output": json.dumps(result["output"]),
+                }
                 logger.info(f"  - call_id={item['call_id']}")
                 conversation_input.append(item)
-            
-        # Max iterations reached
+
+        # Max iterations reached — yield a final snapshot explaining the stop.
         logger.warning(f"Tool loop reached maximum iterations ({max_iterations})")
-        return GenerationResponse(
+        yield _snapshot(
+            response,
             content=content or "Maximum tool execution iterations reached",
-            model_used=response.model,
-            usage=response.usage.model_dump() if hasattr(response.usage, 'model_dump') else response.usage,
-            thinking_trace=self._extract_thinking_trace(response),
             finish_reason="max_iterations",
-            tool_calls=None,
-            tool_executions=all_tool_executions if all_tool_executions else None,
-            raw_response=response.model_dump() if hasattr(response, 'model_dump') else {},
         )
     
     async def _stream_generate_responses(self, request_params: Dict) -> AsyncIterator[GenerationResponse]:
@@ -685,22 +705,57 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                 raw_response={},
             )
     
-    def _messages_to_responses_input(self, messages: List[Dict[str, str]]) -> List[Dict[str, Any]]:
-        """Convert messages to the Responses API input format."""
-        input_items = []
-        
+    def _messages_to_responses_input(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert messages to the Responses API input format.
+
+        When an assistant message carries ``tool_executions`` (prior turns'
+        tool history), splice the function_call / function_call_output items
+        back into the input stream so the model can see what its earlier
+        calls returned. Without this the LLM only sees the final assistant
+        text on subsequent turns and the tool data is gone.
+        """
+        input_items: List[Dict[str, Any]] = []
+
         for message in messages:
             role = message.get("role", "user")
             content_text = message.get("content", "")
-            
-            # For the Responses API, use simple string format for content
-            # The error suggests "input_text" is not supported, so use plain string
-            input_items.append({
-                "type": "message",
-                "role": role,
-                "content": content_text
-            })
-            
+            tool_execs = message.get("tool_executions") if role == "assistant" else None
+
+            if tool_execs:
+                # Group by iteration; inside an iteration emit all function_call
+                # items first then all function_call_output items, in matched order.
+                by_iter: Dict[int, List[Dict[str, Any]]] = {}
+                for ex in tool_execs:
+                    by_iter.setdefault(ex.get("iteration", 1), []).append(ex)
+
+                for it in sorted(by_iter.keys()):
+                    replayable = [e for e in by_iter[it] if _replay_content(e) is not None]
+                    if not replayable:
+                        continue
+                    for ex in replayable:
+                        args = ex.get("arguments") or {}
+                        input_items.append({
+                            "type": "function_call",
+                            "call_id": ex.get("id") or f"call_{ex.get('tool_name')}_{it}",
+                            "name": ex.get("tool_name"),
+                            "arguments": args if isinstance(args, str) else json.dumps(args),
+                        })
+                    for ex in replayable:
+                        mv = _replay_content(ex)
+                        output = mv if isinstance(mv, str) else json.dumps(mv)
+                        input_items.append({
+                            "type": "function_call_output",
+                            "call_id": ex.get("id") or f"call_{ex.get('tool_name')}_{it}",
+                            "output": output,
+                        })
+
+            if content_text and (not isinstance(content_text, str) or content_text.strip()):
+                input_items.append({
+                    "type": "message",
+                    "role": role,
+                    "content": content_text,
+                })
+
         return input_items
     
     def _prepare_tools_for_responses(self, tools: List[Dict[str, Any]], mcp_headers: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:

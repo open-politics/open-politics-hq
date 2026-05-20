@@ -99,12 +99,63 @@ class LanguageDefaults(BaseModel):
         return self.default
 
 
+def _assert_model_required(capability: str, sel: Optional["ProviderSelection"]) -> None:
+    """Raise ``ValueError`` if the provider needs a model and none is set.
+
+    Call this explicitly from save-path endpoints (``PATCH /me``,
+    ``PATCH /infospaces/{id}``). Do NOT call from model ``__init__`` — pydantic
+    rebuilds these models on every DB load, so validating there would reject
+    legacy/partial state that's already persisted and lock users out.
+    """
+    if sel is None or not sel.provider_key:
+        return
+    from app.api.modules.foundation_service_providers.registry import _get_descriptor  # type: ignore
+    desc = _get_descriptor(capability, sel.provider_key)
+    if desc and desc.model_required and not sel.model_name:
+        raise ValueError(
+            f"{capability}/{sel.provider_key} requires a model_name — selection is incomplete"
+        )
+
+
+def validate_provider_defaults(pd: "ProviderDefaults") -> None:
+    """Run save-time checks on a ProviderDefaults value. Raises ``ValueError``.
+
+    Routes that accept user input for provider_defaults call this before
+    persisting. Read paths must NOT call it — stored state may predate the
+    stricter rules.
+    """
+    if pd.language is not None:
+        _assert_model_required("language", pd.language.default)
+        _assert_model_required("language", pd.language.chat)
+        _assert_model_required("language", pd.language.annotation)
+    _assert_model_required("embedding", pd.embedding)
+    _assert_model_required("web_search", pd.web_search)
+    _assert_model_required("ocr", pd.ocr)
+    _assert_model_required("geocoding", pd.geocoding)
+
+
+def validate_enrichment_config(ec: "EnrichmentConfig") -> None:
+    """Run save-time checks on an EnrichmentConfig value. Raises ``ValueError``.
+
+    Same rule as ``validate_provider_defaults``: only call on user-supplied
+    input before persisting, never on stored values being read back.
+    """
+    for cap in ("ocr", "geocoding", "embedding"):
+        val = getattr(ec, cap, None)
+        if isinstance(val, ProviderSelection):
+            _assert_model_required(cap, val)
+
+
 class ProviderDefaults(BaseModel):
     """User's per-capability provider preferences.
 
     Core capabilities are named fields — enforced by the model schema.
     Language uses ``LanguageDefaults`` for context-specific overrides;
     all other capabilities are plain ``ProviderSelection``.
+
+    Completeness checks live in ``validate_provider_defaults()`` — call it
+    from save-path endpoints. The model itself stays permissive so existing
+    DB rows with partial selections still deserialize.
     """
     language: Optional[LanguageDefaults] = None
     embedding: Optional[ProviderSelection] = None
@@ -145,6 +196,10 @@ class EnrichmentConfig(BaseModel):
 
     Embedding is always ``ProviderSelection`` (never plain bool) because you
     can't embed without choosing a provider and model.
+
+    Completeness checks live in ``validate_enrichment_config()`` — call it
+    from save-path endpoints (``PATCH /infospaces/{id}``). Reads must NOT
+    validate: legacy rows with partial selections still need to deserialize.
     """
     ocr: Optional[bool | ProviderSelection] = None
     geocoding: Optional[bool | ProviderSelection] = None
@@ -343,7 +398,7 @@ class ScrapingProvider(Protocol):
 class WebSearchProvider(Protocol):
     """
     Abstract interface for web search providers (Tavily, Google, SearXNG, etc).
-    External search engines; distinct from SearchService (internal asset search).
+    External search engines; distinct from ``modules/search/assets.py`` (internal asset search).
     """
     async def search(self, query: str, skip: int = 0, limit: int = 20) -> List[Dict[str, Any]]:
         """
@@ -526,6 +581,7 @@ class ModelInfo:
     supports_streaming: bool = False
     supports_thinking: bool = False
     supports_multimodal: bool = False
+    supports_prompt_caching: bool = False  # provider-translated cacheable=True content marker
     max_tokens: Optional[int] = None
     context_length: Optional[int] = None
     description: Optional[str] = None

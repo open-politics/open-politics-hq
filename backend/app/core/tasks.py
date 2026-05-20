@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generator, Optional, Type
 
+from pydantic import BaseModel
 from sqlmodel import Session
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,12 @@ class TaskDescriptor:
     dispatch_filter: Optional[Callable] = None
     capability: Optional[str] = None
     schedule: Optional[int] = None  # seconds between dispatcher polls, None = never polled
+    # Direct-invocation-only typed params. When set, triggers/schedule are
+    # forbidden (user-initiated action pattern — v2 §9). The celery wrapper
+    # signature becomes (batch_ids, infospace_id, params_dict) and the wrapper
+    # deserializes params_dict via params_model(**params_dict) before calling
+    # the user function.
+    params_model: Optional[Type[BaseModel]] = None
 
 
 _task_registry: dict[str, TaskDescriptor] = {}
@@ -81,20 +88,44 @@ def _settings_hash() -> str:
     return "|".join(str(k) for k in keys)
 
 
-def cached_resolve(protocol: Type, provider_key: str, settings: Any, credentials: dict | None = None) -> Any:
-    """Resolve provider with per-worker cache, invalidated on config change."""
+def cached_resolve(
+    capability: str,
+    provider_key: str | None = None,
+    model: str | None = None,
+    *,
+    infospace_id: int | None = None,
+    context: str | None = None,
+    runtime_key: str | None = None,
+):
+    """Resolve provider with per-worker cache, invalidated on config change.
+
+    Cache key includes infospace_id so different infospaces (with different
+    owners and different credentials) never share a cached instance.
+
+    Runtime-key calls bypass the cache entirely — BYOK must not leak across
+    invocations.
+    """
     global _cache_config_hash
     current = _settings_hash()
     if _cache_config_hash != current:
         _provider_cache.clear()
         _cache_config_hash = current
-    cache_key = f"{protocol.__name__}:{provider_key}"
+
+    # Runtime key → bypass cache (BYOK isolation).
+    if runtime_key:
+        from app.api.modules.foundation_service_providers.registry import resolve
+        return resolve(
+            capability, provider_key, model,
+            infospace_id=infospace_id, context=context, runtime_key=runtime_key,
+        )
+
+    cache_key = f"{capability}:{provider_key or '_'}:{model or '_'}:{infospace_id or 'system'}:{context or '_'}"
     if cache_key not in _provider_cache:
         from app.api.modules.foundation_service_providers.registry import resolve
-        instance = resolve(protocol, provider_key, settings, credentials)
-        if instance is None:
-            return None
-        _provider_cache[cache_key] = instance
+        _provider_cache[cache_key] = resolve(
+            capability, provider_key, model,
+            infospace_id=infospace_id, context=context,
+        )
     return _provider_cache[cache_key]
 
 
@@ -107,12 +138,17 @@ class TaskContext:
         settings: Any,
         task_name: str,
         failure_memory: int = 3600,
+        task_id: str | None = None,
     ):
         self.infospace_id = infospace_id
         self.settings = settings
         self._task_name = task_name
         self._failure_memory = failure_memory
         self._stats: dict[str, int] = {}
+        # Celery task id for this run. Forwarded from self_task.request.id in
+        # the wrapper. Used for deterministic stream-key composition in
+        # user-initiated action tasks: f"{resource_id}:{ctx.task_id}".
+        self.task_id: str | None = task_id
 
     @contextmanager
     def session(self) -> Generator[Session, None, None]:
@@ -121,16 +157,36 @@ class TaskContext:
         with Session(engine) as s:
             yield s
 
-    def provider(self, protocol: Type, provider_key: str | None = None) -> Any:
-        """Resolve provider. Cached per (protocol, provider_key) per worker."""
-        from app.api.modules.foundation_service_providers.registry import (
-            select_provider,
-            system_default_provider_key,
+    def provider(
+        self,
+        capability,
+        provider_key: str | None = None,
+        model: str | None = None,
+        *,
+        context: str | None = None,
+        runtime_key: str | None = None,
+    ):
+        """Resolve provider for this task's infospace. Cached per-worker.
+
+        `capability` accepts either a capability name (``"storage"``) or a
+        Protocol class (``StorageProvider``). Selection follows the normal
+        chain: explicit args → infospace enrichment_config → owner defaults →
+        system default env var.
+        """
+        if not isinstance(capability, str):
+            from app.api.modules.foundation_service_providers.registry import CAPABILITIES
+            for name, proto in CAPABILITIES.items():
+                if proto is capability:
+                    capability = name
+                    break
+            else:
+                raise ValueError(f"Unknown provider Protocol: {capability!r}")
+        return cached_resolve(
+            capability, provider_key, model,
+            infospace_id=self.infospace_id,
+            context=context,
+            runtime_key=runtime_key,
         )
-        key = provider_key or system_default_provider_key(protocol, self.settings)
-        if not key:
-            raise ValueError(f"No provider_key for {protocol.__name__}")
-        return cached_resolve(protocol, key, self.settings)
 
     def stat(self, key: str, count: int = 1):
         """Increment batch stats (flushed to Redis after function returns)."""
@@ -161,6 +217,82 @@ class TaskContext:
         except Exception as e:
             logger.warning("ctx.send failed: %s", e)
             return False
+
+    def job_progress(
+        self,
+        job_id: int,
+        *,
+        status: str = "progress",
+        stage: str | None = None,
+        message: str | None = None,
+        progress_pct: float | None = None,
+        processed: int | None = None,
+        failed: int | None = None,
+        total: int | None = None,
+        **extra: Any,
+    ) -> None:
+        """Update an IngestionJob row and emit the matching stream event.
+
+        One call replaces the cursor_state write + ctx.send pair every
+        ingestion task used to do by hand. Fire-and-forget (never raises).
+
+        ``status`` is both the IngestionJob status transition signal and the
+        stream event name. Values: ``"progress"`` (no DB status change),
+        ``"completed"`` (sets IngestionStatus.COMPLETED, completed_at),
+        ``"failed"`` (sets IngestionStatus.FAILED, error_message, last_error_at),
+        ``"item_started" | "item_done" | "item_failed"`` (per-item events in a
+        batch job — don't change the job's top-level DB status).
+        """
+        from datetime import datetime, timezone
+
+        from app.models import IngestionJob, IngestionStatus
+
+        payload: dict[str, Any] = {k: v for k, v in {
+            "stage": stage,
+            "message": message,
+            "progress_pct": progress_pct,
+            "processed": processed,
+            "failed": failed,
+            "total": total,
+        }.items() if v is not None}
+        payload.update(extra)
+
+        try:
+            with self.session() as session:
+                job = session.get(IngestionJob, job_id)
+                if job is None:
+                    return
+                cs = dict(job.cursor_state or {})
+                if stage is not None: cs["stage"] = stage
+                if message is not None: cs["message"] = message[:500]
+                if progress_pct is not None: cs["progress_pct"] = progress_pct
+                for k, v in extra.items():
+                    cs[k] = v
+                job.cursor_state = cs
+                if processed is not None:
+                    job.processed_files = processed
+                if failed is not None:
+                    job.failed_files = failed
+                if total is not None:
+                    job.total_files = total
+                if status == "completed":
+                    job.status = IngestionStatus.COMPLETED
+                    job.completed_at = datetime.now(timezone.utc)
+                    cs.setdefault("progress_pct", 100)
+                    job.cursor_state = cs
+                elif status == "failed":
+                    job.status = IngestionStatus.FAILED
+                    job.last_error_at = datetime.now(timezone.utc)
+                    job.retry_count = (job.retry_count or 0) + 1
+                    if message:
+                        job.error_message = message[:500]
+                job.updated_at = datetime.now(timezone.utc)
+                session.add(job)
+                session.commit()
+        except Exception as e:
+            logger.warning("ctx.job_progress DB write failed for job %s: %s", job_id, e)
+
+        self.send("ingestion_job", job_id, status, payload)
 
 
 # Set default context_cls on TaskDescriptor after TaskContext is defined
@@ -209,6 +341,134 @@ return count
 
 def _slot_prefix(task_name: str, infospace_id: int) -> str:
     return f"task:{task_name}:{infospace_id}:slot"
+
+
+# ── Structural block (provider misconfig) ────────────────────────────────────
+#
+# Transient failures (API timeouts, DB hiccups) use the short `:backoff` key.
+# Structural failures (missing credentials, no provider configured, model_required
+# violation) set a `:block` key with no TTL — dispatch skips indefinitely until
+# the user fixes their setup and the save handler clears the block.
+#
+# 30-day sanity backstop so stale blocks don't hang around forever if a cleanup
+# is missed; any reasonable fix cycle is much shorter.
+
+_STRUCTURAL_BLOCK_TTL = 30 * 24 * 3600
+
+
+def _block_key(task_name: str, infospace_id: int) -> str:
+    return f"task:{task_name}:{infospace_id}:block"
+
+
+def is_structurally_blocked(task_name: str, infospace_id: int) -> Optional[str]:
+    """Return the block reason, or None if not blocked. Cheap Redis lookup."""
+    r = _get_redis()
+    if not r:
+        return None
+    try:
+        raw = r.get(_block_key(task_name, infospace_id))
+        if not raw:
+            return None
+        return raw.decode() if isinstance(raw, bytes) else raw
+    except Exception:
+        return None
+
+
+def set_structural_block(task_name: str, infospace_id: int, reason: str) -> None:
+    """Mark this (task, infospace) as structurally blocked. Cleared by config save."""
+    r = _get_redis()
+    if not r:
+        return
+    try:
+        r.set(_block_key(task_name, infospace_id), reason, ex=_STRUCTURAL_BLOCK_TTL)
+        logger.info("Structural block: %s infospace=%d reason=%s", task_name, infospace_id, reason)
+    except Exception as e:
+        logger.warning("Failed to set structural block: %s", e)
+
+
+def clear_structural_blocks(
+    infospace_id: int,
+    task_names: Optional[list[str]] = None,
+    capability: Optional[str] = None,
+) -> int:
+    """Clear structural blocks for an infospace. Called by config-save handlers.
+
+    Precedence:
+      - ``task_names`` given → clear those tasks exactly.
+      - ``capability`` given → resolve to every registered task with that
+        capability, clear those. Config changes for a capability should only
+        unblock tasks that actually depend on it (embedding config change
+        must not unblock OCR).
+      - Both None → clear everything for the infospace. Use sparingly
+        (e.g., full config reset, not targeted field updates).
+
+    Returns the count of keys actually deleted.
+    """
+    r = _get_redis()
+    if not r:
+        return 0
+
+    names: Optional[list[str]] = None
+    if task_names:
+        names = list(task_names)
+    elif capability:
+        names = [
+            name for name, desc in _task_registry.items()
+            if desc.capability == capability
+        ]
+        if not names:
+            return 0  # no registered tasks care about this capability
+
+    try:
+        if names is not None:
+            keys = [_block_key(n, infospace_id) for n in names]
+            # Filter to keys that actually exist — r.delete returns count of
+            # keys deleted, but sending non-existent keys is wasted work.
+            keys = [k for k in keys if r.exists(k)]
+        else:
+            keys = list(r.scan_iter(match=f"task:*:{infospace_id}:block"))
+        if not keys:
+            return 0
+        return int(r.delete(*keys))
+    except Exception as e:
+        logger.warning("Failed to clear structural blocks: %s", e)
+        return 0
+
+
+def capabilities_served_by_provider(provider_key: str) -> set[str]:
+    """Return the set of capabilities a given provider_key implements.
+
+    Used when the user saves a credential for provider X — we want to clear
+    blocks for every capability that provider implements (e.g. ``openai``
+    implements both ``language`` and ``embedding``).
+    """
+    from app.api.modules.foundation_service_providers.registry import _registry
+    return {cap for (cap, pk) in _registry if pk == provider_key.lower()}
+
+
+def list_structural_blocks(infospace_id: int) -> dict[str, str]:
+    """Return {task_name: reason} for all current structural blocks in an infospace.
+
+    Used by the enrichment/status endpoint so the UI can surface setup problems.
+    """
+    r = _get_redis()
+    if not r:
+        return {}
+    out: dict[str, str] = {}
+    try:
+        for raw_key in r.scan_iter(match=f"task:*:{infospace_id}:block"):
+            key = raw_key.decode() if isinstance(raw_key, bytes) else raw_key
+            # key format: task:{name}:{infospace_id}:block
+            parts = key.split(":")
+            if len(parts) != 4:
+                continue
+            name = parts[1]
+            val = r.get(key)
+            if val is not None:
+                out[name] = val.decode() if isinstance(val, bytes) else val
+    except Exception as e:
+        logger.warning("Failed to list structural blocks: %s", e)
+    return out
 
 
 def acquire_slot(r, task_name: str, infospace_id: int, max_concurrency: int, timeout: int) -> int:
@@ -262,7 +522,7 @@ def _flush_stats(task_name: str, infospace_id: int, stats: dict, duration_ms: fl
 
 def task(
     name: str,
-    check: Callable[[int], Any],
+    check: Callable[[int], Any] | None = None,
     *,
     schedule: int | None = None,
     batch: int = 50,
@@ -281,13 +541,45 @@ def task(
     context_cls: Type[TaskContext] = TaskContext,
     dispatch_filter: Callable | None = None,
     capability: str | None = None,
+    # Direct-invocation-only typed params — v2 user-action pattern.
+    params_model: Type[BaseModel] | None = None,
 ):
     """
     Decorator that turns a function into a managed reactive Celery task.
 
     The decorated function signature: fn(ctx: TaskContext, entity_ids: list[int])
+
+    When ``params_model`` is set: the function becomes direct-invocation-only
+    (no triggers, no schedule). The signature gains a third argument:
+    ``fn(ctx, entity_ids, params: params_model)``. Invoke via
+    ``fn.delay(ids, iid, params=MyParams(...))``.
     """
     triggers = triggers or []
+
+    # ── Decorator-time invariants ────────────────────────────────────────
+    #
+    # ``params_model`` is direct-invocation-only. Mixing it with triggers or
+    # schedules would mean the dispatcher/event bus needs to know the params
+    # schema, which it doesn't. Fail fast at module load time — a
+    # misconfigured @task should not be silently half-wired.
+    if params_model is not None:
+        assert not triggers, (
+            f"@task {name}: params_model is direct-invocation-only. "
+            "Tasks with typed params cannot declare triggers."
+        )
+        assert schedule is None, (
+            f"@task {name}: params_model is direct-invocation-only. "
+            "Tasks with typed params cannot declare a schedule."
+        )
+        assert check is None, (
+            f"@task {name}: params_model is direct-invocation-only. "
+            "Tasks with typed params cannot declare a check query "
+            "(self-query mode doesn't apply)."
+        )
+    else:
+        assert check is not None, (
+            f"@task {name}: check= is required unless params_model is set."
+        )
 
     def decorator(fn: Callable) -> Callable:
         descriptor = TaskDescriptor(
@@ -310,17 +602,32 @@ def task(
             dispatch_filter=dispatch_filter,
             capability=capability,
             schedule=schedule,
+            params_model=params_model,
         )
 
         # Register in task registry
         _task_registry[name] = descriptor
 
         # Generate Celery task
-        def _celery_impl(self_task, batch_ids: list[int] | None, infospace_id: int, _chain_depth: int = 0):
+        def _celery_impl(
+            self_task,
+            batch_ids: list[int] | None,
+            infospace_id: int,
+            params_dict: dict[str, Any] | None = None,
+            _chain_depth: int = 0,
+        ):
             """Generated Celery task wrapper."""
             from app.core.config import settings
 
             start = time.perf_counter()
+
+            # Structural block check: if a previous run hit ProviderError, the
+            # block stays set until the user fixes their config (which clears it).
+            # Skips event-triggered and direct invocations too.
+            block_reason = is_structurally_blocked(name, infospace_id)
+            if block_reason:
+                logger.debug("Task %s skipped (blocked): %s", name, block_reason)
+                return
 
             # Check dispatch_filter before doing any work (respects ENABLED_ENRICHERS etc.)
             # Event-triggered tasks bypass the dispatcher, so this is the only gate.
@@ -341,6 +648,13 @@ def task(
 
             # Self-query mode (event-triggered, batch_ids=None)
             if batch_ids is None:
+                if check is None:
+                    # params_model tasks are direct-invocation only.
+                    logger.warning(
+                        "Task %s invoked without batch_ids but has no check query; "
+                        "direct-invocation-only tasks cannot self-query.", name,
+                    )
+                    return
                 try:
                     from app.core.db import engine
                     with Session(engine) as session:
@@ -378,21 +692,44 @@ def task(
 
             try:
                 # Build context
+                task_id = None
+                try:
+                    task_id = self_task.request.id
+                except Exception:
+                    pass
                 ctx = context_cls(
                     infospace_id=infospace_id,
                     settings=settings,
                     task_name=name,
                     failure_memory=failure_memory,
+                    task_id=task_id,
                 )
 
-                # Call decorated function
-                fn(ctx, batch_ids)
+                # Call decorated function — params_model tasks get a third
+                # positional argument; plain tasks stay binary.
+                if params_model is not None:
+                    if params_dict is None:
+                        raise ValueError(
+                            f"Task {name} requires params (params_model={params_model.__name__}); "
+                            "none provided"
+                        )
+                    params = params_model(**params_dict)
+                    fn(ctx, batch_ids, params)
+                else:
+                    fn(ctx, batch_ids)
 
                 # Flush stats
                 duration_ms = (time.perf_counter() - start) * 1000
                 _flush_stats(name, infospace_id, ctx._stats, duration_ms)
 
             except Exception as e:
+                # Structural failures (provider misconfig) block indefinitely.
+                # Transient failures set a short backoff + optional retry.
+                from app.api.modules.foundation_service_providers.registry import ProviderError
+                if isinstance(e, ProviderError):
+                    logger.warning("Task %s structurally blocked: %s", name, e)
+                    set_structural_block(name, infospace_id, str(e))
+                    return
                 logger.error("Task %s failed: %s", name, e, exc_info=True)
                 if r:
                     r.set(f"task:{name}:{infospace_id}:backoff", "1", ex=300)
@@ -406,6 +743,22 @@ def task(
 
             # Self-chain (runs after slot is released)
             if self_chain:
+                # Honor the task-level backoff key. When the task body signals
+                # a transient problem (e.g. lock held by a live sibling), it can
+                # write this key to pause chains for its TTL — avoids tight
+                # loops firing MAX_CHAIN_DEPTH invocations in a second.
+                backoff_countdown = 0
+                try:
+                    if r:
+                        raw_backoff = r.get(f"task:{name}:{infospace_id}:chain_backoff")
+                        if raw_backoff:
+                            try:
+                                backoff_countdown = int(raw_backoff.decode() if isinstance(raw_backoff, bytes) else raw_backoff)
+                            except (TypeError, ValueError):
+                                backoff_countdown = 30
+                except Exception:
+                    pass
+
                 _depth = _chain_depth or 0
                 try:
                     from app.core.db import engine
@@ -413,7 +766,14 @@ def task(
                         more = session.exec(check(infospace_id).limit(1)).first()
                     if more:
                         kwargs = {"_chain_depth": _depth + 1}
-                        if _depth >= MAX_CHAIN_DEPTH:
+                        if backoff_countdown > 0:
+                            kwargs["_chain_depth"] = 0
+                            self_task.apply_async(
+                                args=[None, infospace_id],
+                                kwargs=kwargs,
+                                countdown=backoff_countdown,
+                            )
+                        elif _depth >= MAX_CHAIN_DEPTH:
                             kwargs["_chain_depth"] = 0
                             self_task.apply_async(
                                 args=[None, infospace_id],
@@ -476,8 +836,36 @@ def task(
         # Attach references
         fn._task_descriptor = descriptor
         fn._celery_task = celery_task
-        fn.delay = celery_task.delay
-        fn.apply_async = celery_task.apply_async
+
+        if params_model is not None:
+            # Direct-invocation API: fn.delay(ids, iid, params=Model(...))
+            # Wraps the params into a dict before sending to Celery.
+            def _delay(batch_ids, infospace_id, *, params: BaseModel | None = None):
+                args = [batch_ids, infospace_id]
+                if params is not None:
+                    if not isinstance(params, params_model):
+                        raise TypeError(
+                            f"Task {name} expects params of type "
+                            f"{params_model.__name__}, got {type(params).__name__}"
+                        )
+                    args.append(params.model_dump(mode="json"))
+                return celery_task.apply_async(args=args)
+
+            def _apply_async(args=None, kwargs=None, *, params: BaseModel | None = None, **celery_kwargs):
+                outgoing = list(args or [])
+                if params is not None:
+                    if len(outgoing) < 2:
+                        raise ValueError(
+                            f"{name}: apply_async requires batch_ids + infospace_id in args"
+                        )
+                    outgoing.append(params.model_dump(mode="json"))
+                return celery_task.apply_async(args=outgoing, kwargs=kwargs, **celery_kwargs)
+
+            fn.delay = _delay
+            fn.apply_async = _apply_async
+        else:
+            fn.delay = celery_task.delay
+            fn.apply_async = celery_task.apply_async
 
         return fn
 

@@ -32,7 +32,6 @@ from app.api.modules.annotation.models import (
     AnnotationSchema,
     AnnotationRunTrigger,
     AnnotationSchemaTargetLevel,
-    Justification,
     ResultStatus,
     RunAggregate,
     RunSchemaLink,
@@ -43,8 +42,11 @@ from app.api.modules.annotation.models import (
 # Association table for MCP/raw SQL joins (RunSchemaLink link model)
 annotation_run_schema_association = RunSchemaLink.__table__
 from app.api.modules.graph.models import (
+    Canon,
+    CanonRole,
     KnowledgeGraph,
-    EntityCanonical,
+    Entity,
+    EntityRelationship,
     EntityEditLog,
     GraphEdge,
     FragmentCuration,
@@ -74,8 +76,6 @@ from app.api.modules.sharing.models import (
     BackupType,
     BackupStatus,
 )
-from app.api.modules.analysis.models import AnalysisAdapter
-
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import enum
@@ -108,9 +108,9 @@ from pgvector.sqlalchemy import Vector
 
 
 # Annotation models imported from app.api.modules.annotation.models
-# Graph models (EntityCanonical, FragmentCuration) imported from app.api.modules.graph.models
+# Graph models (Canon, Entity, EntityRelationship, FragmentCuration, ...) imported from app.api.modules.graph.models
 # Task, Flow, FlowExecution imported from app.api.modules.flow.models
 # SearchHistory imported from app.api.modules.search.models
 # ChatConversation, ChatConversationMessage imported from app.api.modules.conversational_intelligence.models
 # ShareableLink, Package, InfospaceBackup, UserBackup, PermissionLevel, ResourceType, BackupType, BackupStatus from app.api.modules.sharing.models
-# AnalysisAdapter from app.api.modules.analysis.models
+# AnalysisAdapter — REMOVED (replaced by annotation/query.py AnnotationQuery)

@@ -445,6 +445,25 @@ class AnnotationRunBase(SQLModel):
     context_window: int = 0
     views_config: Optional[List[Dict[str, Any]]] = None
 
+    @field_validator("views_config", mode="before")
+    @classmethod
+    def _normalise_views_config(cls, v: Any) -> Any:
+        """Tolerate legacy storage shapes for ``views_config``.
+
+        Historically a run carried a ``list[DashboardConfig]`` so the dashboard
+        page could host multiple views. The frontend collapsed to a single
+        dashboard in practice and some runs got persisted as a bare
+        ``DashboardConfig`` dict (``{panels: [...]}``) instead of the list.
+        Normalise on read so pydantic doesn't blow up the runs list endpoint
+        when it encounters a row with the dict shape. The dashboard config is
+        always wrapped in a single-element list — matching what new writes do.
+        """
+        if v is None:
+            return v
+        if isinstance(v, dict):
+            return [v]
+        return v
+
 class AnnotationRunCreate(AnnotationRunBase):
     schema_ids: List[int]
     target_asset_ids: Optional[List[int]] = None
@@ -499,6 +518,14 @@ class AnnotationRunRead(AnnotationRunBase):
     # ═══ PROGRESS ═══
     progress_total: Optional[int] = None
     progress_current: Optional[int] = None
+    # ═══ FAMILY (extension) ═══
+    # Set when the run has any descendants (parent_run_id == this id). Lets
+    # the UI show extension activity without lying about the underlying stored
+    # status. Family rollups: annotation_count covers parent + descendants;
+    # effective_status flips to RUNNING when any descendant is mid-flight.
+    parent_run_id: Optional[int] = None
+    extension_count: Optional[int] = None  # Number of descendant runs.
+    effective_status: Optional[RunStatus] = None  # RUNNING if any descendant is non-terminal, else the parent's own status.
 
 
 class AnnotationRunsOut(SQLModel):
@@ -567,26 +594,14 @@ class JustificationRead(JustificationBase):
     created_at: datetime
 
 # ─────────────────────────────────────── Search ──── #
-# Search Request
-class SearchRequest(SQLModel):
-    query: str
-    limit: int = 20
-    provider: str = "tavily"
-    args: list[str] = []
-    kwargs: dict[str, Any] = {}
-
-# Search Result
+# SearchResultOut stays for legacy consumers; SearchRequest/SearchResultsOut
+# are gone with the bare GET /search route.
 class SearchResultOut(SQLModel):
     title: str
     url: str
     content: str
     score: Optional[float] = None
     raw: Optional[Dict[str, Any]] = None
-
-
-class SearchResultsOut(SQLModel):
-    provider: str
-    results: List[SearchResultOut]
 
 
 # ───────────────────────────────────────────── Package ──── #
@@ -948,13 +963,7 @@ class SharedResourcePreview(SQLModel):
     description: Optional[str] = None
     content: Union[AssetPreview, BundlePreview, AnnotationRunPreview]
 
-# ───────────────────────────────────── Analysis Adapters ──── #
-from app.api.modules.analysis.schemas import (
-    AnalysisAdapterBase,
-    AnalysisAdapterCreate,
-    AnalysisAdapterUpdate,
-    AnalysisAdapterRead,
-)
+# AnalysisAdapter schemas — REMOVED (replaced by annotation/query.py AnnotationQuery)
 
 # ─────────────────────────────────────────────────────────── Backup Schemas ──── #
 
@@ -1110,7 +1119,13 @@ class ChatMessage(SQLModel):
     """Individual message in a conversation."""
     role: str  # "system", "user", "assistant"
     content: str
-    
+    # Tool turn carriers — populated on assistant messages so the route can splice
+    # tool_use/tool_result blocks back into the provider's native message shape on
+    # subsequent turns. Without these, the LLM sees only the assistant's final text
+    # and the rich tool data it produced/consumed earlier in the turn is lost.
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_executions: Optional[List[Dict[str, Any]]] = None
+
     @property
     def has_content(self) -> bool:
         """Check if message has non-empty content."""
@@ -1128,6 +1143,7 @@ class ChatRequest(SQLModel):
     thinking_enabled: bool = False
     tools_enabled: bool = True  # Enable/disable tool calls (default: True for backward compatibility)
     tools: Optional[List[Dict[str, Any]]] = None  # Tools to use for the chat
+    response_format: Optional[Dict[str, Any]] = None  # JSON schema for structured output
     api_keys: Optional[Dict[str, str]] = None  # Runtime API keys for providers (e.g., {"tavily": "key", "openai": "key"})
     conversation_id: Optional[int] = None  # Optional: Save messages to this conversation
     auto_save: bool = False  # Optional: Automatically save messages to conversation history
@@ -1137,6 +1153,19 @@ class ChatRequest(SQLModel):
     context_depth: Optional[str] = None  # Context depth level: 'titles', 'previews', 'full'
     # Image attachments for vision models
     image_asset_ids: Optional[List[int]] = None  # Asset IDs of images to include in the conversation
+    # Agent persona — selects which system prompt + MCP tool subset to load.
+    # 'intelligence' (default) is the workspace-wide research chat with the
+    # workspace_hub / library_hub / analysis_hub tool family. 'dossier' selects
+    # the M7 DossierAgent — formula authoring + observation snapshots, scoped
+    # to a single run. See ``docs/intelligence/HOW_TO.md`` § DossierAgent.
+    agent: Optional[str] = None  # 'intelligence' | 'dossier' | 'formula'
+    # When agent='dossier'|'formula', the run the agent operates against. The
+    # agent's tools take run_id explicitly; this lets the system prompt scope
+    # itself and surface defaults for tool calls.
+    run_id: Optional[int] = None
+    # For the FormulaAgent, the currently-open formula in the workspace. The
+    # backend prepends a hint so the agent knows what the user is editing.
+    formula_id: Optional[str] = None
 
 class ChatResponse(SQLModel):
     """Response from intelligence analysis chat."""

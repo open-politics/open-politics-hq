@@ -5,6 +5,7 @@ A drop-in replacement for MinIO that stores files on the local filesystem.
 Object names map directly to filesystem paths under base_path.
 """
 
+import asyncio
 import logging
 import mimetypes
 import shutil
@@ -58,9 +59,19 @@ class LocalFileSystemStorageProvider(StorageProvider):
         path = self._resolve_path(object_name)
         path.parent.mkdir(parents=True, exist_ok=True)
         chunk_size = 8192
-        with open(path, "wb") as f:
-            while chunk := await file.read(chunk_size):
-                f.write(chunk)
+
+        def _write_chunk(buf: bytes, target: Path, mode: str) -> None:
+            with open(target, mode) as f:
+                f.write(buf)
+
+        # Truncate on first chunk, append on subsequent ones.
+        first = True
+        while chunk := await file.read(chunk_size):
+            await asyncio.to_thread(_write_chunk, chunk, path, "wb" if first else "ab")
+            first = False
+        if first:
+            # Empty upload — still create the file.
+            await asyncio.to_thread(path.write_bytes, b"")
         guessed = file.content_type or (
             mimetypes.guess_type(file.filename or "")[0] if file.filename else "application/octet-stream"
         )
@@ -82,7 +93,7 @@ class LocalFileSystemStorageProvider(StorageProvider):
         elif not guessed:
             guessed = "application/octet-stream"
 
-        path.write_bytes(file_bytes)
+        await asyncio.to_thread(path.write_bytes, file_bytes)
         logger.info(f"Uploaded bytes as '{object_name}' ({guessed}) to {path}")
 
     def get_file_path(self, object_name: str) -> Path:
@@ -122,14 +133,14 @@ class LocalFileSystemStorageProvider(StorageProvider):
         path = self._resolve_path(source_object_name)
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(f"File '{source_object_name}' not found")
-        shutil.copy2(path, destination_local_path)
+        await asyncio.to_thread(shutil.copy2, path, destination_local_path)
         logger.info(f"Downloaded '{source_object_name}' to '{destination_local_path}'")
 
     async def delete_file(self, object_name: str) -> None:
         path = self._resolve_path(object_name)
         if path.exists():
             if path.is_file():
-                path.unlink()
+                await asyncio.to_thread(path.unlink)
                 logger.info(f"Deleted file '{object_name}'")
             else:
                 raise IOError(f"Cannot delete directory: {object_name}")
@@ -153,15 +164,21 @@ class LocalFileSystemStorageProvider(StorageProvider):
         search_root = self.base_path / prefix if prefix else self.base_path
         if not search_root.exists():
             return []
-        result = []
-        for p in search_root.rglob("*"):
-            if p.is_file():
-                try:
-                    rel = p.relative_to(self.base_path)
-                    result.append(str(rel).replace("\\", "/"))
-                except ValueError:
-                    pass
-        result = sorted(result)
+
+        base_path = self.base_path
+
+        def _walk() -> List[str]:
+            files: List[str] = []
+            for p in search_root.rglob("*"):
+                if p.is_file():
+                    try:
+                        rel = p.relative_to(base_path)
+                        files.append(str(rel).replace("\\", "/"))
+                    except ValueError:
+                        pass
+            return sorted(files)
+
+        result = await asyncio.to_thread(_walk)
         if offset > 0:
             result = result[offset:]
         if limit is not None:
@@ -174,5 +191,5 @@ class LocalFileSystemStorageProvider(StorageProvider):
         if not src.exists():
             raise FileNotFoundError(f"Source '{source_object_name}' not found")
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src), str(dst))
+        await asyncio.to_thread(shutil.move, str(src), str(dst))
         logger.info(f"Moved '{source_object_name}' to '{destination_object_name}'")

@@ -97,6 +97,9 @@ asyncio_mode = "auto"
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+markers = [
+    "scale: long-running scale / load tests (5M annotation fixture, bounded-memory checks). Opt-in: run with `pytest -m scale`.",
+]
 
 [tool.ruff]
 target-version = "py313"

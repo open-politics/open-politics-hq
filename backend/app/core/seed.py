@@ -10,22 +10,21 @@ from app.core.db import engine
 from app.core.initial_data import INITIAL_SCHEMAS
 from app.core.security import get_password_hash
 from app.models import (
-    AnalysisAdapter,
     AnnotationSchema,
     Infospace,
     User,
 )
 from app.schemas import InfospaceCreate, UserCreate
-from app.api.modules.foundation_service_providers.registry import get_storage_provider
+from app.api.modules.foundation_service_providers import resolve
 
 logger = logging.getLogger(__name__)
 
 
 def init_db(session: Session) -> None:
-    """Seed superuser, default infospace, annotation schemas, and analysis adapters."""
+    """Seed superuser, default infospace, and annotation schemas."""
     # Call the factory function with settings
     try:
-        storage_provider = get_storage_provider(settings)
+        storage_provider = resolve("storage")
         assert storage_provider is not None, "Storage provider not initialized"
     except Exception as e:
         logger.error(f"Error creating storage provider: {e}")
@@ -76,6 +75,7 @@ def init_db(session: Session) -> None:
         raise
 
     if not super_user_infospace:
+        from app.api.modules.graph.models import Canon, CanonRole
         infospace_in = InfospaceCreate(
             name="Default Infospace",
             description="This is the default infospace for the user",
@@ -83,9 +83,24 @@ def init_db(session: Session) -> None:
         )
         infospace = Infospace(**infospace_in.model_dump())
         session.add(infospace)
+        session.flush()  # need infospace.id for Canon FK
+
+        # Auto-create General canon and wire as default — mirrors
+        # InfospaceService.create_infospace. Both paths produce the same
+        # invariant: every infospace has a default_canon_id.
+        general_canon = Canon(
+            infospace_id=infospace.id,
+            name="General",
+            description="Default vocabulary for this infospace.",
+            role=CanonRole.GENERAL,
+        )
+        session.add(general_canon)
+        session.flush()
+        infospace.default_canon_id = general_canon.id
+        session.add(infospace)
         session.commit()
         session.refresh(infospace)
-        logger.info(f"Default infospace created for user {user.email}.")
+        logger.info(f"Default infospace created for user {user.email} with General canon {general_canon.id}.")
     else:
         infospace = super_user_infospace
         logger.info(f"Default infospace for user {user.email} already exists.")
@@ -101,22 +116,27 @@ def init_db(session: Session) -> None:
         ).first()
 
         if not existing_schema:
-            justification_configs = {}
+            # Lift legacy justification configs into inline keys on the
+            # output_contract — storage is canonical inline.
+            from app.api.routes.annotation_schemas import _lift_configs_into_contract
+            legacy_configs = {}
             if schema_data.field_specific_justification_configs:
                 for field_name, config in schema_data.field_specific_justification_configs.items():
-                    if hasattr(config, 'model_dump'):
-                        justification_configs[field_name] = config.model_dump()
-                    elif hasattr(config, 'dict'):
-                        justification_configs[field_name] = config.dict()
+                    if hasattr(config, "model_dump"):
+                        legacy_configs[field_name] = config.model_dump()
+                    elif hasattr(config, "dict"):
+                        legacy_configs[field_name] = config.dict()
                     else:
-                        justification_configs[field_name] = config
+                        legacy_configs[field_name] = config
+            output_contract = _lift_configs_into_contract(
+                schema_data.output_contract, legacy_configs
+            )
 
             new_schema = AnnotationSchema(
                 name=schema_data.name,
                 description=schema_data.description or "",
                 instructions=schema_data.instructions,
-                output_contract=schema_data.output_contract,
-                field_specific_justification_configs=justification_configs,
+                output_contract=output_contract,
                 version=schema_data.version or "1.0",
                 infospace_id=infospace.id,
                 user_id=user.id,
@@ -126,34 +146,4 @@ def init_db(session: Session) -> None:
             logger.info(f"Creating initial schema: {new_schema.name}")
         else:
             logger.info(f"Initial schema '{schema_data.name}' already exists.")
-    session.commit()
-
-    # --- Register Analysis Adapters ---
-    adapters_to_register = [
-        ("graph_aggregator", "Aggregates graph entities and triplets from annotation results into a unified knowledge graph for visualization",
-         "app.api.modules.analysis.adapters.graph_aggregator_adapter.GraphAggregatorAdapter", "graph"),
-        ("time_series", "Time series aggregation over annotation results",
-         "app.api.modules.analysis.adapters.time_series_adapter.TimeSeriesAggregationAdapter", "aggregation"),
-        ("label_distribution", "Label distribution analysis over annotation results",
-         "app.api.modules.analysis.adapters.label_distribution.LabelDistributionAdapter", "aggregation"),
-    ]
-    for name, desc, module_path, adapter_type in adapters_to_register:
-        existing = session.exec(select(AnalysisAdapter).where(AnalysisAdapter.name == name)).first()
-        if not existing:
-            session.add(AnalysisAdapter(
-                name=name,
-                description=desc,
-                module_path=module_path,
-                adapter_type=adapter_type,
-                is_public=True,
-                creator_user_id=user.id,
-            ))
-            logger.info(f"Registered {name} adapter")
-        elif existing.module_path != module_path:
-            existing.module_path = module_path
-            session.add(existing)
-            logger.info(f"Updated {name} adapter module_path")
-        else:
-            logger.info(f"{name} adapter already registered")
-
     session.commit()

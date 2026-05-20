@@ -4,10 +4,17 @@ Provider interfaces, registry, and resolution.
 Three files form the provider system:
 - base.py:      Protocol classes + ModelSpec types + ProviderSelection
 - registry.py:  Framework (@provider, ProviderDescriptor) + registry + resolve()
-- providers.py: All provider declarations + convenience getters
+- providers.py: All provider declarations
+
+Public API — everything else is internal:
+- ``resolve(capability, ...)``  → build a provider
+- ``Resolved``                  → return type, delegates to the instance
+- ``ProviderError``             → raised on any resolution failure
+- ``is_capability_available()`` → cheap deployment-level probe (circuit breakers)
+- ``list_providers(capability)`` → discovery UI helper
+- ``probe_providers()``         → startup status summary
 """
 
-# Base interfaces
 from .base import (
     ModelSpec,
     LLMModelSpec,
@@ -26,26 +33,19 @@ from .base import (
     ProviderSelection,
     LanguageDefaults,
     ProviderDefaults,
+    EnrichmentConfig,
 )
 
-# Registry + resolution
 from .registry import (
     resolve,
-    is_accessible,
+    Resolved,
+    ProviderError,
     is_capability_available,
-    discover_models,
-    load_credentials,
-    probe_providers,
-    system_default_provider_key,
-    get_descriptor,
     list_providers,
-    get_provider,
-    get_storage_provider,
-    get_scraping_provider,
-    get_web_search_provider,
-    get_embedding_provider,
-    get_geocoding_provider,
-    get_ocr_provider,
+    get_model_spec,
+    get_selection,
+    probe_providers,
+    CAPABILITIES,
 )
 
 __all__ = [
@@ -57,6 +57,7 @@ __all__ = [
     "ProviderSelection",
     "LanguageDefaults",
     "ProviderDefaults",
+    "EnrichmentConfig",
     # Provider protocols
     "StorageProvider",
     "FileStat",
@@ -69,22 +70,14 @@ __all__ = [
     "LanguageModelProvider",
     "ModelInfo",
     "GenerationResponse",
-    # Resolution
+    # Resolution — public API
     "resolve",
-    "is_accessible",
+    "Resolved",
+    "ProviderError",
     "is_capability_available",
-    "discover_models",
-    "load_credentials",
-    "probe_providers",
-    "system_default_provider_key",
-    "get_descriptor",
     "list_providers",
-    "get_provider",
-    # Convenience getters
-    "get_storage_provider",
-    "get_scraping_provider",
-    "get_web_search_provider",
-    "get_embedding_provider",
-    "get_geocoding_provider",
-    "get_ocr_provider",
+    "get_model_spec",
+    "get_selection",
+    "probe_providers",
+    "CAPABILITIES",
 ]

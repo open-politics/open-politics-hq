@@ -37,13 +37,6 @@ class AppSettings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
     DOMAIN: str = "localhost"
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
-    OPOL_DEV_MODE: bool = os.environ.get("OPOL_DEV_MODE", "False") == "True"
-    OPOL_MODE: str = os.environ.get("OPOL_MODE", "container")
-    OPOL_API_KEY: str | None = os.environ.get("OPOL_API_KEY")
-    NOMINATIM_PORT: int = os.environ.get("NOMINATIM_PORT", 8721)
-    
-    if OPOL_DEV_MODE:
-        os.environ["PYTHONPATH"] = "/app/opol:/app"
 
     @computed_field  # type: ignore[misc]
     @property
@@ -171,8 +164,6 @@ class AppSettings(BaseSettings):
     PDF_MAX_PAGES: int = Field(default=0, env="PDF_MAX_PAGES", description="Max pages to process per PDF; 0 = no limit")
     # process_content Celery rate limit (e.g. "10/s", "100/m"); empty = no limit (prevents Redis queue flooding at import scale)
     PROCESS_CONTENT_RATE_LIMIT: str = Field(default="10/s", env="PROCESS_CONTENT_RATE_LIMIT")
-    # Re-resolve singleton window: only consider EntityCanonicals created in last N days; 0 = no time limit
-    RESOLVE_SINGLETON_WINDOW_DAYS: int = Field(default=7, env="RESOLVE_SINGLETON_WINDOW_DAYS")
     # Enrichers to dispatch: comma-separated names, "*" for all, empty = none.
     # Values: hash, ocr, geocoding, language_detection, quality_score, embedding
     ENABLED_ENRICHERS: str = Field(default="", env="ENABLED_ENRICHERS")
@@ -197,29 +188,42 @@ class AppSettings(BaseSettings):
         return frozenset(n.strip() for n in raw.split(",") if n.strip())
 
     # === Provider Access Control ===
-    # Per-provider access levels, set via PROVIDER_ACCESS_<CAPABILITY>_<TYPE_KEY> env vars.
-    # Capability names match CAPABILITIES dict: language, embedding, ocr, geocoding, storage, scraping, web_search.
-    # Values: "all" (any user can use system key), "superuser" (superuser only), "none" (disabled).
-    # Smart defaults: is_local → "all", cloud → "none" (system key not shared).
-    # Users who bring their own key always get through regardless of access level.
+    # Per-provider access levels, set via PROVIDER_ACCESS_<CAPABILITY>_<PROVIDER_KEY> env vars.
+    # Capability names: language, embedding, ocr, geocoding, storage, scraping, web_search.
+    # Values: "all" (any infospace owner), "superuser" (superuser owners only), "none" (blocked).
+    # Default (unset): env key is NOT shared — infospace owners must bring their own key.
     # Examples:
-    #   PROVIDER_ACCESS_LANGUAGE_ollama=all       # any user can use system Ollama for LLM
-    #   PROVIDER_ACCESS_LANGUAGE_openai=superuser  # only superusers can use system OpenAI key
-    #   PROVIDER_ACCESS_EMBEDDING_ollama=all
+    #   PROVIDER_ACCESS_LANGUAGE_ollama=all         # share system Ollama with every infospace
+    #   PROVIDER_ACCESS_LANGUAGE_openai=superuser   # share system OpenAI with superuser-owned infospaces
+    #   PROVIDER_ACCESS_EMBEDDING_jina=all
     #   PROVIDER_ACCESS_OCR_tesseract=all
+    # Legacy: PROVIDER_ACCESS_LLM_* is silently rewritten to LANGUAGE_* with a warning.
 
     @computed_field  # type: ignore[misc]
     @property
     def provider_access(self) -> Dict[str, str]:
-        """Parse PROVIDER_ACCESS_* env vars into {capability_typekey: access_level} dict."""
+        """Parse PROVIDER_ACCESS_* env vars into {capability_providerkey: access_level} dict."""
         result: Dict[str, str] = {}
         prefix = "PROVIDER_ACCESS_"
+        legacy_llm_seen = False
         for key, value in os.environ.items():
-            if key.startswith(prefix) and value.strip():
-                # PROVIDER_ACCESS_LLM_ollama → "llm_ollama"
-                suffix = key[len(prefix):].lower()
-                if value.strip().lower() in ("all", "superuser", "none"):
-                    result[suffix] = value.strip().lower()
+            if not key.startswith(prefix) or not value.strip():
+                continue
+            suffix = key[len(prefix):].lower()
+            level = value.strip().lower()
+            if level not in ("all", "superuser", "none"):
+                continue
+            # Legacy: PROVIDER_ACCESS_LLM_* → PROVIDER_ACCESS_LANGUAGE_*
+            if suffix.startswith("llm_"):
+                legacy_llm_seen = True
+                suffix = "language_" + suffix[len("llm_"):]
+            result[suffix] = level
+        if legacy_llm_seen:
+            import logging
+            logging.getLogger(__name__).warning(
+                "PROVIDER_ACCESS_LLM_* env vars are deprecated; rename to "
+                "PROVIDER_ACCESS_LANGUAGE_*."
+            )
         return result
 
     # === Provider Configurations ===
@@ -246,9 +250,25 @@ class AppSettings(BaseSettings):
     ENCRYPTION_MASTER_KEY: str = Field(
         default="",
         env="ENCRYPTION_MASTER_KEY",
-        description="Master encryption key for user API key storage (REQUIRED in production)"
+        description="Primary Fernet key — used to ENCRYPT user API key storage (REQUIRED in production)"
     )
-    
+    # Decrypt-only legacy keys, comma-separated. Used ONLY during key rotation so
+    # ciphertext written under an old key stays readable. Never used to encrypt.
+    ENCRYPTION_MASTER_KEY_FALLBACKS: str = Field(
+        default="",
+        env="ENCRYPTION_MASTER_KEY_FALLBACKS",
+        description="Comma-separated decrypt-only legacy Fernet keys for rotation; remove once rotation verified"
+    )
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def encryption_keys(self) -> List[str]:
+        """Ordered Fernet keys for MultiFernet. Index 0 (primary) encrypts;
+        all keys are decrypt candidates. Single-key .env => list of one =>
+        behaves exactly like the old single-Fernet path."""
+        keys = [self.ENCRYPTION_MASTER_KEY, *self.ENCRYPTION_MASTER_KEY_FALLBACKS.split(",")]
+        return [k.strip() for k in keys if k and k.strip()]
+
     # Credentials (ensure these environment variables are set for the chosen provider)
     GOOGLE_API_KEY: Optional[str] = Field(default=None, env="GOOGLE_API_KEY")
     OPENAI_API_KEY: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
@@ -257,27 +277,12 @@ class AppSettings(BaseSettings):
     ANTHROPIC_BASE_URL: Optional[str] = Field(default=None, env="ANTHROPIC_BASE_URL")
     MISTRAL_API_KEY: Optional[str] = Field(default=None, env="MISTRAL_API_KEY")
     MISTRAL_BASE_URL: Optional[str] = Field(default=None, env="MISTRAL_BASE_URL")
-    # OPOL specific config (if OPOL is used as an abstraction layer)
-    OPOL_MODE: Optional[Literal["remote", "local", "container"]] = Field(default="remote", env="OPOL_MODE")
-    OPOL_API_KEY: Optional[str] = Field(default=None, env="OPOL_API_KEY")
-    # Ollama specific (if OPOL uses it, or if you add a native Ollama provider)
-    # Use host.docker.internal for Docker containers to reach host machine's Ollama
+    # Ollama (native provider). Use host.docker.internal to reach the host's Ollama from a container.
     OLLAMA_BASE_URL: Optional[str] = Field(default="http://host.docker.internal:11434", env="OLLAMA_BASE_URL")
-    OLLAMA_DEFAULT_MODEL: Optional[str] = Field(default="llama3", env="OLLAMA_DEFAULT_MODEL")
-
-
-    # --- Geospatial Provider ---
-    GEOSPATIAL_PROVIDER_TYPE: Literal["opol", "nominatim"] = Field(default="opol", env="GEOSPATIAL_PROVIDER_TYPE")
-    NOMINATIM_DOMAIN: Optional[str] = Field(default="nominatim.openstreetmap.org", env="NOMINATIM_DOMAIN")
 
     # --- Embedding settings (provider is per-infospace via enrichment_config.embedding) ---
-    # Ollama embedding settings
-    OLLAMA_EMBEDDING_MODEL: str = Field(default="nomic-embed-text", env="OLLAMA_EMBEDDING_MODEL")
-    # Jina AI embedding settings  
     JINA_API_KEY: Optional[str] = Field(default=None, env="JINA_API_KEY")
     JINA_EMBEDDING_MODEL: str = Field(default="jina-embeddings-v5-text-small", env="JINA_EMBEDDING_MODEL")
-    # OpenAI embedding settings (for future use)
-    OPENAI_EMBEDDING_MODEL: str = Field(default="text-embedding-3-small", env="OPENAI_EMBEDDING_MODEL")
     VOYAGE_API_KEY: Optional[str] = Field(default=None, env="VOYAGE_API_KEY")
     VOYAGE_BASE_URL: Optional[str] = Field(default=None, env="VOYAGE_BASE_URL")
 
@@ -338,8 +343,6 @@ class AppSettings(BaseSettings):
     DEFAULT_ANNOTATION_CONCURRENCY: int = Field(default=5, env="DEFAULT_ANNOTATION_CONCURRENCY")
     # Maximum allowed concurrency to prevent overwhelming external APIs
     MAX_ANNOTATION_CONCURRENCY: int = Field(default=20, env="MAX_ANNOTATION_CONCURRENCY")
-    # Enable/disable parallel processing (fallback to sequential if disabled)
-    ENABLE_PARALLEL_ANNOTATION_PROCESSING: bool = Field(default=True, env="ENABLE_PARALLEL_ANNOTATION_PROCESSING")
     # Chunk size for per-chunk commits in large runs (50K-asset run avoids single tx)
     ANNOTATION_CHUNK_SIZE: int = Field(default=50, env="ANNOTATION_CHUNK_SIZE")
     

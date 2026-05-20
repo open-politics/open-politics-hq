@@ -51,10 +51,9 @@ def _is_capability_configured(capability_name: str) -> bool:
     """Check if any provider for this capability is accessible in this deployment."""
     from app.api.modules.foundation_service_providers.registry import CAPABILITIES, is_capability_available
     from app.core.config import settings
-    protocol = CAPABILITIES.get(capability_name)
-    if not protocol:
+    if capability_name not in CAPABILITIES:
         return True  # unknown capability = don't block
-    return is_capability_available(protocol, settings)
+    return is_capability_available(capability_name, settings)
 
 
 def _is_due(descriptor) -> bool:
@@ -87,10 +86,15 @@ def _dispatch_task_for_infospace(desc, infospace_id: int, budget: int = MAX_PER_
     """
     from app.core.db import engine
     from app.core.celery_app import celery_app
-    from app.core.tasks import filter_failed_items
+    from app.core.tasks import filter_failed_items, is_structurally_blocked
 
     # Check capability availability
     if desc.capability and not _is_capability_configured(desc.capability):
+        return 0
+
+    # Structural block — set by previous ProviderError, cleared on config save.
+    # Cheap Redis lookup, no DB hit.
+    if is_structurally_blocked(desc.name, infospace_id):
         return 0
 
     # Apply dispatch_filter (enrichment config + ENABLED_ENRICHERS)

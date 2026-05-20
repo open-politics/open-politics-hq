@@ -87,6 +87,53 @@ class SecurityHeadersMiddleware:
 
 app.add_middleware(SecurityHeadersMiddleware)
 
+
+class SseNoTransformMiddleware:
+    """Force no-transform / no-buffering on every ``text/event-stream`` response.
+
+    Why: gzip middleware in upstream proxies (Next.js dev rewrites, nginx)
+    will batch small SSE frames before flushing, which defeats live progress
+    streams entirely (banner sits at 0% then jumps to 100% at connection close).
+    Standards-compliant ``Cache-Control: no-transform`` plus the nginx hint
+    ``X-Accel-Buffering: no`` plus ``Content-Encoding: identity`` covers all
+    proxy variants we've seen. Applied globally so any future SSE route
+    inherits the fix without per-route plumbing.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_sse_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                # Detect SSE responses by content-type — only those need this.
+                is_sse = any(
+                    name == b"content-type" and b"text/event-stream" in value.lower()
+                    for name, value in headers
+                )
+                if is_sse:
+                    # Drop any existing Cache-Control / Content-Encoding the app
+                    # may have set, then add the no-transform set. Idempotent.
+                    headers = [
+                        (n, v) for (n, v) in headers
+                        if n not in (b"cache-control", b"content-encoding", b"x-accel-buffering")
+                    ]
+                    headers.append((b"cache-control", b"no-cache, no-store, no-transform"))
+                    headers.append((b"x-accel-buffering", b"no"))
+                    headers.append((b"content-encoding", b"identity"))
+                    message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_sse_headers)
+
+
+app.add_middleware(SseNoTransformMiddleware)
+
 # Mount the MCP server only when COMPUTE capability is in the deployment ceiling.
 # MCP exposes workspace search, annotation runs, and asset CRUD — all require compute.
 if "compute" in settings.deployment_capability_names:

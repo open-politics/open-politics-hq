@@ -105,6 +105,36 @@ class StreamWriter:
             pass
 
 
+# ── Family fan-out (annotation run extensions) ──────────────────────────────
+
+
+class FamilyStreamWriter:
+    """Writes the same event to a primary stream and an optional mirror stream.
+
+    Used by annotation extension runs: events need to land on the child run's
+    own stream (so anyone watching the child sees them) AND on the parent
+    run's stream (so panels bound to the parent refetch on activity).
+
+    Construct with the primary key and an optional mirror key. ``send`` and
+    ``expire`` fan out to both. Mirror failures don't affect the primary.
+    """
+
+    def __init__(self, primary_key: str, mirror_key: str | None = None):
+        self._primary = StreamWriter(primary_key)
+        self._mirror = StreamWriter(mirror_key) if mirror_key else None
+
+    def send(self, event: str, data: Any) -> bool:
+        ok = self._primary.send(event, data)
+        if self._mirror:
+            self._mirror.send(event, data)
+        return ok
+
+    def expire(self, ttl: int | None = None) -> None:
+        self._primary.expire(ttl)
+        if self._mirror:
+            self._mirror.expire(ttl)
+
+
 # ── Async Redis client (for StreamHub) ───────────────────────────────────────
 
 _async_pool = None

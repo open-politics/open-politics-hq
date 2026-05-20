@@ -22,23 +22,16 @@ from app.api.modules.foundation_service_providers.base import (
     WebSearchProvider,
     GeocodingProvider,
 )
-from app.api.modules.foundation_service_providers.registry import (
-    get_storage_provider,
-    get_scraping_provider,
-    get_web_search_provider,
-    get_geocoding_provider,
-)
+from app.api.modules.foundation_service_providers import resolve
 # --- Service Class Imports (direct paths to avoid circular import) ---
 from app.api.modules.annotation.services import AnnotationService
 from app.api.modules.identity_infospace_user.services import InfospaceService
 from app.api.modules.sharing.services import ShareableService, PackageService, BackupService, UserBackupService
 from app.api.modules.content.services import (
-    AssetService, BundleService, SourceService,
+    BundleService, SourceService,
     ProcessingService, DatasetService,
 )
-from app.api.modules.analysis.services import AnalysisService
 from app.api.modules.flow.services import TaskService
-from app.api.modules.embedding.services import EmbeddingService
 from app.api.modules.conversational_intelligence.services.conversation_service import (
     IntelligenceConversationService,
 )
@@ -129,23 +122,20 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
         )
     return current_user
 
-# --- Provider Dependencies (registry lookup, no if/elif) ---
-def get_storage_provider_dependency(settings: SettingsDep) -> StorageProvider:
-    return get_storage_provider(settings)
+# --- Provider Dependencies ---
+# Infrastructure providers (storage, scraping) resolve at the deployment level.
+# Credential-bearing capabilities (web_search, geocoding) need an infospace_id —
+# routes that need them should call resolve() directly with access.infospace_id
+# rather than using a generic dep factory.
 
-def get_scraping_provider_dependency(settings: SettingsDep) -> ScrapingProvider:
-    return get_scraping_provider(settings)
+def get_storage_provider_dependency() -> StorageProvider:
+    return resolve("storage")
 
-def get_web_search_provider_dependency(settings: SettingsDep) -> WebSearchProvider:
-    return get_web_search_provider(settings)
-
-def get_geocoding_provider_dependency(settings: SettingsDep) -> GeocodingProvider:
-    return get_geocoding_provider(settings)
+def get_scraping_provider_dependency() -> ScrapingProvider:
+    return resolve("scraping")
 
 StorageProviderDep = Annotated[StorageProvider, Depends(get_storage_provider_dependency)]
 ScrapingProviderDep = Annotated[ScrapingProvider, Depends(get_scraping_provider_dependency)]
-WebSearchProviderDep = Annotated[WebSearchProvider, Depends(get_web_search_provider_dependency)]
-GeocodingProviderDep = Annotated[GeocodingProvider, Depends(get_geocoding_provider_dependency)]
 
 
 
@@ -159,14 +149,6 @@ def get_infospace_service(request: Request, session: SessionDep, settings: Setti
     setattr(request.state, service_name, instance)
     return instance
 InfospaceServiceDep = Annotated[InfospaceService, Depends(get_infospace_service)]
-
-def get_asset_service(request: Request, session: SessionDep, storage_provider: StorageProviderDep) -> AssetService:
-    service_name = "asset_service"
-    if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = AssetService(session=session, storage_provider=storage_provider)
-    setattr(request.state, service_name, instance)
-    return instance
-AssetServiceDep = Annotated[AssetService, Depends(get_asset_service)]
 
 def get_bundle_service(request: Request, session: SessionDep) -> BundleService:
     service_name = "bundle_service"
@@ -189,7 +171,6 @@ def get_processing_service(
     session: SessionDep,
     storage_provider: StorageProviderDep,
     scraping_provider: ScrapingProviderDep,
-    asset_service: AssetServiceDep,
 ) -> ProcessingService:
     service_name = "processing_service"
     if hasattr(request.state, service_name):
@@ -198,7 +179,6 @@ def get_processing_service(
         session=session,
         storage_provider=storage_provider,
         scraping_provider=scraping_provider,
-        asset_service=asset_service,
     )
     setattr(request.state, service_name, instance)
     return instance
@@ -207,11 +187,10 @@ ProcessingServiceDep = Annotated[ProcessingService, Depends(get_processing_servi
 
 def get_annotation_service(
     request: Request, session: SessionDep,
-    asset_service: AssetServiceDep,
 ) -> AnnotationService:
     service_name = "annotation_service"
     if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = AnnotationService(session=session, asset_service=asset_service)
+    instance = AnnotationService(session=session)
     setattr(request.state, service_name, instance)
     return instance
 AnnotationServiceDep = Annotated[AnnotationService, Depends(get_annotation_service)]
@@ -221,12 +200,15 @@ def get_ingestion_context_factory(
     session: SessionDep,
     storage_provider: StorageProviderDep,
     scraping_provider: ScrapingProviderDep,
-    web_search_provider: WebSearchProviderDep,
-    asset_service: AssetServiceDep,
     bundle_service: BundleServiceDep,
     settings: SettingsDep,
 ):
-    """Factory that builds IngestionContext given user_id, infospace_id, options."""
+    """Factory that builds IngestionContext given user_id, infospace_id, options.
+
+    ``search_provider`` (web_search) is resolved inside the factory because it
+    needs ``infospace_id`` for credential resolution — that's not known at
+    dependency-injection time.
+    """
 
     def factory(
         user_id: int,
@@ -234,12 +216,16 @@ def get_ingestion_context_factory(
         options: Optional[dict] = None,
     ):
         from app.api.modules.content.handlers import IngestionContext
+        from app.api.modules.foundation_service_providers import resolve, ProviderError
+        try:
+            search_provider = resolve("web_search", infospace_id=infospace_id, session=session)
+        except ProviderError:
+            search_provider = None  # optional: ingestion can skip search-driven paths
         return IngestionContext(
             session=session,
             storage_provider=storage_provider,
             scraping_provider=scraping_provider,
-            search_provider=web_search_provider,
-            asset_service=asset_service,
+            search_provider=search_provider,
             bundle_service=bundle_service,
             user_id=user_id,
             infospace_id=infospace_id,
@@ -274,7 +260,7 @@ DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
 def get_package_service(
     request: Request, session: SessionDep, storage_provider: StorageProviderDep,
     annotation_service: AnnotationServiceDep,
-    asset_service: AssetServiceDep, bundle_service: BundleServiceDep,
+    bundle_service: BundleServiceDep,
     dataset_service: DatasetServiceDep,
     settings: SettingsDep
 ) -> PackageService:
@@ -283,7 +269,6 @@ def get_package_service(
     instance = PackageService(
         session=session,
         storage_provider=storage_provider,
-        asset_service=asset_service,
         annotation_service=annotation_service,
         bundle_service=bundle_service,
         dataset_service=dataset_service,
@@ -310,36 +295,22 @@ def get_shareable_service(
     request: Request, session: SessionDep, storage_provider: StorageProviderDep,
     settings: SettingsDep,
     annotation_service: AnnotationServiceDep,
-    infospace_service: InfospaceServiceDep, package_service: PackageServiceDep, 
-    asset_service: AssetServiceDep, bundle_service: BundleServiceDep,
+    infospace_service: InfospaceServiceDep, package_service: PackageServiceDep,
+    bundle_service: BundleServiceDep,
     dataset_service: DatasetServiceDep
 ) -> ShareableService:
     service_name = "shareable_service"
     if hasattr(request.state, service_name): return getattr(request.state, service_name)
     instance = ShareableService(
-        session=session, settings=settings, 
+        session=session, settings=settings,
         annotation_service=annotation_service, storage_provider=storage_provider,
-        infospace_service=infospace_service, dataset_service=dataset_service, 
-        package_service=package_service, asset_service=asset_service, 
+        infospace_service=infospace_service, dataset_service=dataset_service,
+        package_service=package_service,
         bundle_service=bundle_service
     )
     setattr(request.state, service_name, instance)
     return instance
 ShareableServiceDep = Annotated[ShareableService, Depends(get_shareable_service)]
-
-def get_analysis_service(
-    request: Request, session: SessionDep,
-    annotation_service: AnnotationServiceDep, asset_service: AssetServiceDep,
-    current_user: CurrentUser, settings: SettingsDep,
-) -> AnalysisService:
-    service_name = "analysis_service"
-    if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = AnalysisService(session=session,
-                             annotation_service=annotation_service, asset_service=asset_service,
-                             current_user=current_user, settings=settings)
-    setattr(request.state, service_name, instance)
-    return instance
-AnalysisServiceDep = Annotated[AnalysisService, Depends(get_analysis_service)]
 
 def get_backup_service(
     request: Request, session: SessionDep, storage_provider: StorageProviderDep,
@@ -371,30 +342,15 @@ def get_user_backup_service(
     return instance
 UserBackupServiceDep = Annotated[UserBackupService, Depends(get_user_backup_service)]
 
-def get_embedding_service(
-    request: Request,
-    session: SessionDep,
-) -> EmbeddingService:
-    """Dependency to get embedding service with request caching."""
-    service_name = "embedding_service"
-    if hasattr(request.state, service_name):
-        return getattr(request.state, service_name)
-    instance = EmbeddingService(session=session)
-    setattr(request.state, service_name, instance)
-    return instance
-
-EmbeddingServiceDep = Annotated[EmbeddingService, Depends(get_embedding_service)]
-
 def get_conversation_service(
     request: Request, session: SessionDep,
-    asset_service: AssetServiceDep, annotation_service: AnnotationServiceDep,
+    annotation_service: AnnotationServiceDep,
     settings: SettingsDep,
 ) -> IntelligenceConversationService:
     service_name = "conversation_service"
     if hasattr(request.state, service_name): return getattr(request.state, service_name)
     instance = IntelligenceConversationService(
         session=session,
-        asset_service=asset_service,
         annotation_service=annotation_service,
         settings=settings,
     )

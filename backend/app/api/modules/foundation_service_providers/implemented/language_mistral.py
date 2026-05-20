@@ -412,7 +412,10 @@ class MistralLanguageModelProvider(LanguageModelProvider):
         """Execute a tool loop for Mistral, handling tool calls until completion."""
         import json
         
-        max_iterations = 10  # Prevent infinite loops
+        # Bumped from 10 → 20 in 2026-04 (matches Anthropic/OpenAI) — see
+        # conversation_service system prompt for the routing guidance that
+        # should keep real paths well under this cap.
+        max_iterations = 20
         iteration = 0
         
         # Build conversation by appending to messages array

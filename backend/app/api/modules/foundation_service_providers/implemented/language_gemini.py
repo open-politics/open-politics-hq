@@ -215,34 +215,37 @@ class GeminiLanguageModelProvider(LanguageModelProvider):
             raise RuntimeError(f"Gemini generation failed: {str(e)}")
     
     async def _stream_generate(self, model, generation_kwargs: Dict) -> AsyncIterator[GenerationResponse]:
-        """Handle streaming generation"""
+        """Handle streaming generation.
+
+        Uses generate_content_async with stream=True; the SDK returns an async
+        iterable so the event loop is never blocked waiting for the next chunk.
+        """
         try:
-            # Gemini streaming
-            response_stream = model.generate_content(**generation_kwargs, stream=True)
-            
+            response_stream = await model.generate_content_async(**generation_kwargs, stream=True)
+
             accumulated_content = ""
             thinking_trace = ""
-            
-            for chunk in response_stream:
+
+            async for chunk in response_stream:
                 try:
                     chunk_text = chunk.text
                     accumulated_content += chunk_text
-                    
+
                     # Check for thinking content
                     if self._is_thinking_content(chunk_text):
                         thinking_trace += chunk_text
-                    
+
                     yield GenerationResponse(
                         content=accumulated_content,
                         model_used=generation_kwargs.get("model", self.default_model),
                         thinking_trace=thinking_trace if thinking_trace else None,
                         raw_response=chunk
                     )
-                    
+
                 except ValueError:
                     # Skip chunks that don't have text (safety filters, etc.)
                     continue
-                    
+
         except Exception as e:
             logger.error(f"Gemini streaming error: {e}")
             raise RuntimeError(f"Gemini streaming failed: {str(e)}")

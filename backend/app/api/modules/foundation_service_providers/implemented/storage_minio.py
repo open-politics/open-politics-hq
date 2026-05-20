@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import List, Optional, Any
 from minio import Minio
@@ -41,12 +42,13 @@ class MinioStorageProvider(StorageProvider):
         try:
             content = await file.read()
             await file.seek(0) # Reset pointer in case it needs to be read again by caller
-            self.client.put_object(
+            await asyncio.to_thread(
+                self.client.put_object,
                 bucket_name=self.bucket_name,
                 object_name=object_name,
                 data=io.BytesIO(content),
                 length=len(content),
-                content_type=file.content_type
+                content_type=file.content_type,
             )
             logger.info(f"File '{file.filename}' uploaded as '{object_name}' to bucket '{self.bucket_name}'.")
         except S3Error as e:
@@ -62,12 +64,13 @@ class MinioStorageProvider(StorageProvider):
             elif not guessed_content_type:
                 guessed_content_type = 'application/octet-stream'
 
-            self.client.put_object(
+            await asyncio.to_thread(
+                self.client.put_object,
                 bucket_name=self.bucket_name,
                 object_name=object_name,
                 data=io.BytesIO(file_bytes),
                 length=len(file_bytes),
-                content_type=guessed_content_type
+                content_type=guessed_content_type,
             )
             logger.info(f"Bytes uploaded as '{object_name}' (content-type: {guessed_content_type}) to bucket '{self.bucket_name}'.")
         except S3Error as e:
@@ -101,7 +104,11 @@ class MinioStorageProvider(StorageProvider):
 
     async def get_file(self, object_name: str) -> Any:
         try:
-            response = self.client.get_object(bucket_name=self.bucket_name, object_name=object_name)
+            response = await asyncio.to_thread(
+                self.client.get_object,
+                bucket_name=self.bucket_name,
+                object_name=object_name,
+            )
             logger.debug(f"Retrieved file object '{object_name}' from bucket '{self.bucket_name}'.")
             # The response itself is a stream (urllib3.response.HTTPResponse)
             return response
@@ -114,7 +121,12 @@ class MinioStorageProvider(StorageProvider):
 
     async def download_file(self, source_object_name: str, destination_local_path: str) -> None:
         try:
-            self.client.fget_object(bucket_name=self.bucket_name, object_name=source_object_name, file_path=destination_local_path)
+            await asyncio.to_thread(
+                self.client.fget_object,
+                bucket_name=self.bucket_name,
+                object_name=source_object_name,
+                file_path=destination_local_path,
+            )
             logger.info(f"File '{source_object_name}' downloaded to '{destination_local_path}'.")
         except S3Error as e:
             if e.code == "NoSuchKey":
@@ -124,7 +136,11 @@ class MinioStorageProvider(StorageProvider):
 
     async def delete_file(self, object_name: str) -> None:
         try:
-            self.client.remove_object(bucket_name=self.bucket_name, object_name=object_name)
+            await asyncio.to_thread(
+                self.client.remove_object,
+                bucket_name=self.bucket_name,
+                object_name=object_name,
+            )
             logger.info(f"File '{object_name}' deleted from bucket '{self.bucket_name}'.")
         except S3Error as e:
             # Idempotency: if it's already gone, don't raise error, just log
@@ -153,9 +169,13 @@ class MinioStorageProvider(StorageProvider):
         limit: Optional[int] = None,
         offset: int = 0,
     ) -> List[str]:
-        try:
+        def _collect() -> List[str]:
+            # list_objects returns a generator that makes HTTP calls while iterating,
+            # so both construction AND iteration must happen in the worker thread.
             objects = self.client.list_objects(bucket_name=self.bucket_name, prefix=prefix, recursive=True)
-            result = [obj.object_name for obj in objects]
+            return [obj.object_name for obj in objects]
+        try:
+            result = await asyncio.to_thread(_collect)
             if offset > 0:
                 result = result[offset:]
             if limit is not None:
@@ -164,13 +184,22 @@ class MinioStorageProvider(StorageProvider):
         except S3Error as e:
             logger.error(f"S3Error listing files with prefix '{prefix}': {e}", exc_info=True)
             raise IOError(f"Minio list_files failed: {e}") from e
-        
+
     async def move_file(self, source_object_name: str, destination_object_name: str) -> None:
         from minio.commonconfig import CopySource # Local import
         try:
             copy_source = CopySource(bucket=self.bucket_name, object=source_object_name)
-            self.client.copy_object(bucket_name=self.bucket_name, object_name=destination_object_name, source=copy_source)
-            self.client.remove_object(bucket_name=self.bucket_name, object_name=source_object_name) # Delete original after copy
+            await asyncio.to_thread(
+                self.client.copy_object,
+                bucket_name=self.bucket_name,
+                object_name=destination_object_name,
+                source=copy_source,
+            )
+            await asyncio.to_thread(
+                self.client.remove_object,
+                bucket_name=self.bucket_name,
+                object_name=source_object_name,
+            )
             logger.info(f"File moved from '{source_object_name}' to '{destination_object_name}' in bucket '{self.bucket_name}'.")
         except S3Error as e:
             logger.error(f"S3Error moving file from '{source_object_name}' to '{destination_object_name}': {e}", exc_info=True)
@@ -181,7 +210,12 @@ class MinioStorageProvider(StorageProvider):
         src_bucket = source_bucket_name if source_bucket_name else self.bucket_name
         try:
             copy_source = CopySource(bucket=src_bucket, object=source_object_name)
-            self.client.copy_object(bucket_name=self.bucket_name, object_name=destination_object_name, source=copy_source)
+            await asyncio.to_thread(
+                self.client.copy_object,
+                bucket_name=self.bucket_name,
+                object_name=destination_object_name,
+                source=copy_source,
+            )
             logger.info(f"File copied from '{src_bucket}/{source_object_name}' to '{self.bucket_name}/{destination_object_name}'.")
         except S3Error as e:
             logger.error(f"S3Error copying file from '{src_bucket}/{source_object_name}' to '{self.bucket_name}/{destination_object_name}': {e}", exc_info=True)

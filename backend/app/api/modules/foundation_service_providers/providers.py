@@ -15,24 +15,21 @@ Most providers only need ``api_key`` and ``base_url``, which ``_build_config``
 handles automatically. The ``extra`` lambdas exist for providers whose
 implementations have non-standard constructor signatures — see inline comments
 on each for the specific reason.
+
+``model_required=False`` is set on Capability declarations where the provider
+has a single fixed implementation and no model selection (Tesseract, Mapbox,
+NominatimAPI, SearXNG, Tavily, MinIO, LocalFS, Newspaper4k). Everything else
+defaults to ``model_required=True``.
 """
 
-from app.core.config import AppSettings
 from app.api.modules.foundation_service_providers.base import (
     LLMModelSpec,
     EmbeddingModelSpec,
-    StorageProvider,
-    ScrapingProvider,
-    WebSearchProvider,
-    EmbeddingProvider,
-    GeocodingProvider,
-    OcrProvider,
 )
 from app.api.modules.foundation_service_providers.registry import (
     Setting,
     Capability,
     provider,
-    get_provider,
 )
 
 
@@ -327,7 +324,7 @@ class Voyage:
 class Tesseract:
     key = "tesseract"
     contexts = {"local"}
-    ocr = Capability("ocr_tesseract.TesseractOcrProvider")
+    ocr = Capability("ocr_tesseract.TesseractOcrProvider", model_required=False)
 
 
 # ── Geocoding ─────────────────────────────────────────────────────────────────
@@ -337,15 +334,21 @@ class NominatimLocal:
     key = "local"
     base_url = Setting("NOMINATIM_BASE_URL", default="http://nominatim:8080")
     contexts = {"local", "self_hosted"}
-    geocoding = Capability("geocoding_nominatim_local.NominatimLocalGeocodingProvider")
+    geocoding = Capability(
+        "geocoding_nominatim_local.NominatimLocalGeocodingProvider",
+        model_required=False,
+    )
 
 
 @provider
 class NominatimAPI:
     key = "nominatim_api"
     contexts = {"cloud"}
-    geocoding = Capability("geocoding_nominatim_api.NominatimAPIGeocodingProvider",
-        extra=lambda s: {"user_agent": s.GEOCODING_USER_AGENT})  # nominatim blocks requests without a user-agent
+    geocoding = Capability(
+        "geocoding_nominatim_api.NominatimAPIGeocodingProvider",
+        extra=lambda s: {"user_agent": s.GEOCODING_USER_AGENT},  # nominatim blocks requests without a user-agent
+        model_required=False,
+    )
 
 
 @provider
@@ -353,7 +356,10 @@ class Mapbox:
     key = "mapbox"
     api_key = Setting("MAPBOX_ACCESS_TOKEN")
     contexts = {"cloud"}
-    geocoding = Capability("geocoding_mapbox.MapboxGeocodingProvider")
+    geocoding = Capability(
+        "geocoding_mapbox.MapboxGeocodingProvider",
+        model_required=False,
+    )
 
 
 # ── Storage ───────────────────────────────────────────────────────────────────
@@ -362,25 +368,31 @@ class Mapbox:
 class MinIO:
     key = "minio"
     contexts = {"self_hosted"}
-    storage = Capability("storage_minio.MinioStorageProvider",
+    storage = Capability(
+        "storage_minio.MinioStorageProvider",
         extra=lambda s: {  # S3 protocol needs its own credential shape — doesn't fit api_key/base_url
             "endpoint_url": s.MINIO_ENDPOINT,
             "access_key": s.MINIO_ACCESS_KEY,
             "secret_key": s.MINIO_SECRET_KEY,
             "bucket_name": s.MINIO_BUCKET_NAME,
             "use_ssl": s.MINIO_USE_SSL,
-        })
+        },
+        model_required=False,
+    )
 
 
 @provider
 class LocalFS:
     key = "local_fs"
     contexts = {"local"}
-    storage = Capability("storage_local.LocalFileSystemStorageProvider",
+    storage = Capability(
+        "storage_local.LocalFileSystemStorageProvider",
         extra=lambda s: {  # impl resolves all paths under base_path and validates imports against allowed list
             "base_path": s.LOCAL_STORAGE_BASE_PATH,
             "allowed_import_paths": [p.strip() for p in (s.ALLOWED_IMPORT_PATHS or "").split(",") if p.strip()],
-        })
+        },
+        model_required=False,
+    )
 
 
 # ── Scraping ──────────────────────────────────────────────────────────────────
@@ -389,7 +401,8 @@ class LocalFS:
 class Newspaper4k:
     key = "newspaper4k"
     contexts = {"local"}
-    scraping = Capability("scraping_newspaper4k.Newspaper4kScrapingProvider",
+    scraping = Capability(
+        "scraping_newspaper4k.Newspaper4kScrapingProvider",
         extra=lambda s: {"config": {  # newspaper4k builds its internal Config once at init from this dict
             "timeout": getattr(s, "SCRAPING_TIMEOUT", 30),
             "threads": getattr(s, "SCRAPING_THREADS", 4),
@@ -397,7 +410,9 @@ class Newspaper4k:
             "enable_nlp": getattr(s, "SCRAPING_ENABLE_NLP", False),
             "language": getattr(s, "SCRAPING_DEFAULT_LANGUAGE", "en"),
             "user_agent": getattr(s, "SCRAPING_USER_AGENT", None),
-        }})
+        }},
+        model_required=False,
+    )
 
 
 # ── Web Search ────────────────────────────────────────────────────────────────
@@ -407,7 +422,10 @@ class Tavily:
     key = "tavily"
     api_key = Setting("TAVILY_API_KEY")
     contexts = {"cloud"}
-    web_search = Capability("web_search_tavily.TavilyWebSearchProvider")
+    web_search = Capability(
+        "web_search_tavily.TavilyWebSearchProvider",
+        model_required=False,
+    )
 
 
 @provider
@@ -415,34 +433,7 @@ class SearXNG:
     key = "searxng"
     base_url = Setting("SEARXNG_BASE_URL", default="http://searxng:8080")
     contexts = {"local", "self_hosted"}
-    web_search = Capability("web_search_searxng.SearXNGWebSearchProvider")
-
-
-# ── Convenience getters ──────────────────────────────────────────────────────
-
-def get_storage_provider(settings: AppSettings):
-    return get_provider(StorageProvider, settings.STORAGE_PROVIDER_TYPE.lower(), settings)
-
-
-def get_scraping_provider(settings: AppSettings):
-    provider_type = getattr(settings, "SCRAPING_PROVIDER_TYPE", "newspaper4k").lower()
-    return get_provider(ScrapingProvider, provider_type, settings)
-
-
-def get_web_search_provider(settings: AppSettings):
-    provider_type = getattr(settings, "WEB_SEARCH_PROVIDER_TYPE", "searxng").lower()
-    return get_provider(WebSearchProvider, provider_type, settings)
-
-
-def get_embedding_provider(settings: AppSettings, type_key: str = "ollama"):
-    """Get an embedding provider by explicit type_key (no system-wide default)."""
-    return get_provider(EmbeddingProvider, type_key.lower(), settings)
-
-
-def get_geocoding_provider(settings: AppSettings):
-    return get_provider(GeocodingProvider, settings.GEOCODING_PROVIDER_TYPE.lower(), settings)
-
-
-def get_ocr_provider(settings: AppSettings):
-    provider_type = getattr(settings, "OCR_PROVIDER_TYPE", "tesseract").lower()
-    return get_provider(OcrProvider, provider_type, settings)
+    web_search = Capability(
+        "web_search_searxng.SearXNGWebSearchProvider",
+        model_required=False,
+    )

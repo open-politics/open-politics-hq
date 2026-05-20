@@ -119,18 +119,22 @@ class NominatimAPIGeocodingProvider:
             logger.info(f"  returning coordinates: [{lon}, {lat}] (as [lon, lat])")
             logger.info(f"  type: {osm_class}/{osm_type}")
             
-            # Calculate approximate area from bounding box
+            # Calculate approximate area from bounding box. Nominatim returns
+            # boundingbox values as strings — convert once and use the floats
+            # for both the area computation AND the returned bbox so downstream
+            # consumers (frontend polygon renderer) get numeric coords.
             area = None
+            bbox_floats: list[float] | None = None
             if len(boundingbox) == 4:
                 bbox_floats = [float(b) for b in boundingbox]
                 lat_diff = bbox_floats[1] - bbox_floats[0]
                 lon_diff = bbox_floats[3] - bbox_floats[2]
                 area = lat_diff * lon_diff
-            
+
             return {
                 'coordinates': [lon, lat],
                 'location_type': location_type,
-                'bbox': boundingbox if boundingbox else None,
+                'bbox': bbox_floats,  # [south, north, west, east] floats
                 'area': area,
                 'display_name': result.get('display_name', location),
                 'geometry': result.get('geojson')  # Future: complex polygons/borders
