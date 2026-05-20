@@ -1,34 +1,34 @@
 'use client';
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { AssetKind } from '@/client/';
 import {
-    Loader2, UploadCloud, Link as LinkIcon, FileText, X, FileSpreadsheet,
-    List, Type, Undo2, RefreshCw, Image as ImageIcon, Video, Music, Mail,
-    FileUp, Plus, Trash2, Globe, CheckCircle, Clock, Upload, ExternalLink, Rss, Search
+    Loader2, FileText, X, FileSpreadsheet,
+    Type, Image as ImageIcon, Video, Music, Mail,
+    FileUp, Plus, Globe, CheckCircle, Clock,
+    Folder, FolderOpen, FileArchive, FileType, AlertTriangle,
+    ChevronRight, ChevronDown
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { AlertTriangle } from "lucide-react"
 import { cn } from '@/lib/utils';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { AssetRead } from '@/client/';
-import RssFeedBrowser from '../RssFeedBrowser';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
+import { useTreeStore } from '@/zustand_stores/storeTree';
 import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { fromEvent, FileWithPath } from 'file-selector';
 
 
 interface CreateAssetDialogProps {
@@ -42,16 +42,21 @@ interface CreateAssetDialogProps {
 
 interface BundleItem {
   id: string;
-  type: 'file' | 'url' | 'text';
+  type: 'file' | 'url' | 'text' | 'archive';
   kind: AssetKind;
   title: string;
   file?: File;
+  /** Relative path within the dropped folder/zip — defaults to file.name for flat drops. */
+  relativePath?: string;
   url?: string;
   textContent?: string;
   status?: 'pending' | 'uploading' | 'processing' | 'complete' | 'error';
   progress?: number;
   error?: string;
 }
+
+/** Pair produced by readEntry / folder picker — File + its relative path within the drop. */
+interface FilePair { file: File; relativePath: string; }
 
 interface UploadProgress {
   phase: 'preparing' | 'uploading' | 'processing' | 'complete' | 'error';
@@ -61,1433 +66,973 @@ interface UploadProgress {
   totalItems: number;
   completedItems: number;
   errors?: { item: string; error: string }[];
-  backgroundTasks?: Array<{
-    id: string;
-    status: 'pending' | 'processing' | 'success' | 'failed';
-    progress?: number;
-    result?: any;
-  }>;
 }
 
-const assetKinds: { value: AssetKind; label: string; description: string; icon: React.ElementType, group: 'file' | 'web' | 'text' }[] = [
-  { value: 'pdf', label: 'PDF', description: 'Upload PDF documents.', icon: FileText, group: 'file' },
-  { value: 'csv', label: 'CSV', description: 'Upload CSV files.', icon: FileSpreadsheet, group: 'file' },
-  { value: 'image', label: 'Image(s)', description: 'Upload JPG, PNG, GIF files.', icon: ImageIcon, group: 'file' },
-  { value: 'video', label: 'Video(s)', description: 'Upload MP4, MOV, AVI files.', icon: Video, group: 'file' },
-  { value: 'audio', label: 'Audio(s)', description: 'Upload MP3, WAV, M4A files.', icon: Music, group: 'file' },
-  { value: 'mbox', label: 'Email Box', description: 'Upload .mbox email archives.', icon: Mail, group: 'file' },
-  { value: 'web', label: 'Web URL(s)', description: 'Scrape content from web pages.', icon: LinkIcon, group: 'web' },
-  { value: 'text', label: 'Text Block', description: 'Paste or type raw text.', icon: Type, group: 'text' },
-  { value: 'article', label: 'Article', description: 'Create an article container with related assets.', icon: FileText, group: 'text' },
+// ── Asset kind metadata ──────────────────────────────────────────────────────
+
+const assetKinds: { value: AssetKind; label: string; icon: React.ElementType; accept: string }[] = [
+  { value: 'pdf',   label: 'PDF',   icon: FileText,       accept: '.pdf' },
+  { value: 'csv',   label: 'CSV',   icon: FileSpreadsheet, accept: '.csv,text/csv' },
+  { value: 'image', label: 'Image', icon: ImageIcon,       accept: 'image/*' },
+  { value: 'video', label: 'Video', icon: Video,           accept: 'video/*' },
+  { value: 'audio', label: 'Audio', icon: Music,           accept: 'audio/*' },
+  { value: 'mbox',  label: 'MBOX',  icon: Mail,            accept: '.mbox' },
 ];
 
-const getAcceptString = (kind: AssetKind | null): string => {
-    switch(kind) {
-        case 'pdf': return '.pdf';
-        case 'csv': return '.csv, text/csv';
-        case 'image': return 'image/*';
-        case 'video': return 'video/*';
-        case 'audio': return 'audio/*';
-        case 'mbox': return '.mbox';
-        default: return '*/*';
-    }
-}
+const ARCHIVE_EXTENSIONS = ['.zip', '.tar', '.gz', '.tgz', '.tar.gz', '.tar.bz2', '.tbz2'];
+
+/** True if `url` ends (ignoring query/fragment) in an archive extension. */
+const isArchiveUrl = (url: string): boolean => {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    return ARCHIVE_EXTENSIONS.some(ext => path.endsWith(ext));
+  } catch {
+    return false;
+  }
+};
+
+const isArchiveFile = (file: File): boolean => {
+  const name = file.name.toLowerCase();
+  return ARCHIVE_EXTENSIONS.some(ext => name.endsWith(ext));
+};
 
 const getKindFromFile = (file: File): AssetKind => {
-  const mimeType = file.type.toLowerCase();
-  const extension = file.name.split('.').pop()?.toLowerCase();
-  
-  if (mimeType.includes('pdf') || extension === 'pdf') return 'pdf';
-  if (mimeType.includes('csv') || extension === 'csv') return 'csv';
-  if (mimeType.startsWith('image/')) return 'image';
-  if (mimeType.startsWith('video/')) return 'video';
-  if (mimeType.startsWith('audio/')) return 'audio';
-  if (extension === 'mbox') return 'mbox';
-  
-  return 'text'; // Default fallback
+  const mime = file.type.toLowerCase();
+  const ext = file.name.split('.').pop()?.toLowerCase();
+  if (mime.includes('pdf') || ext === 'pdf') return 'pdf';
+  if (mime.includes('csv') || ext === 'csv') return 'csv';
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (ext === 'mbox') return 'mbox';
+  return 'text';
 };
 
-const getItemIcon = (item: BundleItem) => {
-  const kindInfo = assetKinds.find(k => k.value === item.kind);
-  return kindInfo?.icon || FileText;
+const getItemIcon = (item: BundleItem): React.ElementType => {
+  if (item.type === 'archive') return FileArchive;
+  if (item.type === 'url') return Globe;
+  if (item.type === 'text') return Type;
+  const found = assetKinds.find(k => k.value === item.kind);
+  return found?.icon || FileText;
 };
 
-const getStatusIcon = (status?: string) => {
+const statusIndicator = (status?: string) => {
   switch (status) {
-    case 'complete':
-      return <CheckCircle className="h-4 w-4 text-green-600" />;
+    case 'complete':    return <CheckCircle className="h-3.5 w-3.5 text-green-600" />;
     case 'uploading':
-    case 'processing':
-      return <Loader2 className="h-4 w-4 animate-spin text-blue-600" />;
-    case 'error':
-      return <AlertTriangle className="h-4 w-4 text-red-600" />;
-    default:
-      return <Clock className="h-4 w-4 text-muted-foreground" />;
+    case 'processing':  return <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />;
+    case 'error':       return <AlertTriangle className="h-3.5 w-3.5 text-red-600" />;
+    default:            return <Clock className="h-3.5 w-3.5 text-muted-foreground/50" />;
   }
 };
 
-const getStatusColor = (status?: string) => {
-  switch (status) {
-    case 'complete':
-      return 'bg-green-100/20 border-green-200';
-    case 'uploading':
-    case 'processing':
-      return 'bg-blue-300/30 border-blue-200';
-    case 'error':
-      return 'bg-red-300/30 border-red-200';
-    default:
-      return 'bg-muted/0 border-muted-foreground/0';
-  }
-};
+// ── URL extraction ───────────────────────────────────────────────────────────
+
+const URL_RE = /https?:\/\/[^\s,;"'<>()]+/gi;
+
+function extractUrls(text: string): string[] {
+  // First try line-by-line (one URL per line)
+  const lines = text.split(/[\n\r]+/).map(l => l.trim()).filter(Boolean);
+  const lineUrls = lines.filter(l => /^https?:\/\//i.test(l));
+  if (lineUrls.length > 0) return [...new Set(lineUrls)];
+  // Fall back to regex extraction
+  const matches = text.match(URL_RE);
+  return matches ? [...new Set(matches)] : [];
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
 
 export default function CreateAssetDialog({ open, onClose, mode, initialFocus, existingBundleId, existingBundleName }: CreateAssetDialogProps) {
-  const { createAsset, isLoading: storeIsLoading, error: storeError, fetchAssets } = useAssetStore();
+  const { isLoading: storeIsLoading, fetchAssets } = useAssetStore();
   const { activeInfospace } = useInfospaceStore();
-  const { bundles, fetchBundles: fetchBundlesFromStore, addAssetToBundle, fetchBundles } = useBundleStore();
-  
+  const { bundles, fetchBundles: fetchBundlesFromStore } = useBundleStore();
+
   const [bundleTitle, setBundleTitle] = useState('');
   const [items, setItems] = useState<BundleItem[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
-  
-  // Destination state
-  const [destination, setDestination] = useState<'individual' | 'new_bundle' | 'existing_bundle'>(mode === 'individual' ? 'individual' : (existingBundleId ? 'existing_bundle' : 'new_bundle'));
+
+  // Destination
+  const [destination, setDestination] = useState<'individual' | 'new_bundle' | 'existing_bundle'>(
+    mode === 'individual' ? 'individual' : (existingBundleId ? 'existing_bundle' : 'new_bundle')
+  );
   const [selectedBundleId, setSelectedBundleId] = useState<number | string | undefined>(existingBundleId);
 
-  // Adding new items state
-  const urlInputRef = React.useRef<HTMLInputElement>(null);
-  const [newUrl, setNewUrl] = useState('');
+  // Input state
+  const [bulkUrlText, setBulkUrlText] = useState('');
   const [newTextContent, setNewTextContent] = useState('');
   const [newTextTitle, setNewTextTitle] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [useBackgroundProcessing, setUseBackgroundProcessing] = useState(false);
-  const [backgroundTasks, setBackgroundTasks] = useState<any[]>([]);
-  
-  // Mobile responsive state
-  const isMobile = useIsMobile();
+  const [isDragOver, setIsDragOver] = useState(false);
+  // Tree expansion state — set of folder paths that are open.
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
 
-  // Fetch bundles when dialog opens
+  const isMobile = useIsMobile();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const urlFileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Effects ──────────────────────────────────────────────────────────────
+
   useEffect(() => {
-    if (open && activeInfospace?.id) {
-        fetchBundlesFromStore(activeInfospace.id);
-    }
+    if (open && activeInfospace?.id) fetchBundlesFromStore(activeInfospace.id);
   }, [open, activeInfospace?.id, fetchBundlesFromStore]);
 
-  // Sync state with props on open
   useEffect(() => {
     if (open) {
-      const newDestination = mode === 'individual' ? 'individual' : (existingBundleId ? 'existing_bundle' : 'new_bundle');
-      setDestination(newDestination);
+      setDestination(mode === 'individual' ? 'individual' : (existingBundleId ? 'existing_bundle' : 'new_bundle'));
       setSelectedBundleId(existingBundleId);
-      if (mode === 'bundle' && existingBundleId) {
-          setBundleTitle(existingBundleName || '');
-      } else {
-          setBundleTitle('');
-      }
+      setBundleTitle(mode === 'bundle' && existingBundleId ? (existingBundleName || '') : '');
     }
   }, [mode, existingBundleId, existingBundleName, open]);
 
-  useEffect(() => {
-    if (open && initialFocus === 'url') {
-      setTimeout(() => urlInputRef.current?.focus(), 100);
-    }
-  }, [open, initialFocus]);
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  const genId = () => `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
   const resetForm = useCallback(() => {
     setBundleTitle('');
     setItems([]);
-    setNewUrl('');
+    setBulkUrlText('');
     setNewTextContent('');
     setNewTextTitle('');
     setFormError(null);
     setUploadProgress(null);
-    setSearchQuery('');
-    setSearchResults([]);
-    setIsSearching(false);
-    setUseBackgroundProcessing(false);
-    setBackgroundTasks([]);
-    // Reset destination based on initial mode
     setDestination(mode === 'individual' ? 'individual' : (existingBundleId ? 'existing_bundle' : 'new_bundle'));
     setSelectedBundleId(existingBundleId);
   }, [mode, existingBundleId]);
 
   const handleClose = () => {
-    if (uploadProgress && uploadProgress.phase !== 'complete' && uploadProgress.phase !== 'error') {
-      // Don't allow closing during upload
-      return;
-    }
+    if (uploadProgress && uploadProgress.phase !== 'complete' && uploadProgress.phase !== 'error') return;
     resetForm();
     onClose();
   };
 
-  const generateItemId = () => `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const updateItemStatus = (id: string, status: BundleItem['status'], error?: string, progress?: number) => {
+    setItems(prev => prev.map(i => i.id === id ? { ...i, status, error, progress } : i));
+  };
 
-  const handleFileSelect = (files: FileList | null, targetKind?: AssetKind) => {
-    if (!files) return;
-    
-    const newItems: BundleItem[] = Array.from(files).map(file => ({
-      id: generateItemId(),
-      type: 'file',
-      kind: targetKind || getKindFromFile(file),
-      title: file.name.replace(/\.[^/.]+$/, ""),
-      file,
-      status: 'pending'
-    }));
-    
+  const updateItemTitle = (id: string, title: string) => {
+    setItems(prev => prev.map(i => i.id === id ? { ...i, title } : i));
+  };
+
+  const removeItem = (id: string) => setItems(prev => prev.filter(i => i.id !== id));
+
+  // ── File handling ────────────────────────────────────────────────────────
+
+  const addFiles = (input: FileList | File[] | FilePair[] | null) => {
+    if (!input) return;
+    // Normalize: accept FileList, File[] (possibly FileWithPath), or FilePair[].
+    const pairs: FilePair[] = Array.from(input as any).map((entry: any): FilePair => {
+      if (entry && (entry as FilePair).file instanceof File) return entry as FilePair;
+      const f = entry as FileWithPath;
+      // Priority: file-selector's `.path` (populated for DnD folders + directory picker)
+      // → webkitRelativePath (directory picker fallback) → file.name (plain flat drop).
+      const rel = (f.path || (f as any).webkitRelativePath || f.name || '').replace(/^\/+/, '');
+      return { file: f, relativePath: rel };
+    });
+    // Diagnostic — remove once confirmed working. Shows whether paths came through.
+    const withSlash = pairs.filter(p => p.relativePath.includes('/')).length;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[upload] addFiles: ${pairs.length} items, ${withSlash} with folder paths.`,
+      pairs.slice(0, 5).map(p => ({ name: p.file.name, path: p.relativePath })),
+    );
+    const realPairs = pairs.filter(({ file: f }) => {
+      if (f.name.startsWith('.')) return false;
+      if (f.size === 0 && !f.type && !f.name.includes('.')) return false;
+      return true;
+    });
+    if (realPairs.length === 0) return;
+
+    // Sort by relative path so the list reads like a folder tree: items in the
+    // same directory group together, directories appear in alphabetical order.
+    // `localeCompare` with numeric:true so "file2" < "file10".
+    realPairs.sort((a, b) =>
+      a.relativePath.localeCompare(b.relativePath, undefined, { numeric: true, sensitivity: 'base' })
+    );
+
+    const newItems: BundleItem[] = realPairs.map(({ file, relativePath }) => {
+      const archive = isArchiveFile(file);
+      return {
+        id: genId(),
+        type: archive ? 'archive' as const : 'file' as const,
+        kind: archive ? ('text' as AssetKind) : getKindFromFile(file),
+        title: file.name.replace(/\.[^/.]+$/, ''),
+        file,
+        relativePath,
+        status: 'pending' as const,
+      };
+    });
     setItems(prev => [...prev, ...newItems]);
     setFormError(null);
   };
 
-  const handleAddUrl = () => {
-    if (!newUrl.trim()) return;
-    
-    const newItem: BundleItem = {
-      id: generateItemId(),
-      type: 'url',
-      kind: 'web',
-      title: `Web: ${new URL(newUrl).hostname}`,
-      url: newUrl.trim(),
-      status: 'pending'
-    };
-    
-    setItems(prev => [...prev, newItem]);
-    setNewUrl('');
-    setFormError(null);
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = (await fromEvent(e.nativeEvent)) as FileWithPath[];
+    addFiles(files);
+    e.target.value = '';
   };
+
+  const handleFolderSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = (await fromEvent(e.nativeEvent)) as FileWithPath[];
+    addFiles(files);
+    e.target.value = '';
+  };
+
+  const handleKindSelect = (kind: typeof assetKinds[number]) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = kind.accept;
+    input.multiple = true;
+    input.onchange = async (e) => {
+      const files = (await fromEvent(e)) as FileWithPath[];
+      addFiles(files);
+    };
+    input.click();
+  };
+
+  // ── Drag & drop ──────────────────────────────────────────────────────────
+
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); };
+  const handleDragLeave = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    if (uploadProgress) return;
+
+    // file-selector handles DnD folder recursion (incl. the readEntries 100-item
+    // chunking quirk) and returns FileWithPath objects whose `.path` is the
+    // relative path within the dropped tree.
+    const files = (await fromEvent(e.nativeEvent)) as FileWithPath[];
+    if (files.length > 0) addFiles(files);
+  };
+
+  // ── URL handling ─────────────────────────────────────────────────────────
+
+  const handleBulkUrlAdd = () => {
+    const urls = extractUrls(bulkUrlText);
+    if (urls.length === 0) {
+      toast.error('No valid URLs found in the text.');
+      return;
+    }
+    const newItems: BundleItem[] = urls.map(url => {
+      let host = url;
+      try { host = new URL(url).hostname; } catch {}
+      return {
+        id: genId(),
+        type: 'url' as const,
+        kind: 'web' as AssetKind,
+        title: host,
+        url,
+        status: 'pending' as const,
+      };
+    });
+    setItems(prev => [...prev, ...newItems]);
+    setBulkUrlText('');
+    setFormError(null);
+    toast.success(`Added ${urls.length} URL${urls.length > 1 ? 's' : ''}`);
+  };
+
+  const handleUrlFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      if (!text) return;
+      const urls = extractUrls(text);
+      if (urls.length === 0) {
+        toast.error('No valid URLs found in the file.');
+        return;
+      }
+      const newItems: BundleItem[] = urls.map(url => {
+        let host = url;
+        try { host = new URL(url).hostname; } catch {}
+        return {
+          id: genId(),
+          type: 'url' as const,
+          kind: 'web' as AssetKind,
+          title: host,
+          url,
+          status: 'pending' as const,
+        };
+      });
+      setItems(prev => [...prev, ...newItems]);
+      toast.success(`Imported ${urls.length} URL${urls.length > 1 ? 's' : ''} from file`);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // ── Text handling ────────────────────────────────────────────────────────
 
   const handleAddText = () => {
     if (!newTextContent.trim()) return;
-    
-    const newItem: BundleItem = {
-      id: generateItemId(),
+    setItems(prev => [...prev, {
+      id: genId(),
       type: 'text',
       kind: 'text',
-      title: newTextTitle.trim() || `Text: ${newTextContent.substring(0, 30)}...`,
+      title: newTextTitle.trim() || `Text: ${newTextContent.substring(0, 40)}...`,
       textContent: newTextContent.trim(),
-      status: 'pending'
-    };
-    
-    setItems(prev => [...prev, newItem]);
+      status: 'pending',
+    }]);
     setNewTextContent('');
     setNewTextTitle('');
     setFormError(null);
   };
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
-    setIsSearching(true);
-    setSearchResults([]);
-    try {
-        console.log("DEBUG: Sending search query:", searchQuery, "with limit:", 20);
-        const { SearchService } = await import('@/client');
-        const response = await SearchService.searchContent({ requestBody: { query: searchQuery, limit: 20 as any}, args: {}, kwargs: {}}); 
-        setSearchResults(response.results || []);
-    } catch (error) {
-        console.error("Search failed:", error);
-        toast.error("Search failed. Please check the logs.");
-    } finally {
-        setIsSearching(false);
-    }
-  };
-
-  const handleAddFromSearch = (result: any) => {
-    const newItem: BundleItem = {
-      id: generateItemId(),
-      type: 'url',
-      kind: 'web',
-      title: result.title || `Web: ${new URL(result.url).hostname}`,
-      url: result.url,
-      status: 'pending'
-    };
-    setItems(prev => [...prev, newItem]);
-  }
-
-  const removeItem = (itemId: string) => {
-    setItems(prev => prev.filter(item => item.id !== itemId));
-  };
-
-  const updateItemTitle = (itemId: string, newTitle: string) => {
-    setItems(prev => prev.map(item => 
-      item.id === itemId ? { ...item, title: newTitle } : item
-    ));
-  };
-
-  const updateItemStatus = (itemId: string, status: BundleItem['status'], error?: string, progress?: number) => {
-    setItems(prev => prev.map(item => 
-      item.id === itemId ? { ...item, status, error, progress } : item
-    ));
-  };
+  // ── Auto bundle title ──────────────────────────────────────────────────
 
   const generateBundleTitle = useCallback((items: BundleItem[]) => {
     if (items.length === 0) return '';
-    
-    // For file uploads, auto-generate a descriptive title
-    const fileItems = items.filter(item => item.type === 'file');
-    const urlItems = items.filter(item => item.type === 'url');
-    const textItems = items.filter(item => item.type === 'text');
-    
-    if (fileItems.length === items.length) {
-      // All files
-      if (items.length === 1) {
-        return items[0].title;
-      } else {
-        const kindCounts = items.reduce((acc, item) => {
-          acc[item.kind] = (acc[item.kind] || 0) + 1;
-          return acc;
-        }, {} as Record<AssetKind, number>);
-        
-        const dominantKind = Object.entries(kindCounts).reduce((a, b) => 
-          kindCounts[a[0] as AssetKind] > kindCounts[b[0] as AssetKind] ? a : b
-        )[0] as AssetKind;
-        
-        const kindLabel = assetKinds.find(k => k.value === dominantKind)?.label || dominantKind;
-        
-        if (Object.keys(kindCounts).length === 1) {
-          return `${kindLabel} Collection (${items.length} files)`;
-        } else {
-          return `Mixed Files Collection (${items.length} files)`;
-        }
+    const files = items.filter(i => i.type === 'file');
+    const archives = items.filter(i => i.type === 'archive');
+    const urls = items.filter(i => i.type === 'url');
+    if (archives.length === items.length) return archives.length === 1 ? archives[0].title : `Archive Collection (${archives.length})`;
+    if (files.length === items.length) {
+      if (items.length === 1) return items[0].title;
+      const kinds = [...new Set(items.map(i => i.kind))];
+      if (kinds.length === 1) {
+        const label = assetKinds.find(k => k.value === kinds[0])?.label || kinds[0];
+        return `${label} Collection (${items.length} files)`;
       }
-    } else if (urlItems.length === items.length) {
-      // All URLs
-      return items.length === 1 ? `Web Article: ${items[0].title}` : `Web Collection (${items.length} URLs)`;
-    } else {
-      // Mixed content
-      return `Mixed Content Collection (${items.length} items)`;
+      return `Mixed Files (${items.length} files)`;
     }
+    if (urls.length === items.length) return urls.length === 1 ? urls[0].title : `Web Collection (${urls.length} URLs)`;
+    return `Mixed Collection (${items.length} items)`;
   }, []);
 
-  // Auto-generate bundle title when items change (for file uploads in bundle mode)
   useEffect(() => {
     if (destination === 'new_bundle' && items.length > 0 && !bundleTitle.trim()) {
-      const autoTitle = generateBundleTitle(items);
-      setBundleTitle(autoTitle);
+      setBundleTitle(generateBundleTitle(items));
     }
   }, [items, destination, bundleTitle, generateBundleTitle]);
+
+  // ── Validation ──────────────────────────────────────────────────────────
 
   const validateForm = (): boolean => {
     setFormError(null);
     if (destination === 'new_bundle' && !bundleTitle.trim() && items.length > 0) {
-      // Auto-generate title if empty for bundle mode
-      const autoTitle = generateBundleTitle(items);
-      setBundleTitle(autoTitle);
+      setBundleTitle(generateBundleTitle(items));
     }
-    if (destination === 'new_bundle' && !bundleTitle.trim()) {
-      setFormError('Please provide a title for the new bundle.');
-      return false;
-    }
-    if (destination === 'existing_bundle' && !selectedBundleId) {
-      setFormError('Please select a bundle to add to.');
-      return false;
-    }
-    if (items.length === 0) {
-      setFormError('Please add at least one item.');
-      return false;
-    }
+    if (destination === 'new_bundle' && !bundleTitle.trim()) { setFormError('Please provide a bundle title.'); return false; }
+    if (destination === 'existing_bundle' && !selectedBundleId) { setFormError('Please select a bundle.'); return false; }
+    if (items.length === 0) { setFormError('Please add at least one item.'); return false; }
     return true;
   };
 
+  // ── Submit ──────────────────────────────────────────────────────────────
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!validateForm()) {
-      return;
-    }
-
-    if (!activeInfospace?.id) {
-      toast.error("No active infospace selected");
+    if (!validateForm() || !activeInfospace?.id) {
+      if (!activeInfospace?.id) toast.error('No active infospace selected');
       return;
     }
 
     setFormError(null);
+    setUploadProgress({ phase: 'preparing', message: 'Preparing upload...', progress: 0, totalItems: items.length, completedItems: 0 });
+    setItems(prev => prev.map(i => ({ ...i, status: 'uploading' as const })));
 
     try {
-      // Initialize upload progress
-      setUploadProgress({
-        phase: 'preparing',
-        message: 'Preparing upload...',
-        progress: 0,
-        totalItems: items.length,
-        completedItems: 0
-      });
-
-      // Mark all items as uploading
-      setItems(prev => prev.map(item => ({ ...item, status: 'uploading' as const })));
-
-      if (destination === 'individual') {
-        await handleIndividualModeParallel();
-      } else {
-        await handleBundleModeParallel();
-      }
-
+      await processUpload();
     } catch (error) {
-      console.error("Submission error caught in component:", error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to create assets";
-      
-      // Mark all items as error
-      setItems(prev => prev.map(item => ({ 
-        ...item, 
-        status: item.status === 'complete' ? 'complete' : 'error' as const, 
-        error: item.status === 'complete' ? undefined : errorMessage 
-      })));
-      
-      setUploadProgress({
-        phase: 'error',
-        message: errorMessage,
-        progress: 0,
-        totalItems: items.length,
-        completedItems: 0
-      });
-      
-      setFormError(errorMessage);
-      toast.error(errorMessage);
+      const msg = error instanceof Error ? error.message : 'Upload failed';
+      setItems(prev => prev.map(i => ({ ...i, status: i.status === 'complete' ? 'complete' : 'error' as const, error: i.status === 'complete' ? undefined : msg })));
+      setUploadProgress({ phase: 'error', message: msg, progress: 0, totalItems: items.length, completedItems: 0 });
+      setFormError(msg);
+      toast.error(msg);
     }
   };
 
-  // Parallel processing for individual mode
-  const handleIndividualModeParallel = async () => {
+  /**
+   * Single upload orchestrator.
+   *
+   * - File/archive items → one POST to bulk-upload-background with
+   *   relative_paths + bundle_name OR parent_bundle_id. Backend builds the
+   *   Bundle tree and dissolves any zips into it.
+   * - URL items → bulkIngestUrls (if >1) or createAsset (single).
+   * - Text items → createAsset each.
+   *
+   * For "new_bundle" destination with URL/text items, we still drop them at
+   * the top level — URL/text aren't tree-building, they're peers of the file
+   * bundle. That matches the existing behavior.
+   */
+  const processUpload = async () => {
     if (!activeInfospace?.id) return;
+    const { AssetsService, IngestionJobsService } = await import('@/client/');
+    const total = items.length;
 
-    setUploadProgress(prev => prev ? {
-      ...prev,
-      phase: 'uploading',
-      message: 'Creating individual assets in parallel...',
-      progress: 10
-    } : null);
+    setUploadProgress(prev => prev ? { ...prev, phase: 'uploading', message: 'Uploading...', progress: 10 } : null);
 
-    const { AssetsService, FilestorageService } = await import('@/client/');
-    const CONCURRENCY_LIMIT = 5; // Limit concurrent uploads to avoid overwhelming server
-    
-    // Separate items by type for optimal processing
-    const fileItems = items.filter(item => item.type === 'file');
-    const urlItems = items.filter(item => item.type === 'url');
-    const textItems = items.filter(item => item.type === 'text');
-    
-    const createdAssets: AssetRead[] = [];
-    let completedCount = 0;
+    // Partition into local (bytes we already have → sync call 1) and remote
+    // (fetch-required → async call 2). Text rides call 1.
+    const fileItems   = items.filter(i => (i.type === 'file' || i.type === 'archive') && i.file);
+    const urlItems    = items.filter(i => i.type === 'url');
+    const textItems   = items.filter(i => i.type === 'text');
+    const hasLocal    = fileItems.length > 0 || textItems.length > 0;
+    const hasRemote   = urlItems.length > 0;
 
-        // Use enhanced bulk URL ingestion if multiple URLs (more efficient with newspaper4k)
-        if (urlItems.length > 1) {
-          try {
-            setUploadProgress(prev => prev ? {
-              ...prev,
-              message: `Bulk processing ${urlItems.length} URLs...`,
-              progress: 15
-            } : null);
+    // Destination resolution — identical contract for both calls.
+    const existingBundleId =
+      destination === 'existing_bundle' && selectedBundleId
+        ? (typeof selectedBundleId === 'string' ? parseInt(selectedBundleId, 10) : selectedBundleId)
+        : undefined;
+    const newBundleName = destination === 'new_bundle' ? bundleTitle : undefined;
 
-            const urls = urlItems.map(item => item.url!);
-            
-            // Use bulk ingestion with newspaper4k capabilities
-            const bulkUrlAssets = await AssetsService.bulkIngestUrls({
-              infospaceId: activeInfospace.id,
-              requestBody: { 
-                urls,
-                base_title: "Bulk URL Collection",
-                scrape_immediately: true
-              }
-            });
+    let resolvedBundleId: number | undefined = existingBundleId;
+    let call1Succeeded = false;
 
-            // Update status for all URL items with enhanced feedback
-            urlItems.forEach((item, index) => {
-              if (bulkUrlAssets[index]) {
-                const asset = bulkUrlAssets[index];
-                const contentLength = asset.file_info?.content_length || 0;
-                const imageCount = Array.isArray(asset.file_info?.images) ? asset.file_info.images.length : 0;
-                
-                updateItemStatus(
-                  item.id, 
-                  'complete', 
-                  undefined, 
-                  100
-                );
-                
-                // Update item title with scraped title if available
-                if (asset.title && asset.title !== item.title) {
-                  updateItemTitle(item.id, asset.title);
-                }
-              } else {
-                updateItemStatus(item.id, 'error', 'Failed to process URL');
-              }
-            });
+    try {
+      // ── Call 1: sync bulk-upload (files + text + folder tree + archives-as-files) ──
+      if (hasLocal) {
+        [...fileItems, ...textItems].forEach(i => updateItemStatus(i.id, 'uploading', undefined, 40));
 
-            createdAssets.push(...bulkUrlAssets);
-            completedCount += urlItems.length;
+        const formData: Record<string, any> = {
+          files: fileItems.map(i => i.file!),
+          relative_paths: fileItems.map(i => i.relativePath || i.file!.name),
+        };
+        if (existingBundleId) formData.parent_bundle_id = existingBundleId;
+        else if (newBundleName) formData.bundle_name = newBundleName;
+        if (textItems.length > 0) {
+          formData.text_items = JSON.stringify(
+            textItems.map(t => ({ title: t.title, content: t.textContent || '' })),
+          );
+        }
 
-            setUploadProgress(prev => prev ? {
-              ...prev,
-              progress: 30,
-              message: `Bulk processing completed for ${urlItems.length} URLs, now processing files...`,
-          completedItems: completedCount
-        } : null);
-
-      } catch (error) {
-        console.error('Bulk URL processing failed:', error);
-        // Fall back to individual processing
-        urlItems.forEach(item => {
-          updateItemStatus(item.id, 'error', 'Bulk processing failed, trying individual...');
+        const resp: any = await AssetsService.createAssetsBackgroundBulk({
+          infospaceId: activeInfospace.id,
+          formData: formData as any,
         });
+        call1Succeeded = true;
+        if (resp?.root_bundle_id) resolvedBundleId = resp.root_bundle_id;
+
+        const tasks: Array<{ asset_id: number | null; filename: string; relative_path: string; status: string; error?: string }> = resp?.tasks ?? [];
+        for (const item of fileItems) {
+          const match = tasks.find(t => t.relative_path === (item.relativePath || item.file!.name));
+          if (match?.status === 'failed') updateItemStatus(item.id, 'error', match.error || 'Upload failed');
+          else updateItemStatus(item.id, 'complete', undefined, 100);
+        }
+        for (const item of textItems) {
+          const match = tasks.find(t => t.relative_path === (item.title || 'Text'));
+          if (match?.status === 'failed') updateItemStatus(item.id, 'error', match.error || 'Failed');
+          else updateItemStatus(item.id, 'complete', undefined, 100);
+        }
       }
-    }
 
-    // Process remaining items (files, text, and individual URLs)
-    const remainingItems = [
-      ...fileItems,
-      ...textItems,
-      ...(urlItems.length <= 1 ? urlItems : urlItems.filter(item => {
-        const status = items.find(i => i.id === item.id)?.status;
-        return status !== 'complete';
-      }))
-    ];
+      // ── Call 2: fire-and-forget batch ingestion for remote items ──
+      let queuedRemote = 0;
+      if (hasRemote) {
+        const batchItems = urlItems.map(i => ({
+          kind: (i.url && isArchiveUrl(i.url) ? 'archive_url' : 'web_url') as 'web_url' | 'archive_url',
+          locator: i.url!,
+          title: i.title,
+        }));
+        // Prefer a concrete bundle id (from call 1 or existing), else create by name.
+        const requestBody: any = { items: batchItems };
+        if (resolvedBundleId) requestBody.bundle_id = resolvedBundleId;
+        else if (newBundleName) requestBody.bundle_name = newBundleName;
 
-    // Create a semaphore-like function to limit concurrent operations
-    const processBatch = async (batch: BundleItem[]) => {
-      const batchPromises = batch.map(async (item) => {
         try {
-          updateItemStatus(item.id, 'uploading', undefined, 25);
-          
-          let newAsset: AssetRead | null = null;
-          
-          if (item.type === 'file' && item.file) {
-            // Upload file and create asset directly
-            updateItemStatus(item.id, 'uploading', undefined, 40);
-            const uploadResponse = await FilestorageService.fileUpload({ 
-              formData: { file: item.file }
-            });
-            updateItemStatus(item.id, 'processing', undefined, 70);
-            const assetCreate = {
-              title: item.title,
-              kind: item.kind,
-              blob_path: uploadResponse.object_name,
-              file_info: { filename: uploadResponse.filename },
-            };
-            
-
-            const assetResponse = await AssetsService.createAsset({ 
-              infospaceId: activeInfospace.id, 
-              requestBody: assetCreate 
-            });
-            newAsset = assetResponse || null;
-            
-          } else if (item.type === 'url' && item.url) {
-            updateItemStatus(item.id, 'processing', undefined, 50);
-            const assetCreate = {
-              title: item.title,
-              kind: 'web' as const,
-              source_identifier: item.url,
-            };
-            
-            const assetResponse = await AssetsService.createAsset({ 
-              infospaceId: activeInfospace.id, 
-              requestBody: assetCreate 
-            });
-            newAsset = assetResponse;
-            
-          } else if (item.type === 'text' && item.textContent) {
-            updateItemStatus(item.id, 'processing', undefined, 50);
-            const assetCreate = {
-              title: item.title,
-              kind: 'text' as const,
-              text_content: item.textContent,
-            };
-            
-            newAsset = await AssetsService.createAsset({ 
-              infospaceId: activeInfospace.id, 
-              requestBody: assetCreate 
-            });
-          }
-          
-          if (newAsset) {
-            updateItemStatus(item.id, 'complete', undefined, 100);
-            return { success: true, asset: newAsset, item };
-          } else {
-            throw new Error(`Failed to create asset for ${item.title}`);
-          }
-          
-        } catch (error) {
-          console.error(`Error creating asset for item ${item.title}:`, error);
-          updateItemStatus(item.id, 'error', error instanceof Error ? error.message : 'Failed to create asset');
-          return { success: false, error, item };
+          await IngestionJobsService.createBatchIngestionJob({
+            infospaceId: activeInfospace.id,
+            requestBody,
+          });
+          urlItems.forEach(i => updateItemStatus(i.id, 'complete', undefined, 100));
+          queuedRemote = urlItems.length;
+        } catch (err: any) {
+          const detail = err?.body?.detail || err?.message || 'Could not queue batch ingestion';
+          const msg = typeof detail === 'string' ? detail : JSON.stringify(detail);
+          urlItems.forEach(i => updateItemStatus(i.id, 'error', msg));
+          if (!hasLocal) throw err;  // nothing else landed — bubble up
         }
-      });
-
-      return Promise.allSettled(batchPromises);
-    };
-
-    // Process remaining items in batches
-    const baseProgress = urlItems.length > 1 ? 30 : 10;
-    for (let i = 0; i < remainingItems.length; i += CONCURRENCY_LIMIT) {
-      const batch = remainingItems.slice(i, i + CONCURRENCY_LIMIT);
-      const batchResults = await processBatch(batch);
-      
-      // Process results
-      batchResults.forEach((result) => {
-        if (result.status === 'fulfilled' && result.value.success && result.value.asset) {
-          createdAssets.push(result.value.asset);
-        }
-        completedCount++;
-      });
-      
-      const progress = baseProgress + (completedCount / items.length) * (90 - baseProgress);
-      setUploadProgress(prev => prev ? {
-        ...prev,
-        progress,
-        message: `Created ${completedCount} of ${items.length} assets...`,
-        completedItems: completedCount
-      } : null);
-    }
-
-    if (createdAssets.length === 0) {
-      throw new Error("No assets were created successfully");
-    }
-
-    setUploadProgress({
-      phase: 'complete',
-      message: `Successfully created ${createdAssets.length} individual asset(s)`,
-      progress: 100,
-      totalItems: items.length,
-      completedItems: items.length
-    });
-
-    // Refresh data after successful upload
-    setTimeout(async () => {
-      await fetchAssets();
-      toast.success(`${createdAssets.length} individual asset(s) created successfully.`);
-      handleClose();
-    }, 1500);
-  };
-
-  // Parallel processing for bundle mode
-  const handleBundleModeParallel = async () => {
-    if (!activeInfospace?.id) return;
-
-    setUploadProgress(prev => prev ? {
-      ...prev,
-      phase: 'uploading',
-      message: 'Creating bundle and assets in parallel...',
-      progress: 10
-    } : null);
-
-    // Determine target bundle
-    let targetBundleId: number;
-    let targetBundleName: string;
-
-    if (destination === 'existing_bundle' && selectedBundleId) {
-      targetBundleId = typeof selectedBundleId === 'string' ? parseInt(selectedBundleId, 10) : selectedBundleId;
-      const selectedBundle = bundles.find(b => b.id === targetBundleId);
-      targetBundleName = selectedBundle?.name || 'Existing Bundle';
-    } else {
-      // Create the bundle first
-      const { BundlesService } = await import('@/client');
-            
-      const kindCounts = items.reduce((acc, item) => {
-        acc[item.kind] = (acc[item.kind] || 0) + 1;
-        return acc;
-      }, {} as Record<AssetKind, number>);
-      
-      const dominantKind = Object.entries(kindCounts).reduce((a, b) => 
-        kindCounts[a[0] as AssetKind] > kindCounts[b[0] as AssetKind] ? a : b
-      )[0] as AssetKind;
-      
-      const bundleDescription = items.length > 1 ? 
-        `Collection containing ${items.length} assets` : 
-        `${dominantKind.toUpperCase()} upload`;
-      
-      const bundleCreate = {
-        name: bundleTitle,
-        description: bundleDescription,
-        purpose: `upload_mixed`,
-      };
-
-      const newBundle = await BundlesService.createBundle({
-        infospaceId: activeInfospace.id,
-        requestBody: bundleCreate
-      });
-
-      targetBundleId = newBundle.id;
-      targetBundleName = newBundle.name;
-      
-      setUploadProgress(prev => prev ? {
-        ...prev,
-        message: `Bundle "${targetBundleName}" created, now creating assets...`,
-        progress: 20
-      } : null);
-    }
-
-    // Create all assets in parallel, then batch-add to bundle
-    const { createAsset } = useAssetStore.getState();
-    const { addAssetToBundle } = useBundleStore.getState();
-    const CONCURRENCY_LIMIT = 5;
-    
-    const createdAssets: AssetRead[] = [];
-    const tempBundlesToCleanup: number[] = [];
-    let completedCount = 0;
-
-    // Process asset creation in parallel batches
-    const processBatch = async (batch: BundleItem[]) => {
-      const batchPromises = batch.map(async (item) => {
-        try {
-          updateItemStatus(item.id, 'uploading', undefined, 25);
-          
-          let assetResult: { bundle: any; assets: AssetRead[] } | null = null;
-          
-          if (item.type === 'file' && item.file) {
-            const fileFormData = new FormData();
-            fileFormData.append('title', item.title);
-            fileFormData.append('kind', item.kind);
-            fileFormData.append('files', item.file);
-            
-            assetResult = await createAsset(fileFormData);
-          } else if (item.type === 'url' && item.url) {
-            const urlFormData = new FormData();
-            urlFormData.append('title', item.title);
-            urlFormData.append('kind', 'web');
-            urlFormData.append('source_identifier', item.url);
-            
-            assetResult = await createAsset(urlFormData);
-          } else if (item.type === 'text' && item.textContent) {
-            const textFormData = new FormData();
-            textFormData.append('title', item.title);
-            textFormData.append('kind', 'text');
-            textFormData.append('text_content', item.textContent);
-            
-            assetResult = await createAsset(textFormData);
-          }
-          
-          if (assetResult && assetResult.assets && assetResult.assets.length > 0) {
-            updateItemStatus(item.id, 'processing', undefined, 75);
-            
-            // Track temp bundle for cleanup if it's not our target
-            if (assetResult.bundle && assetResult.bundle.id !== targetBundleId) {
-              tempBundlesToCleanup.push(assetResult.bundle.id);
-            }
-            
-            return { 
-              success: true, 
-              assets: assetResult.assets, 
-              tempBundleId: assetResult.bundle?.id,
-              item 
-            };
-          } else {
-            throw new Error(`Failed to create asset for ${item.title}`);
-          }
-          
-        } catch (error) {
-          console.error(`Error creating asset for item ${item.title}:`, error);
-          updateItemStatus(item.id, 'error', error instanceof Error ? error.message : 'Failed to create asset');
-          return { success: false, error, item };
-        }
-      });
-
-      return Promise.allSettled(batchPromises);
-    };
-
-    // Process asset creation in batches
-    const allAssetResults: { success: boolean; assets?: AssetRead[]; item: BundleItem }[] = [];
-    
-    for (let i = 0; i < items.length; i += CONCURRENCY_LIMIT) {
-      const batch = items.slice(i, i + CONCURRENCY_LIMIT);
-      const batchResults = await processBatch(batch);
-      
-      batchResults.forEach((result) => {
-        if (result.status === 'fulfilled') {
-          allAssetResults.push(result.value);
-          if (result.value.success && result.value.assets) {
-            createdAssets.push(...result.value.assets);
-          }
-        }
-        completedCount++;
-      });
-      
-      const progress = 20 + (completedCount / items.length) * 50; // 20-70% for creation
-      setUploadProgress(prev => prev ? {
-        ...prev,
-        progress,
-        message: `Created ${completedCount} of ${items.length} assets...`,
-        completedItems: completedCount
-      } : null);
-    }
-
-    if (createdAssets.length === 0) {
-      throw new Error("No assets were created successfully");
-    }
-
-    // Now batch-add all assets to target bundle in parallel
-    setUploadProgress(prev => prev ? {
-      ...prev,
-      progress: 70,
-      message: `Adding ${createdAssets.length} assets to "${targetBundleName}"...`,
-    } : null);
-
-    const bundleAddPromises = createdAssets.map(asset => 
-      addAssetToBundle(targetBundleId, asset.id).catch(error => {
-        console.error(`Failed to add asset ${asset.id} to bundle:`, error);
-        return null;
-      })
-    );
-
-    await Promise.allSettled(bundleAddPromises);
-
-    // Cleanup temp bundles in parallel
-    if (tempBundlesToCleanup.length > 0) {
-      setUploadProgress(prev => prev ? {
-        ...prev,
-        progress: 85,
-        message: 'Cleaning up temporary bundles...',
-      } : null);
-
-      const { BundlesService } = await import('@/client/sdk.gen');
-      const cleanupPromises = [...new Set(tempBundlesToCleanup)].map(bundleId => 
-        BundlesService.deleteBundle({ bundleId }).catch(error => {
-          console.warn('Could not clean up auto-created bundle:', error);
-        })
-      );
-      
-      await Promise.allSettled(cleanupPromises);
-    }
-
-    // Mark successful items as complete
-    allAssetResults.forEach(result => {
-      if (result.success) {
-        updateItemStatus(result.item.id, 'complete', undefined, 100);
       }
-    });
-    
-    setUploadProgress({
-      phase: 'complete',
-      message: `Successfully added ${createdAssets.length} asset(s) to "${targetBundleName}"`,
-      progress: 100,
-      totalItems: items.length,
-      completedItems: items.length
-    });
 
-    // Refresh data after successful upload
-    setTimeout(async () => {
+      // ── Close immediately after the kick ─────────────────────────────────
+      setUploadProgress({
+        phase: 'complete',
+        message: queuedRemote > 0
+          ? `${queuedRemote} item${queuedRemote > 1 ? 's' : ''} queued — track in Ingestion Jobs.`
+          : 'Upload complete.',
+        progress: 100, totalItems: total, completedItems: total,
+      });
+      // Refresh stores so the newly-created bundle appears in the tree.
+      // The inline ingestion-job progress indicator in AssetSelector attaches
+      // to the destination bundle's tree node — without a tree refresh the
+      // user has no visible surface to watch progress on.
       const { fetchBundles } = useBundleStore.getState();
-      await Promise.allSettled([
-        fetchAssets(),
-        fetchBundles(activeInfospace.id)
-      ]);
-      
-      toast.success(`${createdAssets.length} asset(s) added to "${targetBundleName}".`);
+      const { clearCache, fetchRootTree } = useTreeStore.getState();
+      clearCache();
+      Promise.allSettled([fetchAssets(), fetchBundles(activeInfospace.id), fetchRootTree()]);
+      if (queuedRemote > 0) {
+        toast.success(`${queuedRemote} remote item${queuedRemote > 1 ? 's' : ''} queued. Track progress in Ingestion Jobs.`);
+      } else {
+        const successCount = fileItems.length + textItems.length;
+        toast.success(`${successCount} item${successCount !== 1 ? 's' : ''} uploaded.`);
+      }
       handleClose();
-    }, 1500);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Upload failed';
+      if (!call1Succeeded) {
+        fileItems.forEach(i => updateItemStatus(i.id, 'error', msg));
+        textItems.forEach(i => updateItemStatus(i.id, 'error', msg));
+      }
+      throw err;
+    }
   };
 
-  // Background task tracking
-  const pollTaskStatus = useCallback(async (taskIds: string[]) => {
-    if (taskIds.length === 0) return;
-    
-    try {
-      // This would be a new API endpoint to check task status
-      const response = await fetch(`/api/tasks/status`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task_ids: taskIds })
-      });
-      
-      if (response.ok) {
-        const taskStatuses = await response.json();
-        setBackgroundTasks(taskStatuses);
-        
-        // Update upload progress based on task statuses
-        const completedTasks = taskStatuses.filter((t: any) => t.status === 'success' || t.status === 'failed');
-        const failedTasks = taskStatuses.filter((t: any) => t.status === 'failed');
-        
-        setUploadProgress(prev => prev ? {
-          ...prev,
-          completedItems: completedTasks.length,
-          errors: failedTasks.map((t: any) => ({ item: t.filename || t.id, error: t.error || 'Processing failed' }))
-        } : null);
-        
-        // Stop polling when all tasks are complete
-        if (completedTasks.length === taskStatuses.length) {
-          setUseBackgroundProcessing(false);
-          if (failedTasks.length === 0) {
-            toast.success(`All ${taskStatuses.length} items processed successfully`);
-            onClose();
-          } else {
-            toast.warning(`${completedTasks.length - failedTasks.length}/${taskStatuses.length} items processed successfully`);
-          }
+  // ── Derived state ────────────────────────────────────────────────────────
+
+  // ── Tree view ────────────────────────────────────────────────────────────
+  // Build a tree from items' relative paths. File-typed items group under their
+  // directory prefix; URL/text items are "loose leaves" at the root.
+
+  type TreeFile = { kind: 'file'; item: BundleItem };
+  type TreeFolder = { kind: 'folder'; name: string; path: string; children: TreeNode[] };
+  type TreeNode = TreeFile | TreeFolder;
+
+  const tree: TreeNode[] = useMemo(() => {
+    type DirNode = { children: Map<string, DirNode | { item: BundleItem }> };
+    const root: DirNode = { children: new Map() };
+
+    const looseItems: BundleItem[] = [];
+    for (const item of items) {
+      const isFile = item.type === 'file' || item.type === 'archive';
+      const path = isFile ? (item.relativePath || item.file?.name || item.title) : '';
+      const parts = path.split('/').filter(Boolean);
+      if (!isFile || parts.length === 0) { looseItems.push(item); continue; }
+
+      let cursor: DirNode = root;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const dir = parts[i];
+        const existing = cursor.children.get(dir);
+        if (existing && 'children' in existing) {
+          cursor = existing;
+        } else {
+          const next: DirNode = { children: new Map() };
+          cursor.children.set(dir, next);
+          cursor = next;
         }
       }
-    } catch (error) {
-      console.error('Failed to poll task status:', error);
+      cursor.children.set(parts[parts.length - 1], { item });
     }
-  }, [onClose]);
 
-  // Poll task status when background tasks are active
-  useEffect(() => {
-    if (backgroundTasks.length === 0 || !useBackgroundProcessing) return;
-    
-    const taskIds = backgroundTasks.map(t => t.id);
-    const interval = setInterval(() => {
-      pollTaskStatus(taskIds);
-    }, 2000); // Poll every 2 seconds
-    
-    return () => clearInterval(interval);
-  }, [backgroundTasks, useBackgroundProcessing, pollTaskStatus]);
+    const convert = (dir: DirNode, prefix: string): TreeNode[] => {
+      const entries = Array.from(dir.children.entries()).sort(([an, av], [bn, bv]) => {
+        const aFolder = 'children' in av;
+        const bFolder = 'children' in bv;
+        if (aFolder !== bFolder) return aFolder ? -1 : 1;          // folders first
+        return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+      });
+      return entries.map(([name, node]) => {
+        const path = prefix ? `${prefix}/${name}` : name;
+        if ('children' in node) {
+          return { kind: 'folder' as const, name, path, children: convert(node, path) };
+        }
+        return { kind: 'file' as const, item: node.item };
+      });
+    };
 
-  const renderFileDropZone = () => (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <FileUp className="h-4 w-4" />
-          Add Files
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div 
-          className={cn(
-            "relative border-2 border-dashed border-muted-foreground/30 rounded-lg p-4 text-center cursor-pointer hover:border-primary transition-colors",
-            uploadProgress && "pointer-events-none opacity-50"
-          )}
-          onClick={() => !uploadProgress && document.getElementById('file-upload')?.click()}
-        >
-          <FileUp className="mx-auto h-8 w-8 text-muted-foreground/70" />
-          <p className="mt-2 text-sm text-muted-foreground">Click to browse or drag & drop</p>
-          <p className="text-xs text-muted-foreground">Select multiple files at once • Any file type supported</p>
-          <Input
-            id="file-upload"
-            type="file"
-            onChange={(e) => handleFileSelect(e.target.files)}
-            disabled={storeIsLoading || !!uploadProgress}
-            multiple
-            className="sr-only"
-          />
-        </div>
-        
-        <div className={cn(
-          "grid gap-2",
-          isMobile ? "grid-cols-2" : "grid-cols-3"
-        )}>
-          {assetKinds.filter(k => k.group === 'file').map((kind) => {
-            const Icon = kind.icon;
-            return (
-              <Button
-                key={kind.value}
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (uploadProgress) return;
-                  const input = document.createElement('input');
-                  input.type = 'file';
-                  input.accept = getAcceptString(kind.value);
-                  input.multiple = true;
-                  input.onchange = (e) => handleFileSelect((e.target as HTMLInputElement).files, kind.value);
-                  input.click();
-                }}
-                disabled={!!uploadProgress}
-                className={cn(
-                  "flex flex-col items-center justify-center gap-1 p-2",
-                  isMobile ? "h-12" : "h-16"
-                )}
-              >
-                <Icon className={cn(isMobile ? "h-3 w-3" : "h-4 w-4")} />
-                <span className={cn(isMobile ? "text-xs" : "text-xs")}>{kind.label}</span>
-              </Button>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  );
+    return [
+      ...looseItems.map(item => ({ kind: 'file' as const, item })),
+      ...convert(root, ''),
+    ];
+  }, [items]);
 
-  const renderUrlInput = () => (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Globe className="h-4 w-4" />
-          Add Web URLs
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex gap-2">
-          <Input
-            ref={urlInputRef}
-            placeholder="https://example.com"
-            value={newUrl}
-            onChange={(e) => setNewUrl(e.target.value)}
-            disabled={storeIsLoading || !!uploadProgress}
-            className="flex-1"
-            onKeyPress={(e) => e.key === 'Enter' && !uploadProgress && handleAddUrl()}
-          />
-          <Button 
-            type="button" 
-            onClick={handleAddUrl} 
-            disabled={!newUrl.trim() || storeIsLoading || !!uploadProgress}
-            size="sm"
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
+  const toggleFolder = (path: string) => {
+    setExpandedFolders(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      return next;
+    });
+  };
 
-  const renderTextInput = () => (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Type className="h-4 w-4" />
-          Add Text Content
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <Input
-          placeholder="Text block title"
-          value={newTextTitle}
-          onChange={(e) => setNewTextTitle(e.target.value)}
-          disabled={storeIsLoading || !!uploadProgress}
-        />
-        <Textarea
-          placeholder="Paste your text content here..."
-          value={newTextContent}
-          onChange={(e) => setNewTextContent(e.target.value)}
-          rows={4}
-          disabled={storeIsLoading || !!uploadProgress}
-        />
-        <Button 
-          type="button" 
-          onClick={handleAddText} 
-          disabled={!newTextContent.trim() || storeIsLoading || !!uploadProgress}
-          size="sm"
-          className="w-full"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          Add Text Block
-        </Button>
-      </CardContent>
-    </Card>
-  );
+  const collectFolderItemIds = (node: TreeFolder): string[] => {
+    const ids: string[] = [];
+    const walk = (n: TreeNode) => {
+      if (n.kind === 'file') ids.push(n.item.id);
+      else n.children.forEach(walk);
+    };
+    node.children.forEach(walk);
+    return ids;
+  };
 
-  const renderRssBrowser = () => (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Rss className="h-4 w-4" />
-          Browse RSS Feeds
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="text-xs text-muted-foreground">
-          Browse RSS feeds and select articles to ingest
-        </p>
-        <RssFeedBrowser
-          onSelectArticle={(url, title) => {
-            setNewUrl(url);
-            handleAddUrl();
-          }}
-          onIngestArticle={(url, title) => {
-            setNewUrl(url);
-            handleAddUrl();
-          }}
-          destination={destination}
-          selectedBundleId={selectedBundleId}
-          bundleTitle={bundleTitle}
-          trigger={
-            <Button 
-              type="button" 
-              variant="outline"
-              disabled={storeIsLoading || !!uploadProgress}
-              size="sm"
-              className="w-full"
-            >
-              <Rss className="h-4 w-4 mr-2" />
-              Browse RSS
-            </Button>
-          }
-        />
-      </CardContent>
-    </Card>
-  );
+  const removeFolder = (node: TreeFolder) => {
+    const ids = new Set(collectFolderItemIds(node));
+    setItems(prev => prev.filter(i => !ids.has(i.id)));
+  };
 
-  const renderSearchInput = () => (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Search className="h-4 w-4" />
-          Search & Add
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex gap-2">
-          <Input
-            placeholder="Search for articles, events..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            disabled={storeIsLoading || !!uploadProgress || isSearching}
-            className="flex-1"
-            onKeyPress={(e) => e.key === 'Enter' && !isSearching && handleSearch()}
-          />
-          <Button 
-            type="button" 
-            onClick={handleSearch} 
-            disabled={!searchQuery.trim() || storeIsLoading || !!uploadProgress || isSearching}
-            size="sm"
-          >
-            {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-          </Button>
-        </div>
-        {searchResults.length > 0 && (
-            <ScrollArea className="h-48 border rounded-md p-2">
-                <div className="space-y-2">
-                    {searchResults.map((result, index) => (
-                        <div key={index} className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
-                            <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium truncate" title={result.title}>{result.title}</p>
-                                <a href={result.url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary truncate flex items-center gap-1">
-                                    {result.url} <ExternalLink className="h-3 w-3" />
-                                </a>
-                            </div>
-                            <Button type="button" size="sm" variant="outline" onClick={() => handleAddFromSearch(result)}>
-                                <Plus className="h-4 w-4" />
-                            </Button>
-                        </div>
-                    ))}
-                </div>
-            </ScrollArea>
-        )}
-      </CardContent>
-    </Card>
-  );
-
-  const renderItemsList = () => {
-    if (items.length === 0) {
+  const renderTreeNode = (node: TreeNode, depth: number): React.ReactNode => {
+    if (node.kind === 'folder') {
+      const isOpen = expandedFolders.has(node.path);
+      const leafCount = collectFolderItemIds(node).length;
       return (
-        <div className="text-center py-8 text-muted-foreground">
-          <FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />
-          <p>No items added yet</p>
-          <p className="text-sm">Add files, URLs, or text content above</p>
-        </div>
+        <React.Fragment key={`folder:${node.path}`}>
+          <div
+            className="flex items-center gap-1 px-3 py-1.5 hover:bg-muted/40 cursor-pointer select-none"
+            style={{ paddingLeft: `${12 + depth * 16}px` }}
+            onClick={() => toggleFolder(node.path)}
+          >
+            {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+            {isOpen ? <FolderOpen className="h-3.5 w-3.5 text-amber-600" /> : <Folder className="h-3.5 w-3.5 text-amber-600" />}
+            <span className="text-sm font-medium truncate flex-1">{node.name}</span>
+            <span className="text-[10px] text-muted-foreground shrink-0">{leafCount}</span>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); removeFolder(node); }}
+              disabled={disabled}
+              className="text-muted-foreground hover:text-destructive transition-colors shrink-0 p-0.5"
+              title="Remove folder and all contents"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {isOpen && node.children.map(c => renderTreeNode(c, depth + 1))}
+        </React.Fragment>
       );
     }
 
+    const item = node.item;
+    const Icon = getItemIcon(item);
     return (
-      <ScrollArea className={cn("pr-4", isMobile ? "h-48" : "h-64")}>
-        <div className="space-y-2">
-          {items.map((item) => {
-            const Icon = getItemIcon(item);
-            return (
-              <div
-                key={item.id}
-                className={cn(
-                  "flex items-center gap-2 border rounded-lg transition-colors",
-                  isMobile ? "p-2" : "p-3 gap-3",
-                  getStatusColor(item.status)
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  {getStatusIcon(item.status)}
-                  <Icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <Input
-                    value={item.title}
-                    onChange={(e) => updateItemTitle(item.id, e.target.value)}
-                    disabled={storeIsLoading || !!uploadProgress}
-                    className={cn("text-sm", isMobile ? "h-6 text-xs" : "h-7")}
-                  />
-                  <div className={cn("flex items-center gap-2 mt-1", isMobile && "flex-wrap")}>
-                    <Badge variant="outline" className={cn(isMobile ? "text-xs px-1" : "text-xs")}>
-                      {item.kind}
-                    </Badge>
-                    {item.type === 'file' && item.file && !isMobile && (
-                      <span className="text-xs text-muted-foreground">
-                        {(item.file.size / 1024 / 1024).toFixed(1)} MB
-                      </span>
-                    )}
-                    {item.type === 'url' && (
-                      <span className={cn("text-xs text-muted-foreground truncate", isMobile && "max-w-[120px]")}>
-                        {item.url}
-                      </span>
-                    )}
-                    {item.status && item.status !== 'pending' && (
-                      <Badge variant="outline" className={cn(
-                        "text-xs",
-                        item.status === 'complete' && "border-green-200 text-green-700",
-                        item.status === 'error' && "border-red-200 text-red-700",
-                        (item.status === 'uploading' || item.status === 'processing') && "border-blue-200 text-blue-700"
-                      )}>
-                        {item.status}
-                      </Badge>
-                    )}
-                  </div>
-                  {item.progress !== undefined && item.progress > 0 && (
-                    <Progress value={item.progress} className="w-full h-1 mt-1" />
-                  )}
-                  {item.error && (
-                    <p className="text-xs text-red-600 mt-1">{item.error}</p>
-                  )}
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => removeItem(item.id)}
-                  disabled={storeIsLoading || !!uploadProgress}
-                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            );
-          })}
-        </div>
-      </ScrollArea>
-    );
-  };
-
-  const renderUploadProgress = () => {
-    if (!uploadProgress) return null;
-
-    return (
-      <Card className="border-primary/50">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Upload className="h-4 w-4 text-primary" />
-            Upload Progress
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex items-center gap-2">
-            {uploadProgress.phase === 'error' ? (
-              <AlertTriangle className="h-4 w-4 text-red-600" />
-            ) : uploadProgress.phase === 'complete' ? (
-              <CheckCircle className="h-4 w-4 text-green-600" />
-            ) : (
-              <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-            )}
-            <span className="text-sm font-medium">{uploadProgress.message}</span>
-          </div>
-          
-          <Progress 
-            value={uploadProgress.progress} 
-            className={cn(
-              "w-full h-2",
-              uploadProgress.phase === 'error' && "bg-red-100",
-              uploadProgress.phase === 'complete' && "bg-green-100"
-            )}
-          />
-          
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <span>{uploadProgress.completedItems} of {uploadProgress.totalItems} items</span>
-            <span>{uploadProgress.progress}%</span>
-          </div>
-        </CardContent>
-      </Card>
+      <div
+        key={`item:${item.id}`}
+        className={cn(
+          "flex items-center gap-2 px-3 py-1.5 transition-colors",
+          item.status === 'complete' && "bg-green-500/5",
+          item.status === 'error' && "bg-red-500/5",
+          (item.status === 'uploading' || item.status === 'processing') && "bg-blue-500/5"
+        )}
+        style={{ paddingLeft: `${12 + depth * 16}px` }}
+      >
+        {statusIndicator(item.status)}
+        <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <input
+          value={item.title}
+          onChange={(e) => updateItemTitle(item.id, e.target.value)}
+          disabled={disabled}
+          className="bg-transparent text-sm truncate flex-1 min-w-0 outline-none focus:underline"
+        />
+        {item.type === 'archive' && (
+          <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 shrink-0 border-amber-300 text-amber-700">archive</Badge>
+        )}
+        {item.type === 'file' && item.file && (
+          <span className="text-[10px] text-muted-foreground shrink-0">{(item.file.size / 1024 / 1024).toFixed(1)} MB</span>
+        )}
+        {item.type === 'url' && item.url && isArchiveUrl(item.url) && (
+          <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 shrink-0 border-amber-300 text-amber-700">archive</Badge>
+        )}
+        {item.type === 'url' && !isMobile && (
+          <span className="text-[10px] text-muted-foreground truncate max-w-[200px] shrink-0">{item.url}</span>
+        )}
+        {item.progress !== undefined && item.progress > 0 && item.progress < 100 && (
+          <div className="w-12"><Progress value={item.progress} className="h-1" /></div>
+        )}
+        <button
+          type="button"
+          onClick={() => removeItem(item.id)}
+          disabled={disabled}
+          className="text-muted-foreground hover:text-destructive transition-colors shrink-0 p-0.5"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
     );
   };
 
   const itemTypeCounts = useMemo(() => {
-    const counts = items.reduce((acc, item) => {
-      acc[item.kind] = (acc[item.kind] || 0) + 1;
-      return acc;
-    }, {} as Record<AssetKind, number>);
-    
-    return Object.entries(counts).map(([kind, count]) => ({
-      kind: kind as AssetKind,
-      count,
-      info: assetKinds.find(k => k.value === kind)
-    }));
+    const counts: Record<string, number> = {};
+    items.forEach(i => {
+      const key = i.type === 'archive' ? 'archive' : i.kind;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return Object.entries(counts);
   }, [items]);
 
   const isUploading = !!uploadProgress && uploadProgress.phase !== 'complete' && uploadProgress.phase !== 'error';
+  const disabled = storeIsLoading || !!uploadProgress;
+
+  // ── Render ──────────────────────────────────────────────────────────────
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
       <DialogContent className={cn(
-        "flex flex-col",
-        isMobile ? "w-[95vw] max-w-[95vw] h-[90vh] max-h-[90vh] p-4" : "sm:max-w-4xl max-h-[90vh]"
+        "flex flex-col gap-0",
+        isMobile ? "w-[95vw] max-w-[95vw] h-[90vh] max-h-[90vh] p-4" : "sm:max-w-4xl max-h-[85vh] p-0"
       )}>
-        <DialogHeader className="flex-shrink-0">
-          <DialogTitle className={cn(isMobile && "text-lg")}>
-            {destination === 'existing_bundle'
-              ? `Upload to Bundle: ${bundles.find(b => b.id === (typeof selectedBundleId === 'string' ? parseInt(selectedBundleId) : selectedBundleId))?.name || '...'}`
-              : destination === 'new_bundle'
-                ? 'Create New Bundle'
-                : 'Upload & Create Assets'
-            }
-          </DialogTitle>
-          <DialogDescription asChild>
-            <div className={cn(isMobile && "text-sm")}>
+        {/* ── Header ───────────────────────────────────────────────── */}
+        <div className={cn("px-6 pt-5 pb-3", isMobile && "px-4 pt-4 pb-2")}>
+          <DialogHeader>
+            <DialogTitle className="text-base font-medium">
               {destination === 'existing_bundle'
-                ? `Add files, URLs, and text content to the selected bundle.`
-                : destination === 'individual'
-                  ? 'Upload files, scrape URLs, or create text content. Each item will be processed and saved as a separate asset.'
-                  : (
-                    <div className="space-y-1">
-                      <div>Create a new bundle with multiple files, URLs, and text content.</div>
-                      {!isMobile && (
-                        <div className="text-xs text-muted-foreground">
-                          💡 Tip: Add all related files to one bundle instead of creating separate bundles for each file.
-                        </div>
-                      )}
-                    </div>
-                  )
-              }
-            </div>
-          </DialogDescription>
-        </DialogHeader>
-        
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto flex flex-col min-h-0">
-          <div className="space-y-4 flex-1 overflow-y-auto">
-            {uploadProgress && renderUploadProgress()}
+                ? `Add to: ${bundles.find(b => b.id === (typeof selectedBundleId === 'string' ? parseInt(selectedBundleId) : selectedBundleId))?.name || '...'}`
+                : destination === 'new_bundle' ? 'Create Bundle' : 'Upload'}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground mt-0.5">
+              Files, folders, archives, URLs, or text — add anything and choose where it goes.
+            </DialogDescription>
+          </DialogHeader>
+        </div>
 
-            {!uploadProgress && (
-              <div className={cn(
-                "grid gap-4",
-                isMobile ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2 xl:grid-cols-4"
-              )}>
-                {renderFileDropZone()}
-                {renderUrlInput()}
-                {renderTextInput()}
-                {renderRssBrowser()}
-                {renderSearchInput()}
+        <Separator />
+
+        {/* ── Body ─────────────────────────────────────────────────── */}
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto flex flex-col min-h-0">
+          <div className={cn("space-y-5 flex-1 overflow-y-auto", isMobile ? "px-4 py-3" : "px-6 py-4")}>
+
+            {/* Upload progress */}
+            {uploadProgress && (
+              <div className="rounded-md border px-4 py-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  {uploadProgress.phase === 'error' ? <AlertTriangle className="h-4 w-4 text-red-600" />
+                    : uploadProgress.phase === 'complete' ? <CheckCircle className="h-4 w-4 text-green-600" />
+                    : <Loader2 className="h-4 w-4 animate-spin text-blue-600" />}
+                  <span className="text-sm">{uploadProgress.message}</span>
+                </div>
+                <Progress value={uploadProgress.progress} className="h-1.5" />
+                <div className="flex justify-between text-[11px] text-muted-foreground">
+                  <span>{uploadProgress.completedItems} / {uploadProgress.totalItems}</span>
+                  <span>{Math.round(uploadProgress.progress)}%</span>
+                </div>
               </div>
             )}
 
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <Label>
-                  Items to Upload ({items.length} items)
-                </Label>
-                {itemTypeCounts.length > 0 && (
-                  <div className="flex gap-1 flex-wrap">
-                    {itemTypeCounts.map(({ kind, count, info }) => {
-                      const Icon = info?.icon || FileText;
+            {/* ── Input sections ────────────────────────────────────── */}
+            {!uploadProgress && (
+              <>
+                {/* Drop zone */}
+                <section>
+                  <div
+                    className={cn(
+                      "relative rounded-lg border-2 border-dashed transition-colors cursor-pointer",
+                      isMobile ? "p-6" : "p-8",
+                      isDragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-muted-foreground/40",
+                      disabled && "pointer-events-none opacity-50"
+                    )}
+                    onClick={() => !disabled && fileInputRef.current?.click()}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
+                  >
+                    <div className="flex flex-col items-center gap-2 text-center">
+                      <div className="rounded-full bg-muted p-3">
+                        <FileUp className="h-6 w-6 text-muted-foreground" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">Drop files, folders, or archives here</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">or click to browse — ZIP and TAR archives will be extracted automatically</p>
+                      </div>
+                    </div>
+                    <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="sr-only" />
+                    <input ref={folderInputRef} type="file" multiple onChange={handleFolderSelect} className="sr-only" {...{ webkitdirectory: '', directory: '' } as any} />
+                  </div>
+
+                  {/* Action buttons */}
+                  <div className={cn("flex items-center gap-2 mt-3 flex-wrap", isMobile && "gap-1.5")}>
+                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs px-2.5" onClick={() => fileInputRef.current?.click()} disabled={disabled}>
+                      <FileUp className="h-3 w-3 mr-1.5" /> Files
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs px-2.5" onClick={() => folderInputRef.current?.click()} disabled={disabled}>
+                      <FolderOpen className="h-3 w-3 mr-1.5" /> Folder
+                    </Button>
+
+                    <Separator orientation="vertical" className="h-4 mx-1" />
+
+                    {assetKinds.map(k => {
+                      const Icon = k.icon;
                       return (
-                        <Badge key={kind} variant="secondary" className="text-xs">
-                          <Icon className="h-3 w-3 mr-1" />
-                          {count} {info?.label || kind}
-                        </Badge>
+                        <Button key={k.value} type="button" variant="ghost" size="sm" className="h-7 text-xs px-2" onClick={() => handleKindSelect(k)} disabled={disabled}>
+                          <Icon className="h-3 w-3 mr-1" /> {k.label}
+                        </Button>
                       );
                     })}
                   </div>
-                )}
-              </div>
-              
-              <div className="border rounded-lg p-4">
-                {renderItemsList()}
-              </div>
-            </div>
+                </section>
 
-            {/* Destination Selector */}
-            {!uploadProgress && items.length > 0 && (
-              <div className="space-y-3 pt-4 border-t">
-                <Label className="font-semibold">Destination</Label>
-                <RadioGroup value={destination} onValueChange={(value) => setDestination(value as any)} className="space-y-2">
-                  <div className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted/50">
-                    <RadioGroupItem value="individual" id="dest-individual" />
-                    <Label htmlFor="dest-individual" className="font-normal cursor-pointer">
-                      Create individual assets
-                      <p className="text-xs text-muted-foreground">Each item will be a separate asset in the infospace.</p>
-                    </Label>
+                <Separator />
+
+                {/* URL input */}
+                <section className="space-y-2">
+                  <h3 className="text-sm font-medium flex items-center gap-2">
+                    <Globe className="h-3.5 w-3.5" /> URLs
+                  </h3>
+                  <Textarea
+                    placeholder={"Paste one or more URLs, one per line\nhttps://example.com/article-1\nhttps://example.com/article-2"}
+                    value={bulkUrlText}
+                    onChange={(e) => setBulkUrlText(e.target.value)}
+                    disabled={disabled}
+                    rows={3}
+                    className="text-sm resize-none font-mono"
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button type="button" size="sm" className="h-7 text-xs" onClick={handleBulkUrlAdd} disabled={disabled || !bulkUrlText.trim()}>
+                      <Plus className="h-3 w-3 mr-1" /> Add URLs
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => urlFileInputRef.current?.click()} disabled={disabled}>
+                      <FileType className="h-3 w-3 mr-1" /> Load from .txt
+                    </Button>
+                    <input ref={urlFileInputRef} type="file" accept=".txt,.csv,.text,text/plain" onChange={handleUrlFileImport} className="sr-only" />
+                    {bulkUrlText.trim() && (
+                      <span className="text-[11px] text-muted-foreground ml-auto">
+                        {extractUrls(bulkUrlText).length} URL{extractUrls(bulkUrlText).length !== 1 ? 's' : ''} detected
+                      </span>
+                    )}
                   </div>
-                  
-                  <div className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted/50">
-                    <RadioGroupItem value="new_bundle" id="dest-new" />
-                    <Label htmlFor="dest-new" className="font-normal cursor-pointer">
-                      Create a new bundle
-                      <p className="text-xs text-muted-foreground">Group all items together in a new bundle.</p>
-                    </Label>
-                  </div>
-                  {destination === 'new_bundle' && (
-                    <div className="pl-8 pb-2">
-                      <Label htmlFor="bundle-title" className="text-xs font-medium text-muted-foreground">Bundle Title</Label>
+                </section>
+
+                <Separator />
+
+                {/* Text input */}
+                <section className="space-y-2">
+                  <h3 className="text-sm font-medium flex items-center gap-2">
+                    <Type className="h-3.5 w-3.5" /> Text Block
+                  </h3>
+                  <div className={cn("flex gap-2", isMobile ? "flex-col" : "flex-row")}>
+                    <Input
+                      placeholder="Title (optional)"
+                      value={newTextTitle}
+                      onChange={(e) => setNewTextTitle(e.target.value)}
+                      disabled={disabled}
+                      className={cn("text-sm h-8", isMobile ? "w-full" : "w-48")}
+                    />
+                    <div className="flex-1 flex gap-2">
                       <Input
-                        id="bundle-title"
-                        value={bundleTitle}
-                        onChange={(e) => setBundleTitle(e.target.value)}
-                        placeholder={items.length > 0 ? generateBundleTitle(items) : "e.g., Research Documents Collection"}
-                        disabled={storeIsLoading || isUploading}
-                        className="mt-1"
+                        placeholder="Paste text content..."
+                        value={newTextContent}
+                        onChange={(e) => setNewTextContent(e.target.value)}
+                        disabled={disabled}
+                        className="text-sm h-8 flex-1"
+                        onKeyDown={(e) => e.key === 'Enter' && !disabled && newTextContent.trim() && (e.preventDefault(), handleAddText())}
                       />
+                      <Button type="button" size="sm" className="h-8 text-xs px-3" onClick={handleAddText} disabled={disabled || !newTextContent.trim()}>
+                        <Plus className="h-3 w-3 mr-1" /> Add
+                      </Button>
                     </div>
-                  )}
-
-                  <div className="flex items-center space-x-3 p-2 rounded-md hover:bg-muted/50">
-                    <RadioGroupItem value="existing_bundle" id="dest-existing" disabled={!bundles || bundles.length === 0} />
-                    <Label htmlFor="dest-existing" className={cn("font-normal cursor-pointer", (!bundles || bundles.length === 0) && "text-muted-foreground cursor-not-allowed")}>
-                      Add to existing bundle
-                      <p className="text-xs text-muted-foreground">Add all items to a bundle that already exists.</p>
-                    </Label>
                   </div>
-                  {destination === 'existing_bundle' && (
-                    <div className="pl-8 pb-2">
-                      <Select
-                        value={selectedBundleId?.toString()}
-                        onValueChange={(value) => setSelectedBundleId(parseInt(value))}
-                        disabled={!bundles || bundles.length === 0}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={bundles.length > 0 ? "Select a bundle" : "No bundles available"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {bundles.map((bundle) => (
-                            <SelectItem key={bundle.id} value={bundle.id.toString()}>
-                              {bundle.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                </RadioGroup>
+                </section>
+              </>
+            )}
+
+            {/* ── Items list ───────────────────────────────────────── */}
+            {items.length > 0 && (
+              <section>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{items.length} item{items.length !== 1 ? 's' : ''}</span>
+                    {(() => {
+                      const withPath = items.filter(i => (i.type === 'file' || i.type === 'archive') && i.relativePath?.includes('/')).length;
+                      return withPath > 0 ? (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 font-normal border-amber-300 text-amber-700">
+                          {withPath} with folder path
+                        </Badge>
+                      ) : null;
+                    })()}
+                  </div>
+                  <div className="flex gap-1 flex-wrap">
+                    {itemTypeCounts.map(([key, count]) => (
+                      <Badge key={key} variant="secondary" className="text-[10px] px-1.5 py-0 h-5 font-normal">
+                        {count} {key}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+
+                <ScrollArea className={cn("rounded-md border", isMobile ? "h-40" : "h-52")}>
+                  <div className="divide-y">
+                    {tree.map(node => renderTreeNode(node, 0))}
+                  </div>
+                </ScrollArea>
+
+              </section>
+            )}
+
+            {items.length === 0 && !uploadProgress && (
+              <div className="text-center py-6 text-muted-foreground">
+                <p className="text-sm">No items added yet</p>
               </div>
             )}
 
+            {/* ── Destination ──────────────────────────────────────── */}
+            {!uploadProgress && items.length > 0 && (
+              <section className="space-y-2 pt-1">
+                <Separator />
+                <h3 className="text-sm font-medium pt-2">Destination</h3>
+                <RadioGroup value={destination} onValueChange={(v) => setDestination(v as any)} className="space-y-1">
+                  <label className="flex items-start gap-2.5 py-1.5 cursor-pointer">
+                    <RadioGroupItem value="individual" id="d-ind" className="mt-0.5" />
+                    <div>
+                      <span className="text-sm">Individual assets</span>
+                      <p className="text-[11px] text-muted-foreground">Each item becomes a separate asset.</p>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 py-1.5 cursor-pointer">
+                    <RadioGroupItem value="new_bundle" id="d-new" className="mt-0.5" />
+                    <div className="flex-1">
+                      <span className="text-sm">New bundle</span>
+                      <p className="text-[11px] text-muted-foreground">Group everything into a new bundle.</p>
+                      {destination === 'new_bundle' && (
+                        <Input
+                          value={bundleTitle}
+                          onChange={(e) => setBundleTitle(e.target.value)}
+                          placeholder={generateBundleTitle(items) || 'Bundle name...'}
+                          disabled={disabled}
+                          className="mt-1.5 h-7 text-sm"
+                        />
+                      )}
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 py-1.5 cursor-pointer">
+                    <RadioGroupItem value="existing_bundle" id="d-exist" className="mt-0.5" disabled={!bundles?.length} />
+                    <div className="flex-1">
+                      <span className={cn("text-sm", !bundles?.length && "text-muted-foreground")}>Existing bundle</span>
+                      <p className="text-[11px] text-muted-foreground">Add to a bundle that already exists.</p>
+                      {destination === 'existing_bundle' && (
+                        <Select value={selectedBundleId?.toString()} onValueChange={(v) => setSelectedBundleId(parseInt(v))}>
+                          <SelectTrigger className="mt-1.5 h-7 text-sm">
+                            <SelectValue placeholder="Select bundle..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {bundles.map(b => <SelectItem key={b.id} value={b.id.toString()}>{b.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                  </label>
+                </RadioGroup>
+              </section>
+            )}
+
+            {/* Errors */}
             {formError && (
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Validation Error</AlertTitle>
+                <AlertTitle>Error</AlertTitle>
                 <AlertDescription>{formError}</AlertDescription>
-              </Alert>
-            )}
-            {storeError && !formError && (
-              <Alert variant="destructive">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Creation Error</AlertTitle>
-                <AlertDescription>{storeError}</AlertDescription>
               </Alert>
             )}
           </div>
 
-          <DialogFooter className={cn("flex-shrink-0 mt-4 pt-4 border-t", isMobile && "flex-col-reverse gap-2")}>
-            <Button 
-              type="button" 
-              variant="outline" 
-              onClick={handleClose} 
-              disabled={isUploading}
-              className={cn(isMobile && "w-full")}
-            >
+          {/* ── Footer ─────────────────────────────────────────────── */}
+          <Separator />
+          <div className={cn("flex items-center justify-end gap-2 px-6 py-3", isMobile && "px-4 flex-col-reverse")}>
+            <Button type="button" variant="ghost" size="sm" onClick={handleClose} disabled={isUploading} className={cn("h-8 text-xs", isMobile && "w-full")}>
               {isUploading ? 'Uploading...' : 'Cancel'}
             </Button>
-            <Button 
-              type="submit" 
-              disabled={storeIsLoading || items.length === 0 || isUploading}
-              className={cn(isMobile && "w-full")}
-            >
+            <Button type="submit" size="sm" disabled={storeIsLoading || items.length === 0 || isUploading} className={cn("h-8 text-xs", isMobile && "w-full")}>
               {isUploading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {isMobile ? 'Processing...' : (uploadProgress?.message || 'Processing...')}
-                </>
-              ) : storeIsLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {'Processing...'}
-                </>
+                <><Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> Processing...</>
               ) : destination === 'individual' ? (
-                isMobile ? `Upload ${items.length}` : `Upload ${items.length} Item${items.length !== 1 ? 's' : ''}`
+                `Upload ${items.length} item${items.length !== 1 ? 's' : ''}`
               ) : destination === 'existing_bundle' ? (
-                isMobile ? `Add ${items.length}` : `Add to Bundle (${items.length} items)`
+                `Add ${items.length} to bundle`
               ) : (
-                isMobile ? `Create Bundle` : `Create Bundle (${items.length} items)`
+                `Create bundle (${items.length})`
               )}
             </Button>
-          </DialogFooter>
+          </div>
         </form>
       </DialogContent>
     </Dialog>

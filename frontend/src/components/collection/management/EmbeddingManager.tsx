@@ -88,13 +88,14 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
   }, [infospace.id, isEnabled]);
 
   const loadAvailableModels = async (forceRefresh = false) => {
+    if (!infospace?.id) return;
     setIsLoadingModels(true);
     try {
-      const validApiKeys = buildValidApiKeys();
+      // Bulk discover — no provider_key, no runtime_key. The backend returns the
+      // static model catalog across all embedding providers.
       const response = await EmbeddingsService.discoverEmbeddingModels({
-        requestBody: {
-          api_keys: Object.keys(validApiKeys).length > 0 ? validApiKeys : undefined
-        }
+        infospaceId: infospace.id,
+        requestBody: {},
       });
       const models: EmbeddingModel[] = (response.models || []).map(m => ({
         name: m.name, provider: m.provider, dimension: m.dimension,

@@ -155,7 +155,7 @@ export default function SearchInterface({ className }: SearchInterfaceProps) {
     setSelectedResults(new Set());
 
     try {
-      const response = await SearchService.searchAndIngest({
+      const response = await SearchService.webSearchAndIngest({
         requestBody: {
           query: query.trim(),
           provider,
@@ -306,7 +306,7 @@ export default function SearchInterface({ className }: SearchInterfaceProps) {
       });
 
       // Use the SearchService from the generated SDK
-      const result = await SearchService.createAssetsFromResults({
+      const result = await SearchService.webCreateAssetsFromResults({
         requestBody: {
           search_results: selectedSearchResults,
           infospace_id: activeInfospace.id,

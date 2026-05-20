@@ -260,11 +260,10 @@ function GetRunDashboardComponent({ result, compact }: ToolResultRenderProps) {
       <div className="border rounded-lg overflow-hidden bg-background">
         <div className="h-[800px]">
           <PanelRenderer
-            panel={panel}
-            allResults={formattedResults}
+            panel={panel as any}
+            infospaceId={0}
+            runId={0}
             allSchemas={formattedSchemas}
-            allSources={[]}
-            allAssets={formattedAssets}
             onUpdatePanel={() => {}}
             onRemovePanel={() => {}}
             onResultSelect={undefined}

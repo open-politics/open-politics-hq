@@ -345,10 +345,38 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
   };
 
   const handleSelectProvider = (capability: ProviderCapability, providerId: string) => {
-    setSelection(capability, { providerId });
-    // Sync to backend so preferences persist across sessions
+    const provider = getProvider(providerId);
+    const needsModel = provider?.model_required !== false; // default true for LLM/embedding providers
+    const availableModels = provider?.models || [];
+
+    // When the provider requires a model and we have static model specs, auto-pick
+    // the first one as a default. The user can change it via the model picker
+    // rendered in the provider card. If the provider has no static models
+    // (e.g. Ollama), skip the sync — the backend validator would reject an
+    // incomplete selection. Point the user at infospace-level settings for
+    // runtime-discovered model lists.
+    if (needsModel && availableModels.length === 0) {
+      setSelection(capability, { providerId });
+      toast.message(
+        `Selected ${provider?.name ?? providerId}`,
+        { description: 'Pick a model in the infospace embedding settings to finish configuration.' }
+      );
+      return;
+    }
+
+    const defaultModelId = availableModels[0]?.name;
+    setSelection(capability, { providerId, modelId: defaultModelId });
     useProvidersStore.getState().syncToBackend();
-    toast.success(`Selected ${getProvider(providerId)?.name} for ${CAPABILITY_NAMES[capability]}`);
+    toast.success(
+      defaultModelId
+        ? `Selected ${provider?.name ?? providerId} (${defaultModelId})`
+        : `Selected ${provider?.name ?? providerId} for ${CAPABILITY_NAMES[capability]}`
+    );
+  };
+
+  const handleSelectModel = (capability: ProviderCapability, providerId: string, modelId: string) => {
+    setSelection(capability, { providerId, modelId });
+    useProvidersStore.getState().syncToBackend();
   };
 
   const renderProviderCard = (provider: ProviderMetadata, capability: ProviderCapability) => {
@@ -418,6 +446,41 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
         </CardHeader>
 
         <CardContent className="px-2.5 pb-2.5 pt-0 space-y-1.5">
+          {/* Model picker — shown for selected providers that have a static model list.
+              When the provider has no static models (Ollama) the picker is hidden
+              and the user is directed to infospace embedding settings. */}
+          {isSelected && (provider.models?.length ?? 0) > 0 && (
+            <div className="pt-1 border-t border-gray-200 dark:border-gray-700 space-y-1">
+              <Label className="text-xs font-medium text-gray-700 dark:text-gray-300">Model</Label>
+              <Select
+                value={selections[capability]?.modelId || provider.models?.[0]?.name || ''}
+                onValueChange={(modelId) => handleSelectModel(capability, provider.id, modelId)}
+              >
+                <SelectTrigger className="h-7 text-xs">
+                  <SelectValue placeholder="Pick a model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {provider.models!.map((m) => (
+                    <SelectItem key={m.name} value={m.name} className="text-xs">
+                      {m.name}
+                      {m.dimension ? (
+                        <span className="text-gray-500 dark:text-gray-400 ml-2">
+                          {m.dimension}d
+                        </span>
+                      ) : null}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {isSelected && (provider.models?.length ?? 0) === 0 && (provider.model_required !== false) && (
+            <div className="flex items-start gap-1.5 px-2 py-1.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded text-xs text-amber-700 dark:text-amber-400">
+              <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
+              <span>Model list is runtime-discovered. Pick a model in the infospace embedding settings to finish setup.</span>
+            </div>
+          )}
+
           {/* Features */}
           {provider.features && provider.features.length > 0 && (
             <div className="flex flex-wrap gap-1">

@@ -34,7 +34,7 @@ import {
   DISPLAYABLE_ASSET_KINDS,
   getAssetKindConfig,
 } from '../assetKindConfig';
-import type { AssetRead, AssetKind, TreeNode } from '@/client';
+import type { AssetRead, AssetKind } from '@/client';
 import { useDebounce } from '@/hooks/useDebounce';
 import { IconRenderer } from '@/components/collection/utilities/icons/icon-picker';
 

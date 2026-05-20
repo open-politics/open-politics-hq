@@ -51,7 +51,7 @@ import {
   BundleRead,
   BundlesService,
 } from '@/client';
-import type { TreeNode } from '@/client';
+import type { AssetNode } from '@/client';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { useTreeStore } from '@/zustand_stores/storeTree';
@@ -60,7 +60,6 @@ import { useDebounce } from '@/hooks/useDebounce';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { BundleActivityIndicators } from './BundleActivityIndicators';
 import { useAssetQuery } from '@/hooks/useAssetQuery';
 import type { ChildResultGroup } from '@/hooks/useAssetQuery';
 import { useIngestionJobs } from '@/hooks/useIngestionJobs';
@@ -97,16 +96,7 @@ export interface AssetTreeItem {
   type: AssetTreeItemType;
   name: string;
   asset?: AssetRead;
-  bundle?: BundleRead & {
-    has_active_sources?: boolean;
-    active_source_count?: number;
-    has_monitors?: boolean;
-    monitor_count?: number;
-    is_pipeline_input?: boolean;
-    pipeline_input_count?: number;
-    is_pipeline_output?: boolean;
-    pipeline_output_count?: number;
-  };
+  bundle?: BundleRead;
   children?: AssetTreeItem[];
   level: number;
   isExpanded: boolean;
@@ -311,8 +301,8 @@ export default function AssetSelector({
   const lastWheelTime = useRef<number>(0);
 
   const fetchingRef = useRef(false);
-  const previousRootNodesRef = useRef<TreeNode[]>([]);
-  const previousChildrenCacheRef = useRef<Map<string, TreeNode[]>>(new Map());
+  const previousRootNodesRef = useRef<AssetNode[]>([]);
+  const previousChildrenCacheRef = useRef<Map<string, AssetNode[]>>(new Map());
 
   // Cleanup timeouts on unmount
   useEffect(() => {
@@ -387,7 +377,7 @@ export default function AssetSelector({
       const childrenPromises = expandedIds.map(async (itemId) => {
         const node = [...store.rootNodes, ...Array.from(store.childrenCache.values()).flat()]
           .find(n => n.id === itemId);
-        if (node && (node.type === 'bundle' || node.is_container)) {
+        if (node && (node.type === 'bundle' || node.has_children)) {
           try {
             // Clear cache for this item to force refresh
             const newCache = new Map(store.childrenCache);
@@ -648,12 +638,11 @@ export default function AssetSelector({
     setEditingItem(null);
   };
   
-  // Shared conversion function: TreeNode -> AssetTreeItem (extracted for reuse)
-  const convertTreeNodeToTreeItem = useCallback((node: TreeNode, level: number = 0): AssetTreeItem => {
+  // Convert an AssetNode from the tree store into an AssetTreeItem for rendering.
+  const convertAssetNodeToTreeItem = useCallback((node: AssetNode, level: number = 0, parentId?: string): AssetTreeItem => {
     const isExpanded = expandedItems.has(node.id);
     const isSelected = selectedItems.has(node.id);
-    
-    // Get children from cache if node is expanded
+
     let children: AssetTreeItem[] | undefined;
     if (isExpanded) {
       const cachedChildren = childrenCache.get(node.id) || previousChildrenCacheRef.current.get(node.id);
@@ -661,69 +650,55 @@ export default function AssetSelector({
         const relevantChildren = bundlesOnly
           ? cachedChildren.filter(c => c.type === 'bundle')
           : cachedChildren;
-        children = relevantChildren.map(child => convertTreeNodeToTreeItem(child, level + 1));
+        children = relevantChildren.map(child => convertAssetNodeToTreeItem(child, level + 1, node.id));
       }
     }
-    
-    // Create minimal asset/bundle objects for display
+
     let asset: AssetRead | undefined;
     let bundle: BundleRead | undefined;
-    
+
     if (node.type === 'asset') {
       const assetId = parseInt(node.id.replace('asset-', ''));
       asset = {
         id: assetId,
         title: node.name,
         kind: node.kind,
-        is_container: node.is_container || false,
+        is_container: !!node.has_children,
         stub: node.stub || false,
         processing_status: node.processing_status,
         updated_at: node.updated_at,
         created_at: node.created_at,
         infospace_id: activeInfospace?.id || 0,
-        parent_asset_id: null,
+        parent_asset_id: node.parent_asset_id ?? null,
         text_content: '',
         uuid: '',
-        part_index: null,
+        part_index: node.part_index ?? null,
         source_id: null,
         facets: node.facets || null,
-        file_info: node.file_info || null,
+        file_info: null,
         tags: node.tags || [],
       } as AssetRead;
     } else if (node.type === 'bundle') {
       const bundleId = parseInt(node.id.replace('bundle-', ''));
+      const parentBundleId =
+        parentId && parentId.startsWith('bundle-')
+          ? parseInt(parentId.replace('bundle-', ''))
+          : null;
       bundle = {
         id: bundleId,
         name: node.name,
         description: '',
         infospace_id: activeInfospace?.id || 0,
-        parent_bundle_id: node.parent_id ? parseInt(node.parent_id.replace('bundle-', '')) : null,
+        parent_bundle_id: parentBundleId,
         updated_at: node.updated_at,
         created_at: node.created_at || node.updated_at,
         asset_count: node.asset_count || 0,
         child_bundle_count: node.child_bundle_count || 0,
         sealed: node.sealed || false,
         tags: node.tags || [],
-        has_active_sources: node.has_active_sources,
-        active_source_count: node.active_source_count,
-        has_monitors: node.has_monitors,
-        monitor_count: node.monitor_count,
-        is_pipeline_input: node.is_pipeline_input,
-        pipeline_input_count: node.pipeline_input_count,
-        is_pipeline_output: node.is_pipeline_output,
-        pipeline_output_count: node.pipeline_output_count,
-      } as BundleRead & {
-        has_active_sources?: boolean;
-        active_source_count?: number;
-        has_monitors?: boolean;
-        monitor_count?: number;
-        is_pipeline_input?: boolean;
-        pipeline_input_count?: number;
-        is_pipeline_output?: boolean;
-        pipeline_output_count?: number;
-      };
+      } as BundleRead;
     }
-    
+
     return {
       id: node.id,
       type: (node.type === 'bundle' || node.type === 'virtual_folder') ? 'folder' : 'asset',
@@ -731,34 +706,35 @@ export default function AssetSelector({
       level,
       isExpanded,
       isSelected,
-      parentId: node.parent_id || undefined,
-      isContainer: node.type === 'bundle' || node.type === 'virtual_folder' || node.is_container || undefined,
+      parentId,
+      isContainer: node.type === 'bundle' || node.type === 'virtual_folder' || !!node.has_children || undefined,
       children,
       asset,
       bundle,
     };
   }, [expandedItems, selectedItems, childrenCache, activeInfospace, bundlesOnly]);
 
-  // Helper: Convert AssetRead to TreeNode (reusing tree builder pattern from backend)
-  const assetReadToTreeNode = useCallback((asset: AssetRead): TreeNode => {
+  // Helper: Convert AssetRead to AssetNode so search results can flow through the same tree renderer.
+  const assetReadToAssetNode = useCallback((asset: AssetRead): AssetNode => {
     return {
       id: `asset-${asset.id}`,
       type: 'asset' as const,
       name: asset.title || 'Untitled',
       kind: asset.kind,
-      is_container: asset.is_container || false,
+      has_children: !!asset.is_container,
       stub: asset.stub || false,
       processing_status: asset.processing_status,
-      parent_id: asset.parent_asset_id ? `asset-${asset.parent_asset_id}` : undefined,
+      parent_asset_id: asset.parent_asset_id ?? null,
+      part_index: asset.part_index ?? null,
+      tags: asset.tags ?? null,
       updated_at: asset.updated_at,
       created_at: asset.created_at,
-      facets: asset.facets || undefined,
-      file_info: asset.file_info || undefined,
+      facets: asset.facets ?? null,
     };
   }, []);
 
   // Generate hierarchical asset tree
-  // NEW: Convert TreeNodes to AssetTreeItems (much simpler!) - optimized with better memoization
+  // Project AssetNodes into AssetTreeItems. Memoized to avoid churn during search/refresh.
   const assetTree = useMemo(() => {
     // Use filtered bundle children if filterByBundleId is set, otherwise use root nodes
     // Keep showing previous data during refresh to prevent empty state
@@ -781,7 +757,7 @@ export default function AssetSelector({
     const filteredNodesToRender = bundlesOnly
       ? nodesToRender.filter(n => n.type === 'bundle')
       : nodesToRender;
-    const tree = filteredNodesToRender.map(node => convertTreeNodeToTreeItem(node, 0));
+    const tree = filteredNodesToRender.map(node => convertAssetNodeToTreeItem(node, 0));
     console.log('[AssetSelector] Generated', tree.length, 'tree items');
 
     // Parse sort option - supports both "key-direction" and "primary-secondary-direction" formats
@@ -842,7 +818,7 @@ export default function AssetSelector({
         return sortedItems.map(item => ({ ...item, children: item.children ? sortItemsRecursively(item.children) : undefined }));
     };
     return sortItemsRecursively(tree);
-  }, [rootNodes, childrenCache, expandedItems, selectedItems, sortOption, filterByBundleId, pathPrefix, convertTreeNodeToTreeItem]);
+  }, [rootNodes, childrenCache, expandedItems, selectedItems, sortOption, filterByBundleId, pathPrefix, convertAssetNodeToTreeItem]);
   
   // Convert query results to AssetTreeItems — tiered
   const searchNameBundleItems = useMemo(() => {
@@ -862,20 +838,20 @@ export default function AssetSelector({
   const searchNameAssetItems = useMemo(() => {
     if (!isSearchActive || nameMatches.assets.length === 0) return [];
     return nameMatches.assets.map(r => {
-      const treeNode = assetReadToTreeNode(r.asset);
-      const treeItem = convertTreeNodeToTreeItem(treeNode, 0);
+      const treeNode = assetReadToAssetNode(r.asset);
+      const treeItem = convertAssetNodeToTreeItem(treeNode, 0);
       return { ...treeItem, asset: r.asset };
     });
-  }, [isSearchActive, nameMatches.assets, assetReadToTreeNode, convertTreeNodeToTreeItem]);
+  }, [isSearchActive, nameMatches.assets, assetReadToAssetNode, convertAssetNodeToTreeItem]);
 
   const searchContentItems = useMemo(() => {
     if (!isSearchActive || queryResults.length === 0) return [];
     return queryResults.map(r => {
-      const treeNode = assetReadToTreeNode(r.asset);
-      const treeItem = convertTreeNodeToTreeItem(treeNode, 0);
+      const treeNode = assetReadToAssetNode(r.asset);
+      const treeItem = convertAssetNodeToTreeItem(treeNode, 0);
       return { ...treeItem, asset: r.asset };
     });
-  }, [isSearchActive, queryResults, assetReadToTreeNode, convertTreeNodeToTreeItem]);
+  }, [isSearchActive, queryResults, assetReadToAssetNode, convertAssetNodeToTreeItem]);
 
   // Filter tree based on search and type
   const filteredTree = useMemo(() => {
@@ -1092,18 +1068,49 @@ export default function AssetSelector({
     return ids;
   }, [childrenCache]);
 
-  const toggleBundleSelection = useCallback((bundleId: number, select: boolean) => {
+  const toggleBundleSelection = useCallback(async (bundleId: number, select: boolean) => {
     const bundleItemId = `bundle-${bundleId}`;
-    const allIds = collectAllDescendantIds(bundleItemId);
-    const newSet = new Set(selectedItems);
-    
+
+    // Apply the cache-based cascade synchronously so the UI reacts instantly
+    // for bundles the user already expanded. This covers the common case and
+    // the deselect path (where the backend lookup would only be redundant
+    // churn).
+    const cacheIds = collectAllDescendantIds(bundleItemId);
+    const seed = new Set(selectedItems);
     if (select) {
-      allIds.forEach(id => newSet.add(id));
+      cacheIds.forEach(id => seed.add(id));
     } else {
-      allIds.forEach(id => newSet.delete(id));
+      cacheIds.forEach(id => seed.delete(id));
     }
-    onSelectionChange(newSet);
-  }, [selectedItems, onSelectionChange, collectAllDescendantIds]);
+    onSelectionChange(seed);
+
+    // On select, bundles the user hasn't expanded yet have an empty
+    // childrenCache — so `cacheIds` is just [bundle-N] and downstream counters
+    // (e.g. AnnotationRunnerDock's asset count) stay at zero. Pull the full
+    // descendant asset list from the backend so the selection reflects what
+    // a "run on this bundle" would actually target.
+    if (!select || !activeInfospace?.id) return;
+    try {
+      const assetIds = await BundlesService.getBundleDescendantAssetIds({
+        infospaceId: activeInfospace.id,
+        bundleId,
+        recursive: true,
+      });
+      if (!assetIds || assetIds.length === 0) return;
+      // Merge with whatever the user has selected in the meantime — do not
+      // clobber other picks.
+      const next = new Set(seed);
+      let added = 0;
+      assetIds.forEach((id) => {
+        const key = `asset-${id}`;
+        if (!next.has(key)) { next.add(key); added++; }
+      });
+      if (added > 0) onSelectionChange(next);
+    } catch (err: any) {
+      console.error('[AssetSelector] Failed to expand bundle selection:', err);
+      toast.error(err?.message || 'Failed to expand bundle selection');
+    }
+  }, [selectedItems, onSelectionChange, collectAllDescendantIds, activeInfospace?.id]);
   
   const isBundleFullySelected = useCallback((bundleId: number) => {
     const bundleItemId = `bundle-${bundleId}`;
@@ -1544,19 +1551,6 @@ export default function AssetSelector({
                         )}
                       </div>
                     )}
-                    {/* Inline activity indicators for bundles */}
-                    {item.bundle && (
-                      <BundleActivityIndicators
-                        hasActiveSources={item.bundle.has_active_sources}
-                        activeSourceCount={item.bundle.active_source_count}
-                        hasMonitors={item.bundle.has_monitors}
-                        monitorCount={item.bundle.monitor_count}
-                        isPipelineInput={item.bundle.is_pipeline_input}
-                        pipelineInputCount={item.bundle.pipeline_input_count}
-                        isPipelineOutput={item.bundle.is_pipeline_output}
-                        pipelineOutputCount={item.bundle.pipeline_output_count}
-                      />
-                    )}
                   </>
                 )}
               </div>
@@ -1864,11 +1858,17 @@ export default function AssetSelector({
 
           {/* Right fixed section: date + actions - always at end */}
           <div className="flex items-center gap-2 shrink-0">
-            {item.asset && !isEditing && (
-              <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:block">
-                {formatDistanceToNowStrict(new Date(item.asset.updated_at), { addSuffix: true })}
-              </span>
-            )}
+            {item.asset && !isEditing && (() => {
+              const raw = item.asset.updated_at;
+              if (!raw) return null;
+              const d = new Date(raw);
+              if (!Number.isFinite(d.getTime())) return null;
+              return (
+                <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:block">
+                  {formatDistanceToNowStrict(d, { addSuffix: true })}
+                </span>
+              );
+            })()}
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
               {renderItemActions ? renderItemActions(item) : (
                 item.type === 'folder' && (
@@ -2439,8 +2439,8 @@ export default function AssetSelector({
                                   </Badge>
                                 </button>
                                 {isExpanded && group.matches.map(m => {
-                                  const treeNode = assetReadToTreeNode(m.asset);
-                                  const treeItem = convertTreeNodeToTreeItem(treeNode, 1);
+                                  const treeNode = assetReadToAssetNode(m.asset);
+                                  const treeItem = convertAssetNodeToTreeItem(treeNode, 1);
                                   return renderTreeItem({ ...treeItem, asset: m.asset });
                                 })}
                               </div>

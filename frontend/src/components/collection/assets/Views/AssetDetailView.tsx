@@ -29,12 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationNext } from "@/components/ui/pagination"
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -48,7 +43,6 @@ import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { useTreeStore } from '@/zustand_stores/storeTree';
 import { useMediaBlobStore } from '@/zustand_stores/storeMediaBlobs';
 import { useAssetQuery, type QueryResult } from '@/hooks/useAssetQuery';
-import type { TreeNode } from '@/client';
 import { toast } from 'sonner';
 import { ExternalLink, Info, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, X, CheckCircle, AlertCircle, ArrowUp, ArrowDown, Files, Type, Loader2, Table as TableIcon, Layers, Image as ImageIcon, Globe, Video, Music, FileSpreadsheet, Settings, Copy } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -90,12 +84,12 @@ export interface CsvRowListItem {
   score?: number | null;
 }
 
-function treeNodeToCsvRow(node: TreeNode): CsvRowListItem {
-  const fi = node.file_info as Record<string, any> | null | undefined;
+function assetReadToCsvRow(asset: AssetRead): CsvRowListItem {
+  const fi = asset.file_info as Record<string, any> | null | undefined;
   return {
-    assetId: parseInt(node.id.replace('asset-', ''), 10),
-    name: node.name,
-    partIndex: (fi?.data_row_index as number) ?? 0,
+    assetId: asset.id,
+    name: asset.title,
+    partIndex: (fi?.data_row_index as number) ?? asset.part_index ?? 0,
     originalRowData: fi?.original_row_data as Record<string, any> | undefined,
   };
 }
@@ -163,13 +157,22 @@ const AssetDetailView = ({
 
   // CSV-specific: tree browse + query search
   const [csvBrowseItems, setCsvBrowseItems] = useState<CsvRowListItem[]>([]);
+  // Track skip at tree-item granularity (not csv-row granularity) — the
+  // tree endpoint paginates over all children; items are then filtered to
+  // csv_row client-side, so `csvBrowseItems.length` would drift from the
+  // server's skip if any non-csv_row child ever appears.
+  const [csvBrowseTreeSkip, setCsvBrowseTreeSkip] = useState(0);
   const [csvBrowseTotal, setCsvBrowseTotal] = useState(0);
   const [csvBrowseHasMore, setCsvBrowseHasMore] = useState(false);
   const [csvBrowseLoading, setCsvBrowseLoading] = useState(false);
   const isCsvAsset = asset?.kind === 'csv';
   const csvSearchActive = isCsvAsset && debouncedCsvSearch.trim().length > 0;
 
-  const { fetchChildren: treeFetchChildren, getFullAsset: treeGetFullAsset } = useTreeStore();
+  const {
+    fetchChildren: treeFetchChildren,
+    getFullAsset: treeGetFullAsset,
+    batchGetAssets: treeBatchGetAssets,
+  } = useTreeStore();
 
   // CSV search via query endpoint (only active when searching within a CSV)
   const csvSearchQuery = useAssetQuery({
@@ -287,35 +290,43 @@ const AssetDetailView = ({
     }
   }, [selectedAssetId, activeInfospace?.id, getAssetById]);
 
-  // Fetch CSV children via tree (paginated, sorted by part_index)
+  // Fetch CSV children via tree (paginated, sorted by part_index). The tree
+  // endpoint lists row assets; we then batch-fetch full AssetRead records so
+  // we get `file_info.data_row_index` and `original_row_data` for rendering.
   const fetchCsvChildrenFromTree = useCallback(async (parentId: number, append = false) => {
     setCsvBrowseLoading(true);
     try {
-      const skip = append ? csvBrowseItems.length : 0;
+      const skip = append ? csvBrowseTreeSkip : 0;
+      const limit = 200;
       const { TreeNavigationService } = await import('@/client');
-      const response = await TreeNavigationService.getTreeChildren({
+      const tree = await TreeNavigationService.getTreeChildren({
         infospaceId: activeInfospace!.id,
         parentId: `asset-${parentId}`,
         skip,
-        limit: 200,
+        limit,
       });
-      const items = response.children
-        .filter((n: TreeNode) => n.kind === 'csv_row')
-        .map(treeNodeToCsvRow);
+      const treeItems = tree.section.items ?? [];
+      const rowIds = treeItems
+        .filter((n) => n.kind === 'csv_row')
+        .map((n) => parseInt(n.id.replace('asset-', ''), 10));
+      const fullRows = rowIds.length > 0 ? await treeBatchGetAssets(rowIds) : [];
+      const items = fullRows.map(assetReadToCsvRow);
       if (append) {
         setCsvBrowseItems(prev => [...prev, ...items]);
+        setCsvBrowseTreeSkip(prev => prev + treeItems.length);
       } else {
         setCsvBrowseItems(items);
+        setCsvBrowseTreeSkip(treeItems.length);
       }
-      setCsvBrowseTotal(response.total_children);
-      setCsvBrowseHasMore(response.has_more);
+      setCsvBrowseTotal(tree.section.total);
+      setCsvBrowseHasMore(tree.section.has_more ?? false);
     } catch (err: any) {
       console.error('[AssetDetailView] CSV tree fetch error:', err);
       setChildrenError(err.message || 'Failed to load CSV rows');
     } finally {
       setCsvBrowseLoading(false);
     }
-  }, [activeInfospace?.id, csvBrowseItems.length]);
+  }, [activeInfospace?.id, csvBrowseTreeSkip, treeBatchGetAssets]);
 
   const handleCsvLoadMore = useCallback(() => {
     if (!asset?.id || csvIsLoading) return;
@@ -740,20 +751,25 @@ const AssetDetailView = ({
       const { TreeNavigationService } = await import('@/client');
       const pageSize = 200;
       const skip = Math.max(0, partIndex - 20); // some context above the target
-      const resp = await TreeNavigationService.getTreeChildren({
+      const tree = await TreeNavigationService.getTreeChildren({
         infospaceId: activeInfospace!.id,
         parentId: `asset-${asset!.id}`,
         skip,
         limit: pageSize,
       });
 
-      // Replace browse items with this page
-      const items = resp.children
-        .filter((n: TreeNode) => n.kind === 'csv_row')
-        .map(treeNodeToCsvRow);
+      const treeItems = tree.section.items ?? [];
+      const rowIds = treeItems
+        .filter((n) => n.kind === 'csv_row')
+        .map((n) => parseInt(n.id.replace('asset-', ''), 10));
+      const fullRows = rowIds.length > 0 ? await treeBatchGetAssets(rowIds) : [];
+      const items = fullRows.map(assetReadToCsvRow);
       setCsvBrowseItems(items);
-      setCsvBrowseTotal(resp.total_children);
-      setCsvBrowseHasMore(resp.has_more);
+      // Tree skip now reflects the start of the loaded page + its size, so
+      // "load more" continues from the right offset when the user scrolls.
+      setCsvBrowseTreeSkip(skip + treeItems.length);
+      setCsvBrowseTotal(tree.section.total);
+      setCsvBrowseHasMore(tree.section.has_more ?? false);
 
       // Find the target row in the new page and select it
       const target = items.find((r: CsvRowListItem) => r.partIndex === partIndex);
@@ -769,7 +785,7 @@ const AssetDetailView = ({
       toast.message('No row asset for this line', { description: 'Reprocess the CSV if rows are missing.' });
     }
     setActiveTab('children');
-  }, [csvBrowseItems, treeGetFullAsset, activeInfospace?.id, asset?.id]);
+  }, [csvBrowseItems, treeGetFullAsset, treeBatchGetAssets, activeInfospace?.id, asset?.id]);
 
   const handleReprocessAsset = useCallback(async (useCustomOptions: boolean = false) => {
     if (!asset) return;
@@ -1724,7 +1740,7 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
             <Card
               key={childAsset.id}
               className={cn(
-                "cursor-pointer transition-colors hover:bg-muted/50",
+                "cursor-pointer transition-colors hover:bg-muted/50 !rounded-none",
                 selectedChildAsset?.id === childAsset.id && "bg-blue-50 dark:bg-blue-900/50 ring-2 ring-primary"
               )}
               onClick={() => handleChildAssetClick(childAsset)}
@@ -1834,8 +1850,8 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
     return (
       <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
         {/* Search and stats header */}
-        <div className="flex shrink-0 items-center gap-2 bg-background pb-0 z-10">
-          <div className="relative max-w-md flex-grow">
+        <div className="flex shrink-0 mt-10 items-center gap-2 bg-background pb-0 z-10">
+          <div className="relative max-w-md left-2 flex-grow">
             <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               placeholder="Search PDF pages..."
@@ -1844,7 +1860,8 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
               className="pl-8 h-9"
             />
           </div>
-          <Badge variant="outline">
+          <Badge className="ml-2" variant="outline"
+            >
             {sortedPages.length} pages
           </Badge>
         </div>
@@ -1864,7 +1881,7 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
             <Card
               key={pageAsset.id}
               className={cn(
-                "cursor-pointer transition-all hover:shadow-lg group relative",
+                "cursor-pointer transition-all hover:shadow-lg group relative !rounded-none",
                 selectedChildAsset?.id === pageAsset.id && "ring-2 ring-primary shadow-lg"
               )}
               onClick={() => handleChildAssetClick(pageAsset)}
@@ -2016,95 +2033,114 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
           {/* Main Content Area */}
           <div className="flex min-h-0 flex-1 flex-col max-w-full overflow-hidden">
             {isHierarchicalAsset && hasChildren ? (
-              /* Tabs only when there are children */
-              <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'content' | 'children')} className="w-full h-full flex flex-col min-w-0 !px-1 max-w-full overflow-hidden">
-                <TabsList className="grid grid-cols-2 w-full flex-none sticky top-0 z-10 m-1 min-w-0 !px-0">
-                  <TabsTrigger value="content">
-                    {(() => {
-                      switch (asset?.kind) {
-                        case 'csv': return 'Overview';
-                        case 'article': return 'Article';
-                        case 'pdf': return 'Document';
-                        case 'web': return 'Article';
-                        default: return 'Content';
-                      }
-                    })()}
-                  </TabsTrigger>
-                  <TabsTrigger value="children" className="flex items-center gap-2">
-                    <List className="h-4 w-4" />
-                    {(() => {
-                      switch (asset?.kind) {
-                        case 'csv': return `Row Detail`;
-                        case 'pdf': return `pages (${childAssets.length})`;
-                        case 'article': return `${childAssets.length} related`;
-                        case 'mbox': return `${childAssets.length} emails`;
-                        case 'web': {
-                          const imageCount = childAssets.filter(child => {
-                            if (child.kind !== 'image') return false;
-                            const isGif = (url: string) => url.toLowerCase().includes('.gif');
-                            if (child.source_identifier && isGif(child.source_identifier)) return false;
-                            if (child.blob_path && isGif(child.blob_path)) return false;
-                            return true;
-                          }).length;
-                          return `Images (${imageCount})`;
-                        }
-                        default: return `Children (${childAssets.length})`;
-                      }
-                    })()}
-                  </TabsTrigger>
-                </TabsList>
+              /* Floating vertical toggle group, pinned top-right of content pane */
+              <div className="relative flex flex-1 flex-col min-h-0 w-full min-w-0 max-w-full overflow-hidden">
+                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 min-w-0 max-w-full">
+                  {activeTab === 'content' ? (
+                    <>
+                      {renderContent()}
 
-                <TabsContent value="content" className="flex-1 min-h-0 overflow-y-auto p-4 min-w-0 max-w-full overflow-x-hidden">
-                  {renderContent()}
-                  
-                  {/* Related Assets - Semantic Search */}
-                  {asset &&
-                    activeInfospace?.enable_related_assets &&
-                    kindConfig?.showRelatedAssets &&
-                    (activeInfospace?.enrichment_config as any)?.embedding?.model_name && (
-                    <div className="mt-8 pt-8 border-t">
-                      <AssetFeedView
-                        title="Related Articles"
-                        items={relatedAssetsResults
-                          .filter(r => r.asset.id !== asset.id) // Exclude current asset
-                          .slice(0, 6) // Limit to 6
-                          .map(r => ({
-                            asset: r.asset,
-                            score: r.score,
-                          }))}
-                        cardSize="sm"
-                        columns={3}
-                        showControls={false}
-                        onAssetClick={onEdit}
-                        emptyMessage="No related articles found"
-                      />
-                    </div>
-                  )}
-                </TabsContent>
-
-                <TabsContent value="children" className="flex-1 min-h-0 overflow-y-auto p-4 min-w-0 max-w-full overflow-x-hidden">
-                  {kindConfig?.childrenComponent === 'csv' ? (
-                    <AssetDetailViewCsv
-                      asset={asset}
-                      items={csvItems}
-                      total={csvTotal}
-                      hasMore={csvHasMore}
-                      isLoading={csvIsLoading}
-                      childrenError={childrenError}
-                      onRowSelect={handleCsvRowSelect}
-                      onLoadMore={handleCsvLoadMore}
-                      selectedChildAsset={selectedChildAsset}
-                      highlightedAssetId={highlightAssetIdOnOpen}
-                      rowListSearchTerm={childSearchTerm}
-                      onRowListSearchTermChange={setChildSearchTerm}
-                    />
-                  ) : kindConfig?.childrenComponent === 'pdf' ? (
-                    renderPdfChildAssets()
+                      {/* Related Assets - Semantic Search */}
+                      {asset &&
+                        activeInfospace?.enable_related_assets &&
+                        kindConfig?.showRelatedAssets &&
+                        (activeInfospace?.enrichment_config as any)?.embedding?.model_name && (
+                        <div className="mt-8 pt-8 border-t">
+                          <AssetFeedView
+                            title="Related Articles"
+                            items={relatedAssetsResults
+                              .filter(r => r.asset.id !== asset.id) // Exclude current asset
+                              .slice(0, 6) // Limit to 6
+                              .map(r => ({
+                                asset: r.asset,
+                                score: r.score,
+                              }))}
+                            cardSize="sm"
+                            columns={3}
+                            showControls={false}
+                            onAssetClick={onEdit}
+                            emptyMessage="No related articles found"
+                          />
+                        </div>
+                      )}
+                    </>
                   ) : (
-                    renderChildAssets()
+                    kindConfig?.childrenComponent === 'csv' ? (
+                      <AssetDetailViewCsv
+                        asset={asset}
+                        items={csvItems}
+                        total={csvTotal}
+                        hasMore={csvHasMore}
+                        isLoading={csvIsLoading}
+                        childrenError={childrenError}
+                        onRowSelect={handleCsvRowSelect}
+                        onLoadMore={handleCsvLoadMore}
+                        selectedChildAsset={selectedChildAsset}
+                        highlightedAssetId={highlightAssetIdOnOpen}
+                        rowListSearchTerm={childSearchTerm}
+                        onRowListSearchTermChange={setChildSearchTerm}
+                      />
+                    ) : kindConfig?.childrenComponent === 'pdf' ? (
+                      renderPdfChildAssets()
+                    ) : (
+                      renderChildAssets()
+                    )
                   )}
-                </TabsContent>
-              </Tabs>
+                </div>
+
+                {(() => {
+                  const contentLabel = (() => {
+                    switch (asset?.kind) {
+                      case 'csv': return 'Overview';
+                      case 'article': return 'Article';
+                      case 'pdf': return 'Document';
+                      case 'web': return 'Article';
+                      default: return 'Content';
+                    }
+                  })();
+                  const childrenLabel = (() => {
+                    switch (asset?.kind) {
+                      case 'csv': return 'Row Detail';
+                      case 'pdf': return `Pages (${childAssets.length})`;
+                      case 'article': return `${childAssets.length} related`;
+                      case 'mbox': return `${childAssets.length} emails`;
+                      case 'web': {
+                        const imageCount = childAssets.filter(child => {
+                          if (child.kind !== 'image') return false;
+                          const isGif = (url: string) => url.toLowerCase().includes('.gif');
+                          if (child.source_identifier && isGif(child.source_identifier)) return false;
+                          if (child.blob_path && isGif(child.blob_path)) return false;
+                          return true;
+                        }).length;
+                        return `Images (${imageCount})`;
+                      }
+                      default: return `Children (${childAssets.length})`;
+                    }
+                  })();
+                  return (
+                    <ToggleGroup
+                      type="single"
+                      value={activeTab}
+                      onValueChange={(value) => {
+                        if (value === 'content' || value === 'children') {
+                          setActiveTab(value);
+                        }
+                      }}
+                      size="sm"
+                      className="absolute top-2 left-1/2 z-10 -translate-x-1/2 gap-0.5 rounded-md border bg-background/80 p-0.5 shadow-sm backdrop-blur"
+                    >
+                      <ToggleGroupItem value="content" aria-label={contentLabel} className="gap-1.5 px-2">
+                        <FileText className="h-4 w-4" />
+                        <span className="text-xs">{contentLabel}</span>
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="children" aria-label={childrenLabel} className="gap-1.5 px-2">
+                        <List className="h-4 w-4" />
+                        <span className="text-xs">{childrenLabel}</span>
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+                  );
+                })()}
+              </div>
             ) : (
               /* No tabs - just render content directly */
               <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 min-w-0 max-w-full">

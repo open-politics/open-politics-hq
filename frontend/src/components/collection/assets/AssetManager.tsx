@@ -57,6 +57,7 @@ import {
   AssetUpdate,
   BundlesService,
 } from '@/client';
+import type { AssetNode } from '@/client';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { useTreeStore } from '@/zustand_stores/storeTree';
@@ -532,58 +533,59 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     setEditingItem(null);
   };
 
-  // NEW: Convert TreeNodes to AssetTreeItems (much simpler!)
+  // Convert AssetNodes from the tree store into AssetTreeItems for rendering.
   const assetTree = useMemo(() => {
     console.log('[AssetManager] Building tree from', rootNodes.length, 'root nodes');
-    
-    const convertToTreeItem = (node: any, level: number = 0): AssetTreeItem => {
+
+    const convertToTreeItem = (node: AssetNode, level: number = 0, parentId?: string): AssetTreeItem => {
       const isExpanded = expandedItems.has(node.id);
       const isSelected = selectedItems.has(node.id);
-      
+
       // Get children from cache if node is expanded
       let children: AssetTreeItem[] | undefined;
       if (isExpanded) {
         const cachedChildren = childrenCache.get(node.id);
         if (cachedChildren && cachedChildren.length > 0) {
-          children = cachedChildren.map(child => convertToTreeItem(child, level + 1));
+          children = cachedChildren.map(child => convertToTreeItem(child, level + 1, node.id));
         }
       }
-      
+
       // Create minimal asset/bundle objects for display (icons, styling, etc.)
       let asset: AssetRead | undefined;
       let bundle: BundleRead | undefined;
-      
+
       if (node.type === 'asset') {
-        // Create minimal asset object with data from TreeNode
         const assetId = parseInt(node.id.replace('asset-', ''));
         asset = {
           id: assetId,
           title: node.name,
           kind: node.kind,
-          is_container: node.is_container || false,
+          is_container: !!node.has_children,
           stub: node.stub || false,
           processing_status: node.processing_status,
           updated_at: node.updated_at,
           created_at: node.created_at,
           tags: node.tags || [],
-          // Minimal required fields
           infospace_id: activeInfospace?.id || 0,
-          parent_asset_id: null,
+          parent_asset_id: node.parent_asset_id ?? null,
           text_content: '',
           metadata: {},
           uuid: '',
-          part_index: null,
+          part_index: node.part_index ?? null,
           source_id: null,
         } as AssetRead;
       } else if (node.type === 'bundle') {
-        // Create minimal bundle object with data from TreeNode
         const bundleId = parseInt(node.id.replace('bundle-', ''));
+        const parentBundleId =
+          parentId && parentId.startsWith('bundle-')
+            ? parseInt(parentId.replace('bundle-', ''))
+            : null;
         bundle = {
           id: bundleId,
           name: node.name,
           description: '',
           infospace_id: activeInfospace?.id || 0,
-          parent_bundle_id: node.parent_id ? parseInt(node.parent_id.replace('bundle-', '')) : null,
+          parent_bundle_id: parentBundleId,
           updated_at: node.updated_at,
           created_at: node.created_at || node.updated_at,
           asset_count: node.asset_count || 0,
@@ -591,7 +593,7 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
           tags: node.tags || [],
         } as BundleRead;
       }
-      
+
       return {
         id: node.id,
         type: node.type === 'bundle' ? 'folder' : 'asset',
@@ -599,11 +601,11 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
         level,
         isExpanded,
         isSelected,
-        parentId: node.parent_id,
-        isContainer: node.type === 'bundle' || node.is_container,
+        parentId,
+        isContainer: node.type === 'bundle' || !!node.has_children,
         children,
-        asset,  // Now populated for icons/styling
-        bundle, // Now populated for styling
+        asset,
+        bundle,
       };
     };
     

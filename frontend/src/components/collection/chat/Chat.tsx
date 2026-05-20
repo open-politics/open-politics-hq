@@ -36,13 +36,15 @@ import {
   type PromptInputMessage,
 } from '@/components/ai-elements/prompt-input'
 import { useIntelligenceChat, ChatMessage, ToolExecution } from '@/hooks/useIntelligenceChat'
+import { useActiveJobsStore } from '@/zustand_stores/storeActiveJobs'
+import { JobProgressBanner } from './JobProgressBanner'
 import { useChatConversations } from '@/hooks/useChatConversations'
 import { ToolExecutionList } from './ToolExecutionIndicator'
 import { MessageContentWithToolResults } from './ChatMessage'
 import { AssistantMessageRenderer } from './MessageRenderer'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
 import { IntelligenceChatService, EmbeddingsService, OpenAPI } from '@/client'
-import { ModelInfo, SemanticSearchResponse2 } from '@/client'
+import { ModelInfo } from '@/client'
 import ProviderSelector from '@/components/collection/management/ProviderSelector'
 import { useProvidersStore } from '@/zustand_stores/storeProviders'
 import { toast } from 'sonner'
@@ -76,11 +78,66 @@ import { MessageTaskPanel } from './MessageTaskPanel'
 
 interface IntelligenceChatProps {
   className?: string
+  /**
+   * Agent persona — selects the system prompt + MCP tool subset on the
+   * backend, AND scopes the history list to conversations from this surface.
+   *   - ``undefined`` / ``'intelligence'`` (default): workspace research chat.
+   *     Full toolset, file attachments enabled, suggestion chips visible.
+   *   - ``'dossier'`` : run-level DossierAgent (formula + panel + snapshot + note).
+   *   - ``'formula'`` : in-workspace FormulaAgent (formula authoring only).
+   *
+   * Each agent gets its own conversation history. See ``HOW_TO.md`` § agents.
+   */
+  agent?: 'intelligence' | 'dossier' | 'formula'
+  /** When ``agent`` is ``'dossier'`` or ``'formula'``, the annotation run id
+   *  the agent operates against. The backend surfaces this in the system
+   *  prompt and stamps it onto the conversation for history scoping. */
+  runId?: number
+  /** When set, the in-workspace agent gets a hint about the currently-edited
+   *  formula so it can default tool calls and respond contextually. */
+  formulaId?: string | null
+  /** Fires after the chat completes a turn that called a mutation tool
+   *  (formula_create/edit, panel_create/edit, observation_snapshot, …). The
+   *  parent uses this to refetch the active run so live edits flow back into
+   *  the dashboard / workspace without manual reload. */
+  onAgentMutation?: () => void
+  /** When ``true``, swap the viewport-relative outer sizing (``min-h-[91svh]``,
+   *  ``max-h-[92.75svh]``) for ``h-full min-h-0`` so the chat fits inside a
+   *  bounded container (e.g. ``DockedChat``'s 600px panel). Default ``false``
+   *  for the full-page workspace chat. */
+  embedded?: boolean
 }
 
 type ContextDepth = 'titles' | 'previews' | 'full'
 
-export function IntelligenceChat({ className }: IntelligenceChatProps) {
+/**
+ * Renders a ``<JobProgressBanner>`` for every job tracked in the active-jobs
+ * store. Banners self-dismiss by calling ``removeJob`` on terminal events.
+ *
+ * Works for any chat-spawned action that creates an IngestionJob — e.g. the
+ * search-result ingestor today, future bulk-ingest variants tomorrow. The
+ * spawning surface only needs to call ``useActiveJobsStore.addJob({...})``.
+ */
+function ActiveJobBanners() {
+  const jobs = useActiveJobsStore((s) => s.jobs)
+  const removeJob = useActiveJobsStore((s) => s.removeJob)
+  if (jobs.length === 0) return null
+  return (
+    <div className="px-2 sm:px-4 py-2 space-y-1.5 border-t bg-muted/20">
+      {jobs.map((job) => (
+        <JobProgressBanner
+          key={job.jobId}
+          jobId={job.jobId}
+          infospaceId={job.infospaceId}
+          label={job.label}
+          onComplete={() => removeJob(job.jobId)}
+        />
+      ))}
+    </div>
+  )
+}
+
+export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMutation, embedded = false }: IntelligenceChatProps) {
   const [input, setInput] = useState('')
   const { selections, setSelection } = useProvidersStore()
   const selectedModel = selections.llm?.modelId || ''
@@ -229,7 +286,8 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
 
   const { activeInfospace, fetchInfospaces } = useInfospaceStore()
 
-  // Conversation management hook
+  // Conversation management hook — scoped to this surface so each agent
+  // (intelligence / dossier / formula) only sees its own history.
   const {
     conversations,
     isLoading: isLoadingConversations,
@@ -240,7 +298,10 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
     deleteConversation: deleteConversationApi,
     pinConversation,
     archiveConversation,
-  } = useChatConversations()
+  } = useChatConversations({
+    agentKind: agent ?? 'intelligence',
+    runId: runId,
+  })
 
   const {
     messages,
@@ -257,8 +318,35 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
     model_name: selectedModel,
     thinking_enabled: thinkingEnabled,
     conversation_id: currentConversationId || undefined,
-    auto_save: currentConversationId !== null
+    auto_save: currentConversationId !== null,
+    agent,
+    run_id: runId,
+    formula_id: formulaId,
   })
+
+  // Live-update bridge — when the agent finishes a turn that mutates the
+  // dashboard (formula_create/edit/delete, panel_create, observation_snapshot),
+  // tell the parent so it can refetch the run. Without this, agent edits sit
+  // on the backend invisible until the user reloads.
+  const lastFiredMutationMsgIdRef = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    if (!onAgentMutation || isLoading) return
+    const last = messages[messages.length - 1]
+    if (!last || last.role !== 'assistant') return
+    if (lastFiredMutationMsgIdRef.current === last.id) return
+    const mutationTools = new Set([
+      'formula_create', 'formula_edit', 'formula_delete',
+      'panel_create', 'panel_layout',
+      'observation_snapshot', 'dossier_note_append',
+    ])
+    const mutated = (last.tool_executions ?? []).some(t =>
+      t.status === 'completed' && mutationTools.has(t.tool_name),
+    )
+    if (mutated) {
+      lastFiredMutationMsgIdRef.current = last.id
+      onAgentMutation()
+    }
+  }, [messages, isLoading, onAgentMutation])
 
   // Load infospace on mount if not already loaded
   useEffect(() => {
@@ -832,20 +920,23 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
       for (const tag of tags) {
         if (tag.trim().length === 0) continue
         
-        const response = await EmbeddingsService.semanticSearch({
+        // Phase 5: semantic search now lives on /search/assets with mode='vector'.
+        const { SearchService } = await import('@/client')
+        const envelope = await SearchService.assetSearch({
           infospaceId: activeInfospace.id,
           requestBody: {
-            query: tag,
-            limit: 3, // Top 3 results per tag
-            distance_threshold: 0.6, // Slightly lower threshold for auto-search
-            api_keys: apiKeys // Pass API keys for cloud providers
-          }
+            q: tag,
+            mode: 'vector',
+            limit: 3,
+            sort: 'relevance',
+          } as any,
         })
-        
-        // Get full asset data for top results
+
         const { getFullAsset } = useTreeStore.getState()
-        for (const result of response.results.slice(0, 3)) {
-          const assetId = result.asset_id as number
+        for (const item of (envelope.primary.items ?? []).slice(0, 3)) {
+          const m = item.id.match(/^asset-(\d+)$/)
+          if (!m) continue
+          const assetId = Number(m[1])
           if (!allResults.has(assetId)) {
             const fullAsset = await getFullAsset(assetId)
             if (fullAsset) {
@@ -1469,7 +1560,18 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
   }
 
   return (
-    <div className={cn("flex gap-4 flex-1 min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] overflow-hidden", className)}>
+    <div className={cn(
+      // ``@container`` makes the chat its own container-query reference so the
+      // ``@xl:*`` rules in renderMessage / MessageRenderer evaluate against the
+      // chat's own width — not the viewport. In the 440px DockedChat this
+      // keeps the narrow layout (inline tool indicators, no sidebar). In the
+      // full-page workspace chat the sidebar layout activates as designed.
+      "@container flex gap-4 flex-1 overflow-hidden",
+      embedded
+        ? "h-full min-h-0 max-h-full"
+        : "min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh]",
+      className,
+    )}>
       {/* Conversation History Sidebar - Overlay on mobile, side-by-side on desktop */}
       <AnimatePresence mode="wait">
         {showConversations && (
@@ -1989,6 +2091,23 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
               <PersistentTaskTracker messages={messages} />
               
               {messages.length === 0 ? (
+                agent === 'dossier' ? (
+                  <ConversationEmptyState
+                    icon={<Bot className="h-8 w-8 text-purple-600 dark:text-purple-400" />}
+                    title="DossierAgent"
+                    description={runId
+                      ? `Operating on run ${runId}. Ask me to author formulas, drop panels, or snapshot findings.`
+                      : 'Open a run to start authoring.'}
+                  />
+                ) : agent === 'formula' ? (
+                  <ConversationEmptyState
+                    icon={<Bot className="h-8 w-8 text-blue-600 dark:text-blue-400" />}
+                    title="Formula assistant"
+                    description={runId
+                      ? `Tell me what signal you want to measure. I'll introspect the schema and propose a formula.`
+                      : 'Open a run to start authoring formulas.'}
+                  />
+                ) : (
                 <ConversationEmptyState
                   icon={<Bot className="h-10 w-10 sm:h-12 sm:w-12" />}
                   title="Start a conversation with your intelligence data"
@@ -2033,6 +2152,7 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                     </div>
                   </div>
                 </ConversationEmptyState>
+                )
               ) : (
                 <div className="space-y-1">
                   {messages.map(renderMessage)}
@@ -2047,6 +2167,12 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                       />
                     </div>
                   )}
+
+                  {/* Active background jobs spawned from chat actions —
+                      generic over IngestionJob kinds. Banners self-remove
+                      via the store when they observe a terminal stream event. */}
+                  <ActiveJobBanners />
+
 
                   {isLoading && (
                     <div className="flex gap-2 sm:gap-3 p-2 sm:p-4">
@@ -2236,22 +2362,24 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                 <PromptInput onSubmit={handleSubmit}>
                   <PromptInputBody className="text-left">
                     <div className="relative w-full">
-                      {/* Keyboard shortcuts hint - desktop only */}
-                      <div className="hidden sm:flex absolute top-2 right-2 items-center gap-2 mr-1 text-xs text-muted-foreground pointer-events-none z-10">
-                        <div className="flex items-center gap-1">
-                          <Kbd>@</Kbd>
-                          <span className="text-[10px]">context</span>
+                      {/* Keyboard shortcuts hint - desktop only, hidden after first typed text */}
+                      {input.trim().length === 0 && (
+                        <div className="hidden sm:flex absolute top-2 right-2 items-center gap-2 mr-1 text-xs text-muted-foreground pointer-events-none z-10">
+                          <div className="flex items-center gap-1">
+                            <Kbd>@</Kbd>
+                            <span className="text-[10px]">context</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Kbd>#word</Kbd>
+                            <Kbd>#"phrase"</Kbd>
+                            <span className="text-[10px]">search</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Kbd>/</Kbd>
+                            <span className="text-[10px]">focus</span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Kbd>#word</Kbd>
-                          <Kbd>#"phrase"</Kbd>
-                          <span className="text-[10px]">search</span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Kbd>/</Kbd>
-                          <span className="text-[10px]">focus</span>
-                        </div>
-                      </div>
+                      )}
                     
                     {/* Simple highlight layer for @mentions - positioned behind textarea */}
                     <div 
@@ -2385,6 +2513,12 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                 </PromptInputBody>
                 <PromptInputToolbar>
                   <PromptInputTools>
+                    {/* Context-attachment buttons (assets + images) only apply
+                        to the workspace chat. Dossier / Formula agents work
+                        against an annotation run; attaching arbitrary assets
+                        would muddle their scope. */}
+                    {(!agent || agent === 'intelligence') && (
+                      <>
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -2419,6 +2553,8 @@ export function IntelligenceChat({ className }: IntelligenceChatProps) {
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
+                      </>
+                    )}
 
                     <TooltipProvider>
                       <Tooltip>

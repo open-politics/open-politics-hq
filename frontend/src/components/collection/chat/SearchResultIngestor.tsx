@@ -32,6 +32,7 @@ import {
 import { toast } from 'sonner';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
+import { useActiveJobsStore } from '@/zustand_stores/storeActiveJobs';
 import { AssetsService, BundlesService } from '@/client';
 import { SearchResultData } from './SearchResultViewer';
 
@@ -40,16 +41,24 @@ interface SearchResultIngestorProps {
   open: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  /**
+   * Bubble up the ``IngestionJob`` id when SearXNG-style snippets get queued
+   * for background scraping. Parent (Chat) attaches a ``<JobProgressBanner>``
+   * so the user sees live progress instead of opaque silence.
+   */
+  onJobCreated?: (jobId: number, urlCount: number) => void;
 }
 
-export function SearchResultIngestor({ 
-  results, 
-  open, 
+export function SearchResultIngestor({
+  results,
+  open,
   onClose,
-  onSuccess 
+  onSuccess,
+  onJobCreated
 }: SearchResultIngestorProps) {
   const { activeInfospace } = useInfospaceStore();
   const { bundles, fetchBundles, createBundle } = useBundleStore();
+  const addActiveJob = useActiveJobsStore((s) => s.addJob);
   
   const [destination, setDestination] = useState<'none' | 'existing' | 'new'>('none');
   const [selectedBundleId, setSelectedBundleId] = useState<number | null>(null);
@@ -117,10 +126,29 @@ export function SearchResultIngestor({
         targetBundleId = selectedBundleId;
       }
 
-      // Ingest each result as an asset
-      const ingestedCount = await ingestResults(results, targetBundleId);
+      // Ingest — backend splits inline-vs-scrape per content length.
+      const { inlineCount, scrapeJobId, scrapeUrlCount } = await ingestResults(results, targetBundleId);
 
-      toast.success(`Successfully ingested ${ingestedCount} search results${targetBundleId ? ' into bundle' : ''}`);
+      if (scrapeJobId && activeInfospace?.id) {
+        // Push to the chat-wide active-jobs store so the Chat parent renders
+        // a <JobProgressBanner>. Avoids prop-drilling through the renderer tree.
+        addActiveJob({
+          jobId: scrapeJobId,
+          infospaceId: activeInfospace.id,
+          label: `Scraping ${scrapeUrlCount} URL${scrapeUrlCount === 1 ? '' : 's'}`,
+        });
+        // Optional callback for parents that prefer explicit handoff.
+        onJobCreated?.(scrapeJobId, scrapeUrlCount);
+      }
+
+      const summary: string[] = [];
+      if (inlineCount > 0) summary.push(`${inlineCount} ingested directly`);
+      if (scrapeUrlCount > 0) summary.push(`${scrapeUrlCount} queued for scraping`);
+      toast.success(
+        summary.length
+          ? `Search results: ${summary.join(', ')}${targetBundleId ? ' (bundle)' : ''}`
+          : 'No assets created',
+      );
       onSuccess?.();
       onClose();
 
@@ -134,14 +162,18 @@ export function SearchResultIngestor({
   };
 
   const ingestResults = async (
-    results: SearchResultData[], 
+    results: SearchResultData[],
     bundleId?: number
-  ): Promise<number> => {
-    if (!activeInfospace?.id) return 0;
+  ): Promise<{ inlineCount: number; scrapeJobId: number | null; scrapeUrlCount: number }> => {
+    if (!activeInfospace?.id) {
+      return { inlineCount: 0, scrapeJobId: null, scrapeUrlCount: 0 };
+    }
 
     try {
-      // Use the new bulk ingest endpoint with pre-fetched content
-      const createdAssets = await AssetsService.ingestSearchResults({
+      // Backend now returns { assets, scrape_job_id, scrape_url_count }.
+      // assets[] = built inline (Tavily-style full content). scrape_job_id =
+      // background IngestionJob handling SearXNG-style snippets via Newspaper4k.
+      const response: any = await AssetsService.ingestSearchResults({
         infospaceId: activeInfospace.id,
         requestBody: {
             results: results.map(r => ({
@@ -157,7 +189,12 @@ export function SearchResultIngestor({
         }
       });
 
-      return createdAssets.length;
+      const assets = response?.assets ?? [];
+      return {
+        inlineCount: Array.isArray(assets) ? assets.length : 0,
+        scrapeJobId: response?.scrape_job_id ?? null,
+        scrapeUrlCount: response?.scrape_url_count ?? 0,
+      };
     } catch (err: any) {
       console.error('Failed to ingest search results:', err);
       throw err;
@@ -166,7 +203,7 @@ export function SearchResultIngestor({
 
   return (
     <Dialog open={open} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="">
         <DialogHeader>
           <DialogTitle>Ingest Search Results</DialogTitle>
           <DialogDescription>
@@ -222,7 +259,7 @@ export function SearchResultIngestor({
                     <SelectTrigger>
                       <SelectValue placeholder="Select a bundle..." />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="max-h-80 overflow-y-auto">
                       {bundles.map((bundle) => (
                         <SelectItem key={bundle.id} value={bundle.id.toString()}>
                           <div className="flex items-center gap-2">

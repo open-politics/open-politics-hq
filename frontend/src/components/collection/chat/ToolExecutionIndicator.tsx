@@ -85,10 +85,12 @@ export function ToolExecutionIndicator({ execution, compact = false, onAssetClic
 
   if (compact) {
     return (
-      <div className=" border bg-background/50 overflow-hidden">
+      // min-w-0 + overflow-hidden so the rendered card content is bounded by the
+      // host width and can wrap/clip instead of pushing the chat bubble wider.
+      <div className=" border bg-background/50 overflow-hidden min-w-0">
         <div
           className={cn(
-            "flex items-center gap-2 p-2",
+            "flex items-center gap-2 p-2 min-w-0",
             hasResult && "cursor-pointer  transition"
           )}
           onClick={hasResult ? () => setIsExpanded(!isExpanded) : undefined}
@@ -96,24 +98,24 @@ export function ToolExecutionIndicator({ execution, compact = false, onAssetClic
           tabIndex={hasResult ? 0 : undefined}
           aria-expanded={isExpanded}
         >
-          <div className="flex items-center gap-2 flex-1 ml-3">
+          <div className="flex items-center gap-2 flex-1 ml-3 min-w-0">
             {getStatusIcon(execution.status, 'h-4 w-4')}
-            <span className="text-xs font-medium">{formatToolName(execution.tool_name)}</span>
+            <span className="text-xs font-medium truncate">{formatToolName(execution.tool_name)}</span>
           </div>
-          
+
           {execution.status === 'running' && (
-            <div className="text-xs text-muted-foreground">Running...</div>
+            <div className="text-xs text-muted-foreground shrink-0">Running...</div>
           )}
-          
+
           {hasResult && (
-            <span>
+            <span className="shrink-0">
               {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
             </span>
           )}
         </div>
-        
+
         {isExpanded && hasResult && (
-          <div className="px-2 pb-2">
+          <div className="px-2 pb-2 min-w-0 overflow-hidden">
             {useRegistryRenderer ? (
               // Use new registry system
               <ToolResultDisplay
@@ -164,8 +166,11 @@ export function ToolExecutionIndicator({ execution, compact = false, onAssetClic
   }
 
   return (
-    <div className={cn(" border-l-2 bg-card transition-all duration-200", getStatusColorClass(execution.status))}>
-      <div>
+    // min-w-0 + overflow-hidden so the host gives the renderer a bounded width
+    // to wrap inside (long URLs / titles otherwise push the card past the
+    // surrounding chat bubble).
+    <div className={cn(" border-l-2 bg-card transition-all duration-200 min-w-0 overflow-hidden", getStatusColorClass(execution.status))}>
+      <div className="min-w-0">
         <div
           className={cn(
             "p-1.5 w-full flex items-center gap-1.5 mb-0.5 text-left",
@@ -201,7 +206,7 @@ export function ToolExecutionIndicator({ execution, compact = false, onAssetClic
         
         {/* Results - with max height constraint */}
         {hasResult && isExpanded && (
-          <div className="mt-1 px-1.5">
+          <div className="mt-1 px-1.5 min-w-0 overflow-hidden">
             {useRegistryRenderer ? (
               // Use new registry system
               <ToolResultDisplay

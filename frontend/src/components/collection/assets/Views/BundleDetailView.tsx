@@ -25,7 +25,7 @@ import {
   AssetKind,
   BundleRead,
 } from '@/client';
-import type { TreeNode } from '@/client';
+import type { AssetNode } from '@/client';
 import { useTreeStore } from '@/zustand_stores/storeTree';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import AssetDetailView from './AssetDetailView';
@@ -47,31 +47,21 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-// Asset composition stats helper
-const getCompositionStats = (children: any[]) => {
-  const stats = new Map<AssetKind, { count: number; totalChildren: number }>();
-  let totalChildAssets = 0;
+// Asset composition stats helper. Counts top-level children per kind; the
+// legacy per-kind "+N sub-items" aggregation (CSV rows, PDF pages) relied on
+// file_info which no longer rides on AssetNode, so it's dropped here.
+const getCompositionStats = (children: AssetNode[]) => {
+  const stats = new Map<AssetKind, { count: number }>();
 
-  const processNode = (node: any) => {
+  children.forEach(node => {
     if (node.type === 'asset' && node.kind) {
-      const current = stats.get(node.kind) || { count: 0, totalChildren: 0 };
+      const current = stats.get(node.kind) || { count: 0 };
       current.count += 1;
-      
-      // Count potential child items (rows, pages, etc.)
-      let childCount = 0;
-      if (node.kind === 'csv' && node.file_info?.row_count) {
-        childCount = node.file_info.row_count as number;
-      } else if (node.kind === 'pdf' && node.file_info?.page_count) {
-        childCount = node.file_info.page_count as number;
-      }
-      current.totalChildren += childCount;
-      totalChildAssets += childCount;
       stats.set(node.kind, current);
     }
-  };
+  });
 
-  children.forEach(processNode);
-  return { stats, totalChildAssets };
+  return { stats };
 };
 
 // Note: AssetFeedView now loads bundle children directly via AssetSelector
@@ -142,7 +132,7 @@ export default function BundleDetailView({
   }, [bundleChildren]);
 
   // Compute composition stats
-  const { stats: compositionStats, totalChildAssets } = useMemo(() => 
+  const { stats: compositionStats } = useMemo(() =>
     getCompositionStats(bundleChildren), [bundleChildren]
   );
 
@@ -253,27 +243,10 @@ export default function BundleDetailView({
                           </TooltipTrigger>
                           <TooltipContent>
                             <p>{data.count} {kind.replace('_', ' ')} file{data.count > 1 ? 's' : ''}</p>
-                            {data.totalChildren > 0 && (
-                              <p>+{data.totalChildren} sub-items</p>
-                            )}
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
                     ))}
-                    {totalChildAssets > 0 && (
-                      <TooltipProvider delayDuration={100}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge variant="secondary" className="text-xs px-1 py-0">
-                              +{totalChildAssets}
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>{totalChildAssets} total sub-items (CSV rows, PDF pages, etc.)</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )}
                   </div>
                 </>
               )}

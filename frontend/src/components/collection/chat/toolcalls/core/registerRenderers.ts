@@ -22,6 +22,7 @@ import { GetRunDashboardRenderer } from '../renderers/GetRunDashboardRenderer';
 import { ListRunsRenderer } from '../renderers/ListRunsRenderer';
 import { WorkingMemoryRenderer } from '../renderers/WorkingMemoryRenderer';
 import { TasksRenderer } from '../renderers/TasksRenderer';
+import { AnalysisHubRenderer } from '../renderers/AnalysisHubRenderer';
 
 let isInitialized = false;
 
@@ -41,8 +42,13 @@ export function initializeToolRenderers(): void {
   toolResultRegistry.register({ ...NavigateRenderer, toolName: 'library_hub' });
   toolResultRegistry.register(SemanticSearchRenderer);
   toolResultRegistry.register(SearchWebRenderer);
+  // Current MCP tool name. Same renderer — it accepts both legacy ``search_web``
+  // (flat shape) and ``web_research`` (search nested under .search, optional
+  // .ingestion summary).
+  toolResultRegistry.register({ ...SearchWebRenderer, toolName: 'web_research' });
   toolResultRegistry.register(GetRunDashboardRenderer);
   toolResultRegistry.register(ListRunsRenderer);
+  toolResultRegistry.register(AnalysisHubRenderer);
   
   // Operation tools (minimal, confirmatory)
   toolResultRegistry.register(OrganizeRenderer);

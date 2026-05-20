@@ -3,7 +3,7 @@
 import React, { useState, useCallback } from 'react';
 import { FolderOpen, Folder, FileText, MoreHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { AssetKind, TreeNode } from '@/client';
+import type { AssetKind, AssetNode } from '@/client';
 import { getAssetIcon } from './assetKindConfig';
 import { TreeRow } from './TreeRow';
 import { Button } from '@/components/ui/button';
@@ -32,14 +32,14 @@ export interface TreeLoadResult {
   hasMore: boolean;
 }
 
-/** Convert a backend TreeNode to a TreeViewItem */
-export function treeNodeToViewItem(node: TreeNode): TreeViewItem {
+/** Convert a backend AssetNode to a TreeViewItem */
+export function treeNodeToViewItem(node: AssetNode): TreeViewItem {
   return {
     id: node.id,
     type: node.type === 'bundle' ? 'folder' : 'asset',
     name: node.name,
     kind: node.kind ?? undefined,
-    isContainer: node.type === 'bundle' || !!node.is_container,
+    isContainer: node.type === 'bundle' || !!node.has_children,
     updatedAt: node.updated_at,
     sealed: node.sealed ?? undefined,
   };

@@ -305,7 +305,7 @@ export default function AssetMetaHeader({
                 </button>
               </TooltipTrigger>
               <TooltipContent>
-                <p className="font-mono text-xs">{asset.uuid}</p>
+                <p className="font-mono text-xs">System-wide unique id: {asset.uuid}</p>
                 <p className="text-xs text-muted-foreground">Click to copy</p>
               </TooltipContent>
             </Tooltip>

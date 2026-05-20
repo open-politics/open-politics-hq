@@ -101,7 +101,7 @@ export default function SearchComponent({
 
     try {
       // Use the SearchService from the generated SDK with API key
-      const response = await SearchService.searchAndIngest({
+      const response = await SearchService.webSearchAndIngest({
         requestBody: {
           query,
           provider,
@@ -193,7 +193,7 @@ export default function SearchComponent({
         }
       });
 
-      console.log('About to call SearchService.createAssetsFromResults with:', {
+      console.log('About to call SearchService.webCreateAssetsFromResults with:', {
         selectedSearchResultsCount: selectedSearchResults.length,
         infospaceId: activeInfospace.id,
         query,
@@ -201,10 +201,10 @@ export default function SearchComponent({
       });
 
       console.log('SearchService available?', !!SearchService);
-      console.log('SearchService.createAssetsFromResults available?', !!SearchService.createAssetsFromResults);
+      console.log('SearchService.webCreateAssetsFromResults available?', !!SearchService.webCreateAssetsFromResults);
 
       // Use the SearchService from the generated SDK
-      const result = await SearchService.createAssetsFromResults({
+      const result = await SearchService.webCreateAssetsFromResults({
         requestBody: {
           search_results: selectedSearchResults,
           infospace_id: activeInfospace.id,
@@ -216,7 +216,7 @@ export default function SearchComponent({
         }
       });
 
-      console.log('SearchService.createAssetsFromResults result:', result);
+      console.log('SearchService.webCreateAssetsFromResults result:', result);
       
       toast.success(`Created ${result.assets_created} assets from ${urlsToCreate.length} selected results`);
       

@@ -19,6 +19,7 @@ import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { searchInAnnotationValue } from '@/lib/annotations/search';
+import { useAssetDetail } from './AssetDetailProvider';
 
 interface AssetDetailOverlayProps {
   open: boolean;
@@ -58,6 +59,30 @@ export default function AssetDetailOverlay({
   
   // Local search state for overlay
   const [overlaySearchTerm, setOverlaySearchTerm] = useState('');
+
+  // Cross-row keyboard navigation, wired through the provider's nav list.
+  const { navigateAdjacent, navHasPrev, navHasNext, hasNav } = useAssetDetail();
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      // Ignore when the user is typing in any input/textarea/contenteditable.
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (e.key === 'ArrowUp' || e.key === 'k') {
+        if (navHasPrev) {
+          e.preventDefault();
+          navigateAdjacent('prev');
+        }
+      } else if (e.key === 'ArrowDown' || e.key === 'j') {
+        if (navHasNext) {
+          e.preventDefault();
+          navigateAdjacent('next');
+        }
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [open, navHasPrev, navHasNext, navigateAdjacent]);
 
   // Fetch the asset details
   const fetchAssetDetails = useCallback(async (id: number) => {
@@ -194,12 +219,14 @@ export default function AssetDetailOverlay({
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <DialogContent className={cn(
-        "flex flex-col p-0",
+        "flex flex-col p-0 overflow-hidden",
         // Desktop: wider when showing annotations
-        showAnnotations ? "max-w-[100vw] h-full" : "max-w-4xl",
+        showAnnotations
+          ? "w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] h-[calc(100vh-1rem)] sm:w-[calc(100vw-2rem)] sm:max-w-[calc(100vw-2rem)] sm:h-[calc(100vh-2rem)]"
+          : "max-w-4xl",
         // Mobile: full screen
         "max-h-[90vh] sm:max-h-[100vh]",
-        "w-auto md:w-[100vw]"
+        "w-auto"
       )}>
         <DialogHeader className="flex flex-row items-center justify-between p-3 sm:p-4 border-b flex-shrink-0">
           <DialogTitle className="text-sm sm:text-base">
@@ -249,50 +276,13 @@ export default function AssetDetailOverlay({
         
         <TextSpanHighlightProvider>
           <HighlightClearer assetId={assetId} open={open} />
-        <div className="flex-1 min-h-0 flex">
-          {/* Left Panel: Asset Detail */}
-          <div className={cn(
-            "overflow-y-auto",
-            // Desktop: flex layout with border when annotations present
-            showAnnotations ? "hidden sm:flex sm:flex-1 sm:border-r" : "flex-1",
-            // Mobile: show/hide based on toggle
-            showAnnotations && mobileView === 'asset' && "flex flex-1",
-            showAnnotations && mobileView === 'annotations' && "hidden"
-          )}>
-            <div className="p-3 sm:p-4 w-full">
-              {isLoading ? (
-                <div className="flex items-center justify-center h-full">
-                  <Loader2 className="h-5 w-5 sm:h-6 sm:w-6 animate-spin mr-2" />
-                  <p className="text-sm">Loading details...</p>
-                </div>
-              ) : loadError ? (
-                <div className="flex flex-col items-center justify-center h-full text-destructive">
-                  <AlertCircle className="h-8 w-8 sm:h-10 sm:w-10 mb-4" />
-                  <p className="text-center text-sm">{loadError}</p>
-                </div>
-              ) : asset ? (
-                <AssetDetailView
-                  onEdit={handleEdit}
-                  schemas={[]}
-                  selectedAssetId={assetId}
-                  highlightAssetIdOnOpen={highlightAssetIdOnOpen}
-                  onLoadIntoRunner={handleLoadIntoRunner}
-                  enableHighlighting={true}
-                />
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  <p className="text-sm">No asset found or item does not exist.</p>
-                </div>
-              )}
-            </div>
-          </div>
-          
-          {/* Right Panel: Annotation Results */}
+        <div className="flex-1 min-h-0 flex min-w-0 overflow-hidden">
+          {/* Left Panel: Annotation Results */}
           {showAnnotations && (
             <div className={cn(
-              "flex flex-col overflow-hidden bg-muted/20",
+              "flex flex-col overflow-hidden bg-muted/20 min-w-0",
               // Desktop: fixed width sidebar
-              "hidden sm:flex sm:w-[500px]",
+              "hidden sm:flex sm:w-[35%] sm:max-w-[35%] sm:flex-shrink-0",
               // Mobile: full width when active
               mobileView === 'annotations' && "flex flex-1"
             )}>
@@ -326,8 +316,14 @@ export default function AssetDetailOverlay({
                   )}
                 </div>
               </div>
-              <ScrollArea className="flex-1">
-                <div className="p-2.5 sm:p-3 space-y-2.5 sm:space-y-3">
+              {/* Native overflow-auto rather than radix ScrollArea —
+                  ScrollArea's Viewport `display:block` + `overflow:scroll`
+                  combined with the root's `overflow-hidden` clips horizontal
+                  overflow invisibly (shadcn's default ScrollBar is vertical
+                  only). Plain overflow-auto gives both axes a real scrollbar
+                  so wide mini-tables actually become scrollable here. */}
+              <div className="flex-1 overflow-auto scrollbar-hide min-w-0">
+                <div className="p-2.5 sm:p-3 space-y-2.5 sm:space-y-3 min-w-0">
                   {assetResults.length === 0 && overlaySearchTerm && overlaySearchTerm.trim().length > 0 ? (
                     <div className="text-center py-8 text-muted-foreground">
                       <p className="text-sm">No matches found for "{overlaySearchTerm}"</p>
@@ -344,15 +340,15 @@ export default function AssetDetailOverlay({
                     assetResults.map((result) => {
                       const schema = schemas.find(s => s.id === result.schema_id);
                       if (!schema) return null;
-                      
+
                       return (
-                        <Card key={result.id} className="p-2.5 sm:p-3">
+                        <Card key={result.id} className="p-2.5 sm:p-3 min-w-0">
                           <AnnotationResultDisplay
                             result={result}
                             schema={schema}
                             asset={asset}
                             compact={false}
-                            renderContext="default"
+                            renderContext="enhanced"
                             searchTerm={overlaySearchTerm}
                           />
                         </Card>
@@ -360,10 +356,47 @@ export default function AssetDetailOverlay({
                     })
                   )}
                 </div>
-              </ScrollArea>
+              </div>
             </div>
           )}
-          
+
+          {/* Right Panel: Asset Detail */}
+          <div className={cn(
+            "overflow-y-auto min-w-0",
+            // Desktop: flex layout with border when annotations present
+            showAnnotations ? "hidden sm:flex sm:flex-1 sm:border-l" : "flex-1",
+            // Mobile: show/hide based on toggle
+            showAnnotations && mobileView === 'asset' && "flex flex-1",
+            showAnnotations && mobileView === 'annotations' && "hidden"
+          )}>
+            <div className="p-3 sm:p-4 w-full">
+              {isLoading ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="h-5 w-5 sm:h-6 sm:w-6 animate-spin mr-2" />
+                  <p className="text-sm">Loading details...</p>
+                </div>
+              ) : loadError ? (
+                <div className="flex flex-col items-center justify-center h-full text-destructive">
+                  <AlertCircle className="h-8 w-8 sm:h-10 sm:w-10 mb-4" />
+                  <p className="text-center text-sm">{loadError}</p>
+                </div>
+              ) : asset ? (
+                <AssetDetailView
+                  onEdit={handleEdit}
+                  schemas={[]}
+                  selectedAssetId={assetId}
+                  highlightAssetIdOnOpen={highlightAssetIdOnOpen}
+                  onLoadIntoRunner={handleLoadIntoRunner}
+                  enableHighlighting={true}
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <p className="text-sm">No asset found or item does not exist.</p>
+                </div>
+              )}
+            </div>
+          </div>
+
         </div>
         </TextSpanHighlightProvider>
       </DialogContent>

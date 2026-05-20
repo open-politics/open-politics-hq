@@ -175,14 +175,17 @@ export default function PackageConsumerView({ token }: Props) {
     const pkgItemId = parseInt(id.replace('pkg-', ''), 10);
     const item = pkg.items.find(i => i.id === pkgItemId);
     if (!item || item.resource_type !== 'bundle') return { items: [], hasMore: false };
-    const response = await TreeNavigationService.getTreeChildren({
+    const tree = await TreeNavigationService.getTreeChildren({
       infospaceId: pkg.infospace_id,
       parentId: `bundle-${item.resource_id}`,
       packageToken: token,
       skip: offset,
       limit: 20,
     });
-    return { items: response.children.map(treeNodeToViewItem), hasMore: response.has_more };
+    return {
+      items: (tree.section.items ?? []).map(treeNodeToViewItem),
+      hasMore: tree.section.has_more ?? false,
+    };
   }, [pkg, token]);
 
   const renderBadge = useCallback((item: TreeViewItem) => {

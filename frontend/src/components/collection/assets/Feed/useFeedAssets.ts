@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import type { AssetRead } from '@/client';
+import type { AssetRead, AssetNode, AssetKind } from '@/client';
 import type {
   UseFeedAssetsOptions,
   UseFeedAssetsReturn,
@@ -9,12 +9,35 @@ import type {
 } from './types';
 import { connectSSE } from '@/lib/sse';
 
+// AssetNode ids arrive prefixed ("asset-91350"); strip to numeric for AssetRead.id.
+const nodeToAsset = (node: AssetNode, infospaceId: number): AssetRead => {
+  const numericId = Number(String(node.id).split('-').pop()) || 0;
+  return {
+    id: numericId,
+    uuid: '',
+    title: node.name,
+    kind: (node.kind ?? 'unknown') as AssetKind,
+    stub: node.stub ?? false,
+    parent_asset_id: node.parent_asset_id ?? null,
+    part_index: node.part_index ?? null,
+    infospace_id: infospaceId,
+    source_id: null,
+    created_at: node.created_at ?? node.updated_at,
+    updated_at: node.updated_at,
+    processing_status: node.processing_status ?? undefined,
+    tags: node.tags ?? [],
+    facets: node.facets ?? null,
+    is_container: Boolean(node.has_children),
+  } as AssetRead;
+};
+
 /**
  * useFeedAssets - Hook for fetching feed assets
  *
- * Uses the /tree/feed API endpoint with native SSE progressive delivery:
- * - Assets stream first, count arrives later (keepalive pings keep connection alive)
- * - All loads (initial + pagination) use SSE
+ * Subscribes to /tree/feed/stream (native SSE). render_feed emits:
+ *   skeleton → section(role="primary") → count → done
+ * We map section.items (AssetNode[]) into AssetFeedItem[] and clear loading
+ * on section/count/done as they arrive.
  */
 
 const DEFAULT_LIMIT = 20;
@@ -81,7 +104,7 @@ export function useFeedAssets(options: UseFeedAssetsOptions): UseFeedAssetsRetur
     if (bundleId != null) params.set('bundle_id', String(bundleId));
     if (pathFilter) params.set('path_filter', pathFilter);
 
-    const url = `/api/v1/infospaces/${infospaceId}/tree/feed?${params.toString()}`;
+    const url = `/api/v1/infospaces/${infospaceId}/tree/feed/stream?${params.toString()}`;
     const controller = new AbortController();
 
     try {
@@ -105,9 +128,16 @@ export function useFeedAssets(options: UseFeedAssetsOptions): UseFeedAssetsRetur
           let phase: any;
           try { phase = JSON.parse(event.data); } catch { return; }
 
-          if (event.type === 'feed') {
+          // `section` (role="primary") carries the AssetNode items. total=-1
+          // is a sentinel meaning "count still pending"; the CountEvent
+          // that follows resolves it.
+          if (event.type === 'section' && phase?.role === 'primary') {
+            const section = phase.section ?? {};
+            const nodes: AssetNode[] = Array.isArray(section.items) ? section.items : [];
             const feedItems = applyCompoundSort(
-              (phase.assets || []).map((asset: AssetRead) => ({ asset, childAssets: undefined }))
+              nodes
+                .filter(n => n.type === 'asset')
+                .map(n => ({ asset: nodeToAsset(n, infospaceId), childAssets: undefined }))
             );
             if (append) {
               setItems(prev => [...prev, ...feedItems]);
@@ -116,16 +146,20 @@ export function useFeedAssets(options: UseFeedAssetsOptions): UseFeedAssetsRetur
             }
             setCurrentOffset(offset + feedItems.length);
             setIsLoading(false);
-            if (phase.total >= 0) {
-              setTotalCount(phase.total);
-              setHasMore(phase.has_more);
+            if (typeof section.has_more === 'boolean') setHasMore(section.has_more);
+            if (typeof section.total === 'number' && section.total >= 0) {
+              setTotalCount(section.total);
               setIsCounting(false);
             }
           }
 
-          if (event.type === 'count') {
+          if (event.type === 'count' && typeof phase?.total === 'number') {
             setTotalCount(phase.total);
-            setHasMore(phase.has_more);
+            setIsCounting(false);
+          }
+
+          if (event.type === 'done') {
+            setIsLoading(false);
             setIsCounting(false);
           }
         },

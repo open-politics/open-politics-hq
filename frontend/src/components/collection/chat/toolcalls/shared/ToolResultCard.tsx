@@ -31,15 +31,18 @@ export function ToolResultCard({
   
   if (compact) {
     return (
-      <div className="bg-background/50 overflow-hidden">
+      <div className="bg-background/50 overflow-hidden min-w-0">
         {children}
       </div>
     );
   }
 
+  // min-w-0 + overflow-hidden so renderers' break-words actually has a width
+  // to wrap inside — without these, long URLs / titles push the card past
+  // the chat bubble edge instead of wrapping.
   return (
-    <Card className="w-full rounded-none border-none">
-      <CardContent className="p-0">
+    <Card className="w-full min-w-0 overflow-hidden rounded-none border-none">
+      <CardContent className="p-0 min-w-0">
         {children}
       </CardContent>
     </Card>

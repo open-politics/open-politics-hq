@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, createContext, useContext, useCallback } from 'react';
+import React, { useState, createContext, useContext, useCallback, useRef, useMemo } from 'react';
 // Removed: import { useDocumentStore } from '@/zustand_stores/storeDocuments';
 import AssetDetailOverlay from './AssetDetailOverlay';
 import AssetManagerOverlay from '../Helper/AssetManagerOverlay'; // Assuming this will be adapted or replaced
@@ -20,9 +20,17 @@ interface AssetDetailContextType {
   selectedAssetId: number | null;
   selectedBundleId: number | null;
   viewType: DetailViewType;
+  /** Register the current row order so the overlay can navigate ↑↓ between rows. */
+  setNavAssetIds: (ids: number[]) => void;
+  /** Move the open overlay to the previous/next asset in the registered list. No-op when not registered. */
+  navigateAdjacent: (direction: 'prev' | 'next') => void;
+  /** True when there is a registered list of nav IDs and adjacency is possible. */
+  hasNav: boolean;
+  navHasPrev: boolean;
+  navHasNext: boolean;
 }
 
-const AssetDetailContext = createContext<AssetDetailContextType | undefined>(undefined);
+export const AssetDetailContext = createContext<AssetDetailContextType | undefined>(undefined);
 
 export const useAssetDetail = () => {
   const context = useContext(AssetDetailContext);
@@ -63,6 +71,15 @@ export default function AssetDetailProvider({
   // --- Add state for initial highlight ---
   const [highlightAssetIdOnOpen, setHighlightAssetIdOnOpen] = useState<number | null>(null);
   // --- End Add state ---
+
+  // Row-order list registered by the underlying surface (e.g. the results table)
+  // so the overlay can navigate ↑↓ across rows.
+  const navAssetIdsRef = useRef<number[]>([]);
+  const [navTick, setNavTick] = useState(0); // bump to recompute hasPrev/hasNext when ids change
+  const setNavAssetIds = useCallback((ids: number[]) => {
+    navAssetIdsRef.current = ids;
+    setNavTick((t) => t + 1);
+  }, []);
   // --- End Manage Overlay State ---
 
   // --- Functions to control the overlay ---
@@ -91,6 +108,24 @@ export default function AssetDetailProvider({
     setViewType(null);
     setHighlightAssetIdOnOpen(null); // Clear highlight ID on close
   }, []);
+
+  const navigateAdjacent = useCallback((direction: 'prev' | 'next') => {
+    const ids = navAssetIdsRef.current;
+    if (!ids.length || detailAssetId == null) return;
+    const idx = ids.indexOf(detailAssetId);
+    if (idx < 0) return;
+    const target = direction === 'prev' ? idx - 1 : idx + 1;
+    if (target < 0 || target >= ids.length) return;
+    openDetailOverlay(ids[target]);
+  }, [detailAssetId, openDetailOverlay]);
+
+  const navIds = navAssetIdsRef.current;
+  const navIdx = detailAssetId != null ? navIds.indexOf(detailAssetId) : -1;
+  const hasNav = navIds.length > 0 && navIdx >= 0;
+  const navHasPrev = hasNav && navIdx > 0;
+  const navHasNext = hasNav && navIdx < navIds.length - 1;
+  // navTick keeps these derived values in sync when navAssetIds is updated.
+  void navTick;
   // --- End Functions ---
 
   const handleLoadIntoRunner = (runId: number, runName: string) => {
@@ -110,7 +145,8 @@ export default function AssetDetailProvider({
   };
 
   // --- Provide context value ---
-  const contextValue = {
+  // Memoised so consumers don't re-render every time AssetDetailProvider's parent renders.
+  const contextValue = useMemo(() => ({
     openDetailOverlay,
     openBundleDetail,
     closeDetailOverlay,
@@ -118,7 +154,25 @@ export default function AssetDetailProvider({
     selectedAssetId: detailAssetId,
     selectedBundleId: detailBundleId,
     viewType,
-  };
+    setNavAssetIds,
+    navigateAdjacent,
+    hasNav,
+    navHasPrev,
+    navHasNext,
+  }), [
+    openDetailOverlay,
+    openBundleDetail,
+    closeDetailOverlay,
+    isDetailOverlayOpen,
+    detailAssetId,
+    detailBundleId,
+    viewType,
+    setNavAssetIds,
+    navigateAdjacent,
+    hasNav,
+    navHasPrev,
+    navHasNext,
+  ]);
   // --- End Provide context value ---
 
   return (

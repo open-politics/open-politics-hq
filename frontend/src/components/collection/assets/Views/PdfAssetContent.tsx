@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
 
 /** Viewport width at or above this uses side‑by‑side when layout is Auto */
-const PDF_SPLIT_WIDE_PX = 960;
+const PDF_SPLIT_WIDE_PX = 760;
 
 /** 0-based start index of the `ordinal`-th non-overlapping case-insensitive match of `needle` in `haystack`, or -1 */
 function nthMatchStart(haystack: string, needle: string, ordinal: number): number {

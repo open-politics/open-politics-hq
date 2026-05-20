@@ -6,6 +6,7 @@ import { ToolExecutionIndicator } from './ToolExecutionIndicator'
 import { Response } from '@/components/ai-elements/response'
 import { Badge } from '@/components/ui/badge'
 import { Wrench } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 interface MessageContentWithToolResultsProps {
   content: string
@@ -179,10 +180,20 @@ export function MessageContentWithToolResults({
             if (execution) {
               // Always use ToolExecutionIndicator - it intelligently routes to registry or legacy
               // Operator tools show as full cards (not compact), others show compact
-              const isOperatorTool = ['navigate', 'organize', 'semantic_search', 'search_web'].includes(execution.tool_name);
-              
+              // Current MCP tool names that warrant the full-card treatment
+              // (rich rendering, not compact). Legacy aliases kept for parity.
+              const isOperatorTool = [
+                'navigate', 'workspace_hub',
+                'organize',
+                'semantic_search',
+                'search_web', 'web_research',
+                'analysis_hub',
+              ].includes(execution.tool_name);
+
               return (
-                <div key={`marker-${index}`} className={isOperatorTool ? "my-4" : "my-3"}>
+                // min-w-0 so the marker wrapper passes a bounded width down to
+                // ToolExecutionIndicator instead of letting it grow to content size.
+                <div key={`marker-${index}`} className={cn(isOperatorTool ? "my-4" : "my-3", "min-w-0 overflow-hidden")}>
                   <ToolExecutionIndicator
                     execution={execution}
                     compact={!isOperatorTool}

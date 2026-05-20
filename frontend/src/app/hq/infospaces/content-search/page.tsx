@@ -1,38 +1,33 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { 
-  Search, 
-  Send, 
-  Loader2, 
-  Brain, 
-  FileText, 
-  MessageCircle, 
-  Settings, 
+import {
+  Search,
+  Send,
+  Loader2,
+  Brain,
+  MessageCircle,
+  Settings,
   RefreshCw,
   AlertCircle,
   Lightbulb,
   Bot,
   User,
   Copy,
-  ExternalLink
 } from 'lucide-react';
-import { AnalysisAdaptersService, EmbeddingsService } from '@/client';
-import { EmbeddingModelRead } from '@/client';
+import { OpenAPI } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
+import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import { toast } from 'sonner';
-import Link from 'next/link';
 
 interface ChatMessage {
   id: string;
@@ -41,27 +36,23 @@ interface ChatMessage {
   timestamp: Date;
   metadata?: {
     model?: string;
-    sources?: any[];
+    sources?: Array<{
+      asset_id: number;
+      title: string;
+      score: number;
+      snippet: string;
+    }>;
     processing_time?: number;
-    reasoning?: string;
   };
 }
 
 interface SearchConfig {
-  embeddingModelId: string;
   model: string;
+  providerName: string;
   enableThinking: boolean;
   temperature: number;
   topK: number;
 }
-
-const defaultConfig: SearchConfig = {
-  embeddingModelId: '',
-  model: 'gemini-2.0-flash-thinking-exp-01-21',
-  enableThinking: false,
-  temperature: 0.1,
-  topK: 5,
-};
 
 const suggestedQuestions = [
   "What are the main themes discussed in these documents?",
@@ -76,38 +67,42 @@ const suggestedQuestions = [
 
 export default function ContentSearchPage() {
   const { activeInfospace } = useInfospaceStore();
+  const { selections } = useProvidersStore();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [embeddingModels, setEmbeddingModels] = useState<EmbeddingModelRead[]>([]);
-  const [config, setConfig] = useState<SearchConfig>(defaultConfig);
   const [showSettings, setShowSettings] = useState(false);
-  const [loadingModels, setLoadingModels] = useState(true);
 
-  // Load embedding models on mount
-  useEffect(() => {
-    loadEmbeddingModels();
-  }, []);
+  // Derive defaults from the global provider store
+  const defaultModel = selections.llm?.modelId || '';
+  const defaultProvider = selections.llm?.providerId || '';
 
-  const loadEmbeddingModels = async () => {
-    setLoadingModels(true);
-    try {
-      const response = await EmbeddingsService.listEmbeddingModels();
-      setEmbeddingModels(response);
-      if (response.length > 0 && !config.embeddingModelId) {
-        setConfig(prev => ({ ...prev, embeddingModelId: response[0].id.toString() }));
-      }
-    } catch (error) {
-      console.error('Failed to load embedding models:', error);
-      toast.error('Failed to load embedding models');
-    } finally {
-      setLoadingModels(false);
-    }
-  };
+  const [config, setConfig] = useState<SearchConfig>({
+    model: defaultModel,
+    providerName: defaultProvider,
+    enableThinking: false,
+    temperature: 0.1,
+    topK: 5,
+  });
+
+  // Sync config when provider store selections change
+  React.useEffect(() => {
+    setConfig(prev => ({
+      ...prev,
+      model: prev.model || selections.llm?.modelId || '',
+      providerName: prev.providerName || selections.llm?.providerId || '',
+    }));
+  }, [selections.llm?.modelId, selections.llm?.providerId]);
+
+  const canSearch = !!activeInfospace?.id && (!!config.providerName || !!defaultProvider);
 
   const handleSearch = async (question: string = inputValue) => {
-    if (!question.trim() || !config.embeddingModelId) {
-      toast.error('Please enter a question and select an embedding model');
+    if (!question.trim()) {
+      toast.error('Please enter a question');
+      return;
+    }
+    if (!activeInfospace?.id) {
+      toast.error('No active infospace selected');
       return;
     }
 
@@ -123,21 +118,43 @@ export default function ContentSearchPage() {
     setIsLoading(true);
 
     try {
+      const providerName = config.providerName || defaultProvider;
+      const modelName = config.model || defaultModel;
+
       const requestBody = {
         question: question.trim(),
-        embedding_model_id: parseInt(config.embeddingModelId),
-        model: config.model,
+        model: modelName || undefined,
+        provider_name: providerName || undefined,
         enable_thinking: config.enableThinking,
         temperature: config.temperature,
         top_k: config.topK,
       };
 
+      // Resolve auth headers from the OpenAPI config
+      let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (OpenAPI.HEADERS) {
+        const resolved = typeof OpenAPI.HEADERS === 'function' ? await OpenAPI.HEADERS({} as any) : OpenAPI.HEADERS;
+        headers = { ...headers, ...resolved };
+      }
+
       const startTime = Date.now();
-      const response = await AnalysisAdaptersService.executeAnalysisAdapter({
-        adapterName: 'rag_adapter',
-        requestBody,
-      }) as any;
-      const processingTime = Date.now() - startTime;
+      const res = await fetch(
+        `${OpenAPI.BASE}/api/v1/infospaces/${activeInfospace.id}/rag`,
+        {
+          method: 'POST',
+          headers,
+          credentials: OpenAPI.WITH_CREDENTIALS ? 'include' : 'same-origin',
+          body: JSON.stringify(requestBody),
+        },
+      );
+
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(errorBody.detail || `Request failed (${res.status})`);
+      }
+
+      const response = await res.json();
+      const processingTime = response.processing_time_ms || (Date.now() - startTime);
 
       const assistantMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
@@ -145,10 +162,9 @@ export default function ContentSearchPage() {
         content: response.answer || 'No answer generated',
         timestamp: new Date(),
         metadata: {
-          model: config.model,
+          model: response.model || modelName,
           sources: response.sources || [],
           processing_time: processingTime,
-          reasoning: response.reasoning,
         },
       };
 
@@ -226,41 +242,29 @@ export default function ContentSearchPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <Label htmlFor="embedding-model">Embedding Model</Label>
-                <Select
-                  value={config.embeddingModelId}
-                  onValueChange={(value) => setConfig(prev => ({ ...prev, embeddingModelId: value }))}
-                  disabled={loadingModels}
-                >
-                  <SelectTrigger id="embedding-model">
-                    <SelectValue placeholder="Select embedding model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {embeddingModels.map(model => (
-                      <SelectItem key={model.id} value={model.id.toString()}>
-                        {model.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="llm-provider">LLM Provider</Label>
+                <Input
+                  id="llm-provider"
+                  placeholder="e.g. google, openai, ollama"
+                  value={config.providerName}
+                  onChange={(e) => setConfig(prev => ({ ...prev, providerName: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Uses your default provider if left empty
+                </p>
               </div>
 
               <div>
                 <Label htmlFor="llm-model">Language Model</Label>
-                <Select
+                <Input
+                  id="llm-model"
+                  placeholder="e.g. gemini-2.0-flash"
                   value={config.model}
-                  onValueChange={(value) => setConfig(prev => ({ ...prev, model: value }))}
-                >
-                  <SelectTrigger id="llm-model">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="gemini-2.0-flash-thinking-exp-01-21">Gemini 2.0 Flash Thinking</SelectItem>
-                    <SelectItem value="gemini-2.0-flash-exp">Gemini 2.0 Flash</SelectItem>
-                    <SelectItem value="gemini-1.5-flash">Gemini 1.5 Flash</SelectItem>
-                    <SelectItem value="gemini-1.5-pro">Gemini 1.5 Pro</SelectItem>
-                  </SelectContent>
-                </Select>
+                  onChange={(e) => setConfig(prev => ({ ...prev, model: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Uses your default model if left empty
+                </p>
               </div>
 
               <div>
@@ -269,7 +273,7 @@ export default function ContentSearchPage() {
                   id="top-k"
                   type="number"
                   min="1"
-                  max="20"
+                  max="50"
                   value={config.topK}
                   onChange={(e) => setConfig(prev => ({ ...prev, topK: parseInt(e.target.value) || 5 }))}
                 />
@@ -309,7 +313,7 @@ export default function ContentSearchPage() {
                 AI Assistant
               </CardTitle>
               <Badge variant="outline">
-                {embeddingModels.find(m => m.id.toString() === config.embeddingModelId)?.name || 'No model'}
+                {config.model || defaultModel || 'No model selected'}
               </Badge>
             </div>
           </CardHeader>
@@ -324,7 +328,7 @@ export default function ContentSearchPage() {
                     <h3 className="text-lg font-medium mb-2">Start a conversation</h3>
                     <p className="text-sm">Ask questions about your documents and assets</p>
                   </div>
-                  
+
                   <div className="w-full max-w-2xl">
                     <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
                       <Lightbulb className="h-4 w-4" />
@@ -338,7 +342,7 @@ export default function ContentSearchPage() {
                           size="sm"
                           className="h-auto p-3 text-left justify-start whitespace-normal"
                           onClick={() => handleSearch(question)}
-                          disabled={isLoading || !config.embeddingModelId}
+                          disabled={isLoading || !canSearch}
                         >
                           {question}
                         </Button>
@@ -371,7 +375,7 @@ export default function ContentSearchPage() {
                           >
                             <p className="text-sm whitespace-pre-wrap">{message.content}</p>
                           </div>
-                          
+
                           {message.metadata && (
                             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                               <Badge variant="secondary" className="text-xs">
@@ -393,7 +397,7 @@ export default function ContentSearchPage() {
                               </Button>
                             </div>
                           )}
-                          
+
                           {message.metadata?.sources && message.metadata.sources.length > 0 && (
                             <div className="w-full">
                               <details className="text-xs">
@@ -401,14 +405,14 @@ export default function ContentSearchPage() {
                                   View {message.metadata.sources.length} sources
                                 </summary>
                                 <div className="mt-2 space-y-1 border-l-2 border-muted pl-3">
-                                  {message.metadata.sources.map((source: any, index: number) => (
+                                  {message.metadata.sources.map((source, index) => (
                                     <div key={index} className="text-xs">
-                                      <div className="font-medium">{source.asset_title || `Asset ${source.asset_id}`}</div>
+                                      <div className="font-medium">{source.title || `Asset ${source.asset_id}`}</div>
                                       <div className="text-muted-foreground truncate">
-                                        {source.text_content?.substring(0, 100)}...
+                                        {source.snippet?.substring(0, 150)}...
                                       </div>
                                       <div className="text-muted-foreground">
-                                        Similarity: {(source.similarity * 100).toFixed(1)}%
+                                        Similarity: {(source.score * 100).toFixed(1)}%
                                       </div>
                                     </div>
                                   ))}
@@ -420,7 +424,7 @@ export default function ContentSearchPage() {
                       </div>
                     </div>
                   ))}
-                  
+
                   {isLoading && (
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
@@ -429,7 +433,7 @@ export default function ContentSearchPage() {
                       <div className="bg-muted rounded-lg px-4 py-2">
                         <div className="flex items-center gap-2">
                           <Loader2 className="h-4 w-4 animate-spin" />
-                          <span className="text-sm text-muted-foreground">Thinking...</span>
+                          <span className="text-sm text-muted-foreground">Searching and generating answer...</span>
                         </div>
                       </div>
                     </div>
@@ -452,18 +456,20 @@ export default function ContentSearchPage() {
               />
               <Button
                 onClick={() => handleSearch()}
-                disabled={isLoading || !inputValue.trim() || !config.embeddingModelId}
+                disabled={isLoading || !inputValue.trim() || !canSearch}
                 size="lg"
               >
                 <Send className="h-4 w-4" />
               </Button>
             </div>
-            
-            {!config.embeddingModelId && (
+
+            {!canSearch && (
               <Alert className="mt-2">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>
-                  Please select an embedding model in settings to start asking questions.
+                  {!activeInfospace?.id
+                    ? 'Please select an infospace to start asking questions.'
+                    : 'Please configure an LLM provider in Settings or in the Provider Hub.'}
                 </AlertDescription>
               </Alert>
             )}
@@ -472,4 +478,4 @@ export default function ContentSearchPage() {
       </div>
     </div>
   );
-} 
+}
