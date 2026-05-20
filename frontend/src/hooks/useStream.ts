@@ -111,10 +111,17 @@ export function useStream<T = unknown>(options: UseStreamOptions<T>): UseStreamR
               // Deadline event: server closing connection, reconnect
               if (raw.type === 'deadline') return;
 
+              // Bare events without a body — keepalives, lifecycle pings, or
+              // the FastAPI SSE pipeline's `event:` markers emitted with no
+              // `data:` line. Nothing to parse; nothing to deliver.
+              if (!raw.data) return;
+
               let parsed: T;
               try {
                 parsed = JSON.parse(raw.data) as T;
-              } catch {
+              } catch (err) {
+                // eslint-disable-next-line no-console
+                console.warn('[useStream] JSON.parse failed on data=', raw.data, err);
                 return; // malformed JSON, skip
               }
 
@@ -123,6 +130,8 @@ export function useStream<T = unknown>(options: UseStreamOptions<T>): UseStreamR
                 type: raw.type,
                 data: parsed,
               };
+              // eslint-disable-next-line no-console
+              console.log('[useStream]', topic, resourceId, 'event:', event.type, event.data);
               setLastEvent(event);
               onEventRef.current?.(event);
             },

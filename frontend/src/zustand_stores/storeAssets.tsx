@@ -1,13 +1,12 @@
 import { create } from 'zustand';
-import { AssetsService, FilestorageService, BundlesService } from '@/client';
-import { 
+import { AssetsService, FilestorageService } from '@/client';
+import {
   AssetRead,
   AssetKind,
   AssetsOut,
   AssetCreate,
   AssetUpdate,
   ResourceType,
-  BundleRead,
 } from '@/client';
 import { toast } from 'sonner';
 import { useInfospaceStore } from './storeInfospace';
@@ -39,7 +38,7 @@ interface AssetState {
   isLoading: boolean;
   error: string | null;
   fetchAssets: () => Promise<void>;
-  createAsset: (formData: FormData) => Promise<{ bundle: BundleRead; assets: AssetRead[] } | null>;
+  createAsset: (formData: FormData) => Promise<{ assets: AssetRead[] } | null>;
   deleteAsset: (assetId: number) => Promise<void>;
   updateAsset: (assetId: number, updateData: AssetUpdate) => Promise<AssetRead | null>;
   getAssetById: (assetId: number) => Promise<AssetRead | null>;
@@ -88,7 +87,7 @@ export const useAssetStore = create<AssetState>((set, get) => ({
     }
   },
 
-  createAsset: async (formData: FormData): Promise<{ bundle: BundleRead; assets: AssetRead[] } | null> => {
+  createAsset: async (formData: FormData): Promise<{ assets: AssetRead[] } | null> => {
     const { activeInfospace } = useInfospaceStore.getState();
     if (!activeInfospace?.id) {
       toast.error("No active infospace selected");
@@ -104,18 +103,12 @@ export const useAssetStore = create<AssetState>((set, get) => ({
       const createdAssets: AssetRead[] = [];
 
       if (kind === 'pdf' || kind === 'csv' || kind === 'mbox' || kind === 'image' || kind === 'audio' || kind === 'video') {
-        // Handle file uploads - upload each file individually with correct type detection
         for (const file of files) {
-          const uploadResponse = await FilestorageService.fileUpload({ 
-            formData: { file: file }
-          });
-          
-          // Detect the actual file type for each file
+          const uploadResponse = await FilestorageService.fileUpload({ formData: { file: file as any } });
           const actualKind = getKindFromFile(file);
-          
           const assetCreate: AssetCreate = {
-            title: files.length === 1 ? title : file.name.replace(/\.[^/.]+$/, ""), // Use actual filename without extension
-            kind: actualKind, // Use detected file type, not the dominant kind
+            title: files.length === 1 ? title : file.name.replace(/\.[^/.]+$/, ""),
+            kind: actualKind,
             blob_path: uploadResponse.object_name,
             file_info: { filename: uploadResponse.filename },
           };
@@ -123,19 +116,13 @@ export const useAssetStore = create<AssetState>((set, get) => ({
           createdAssets.push(newAsset);
         }
       } else if (kind === 'web') {
-        // Handle URL scraping
         const sourceIdentifier = formData.get('source_identifier') as string;
-        const assetCreate: AssetCreate = {
-          title: title,
-          kind: kind as AssetKind,
-          source_identifier: sourceIdentifier,
-        };
+        const assetCreate: AssetCreate = { title, kind: kind as AssetKind, source_identifier: sourceIdentifier };
         const newAsset = await AssetsService.createAsset({ infospaceId: activeInfospace.id, requestBody: assetCreate });
         createdAssets.push(newAsset);
       } else {
-        // Handle text content
         const assetCreate: AssetCreate = {
-          title: title,
+          title,
           kind: kind as AssetKind,
           text_content: formData.get('text_content') as string | undefined,
           source_identifier: formData.get('source_identifier') as string | undefined,
@@ -143,65 +130,13 @@ export const useAssetStore = create<AssetState>((set, get) => ({
         const newAsset = await AssetsService.createAsset({ infospaceId: activeInfospace.id, requestBody: assetCreate });
         createdAssets.push(newAsset);
       }
-      
-      // Step 2: Create bundle for the upload
-      const kindCounts = createdAssets.reduce((acc, asset) => {
-        acc[asset.kind] = (acc[asset.kind] || 0) + 1;
-        return acc;
-      }, {} as Record<AssetKind, number>);
-      
-      const dominantKind = Object.entries(kindCounts).reduce((a, b) => 
-        kindCounts[a[0] as AssetKind] > kindCounts[b[0] as AssetKind] ? a : b
-      )[0] as AssetKind;
-      
-      const bundleName = files.length > 1 ? `${title} (${files.length} files)` : title;
-      const bundleDescription = files.length > 1 ? 
-        `Mixed upload collection containing ${files.length} files` : 
-        `${dominantKind.toUpperCase()} upload`;
-      
-      const bundleCreate = {
-        name: bundleName,
-        description: bundleDescription,
-        purpose: `upload_mixed`,
-      };
 
-      const newBundle = await BundlesService.createBundle({
-        infospaceId: activeInfospace.id,
-        requestBody: bundleCreate
-      });
-
-      // Step 3: Add all created assets to the bundle
-      for (const asset of createdAssets) {
-        await BundlesService.addAssetToBundle({
-          bundleId: newBundle.id,
-          assetId: asset.id
-        });
-      }
-
-      // Update local state
-      set(state => ({
-        assets: [...createdAssets, ...state.assets],
-        isLoading: false,
-      }));
-
-      // Refresh bundles to ensure UI shows the new bundle
-      try {
-        const { useBundleStore } = await import('./storeBundles');
-        await useBundleStore.getState().fetchBundles(activeInfospace.id);
-      } catch (error) {
-        console.warn('Failed to refresh bundles after asset creation:', error);
-      }
-
-      const successMessage = createdAssets.length === 1 
-        ? `Bundle "${newBundle.name}" created with asset "${createdAssets[0].title}".`
-        : `Bundle "${newBundle.name}" created with ${createdAssets.length} assets.`;
-      toast.success(successMessage);
-      
-      return { bundle: newBundle, assets: createdAssets };
-
+      set(state => ({ assets: [...createdAssets, ...state.assets], isLoading: false }));
+      return { assets: createdAssets };
     } catch (err: any) {
       console.error("Error creating asset:", err);
-      const errorMsg = err.body?.detail || err.message || "Failed to create asset";
+      const rawDetail = err.body?.detail;
+      const errorMsg = typeof rawDetail === 'string' ? rawDetail : err.message || "Failed to create asset";
       set({ error: errorMsg, isLoading: false });
       toast.error(errorMsg);
       return null;

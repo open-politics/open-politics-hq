@@ -4,7 +4,16 @@ import { useChatHistoryStore, ChatConversation, ChatConversationWithMessages } f
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { OpenAPI } from '@/client/core/OpenAPI';
 
-export function useChatConversations() {
+export interface ChatHistoryScope {
+  /** Agent kind to filter by. ``undefined`` → workspace conversations
+   *  (no agent_kind set). ``'dossier'`` / ``'formula'`` → only that surface.
+   *  ``'any'`` → no filter. */
+  agentKind?: 'intelligence' | 'dossier' | 'formula' | 'any';
+  /** When agentKind is dossier or formula, optionally scope to one run. */
+  runId?: number;
+}
+
+export function useChatConversations(scope?: ChatHistoryScope) {
   const { 
     conversations, 
     activeConversationId,
@@ -56,6 +65,20 @@ export function useChatConversations() {
         limit: '50',
       });
 
+      // Agent-kind scoping — the backend treats absent agent_kind as
+      // "workspace chats only", so passing nothing here is correct for the
+      // default chat. Dossier / Formula hosts pass their kind explicitly.
+      if (scope?.agentKind === 'intelligence' || scope?.agentKind === undefined) {
+        // Workspace: omit param so backend's default (workspace-only) filter applies.
+      } else if (scope.agentKind === 'any') {
+        params.set('agent_kind', 'any');
+      } else {
+        params.set('agent_kind', scope.agentKind);
+        if (scope.runId !== undefined) {
+          params.set('run_id', String(scope.runId));
+        }
+      }
+
       const response = await fetch(`/api/v1/chat/conversations?${params}`, {
         headers,
         credentials: 'include',
@@ -76,7 +99,7 @@ export function useChatConversations() {
     } finally {
       setLoading(false);
     }
-  }, [activeInfospace, setConversations, setLoading, setError, getHeaders]);
+  }, [activeInfospace, setConversations, setLoading, setError, getHeaders, scope?.agentKind, scope?.runId]);
 
   const createConversation = useCallback(async (
     title: string,

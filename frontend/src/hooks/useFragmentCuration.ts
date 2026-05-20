@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useToast } from "@/components/ui/use-toast";
-import { AnalysisServiceService, PromoteFragmentRequest, DeleteFragmentData } from '@/client';
+import { FragmentsService } from '@/client';
 import { ApiError } from '@/client/core/ApiError';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 
@@ -54,7 +54,7 @@ export function useFragmentCuration(): UseFragmentCurationReturn {
           fragment_value: payload.fragmentValue,
           source_run_id: payload.sourceRunId, // Pass original run ID
         };
-        const result = await AnalysisServiceService.promoteFragment({
+        const result = await FragmentsService.promoteFragment({
           infospaceId: activeInfospace.id,
           assetId: payload.assetId,
           requestBody,
@@ -107,7 +107,7 @@ export function useFragmentCuration(): UseFragmentCurationReturn {
     }
 
     try {
-      const result = await AnalysisServiceService.deleteFragment({
+      const result = await FragmentsService.deleteFragment({
         infospaceId: activeInfospace.id,
         assetId: payload.assetId,
         fragmentKey: payload.fragmentKey,

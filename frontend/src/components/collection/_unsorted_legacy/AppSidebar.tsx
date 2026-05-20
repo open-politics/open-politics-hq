@@ -165,8 +165,8 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       colorClass: "sidebar-sky",
     },
     {
-      title: "Knowledge Graphs",
-      url: "/hq/infospaces/knowledge-graphs",
+      title: "Graphs",
+      url: "/hq/infospaces/graphs",
       icon: Network,
       isActive: true,
       colorClass: "sidebar-teal",

@@ -55,6 +55,20 @@ export interface UseIntelligenceChatOptions {
   stream?: boolean
   conversation_id?: number  // Optional: Save messages to this conversation
   auto_save?: boolean  // Optional: Automatically save messages to conversation history
+  /**
+   * Agent persona — selects system prompt + MCP tool subset on the backend.
+   *   - ``undefined`` / ``'intelligence'``: workspace research chat (full tools).
+   *   - ``'dossier'``: run-level DossierAgent — formula + panel + snapshot + note.
+   *   - ``'formula'``: in-workspace FormulaAgent — formula authoring only.
+   *
+   * For dossier/formula, pass ``run_id`` so the agent scopes to one annotation run.
+   */
+  agent?: 'intelligence' | 'dossier' | 'formula'
+  /** For dossier / formula agents, the run id they operate against. */
+  run_id?: number
+  /** For the FormulaAgent, the currently-open formula id so the model has
+   *  context about what the user is editing. Surfaces in the system prompt. */
+  formula_id?: string | null
 }
 
 export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
@@ -100,9 +114,24 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
     try {
       const chatRequest: ChatRequest = {
         messages: [
-          ...messages.map(msg => ({ role: msg.role, content: msg.content })),
+          // Carry tool_executions / tool_calls on prior assistant messages so the
+          // backend can splice tool_use/tool_result blocks back into the provider's
+          // native message shape. Without this the model only sees the assistant's
+          // final text on subsequent turns and the tool data is gone.
+          ...messages.map(msg => {
+            const base: Record<string, unknown> = { role: msg.role, content: msg.content }
+            if (msg.role === 'assistant') {
+              if (msg.tool_executions && msg.tool_executions.length > 0) {
+                base.tool_executions = msg.tool_executions
+              }
+              if (msg.tool_calls && msg.tool_calls.length > 0) {
+                base.tool_calls = msg.tool_calls
+              }
+            }
+            return base
+          }),
           { role: 'user', content }
-        ],
+        ] as ChatRequest['messages'],
         model_name: customOptions?.model_name || options.model_name || undefined as unknown as string,
         provider_name: customOptions?.provider_name || options.provider_name || undefined,
         infospace_id: activeInfospace.id,
@@ -119,7 +148,11 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
         context_assets: customOptions?.contextAssets,
         context_depth: customOptions?.contextDepth,
         // Vision features
-        image_asset_ids: customOptions?.imageAssetIds
+        image_asset_ids: customOptions?.imageAssetIds,
+        // Agent persona — DossierAgent (M7) or default intelligence chat.
+        agent: (customOptions as any)?.agent ?? (options as any).agent,
+        run_id: (customOptions as any)?.run_id ?? (options as any).run_id,
+        formula_id: (customOptions as any)?.formula_id ?? (options as any).formula_id,
       } as ChatRequest
       
       if (chatRequest.stream) {
@@ -135,7 +168,7 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
           let messageAddedToUI = false
 
           await connectSSE({
-            url: '/api/v1/chat/chat',
+            url: '/api/v1/chat/chat/stream',
             method: 'POST',
             body: chatRequest,
             signal: controller.signal,
@@ -177,16 +210,17 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
                 }
 
                 if (updated) {
-                  const hasContent = current.content.trim().length > 0 ||
-                                    current.thinking_trace ||
-                                    (current.tool_executions && current.tool_executions.length > 0) ||
-                                    (current.tool_calls && current.tool_calls.length > 0)
+                  const snapshot = current
+                  const hasContent = snapshot.content.trim().length > 0 ||
+                                    snapshot.thinking_trace ||
+                                    (snapshot.tool_executions && snapshot.tool_executions.length > 0) ||
+                                    (snapshot.tool_calls && snapshot.tool_calls.length > 0)
 
                   if (!messageAddedToUI && hasContent) {
-                    setMessages(prev => [...prev, current])
+                    setMessages(prev => [...prev, snapshot])
                     messageAddedToUI = true
                   } else if (messageAddedToUI) {
-                    setMessages(prev => prev.map(m => m.id === current.id ? current : m))
+                    setMessages(prev => prev.map(m => m.id === snapshot.id ? snapshot : m))
                   }
                 }
               } catch (e) {

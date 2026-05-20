@@ -108,15 +108,31 @@ export async function connectSSE(options: SSEOptions): Promise<void> {
     throw error;
   }
 
+  // eslint-disable-next-line no-console
+  console.log('[sse] connected', url, 'headers:', {
+    contentType: resp.headers.get('content-type'),
+    transferEncoding: resp.headers.get('transfer-encoding'),
+    contentEncoding: resp.headers.get('content-encoding'),
+  });
+
   const reader = resp.body.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
+  let chunkCount = 0;
 
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      if (done) {
+        // eslint-disable-next-line no-console
+        console.log('[sse] reader done', url, 'total chunks:', chunkCount);
+        break;
+      }
+      chunkCount += 1;
+      const decoded = decoder.decode(value, { stream: true });
+      // eslint-disable-next-line no-console
+      console.log('[sse] chunk', chunkCount, 'bytes:', value?.byteLength, 'decoded[0..120]:', decoded.slice(0, 120));
+      buffer += decoded;
 
       // SSE frames are delimited by double newlines
       const blocks = buffer.split('\n\n');

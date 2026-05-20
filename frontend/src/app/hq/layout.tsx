@@ -224,10 +224,25 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
   const activeInfospace = useInfospaceStore.getState().activeInfospace;
   const breadcrumbs = useBreadcrumbs(activeInfospace);
   const mainContentRef = useRef<HTMLDivElement>(null);
-  
+
   // User preferences
   const { preferences, initializePreferences, updatePreference } = useUserPreferencesStore();
-  
+
+  // Bootstrap infospaces once at the layout level (which is always mounted),
+  // not from the sidebar — on mobile the sidebar lives inside a Radix <Sheet>
+  // whose content doesn't mount until the user opens it, so the
+  // <InfospaceSwitcher>'s `fetchInfospaces()` effect never fires until then.
+  // Pages that auto-load on `activeInfospace?.id` (annotation runner, etc.)
+  // would otherwise stay empty until the user manually opens the sidebar.
+  // Same guard as the switcher (skip if already populated) so this stays
+  // a single fetch.
+  useEffect(() => {
+    const { infospaces, activeInfospace, fetchInfospaces } = useInfospaceStore.getState();
+    if (infospaces.length === 0 && !activeInfospace) {
+      fetchInfospaces();
+    }
+  }, []);
+
   // Initialize preferences from user data
   useEffect(() => {
     if (user?.ui_preferences) {

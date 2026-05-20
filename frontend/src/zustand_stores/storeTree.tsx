@@ -13,19 +13,19 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import { TreeNavigationService, AssetRead, BundleRead } from '@/client';
-import type { TreeNode, TreeChildrenResponse } from '@/client';
+import type { AssetNode, AssetTree } from '@/client';
 import { connectSSE } from '@/lib/sse';
 import { useInfospaceStore } from './storeInfospace';
 
 interface FetchChildrenResult {
-  children: TreeNode[];
+  children: AssetNode[];
   hasMore: boolean;
 }
 
 interface TreeState {
   // Tree structure (minimal data)
-  rootNodes: TreeNode[];
-  childrenCache: Map<string, TreeNode[]>;  // parent_id -> children (accumulated across pages)
+  rootNodes: AssetNode[];
+  childrenCache: Map<string, AssetNode[]>;  // parent_id -> children (accumulated across pages)
   hasMoreChildren: Map<string, boolean>;   // parent_id -> has_more flag from backend
 
   // Loading states
@@ -86,8 +86,49 @@ export const useTreeStore = create<TreeState>((set, get) => ({
     if (state.lastFetchedInfospaceId === activeInfospace.id && state.rootNodes.length > 0) return;
 
     set({ isLoadingRoot: true, error: null, isCounting: true });
-    const url = `/api/v1/infospaces/${activeInfospace.id}/tree`;
+    const url = `/api/v1/infospaces/${activeInfospace.id}/tree/stream`;
     const controller = new AbortController();
+
+    // Phase 5 wire protocol: skeleton → nav → section(role='level') → count → done.
+    // Nav carries the flat bundle registry; section carries top-level assets.
+    // Bundle AssetNodes are synthesized from the nav registry.
+    let navBundles: { id: number; name: string; parent_id: number | null }[] = [];
+    let topLevelAssets: AssetNode[] = [];
+
+    // Skip set() when the new rootNodes would be structurally equivalent to
+    // the current ones — otherwise every SSE nav/section event creates a new
+    // array identity and every subscriber (sidebar, pickers, etc.) re-renders.
+    // Cheap shallow compare by (id, name) is enough — the other fields
+    // don't affect what subscribers render.
+    const sameRootNodes = (next: AssetNode[], prev: AssetNode[]) => {
+      if (next.length !== prev.length) return false;
+      for (let i = 0; i < next.length; i++) {
+        if (next[i].id !== prev[i].id || next[i].name !== prev[i].name) return false;
+      }
+      return true;
+    };
+
+    const commit = () => {
+      const bundleNodes: AssetNode[] = navBundles.map((b) => ({
+        id: `bundle-${b.id}`,
+        type: 'bundle',
+        name: b.name,
+        has_children: true,
+        children_count: null,
+        updated_at: new Date().toISOString(),
+      }));
+      const nextRootNodes = [...bundleNodes, ...topLevelAssets];
+      const prev = get();
+      const totalBundlesChanged = prev.totalBundles !== navBundles.length;
+      const infospaceChanged = prev.lastFetchedInfospaceId !== activeInfospace.id;
+      const rootNodesChanged = !sameRootNodes(nextRootNodes, prev.rootNodes);
+      if (!rootNodesChanged && !totalBundlesChanged && !infospaceChanged) return;
+      set({
+        rootNodes: rootNodesChanged ? nextRootNodes : prev.rootNodes,
+        totalBundles: navBundles.length,
+        lastFetchedInfospaceId: activeInfospace.id,
+      });
+    };
 
     try {
       await connectSSE({
@@ -105,27 +146,33 @@ export const useTreeStore = create<TreeState>((set, get) => ({
             return;
           }
 
-          let phase: any;
-          try { phase = JSON.parse(event.data); } catch { return; }
+          let payload: any;
+          try { payload = JSON.parse(event.data); } catch { return; }
 
-          if (event.type === 'tree') {
-            set({
-              rootNodes: phase.nodes,
-              totalBundles: phase.total_bundles >= 0 ? phase.total_bundles : 0,
-              totalAssets: phase.total_assets >= 0 ? phase.total_assets : 0,
-              isCounting: phase.total_bundles === -1 || phase.total_assets === -1,
-              lastFetchedInfospaceId: activeInfospace.id,
-              isLoadingRoot: false,
-              error: null,
-            });
+          if (event.type === 'nav') {
+            navBundles = (payload.nav?.bundles ?? []) as typeof navBundles;
+            commit();
           }
 
-          if (event.type === 'counts') {
-            set({
-              totalBundles: phase.total_bundles,
-              totalAssets: phase.total_assets,
-              isCounting: false,
-            });
+          if (event.type === 'section') {
+            const section = payload.section ?? {};
+            topLevelAssets = (section.items ?? []) as AssetNode[];
+            // Sentinel -1 means count still running
+            if (typeof section.total === 'number' && section.total >= 0) {
+              set({ totalAssets: section.total });
+            }
+            commit();
+            set({ isLoadingRoot: false });
+          }
+
+          if (event.type === 'count') {
+            if (typeof payload.total === 'number') {
+              set({ totalAssets: payload.total, isCounting: false });
+            }
+          }
+
+          if (event.type === 'done') {
+            set({ isLoadingRoot: false, isCounting: false });
           }
         },
         onError: (err) => {
@@ -171,24 +218,44 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       }));
 
       try {
-        const response: TreeChildrenResponse = await TreeNavigationService.getTreeChildren({
+        const tree: AssetTree = await TreeNavigationService.getTreeChildren({
           infospaceId: activeInfospace.id,
           parentId,
           skip,
           limit,
         });
+        const section = tree.section;
+        const assetNodeChildren: AssetNode[] = (section.items ?? []) as AssetNode[];
+        // When the parent is a bundle, synthesize child-bundle AssetNodes from
+        // the flat nav registry (nav.bundles where parent_id === this bundle).
+        const bundleChildren: AssetNode[] = (() => {
+          const m = parentId.match(/^bundle-(\d+)$/);
+          if (!m) return [];
+          const pid = Number(m[1]);
+          return (tree.nav?.bundles ?? [])
+            .filter((b) => b.parent_id === pid)
+            .map((b) => ({
+              id: `bundle-${b.id}`,
+              type: 'bundle' as const,
+              name: b.name,
+              has_children: true,
+              children_count: null,
+              updated_at: new Date().toISOString(),
+            }));
+        })();
+        const children = [...bundleChildren, ...assetNodeChildren];
+        const has_more = !!section.has_more;
 
-        // Update cache: replace on first page, append on subsequent pages
         set(state => {
           const newCache = new Map(state.childrenCache);
           if (skip === 0) {
-            newCache.set(parentId, response.children);
+            newCache.set(parentId, children);
           } else {
-            newCache.set(parentId, [...(state.childrenCache.get(parentId) ?? []), ...response.children]);
+            newCache.set(parentId, [...(state.childrenCache.get(parentId) ?? []), ...children]);
           }
 
           const newHasMore = new Map(state.hasMoreChildren);
-          newHasMore.set(parentId, response.has_more);
+          newHasMore.set(parentId, has_more);
 
           const newLoadingSet = new Set(state.isLoadingChildren);
           newLoadingSet.delete(parentId);
@@ -204,7 +271,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
           };
         });
 
-        return { children: response.children, hasMore: response.has_more };
+        return { children, hasMore: has_more };
       } catch (err: any) {
         console.error('[TreeStore] Failed to fetch children:', err);
 
@@ -361,12 +428,26 @@ export const useTreeStore = create<TreeState>((set, get) => ({
     });
     
     try {
-      // Use TreeNavigationService for efficient batch fetch
-      const fetchedAssets = await TreeNavigationService.batchGetAssets({
-        infospaceId: activeInfospace.id,
-        requestBody: { asset_ids: uncachedIds },
-      });
-      
+      // The backend endpoint caps each request at 100 asset_ids (see
+      // tree.py BatchGetAssetsRequest.asset_ids max_length). Chunk here so
+      // callers never have to think about it — for a 200-row CSV page we
+      // fire 2 parallel requests, cache both, return in input order.
+      const CHUNK = 100;
+      const chunks: number[][] = [];
+      for (let i = 0; i < uncachedIds.length; i += CHUNK) {
+        chunks.push(uncachedIds.slice(i, i + CHUNK));
+      }
+      const fetchedAssets = (
+        await Promise.all(
+          chunks.map((chunk) =>
+            TreeNavigationService.batchGetAssets({
+              infospaceId: activeInfospace.id,
+              requestBody: { asset_ids: chunk },
+            })
+          )
+        )
+      ).flat();
+
       // Cache fetched assets
       set(state => {
         const newCache = new Map(state.fullAssetsCache);
@@ -375,7 +456,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
         }
         return { fullAssetsCache: newCache };
       });
-      
+
       // Combine cached and fetched, preserving original order
       const allAssets = [...cachedAssets, ...fetchedAssets];
       const assetMap = new Map(allAssets.map(a => [a.id, a]));

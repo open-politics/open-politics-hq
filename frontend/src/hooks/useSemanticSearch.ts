@@ -1,18 +1,28 @@
 /**
- * useSemanticSearch - Reusable hook for semantic search
- * 
- * Wraps EmbeddingsService.semanticSearch and handles:
- * - Runtime API keys from provider store
- * - Converting similarity scores to percentages
- * - Fetching full asset data from search results
- * - Auto-detecting if semantic search is available
+ * useSemanticSearch — vector asset search via the Phase 5 unified endpoint.
+ *
+ * Pre-Phase 5 this hook hit ``POST /embeddings/search`` which was deleted
+ * alongside the embedding services. The hook now delegates to
+ * ``POST /search/assets`` with ``mode="vector"``; the backend ``AssetQuery``
+ * runs pgvector under the hood. BYOK keys still flow through so cloud
+ * embedding providers work.
+ *
+ * Hook signature preserved for the two consumers (AssetManager,
+ * AssetDetailView) — they keep reading ``{ results, isLoading, error,
+ * isAvailable, search }`` with ``ScoredAssetItem`` items.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { EmbeddingsService, AssetsService, TreeNavigationService } from '@/client';
-import type { AssetRead, AssetKind, SemanticSearchRequest, SemanticSearchResponse } from '@/client';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { SearchService } from '@/client';
+import type {
+  AssetRead,
+  AssetKind,
+  AssetSearch,
+  AssetSearchRequest,
+} from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useProvidersStore } from '@/zustand_stores/storeProviders';
+import { useTreeStore } from '@/zustand_stores/storeTree';
 import { toast } from 'sonner';
 
 export interface ScoredAssetItem {
@@ -35,251 +45,115 @@ export interface UseSemanticSearchReturn {
   results: ScoredAssetItem[];
   isLoading: boolean;
   error: string | null;
-  isAvailable: boolean; // Whether semantic search is available for current infospace
+  isAvailable: boolean;
   search: () => Promise<void>;
 }
 
-/**
- * Check if semantic search is available for the current infospace
- */
-function isSemanticSearchAvailable(infospace: { enrichment_config?: { embedding?: { model_name?: string | null } | null } | null } | null): boolean {
+
+function isSemanticSearchAvailable(
+  infospace: { enrichment_config?: { embedding?: { model_name?: string | null } | null } | null } | null,
+): boolean {
   return !!(infospace?.enrichment_config as any)?.embedding?.model_name;
 }
 
-/**
- * Map frontend provider ID to backend provider name
- * Frontend uses IDs like "openai_embeddings", backend expects "openai"
- */
-function mapProviderIdToName(providerId: string): string {
-  // Handle common mappings
-  if (providerId === 'openai_embeddings') return 'openai';
-  if (providerId === 'ollama_embeddings') return 'ollama';
-  // These are already correct
-  if (providerId === 'voyage') return 'voyage';
-  if (providerId === 'jina') return 'jina';
-  // Fallback: try to infer from ID
-  if (providerId.includes('openai')) return 'openai';
-  if (providerId.includes('ollama')) return 'ollama';
-  if (providerId.includes('voyage')) return 'voyage';
-  if (providerId.includes('jina')) return 'jina';
-  // Default: return as-is
-  return providerId;
+
+function similarityToPercentage(score: number | null | undefined): number {
+  if (typeof score !== 'number') return 0;
+  // AssetQuery returns relevance/similarity scores in [0, 1] for vector mode.
+  return Math.round(Math.max(0, Math.min(1, score)) * 100);
 }
 
-/**
- * Convert similarity score (0-1) to percentage (0-100)
- */
-function similarityToPercentage(similarity: number): number {
-  return Math.round(similarity * 100);
+
+function parseAssetNodeId(id: string): number | null {
+  const m = id.match(/^asset-(\d+)$/);
+  return m ? Number(m[1]) : null;
 }
 
-/**
- * Extract similarity from search result
- */
-function extractSimilarity(result: Record<string, unknown>): number {
-  // Backend returns similarity as a number (0-1 range)
-  const similarity = result.similarity as number | undefined;
-  if (typeof similarity === 'number') {
-    return similarity;
-  }
-  // Fallback: if only distance is available, convert it
-  const distance = result.distance as number | undefined;
-  if (typeof distance === 'number') {
-    // For cosine distance: similarity = 1 - distance
-    return Math.max(0, Math.min(1, 1 - distance));
-  }
-  return 0;
-}
 
 export function useSemanticSearch(options: UseSemanticSearchOptions): UseSemanticSearchReturn {
-  const { query, enabled = true, limit = 20, bundleId, parentAssetId, assetKinds, distanceThreshold } = options;
-  
+  const { query, enabled = true, limit = 20, bundleId, parentAssetId, assetKinds } = options;
+
   const { activeInfospace } = useInfospaceStore();
-  const { getApiKey, selections } = useProvidersStore();
-  
+  const { selections } = useProvidersStore();
+
   const [results, setResults] = useState<ScoredAssetItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hasShownNoEmbeddingsToast = useRef(false);
-  
+
   const isAvailable = isSemanticSearchAvailable(activeInfospace);
-  
+
   const search = useCallback(async () => {
     if (!enabled || !query.trim() || !isAvailable || !activeInfospace?.id) {
       setResults([]);
       return;
     }
-    
+
     setIsLoading(true);
     setError(null);
-    
+
     try {
-      // Get runtime API keys for embedding provider
-      const embeddingProviderId = selections.embedding?.providerId;
-      const apiKeys: Record<string, string> = {};
-      
-      if (embeddingProviderId) {
-        const apiKey = getApiKey(embeddingProviderId);
-        if (apiKey) {
-          // Map provider ID to backend provider name
-          const providerName = mapProviderIdToName(embeddingProviderId);
-          apiKeys[providerName] = apiKey;
-        }
-      }
-      
-      // Also try to infer provider from model name and include API key if available
-      // This helps when the model name doesn't match the selected provider
-      const embSel = (activeInfospace?.enrichment_config as any)?.embedding;
-      if (embSel?.model_name) {
-        const modelName = (embSel.model_name as string).toLowerCase();
-        
-        // Infer provider from model name patterns
-        if (modelName.includes('text-embedding') && !apiKeys['openai']) {
-          const openaiKey = getApiKey('openai_embeddings');
-          if (openaiKey) apiKeys['openai'] = openaiKey;
-        }
-        if (modelName.includes('voyage') && !apiKeys['voyage']) {
-          const voyageKey = getApiKey('voyage');
-          if (voyageKey) apiKeys['voyage'] = voyageKey;
-        }
-        if (modelName.includes('jina') && !apiKeys['jina']) {
-          const jinaKey = getApiKey('jina');
-          if (jinaKey) apiKeys['jina'] = jinaKey;
-        }
-      }
-      
-      // Build search request
-      const request: SemanticSearchRequest = {
-        query: query.trim(),
+      const request: AssetSearchRequest = {
+        q: query.trim(),
+        mode: 'vector',
         limit,
-        asset_kinds: assetKinds?.map(k => k as string) || null,
-        bundle_id: bundleId || null,
-        distance_threshold: distanceThreshold || null,
-        distance_function: 'cosine',
-        api_keys: Object.keys(apiKeys).length > 0 ? apiKeys : null,
-      };
-      
-      // Perform semantic search
-      const response: SemanticSearchResponse = await EmbeddingsService.semanticSearch({
+        sort: 'relevance',
+        scope_hints: {
+          bundle_ids: bundleId ? [bundleId] : [],
+          asset_ids: [],
+          kinds: (assetKinds as any) ?? [],
+          facets: {},
+          parent_asset_id: parentAssetId ?? null,
+        },
+      } as unknown as AssetSearchRequest;
+
+      const envelope: AssetSearch = await SearchService.assetSearch({
         infospaceId: activeInfospace.id,
         requestBody: request,
       });
-      
-      // Extract asset IDs and scores from results
-      const assetIdToScore = new Map<number, number>();
-      const assetIdToChunkPreview = new Map<number, string>();
-      
-      for (const result of response.results) {
-        const assetId = result.asset_id as number | undefined;
-        if (!assetId) continue;
-        
-        const similarity = extractSimilarity(result);
-        const score = similarityToPercentage(similarity);
-        
-        // Keep highest score per asset (multiple chunks can match)
-        const currentScore = assetIdToScore.get(assetId);
-        if (!currentScore || score > currentScore) {
-          assetIdToScore.set(assetId, score);
-          
-          // Store chunk preview text
-          const chunkText = result.chunk_text as string | undefined;
-          if (chunkText) {
-            assetIdToChunkPreview.set(assetId, chunkText.slice(0, 200));
-          }
-        }
+
+      // Pull numeric ids from AssetNode, fetch AssetRead batch for full fields
+      const scored: { assetId: number; score: number; snippet?: string }[] = [];
+      for (const item of envelope.primary.items ?? []) {
+        const assetId = parseAssetNodeId(item.id);
+        if (assetId === null) continue;
+        const score = similarityToPercentage(item.score);
+        const snippet = item.matches?.find((m) => m.snippet)?.snippet ?? undefined;
+        scored.push({ assetId, score, snippet: snippet ?? undefined });
       }
-      
-      // Fetch full asset data for unique asset IDs using batch endpoint (single API call!)
-      const assetIds = Array.from(assetIdToScore.keys());
-      if (assetIds.length === 0) {
+
+      if (scored.length === 0) {
         setResults([]);
         return;
       }
-      
-      // Use TreeNavigationService.batchGetAssets for efficient batch fetching
-      // Split into chunks of 100 (API limit) if needed
-      const scoredAssets: ScoredAssetItem[] = [];
-      const batchSize = 100; // API limit
-      
-      for (let i = 0; i < assetIds.length; i += batchSize) {
-        const batch = assetIds.slice(i, i + batchSize);
-        
-        try {
-          // Single API call for batch of assets using TreeNavigationService
-          const assets = await TreeNavigationService.batchGetAssets({
-            infospaceId: activeInfospace.id,
-            requestBody: { asset_ids: batch },
-          });
-          
-          // Process batch results
-          for (const asset of assets) {
-            // Apply parent_asset_id filter if specified
-            if (parentAssetId !== undefined && asset.parent_asset_id !== parentAssetId) {
-              continue;
-            }
-            
-            const score = assetIdToScore.get(asset.id) || 0;
-            const chunkPreview = assetIdToChunkPreview.get(asset.id);
-            
-            scoredAssets.push({
-              asset,
-              score,
-              chunkPreview,
-            });
-          }
-        } catch (err) {
-          console.warn(`Failed to batch fetch assets:`, err);
-          // Fallback: try individual fetches for this batch (shouldn't happen normally)
-          for (const assetId of batch) {
-            try {
-              const asset = await AssetsService.getAsset({
-                infospaceId: activeInfospace.id,
-                assetId,
-              });
-              
-              if (parentAssetId !== undefined && asset.parent_asset_id !== parentAssetId) {
-                continue;
-              }
-              
-              const score = assetIdToScore.get(assetId) || 0;
-              const chunkPreview = assetIdToChunkPreview.get(assetId);
-              
-              scoredAssets.push({
-                asset,
-                score,
-                chunkPreview,
-              });
-            } catch (individualErr) {
-              console.warn(`Failed to fetch asset ${assetId}:`, individualErr);
-            }
-          }
-        }
+
+      // Batch fetch full AssetRead via the store — it chunks around the
+      // backend's 100-id per-request cap and primes the shared cache.
+      const assets: AssetRead[] = await useTreeStore
+        .getState()
+        .batchGetAssets(scored.map((s) => s.assetId));
+
+      const byId = new Map(assets.map((a) => [a.id, a]));
+      const merged: ScoredAssetItem[] = [];
+      for (const s of scored) {
+        const asset = byId.get(s.assetId);
+        if (!asset) continue;
+        merged.push({ asset, score: s.score, chunkPreview: s.snippet });
       }
-      
-      // Sort by score descending
-      scoredAssets.sort((a, b) => b.score - a.score);
-      
-      setResults(scoredAssets);
+      merged.sort((a, b) => b.score - a.score);
+      setResults(merged);
     } catch (err) {
       console.error('Semantic search error:', err);
-      
-      // Provide helpful error messages
       let errorMessage = 'Semantic search failed';
-      let shouldShowError = true;
-      
+
       if (err instanceof Error) {
         const errMsg = err.message.toLowerCase();
         if (errMsg.includes('not found in database') || errMsg.includes('run embedding generation')) {
-          // This is expected if embeddings haven't been generated yet
-          // Show a helpful toast once, then silently fall back to empty results
           if (!hasShownNoEmbeddingsToast.current && query.trim().length > 0) {
-            toast.info('No embeddings found. Generate embeddings first to enable semantic search.', {
-              duration: 5000,
-            });
+            toast.info('No embeddings found. Generate embeddings first to enable semantic search.', { duration: 5000 });
             hasShownNoEmbeddingsToast.current = true;
           }
-          errorMessage = '';
-          shouldShowError = false;
+          setError(null);
           setResults([]);
           setIsLoading(false);
           return;
@@ -293,12 +167,8 @@ export function useSemanticSearch(options: UseSemanticSearchOptions): UseSemanti
           errorMessage = err.message;
         }
       }
-      
-      if (shouldShowError) {
-        setError(errorMessage);
-      } else {
-        setError(null);
-      }
+
+      setError(errorMessage);
       setResults([]);
     } finally {
       setIsLoading(false);
@@ -312,31 +182,20 @@ export function useSemanticSearch(options: UseSemanticSearchOptions): UseSemanti
     bundleId,
     parentAssetId,
     assetKinds,
-    distanceThreshold,
-    getApiKey,
     selections.embedding?.providerId,
   ]);
-  
-  // Reset toast flag when query changes significantly
+
   useEffect(() => {
-    if (!query.trim()) {
-      hasShownNoEmbeddingsToast.current = false;
-    }
+    if (!query.trim()) hasShownNoEmbeddingsToast.current = false;
   }, [query]);
-  
-  // Auto-search when query changes (debounced by caller)
-  // Use a ref to track the last searched query to avoid infinite loops
+
   const lastSearchedQueryRef = useRef<string>('');
-  
   useEffect(() => {
     const trimmedQuery = query.trim();
-    
-    // Only search if query actually changed and conditions are met
     if (enabled && trimmedQuery && isAvailable && trimmedQuery !== lastSearchedQueryRef.current) {
       lastSearchedQueryRef.current = trimmedQuery;
       search();
     } else if (!enabled || !trimmedQuery || !isAvailable) {
-      // Clear results and reset ref when disabled or query is empty
       if (lastSearchedQueryRef.current) {
         lastSearchedQueryRef.current = '';
         setResults([]);
@@ -344,7 +203,7 @@ export function useSemanticSearch(options: UseSemanticSearchOptions): UseSemanti
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, query, isAvailable]);
-  
+
   return {
     results,
     isLoading,

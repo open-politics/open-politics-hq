@@ -1,9 +1,21 @@
 'use client';
 
+/**
+ * useAssetQuery — thin adapter over the Phase 5 ``/search/assets`` endpoint.
+ *
+ * The hook signature stays stable for existing consumers (AssetExplorer,
+ * AssetManager, AssetSelector, ChannelFeedView, AssetDetailView). Under the
+ * hood it now targets ``POST /search/infospaces/{iid}/assets/stream`` and
+ * projects ``AssetNode`` items into the legacy ``QueryResult`` shape.
+ *
+ * Event protocol: ``skeleton → section(role='primary') → count → done``.
+ * Empty-query semantics preserved — empty without parent/filter short-circuits
+ * to zeros locally.
+ */
+
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { connectSSE } from '@/lib/sse';
-import type { AssetRead, BundleRead } from '@/client';
-import type { ParsedQueryResponse } from '@/lib/query/asset_query_language';
+import type { AssetRead, BundleRead, AssetNode, AssetKind, ProcessingStatus } from '@/client';
 
 export interface QueryResult {
   asset: AssetRead;
@@ -23,17 +35,6 @@ export interface ChildResultGroup {
   total_matches: number;
 }
 
-interface QueryResponse {
-  query: string;
-  parsed: ParsedQueryResponse;
-  name_matches: NameMatches;
-  results: QueryResult[];
-  child_results: ChildResultGroup[];
-  total: number;
-  has_more: boolean;
-  cursor_next: number | null;
-}
-
 interface UseAssetQueryOptions {
   infospaceId: number;
   query: string;
@@ -45,39 +46,80 @@ interface UseAssetQueryOptions {
 
 const EMPTY_NAME_MATCHES: NameMatches = { bundles: [], assets: [] };
 
+
+/**
+ * Project a polymorphic ``AssetNode`` into the legacy partial-``AssetRead``
+ * shape consumed by the search UI. Display-only fields; consumers that need
+ * ``text_content`` / ``blob_path`` still call ``useTreeStore.getFullAsset``.
+ */
+function projectAssetNodeToAssetRead(node: AssetNode): AssetRead {
+  const numericId = (() => {
+    const m = node.id.match(/^(?:asset|bundle|vfolder)-(\d+)/);
+    return m ? Number(m[1]) : 0;
+  })();
+  return {
+    id: numericId,
+    uuid: node.id,
+    title: node.name,
+    kind: (node.kind ?? 'text') as AssetKind,
+    stub: node.stub ?? false,
+    parent_asset_id: node.parent_asset_id ?? null,
+    part_index: node.part_index ?? null,
+    infospace_id: 0, // not carried on AssetNode; caller knows its context
+    source_id: null,
+    created_at: node.created_at ?? node.updated_at,
+    text_content: null,
+    blob_path: null,
+    logical_path: null,
+    source_identifier: null,
+    facets: (node.facets as any) ?? null,
+    processing_status: (node.processing_status ?? undefined) as ProcessingStatus | undefined,
+    bundle_ids: node.bundle_ids ?? undefined,
+    tags: (node.tags ?? undefined) as any,
+  } as unknown as AssetRead;
+}
+
+
+function toQueryResult(node: AssetNode): QueryResult {
+  const headline = node.matches?.find((m) => m.snippet)?.snippet ?? null;
+  return {
+    asset: projectAssetNodeToAssetRead(node),
+    score: node.score ?? null,
+    highlight: headline,
+  };
+}
+
+
 export function useAssetQuery(options: UseAssetQueryOptions) {
   const { infospaceId, query, parentAssetId, sort = 'relevance', limit = 50, enabled = true } = options;
 
-  const [nameMatches, setNameMatches] = useState<NameMatches>(EMPTY_NAME_MATCHES);
+  const [nameMatches] = useState<NameMatches>(EMPTY_NAME_MATCHES);
   const [results, setResults] = useState<QueryResult[]>([]);
   const [childResults, setChildResults] = useState<ChildResultGroup[]>([]);
-  const [parsed, setParsed] = useState<ParsedQueryResponse>({});
+  const [parsed] = useState<Record<string, unknown>>({});
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
-  const [cursorNext, setCursorNext] = useState<number | null>(null);
+  const [cursorNext, setCursorNext] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Track the active query to avoid stale responses
   const activeQuery = useRef(query);
   activeQuery.current = query;
 
   const fetchQuery = useCallback(
-    async (q: string, append = false, cursor?: number | null, offset?: number) => {
+    async (q: string, append = false, cursor?: string | null) => {
       if (!infospaceId) return;
-      if (!q.trim() && !parentAssetId && sort === 'relevance') return;
+      const isEmpty = !q.trim() && !parentAssetId && sort === 'relevance';
+      if (isEmpty) return;
+
       setIsLoading(true);
       if (!append) setError(null);
 
-      const body: Record<string, unknown> = { q, limit, sort };
-      if (parentAssetId) body.parent_asset_id = parentAssetId;
-      if (append && sort === 'relevance' && offset) {
-        body.offset = offset;
-      } else if (append && cursor) {
-        body.cursor = cursor;
-      }
+      const body: Record<string, unknown> = { q, mode: 'text', limit, sort };
+      if (cursor) body.cursor = cursor;
+      if (parentAssetId) body.scope_hints = { parent_asset_id: parentAssetId };
 
-      const url = `/api/v1/infospaces/${infospaceId}/query`;
+      const url = `/api/v1/search/infospaces/${infospaceId}/assets/stream`;
       const controller = new AbortController();
 
       try {
@@ -102,37 +144,47 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
               return;
             }
 
-            let phase: Partial<QueryResponse>;
-            try {
-              phase = JSON.parse(event.data);
-            } catch {
-              return;
+            let payload: any;
+            try { payload = JSON.parse(event.data); } catch { return; }
+
+            if (event.type === 'section' && payload.role === 'primary') {
+              const section = payload.section ?? {};
+              const items: AssetNode[] = section.items ?? [];
+              const mapped = items.map(toQueryResult);
+              if (append) {
+                setResults((prev) => [...prev, ...mapped]);
+              } else {
+                setResults(mapped);
+              }
+              if (typeof section.total === 'number' && section.total >= 0) {
+                setTotal(section.total);
+              }
+              setHasMore(!!section.has_more);
+              setCursorNext(section.cursor_next ?? null);
             }
 
-            if (event.type === 'results') {
-              if (append) {
-                setResults((prev) => [...prev, ...(phase.results ?? [])]);
-              } else {
-                setNameMatches(phase.name_matches ?? EMPTY_NAME_MATCHES);
-                setResults(phase.results ?? []);
-                setChildResults(phase.child_results ?? []);
-                setParsed(phase.parsed ?? {});
-              }
-              if (phase.total !== undefined && phase.total >= 0) {
-                setTotal(phase.total);
-              }
-              if (phase.has_more !== undefined) setHasMore(phase.has_more);
-              if (phase.cursor_next !== undefined) setCursorNext(phase.cursor_next);
+            if (event.type === 'section' && payload.role === 'grouped') {
+              const section = payload.section ?? {};
+              const parentId = Number(
+                (section.at_parent ?? '').replace(/^asset-/, '')
+              );
+              if (!Number.isFinite(parentId) || parentId <= 0) return;
+              const childItems: AssetNode[] = section.items ?? [];
+              const group: ChildResultGroup = {
+                parent_asset_id: parentId,
+                parent_title: section.at_parent ?? `Asset #${parentId}`,
+                matches: childItems.map(toQueryResult),
+                total_matches: section.total ?? childItems.length,
+              };
+              setChildResults((prev) => {
+                const next = prev.filter((g) => g.parent_asset_id !== parentId);
+                next.push(group);
+                return next;
+              });
             }
 
             if (event.type === 'count') {
-              if (phase.total !== undefined) setTotal(phase.total);
-              if (phase.has_more !== undefined) setHasMore(phase.has_more);
-              if (phase.cursor_next !== undefined) setCursorNext(phase.cursor_next);
-            }
-
-            if (event.type === 'children') {
-              if (phase.child_results) setChildResults(phase.child_results);
+              if (typeof payload.total === 'number') setTotal(payload.total);
             }
           },
           onError: (err) => {
@@ -151,14 +203,11 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
     [infospaceId, parentAssetId, limit, sort],
   );
 
-  // Auto-search on query change
   useEffect(() => {
     const isEmpty = !query.trim() && !parentAssetId && sort === 'relevance';
     if (!enabled || isEmpty) {
-      setNameMatches(EMPTY_NAME_MATCHES);
       setResults([]);
       setChildResults([]);
-      setParsed({});
       setTotal(0);
       setHasMore(false);
       setCursorNext(null);
@@ -171,10 +220,9 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
 
   const loadMore = useCallback(() => {
     if (!hasMore || isLoading) return;
-    fetchQuery(query, true, cursorNext, results.length);
-  }, [hasMore, isLoading, query, cursorNext, results.length, fetchQuery]);
+    fetchQuery(query, true, cursorNext);
+  }, [hasMore, isLoading, query, cursorNext, fetchQuery]);
 
-  // total === -1 is the sentinel meaning "count still running".
   const isCounting = total === -1;
   const resolvedTotal = isCounting ? null : total;
 

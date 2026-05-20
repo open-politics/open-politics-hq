@@ -80,8 +80,8 @@
  *    title           ILIKE fallback (OR'd with FTS)
  *
  *  entity: searches:
- *    EntityCanonical.canonical_name    (case-insensitive)
- *    EntityCanonical.aliases           (JSON array)
+ *    Entity.canonical_name    (case-insensitive)
+ *    Entity.aliases           (JSON array)
  *    Fallback: Asset.text_content + Asset.title (ILIKE)
  *
  *  annotation: searches:

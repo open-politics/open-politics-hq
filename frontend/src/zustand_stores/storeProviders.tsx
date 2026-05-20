@@ -1,10 +1,17 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { UsersService } from '@/client';
-import type { ProviderDefaults_Output, ProviderSelection as BackendProviderSelection } from '@/client';
+import type { ProviderDefaults, ProviderSelection as BackendProviderSelection } from '@/client';
 
 // Provider types match backend capabilities
 export type ProviderCapability = 'llm' | 'embedding' | 'web_search' | 'geocoding' | 'ocr' | 'annotation';
+
+export interface ProviderModelSpec {
+  name: string;
+  description?: string;
+  dimension?: number | null;
+  max_sequence_length?: number | null;
+}
 
 export interface ProviderMetadata {
   id: string;
@@ -20,6 +27,10 @@ export interface ProviderMetadata {
   features: string[];
   rate_limited?: boolean;
   rate_limit_info?: string;
+  /** True when the provider requires an explicit model_name for save-validation to pass. */
+  model_required?: boolean;
+  /** Statically-declared models for this (capability, provider). Empty for runtime-discovered (e.g. Ollama). */
+  models?: ProviderModelSpec[];
 }
 
 export interface ProviderSelection {
@@ -44,7 +55,7 @@ interface ProvidersState {
   setSelection: (capability: ProviderCapability, selection: ProviderSelection) => void;
   clearAllKeys: () => void;
   syncToBackend: () => void;
-  hydrateFromProfile: (providerDefaults: ProviderDefaults_Output | null | undefined) => void;
+  hydrateFromProfile: (providerDefaults: ProviderDefaults | null | undefined) => void;
 
   // Helpers
   getProvider: (providerId: string) => ProviderMetadata | undefined;
@@ -110,9 +121,9 @@ export const useProvidersStore = create<ProvidersState>()(
 
       syncToBackend: () => {
         const { selections } = get();
-        const toSel = (s: ProviderSelection | undefined) =>
-          s?.providerId ? { type_key: s.providerId, model_name: s.modelId || null } : null;
-        const defaults = {
+        const toSel = (s: ProviderSelection | undefined): BackendProviderSelection | null =>
+          s?.providerId ? { provider_key: s.providerId, model_name: s.modelId || null } : null;
+        const defaults: ProviderDefaults = {
           language: {
             default: toSel(selections.llm),
             chat: toSel(selections.llm),
@@ -127,10 +138,10 @@ export const useProvidersStore = create<ProvidersState>()(
           .catch((e) => console.warn('Failed to sync provider defaults:', e));
       },
 
-      hydrateFromProfile: (providerDefaults: ProviderDefaults_Output | null | undefined) => {
+      hydrateFromProfile: (providerDefaults: ProviderDefaults | null | undefined) => {
         if (!providerDefaults) return;
         const fromSel = (sel: BackendProviderSelection | null | undefined): ProviderSelection | undefined =>
-          sel?.type_key ? { providerId: sel.type_key, modelId: sel.model_name || undefined } : undefined;
+          sel?.provider_key ? { providerId: sel.provider_key, modelId: sel.model_name || undefined } : undefined;
 
         set((state) => {
           const next = { ...state.selections };

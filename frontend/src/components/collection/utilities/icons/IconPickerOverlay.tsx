@@ -11,7 +11,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { AtSymbolIcon } from '@heroicons/react/24/solid';
+import { AtSign } from 'lucide-react';
 
 interface IconPickerDialogProps {
   onIconSelect: (icon: string) => void;
@@ -28,7 +28,7 @@ export const IconPickerDialog: React.FC<IconPickerDialogProps> = ({ onIconSelect
         <Button variant="outline" className="min-w-[150px] flex justify-center">
           {selected ? (
             <div className="flex items-center gap-2">
-              <AtSymbolIcon className="w-4 h-4 text-gray-500" />
+              <AtSign className="w-4 h-4 text-gray-500" />
               <span className="text-gray-500">Update Icon</span>
             </div>
           ) : (

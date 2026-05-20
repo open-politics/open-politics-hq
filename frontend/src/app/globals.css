@@ -81,8 +81,13 @@
   --main-styled-text: oklch(0.985 0 0);
   --graph-node-stroke: oklch(0.3 0.02 230);
   --graph-node-label: oklch(0.9 0.005 0);
-  --graph-edge-stroke: oklch(0.55 0.01 0);
-  --graph-edge-label: oklch(0.65 0.01 0);
+  /* Edge tint readable against the dark canvas (bg ≈ oklch(0.15)) without
+     overpowering labels or arrows. We render with ``MeshBasicMaterial`` in
+     3D (see ForceGraph.tsx) so the colour isn't dimmed by lighting; the
+     value here is the literal painted colour — push too high and edges
+     become a bright mat that drowns out node labels and edge labels alike. */
+  --graph-edge-stroke: oklch(0.65 0.02 230);
+  --graph-edge-label: oklch(0.78 0.015 230);
   --graph-label-halo: oklch(0.15 0.02 230 / 75%);
   --graph-svg-border: oklch(1 0 0 / 20%);
 }
