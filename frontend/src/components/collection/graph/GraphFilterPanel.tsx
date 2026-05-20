@@ -73,7 +73,7 @@ export function GraphFilterPanel({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className={`h-7 text-xs ${hasActiveFilters ? 'border-amber-500 text-amber-600 dark:text-amber-400' : ''}`}>
+        <Button variant="outline" size="sm" className={`h-6 text-[11px] px-1.5 ${hasActiveFilters ? 'border-amber-500 text-amber-600 dark:text-amber-400' : ''}`}>
           <Filter className="h-3 w-3 mr-1" />
           Filter
           {hasActiveFilters && (

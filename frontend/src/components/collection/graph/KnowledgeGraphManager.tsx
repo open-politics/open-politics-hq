@@ -1,14 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Plus, Edit, Trash2, Network, Loader2, Users } from 'lucide-react';
-import Link from 'next/link';
+import { Plus, Edit, Trash2, Network, Loader2, MapPin, Users } from 'lucide-react';
 import { KnowledgeGraphsService } from '@/client';
 import type { KnowledgeGraphCreate, KnowledgeGraphUpdate } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { useToast } from '@/components/ui/use-toast';
+import { useCanons } from '@/hooks/useCanons';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -43,6 +42,7 @@ interface KnowledgeGraphRecord {
   id: number;
   uuid: string;
   infospace_id: number;
+  canon_id: number;
   name: string;
   description: string | null;
   source_config: Record<string, unknown>;
@@ -53,6 +53,7 @@ interface KnowledgeGraphRecord {
 
 const KnowledgeGraphManager: React.FC = () => {
   const { activeInfospace } = useInfospaceStore();
+  const { canons } = useCanons();
   const [graphs, setGraphs] = useState<KnowledgeGraphRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -60,9 +61,12 @@ const KnowledgeGraphManager: React.FC = () => {
   const [formName, setFormName] = useState('');
   const [formDescription, setFormDescription] = useState('');
   const [formEditPolicy, setFormEditPolicy] = useState<'method_only' | 'editable'>('method_only');
+  const [formCanonId, setFormCanonId] = useState<number | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeGraphRecord | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const canonById = useMemo(() => new Map(canons.map(c => [c.id, c])), [canons]);
 
   const loadGraphs = useCallback(async () => {
     if (!activeInfospace?.id) return;
@@ -88,6 +92,7 @@ const KnowledgeGraphManager: React.FC = () => {
     setFormName('');
     setFormDescription('');
     setFormEditPolicy('method_only');
+    setFormCanonId(activeInfospace?.default_canon_id ?? null);
     setIsDialogOpen(true);
   };
 
@@ -96,6 +101,7 @@ const KnowledgeGraphManager: React.FC = () => {
     setFormName(g.name);
     setFormDescription(g.description || '');
     setFormEditPolicy((g.edit_policy as 'method_only' | 'editable') || 'method_only');
+    setFormCanonId(g.canon_id);
     setIsDialogOpen(true);
   };
 
@@ -124,6 +130,7 @@ const KnowledgeGraphManager: React.FC = () => {
           name: formName.trim(),
           description: formDescription.trim() || null,
           edit_policy: formEditPolicy,
+          ...(formCanonId != null ? { canon_id: formCanonId } : {}),
         };
         await KnowledgeGraphsService.createKnowledgeGraph({
           infospaceId: activeInfospace.id,
@@ -147,12 +154,14 @@ const KnowledgeGraphManager: React.FC = () => {
       await KnowledgeGraphsService.deleteKnowledgeGraph({
         infospaceId: activeInfospace.id,
         graphId: deleteTarget.id,
+        requestBody: { confirm: true },
       });
       toast.success('Knowledge graph deleted');
       setDeleteTarget(null);
       loadGraphs();
-    } catch (e) {
-      toast.error('Failed to delete');
+    } catch (e: any) {
+      const detail = e?.body?.detail ?? e?.message ?? 'Failed to delete';
+      toast.error(typeof detail === 'string' ? detail : 'Failed to delete');
     } finally {
       setIsDeleting(false);
     }
@@ -171,20 +180,12 @@ const KnowledgeGraphManager: React.FC = () => {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <Network className="h-5 w-5" />
-          Knowledge Graphs
+          Graphs
         </h2>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" asChild>
-            <Link href="#entities-section">
-              <Users className="h-4 w-4 mr-1" />
-              Entity Canon
-            </Link>
-          </Button>
-          <Button onClick={handleOpenCreate} size="sm">
-            <Plus className="h-4 w-4 mr-1" />
-            New Graph
-          </Button>
-        </div>
+        <Button onClick={handleOpenCreate} size="sm">
+          <Plus className="h-4 w-4 mr-1" />
+          New Graph
+        </Button>
       </div>
 
       {isLoading ? (
@@ -205,15 +206,29 @@ const KnowledgeGraphManager: React.FC = () => {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
+                <TableHead>Canon</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead>Edit policy</TableHead>
                 <TableHead className="w-[100px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {graphs.map((g) => (
+              {graphs.map((g) => {
+                const canon = canonById.get(g.canon_id);
+                const CanonIcon = canon?.role === 'geo' ? MapPin : Users;
+                return (
                 <TableRow key={g.id}>
                   <TableCell className="font-medium">{g.name}</TableCell>
+                  <TableCell>
+                    {canon ? (
+                      <Badge variant="outline" className="gap-1">
+                        <CanonIcon className="h-3 w-3" />
+                        {canon.name}
+                      </Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">canon #{g.canon_id}</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-muted-foreground max-w-[200px] truncate">
                     {g.description || '—'}
                   </TableCell>
@@ -243,7 +258,8 @@ const KnowledgeGraphManager: React.FC = () => {
                     </div>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </ScrollArea>
@@ -252,7 +268,7 @@ const KnowledgeGraphManager: React.FC = () => {
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editingGraph ? 'Edit' : 'Create'} Knowledge Graph</DialogTitle>
+            <DialogTitle>{editingGraph ? 'Edit' : 'Create'} Graph</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
@@ -273,6 +289,32 @@ const KnowledgeGraphManager: React.FC = () => {
                 placeholder="Brief description"
               />
             </div>
+            {!editingGraph && (
+              <div className="grid gap-2">
+                <Label>Canon</Label>
+                <select
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                  value={formCanonId ?? ''}
+                  onChange={(e) => setFormCanonId(e.target.value ? parseInt(e.target.value, 10) : null)}
+                >
+                  {canons.length === 0 && (
+                    <option value="">Default (general)</option>
+                  )}
+                  {canons.map(c => {
+                    const isDefault = c.id === activeInfospace?.default_canon_id;
+                    return (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ({c.role}){isDefault ? ' — default' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+                <p className="text-[11px] text-muted-foreground">
+                  Entities and edges curated into this graph will resolve against the chosen canon.
+                  Multiple graphs can share one canon.
+                </p>
+              </div>
+            )}
             <div className="grid gap-2">
               <Label>Edit policy</Label>
               <select
@@ -303,7 +345,7 @@ const KnowledgeGraphManager: React.FC = () => {
             <AlertDialogTitle>Delete graph?</AlertDialogTitle>
             <AlertDialogDescription>
               {deleteTarget
-                ? `Delete "${deleteTarget.name}"? Entities will be moved to infospace-level.`
+                ? `Delete "${deleteTarget.name}"? Triplet edges and pinned relationships in this graph are removed. Entities stay in their canon — canons outlive graphs and remain available to other graphs that share the canon.`
                 : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>

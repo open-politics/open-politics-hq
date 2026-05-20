@@ -55,7 +55,7 @@ const PredicateManager: React.FC = () => {
       const data = await fetchPredicates(activeInfospace.id);
       setPredicates(data);
     } catch {
-      toast.error('Failed to load predicates');
+      toast.error('Failed to load connections');
     } finally {
       setIsLoading(false);
     }
@@ -78,8 +78,7 @@ const PredicateManager: React.FC = () => {
   };
 
   const openMerge = () => {
-    if (selected.size < 2) { toast.error('Select at least 2 predicates to merge'); return; }
-    // Default target is the most frequent selected predicate
+    if (selected.size < 2) { toast.error('Select at least 2 connections to merge'); return; }
     const sorted = predicates.filter(p => selected.has(p.predicate)).sort((a, b) => b.count - a.count);
     setMergeTarget(sorted[0]?.predicate || '');
     setIsMergeOpen(true);
@@ -96,7 +95,7 @@ const PredicateManager: React.FC = () => {
       setIsMergeOpen(false);
       loadPredicates();
     } catch {
-      toast.error('Failed to merge predicates');
+      toast.error('Failed to merge connections');
     } finally {
       setIsSaving(false);
     }
@@ -114,8 +113,10 @@ const PredicateManager: React.FC = () => {
     <div className="space-y-3 p-4">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold">Edge Predicates</h3>
-          <p className="text-xs text-muted-foreground">{predicates.length} predicates, {totalEdges} edges total</p>
+          <h3 className="text-sm font-semibold">Connections</h3>
+          <p className="text-xs text-muted-foreground">
+            {predicates.length} connection type{predicates.length === 1 ? '' : 's'}, {totalEdges} edge{totalEdges === 1 ? '' : 's'} total
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {selected.size >= 2 && (
@@ -134,7 +135,7 @@ const PredicateManager: React.FC = () => {
       <div className="relative">
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
         <Input
-          placeholder="Filter predicates..."
+          placeholder="Filter connections..."
           value={searchFilter}
           onChange={e => setSearchFilter(e.target.value)}
           className="h-8 text-xs pl-8"
@@ -152,7 +153,7 @@ const PredicateManager: React.FC = () => {
                   onCheckedChange={selectAll}
                 />
               </TableHead>
-              <TableHead className="text-xs">Predicate</TableHead>
+              <TableHead className="text-xs">Connection</TableHead>
               <TableHead className="text-xs text-right">Edges</TableHead>
             </TableRow>
           </TableHeader>
@@ -171,7 +172,7 @@ const PredicateManager: React.FC = () => {
             {filtered.length === 0 && !isLoading && (
               <TableRow>
                 <TableCell colSpan={3} className="text-center text-xs text-muted-foreground py-8">
-                  {searchFilter ? 'No matching predicates' : 'No predicates found'}
+                  {searchFilter ? 'No matching connections' : 'No connections yet'}
                 </TableCell>
               </TableRow>
             )}
@@ -183,11 +184,11 @@ const PredicateManager: React.FC = () => {
       <Dialog open={isMergeOpen} onOpenChange={setIsMergeOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-sm">Merge Predicates</DialogTitle>
+            <DialogTitle className="text-sm">Merge connections</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="text-xs text-muted-foreground">
-              Merging {selected.size} predicates. All edges will use the target predicate name.
+              Merging {selected.size} connections. All edges will use the target name.
             </div>
             <div className="flex flex-wrap gap-1">
               {Array.from(selected).map(p => (
@@ -195,12 +196,12 @@ const PredicateManager: React.FC = () => {
               ))}
             </div>
             <div>
-              <Label className="text-xs">Target predicate name</Label>
+              <Label className="text-xs">Target connection name</Label>
               <Input
                 value={mergeTarget}
                 onChange={e => setMergeTarget(e.target.value)}
                 className="h-8 text-xs font-mono mt-1"
-                placeholder="merged_predicate_name"
+                placeholder="merged_connection_name"
               />
             </div>
           </div>
