@@ -118,7 +118,8 @@ class TestRequireInScope:
             "run_ids": (10,),
             "schema_ids": (20,),
             "graph_ids": (30,),
-            "entity_canonical_ids": (40,),
+            "entity_ids": (40,),
+            "canon_ids": (45,),
             "asset_ids": (50,),
             "bundle_ids": (60,),
         }
@@ -291,7 +292,8 @@ class TestPackageScope:
         assert scope.run_ids == ()
         assert scope.schema_ids == ()
         assert scope.graph_ids == ()
-        assert scope.entity_canonical_ids == ()
+        assert scope.canon_ids == ()
+        assert scope.entity_ids == ()
         assert scope.asset_ids == ()
 
     def test_is_frozen(self):

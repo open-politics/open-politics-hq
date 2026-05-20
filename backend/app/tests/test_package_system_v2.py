@@ -313,7 +313,7 @@ class TestPackageItemExpansion:
 
         # Create a run linked to this schema and bundle
         run_r = client.post(
-            f"{_api()}/annotation_jobs/infospaces/{iid}/runs",
+            f"{_api()}/infospaces/{iid}/runs",
             headers=headers,
             json={"name": "Test Run", "schema_ids": [schema_id], "target_bundle_id": bundle_id},
         )

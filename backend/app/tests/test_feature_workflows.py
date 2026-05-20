@@ -124,72 +124,83 @@ def bundle_with_assets(client, headers, workspace, seeded_assets):
 # ═══════════════════════════════════════════════════
 
 class TestSearch:
-    """Users search their workspace for assets matching a query."""
+    """Users search their workspace for assets matching a query.
+
+    Post-Phase 5: ``POST /search/infospaces/{iid}/assets`` (JSON envelope).
+    Response shape: ``AssetSearch`` → ``primary: ListingSection[AssetNode]``,
+    ``meta: AssetSearchMeta``.
+    """
 
     def test_text_search_returns_results(self, client, headers, workspace, seeded_assets):
         """Search for 'climate' should find the Climate Brief asset."""
-        r = client.get(
-            f"{API}/infospaces/{workspace}/tree/text-search",
+        r = client.post(
+            f"{API}/search/infospaces/{workspace}/assets",
             headers=headers,
-            params={"query": "climate", "limit": 50},
+            json={"q": "climate", "mode": "text", "limit": 50},
         )
-        assert r.status_code == 200
+        assert r.status_code == 200, r.text[:300]
         body = r.json()
-        assert body["query"] == "climate"
-        assert body["total_found"] >= 1
-        titles = [hit["asset"]["title"] for hit in body["results"]]
+        assert body["meta"]["query"] == "climate"
+        assert body["primary"]["total"] >= 1
+        titles = [item["name"] for item in body["primary"]["items"]]
         assert "Climate Brief" in titles
 
     def test_text_search_no_results(self, client, headers, workspace, seeded_assets):
         """Search for nonsense returns empty results, not an error."""
-        r = client.get(
-            f"{API}/infospaces/{workspace}/tree/text-search",
+        r = client.post(
+            f"{API}/search/infospaces/{workspace}/assets",
             headers=headers,
-            params={"query": "xyzzy_nonexistent_gibberish_42"},
+            json={"q": "xyzzy_nonexistent_gibberish_42", "mode": "text"},
         )
         assert r.status_code == 200
-        assert r.json()["total_found"] == 0
-        assert r.json()["results"] == []
+        body = r.json()
+        assert body["primary"]["total"] == 0
+        assert body["primary"]["items"] == []
 
     def test_text_search_respects_infospace_isolation(self, client, headers, user_id, seeded_assets, infospace_factory):
         """Search in a different workspace shouldn't find assets from the test workspace."""
         other = infospace_factory("Search Isolation Test", user_id)
 
-        r = client.get(
-            f"{API}/infospaces/{other}/tree/text-search",
+        r = client.post(
+            f"{API}/search/infospaces/{other}/assets",
             headers=headers,
-            params={"query": "climate"},
+            json={"q": "climate", "mode": "text"},
         )
         assert r.status_code == 200
-        assert r.json()["total_found"] == 0
+        assert r.json()["primary"]["total"] == 0
 
-    def test_text_search_result_has_score_and_context(self, client, headers, workspace, seeded_assets):
-        """Each search result includes relevance score and match context."""
-        r = client.get(
-            f"{API}/infospaces/{workspace}/tree/text-search",
+    def test_text_search_result_has_score_and_matches(self, client, headers, workspace, seeded_assets):
+        """Each search result includes a score and structured match evidence."""
+        r = client.post(
+            f"{API}/search/infospaces/{workspace}/assets",
             headers=headers,
-            params={"query": "budget humanitarian"},
+            json={"q": "budget humanitarian", "mode": "text"},
         )
         assert r.status_code == 200
-        if r.json()["total_found"] > 0:
-            hit = r.json()["results"][0]
+        items = r.json()["primary"]["items"]
+        if items:
+            hit = items[0]
             assert "score" in hit
-            assert hit["score"] > 0
-            assert "match_type" in hit
+            assert hit["score"] is None or hit["score"] >= 0
+            assert "matches" in hit and isinstance(hit["matches"], list)
 
     def test_text_search_filter_by_bundle(self, client, headers, workspace, bundle_with_assets, seeded_assets):
-        """Search within a specific bundle only returns assets in that bundle."""
+        """Scope-hint filter: bundle_ids clamps visibility to that bundle."""
         bundle, asset_ids = bundle_with_assets
-        r = client.get(
-            f"{API}/infospaces/{workspace}/tree/text-search",
+        r = client.post(
+            f"{API}/search/infospaces/{workspace}/assets",
             headers=headers,
-            params={"query": "budget", "bundle_id": bundle["id"]},
+            json={
+                "q": "budget",
+                "mode": "text",
+                "scope_hints": {"bundle_ids": [bundle["id"]]},
+            },
         )
         assert r.status_code == 200
-        # Budget Report is in the bundle, so it should appear
-        if r.json()["total_found"] > 0:
-            result_ids = [hit["asset"]["id"] for hit in r.json()["results"]]
-            # All results should be from assets in this bundle
+        items = r.json()["primary"]["items"]
+        if items:
+            # Items ids look like "asset-123"; pull the numeric id.
+            result_ids = [int(item["id"].split("-", 1)[1]) for item in items]
             for rid in result_ids:
                 assert rid in asset_ids
 
@@ -408,7 +419,6 @@ class TestPackages:
         """A package token restricts tree browsing to only the shared bundle."""
         bundle, asset_ids = bundle_with_assets
 
-        # Create package with just one bundle
         pkg = client.post(
             f"{API}/infospaces/{workspace}/packages",
             headers=headers,
@@ -420,19 +430,19 @@ class TestPackages:
         ).json()
         token = pkg["token"]
 
-        # Access tree with package token (no auth header — anonymous + token)
+        # Access tree with package token (anonymous + token)
         r = client.get(
             f"{API}/infospaces/{workspace}/tree",
             params={"package_token": token},
         )
         assert r.status_code == 200
         tree = r.json()
-        # Only the shared bundle should appear (not the CSV, image, etc.)
-        node_names = [n["name"] for n in tree["nodes"]]
-        assert bundle["name"] in node_names
-        # Assets not in the bundle should not be visible at root
-        # (the image and csv are at root, not in the bundle)
-        assert tree["total_assets"] <= len(asset_ids)
+        # Nav carries the flat bundle registry; scoped token only sees its bundle
+        bundle_names = [b["name"] for b in tree["nav"]["bundles"]]
+        assert bundle["name"] in bundle_names
+        # Section holds top-level assets at the current level; scoped token
+        # shouldn't see the infospace-root assets outside the shared bundle
+        assert tree["section"]["total"] <= len(asset_ids)
 
     def test_package_token_scopes_feed(self, client, headers, workspace, bundle_with_assets, seeded_assets):
         """Feed endpoint with package token only shows assets in scoped bundles."""
@@ -455,9 +465,10 @@ class TestPackages:
         )
         assert r.status_code == 200
         feed = r.json()
-        # All returned assets should be ones we put in the bundle
-        for asset in feed["assets"]:
-            assert asset["id"] in asset_ids
+        for item in feed["section"]["items"]:
+            # AssetNode.id is "asset-N" — pull the numeric id
+            aid = int(item["id"].split("-", 1)[1])
+            assert aid in asset_ids
 
     def test_add_and_remove_package_item(self, client, headers, workspace, seeded_assets):
         """Add an item to a package, then remove it."""
@@ -525,26 +536,30 @@ class TestPackages:
 # ═══════════════════════════════════════════════════
 
 class TestTreeAPI:
-    """Users browse the workspace tree: root view, drill into bundles, expand containers."""
+    """Users browse the workspace tree: root view, drill into bundles, expand containers.
+
+    Post-Phase 5: ``/tree``, ``/tree/children``, ``/tree/feed`` return the
+    unified ``AssetTree`` / ``AssetFeed`` shapes (``nav``, ``section``, ``meta``).
+    """
 
     def test_root_tree_shows_bundles_and_assets(self, client, headers, workspace, seeded_assets, bundle_with_assets):
-        """Root tree should show bundles and loose assets."""
+        """Root tree: nav.bundles + section.items (top-level assets)."""
         r = client.get(
             f"{API}/infospaces/{workspace}/tree",
             headers=headers,
         )
         assert r.status_code == 200
         tree = r.json()
-        assert tree["total_bundles"] >= 1
-        assert tree["total_assets"] >= 3  # at least our seeded assets
-        assert tree["total_nodes"] >= 1
-
-        # Should have both bundle and asset nodes
-        types = {n["type"] for n in tree["nodes"]}
-        assert "bundle" in types
+        # nav.bundles is the flat bundle registry
+        assert len(tree["nav"]["bundles"]) >= 1
+        # section holds top-level assets at current level
+        assert "items" in tree["section"]
+        # meta has aggregate counts
+        assert tree["meta"]["bundles"] >= 1
+        assert tree["meta"]["assets"] >= 3
 
     def test_tree_children_of_bundle(self, client, headers, workspace, bundle_with_assets):
-        """Drilling into a bundle shows its child assets."""
+        """Drilling into a bundle shows its child assets via the section."""
         bundle, asset_ids = bundle_with_assets
         r = client.get(
             f"{API}/infospaces/{workspace}/tree/children",
@@ -553,8 +568,9 @@ class TestTreeAPI:
         )
         assert r.status_code == 200
         body = r.json()
-        assert body["parent_id"] == f"bundle-{bundle['id']}"
-        assert body["total_children"] >= len(asset_ids)
+        assert body["section"]["at_parent"] == f"bundle-{bundle['id']}"
+        # Drained section carries resolved total
+        assert body["section"]["total"] >= len(asset_ids)
 
     def test_tree_children_of_container_asset(self, client, headers, workspace, seeded_assets):
         """Drilling into a CSV asset (container) shows its row children."""
@@ -566,9 +582,8 @@ class TestTreeAPI:
         )
         assert r.status_code == 200
         body = r.json()
-        assert body["parent_id"] == f"asset-{csv_id}"
-        # CSV with 10 rows should have children
-        assert body["total_children"] >= 1
+        assert body["section"]["at_parent"] == f"asset-{csv_id}"
+        assert body["section"]["total"] >= 1
 
     def test_tree_children_of_leaf_asset(self, client, headers, workspace, seeded_assets):
         """Drilling into a non-container asset returns empty children."""
@@ -580,9 +595,9 @@ class TestTreeAPI:
         )
         assert r.status_code == 200
         body = r.json()
-        assert body["total_children"] == 0
-        assert body["children"] == []
-        assert body["has_more"] is False
+        assert body["section"]["total"] == 0
+        assert body["section"]["items"] == []
+        assert body["section"]["has_more"] is False
 
     def test_tree_children_pagination(self, client, headers, workspace, bundle_with_assets):
         """Tree children support skip/limit pagination."""
@@ -594,7 +609,7 @@ class TestTreeAPI:
         )
         assert r.status_code == 200
         body = r.json()
-        assert len(body["children"]) <= 1
+        assert len(body["section"]["items"]) <= 1
 
     def test_tree_invalid_parent_id_400(self, client, headers, workspace):
         """Invalid parent_id format returns 400."""
@@ -623,8 +638,8 @@ class TestTreeAPI:
         )
         assert r.status_code == 200
         body = r.json()
-        assert body["total"] >= 3
-        assert len(body["assets"]) >= 3
+        assert body["section"]["total"] >= 3
+        assert len(body["section"]["items"]) >= 3
 
     def test_feed_filter_by_kind(self, client, headers, workspace, seeded_assets):
         """Feed can be filtered to specific asset kinds."""
@@ -634,9 +649,8 @@ class TestTreeAPI:
             params={"kinds": ["image"]},
         )
         assert r.status_code == 200
-        body = r.json()
-        for asset in body["assets"]:
-            assert asset["kind"] == "image"
+        for item in r.json()["section"]["items"]:
+            assert item["kind"] == "image"
 
     def test_feed_filter_by_bundle(self, client, headers, workspace, bundle_with_assets):
         """Feed filtered by bundle_id only shows assets in that bundle."""
@@ -647,9 +661,9 @@ class TestTreeAPI:
             params={"bundle_id": bundle["id"]},
         )
         assert r.status_code == 200
-        body = r.json()
-        for asset in body["assets"]:
-            assert asset["id"] in asset_ids
+        for item in r.json()["section"]["items"]:
+            aid = int(item["id"].split("-", 1)[1])
+            assert aid in asset_ids
 
     def test_tree_delete_preview(self, client, headers, workspace, seeded_assets):
         """Delete preview shows what would be deleted without actually deleting."""

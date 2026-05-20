@@ -154,21 +154,16 @@ class TestTaskContext:
         with patch("app.core.redis.get_redis", side_effect=Exception("Redis down")):
             ctx.item_failed(123)  # should not raise
 
-    def test_provider_raises_without_key(self):
-        """provider() with no key and no system default → ValueError."""
+    def test_provider_raises_on_unknown_capability(self):
+        """provider() with an unknown capability string raises ProviderError."""
+        from app.api.modules.foundation_service_providers import ProviderError
         ctx = TaskContext(
             infospace_id=1,
             settings=MagicMock(),
             task_name="test",
         )
-        # These are lazy-imported inside provider() — patch at their source modules
-        with patch(
-            "app.api.modules.foundation_service_providers.registry.system_default_provider_key",
-            return_value=None,
-        ):
-            with patch("app.api.modules.foundation_service_providers.registry.select_provider"):
-                with pytest.raises(ValueError, match="No provider_key"):
-                    ctx.provider(type("FakeProtocol", (), {}))
+        with pytest.raises(ProviderError, match="Unknown capability"):
+            ctx.provider("not-a-real-capability")
 
 
 # ═══════════════════════════════════════════════════
@@ -288,11 +283,16 @@ class TestTaskRegistry:
             pass  # Import may fail without full app context
 
         registry = get_task_registry()
-        # If any tasks registered, verify they have proper descriptors
+        # If any tasks registered, verify they have proper descriptors.
+        # params_model tasks (user-action pattern) intentionally carry
+        # check=None — they're direct-invocation only.
         for name, desc in registry.items():
             assert isinstance(desc, TaskDescriptor)
             assert desc.name == name
-            assert callable(desc.check)
+            if desc.params_model is None:
+                assert callable(desc.check)
+            else:
+                assert desc.check is None
 
     def test_registry_returns_dict(self):
         assert isinstance(get_task_registry(), dict)
@@ -324,3 +324,107 @@ class TestChainDepth:
         """Prevent infinite self-chaining."""
         assert MAX_CHAIN_DEPTH > 0
         assert MAX_CHAIN_DEPTH <= 100  # not absurdly high
+
+
+# ═══════════════════════════════════════════════════
+# @task + params_model — user-action pattern
+# ═══════════════════════════════════════════════════
+
+class TestTaskParamsModel:
+    """params_model is direct-invocation-only. Mixing it with triggers or
+    schedule would make self-query and event paths incoherent (they have no
+    params to pass). The decorator must reject those combos at load time."""
+
+    def test_params_model_rejects_triggers(self):
+        from pydantic import BaseModel
+        from app.core.tasks import task
+
+        class P(BaseModel):
+            x: int
+
+        with pytest.raises(AssertionError, match="triggers"):
+            @task("_bad_triggers", params_model=P, triggers=["asset.ingested"])
+            def _fn(ctx, ids, params): pass
+
+    def test_params_model_rejects_schedule(self):
+        from pydantic import BaseModel
+        from app.core.tasks import task
+
+        class P(BaseModel):
+            x: int
+
+        with pytest.raises(AssertionError, match="schedule"):
+            @task("_bad_schedule", params_model=P, schedule=60)
+            def _fn(ctx, ids, params): pass
+
+    def test_params_model_rejects_check(self):
+        """A check query is for self-query mode; params tasks don't self-query."""
+        from pydantic import BaseModel
+        from app.core.tasks import task
+
+        class P(BaseModel):
+            x: int
+
+        with pytest.raises(AssertionError, match="check query"):
+            @task("_bad_check", params_model=P, check=lambda iid: None)
+            def _fn(ctx, ids, params): pass
+
+    def test_plain_task_still_requires_check(self):
+        from app.core.tasks import task
+
+        with pytest.raises(AssertionError, match="check="):
+            @task("_bad_plain")
+            def _fn(ctx, ids): pass
+
+    def test_params_model_descriptor_stores_model(self):
+        from pydantic import BaseModel
+        from app.core.tasks import task, _task_registry
+
+        class P(BaseModel):
+            value: str
+
+        @task("_params_ok", params_model=P, queue="external_api")
+        def _fn(ctx, ids, params): pass
+
+        desc = _task_registry["_params_ok"]
+        assert desc.params_model is P
+
+    def test_delay_with_params_kwarg_sends_dict(self):
+        """fn.delay(ids, iid, params=P(...)) calls Celery with the dumped dict."""
+        from pydantic import BaseModel
+        from app.core.tasks import task
+
+        class P(BaseModel):
+            run_id: int
+            field_path: str
+
+        @task("_delay_params", params_model=P, queue="external_api")
+        def _fn(ctx, ids, params): pass
+
+        sent = {}
+        def _fake_apply_async(args=None, **kw):
+            sent["args"] = args
+            return MagicMock(id="celery-123")
+        _fn._celery_task.apply_async = _fake_apply_async
+
+        result = _fn.delay([1, 2], 42, params=P(run_id=5, field_path="annotations[*].location"))
+        assert result.id == "celery-123"
+        assert sent["args"][0] == [1, 2]
+        assert sent["args"][1] == 42
+        assert sent["args"][2] == {"run_id": 5, "field_path": "annotations[*].location"}
+
+    def test_delay_type_mismatch_raises(self):
+        from pydantic import BaseModel
+        from app.core.tasks import task
+
+        class P(BaseModel):
+            x: int
+
+        class Q(BaseModel):
+            x: int
+
+        @task("_delay_typecheck", params_model=P, queue="external_api")
+        def _fn(ctx, ids, params): pass
+
+        with pytest.raises(TypeError, match="expects params of type P"):
+            _fn.delay([1], 1, params=Q(x=5))

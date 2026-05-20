@@ -293,7 +293,7 @@ class TestAnnotationWorkflow:
         assert len(assets) > 0
 
         r = client.post(
-            f"{settings.API_V1_STR}/annotation_jobs/infospaces/{workspace}/runs",
+            f"{settings.API_V1_STR}/infospaces/{workspace}/runs",
             headers=headers,
             json={
                 "name": "Entity Extraction Run",
@@ -309,7 +309,7 @@ class TestAnnotationWorkflow:
 
     def test_list_runs(self, client, headers, workspace):
         r = client.get(
-            f"{settings.API_V1_STR}/annotation_jobs/infospaces/{workspace}/runs",
+            f"{settings.API_V1_STR}/infospaces/{workspace}/runs",
             headers=headers,
         )
         assert r.status_code == 200
