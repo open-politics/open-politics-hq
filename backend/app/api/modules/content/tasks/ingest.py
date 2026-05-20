@@ -29,10 +29,7 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
         from app.api.modules.content.handlers import IngestionContext
         from app.api.modules.content.ingest import ingest
         from app.api.modules.content.services.source_service import SourceService
-        from app.api.modules.foundation_service_providers.registry import (
-            get_storage_provider, get_scraping_provider, get_web_search_provider,
-        )
-        from app.api.modules.content.services.asset_service import AssetService
+        from app.api.modules.foundation_service_providers import resolve
         from app.api.modules.content.services.bundle_service import BundleService
 
         source_service = SourceService(session)
@@ -103,13 +100,12 @@ async def _process_source_async(source_id: int, task_origin_details_override: Op
 
             logger.info(f"Ingesting content for source {source_id} into bundle {bundle_id}")
 
-            storage = get_storage_provider(settings)
+            storage = resolve("storage")
             context = IngestionContext(
                 session=session,
                 storage_provider=storage,
-                scraping_provider=get_scraping_provider(settings),
-                search_provider=get_web_search_provider(settings),
-                asset_service=AssetService(session, storage),
+                scraping_provider=resolve("scraping"),
+                search_provider=resolve("web_search", infospace_id=source.infospace_id),
                 bundle_service=BundleService(session),
                 user_id=source.user_id,
                 infospace_id=source.infospace_id,

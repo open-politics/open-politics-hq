@@ -9,8 +9,8 @@ import logging
 import dateutil.parser
 from datetime import datetime, timezone
 from typing import List
-from app.api.modules.content.models import Asset, AssetKind
-from app.schemas import AssetCreate
+from app.api.modules.content.models import Asset, AssetKind, ProcessingStatus
+from app.api.modules.content.services.asset_builder import AssetBuilder
 from .base import BaseProcessor, ProcessingError
 
 logger = logging.getLogger(__name__)
@@ -93,74 +93,72 @@ class WebProcessor(BaseProcessor):
         })
         asset.file_info = file_info
         
-        # Create image assets
-        child_assets = []
-        
+        # Build image child assets (stub image rows — just URL references)
+        child_assets: List[Asset] = []
+        parent_article_info = {
+            'title': asset.title,
+            'url': asset.source_identifier,
+            'asset_id': asset.id,
+        }
+        scraped_at = asset.file_info.get('scraped_at', '')
+
         # Featured image
         if scraped_data.get('top_image'):
-            featured_asset = AssetCreate(
+            child_assets.append(Asset(
                 title=f"Featured: {asset.title}",
                 kind=AssetKind.IMAGE,
                 user_id=asset.user_id,
                 infospace_id=asset.infospace_id,
-                parent_asset_id=asset.id,
                 source_identifier=scraped_data['top_image'],
-                part_index=0,
+                processing_status=ProcessingStatus.READY,
                 file_info={
                     'image_role': 'featured',
                     'image_url': scraped_data['top_image'],
-                    'parent_article': {
-                        'title': asset.title,
-                        'url': asset.source_identifier,
-                        'asset_id': asset.id
-                    },
-                    'scraped_at': asset.file_info.get('scraped_at', ''),
-                    'is_hero_image': True
-                }
-            )
-            child_assets.append(featured_asset)
-        
+                    'parent_article': parent_article_info,
+                    'scraped_at': scraped_at,
+                    'is_hero_image': True,
+                },
+            ))
+
         # Content images
         images = scraped_data.get('images', [])
         if images:
             content_images = self._filter_content_images(
-                images, 
-                scraped_data.get('top_image')
+                images,
+                scraped_data.get('top_image'),
             )
-            
+
             start_index = 1 if scraped_data.get('top_image') else 0
             for idx, img_url in enumerate(content_images[:max_images]):
-                content_asset = AssetCreate(
+                child_assets.append(Asset(
                     title=f"Image {start_index + idx + 1}: {asset.title}",
                     kind=AssetKind.IMAGE,
                     user_id=asset.user_id,
                     infospace_id=asset.infospace_id,
-                    parent_asset_id=asset.id,
                     source_identifier=img_url,
-                    part_index=start_index + idx,
+                    processing_status=ProcessingStatus.READY,
                     file_info={
                         'image_role': 'content',
                         'image_url': img_url,
-                        'parent_article': {
-                            'title': asset.title,
-                            'url': asset.source_identifier,
-                            'asset_id': asset.id
-                        },
+                        'parent_article': parent_article_info,
                         'content_index': idx,
-                        'scraped_at': asset.file_info.get('scraped_at', '')
-                    }
-                )
-                child_assets.append(content_asset)
-        
-        # Save child assets
-        saved_children = []
-        for child_create in child_assets:
-            child_asset = self.context.asset_service.create_asset(child_create)
-            saved_children.append(child_asset)
-        
-        logger.info(f"Processed web content: {len(child_assets)} images extracted, created {len(saved_children)} image assets")
-        
-        return saved_children
+                        'scraped_at': scraped_at,
+                    },
+                ))
+
+        # Batch insert via builder (auto-assigns parent_asset_id + part_index 0..N-1)
+        if child_assets:
+            builder = AssetBuilder(
+                self.context.session, asset.user_id, asset.infospace_id,
+            )
+            await builder.build_children(asset.id, child_assets)
+
+        logger.info(
+            f"Processed web content: {len(child_assets)} images extracted, "
+            f"created {len(child_assets)} image assets"
+        )
+
+        return child_assets
     
     def _filter_content_images(
         self, 

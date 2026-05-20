@@ -74,16 +74,19 @@ class FileHandler(BaseHandler):
             "ingestion_method": "file_upload"
         }
         
-        # Build asset using AssetBuilder
+        # Build asset using AssetBuilder — handler owns storage upload + blob path
         asset_title = title or file.filename or f"Uploaded {content_kind.value}"
-        
-        builder = (AssetBuilder(self.session, self.user_id, self.infospace_id)
+
+        builder = (
+            AssetBuilder(self.session, self.user_id, self.infospace_id)
             .as_kind(content_kind)
             .with_title(asset_title)
-            .with_metadata(**file_info))
-        
-        # Set blob path directly (file already uploaded)
-        builder.blueprint.blob_path = storage_path
+            .with_blob(storage_path)
+            .with_metadata(**file_info)
+            # Each upload is a fresh row — the storage_path is already unique per upload.
+            # Callers that want content-hash dedup should wrap this handler.
+            .no_dedup()
+        )
         
         # Determine if processing is needed using centralized function
         needs_proc = needs_processing(content_kind)
@@ -109,7 +112,9 @@ class FileHandler(BaseHandler):
                 # Process immediately using processor
                 builder.with_processing_status(ProcessingStatus.PENDING)
                 asset = await builder.build()
-                
+                self.session.commit()  # v2: builder flushes only; handler owns tx
+                self.session.refresh(asset)
+
                 # Get processor and process
                 processor_context = self.context.to_processor_context(options)
                 
@@ -151,7 +156,9 @@ class FileHandler(BaseHandler):
                 # Queue for background processing
                 builder.with_processing_status(ProcessingStatus.PENDING)
                 asset = await builder.build()
-                
+                self.session.commit()  # v2: builder flushes only; handler owns tx
+                self.session.refresh(asset)
+
                 # Emit event for background processing
                 from app.core.events import emit
                 emit("asset.ingested", {"asset_id": asset.id, "infospace_id": asset.infospace_id})
@@ -160,7 +167,9 @@ class FileHandler(BaseHandler):
             # No processing needed
             builder.with_processing_status(ProcessingStatus.READY)
             asset = await builder.build()
-        
+            self.session.commit()  # v2: builder flushes only; handler owns tx
+            self.session.refresh(asset)
+
         return [asset]
     
     # NOTE: Content type detection in app.api.utils.content_types

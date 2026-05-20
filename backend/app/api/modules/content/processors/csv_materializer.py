@@ -117,16 +117,27 @@ class CsvMaterializer:
         asset: Asset,
         session: Session,
         storage_provider: "StorageProvider",
-        asset_service: Any,
         options: dict,
     ) -> None:
         """
         Reprocess CSV by updating existing row assets in-place.
-        Used when descriptor.reprocess_strategy == "preserve_children".
+
+        Used when descriptor.reprocess_strategy == "preserve_children". We preserve
+        existing row asset ids so any attached annotations survive reprocessing.
+
+        Parses the CSV via ``CSVProcessor._extract_child_assets`` (which does NOT
+        insert), then diffs against existing children:
+          - position i exists: mutate in place
+          - position i > len(existing): flush a new CSV_ROW child
+          - tail overage: delete
+
+        Flush-only. Caller owns the transaction boundary.
         """
         from app.api.modules.content.processors import get_processor
         from app.api.modules.content.processors.base import ProcessingContext
+        from app.api.modules.content.processors.csv_processor import CSVProcessor
         from app.api.modules.content.services.bundle_service import BundleService
+        from app.api.modules.content.services.asset_builder import AssetBuilder
         from app.core.config import settings
 
         existing_children = session.exec(
@@ -147,39 +158,41 @@ class CsvMaterializer:
             session=session,
             storage_provider=storage_provider,
             scraping_provider=None,
-            asset_service=asset_service,
             bundle_service=BundleService(session),
             user_id=asset.user_id,
             infospace_id=asset.infospace_id,
             options=opts,
         )
         processor = get_processor(asset, context)
-        if not processor:
-            raise ValueError(f"No processor found for asset kind: {asset.kind}")
+        if not processor or not isinstance(processor, CSVProcessor):
+            raise ValueError(f"No CSV processor for asset kind: {asset.kind}")
 
-        new_row_creates = await processor.process(asset)
+        new_child_assets, summary = await processor._extract_child_assets(asset)
+        processor._apply_summary_to_parent(asset, summary)
 
-        for i, row_create in enumerate(new_row_creates):
+        for i, new_child in enumerate(new_child_assets):
             if i < len(existing_children):
                 existing_asset = existing_children[i]
-                existing_asset.title = row_create.title
-                existing_asset.text_content = row_create.text_content
-                existing_asset.file_info = row_create.file_info
-                existing_asset.part_index = row_create.part_index
+                existing_asset.title = new_child.title
+                existing_asset.text_content = new_child.text_content
+                existing_asset.file_info = new_child.file_info
+                existing_asset.part_index = new_child.part_index
                 existing_asset.updated_at = datetime.now(timezone.utc)
                 session.add(existing_asset)
-            else:
-                new_asset = asset_service.create_asset(row_create)
-                session.add(new_asset)
 
-        if len(existing_children) > len(new_row_creates):
-            for old_asset in existing_children[len(new_row_creates):]:
+        overage = new_child_assets[len(existing_children):]
+        if overage:
+            builder = AssetBuilder(session, asset.user_id, asset.infospace_id)
+            await builder.build_children(asset.id, overage)
+
+        if len(existing_children) > len(new_child_assets):
+            for old_asset in existing_children[len(new_child_assets):]:
                 session.delete(old_asset)
 
         session.flush()
         logger.info(
             "CSV reprocessing complete: %d updated, %d created, %d deleted",
-            min(len(existing_children), len(new_row_creates)),
-            max(0, len(new_row_creates) - len(existing_children)),
-            max(0, len(existing_children) - len(new_row_creates)),
+            min(len(existing_children), len(new_child_assets)),
+            len(overage),
+            max(0, len(existing_children) - len(new_child_assets)),
         )

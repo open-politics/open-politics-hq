@@ -1,746 +1,487 @@
 """
-Asset Builder - Unified Asset Construction System
-=================================================
+Asset Builder — pure fluent blueprint + identity + policy + flush pipeline.
 
-This module provides a fluent, declarative interface for building assets from any source.
-All asset creation should flow through the AssetBuilder to ensure consistency and 
-reduce code duplication.
+This module contains NO source-type knowledge. Every `from_rss_entry`,
+`from_search_result`, `from_file`, `from_url`, `for_csv_row`, etc. has
+been moved to the handler or processor that owns the domain. The builder
+exposes only:
 
-Usage:
-    # Tavily search result → Article
-    asset = await (AssetBuilder(session, user_id, infospace_id)
-        .from_search_result(result, "query")
-        .with_depth(0)
-        .build())
-    
-    # URL → Scraped web asset
-    asset = await (AssetBuilder(session, user_id, infospace_id)
-        .from_url("https://example.com")
-        .with_depth(1)
-        .build())
-    
-    # File upload → PDF with pages
-    asset = await (AssetBuilder(session, user_id, infospace_id)
-        .from_file(pdf_file)
-        .build())
+  • Blueprint setters (`as_kind`, `with_title`, `with_text`, `with_source`,
+    `with_blob`, `with_metadata`, `with_facets`, `with_timestamp`,
+    `as_child_of`, `with_part_index`, `as_stub`, `with_processing_status`,
+    `with_content_hash`, `with_depth`) — configure the asset's fields.
+
+  • Identity (`dedup_on`, `no_dedup`) — declare what "match" means.
+
+  • Policy (`on_match`, `supersedes`) — declare what happens on match.
+
+  • Terminals (`find_match`, `build`, `load`, `build_batch`, `build_children`)
+    — run the pipeline and flush. NEVER commit. Callers own the transaction.
+
+See docs/plans/hq-v2/PRIMITIVES.md §1 for the full contract. Composition
+examples in the v2 handlers (`content/handlers/*.py`).
 """
 
+import hashlib
 import logging
-import os
-import uuid
-import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Callable, Union
-from urllib.parse import urlparse
+from typing import Any, Dict, List, Literal, Optional
 
-import dateutil.parser
-from fastapi import UploadFile
+from sqlalchemy import update
 from sqlmodel import Session, select
 
 from app.models import Asset, AssetKind, ProcessingStatus
-from app.schemas import AssetCreate, SearchResult
-from app.api.modules.foundation_service_providers.base import WebSearchProvider, ScrapingProvider, StorageProvider
-from app.api.modules.foundation_service_providers.registry import get_web_search_provider, get_scraping_provider, get_storage_provider
-from app.api.modules.content.services.asset_service import AssetService
-from app.api.modules.content.processors import detect_asset_kind_from_extension
-from app.core.config import settings
+from app.schemas import AssetCreate
 
 logger = logging.getLogger(__name__)
 
 
+# Sentinel for dedup_on "not configured yet" (distinct from explicitly setting
+# a key to None, which is meaningless, and from no_dedup(), which disables dedup).
+_UNSET: Any = object()
+
+MatchPolicy = Literal["skip", "supersede", "update"]
+
+
 @dataclass
 class AssetBlueprint:
+    """Intermediate representation of an asset being built.
+
+    Every field here corresponds to exactly one fluent setter on AssetBuilder.
+    No enrichment queues, no child-builder lists — handlers own that logic.
     """
-    Intermediate representation of an asset being built.
-    
-    This is the "recipe" that gets progressively refined by builder methods
-    before being converted to an Asset.
-    """
-    
+
     # Required context
     user_id: int
     infospace_id: int
-    
+
     # Identity
     kind: Optional[AssetKind] = None
     title: Optional[str] = None
     stub: bool = False
-    
-    # Content (one of these will be populated)
+
+    # Content
     text_content: Optional[str] = None
     blob_path: Optional[str] = None
     source_identifier: Optional[str] = None
-    
+    content_hash: Optional[str] = None
+
     # Hierarchy
     parent_asset_id: Optional[int] = None
     part_index: Optional[int] = None
-    
-    # Metadata (file_info for ingestion/processing; facets for enrichment-discovered)
+
+    # Metadata
     file_info: Dict[str, Any] = field(default_factory=dict)
     facets: Dict[str, Any] = field(default_factory=dict)
     event_timestamp: Optional[datetime] = None
     processing_status: Optional[ProcessingStatus] = None
-    
-    # Ingestion behavior
+
+    # Ingestion depth (used by some handlers to signal child-extraction strategy)
     ingestion_depth: int = 0
-    process_immediately: bool = True
-    
-    # Enrichment pipeline (callables that modify the blueprint)
-    _enrichers: List[Callable] = field(default_factory=list)
-    _child_builders: List['AssetBuilder'] = field(default_factory=list)
+
+    # Identity + policy (driven by .dedup_on() / .no_dedup() / .on_match() / .supersedes())
+    dedup_source_identifier: Any = field(default=_UNSET)
+    dedup_content_hash: Any = field(default=_UNSET)
+    dedup_title: Any = field(default=_UNSET)
+    dedup_disabled: bool = False
+    match_policy: MatchPolicy = "skip"
+    supersede_target: Optional["Asset"] = None
 
 
 class AssetBuilder:
+    """Fluent blueprint + identity + policy + flush.
+
+    Every asset in the system is created through this builder. Handlers and
+    processors compose setters — no `from_X` entry points on this class.
+
+    Flush, never commit. The caller (route, @task, poll handler) owns the
+    transaction boundary. Enforced by the flush-never-commit pytest fixture.
     """
-    Fluent builder for creating assets from any source.
-    
-    Responsibilities:
-    - Content discovery and classification
-    - Metadata enrichment
-    - Child asset extraction (depth-based)
-    - Deduplication (delegates to AssetService)
-    - Batch operations
-    """
-    
+
     def __init__(self, session: Session, user_id: int, infospace_id: int):
-        """
-        Initialize builder with context.
-        
-        Args:
-            session: Database session
-            user_id: User performing the ingestion
-            infospace_id: Target infospace
-        """
         self.session = session
         self.blueprint = AssetBlueprint(
-            user_id=user_id,
-            infospace_id=infospace_id
-        )
-        
-        # Lazy-initialize providers (only create if needed)
-        self._storage_provider: Optional[StorageProvider] = None
-        self._scraping_provider: Optional[ScrapingProvider] = None
-        self._search_provider: Optional[WebSearchProvider] = None
-        self._asset_service: Optional[AssetService] = None
-    
-    # ═══════════════════════════════════════════════════════════════
-    # PROVIDER ACCESS (lazy initialization)
-    # ═══════════════════════════════════════════════════════════════
-    
-    @property
-    def storage_provider(self) -> StorageProvider:
-        if self._storage_provider is None:
-            self._storage_provider = get_storage_provider(settings)
-        return self._storage_provider
-    
-    @property
-    def scraping_provider(self) -> ScrapingProvider:
-        if self._scraping_provider is None:
-            self._scraping_provider = get_scraping_provider(settings)
-        return self._scraping_provider
-    
-    @property
-    def search_provider(self) -> WebSearchProvider:
-        if self._search_provider is None:
-            self._search_provider = get_web_search_provider(settings)
-        return self._search_provider
-    
-    @property
-    def asset_service(self) -> AssetService:
-        if self._asset_service is None:
-            self._asset_service = AssetService(self.session, self.storage_provider)
-        return self._asset_service
-    
-    # ═══════════════════════════════════════════════════════════════
-    # SOURCE METHODS (entry points)
-    # ═══════════════════════════════════════════════════════════════
-    
-    def from_search_result(self, result: SearchResult, query: str) -> 'AssetBuilder':
-        """
-        Build from search result (Tavily, etc.).
-        
-        Creates an ARTICLE asset with markdown content.
-        """
-        self.blueprint.kind = AssetKind.ARTICLE
-        self.blueprint.stub = False
-        self.blueprint.title = result.title
-        
-        # Prefer raw_content (markdown) over summary
-        content = ""
-        if result.raw_data and "raw_content" in result.raw_data and result.raw_data["raw_content"]:
-            content = result.raw_data["raw_content"]
-        else:
-            content = result.content
-        
-        self.blueprint.text_content = content
-        self.blueprint.source_identifier = result.url
-        
-        # Enrich with search context
-        self.blueprint.file_info.update({
-            "content_format": "markdown",  # Search results are markdown
-            "content_source": "search_result",
-            "search_query": query,
-            "search_provider": result.provider,
-            "search_score": result.score,
-            "ingestion_method": "search_result"
-        })
-        
-        # Add provider enrichment
-        if result.raw_data:
-            if "favicon" in result.raw_data:
-                self.blueprint.file_info["favicon"] = result.raw_data["favicon"]
-            if "tavily_answer" in result.raw_data:
-                self.blueprint.file_info["ai_summary"] = result.raw_data["tavily_answer"]
-            if "published_date" in result.raw_data:
-                self.blueprint.file_info["published_date"] = result.raw_data["published_date"]
-                # Parse to event_timestamp
-                try:
-                    self.blueprint.event_timestamp = dateutil.parser.parse(result.raw_data["published_date"])
-                except Exception as e:
-                    logger.warning(f"Could not parse publication date: {e}")
-        
-        # Mark as ready (no processing needed for articles)
-        self.blueprint.processing_status = ProcessingStatus.READY
-        
-        return self
-    
-    def from_url(self, url: str, title: Optional[str] = None) -> 'AssetBuilder':
-        """
-        Build from URL (will scrape content).
-        
-        Creates a WEB asset that needs scraping.
-        """
-        self.blueprint.kind = AssetKind.WEB
-        self.blueprint.stub = False
-        self.blueprint.title = title or f"Web: {url}"
-        self.blueprint.source_identifier = url
-        self.blueprint.file_info["ingestion_method"] = "url_scraping"
-        
-        # Add scraping enricher
-        self.blueprint._enrichers.append(self._enrich_scrape_url)
-        
-        return self
-    
-    def from_url_stub(self, url: str, title: Optional[str] = None) -> 'AssetBuilder':
-        """
-        Build stub reference to URL (no scraping).
-        
-        Creates a WEB asset that's just a bookmark.
-        """
-        self.blueprint.kind = AssetKind.WEB
-        self.blueprint.stub = True  # Just a reference!
-        self.blueprint.title = title or url
-        self.blueprint.source_identifier = url
-        self.blueprint.file_info["ingestion_method"] = "url_bookmark"
-        self.blueprint.processing_status = ProcessingStatus.READY
-        
-        return self
-    
-    def from_file(self, file: UploadFile, title: Optional[str] = None) -> 'AssetBuilder':
-        """
-        Build from uploaded file.
-        
-        Detects file type and stores content.
-        """
-        file_ext = os.path.splitext(file.filename or "")[1].lower()
-        self.blueprint.kind = detect_asset_kind_from_extension(file_ext)
-        self.blueprint.stub = False
-        self.blueprint.title = title or file.filename or f"Uploaded {self.blueprint.kind.value}"
-        
-        self.blueprint.file_info.update({
-            "original_filename": file.filename,
-            "file_size": getattr(file, 'size', None),
-            "mime_type": getattr(file, 'content_type', None),
-            "ingestion_method": "file_upload"
-        })
-        
-        # Store file enricher
-        self.blueprint._enrichers.append(lambda: self._enrich_store_file(file))
-        
-        return self
-    
-    def from_text(self, text: str, title: Optional[str] = None) -> 'AssetBuilder':
-        """
-        Build from plain text content.
-        """
-        self.blueprint.kind = AssetKind.TEXT
-        self.blueprint.stub = False
-        self.blueprint.title = title or f"Text: {text[:30]}..."
-        self.blueprint.text_content = text
-        self.blueprint.file_info["ingestion_method"] = "direct_text"
-        self.blueprint.processing_status = ProcessingStatus.READY
-        
-        return self
-    
-    def from_article(
-        self, 
-        title: str, 
-        content: str,
-        summary: Optional[str] = None,
-        embedded_assets: Optional[List[Dict[str, Any]]] = None
-    ) -> 'AssetBuilder':
-        """
-        Build user-composed article.
-        
-        Args:
-            title: Article title
-            content: Article content (markdown)
-            summary: Optional summary
-            embedded_assets: Optional list of embedded asset references
-        """
-        self.blueprint.kind = AssetKind.ARTICLE
-        self.blueprint.stub = False
-        self.blueprint.title = title
-        self.blueprint.text_content = content
-        
-        self.blueprint.file_info.update({
-            "content_format": "markdown",  # Composed articles use markdown with embeds
-            "content_source": "user",
-            "composition_type": "free_form_article",  # Mark as composed article
-            "ingestion_method": "article_composition"
-        })
-        
-        if summary:
-            self.blueprint.facets["summary"] = summary
-        
-        if embedded_assets:
-            self.blueprint.file_info["embedded_assets"] = embedded_assets
-            # Add enricher to create child assets for embeds
-            self.blueprint._enrichers.append(
-                lambda: self._enrich_embedded_assets(embedded_assets)
-            )
-        
-        self.blueprint.processing_status = ProcessingStatus.READY
-        
-        return self
-    
-    def for_csv_container(
-        self,
-        title: str,
-        columns: List[str],
-        description: Optional[str] = None
-    ) -> 'AssetBuilder':
-        """
-        Build a CSV parent container asset for organizing tabular data.
-        
-        Args:
-            title: Name of the dataset
-            columns: List of column names/headers
-            description: Optional description of the dataset
-        """
-        self.blueprint.kind = AssetKind.CSV
-        self.blueprint.title = title
-        self.blueprint.stub = False
-        
-        # Store column schema in file_info
-        self.blueprint.file_info = {
-            'columns': columns,
-            'column_count': len(columns),
-            'row_count': 0,  # Will be updated as rows are added
-            'created_via': 'mcp_chat'
-        }
-        
-        if description:
-            self.blueprint.file_info['description'] = description
-        
-        # Initialize empty text_content (will be built from rows)
-        self.blueprint.text_content = ",".join(columns)  # Just the header
-        
-        self.blueprint.processing_status = ProcessingStatus.READY
-        return self
-
-    def for_csv_row(
-        self,
-        row_data: Dict[str, Any],
-        column_headers: Optional[List[str]] = None,
-        schema_validation: Optional[Dict[str, Any]] = None
-    ) -> 'AssetBuilder':
-        """
-        Build a CSV row asset from structured data.
-
-        Args:
-            row_data: Dictionary of column_name -> value
-            column_headers: Optional list of expected column names for validation
-            schema_validation: Optional schema for data validation (lenient by default)
-        """
-        self.blueprint.kind = AssetKind.CSV_ROW
-        self.blueprint.stub = False
-
-        # Generate title in CSV format: {index} | {first_non_empty_cols[:25]}
-        # Calculate the next available part_index based on existing children
-        if self.blueprint.parent_asset_id:
-            # Count existing children to determine the next part_index
-            existing_children = self.session.exec(
-                select(Asset).where(Asset.parent_asset_id == self.blueprint.parent_asset_id)
-            ).all()
-            next_part_index = len(existing_children)
-            title_parts = [str(next_part_index + 1)]
-        else:
-            title_parts = ["1"]
-
-        for key, value in list(row_data.items())[:3]:
-            if value and str(value).strip():
-                title_parts.append(f"{key}: {str(value)[:25]}")
-        self.blueprint.title = " | ".join(title_parts) if len(title_parts) > 1 else f"Row {len(row_data)} columns"
-
-        # Create pipe-separated text content from row data
-        if column_headers:
-            # Use provided headers for consistent ordering
-            self.blueprint.text_content = " | ".join(
-                str(row_data.get(header, "")) for header in column_headers
-            )
-        else:
-            # Use row keys as headers
-            sorted_keys = sorted(row_data.keys())
-            self.blueprint.text_content = " | ".join(
-                str(row_data.get(key, "")) for key in sorted_keys
-            )
-
-        # Store original structured data in file_info
-        self.blueprint.file_info.update({
-            "original_row_data": row_data,
-            "column_headers": column_headers or list(row_data.keys()),
-            "ingestion_method": "csv_row_construction",
-            "row_length": len(row_data)
-        })
-
-        # Basic schema validation (lenient - just check required fields exist)
-        if schema_validation:
-            for field_name, field_config in schema_validation.items():
-                if field_config.get("required", False) and field_name not in row_data:
-                    logger.warning(f"Missing required field '{field_name}' in CSV row data")
-
-        self.blueprint.processing_status = ProcessingStatus.READY
-        return self
-
-    def update_csv_row(
-        self,
-        existing_asset_id: int,
-        updates: Dict[str, Any],
-        merge_strategy: str = "overwrite"
-    ) -> 'AssetBuilder':
-        """
-        Update an existing CSV row asset with new data.
-
-        Args:
-            existing_asset_id: ID of the CSV row asset to update
-            updates: Dictionary of fields to update
-            merge_strategy: "overwrite" (replace), "merge" (combine with existing)
-        """
-        self.blueprint.kind = AssetKind.CSV_ROW
-        self.blueprint.stub = False
-
-        # Mark this as an update operation
-        self.blueprint.file_info.update({
-            "update_operation": True,
-            "existing_asset_id": existing_asset_id,
-            "merge_strategy": merge_strategy,
-            "ingestion_method": "csv_row_update"
-        })
-
-        # Queue the update enricher
-        self.blueprint._enrichers.append(
-            lambda: self._enrich_csv_row_update(existing_asset_id, updates, merge_strategy)
+            user_id=user_id, infospace_id=infospace_id,
         )
 
-        return self
+    # ═══════════════════════════════════════════════════════════════
+    # BLUEPRINT SETTERS
+    # ═══════════════════════════════════════════════════════════════
 
-    def from_rss_entry(
-        self,
-        entry: Any,
-        feed_url: str,
-        part_index: int = 0
-    ) -> 'AssetBuilder':
-        """
-        Build from RSS feed entry with proper content extraction.
-        
-        Properly extracts full content from <content:encoded> via feedparser's
-        entry.content field. Only falls back to summary if no content available.
-        
-        Args:
-            entry: Feedparser entry object
-            feed_url: URL of the RSS feed
-            part_index: Position in feed
-        """
-        # Extract title
-        title = entry.get('title', 'RSS Item')
-        
-        # Extract full content from entry.content (handles <content:encoded>)
-        # Feedparser stores content in entry.content as a list of dicts with 'value' and 'type'
-        content_text = ''
-        if hasattr(entry, 'content') and entry.content:
-            # entry.content is a list of content dicts with 'value' and 'type'
-            content_text = entry.content[0].get('value', '')
-        
-        # Fallback to summary or description if no content
-        if not content_text:
-            content_text = entry.get('summary', '') or entry.get('description', '')
-        
-        # Set up blueprint for ARTICLE kind (RSS items are curated content)
-        self.blueprint.kind = AssetKind.ARTICLE
-        self.blueprint.stub = False  # We have content from RSS
-        self.blueprint.title = title
-        self.blueprint.text_content = content_text
-        self.blueprint.source_identifier = entry.get('link', '')
-        self.blueprint.part_index = part_index
-        
-        # Parse publication date
-        pub_date = entry.get('published') or entry.get('updated')
-        if pub_date:
-            try:
-                import dateutil.parser
-                self.blueprint.event_timestamp = dateutil.parser.parse(pub_date)
-            except Exception:
-                pass
-        
-        # Extract images from media:content elements
-        image_urls = []
-        if hasattr(entry, 'media_content'):
-            for idx, media in enumerate(entry.media_content):
-                media_type = media.get('type', '')
-                image_url = media.get('url')
-                
-                if not image_url:
-                    continue
-                
-                # Detect if this is an image by:
-                # 1. MIME type starts with 'image'
-                # 2. Type is 'application/octet-stream' (generic binary, often used for images)
-                # 3. URL ends with image extension
-                is_image = (
-                    (media_type and media_type.startswith('image')) or
-                    media_type == 'application/octet-stream' or
-                    any(image_url.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'])
-                )
-                
-                if is_image:
-                    # Extract media:title - feedparser stores it directly in the media dict
-                    image_title = None
-                    
-                    # Try different ways feedparser might store media:title
-                    if 'media_title' in media:
-                        image_title = media.get('media_title')
-                    elif hasattr(media, 'title'):
-                        image_title = media.title
-                    
-                    # If still no title, check if entry has indexed media_title
-                    if not image_title and hasattr(entry, 'media_title'):
-                        image_title = entry.media_title
-                    
-                    # Store image data for later creation as child assets
-                    image_urls.append({
-                        'url': image_url,
-                        'title': image_title,
-                        'role': 'featured' if idx == 0 else 'content',
-                        'media_credit': media.get('media_credit') or media.get('credit'),
-                        'part_index': idx
-                    })
-        
-        # Build comprehensive metadata
-        self.blueprint.file_info = {
-            'content_format': 'html',  # RSS content is HTML
-            'content_source': 'rss_feed',
-            'ingestion_method': 'rss_content_extraction',
-            'guid': entry.get('id', ''),  # For RSS poll cursor
-            'author': entry.get('author', ''),  # Canonical author field
-            'publication_date': entry.get('published', ''),  # Canonical date field
-            'summary': entry.get('summary', ''),  # Canonical summary field
-            'top_image': image_urls[0]['url'] if image_urls else None,  # Featured image URL
-            'rss_feed_url': feed_url,
-            'rss_item_id': entry.get('id', ''),
-            'rss_published_date': entry.get('published', ''),
-            'rss_updated_date': entry.get('updated', ''),
-            'rss_author': entry.get('author', ''),
-            'rss_summary': entry.get('summary', ''),
-            'rss_tags': [tag.get('term', '') for tag in entry.get('tags', [])],
-            'rss_link': entry.get('link', ''),
-            'has_full_content': bool(hasattr(entry, 'content') and entry.content),
-            'content_length': len(content_text),
-            'rss_images': image_urls  # Store for later processing
-        }
-        
-        # Add enricher to create child image assets if we found images
-        if image_urls:
-            self.blueprint._enrichers.append(
-                lambda: self._enrich_rss_images(image_urls)
-            )
-        
-        self.blueprint.processing_status = ProcessingStatus.READY
-        
-        return self
-    
-    # ═══════════════════════════════════════════════════════════════
-    # CONFIGURATION METHODS (modify blueprint)
-    # ═══════════════════════════════════════════════════════════════
-    
-    def with_title(self, title: str) -> 'AssetBuilder':
-        """Override detected title."""
-        self.blueprint.title = title
-        return self
-    
-    def as_kind(self, kind: AssetKind) -> 'AssetBuilder':
-        """Override detected kind."""
+    def as_kind(self, kind: AssetKind) -> "AssetBuilder":
         self.blueprint.kind = kind
         return self
-    
-    def as_stub(self, stub: bool = True) -> 'AssetBuilder':
-        """Mark as stub (reference only) or full asset."""
+
+    def with_title(self, title: str) -> "AssetBuilder":
+        self.blueprint.title = title
+        return self
+
+    def with_text(self, text: str) -> "AssetBuilder":
+        """Set text_content. Replaces any prior value."""
+        self.blueprint.text_content = text
+        return self
+
+    def with_source(self, identifier: str) -> "AssetBuilder":
+        """Set source_identifier (URL, feed entry id, file path, etc.)."""
+        self.blueprint.source_identifier = identifier
+        return self
+
+    def with_blob(self, path: str) -> "AssetBuilder":
+        """Set blob_path. Caller uploaded to storage themselves."""
+        self.blueprint.blob_path = path
+        return self
+
+    def with_metadata(self, **kwargs) -> "AssetBuilder":
+        """Merge into blueprint.file_info (ingestion/processing metadata)."""
+        self.blueprint.file_info.update(kwargs)
+        return self
+
+    def with_facets(self, **kwargs) -> "AssetBuilder":
+        """Merge into blueprint.facets (enricher-style discoverable properties).
+        Scalars and flat lists only (per content/facets.py invariant)."""
+        self.blueprint.facets.update(kwargs)
+        return self
+
+    def with_timestamp(self, ts: datetime) -> "AssetBuilder":
+        self.blueprint.event_timestamp = ts
+        return self
+
+    def as_child_of(self, parent_id: int, part_index: Optional[int] = None) -> "AssetBuilder":
+        self.blueprint.parent_asset_id = parent_id
+        if part_index is not None:
+            self.blueprint.part_index = part_index
+        return self
+
+    def with_part_index(self, part_index: int) -> "AssetBuilder":
+        self.blueprint.part_index = part_index
+        return self
+
+    def as_stub(self, stub: bool = True) -> "AssetBuilder":
         self.blueprint.stub = stub
         if stub:
             # Stubs don't need processing
             self.blueprint.processing_status = ProcessingStatus.READY
         return self
-    
-    def with_depth(self, depth: int) -> 'AssetBuilder':
-        """
-        Set ingestion depth for link extraction.
-        
-        Args:
-            depth: 0 = no extraction, 1 = extract as stubs, 2 = recursive ingestion
-        """
-        self.blueprint.ingestion_depth = depth
-        return self
-    
-    def as_child_of(self, parent_id: int, part_index: Optional[int] = None) -> 'AssetBuilder':
-        """Make this a child asset."""
-        self.blueprint.parent_asset_id = parent_id
-        self.blueprint.part_index = part_index
-        return self
-    
-    def with_part_index(self, part_index: int) -> 'AssetBuilder':
-        """Set the part index for this asset."""
-        self.blueprint.part_index = part_index
-        return self
 
-    def with_metadata(self, **kwargs) -> 'AssetBuilder':
-        """Add arbitrary metadata."""
-        self.blueprint.file_info.update(kwargs)
-        return self
-    
-    def with_timestamp(self, timestamp: datetime) -> 'AssetBuilder':
-        """Set event timestamp."""
-        self.blueprint.event_timestamp = timestamp
-        return self
-
-    @classmethod
-    async def compose_article(
-        cls,
-        session: Session,
-        user_id: int,
-        infospace_id: int,
-        title: str,
-        content: str,
-        summary: Optional[str] = None,
-        embedded_assets: Optional[List[Dict[str, Any]]] = None,
-        referenced_bundles: Optional[List[int]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        event_timestamp: Optional[datetime] = None,
-    ) -> Asset:
-        """
-        Compose article with embedded assets.
-        Used by POST /assets/compose-article route.
-        """
-        builder = cls(session, user_id, infospace_id).from_article(
-            title, content, summary, embedded_assets
-        )
-
-        if referenced_bundles:
-            builder.with_metadata(
-                referenced_bundles=referenced_bundles,
-                bundle_references=len(referenced_bundles),
-            )
-
-        if metadata:
-            builder.with_metadata(**metadata)
-
-        if event_timestamp:
-            builder.with_timestamp(event_timestamp)
-
-        article = await builder.build()
-        logger.info(f"Composed article {article.id}")
-        return article
-    
-    def with_processing_status(self, status: ProcessingStatus) -> 'AssetBuilder':
-        """Manually set processing status."""
+    def with_processing_status(self, status: ProcessingStatus) -> "AssetBuilder":
         self.blueprint.processing_status = status
         return self
-    
+
+    def with_content_hash(self, content_hash: str) -> "AssetBuilder":
+        """Set blueprint.content_hash. Persisted on the asset row."""
+        self.blueprint.content_hash = content_hash
+        return self
+
+    def with_depth(self, depth: int) -> "AssetBuilder":
+        """Ingestion depth for link extraction (handler-interpreted).
+        0 = no extraction, 1 = stub references, 2 = recursive fetch."""
+        self.blueprint.ingestion_depth = depth
+        return self
+
     # ═══════════════════════════════════════════════════════════════
-    # EXECUTION METHODS
+    # IDENTITY (dedup_on, no_dedup)
     # ═══════════════════════════════════════════════════════════════
-    
+
+    def dedup_on(
+        self,
+        *,
+        source_identifier: Optional[str] = _UNSET,
+        content_hash: Optional[str] = _UNSET,
+        title: Optional[str] = _UNSET,
+    ) -> "AssetBuilder":
+        """Configure identity fields for find_match + on_match.
+
+        Pass all fields that uniquely identify this asset for this caller.
+        At least one of {source_identifier, content_hash, title} must be set;
+        find_match runs an AND across supplied keys.
+
+        Calling dedup_on() clears any prior no_dedup() flag; calling it twice
+        merges keys (last write wins per key).
+        """
+        if source_identifier is not _UNSET:
+            self.blueprint.dedup_source_identifier = source_identifier
+        if content_hash is not _UNSET:
+            self.blueprint.dedup_content_hash = content_hash
+        if title is not _UNSET:
+            self.blueprint.dedup_title = title
+        self.blueprint.dedup_disabled = False
+        return self
+
+    def no_dedup(self) -> "AssetBuilder":
+        """Disable dedup explicitly — this build always creates a new row."""
+        self.blueprint.dedup_disabled = True
+        self.blueprint.dedup_source_identifier = _UNSET
+        self.blueprint.dedup_content_hash = _UNSET
+        self.blueprint.dedup_title = _UNSET
+        return self
+
+    # ═══════════════════════════════════════════════════════════════
+    # POLICY (on_match, supersedes)
+    # ═══════════════════════════════════════════════════════════════
+
+    def on_match(self, policy: MatchPolicy) -> "AssetBuilder":
+        """Set policy applied when find_match finds an existing row.
+
+        - 'skip' (default): return the existing row unchanged.
+        - 'supersede': mark existing is_superseded=True, cascade to its
+          children, insert new row with previous_asset_id = existing.id.
+        - 'update': mutate existing row in place (rare — CSV row updates).
+        """
+        if policy not in ("skip", "supersede", "update"):
+            raise ValueError(f"on_match policy must be skip|supersede|update, got {policy!r}")
+        self.blueprint.match_policy = policy
+        return self
+
+    def supersedes(self, old_asset: Asset) -> "AssetBuilder":
+        """Explicit supersede target — caller has already resolved the match.
+        Builder skips find_match; on_match is forced to 'supersede'."""
+        if old_asset is None:
+            raise ValueError("supersedes() requires a non-None Asset")
+        self.blueprint.supersede_target = old_asset
+        self.blueprint.match_policy = "supersede"
+        return self
+
+    # ═══════════════════════════════════════════════════════════════
+    # TERMINALS
+    # ═══════════════════════════════════════════════════════════════
+
+    async def find_match(self) -> Optional[Asset]:
+        """Run the identity query without creating anything. Returns the
+        existing Asset matching the configured dedup keys, or None.
+
+        Uses the composite index ix_asset_source_active_roots when source_id
+        or content_hash is the dominant key. Returns the most recent (by
+        created_at DESC) non-superseded row matching all configured keys.
+
+        When .supersedes(old) has been called, returns old directly.
+        """
+        if self.blueprint.supersede_target is not None:
+            return self.blueprint.supersede_target
+
+        if self.blueprint.dedup_disabled:
+            return None
+
+        stmt = select(Asset).where(
+            Asset.infospace_id == self.blueprint.infospace_id,
+            Asset.is_superseded == False,  # noqa: E712
+        )
+
+        has_key = False
+        if self.blueprint.dedup_source_identifier is not _UNSET:
+            stmt = stmt.where(
+                Asset.source_identifier == self.blueprint.dedup_source_identifier
+            )
+            has_key = True
+        if self.blueprint.dedup_content_hash is not _UNSET:
+            stmt = stmt.where(Asset.content_hash == self.blueprint.dedup_content_hash)
+            has_key = True
+        if self.blueprint.dedup_title is not _UNSET:
+            stmt = stmt.where(Asset.title == self.blueprint.dedup_title)
+            has_key = True
+
+        if not has_key:
+            logger.warning(
+                "AssetBuilder.find_match called with no identity keys configured; "
+                "returning None. Did you forget dedup_on() or no_dedup()?"
+            )
+            return None
+
+        stmt = stmt.order_by(Asset.created_at.desc()).limit(1)
+        return self.session.exec(stmt).first()
+
     async def build(self) -> Asset:
+        """Execute the fluent blueprint — validate, dedup, apply policy, flush.
+
+        Flush-never-commit. The caller's transaction is the asset's unit of
+        atomicity. Use in handlers, routes, @task bodies.
         """
-        Execute the build: enrich, create, extract children.
-        
-        Returns:
-            Created asset
-        """
-        # 1. Validate blueprint
         if not self.blueprint.kind:
-            raise ValueError("Asset kind must be specified")
+            raise ValueError("AssetBuilder.build(): kind must be set (.as_kind(...))")
         if not self.blueprint.title:
-            raise ValueError("Asset title must be specified")
-        
-        # 2. Run enrichers (scraping, file upload, etc.)
-        for enricher in self.blueprint._enrichers:
-            await enricher()
-        
-        # 3. Add ingestion timestamp
-        self.blueprint.file_info["ingested_at"] = datetime.now(timezone.utc).isoformat()
-        
-        # 4. Handle CSV row updates vs creation
-        if self.blueprint.file_info.get("update_operation"):
-            # For CSV row updates, we need to return the updated asset directly
-            # The enricher already handled the update
-            existing_asset_id = self.blueprint.file_info.get("existing_asset_id")
-            asset = self.session.get(Asset, existing_asset_id)
-            if not asset:
-                raise ValueError(f"Failed to find updated asset {existing_asset_id}")
-            logger.info(f"Updated asset: {asset.id} ({asset.kind.value}) - {asset.title}")
-        else:
-            # Create the asset via AssetService (handles deduplication)
-            asset_create = self._blueprint_to_asset_create()
-            asset = self.asset_service.create_asset(asset_create)
-            logger.info(f"Created asset: {asset.id} ({asset.kind.value}) - {asset.title}")
-        
-        # 5. Extract children based on ingestion_depth
-        if self.blueprint.ingestion_depth > 0:
-            await self._extract_children(asset)
-        
-        # 6. Build any child builders that were queued
-        for child_builder in self.blueprint._child_builders:
-            await child_builder.as_child_of(asset.id).build()
-        
-        return asset
-    
-    async def build_batch(self, count: int = 1) -> List[Asset]:
-        """
-        Build multiple identical assets (useful for testing).
-        
-        For building from multiple different sources, see build_from_list.
-        """
-        assets = []
-        for i in range(count):
-            # Clone the blueprint
-            builder = self._clone()
-            if "{i}" in self.blueprint.title:
-                builder.blueprint.title = self.blueprint.title.replace("{i}", str(i))
-            asset = await builder.build()
-            assets.append(asset)
+            raise ValueError("AssetBuilder.build(): title must be set (.with_title(...))")
+
+        # Identity check
+        match = await self.find_match()
+
+        if match is None:
+            new_asset = self._blueprint_to_asset()
+            self.session.add(new_asset)
+            self.session.flush()
+            logger.info(
+                "Created asset id=%s (%s) %s",
+                new_asset.id, new_asset.kind.value if new_asset.kind else "?", new_asset.title,
+            )
+            return new_asset
+
+        policy = self.blueprint.match_policy
+        if policy == "skip":
+            logger.debug("Matched asset id=%s, policy=skip, returning existing", match.id)
+            return match
+
+        if policy == "supersede":
+            incoming_hash = self.blueprint.content_hash or self._derived_content_hash()
+            if match.content_hash and incoming_hash and match.content_hash == incoming_hash:
+                logger.debug(
+                    "Matched asset id=%s, content_hash identical, skipping supersede",
+                    match.id,
+                )
+                return match
+            self._do_supersede(match)
+            new_asset = self._blueprint_to_asset()
+            new_asset.previous_asset_id = match.id
+            self.session.add(new_asset)
+            self.session.flush()
+            logger.info(
+                "Superseded id=%s with new id=%s (%s)",
+                match.id, new_asset.id, new_asset.title,
+            )
+            return new_asset
+
+        if policy == "update":
+            # Mutate the match in place with non-None blueprint fields
+            self._apply_blueprint_to(match)
+            self.session.add(match)
+            self.session.flush()
+            logger.info("Updated asset id=%s in place", match.id)
+            return match
+
+        raise ValueError(f"Unknown match_policy {policy!r}")
+
+    async def load(self, asset: Asset) -> Asset:
+        """Accept a pre-constructed Asset and run it through the identity/policy
+        pipeline. For importers and processors that already built the row.
+
+        When .dedup_on() is configured: find_match runs, match_policy applies.
+        Otherwise the asset is flushed as-is. Caller owns the transaction."""
+        match = await self.find_match()
+
+        if match is None:
+            if asset.user_id is None:
+                asset.user_id = self.blueprint.user_id
+            if asset.infospace_id is None:
+                asset.infospace_id = self.blueprint.infospace_id
+            self.session.add(asset)
+            self.session.flush()
+            return asset
+
+        policy = self.blueprint.match_policy
+        if policy == "skip":
+            return match
+        if policy == "supersede":
+            if (
+                match.content_hash
+                and asset.content_hash
+                and match.content_hash == asset.content_hash
+            ):
+                logger.debug(
+                    "load(): matched asset id=%s, content_hash identical, skipping supersede",
+                    match.id,
+                )
+                return match
+            self._do_supersede(match)
+            asset.previous_asset_id = match.id
+            if asset.user_id is None:
+                asset.user_id = self.blueprint.user_id
+            if asset.infospace_id is None:
+                asset.infospace_id = self.blueprint.infospace_id
+            self.session.add(asset)
+            self.session.flush()
+            return asset
+        if policy == "update":
+            for attr in ("title", "text_content", "blob_path", "file_info",
+                         "facets", "event_timestamp", "processing_status",
+                         "content_hash"):
+                val = getattr(asset, attr, None)
+                if val is not None:
+                    setattr(match, attr, val)
+            self.session.add(match)
+            self.session.flush()
+            return match
+
+        raise ValueError(f"Unknown match_policy {policy!r}")
+
+    async def build_batch(self, assets: List[Asset]) -> List[Asset]:
+        """Bulk insert a list of pre-constructed Asset objects.
+
+        No dedup, no enrichers. Flushes per chunk of 500. For processors
+        inserting known children or importers inserting validated rows."""
+        CHUNK_SIZE = 500
+        for i, asset in enumerate(assets):
+            if asset.user_id is None:
+                asset.user_id = self.blueprint.user_id
+            if asset.infospace_id is None:
+                asset.infospace_id = self.blueprint.infospace_id
+            elif asset.infospace_id != self.blueprint.infospace_id:
+                raise ValueError(
+                    f"build_batch asset[{i}] infospace_id={asset.infospace_id} "
+                    f"does not match builder's {self.blueprint.infospace_id}"
+                )
+            self.session.add(asset)
+            if (i + 1) % CHUNK_SIZE == 0:
+                self.session.flush()
+
+        if len(assets) % CHUNK_SIZE != 0:
+            self.session.flush()
+
         return assets
-    
+
+    async def build_children(
+        self, parent_id: int, children: List[Asset],
+    ) -> List[Asset]:
+        """Bulk insert structural children. Auto-sets parent_asset_id and
+        part_index (0..N-1) when missing. Delegates to build_batch."""
+        for idx, child in enumerate(children):
+            if child.parent_asset_id is None:
+                child.parent_asset_id = parent_id
+            elif child.parent_asset_id != parent_id:
+                raise ValueError(
+                    f"build_children child[{idx}] has parent_asset_id={child.parent_asset_id}, "
+                    f"expected {parent_id}"
+                )
+            if child.part_index is None:
+                child.part_index = idx
+        return await self.build_batch(children)
+
     # ═══════════════════════════════════════════════════════════════
-    # INTERNAL HELPERS
+    # INTERNAL
     # ═══════════════════════════════════════════════════════════════
-    
-    def _blueprint_to_asset_create(self) -> AssetCreate:
-        """Convert blueprint to AssetCreate schema."""
-        # Generate content hash for deduplication
-        content_hash = self._generate_content_hash()
-        
-        return AssetCreate(
+
+    def _do_supersede(self, old_asset: Asset) -> None:
+        """Mark old_asset superseded and cascade parent_is_superseded.
+
+        This is the ONE place in the codebase that writes is_superseded=True.
+        Invariant enforced by CI grep. If you want to mark a row superseded
+        elsewhere, call .supersedes(old).build() instead.
+        """
+        old_asset.is_superseded = True
+        self.session.add(old_asset)
+
+        self.session.exec(
+            update(Asset)
+            .where(Asset.parent_asset_id == old_asset.id)
+            .values(parent_is_superseded=True)
+        )
+
+        self.session.flush()
+        logger.info(
+            "Superseded asset id=%s (%s) — children cascaded parent_is_superseded=True",
+            old_asset.id, old_asset.title,
+        )
+
+    def _blueprint_to_asset(self) -> Asset:
+        """Construct an Asset row from the fluent blueprint."""
+        # Compute content_hash if not explicitly set.
+        content_hash = self.blueprint.content_hash or self._derived_content_hash()
+
+        # Annotate with ingested_at for observability (idempotent — overwrites on rebuild).
+        file_info = dict(self.blueprint.file_info or {})
+        file_info.setdefault("ingested_at", datetime.now(timezone.utc).isoformat())
+
+        # Status default — keep caller's choice if set, else READY.
+        status = self.blueprint.processing_status or ProcessingStatus.READY
+
+        return Asset(
             title=self.blueprint.title,
             kind=self.blueprint.kind,
             stub=self.blueprint.stub,
@@ -750,301 +491,52 @@ class AssetBuilder:
             blob_path=self.blueprint.blob_path,
             source_identifier=self.blueprint.source_identifier,
             facets=self.blueprint.facets or None,
-            file_info=self.blueprint.file_info or None,
+            file_info=file_info or None,
             event_timestamp=self.blueprint.event_timestamp,
             parent_asset_id=self.blueprint.parent_asset_id,
             part_index=self.blueprint.part_index,
-            processing_status=self.blueprint.processing_status,
-            content_hash=content_hash
+            processing_status=status,
+            content_hash=content_hash,
         )
-    
-    def _generate_content_hash(self) -> Optional[str]:
+
+    def _apply_blueprint_to(self, asset: Asset) -> None:
+        """Mutate an existing Asset with blueprint fields (for update policy).
+        Only overwrites fields the blueprint set (non-None)."""
+        if self.blueprint.title is not None:
+            asset.title = self.blueprint.title
+        if self.blueprint.text_content is not None:
+            asset.text_content = self.blueprint.text_content
+        if self.blueprint.blob_path is not None:
+            asset.blob_path = self.blueprint.blob_path
+        if self.blueprint.file_info:
+            merged = dict(asset.file_info or {})
+            merged.update(self.blueprint.file_info)
+            asset.file_info = merged
+        if self.blueprint.facets:
+            merged_facets = dict(asset.facets or {})
+            merged_facets.update(self.blueprint.facets)
+            asset.facets = merged_facets
+        if self.blueprint.event_timestamp is not None:
+            asset.event_timestamp = self.blueprint.event_timestamp
+        if self.blueprint.processing_status is not None:
+            asset.processing_status = self.blueprint.processing_status
+        if self.blueprint.content_hash is not None:
+            asset.content_hash = self.blueprint.content_hash
+        asset.updated_at = datetime.now(timezone.utc)
+
+    def _derived_content_hash(self) -> Optional[str]:
+        """Derive a content hash from source_identifier + text_content prefix.
+
+        Stable across builds of the same content — used as a fallback when the
+        caller didn't supply one via .with_content_hash(). Returns None if
+        neither source_identifier nor text_content is set.
         """
-        Generate a content hash for deduplication.
-        
-        Uses source_identifier (URL) + text content to create a stable hash.
-        This ensures that the same content from the same source is deduplicated.
-        """
-        import hashlib
-        
-        # For deduplication, we primarily use source_identifier (URL)
-        # combined with a sample of the text content
         if not self.blueprint.source_identifier and not self.blueprint.text_content:
             return None
-        
-        # Build hash components
-        hash_parts = []
-        
+
+        parts: List[str] = []
         if self.blueprint.source_identifier:
-            hash_parts.append(self.blueprint.source_identifier)
-        
-        # Use first 1000 chars of text content for hash (enough to detect changes)
+            parts.append(self.blueprint.source_identifier)
         if self.blueprint.text_content:
-            hash_parts.append(self.blueprint.text_content[:1000])
-        
-        # Combine and hash
-        content_for_hash = "|".join(hash_parts)
-        return hashlib.md5(content_for_hash.encode('utf-8', errors='ignore')).hexdigest()
-    
-    def _clone(self) -> 'AssetBuilder':
-        """Clone this builder (shallow copy of blueprint)."""
-        new_builder = AssetBuilder(self.session, self.blueprint.user_id, self.blueprint.infospace_id)
-        # Copy blueprint fields (shallow copy)
-        import copy
-        new_builder.blueprint = copy.copy(self.blueprint)
-        new_builder.blueprint.file_info = self.blueprint.file_info.copy()
-        new_builder.blueprint.facets = self.blueprint.facets.copy()
-        new_builder.blueprint._enrichers = self.blueprint._enrichers.copy()
-        new_builder.blueprint._child_builders = []
-        return new_builder
-    
-    # NOTE: Content type detection in app.api.utils.content_types
-    # Use detect_asset_kind_from_extension() instead
-    
-    # ═══════════════════════════════════════════════════════════════
-    # ENRICHERS (modify blueprint during build)
-    # ═══════════════════════════════════════════════════════════════
-    
-    async def _enrich_scrape_url(self):
-        """Enricher: Scrape URL content."""
-        url = self.blueprint.source_identifier
-        if not url:
-            raise ValueError("Cannot scrape without source_identifier")
-        
-        try:
-            scraped = await self.scraping_provider.scrape_url(url, timeout=30)
-            
-            if scraped and scraped.get('text_content'):
-                self.blueprint.text_content = scraped['text_content']
-                
-                if scraped.get('title') and not self.blueprint.title.startswith("Web:"):
-                    self.blueprint.title = scraped['title']
-                
-                self.blueprint.file_info.update({
-                    "content_format": "markdown",  # Web scraping produces markdown
-                    "content_source": "web_scrape",
-                    "scraped_at": datetime.now(timezone.utc).isoformat(),
-                    "scraped_title": scraped.get('title'),
-                    "top_image": scraped.get('top_image'),
-                    "summary": scraped.get('summary'),
-                    "publication_date": scraped.get('publication_date'),
-                    "author": scraped.get('author'),  # Canonical author field if available
-                    "content_length": len(scraped['text_content'])
-                })
-                
-                # Parse publication date
-                if scraped.get('publication_date'):
-                    try:
-                        self.blueprint.event_timestamp = dateutil.parser.parse(scraped['publication_date'])
-                    except: pass
-                
-                logger.info(f"Scraped {len(scraped['text_content'])} characters from {url}")
-            else:
-                logger.warning(f"No content scraped from {url}")
-                
-        except Exception as e:
-            logger.error(f"Error scraping URL {url}: {e}")
-            # Don't fail the build, just mark it
-            self.blueprint.file_info["scraping_error"] = str(e)
-    
-    async def _enrich_store_file(self, file: UploadFile):
-        """Enricher: Upload file to storage."""
-        file_ext = os.path.splitext(file.filename or "")[1]
-        storage_path = f"user_{self.blueprint.user_id}/{uuid.uuid4()}{file_ext}"
-        
-        try:
-            await self.storage_provider.upload_file(file, storage_path)
-            self.blueprint.blob_path = storage_path
-            logger.info(f"Stored file at {storage_path}")
-        except Exception as e:
-            logger.error(f"Error storing file: {e}")
-            raise
-    
-    async def _enrich_embedded_assets(self, embedded_assets: List[Dict[str, Any]]):
-        """Enricher: Create child assets for embedded references."""
-        # This enricher queues child builders to run after parent is created
-        for i, embed_config in enumerate(embedded_assets):
-            try:
-                asset_id = embed_config.get('asset_id')
-                if not asset_id:
-                    continue
-                
-                # Verify the referenced asset exists and belongs to same infospace
-                referenced_asset = self.session.get(Asset, asset_id)
-                if not referenced_asset or referenced_asset.infospace_id != self.blueprint.infospace_id:
-                    logger.warning(f"Embedded asset {asset_id} not found or not accessible")
-                    continue
-                
-                # Create a child builder for the embed reference
-                child_builder = AssetBuilder(self.session, self.blueprint.user_id, self.blueprint.infospace_id)
-                child_builder.from_text(
-                    text=f"Reference to: {referenced_asset.title}",
-                    title=f"Embed: {embed_config.get('caption', referenced_asset.title)}"
-                )
-                child_builder.blueprint.part_index = i
-                child_builder.with_metadata(
-                    embed_type='asset_reference',
-                    target_asset_id=asset_id,
-                    embed_mode=embed_config.get('mode', 'card'),
-                    embed_size=embed_config.get('size', 'medium'),
-                    caption=embed_config.get('caption'),
-                    position=embed_config.get('position', i)
-                )
-                
-                self.blueprint._child_builders.append(child_builder)
-                
-            except Exception as e:
-                logger.warning(f"Failed to create embed reference for asset {embed_config.get('asset_id')}: {e}")
-                continue
-    
-    async def _enrich_csv_row_update(self, existing_asset_id: int, updates: Dict[str, Any], merge_strategy: str):
-        """Enricher: Update existing CSV row asset with new data."""
-        # Get the existing asset
-        existing_asset = self.session.get(Asset, existing_asset_id)
-        if not existing_asset:
-            raise ValueError(f"CSV row asset {existing_asset_id} not found")
-
-        if existing_asset.infospace_id != self.blueprint.infospace_id:
-            raise ValueError(f"CSV row asset {existing_asset_id} does not belong to this infospace")
-
-        # Get existing row data
-        existing_row_data = (existing_asset.file_info or {}).get("original_row_data", {})
-
-        # Apply merge strategy
-        if merge_strategy == "merge":
-            # Merge updates with existing data
-            merged_data = {**existing_row_data, **updates}
-        elif merge_strategy == "overwrite":
-            # Use updates, but preserve non-updated fields from existing
-            merged_data = {**existing_row_data, **updates}
-        else:
-            raise ValueError(f"Unknown merge strategy: {merge_strategy}")
-
-        # Update the asset
-        column_headers = (existing_asset.file_info or {}).get("column_headers", list(merged_data.keys()))
-
-        # Generate new title from first few columns
-        title_parts = []
-        for key, value in list(merged_data.items())[:3]:
-            if value and str(value).strip():
-                title_parts.append(f"{key}: {str(value)[:25]}")
-        new_title = " | ".join(title_parts) if title_parts else f"Row {len(merged_data)} columns"
-
-        # Create pipe-separated text content
-        existing_asset.text_content = " | ".join(
-            str(merged_data.get(header, "")) for header in column_headers
-        )
-
-        # Update metadata
-        existing_asset.title = new_title
-        file_info = existing_asset.file_info or {}
-        file_info.update({
-            "original_row_data": merged_data,
-            "column_headers": column_headers,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "merge_strategy": merge_strategy,
-            "updated_fields": list(updates.keys())
-        })
-        existing_asset.file_info = file_info
-
-        # Update timestamp
-        existing_asset.updated_at = datetime.now(timezone.utc)
-
-        # Mark as ready
-        existing_asset.processing_status = ProcessingStatus.READY
-
-        self.session.add(existing_asset)
-
-        logger.info(f"Updated CSV row asset {existing_asset_id} with {len(updates)} fields")
-
-    async def _enrich_rss_images(self, image_urls: List[Dict[str, Any]]):
-        """Enricher: Create child image assets from RSS media:content."""
-        # This enricher queues child builders to run after parent is created
-        for idx, img_data in enumerate(image_urls):
-            try:
-                image_url = img_data.get('url')
-                if not image_url:
-                    continue
-
-                # Determine if this is the featured/hero image (first one)
-                is_featured = (idx == 0)
-                role = img_data.get('role', 'featured' if is_featured else 'content')
-
-                # Create a child builder for the image as a stub (don't download)
-                child_builder = AssetBuilder(self.session, self.blueprint.user_id, self.blueprint.infospace_id)
-
-                # Use URL stub pattern - creates reference without downloading
-                if is_featured:
-                    image_title = img_data.get('title') or "Featured image"
-                else:
-                    image_title = img_data.get('title') or f"Image {idx + 1}"
-
-                child_builder.from_url_stub(image_url, image_title)
-                child_builder.blueprint.kind = AssetKind.IMAGE
-                child_builder.blueprint.part_index = img_data.get('part_index', idx)
-
-                # Add rich metadata from RSS feed (following WebProcessor pattern)
-                child_builder.with_metadata(
-                    source='rss_media_content',
-                    image_role=role,  # 'featured' or 'content'
-                    is_hero_image=is_featured,  # Mark first image as hero
-                    image_url=image_url,
-                    media_credit=img_data.get('media_credit'),
-                    extracted_from_rss=True
-                )
-
-                self.blueprint._child_builders.append(child_builder)
-
-            except Exception as e:
-                logger.warning(f"Failed to create image asset for {img_data.get('url')}: {e}")
-                continue
-    
-    async def _extract_children(self, parent: Asset):
-        """Extract children based on ingestion_depth and asset kind."""
-        if self.blueprint.kind == AssetKind.ARTICLE and parent.text_content:
-            await self._extract_article_links(parent)
-        # Future: Add other extraction types (PDF pages, CSV rows, etc.)
-    
-    async def _extract_article_links(self, article: Asset):
-        """Extract links from markdown article based on depth."""
-        markdown = article.text_content
-        if not markdown:
-            return
-        
-        # Extract image URLs from markdown
-        image_urls = self._extract_markdown_images(markdown)
-        
-        logger.info(f"Extracting {len(image_urls)} images from article {article.id} at depth {self.blueprint.ingestion_depth}")
-        
-        for idx, img_url in enumerate(image_urls):
-            try:
-                child_builder = AssetBuilder(self.session, article.user_id, article.infospace_id)
-                
-                if self.blueprint.ingestion_depth == 1:
-                    # Depth 1: Create stub reference
-                    child_builder.from_url_stub(img_url, f"Image {idx+1} from {article.title[:30]}...")
-                else:  # depth >= 2
-                    # Depth 2+: Actually fetch the image
-                    child_builder.from_url(img_url, f"Image {idx+1} from {article.title[:30]}...")
-                
-                await child_builder \
-                    .as_kind(AssetKind.IMAGE) \
-                    .as_child_of(article.id, idx) \
-                    .with_metadata(extracted_from_markdown=True) \
-                    .build()
-                    
-            except Exception as e:
-                logger.error(f"Failed to extract image {img_url} from article {article.id}: {e}")
-                continue
-    
-    def _extract_markdown_images(self, markdown: str) -> List[str]:
-        """Extract image URLs from markdown."""
-        # Match both ![alt](url) and ![alt](url "title")
-        pattern = r'!\[(?:[^\]]*)\]\(([^)]+?)(?:\s+"[^"]*")?\)'
-        matches = re.findall(pattern, markdown)
-        
-        # Filter to only http/https URLs
-        urls = [url.strip() for url in matches if url.strip().startswith(('http://', 'https://'))]
-        
-        return urls
-
+            parts.append(self.blueprint.text_content[:1000])
+        return hashlib.md5("|".join(parts).encode("utf-8", errors="ignore")).hexdigest()

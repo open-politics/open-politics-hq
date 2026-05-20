@@ -15,20 +15,19 @@ from app.api.modules.content.models import Asset
 class ProcessingContext:
     """
     Context passed to processors containing configuration and dependencies.
-    
-    This allows processors to access shared resources without tight coupling.
-    Processors can create child assets directly using asset_service.
+
+    Processors create child assets through ``AssetBuilder.build_children`` using
+    ``context.session`` directly — they don't need a service wrapper.
     """
-    
-    # Database and services (needed for creating child assets)
+
+    # Database and services
     session: Any  # Session
-    asset_service: Any  # AssetService
     bundle_service: Any  # BundleService
-    
+
     # Context information
     user_id: int
     infospace_id: int
-    
+
     # Storage and providers
     storage_provider: Any  # StorageProvider
     scraping_provider: Optional[Any] = None  # ScrapingProvider

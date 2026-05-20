@@ -27,8 +27,9 @@ from app.models import (
     ProcessingStatus
 )
 from app.schemas import SourceCreate, SourceUpdate, SourceRead
-from app.api.modules.content.handlers import IngestionContext
-from app.api.modules.content.ingest import ingest
+# IngestionContext and ingest are imported lazily inside the methods that use
+# them — eager import here creates a cycle: services/__init__ → source_service →
+# handlers → handlers/base → services/bundle_service → services/__init__.
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -284,18 +285,16 @@ class SourceService:
             locator = self._extract_locator_from_source(source)
             opts = {**(discovery_options or {}), **(processing_options or {})}
 
-            from app.api.modules.foundation_service_providers.registry import (
-                get_storage_provider, get_scraping_provider, get_web_search_provider,
-            )
-            from app.api.modules.content.services.asset_service import AssetService
+            from app.api.modules.foundation_service_providers import resolve
             from app.api.modules.content.services.bundle_service import BundleService
-            storage = get_storage_provider(settings)
+            from app.api.modules.content.handlers import IngestionContext
+            from app.api.modules.content.ingest import ingest
+            storage = resolve("storage")
             context = IngestionContext(
                 session=self.session,
                 storage_provider=storage,
-                scraping_provider=get_scraping_provider(settings),
-                search_provider=get_web_search_provider(settings),
-                asset_service=AssetService(self.session, storage),
+                scraping_provider=resolve("scraping"),
+                search_provider=resolve("web_search", infospace_id=infospace_id),
                 bundle_service=BundleService(self.session),
                 user_id=user_id,
                 infospace_id=infospace_id,
@@ -620,16 +619,10 @@ class SourceService:
             Bundle,
         )
         from app.api.modules.content.services.bundle_service import BundleService
-        from app.api.modules.content.services.asset_service import AssetService
         from app.api.modules.content.services.poll_handlers import (
             get_poll_handler,
             registered_poll_kinds,
             PollResult,
-        )
-        from app.api.modules.foundation_service_providers.registry import (
-            get_storage_provider,
-            get_scraping_provider,
-            get_web_search_provider,
         )
 
         source = self.session.get(Source, source_id)
@@ -643,21 +636,22 @@ class SourceService:
                 f"Registered kinds: {list(registered_poll_kinds())}"
             )
 
-        storage_provider = get_storage_provider(settings)
-        scraping_provider = get_scraping_provider(settings)
+        from app.api.modules.foundation_service_providers import resolve
+
+        storage_provider = resolve("storage")
+        scraping_provider = resolve("scraping")
         try:
-            search_provider = get_web_search_provider(settings)
+            search_provider = resolve("web_search", infospace_id=source.infospace_id)
         except Exception as e:
             logger.warning("Search provider init failed: %s", e)
             search_provider = None
         bundle_service = BundleService(self.session)
-        asset_service = AssetService(self.session, storage_provider)
+        from app.api.modules.content.handlers import IngestionContext
         context = IngestionContext(
             session=self.session,
             storage_provider=storage_provider,
             scraping_provider=scraping_provider,
             search_provider=search_provider,
-            asset_service=asset_service,
             bundle_service=bundle_service,
             user_id=source.user_id,
             infospace_id=source.infospace_id,

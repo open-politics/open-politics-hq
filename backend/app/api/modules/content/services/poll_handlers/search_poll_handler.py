@@ -48,13 +48,13 @@ class SearchPollHandler:
             api_key = settings.TAVILY_API_KEY
 
         # --- execute search ---
-        from app.api.modules.foundation_service_providers.base import WebSearchProvider
-        from app.api.modules.foundation_service_providers.registry import get_provider
-        from app.core.config import settings as app_settings
+        from app.api.modules.foundation_service_providers import resolve
 
-        search_provider = get_provider(
-            WebSearchProvider, provider, app_settings,
-            api_key_override=api_key,
+        search_provider = resolve(
+            "web_search",
+            provider,
+            infospace_id=source.infospace_id,
+            runtime_key=api_key,
         )
 
         logger.info("Executing search query: '%s' with provider %s", query, provider)

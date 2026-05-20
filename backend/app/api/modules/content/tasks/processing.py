@@ -20,7 +20,6 @@ from sqlalchemy import update, func, text
 from sqlmodel import Session, select
 
 from app.api.modules.content.models import Asset, ProcessingStatus
-from app.api.modules.content.services.asset_service import AssetService
 from app.api.modules.content.services.processing_service import ProcessingService
 from app.api.modules.foundation_service_providers.base import StorageProvider, ScrapingProvider
 from app.core.tasks import TaskContext, task
@@ -37,7 +36,6 @@ def _processing_service(ctx: TaskContext, session: Session) -> ProcessingService
         session=session,
         storage_provider=storage,
         scraping_provider=scraping,
-        asset_service=AssetService(session, storage),
     )
 
 

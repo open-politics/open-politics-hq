@@ -15,7 +15,7 @@ import logging
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable, Generator, Optional, Type
+from typing import Any, Callable, Generator, Optional
 
 from sqlalchemy import literal_column, text, update, exists
 from sqlmodel import Session, select
@@ -30,33 +30,16 @@ logger = logging.getLogger(__name__)
 # ── EnrichmentContext ─────────────────────────────────────────────────────────
 
 class EnrichmentContext(TaskContext):
-    """Extended context for enrichment domain."""
+    """Extended context for enrichment domain.
+
+    ``provider()`` is inherited from TaskContext unchanged — the enrichment_config
+    lookup is handled inside resolve() itself, keyed by infospace_id.
+    """
 
     def __init__(self, enricher_name: str = "", enrichment_config=None, **kwargs):
         super().__init__(**kwargs)
         self._enricher_name = enricher_name
         self.enrichment_config = enrichment_config
-
-    def provider(self, protocol: Type, provider_key: str | None = None) -> Any:
-        """Resolve from enrichment_config selection, fall back to system default. Cached."""
-        from app.api.modules.foundation_service_providers.registry import select_provider
-        from app.core.tasks import cached_resolve
-
-        if provider_key is None:
-            # Check enrichment_config for enricher-specific selection
-            if self.enrichment_config:
-                sel = self.enrichment_config.get_selection(self._enricher_name)
-                if sel and sel.provider_key:
-                    provider_key = sel.provider_key
-
-            # Fall back to select_provider (system default)
-            if not provider_key:
-                provider_key = select_provider(protocol, self.settings)
-
-        if not provider_key:
-            raise ValueError(f"No provider for {protocol.__name__}")
-
-        return cached_resolve(protocol, provider_key, self.settings)
 
     def _mark_resolved(self, session: Session, asset_id: int):
         """Add enricher name to enrichment_resolved (idempotent, dedup guard)."""
@@ -235,7 +218,6 @@ def enrich_ocr(ctx: EnrichmentContext, asset_ids: list[int]):
     import asyncio
     import fitz
 
-    from app.api.modules.foundation_service_providers.base import OcrProvider, StorageProvider
     from app.api.modules.content.utils.resolve_source_file import resolve_source_file
 
     # Phase 1: Load assets, group by parent
@@ -256,8 +238,8 @@ def enrich_ocr(ctx: EnrichmentContext, asset_ids: list[int]):
 
     # Resolve providers
     try:
-        ocr = ctx.provider(OcrProvider)
-        storage = ctx.provider(StorageProvider)
+        ocr = ctx.provider("ocr")
+        storage = ctx.provider("storage")
     except Exception as e:
         logger.warning("OCR provider not available: %s", e)
         return
@@ -274,19 +256,8 @@ def enrich_ocr(ctx: EnrichmentContext, asset_ids: list[int]):
                     ocr_failed.append((aid, "no blob_path for parent"))
                 continue
             try:
-                pdf_bytes = None
-                if hasattr(storage, "get_file_path"):
-                    try:
-                        path = storage.get_file_path(blob_path)
-                        pdf_bytes = io.BytesIO(path.read_bytes())
-                    except (NotImplementedError, OSError):
-                        pass
-                if pdf_bytes is None:
-                    fh = await storage.get_file(blob_path)
-                    try:
-                        pdf_bytes = io.BytesIO(fh.read())
-                    finally:
-                        fh.close()
+                from app.api.modules.content.storage_access import read_to_bytes
+                pdf_bytes = io.BytesIO(await read_to_bytes(storage, blob_path))
 
                 for asset_id, page_index in page_list:
                     try:
@@ -335,12 +306,26 @@ def enrich_ocr(ctx: EnrichmentContext, asset_ids: list[int]):
           capability="geocoding", batch=20, queue="external_api",
           triggers=["asset.processed"])
 def enrich_geocoding(ctx: EnrichmentContext, asset_ids: list[int]):
-    """Geocode assets with location facet but missing coordinates."""
-    from app.api.modules.foundation_service_providers.base import GeocodingProvider
-    from app.api.modules.content.facets import get_facet
+    """Geocode assets with location facet but missing coordinates.
 
-    # Phase 1: Load
-    work: list[tuple[int, str]] = []
+    Lookup chain:
+    1. **Geo canon hit-first.** If the infospace has ``default_geo_canon_id``
+       set, look up an Entity of type ``location`` whose canonical_name or
+       aliases match the location string AND whose ``properties.coords`` is
+       populated. If hit, use those coords directly — provider call skipped.
+    2. **Provider fallback.** Misses fall through to the geocoding provider.
+
+    The geo canon is the trusted reference (e.g., countries, capitals,
+    ISO 3166 entries). Provider results are NOT auto-written into the canon
+    — population stays user-curated. To promote a provider result into the
+    canon, the user does so explicitly.
+    """
+    from app.api.modules.content.facets import get_facet
+    from app.api.modules.graph.resolution import find_by_alias
+    from app.api.modules.identity_infospace_user.models import Infospace
+
+    # Phase 1: Load — collect (asset_id, location_string) pairs.
+    candidates: list[tuple[int, str]] = []
     with ctx.session() as session:
         for asset_id in asset_ids:
             asset = session.get(Asset, asset_id)
@@ -351,47 +336,80 @@ def enrich_geocoding(ctx: EnrichmentContext, asset_ids: list[int]):
             if not location or not isinstance(location, str) or not location.strip():
                 ctx.skip(session, asset_id)
                 continue
-            work.append((asset.id, location.strip()))
+            candidates.append((asset.id, location.strip()))
         session.commit()
 
-    if not work:
+    if not candidates:
         return
 
-    geocoding = ctx.provider(GeocodingProvider)
-
-    # Phase 2: External API
-    results: list[tuple[int, dict | None]] = []
-
-    async def _geocode():
-        for asset_id, location in work:
-            try:
-                result = await geocoding.geocode(location)
-                results.append((asset_id, result))
-            except Exception as e:
-                results.append((asset_id, None))
-                logger.warning("Geocoding failed for asset %d: %s", asset_id, e)
-
-    from app.core.task_utils import run_async_in_celery
-    run_async_in_celery(_geocode)
-
-    # Phase 3: Write
+    # Phase 2: Canon hit-first. Resolve each location against the infospace's
+    # geo canon (when set). Hits get patched immediately; misses go to the
+    # provider work list.
+    cached_writes: list[tuple[int, dict]] = []
+    work: list[tuple[int, str]] = []
     with ctx.session() as session:
-        for asset_id, result in results:
-            if not result or "coordinates" not in result:
-                ctx.fail(session, asset_id, "no coordinates returned")
-                continue
-            coords = result["coordinates"]
-            if len(coords) < 2:
-                ctx.fail(session, asset_id, "invalid coordinates")
-                continue
-            patch = {
-                "location_lon": float(coords[0]),
-                "location_lat": float(coords[1]),
-            }
-            if result.get("display_name"):
-                patch["location"] = result["display_name"]
+        infospace = session.get(Infospace, ctx.infospace_id)
+        geo_canon_id = infospace.default_geo_canon_id if infospace else None
+
+        for asset_id, location in candidates:
+            cached = None
+            if geo_canon_id is not None:
+                ent = find_by_alias(
+                    session, canon_id=geo_canon_id,
+                    raw_name=location, entity_type="location",
+                )
+                if ent and isinstance(ent.properties, dict):
+                    coords = ent.properties.get("coords")
+                    if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+                        cached = {
+                            "location_lon": float(coords[0]),
+                            "location_lat": float(coords[1]),
+                            "location": ent.canonical_name,
+                        }
+            if cached is not None:
+                cached_writes.append((asset_id, cached))
+            else:
+                work.append((asset_id, location))
+
+        # Apply canon-cached writes immediately.
+        for asset_id, patch in cached_writes:
             ctx.done(session, asset_id, facets=patch)
         session.commit()
+
+    # Phase 3: Provider for misses.
+    if work:
+        geocoding = ctx.provider("geocoding")
+        results: list[tuple[int, dict | None]] = []
+
+        async def _geocode():
+            for asset_id, location in work:
+                try:
+                    result = await geocoding.geocode(location)
+                    results.append((asset_id, result))
+                except Exception as e:
+                    results.append((asset_id, None))
+                    logger.warning("Geocoding failed for asset %d: %s", asset_id, e)
+
+        from app.core.task_utils import run_async_in_celery
+        run_async_in_celery(_geocode)
+
+        with ctx.session() as session:
+            for asset_id, result in results:
+                if not result or "coordinates" not in result:
+                    ctx.fail(session, asset_id, "no coordinates returned")
+                    continue
+                coords = result["coordinates"]
+                if len(coords) < 2:
+                    ctx.fail(session, asset_id, "invalid coordinates")
+                    continue
+                patch = {
+                    "location_lon": float(coords[0]),
+                    "location_lat": float(coords[1]),
+                }
+                if result.get("display_name"):
+                    patch["location"] = result["display_name"]
+                ctx.done(session, asset_id, facets=patch)
+            session.commit()
 
     from app.core.events import emit
     emit("asset.enriched", {"enricher_name": "geocoding", "infospace_id": ctx.infospace_id})
@@ -407,8 +425,6 @@ def enrich_geocoding(ctx: EnrichmentContext, asset_ids: list[int]):
           triggers=["asset.processed"])
 def enrich_hash(ctx: EnrichmentContext, asset_ids: list[int]):
     """Compute SHA-256 for assets with blob_path but no content_hash."""
-    from app.api.modules.foundation_service_providers.base import StorageProvider
-
     # Phase 1: Load
     work: list[tuple[int, str]] = []
     with ctx.session() as session:
@@ -421,41 +437,30 @@ def enrich_hash(ctx: EnrichmentContext, asset_ids: list[int]):
     if not work:
         return
 
-    storage = ctx.provider(StorageProvider)
+    storage = ctx.provider("storage")
 
     # Phase 2: Compute hashes
     hashes: list[tuple[int, str | None]] = []
 
     async def _compute():
         import asyncio
+        from app.api.modules.content.storage_access import read_to_path
         for asset_id, blob_path in work:
             try:
-                path_or_stream = None
-                if hasattr(storage, "get_file_path"):
-                    try:
-                        path_or_stream = storage.get_file_path(blob_path)
-                    except (NotImplementedError, FileNotFoundError):
-                        pass
-                if path_or_stream is None:
-                    fh = await storage.get_file(blob_path)
-                    try:
-                        path_or_stream = io.BytesIO(fh.read())
-                    finally:
-                        fh.close()
-
-                def _sha256(p):
-                    h = hashlib.sha256()
-                    if hasattr(p, "read"):
-                        while chunk := p.read(65536):
-                            h.update(chunk)
+                path, is_temp = await read_to_path(storage, blob_path)
+                try:
+                    def _sha256(p):
+                        h = hashlib.sha256()
+                        with open(p, "rb") as f:
+                            while chunk := f.read(65536):
+                                h.update(chunk)
                         return h.hexdigest()
-                    with open(p, "rb") as f:
-                        while chunk := f.read(65536):
-                            h.update(chunk)
-                    return h.hexdigest()
-
-                computed = await asyncio.to_thread(_sha256, path_or_stream)
-                hashes.append((asset_id, computed))
+                    computed = await asyncio.to_thread(_sha256, path)
+                    hashes.append((asset_id, computed))
+                finally:
+                    if is_temp:
+                        try: path.unlink()
+                        except OSError: pass
             except FileNotFoundError:
                 hashes.append((asset_id, None))
             except Exception as e:
@@ -574,20 +579,16 @@ def enrich_embedding(ctx: EnrichmentContext, asset_ids: list[int]):
     Phase 2 — Generate embeddings (no DB session)
     Phase 3 — Store vectors + emit events (fresh DB session)
     """
-    from app.api.modules.foundation_service_providers.base import EmbeddingProvider as EmbeddingProviderProtocol
-    from app.api.modules.foundation_service_providers.registry import resolve
     from app.api.modules.content.models import get_embedding_column_for_dimension
 
     # Phase 1: Load + Chunk
     groups: dict[int, dict] = {}  # infospace_id → group info
 
     with ctx.session() as session:
-        from app.api.modules.embedding.services.chunking_service import ChunkingService
-        from app.api.modules.embedding.services.embedding_service import EmbeddingService
+        from app.api.modules.embedding import chunk as chunk_mod
+        from app.api.modules.embedding.embed import ensure_embedding_model
         from app.api.modules.identity_infospace_user.models import Infospace
-
-        chunking = ChunkingService(session)
-        embedding_svc = EmbeddingService(session)
+        from app.api.modules.foundation_service_providers import get_selection
 
         assets = session.exec(select(Asset).where(Asset.id.in_(asset_ids))).all()
 
@@ -595,27 +596,28 @@ def enrich_embedding(ctx: EnrichmentContext, asset_ids: list[int]):
             iid = asset.infospace_id
             if iid not in groups:
                 infospace = session.get(Infospace, iid)
-                if not infospace or not infospace.embedding_configured:
+                if not infospace:
                     continue
 
-                sel = infospace.get_embedding_selection()
+                sel = get_selection(session, iid, "embedding")
+                if not sel or not sel.model_name:
+                    continue
                 dim_override = infospace.get_embedding_dimension_override()
 
-                provider_instance = resolve(
-                    EmbeddingProviderProtocol, sel.provider_key, ctx.settings,
+                # All assets in this batch share ctx.infospace_id, so the cache
+                # key is stable per-worker. Resolve() reads sel from the
+                # infospace's enrichment_config internally too, but we pass
+                # explicit args so the per-worker cache key matches.
+                provider_instance = ctx.provider(
+                    "embedding", sel.provider_key, sel.model_name,
                 )
-                if not provider_instance:
-                    logger.warning("No embedding provider for infospace %d", iid)
-                    continue
-
-                async def _ensure_model(svc, pk, mn, dim=None):
-                    return await svc.ensure_embedding_model_registered(
-                        provider=pk, model_name=mn, dimension=dim,
-                    )
 
                 from app.core.task_utils import run_async_in_celery
                 em = run_async_in_celery(
-                    _ensure_model, embedding_svc, sel.provider_key, sel.model_name, dim_override,
+                    ensure_embedding_model,
+                    session, sel.provider_key, sel.model_name,
+                    dimension=dim_override,
+                    infospace_id=iid,
                 )
                 col_name = get_embedding_column_for_dimension(em.dimension)
                 if not col_name:
@@ -646,8 +648,9 @@ def enrich_embedding(ctx: EnrichmentContext, asset_ids: list[int]):
             if not existing:
                 if not asset.text_content:
                     continue
-                existing = chunking.chunk_asset(
-                    asset=asset,
+                existing = chunk_mod.chunk_asset(
+                    session,
+                    asset,
                     strategy=grp["chunk_strategy"],
                     chunk_size=grp["chunk_size"],
                     chunk_overlap=grp["chunk_overlap"],

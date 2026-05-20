@@ -6,21 +6,20 @@ Handles direct text content ingestion.
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from app.models import Asset
+from app.models import Asset, AssetKind, ProcessingStatus
 from app.api.modules.content.services.asset_builder import AssetBuilder
-from .base import BaseHandler, IngestionContext
+from .base import BaseHandler
 
 logger = logging.getLogger(__name__)
 
 
 class TextHandler(BaseHandler):
-    """
-    Handle direct text content ingestion.
+    """Handle direct text content ingestion.
 
-    Uses AssetBuilder's from_text() pattern.
+    Composes AssetBuilder setters directly — no from_X entry point.
+    TextHandler owns the defaults for TEXT kind: ingestion_method, READY status.
     """
 
     async def handle(
@@ -29,8 +28,7 @@ class TextHandler(BaseHandler):
         title: Optional[str] = None,
         options: Optional[Dict[str, Any]] = None,
     ) -> List[Asset]:
-        """
-        Handle text content ingestion.
+        """Handle text content ingestion.
 
         Args:
             locator: Text content string
@@ -45,7 +43,12 @@ class TextHandler(BaseHandler):
 
         builder = (
             AssetBuilder(self.session, self.user_id, self.infospace_id)
-            .from_text(text, title)
+            .as_kind(AssetKind.TEXT)
+            .with_title(title or f"Text: {text[:30]}...")
+            .with_text(text)
+            .with_metadata(ingestion_method="direct_text")
+            .with_processing_status(ProcessingStatus.READY)
+            .no_dedup()  # text ingestion is always a fresh row
         )
 
         event_timestamp = options.get("event_timestamp")
@@ -56,5 +59,7 @@ class TextHandler(BaseHandler):
             builder.with_metadata(**options["metadata"])
 
         asset = await builder.build()
+        self.session.commit()  # v2: builder flushes only; handler owns transaction
+        self.session.refresh(asset)
 
         return [asset]

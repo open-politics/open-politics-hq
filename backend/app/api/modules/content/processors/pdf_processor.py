@@ -26,19 +26,16 @@ class PdfMetadataExtractor:
         if not asset.blob_path:
             return None
         try:
-            if hasattr(storage, "get_file_path"):
-                try:
-                    file_path = storage.get_file_path(asset.blob_path)
-                    return await asyncio.to_thread(
-                        extract_pdf_metadata, file_path=str(file_path)
-                    )
-                except Exception:
-                    pass
-            file_stream = await storage.get_file(asset.blob_path)
-            pdf_bytes = await asyncio.to_thread(file_stream.read)
-            return await asyncio.to_thread(
-                extract_pdf_metadata, pdf_bytes=pdf_bytes
-            )
+            from app.api.modules.content.storage_access import read_to_path
+            file_path, is_temp = await read_to_path(storage, asset.blob_path)
+            try:
+                return await asyncio.to_thread(
+                    extract_pdf_metadata, file_path=str(file_path)
+                )
+            finally:
+                if is_temp:
+                    try: file_path.unlink()
+                    except OSError: pass
         except Exception:
             return None
 
@@ -115,19 +112,19 @@ class PDFProcessor(BaseProcessor):
         
         max_pages = self.context.max_pages
 
-        # Use filesystem path when available (local_fs) to avoid loading full file into memory
+        # Use filesystem path when available (local_fs) to avoid loading full file into memory.
+        # For remote storage (MinIO) we stage to a temp file so pymupdf can mmap it.
+        from app.api.modules.content.storage_access import read_to_path
         storage = self.context.storage_provider
-        if hasattr(storage, "get_file_path"):
-            file_path = storage.get_file_path(asset.blob_path)
+        file_path, is_temp = await read_to_path(storage, asset.blob_path)
+        try:
             full_text, child_assets, metadata = await asyncio.to_thread(
                 self._process_pdf_sync, asset, max_pages, file_path=str(file_path)
             )
-        else:
-            file_stream = await storage.get_file(asset.blob_path)
-            pdf_bytes = await asyncio.to_thread(file_stream.read)
-            full_text, child_assets, metadata = await asyncio.to_thread(
-                self._process_pdf_sync, asset, max_pages, pdf_bytes=pdf_bytes
-            )
+        finally:
+            if is_temp:
+                try: file_path.unlink()
+                except OSError: pass
         
         # Per Foundation: "A PDF with scanned pages is still a PDF. Processing discovers
         # that its pages are image-dominant; it does not reclassify the PDF."

@@ -12,8 +12,8 @@ import asyncio
 import csv
 import logging
 from typing import List, Dict, Any, Tuple, Optional
-from app.api.modules.content.models import Asset, AssetKind
-from app.schemas import AssetCreate
+from app.api.modules.content.models import Asset, AssetKind, ProcessingStatus
+from app.api.modules.content.services.asset_builder import AssetBuilder
 from .base import BaseProcessor, ProcessingError
 
 logger = logging.getLogger(__name__)
@@ -185,75 +185,81 @@ class ExcelProcessor(BaseProcessor):
         """
         sheet_name = sheet_data['name']
         csv_text = sheet_data['csv_text']
-        
-        # Create sheet asset
-        sheet_asset_create = AssetCreate(
-            title=sheet_name,
-            kind=AssetKind.CSV,
-            user_id=parent_asset.user_id,
-            infospace_id=parent_asset.infospace_id,
-            parent_asset_id=parent_asset.id,
-            part_index=sheet_index,
-            text_content="",  # Will be filled with row summaries
-            file_info={
+        session = self.context.session
+
+        def _build_sheet_asset(text_content: str = "", extra_info: Optional[Dict[str, Any]] = None) -> Asset:
+            info = {
                 'sheet_name': sheet_name,
                 'sheet_index': sheet_index,
                 'parent_excel_file': parent_asset.title,
                 'row_count': sheet_data['row_count'],
-                'is_excel_sheet': True
+                'is_excel_sheet': True,
             }
-        )
-        
+            if extra_info:
+                info.update(extra_info)
+            return Asset(
+                title=sheet_name,
+                kind=AssetKind.CSV,
+                user_id=parent_asset.user_id,
+                infospace_id=parent_asset.infospace_id,
+                parent_asset_id=parent_asset.id,
+                part_index=sheet_index,
+                text_content=text_content,
+                file_info=info,
+                processing_status=ProcessingStatus.READY,
+            )
+
         # Parse CSV text
         csv_lines = csv_text.split('\n')
         all_rows = list(csv.reader(csv_lines, delimiter=','))
-        
+
         if not all_rows:
             logger.warning(f"Sheet '{sheet_name}' has no rows")
-            return self.context.asset_service.create_asset(sheet_asset_create)
-        
+            sheet_asset = _build_sheet_asset()
+            session.add(sheet_asset)
+            session.flush()
+            return sheet_asset
+
         # Smart header detection: find the row with the most non-empty cells
         header_row_idx, header = self._detect_header_row(all_rows, sheet_name)
-        
+
         if header_row_idx is None or not header:
             logger.warning(f"Sheet '{sheet_name}' has no valid header row")
-            return self.context.asset_service.create_asset(sheet_asset_create)
-        
-        # Update metadata with detected header position
-        sheet_asset_create.file_info['header_row_index'] = header_row_idx
-        sheet_asset_create.file_info['data_starts_at_row'] = header_row_idx + 1
-        
+            sheet_asset = _build_sheet_asset()
+            session.add(sheet_asset)
+            session.flush()
+            return sheet_asset
+
         # Process rows (skip rows before and including header)
-        child_assets = []
+        child_rows: List[Asset] = []
         full_text_parts = [f"Sheet: {sheet_name}", f"Headers: {' | '.join(header)}"]
         rows_processed = 0
-        
+
         # Start processing from the row after the header
         for idx, row in enumerate(all_rows[header_row_idx + 1:]):
             if rows_processed >= max_rows:
                 logger.warning(f"Sheet '{sheet_name}' processing stopped at {max_rows} rows limit")
                 break
-            
+
             if not any(cell.strip() for cell in row if cell):
                 continue
-            
+
             # Normalize row length
             while len(row) < len(header):
                 row.append('')
             if len(row) > len(header):
                 row = row[:len(header)]
-            
+
             # Clean row data
             cleaned_row = [cell.replace('\x00', '').strip() for cell in row]
             row_data = {header[j]: cleaned_row[j] for j in range(len(header))}
             row_text = ' | '.join(cleaned_row)
-            
-            # Debug: Log if row_text is empty or very short
+
             if not row_text or len(row_text.strip('| ')) < 3:
                 logger.warning(f"Sheet '{sheet_name}' Row {rows_processed}: text_content is suspiciously empty: '{row_text}'")
-            
+
             full_text_parts.append(row_text)
-            
+
             # Generate title: {sheet_name} | {index} | {first_cols}
             title_parts = [sheet_name, str(rows_processed + 1)]
             title_parts.extend(
@@ -264,55 +270,53 @@ class ExcelProcessor(BaseProcessor):
                 " | ".join(title_parts) if len(title_parts) > 2
                 else f"{sheet_name} Row {rows_processed + 1}"
             )
-            
-            # Store row data for later creation (after sheet asset is created)
-            row_metadata = {
-                'title': row_title,
-                'text_content': row_text,
-                'part_index': rows_processed,
-                'original_row_data': row_data
-            }
-            child_assets.append(row_metadata)
-            rows_processed += 1
-            
-            # Yield periodically
-            if rows_processed % 1000 == 0:
-                await asyncio.sleep(0.01)
-        
-        # Update sheet asset with content summary
-        sheet_asset_create.text_content = "\n".join(full_text_parts)
-        sheet_asset_create.file_info.update({
-            'columns': header,
-            'column_count': len(header),
-            'rows_processed': rows_processed
-        })
-        
-        # Create the sheet asset first
-        sheet_asset = self.context.asset_service.create_asset(sheet_asset_create)
-        
-        # Now create row assets as children of the sheet
-        for row_metadata in child_assets:
-            child_asset_create = AssetCreate(
-                title=row_metadata['title'],
+
+            child_rows.append(Asset(
+                title=row_title,
                 kind=AssetKind.CSV_ROW,
                 user_id=parent_asset.user_id,
                 infospace_id=parent_asset.infospace_id,
-                parent_asset_id=sheet_asset.id,  # Set sheet as parent
-                part_index=row_metadata['part_index'],
-                text_content=row_metadata['text_content'],
+                part_index=rows_processed,
+                text_content=row_text,
                 file_info={
                     'sheet_name': sheet_name,
                     'sheet_index': sheet_index,
-                    'row_number': row_metadata['part_index'] + 1,
-                    'data_row_index': row_metadata['part_index'],
-                    'original_row_data': row_metadata['original_row_data'],
-                    'excel_file': parent_asset.title
-                }
-            )
-            self.context.asset_service.create_asset(child_asset_create)
-        
-        logger.info(f"Processed sheet '{sheet_name}': {rows_processed} rows, {len(header)} columns, created {len(child_assets)} row assets")
-        
+                    'row_number': rows_processed + 1,
+                    'data_row_index': rows_processed,
+                    'original_row_data': row_data,
+                    'excel_file': parent_asset.title,
+                },
+                processing_status=ProcessingStatus.READY,
+            ))
+            rows_processed += 1
+
+            if rows_processed % 1000 == 0:
+                await asyncio.sleep(0.01)
+
+        # Persist the sheet asset (with content summary + detected header info)
+        sheet_asset = _build_sheet_asset(
+            text_content="\n".join(full_text_parts),
+            extra_info={
+                'header_row_index': header_row_idx,
+                'data_starts_at_row': header_row_idx + 1,
+                'columns': header,
+                'column_count': len(header),
+                'rows_processed': rows_processed,
+            },
+        )
+        session.add(sheet_asset)
+        session.flush()
+
+        # Batch-insert row children (flush every 500 internally)
+        if child_rows:
+            builder = AssetBuilder(session, parent_asset.user_id, parent_asset.infospace_id)
+            await builder.build_children(sheet_asset.id, child_rows)
+
+        logger.info(
+            f"Processed sheet '{sheet_name}': {rows_processed} rows, "
+            f"{len(header)} columns, created {len(child_rows)} row assets"
+        )
+
         return sheet_asset
     
     def _detect_header_row(self, all_rows: List[List[str]], sheet_name: str) -> Tuple[Optional[int], List[str]]:

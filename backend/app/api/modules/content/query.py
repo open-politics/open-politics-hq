@@ -61,7 +61,6 @@ class AssetQuery:
         self._semantic_top_k: int = 20
         self._semantic_threshold: Optional[float] = None
         self._semantic_threshold_op: Optional[str] = None
-        self._semantic_embedding_service: Optional[Any] = None
         self._text_query: Optional[str] = None
         self._kinds: List[AssetKind] = []
         self._bundle_id: Optional[int] = None
@@ -165,14 +164,17 @@ class AssetQuery:
         top_k: int = 20,
         threshold: Optional[float] = None,
         threshold_op: Optional[str] = None,
-        embedding_service: Optional[Any] = None,
     ) -> AssetQuery:
-        """Add semantic similarity filter via pgvector."""
+        """Add semantic similarity filter via pgvector.
+
+        Credentials follow the infospace owner (ROADMAP invariant #6) — no BYOK
+        at this layer. Call `similarity.search_by_text` directly if runtime_key
+        is needed.
+        """
         self._semantic_query = query_text
         self._semantic_top_k = top_k
         self._semantic_threshold = threshold
         self._semantic_threshold_op = threshold_op
-        self._semantic_embedding_service = embedding_service
         return self
 
     # ─── Date range ───
@@ -210,34 +212,10 @@ class AssetQuery:
             )
         return self
 
-    def scope_bundles(self, bundle_ids: tuple[int, ...]) -> AssetQuery:
-        """Restrict to assets in any of the given bundles (PackageScope).
-
-        Uses the && (overlap) operator: asset.bundle_ids && scope_bundle_ids.
-        """
-        if bundle_ids:
-            arr = list(bundle_ids)
-            self._conditions.append(
-                text("bundle_ids && CAST(:scope_ids AS int[])").bindparams(scope_ids=arr)
-            )
-        return self
-
-    def scope_items(
-        self,
-        bundle_ids: list[int] | None = None,
-        asset_ids: list[int] | None = None,
-    ) -> AssetQuery:
-        """AQL scope: assets in any of these bundles OR matching these asset IDs (OR)."""
-        clauses = []
-        if bundle_ids:
-            if len(bundle_ids) == 1:
-                clauses.append(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_ids[0]))
-            else:
-                clauses.append(text("bundle_ids && CAST(:scope_bids AS int[])").bindparams(scope_bids=bundle_ids))
+    def ids(self, asset_ids: List[int]) -> AssetQuery:
+        """Filter to specific asset IDs. Enables drill-down from AnnotationQuery.results()."""
         if asset_ids:
-            clauses.append(Asset.id.in_(asset_ids))
-        if clauses:
-            self._conditions.append(or_(*clauses))
+            self._conditions.append(Asset.id.in_(asset_ids))
         return self
 
     def scope(self, package_scope) -> AssetQuery:
@@ -293,6 +271,21 @@ class AssetQuery:
         self._conditions.append(Asset.parent_asset_id.is_(None))
         return self
 
+    def no_bundles(self) -> AssetQuery:
+        """Only return assets that are not in any real bundle.
+
+        Uses the ROOT=0 sentinel convention from ``core/tree.py``: every
+        asset's ``bundle_ids`` array is non-empty, with ``0`` meaning "at
+        root" and any positive id meaning "in that bundle". An asset is
+        unbundled iff its array contains only zeros — i.e. it is a subset
+        of ``{0}``. This is what the tree root listing wants, so that an
+        asset inside a bundle doesn't also appear as a top-level sibling.
+        """
+        self._conditions.append(
+            text("bundle_ids <@ ARRAY[0]::int[]")
+        )
+        return self
+
     def children_only(self) -> AssetQuery:
         """Only return child assets (parent_asset_id IS NOT NULL)."""
         self._conditions.append(Asset.parent_asset_id.isnot(None))
@@ -323,7 +316,7 @@ class AssetQuery:
     def entities(self, name_groups: List[List[str]]) -> AssetQuery:
         """Filter by entities. Each group is OR'd internally, groups are AND'd.
 
-        Uses graph (GraphEdge → EntityCanonical) when available, falls back to text match.
+        Uses graph (GraphEdge → Entity) when available, falls back to text match.
         """
         for group in name_groups:
             if not group:
@@ -354,7 +347,7 @@ class AssetQuery:
         """Find assets connected to entities matching a semantic query.
 
         Resolved at execution time (async) — embeds query_text and searches
-        EntityCanonical embeddings via pgvector, then filters assets via GraphEdge.
+        Entity embeddings via pgvector, then filters assets via GraphEdge.
         """
         self._entity_semantic_query = query_text
         self._entity_semantic_threshold = threshold
@@ -375,24 +368,21 @@ class AssetQuery:
 
         Supports nested JSONB paths (dot notation), optional run scoping,
         and smart type detection for comparisons (numeric vs text/date).
+
+        Uses shared JSONB accessor from core/filters.py.
         """
+        from app.core.filters import jsonb_accessor as _jsonb_acc
+
         if not re.match(r"^[a-zA-Z0-9_.]+$", field):
             return self
 
-        # Build field accessor — single key uses ->>, nested uses #>>
-        parts = field.split('.')
-        if len(parts) == 1:
-            field_accessor = "annotation.value->>:field_path"
-            field_param = field
-        else:
-            field_accessor = "annotation.value #>> :field_path"
-            field_param = '{' + ','.join(parts) + '}'
+        field_accessor, params = _jsonb_acc("annotation.value", field)
+        parts = field.split(".")
 
         # Base EXISTS
         base_parts = [
             "SELECT 1 FROM annotation WHERE annotation.asset_id = asset.id",
         ]
-        params: Dict[str, Any] = {"field_path": field_param}
 
         if run_ids:
             base_parts.append("AND annotation.run_id = ANY(:run_ids)")
@@ -409,7 +399,6 @@ class AssetQuery:
             expr = f"({field_accessor})::text = :val"
             params["val"] = str(value)
         elif op in (">=", ">", "<=", "<"):
-            # Detect type: number → float cast, otherwise text (ISO dates sort lexicographically)
             try:
                 params["val"] = float(value)
                 expr = f"({field_accessor})::float {op} :val"
@@ -449,9 +438,32 @@ class AssetQuery:
         self._sort = mode or "created_at_desc"
         return self
 
-    def paginate(self, cursor: Optional[int] = None, limit: int = 25, max_limit: int = 200) -> AssetQuery:
-        """Set cursor (asset id) and limit for pagination."""
-        self._cursor = cursor
+    def paginate(
+        self,
+        cursor: str | int | None = None,
+        limit: int = 25,
+        max_limit: int = 200,
+    ) -> AssetQuery:
+        """Set cursor and limit for pagination.
+
+        Accepts the opaque ``core.cursor`` encoded string (preferred), a raw
+        ``int`` asset id (legacy), or ``None``. The primitive decodes
+        internally; callers never parse.
+        """
+        if cursor is None:
+            self._cursor = None
+        elif isinstance(cursor, int):
+            self._cursor = cursor
+        else:
+            try:
+                from app.core.cursor import decode_cursor
+                _, _, _, last_id = decode_cursor(cursor)
+                self._cursor = last_id
+            except Exception:
+                try:
+                    self._cursor = int(cursor)
+                except ValueError:
+                    self._cursor = None
         self._limit = min(limit or 25, max_limit)
         return self
 
@@ -558,17 +570,15 @@ class AssetQuery:
         """Execute with async semantic search when semantic() was used."""
         if self._semantic_query:
             try:
-                from app.api.modules.embedding.services import VectorSearchService
+                from app.api.modules.embedding.similarity import search_by_text
 
-                vss = VectorSearchService(self.session)
-                results = await vss.semantic_search(
-                    query_text=self._semantic_query,
-                    infospace_id=self.infospace_id,
+                hits = await search_by_text(
+                    self.session, self.infospace_id, self._semantic_query,
                     limit=self._semantic_top_k,
                     asset_kinds=self._kinds if self._kinds else None,
                     bundle_id=self._bundle_id,
                 )
-                asset_ids = list({r.asset_id for r in results})
+                asset_ids = list({h.asset_id for h in hits})
                 if not asset_ids:
                     return []
                 self._conditions.append(Asset.id.in_(asset_ids))
@@ -582,7 +592,7 @@ class AssetQuery:
         """Execute with semantic/entity-semantic search support, returning (asset, rank, headline) tuples."""
         semantic_scores: Dict[int, float] = {}
 
-        # ── Entity semantic: embed query → search EntityCanonical → filter via GraphEdge ──
+        # ── Entity semantic: embed query → search Entity → filter via GraphEdge ──
         if self._entity_semantic_query:
             try:
                 await self._resolve_entity_semantic()
@@ -592,17 +602,15 @@ class AssetQuery:
         # ── Asset semantic: embed query → search AssetChunk via pgvector ──
         if self._semantic_query:
             try:
-                from app.api.modules.embedding.services import VectorSearchService
+                from app.api.modules.embedding.similarity import search_by_text
 
                 # Convert similarity threshold → distance threshold for cosine
                 dist_threshold = None
                 if self._semantic_threshold is not None and self._semantic_threshold_op in ('>', '>='):
                     dist_threshold = 1.0 - self._semantic_threshold
 
-                vss = VectorSearchService(self.session)
-                results = await vss.semantic_search(
-                    query_text=self._semantic_query,
-                    infospace_id=self.infospace_id,
+                hits = await search_by_text(
+                    self.session, self.infospace_id, self._semantic_query,
                     limit=self._semantic_top_k,
                     asset_kinds=self._kinds if self._kinds else None,
                     bundle_id=self._bundle_id,
@@ -612,11 +620,11 @@ class AssetQuery:
                 # For < / <= threshold, post-filter: keep only results below threshold
                 if self._semantic_threshold is not None and self._semantic_threshold_op in ('<', '<='):
                     max_sim = self._semantic_threshold
-                    results = [r for r in results if r.similarity < max_sim]
+                    hits = [h for h in hits if h.similarity < max_sim]
 
                 # Capture similarity scores per asset (best chunk wins)
-                for r in results:
-                    semantic_scores[r.asset_id] = max(semantic_scores.get(r.asset_id, 0), r.similarity)
+                for h in hits:
+                    semantic_scores[h.asset_id] = max(semantic_scores.get(h.asset_id, 0), h.similarity)
 
                 asset_ids = list(semantic_scores.keys())
                 if not asset_ids:
@@ -648,29 +656,24 @@ class AssetQuery:
         return rows
 
     async def _resolve_entity_semantic(self) -> None:
-        """Embed entity query text, search EntityCanonical embeddings, filter assets via GraphEdge."""
+        """Embed entity query text, search Entity embeddings, filter assets via GraphEdge."""
         from app.api.modules.content.models import EMBEDDING_SUPPORTED_DIMS
-        from app.api.modules.embedding.services import EmbeddingService
-        from app.api.modules.identity_infospace_user.models import Infospace
+        from app.api.modules.embedding.embed import embed_texts
+        from app.api.modules.foundation_service_providers import get_selection
 
-        infospace = self.session.get(Infospace, self.infospace_id)
-        if not infospace or not infospace.embedding_configured:
+        sel = get_selection(self.session, self.infospace_id, "embedding")
+        if not sel or not sel.model_name:
             logger.debug("Entity semantic: no embedding configured for infospace %s", self.infospace_id)
             return
 
-        sel = infospace.get_embedding_selection()
-        embedding_service = EmbeddingService(self.session)
-
-        emb_result = await embedding_service.generate_embeddings_for_chunks(
-            chunks=[self._entity_semantic_query],
-            model_name=sel.model_name,
-            provider=sel.provider_key,
+        vectors, em = await embed_texts(
+            self.session, self.infospace_id, [self._entity_semantic_query],
         )
-        if not emb_result or not emb_result[0].get('embedding'):
+        if not vectors:
             return
 
-        raw_embedding = emb_result[0]['embedding']
-        dim = len(raw_embedding)
+        raw_embedding = vectors[0]
+        dim = em.dimension
         if dim not in EMBEDDING_SUPPORTED_DIMS:
             return
 
@@ -685,10 +688,10 @@ class AssetQuery:
             FROM asset a
             JOIN annotation ann ON ann.asset_id = a.id
             JOIN graphedge ge ON ge.annotation_id = ann.id
-            JOIN entitycanonical ec ON (ge.subject_entity_id = ec.id OR ge.object_entity_id = ec.id)
+            JOIN entity ec ON (ge.source_entity_id = ec.id OR ge.target_entity_id = ec.id)
             WHERE ge.infospace_id = :iid
               AND ec.{col_name} IS NOT NULL
-              AND (ec.{col_name} <=> :vec::vector) <= :dist_thresh
+              AND (ec.{col_name} <=> CAST(:vec AS vector)) <= :dist_thresh
         """)
         rows = self.session.execute(sql, {
             "iid": self.infospace_id,
@@ -741,11 +744,15 @@ class AssetQuery:
                 before=_parse_date(parsed.date_before, end=True),
             )
 
-        # Scope: bundles + assets combined with OR
+        # Scope: bundles + assets combined with OR (same semantics as PackageScope)
         if parsed.bundle_refs or parsed.asset_refs:
+            from app.api.modules.identity_infospace_user.access import PackageScope
             bundle_ids = _resolve_bundle_ids(session, infospace_id, parsed.bundle_refs)
             asset_ids = _resolve_asset_ids(session, infospace_id, parsed.asset_refs)
-            q.scope_items(bundle_ids=bundle_ids or None, asset_ids=asset_ids or None)
+            q.scope(PackageScope(
+                bundle_ids=tuple(bundle_ids or ()),
+                asset_ids=tuple(asset_ids or ()),
+            ))
 
         if parsed.entities:
             q.entities(parsed.entities)
@@ -797,7 +804,7 @@ def _entity_condition(name: str, infospace_id: int):
         EXISTS (
             SELECT 1 FROM graphedge ge
             JOIN annotation ann ON ge.annotation_id = ann.id
-            JOIN entitycanonical ec ON (ge.subject_entity_id = ec.id OR ge.object_entity_id = ec.id)
+            JOIN entity ec ON (ge.source_entity_id = ec.id OR ge.target_entity_id = ec.id)
             WHERE ann.asset_id = asset.id
             AND ge.infospace_id = :iid
             AND (

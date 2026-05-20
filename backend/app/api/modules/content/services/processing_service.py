@@ -21,7 +21,6 @@ from sqlmodel import Session, select
 
 from app.models import Asset, ProcessingStatus
 from app.api.modules.foundation_service_providers.base import StorageProvider, ScrapingProvider
-from app.api.modules.content.services.asset_service import AssetService
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +36,10 @@ class ProcessingService:
         session: Session,
         storage_provider: StorageProvider,
         scraping_provider: ScrapingProvider,
-        asset_service: AssetService,
     ):
         self.session = session
         self.storage_provider = storage_provider
         self.scraping_provider = scraping_provider
-        self.asset_service = asset_service
 
     async def _run_phase1_metadata(self, asset: Asset) -> Optional[Dict[str, Any]]:
         """
@@ -119,7 +116,6 @@ class ProcessingService:
                 session=self.session,
                 storage_provider=self.storage_provider,
                 scraping_provider=self.scraping_provider,
-                asset_service=self.asset_service,
                 bundle_service=BundleService(self.session),
                 user_id=asset.user_id,
                 infospace_id=asset.infospace_id,
@@ -163,7 +159,7 @@ class ProcessingService:
             if not asset.blob_path:
                 await materializer.materialize(asset, self.session, self.storage_provider)
             await materializer.reprocess_preserving_children(
-                asset, self.session, self.storage_provider, self.asset_service, options or {}
+                asset, self.session, self.storage_provider, options or {}
             )
         else:
             children = self.session.exec(

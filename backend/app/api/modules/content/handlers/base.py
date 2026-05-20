@@ -12,7 +12,6 @@ from sqlmodel import Session
 
 from app.models import Asset
 from app.api.modules.foundation_service_providers.base import StorageProvider, ScrapingProvider, WebSearchProvider
-from app.api.modules.content.services.asset_service import AssetService
 from app.api.modules.content.services.bundle_service import BundleService
 from app.core.config import AppSettings
 
@@ -36,23 +35,14 @@ class IngestionContext:
     storage_provider: StorageProvider
     scraping_provider: ScrapingProvider
     search_provider: Optional[WebSearchProvider]
-    asset_service: AssetService
     bundle_service: BundleService
     user_id: int
     infospace_id: int
     settings: AppSettings
     options: Dict[str, Any] = field(default_factory=dict)
-    
+
     def to_processor_context(self, additional_options: Optional[Dict[str, Any]] = None):
-        """
-        Convert IngestionContext to ProcessorContext for processor execution.
-
-        Args:
-            additional_options: Additional options to merge with existing options
-
-        Returns:
-            ProcessingContext instance
-        """
+        """Convert IngestionContext to ProcessingContext for processor execution."""
         from app.api.modules.content.processors.base import ProcessingContext
 
         options = {**self.options}
@@ -65,11 +55,10 @@ class IngestionContext:
             session=self.session,
             storage_provider=self.storage_provider,
             scraping_provider=self.scraping_provider,
-            asset_service=self.asset_service,
             bundle_service=self.bundle_service,
             user_id=self.user_id,
             infospace_id=self.infospace_id,
-            options=options
+            options=options,
         )
 
 
@@ -95,7 +84,6 @@ class BaseHandler:
         self.storage_provider = context.storage_provider
         self.scraping_provider = context.scraping_provider
         self.search_provider = context.search_provider
-        self.asset_service = context.asset_service
         self.bundle_service = context.bundle_service
         self.user_id = context.user_id
         self.infospace_id = context.infospace_id

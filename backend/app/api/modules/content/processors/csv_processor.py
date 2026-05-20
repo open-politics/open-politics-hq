@@ -10,9 +10,9 @@ import asyncio
 import csv
 import io
 import logging
-from typing import Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 from app.api.modules.content.models import Asset, AssetKind, ProcessingStatus
-from app.schemas import AssetCreate
+from app.api.modules.content.services.asset_builder import AssetBuilder
 from .base import BaseProcessor, ProcessingError
 
 logger = logging.getLogger(__name__)
@@ -36,78 +36,82 @@ class CSVProcessor(BaseProcessor):
     async def process(self, asset: Asset) -> List[Asset]:
         """
         Process CSV file and create row assets.
-        
+
+        Parses the CSV, updates parent summary, and batch-inserts row children
+        through AssetBuilder.build_children (flush-only — caller owns commit).
+
         Args:
             asset: Parent CSV asset
-            
+
         Returns:
-            List of CSV_ROW child assets
+            List of CSV_ROW child assets (flushed to session)
         """
         if not self.can_process(asset):
             raise ProcessingError(f"Cannot process asset {asset.id} as CSV")
-        
-        # Get processing options
+
+        child_assets, summary = await self._extract_child_assets(asset)
+        self._apply_summary_to_parent(asset, summary)
+
+        if child_assets:
+            builder = AssetBuilder(self.context.session, asset.user_id, asset.infospace_id)
+            await builder.build_children(asset.id, child_assets)
+
+        logger.info(
+            f"Processed CSV: {summary['rows_processed']} rows, "
+            f"{len(summary['header'])} columns, created {len(child_assets)} child assets"
+        )
+        return child_assets
+
+    async def _extract_child_assets(
+        self, asset: Asset,
+    ) -> Tuple[List[Asset], Dict[str, Any]]:
+        """Parse CSV → (child Asset blueprints, summary dict). Does NOT insert.
+
+        Used by `process()` (which then inserts via build_children) and by
+        `CsvMaterializer.reprocess_preserving_children` (which diffs against
+        existing rows instead of inserting). The CSV file is read via the
+        storage provider; the parse itself is off-thread.
+        """
         delimiter = self.context.options.get('delimiter')
         encoding = self.context.options.get('encoding', 'utf-8')
         skip_rows = self.context.options.get('skip_rows', 0)
         max_rows = self.context.max_rows
 
+        from app.api.modules.content.storage_access import read_to_path
         storage = self.context.storage_provider
-        if hasattr(storage, "get_file_path"):
-            file_path = storage.get_file_path(asset.blob_path)
+        file_path, is_temp = await read_to_path(storage, asset.blob_path)
+        try:
             result = await asyncio.to_thread(
                 self._process_csv_stream_from_path,
-                file_path,
-                asset,
-                encoding,
-                delimiter,
-                skip_rows,
-                max_rows,
+                file_path, asset, encoding, delimiter, skip_rows, max_rows,
             )
-        else:
-            file_stream = await storage.get_file(asset.blob_path)
-            result = await asyncio.to_thread(
-                self._process_csv_stream_from_file,
-                file_stream,
-                asset,
-                encoding,
-                delimiter,
-                skip_rows,
-                max_rows,
-            )
+        finally:
+            if is_temp:
+                try: file_path.unlink()
+                except OSError: pass
 
-        child_assets = result["child_assets"]
-        full_text_parts = result["full_text_parts"]
-        header = result["header"]
-        delimiter = result["delimiter"]
-        rows_processed = result["rows_processed"]
+        summary = {
+            "full_text_parts": result["full_text_parts"],
+            "header": result["header"],
+            "delimiter": result["delimiter"],
+            "encoding": encoding,
+            "rows_processed": result["rows_processed"],
+        }
+        return result["child_assets"], summary
 
-        # Update parent asset
-        asset.text_content = "\n".join(full_text_parts)
+    def _apply_summary_to_parent(self, asset: Asset, summary: Dict[str, Any]) -> None:
+        """Write parse summary back onto the parent CSV asset (text + file_info)."""
+        asset.text_content = "\n".join(summary["full_text_parts"])
         file_info = asset.file_info or {}
         file_info.update({
-            'columns': header,
-            'delimiter_used': delimiter,
-            'encoding_used': encoding,
-            'rows_processed': rows_processed,
-            'column_count': len(header),
-            'processing_options': self.context.options
+            'columns': summary["header"],
+            'delimiter_used': summary["delimiter"],
+            'encoding_used': summary["encoding"],
+            'rows_processed': summary["rows_processed"],
+            'column_count': len(summary["header"]),
+            'processing_options': self.context.options,
         })
         asset.file_info = file_info
-        
-        # Save child assets in batches
-        saved_children = []
-        batch_size = 500
-        for i in range(0, len(child_assets), batch_size):
-            batch = child_assets[i : i + batch_size]
-            batch_assets = [Asset(**c.model_dump()) for c in batch]
-            saved_children.extend(batch_assets)
-            self.context.session.add_all(batch_assets)
-            self.context.session.flush()
-        self.context.session.commit()
-
-        logger.info(f"Processed CSV: {rows_processed} rows, {len(header)} columns, created {len(saved_children)} child assets")
-        return saved_children
 
     def _process_csv_stream_from_path(
         self,
@@ -223,14 +227,14 @@ class CSVProcessor(BaseProcessor):
             )
             row_title = " | ".join(title_parts) if len(title_parts) > 1 else f"Row {rows_processed + 1}"
             child_assets.append(
-                AssetCreate(
+                Asset(
                     title=row_title,
                     kind=AssetKind.CSV_ROW,
                     user_id=asset.user_id,
                     infospace_id=asset.infospace_id,
-                    parent_asset_id=asset.id,
                     part_index=rows_processed,
                     text_content=row_text,
+                    processing_status=ProcessingStatus.READY,
                     file_info={
                         "row_number": skip_rows + rows_processed + 2,
                         "data_row_index": rows_processed,

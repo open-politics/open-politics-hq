@@ -13,8 +13,9 @@ Supports two modes:
 
 Reconcile mode (reconcile_mode=True): Compares file stat (size, mtime) for existing blob_paths,
 detects additions, changes, deletions. For changed files, recomputes hash; if different,
-creates new version via previous_asset_id, sets is_superseded=True on old. Deleted files
-are added to bundle_metadata.excluded_blob_paths.
+routes through AssetBuilder.supersedes(existing).load(new) — AssetBuilder owns the
+supersede cascade (single write site). Deleted files are added to
+bundle_metadata.excluded_blob_paths.
 """
 
 import asyncio
@@ -148,49 +149,31 @@ class DirectoryImportHandler(BaseHandler):
         return result
 
     async def _compute_file_hash(self, blob_path: str, file_path: Optional[Path] = None) -> str:
-        """Compute SHA-256 of file. Uses file_path if provided (local), else storage.get_file."""
+        """Compute SHA-256 of file. Uses ``file_path`` if provided (local);
+        otherwise reads via storage (zero-copy on local_fs, temp-file on remote)."""
         if file_path is not None and file_path.exists():
             h = hashlib.sha256()
             with open(file_path, "rb") as f:
                 for chunk in iter(lambda: f.read(65536), b""):
                     h.update(chunk)
             return h.hexdigest()
-        if self.storage_provider and hasattr(self.storage_provider, "get_file_path"):
+        if not self.storage_provider:
+            return ""
+        try:
+            from app.api.modules.content.storage_access import read_to_path
+            path, is_temp = await read_to_path(self.storage_provider, blob_path)
             try:
-                local_path = self.storage_provider.get_file_path(blob_path)
-                if local_path and local_path.exists():
-                    h = hashlib.sha256()
-                    with open(local_path, "rb") as f:
-                        for chunk in iter(lambda: f.read(65536), b""):
-                            h.update(chunk)
-                    return h.hexdigest()
-            except Exception:
-                pass
-        if self.storage_provider:
-            try:
-                fh = await self.storage_provider.get_file(blob_path)
                 h = hashlib.sha256()
-                try:
-                    read_fn = getattr(fh, "read", None)
-                    if read_fn:
-                        while True:
-                            chunk = read_fn(65536)
-                            if asyncio.iscoroutine(chunk):
-                                chunk = await chunk
-                            if not chunk:
-                                break
-                            h.update(chunk)
-                finally:
-                    if hasattr(fh, "close"):
-                        close_fn = fh.close
-                        if asyncio.iscoroutinefunction(close_fn):
-                            await close_fn()
-                        else:
-                            close_fn()
+                with open(path, "rb") as f:
+                    for chunk in iter(lambda: f.read(65536), b""):
+                        h.update(chunk)
                 return h.hexdigest()
-            except Exception:
-                pass
-        return ""
+            finally:
+                if is_temp:
+                    try: path.unlink()
+                    except OSError: pass
+        except Exception:
+            return ""
 
     def _archive_old_content(self, asset: Asset) -> Optional[str]:
         """
@@ -422,21 +405,11 @@ class DirectoryImportHandler(BaseHandler):
                         errors.append(f"Failed to upload {file_path}: {e}")
                         continue
 
-                # Archive old content before superseding (preserves provenance)
+                # Archive old content before superseding (preserves provenance).
+                # Must run BEFORE AssetBuilder writes is_superseded — we mutate existing.blob_path.
                 archive_path = self._archive_old_content(existing)
                 if archive_path:
                     existing.blob_path = archive_path
-
-                existing.is_superseded = True
-                self.session.add(existing)
-                # Cascade: mark children as having a superseded parent
-                from sqlalchemy import update as sql_update
-
-                self.session.execute(
-                    sql_update(Asset)
-                    .where(Asset.parent_asset_id == existing.id)
-                    .values(parent_is_superseded=True)
-                )
 
                 new_asset = Asset(
                     title=title,
@@ -447,10 +420,15 @@ class DirectoryImportHandler(BaseHandler):
                     blob_path=blob_path,
                     logical_path=logical_path,
                     processing_status=ProcessingStatus.PENDING,
+                    content_hash=current_hash,
                     file_info=file_info,
-                    previous_asset_id=existing.id,
                 )
-                self.session.add(new_asset)
+                from app.api.modules.content.services.asset_builder import AssetBuilder
+                await (
+                    AssetBuilder(self.session, self.user_id, self.infospace_id)
+                    .supersedes(existing)
+                    .load(new_asset)
+                )
                 created_assets.append(new_asset)
                 batch.append(new_asset)
                 existing_by_blob[blob_path] = new_asset

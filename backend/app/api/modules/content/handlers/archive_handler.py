@@ -169,19 +169,20 @@ class ArchiveHandler(BaseHandler):
         root_bundle: Bundle,
         infospace_id: int,
         user_id: int,
-        options: Dict[str, Any]
+        options: Dict[str, Any],
+        on_download_progress: Optional[Any] = None,
     ) -> List[Asset]:
         """
         Process archive synchronously (for small archives or testing).
-        
+
         Flow:
-        1. Download archive
+        1. Download archive (streams bytes; calls `on_download_progress(done, total)`
+           throttled to once per ~500 ms)
         2. Extract to {LOCAL_STORAGE_BASE_PATH}/managed/archives/{name}/
         3. DirectoryImportHandler.handle(extracted_path, copy_mode=False)
-        4. Delete archive file (keep extracted files)
         """
         from app.core.config import settings
-        from app.api.modules.foundation_service_providers.registry import get_storage_provider
+        from app.api.modules.foundation_service_providers import resolve
 
         storage_base = Path(settings.LOCAL_STORAGE_BASE_PATH)
         managed_archives = storage_base / "managed" / "archives"
@@ -196,13 +197,14 @@ class ArchiveHandler(BaseHandler):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             ua = options.get('user_agent')
-            archive_path = await self._download_archive(archive_url, temp_dir, user_agent=ua)
+            archive_path = await self._download_archive(
+                archive_url, temp_dir, user_agent=ua, on_progress=on_download_progress
+            )
             # Extract to persistent location (archive in temp_dir is deleted when with exits)
-            await self._extract_archive(str(archive_path), str(extract_dir))
+            await ArchiveHandler.extract_archive(str(archive_path), str(extract_dir))
 
         # Use DirectoryImportHandler for flat bundle + virtual folders
         from app.api.modules.content.handlers.base import IngestionContext
-        from app.api.modules.content.services.asset_service import AssetService
         allowed_paths = [p.strip() for p in (settings.ALLOWED_IMPORT_PATHS or "").split(",") if p.strip()]
         if not allowed_paths:
             allowed_paths = [str(storage_base)]
@@ -214,7 +216,6 @@ class ArchiveHandler(BaseHandler):
             storage_provider=None,
             scraping_provider=self.scraping_provider,
             search_provider=self.search_provider,
-            asset_service=AssetService(self.session, get_storage_provider(settings)),
             bundle_service=self.bundle_service,
             user_id=user_id,
             infospace_id=infospace_id,
@@ -229,78 +230,133 @@ class ArchiveHandler(BaseHandler):
         logger.info(f"Archive processing complete: {len(assets)} assets created")
         return list(assets)
     
-    async def _download_archive(self, url: str, temp_dir: str, user_agent: Optional[str] = None) -> str:
+    async def _download_archive(
+        self,
+        url: str,
+        temp_dir: str,
+        user_agent: Optional[str] = None,
+        on_progress: Optional[Any] = None,
+    ) -> str:
         """
-        Download archive file with streaming (for large files).
-        
-        Returns path to downloaded file.
+        Stream-download a remote archive to `temp_dir`.
+
+        `on_progress(downloaded_bytes, total_bytes_or_None)` is invoked at most
+        once every ~500 ms — cheap enough to write to the DB + Redis stream on
+        each tick.
+
+        Returns the local filepath of the downloaded archive.
         """
+        import time
+
         filename = url.split('/')[-1].split('?')[0]
         filepath = os.path.join(temp_dir, filename)
-        
-        logger.info(f"Downloading archive from {url} to {filepath}")
-        
-        # Use browser's User-Agent if provided, otherwise fallback to settings
-        # This allows passing the actual browser's UA from frontend for better compatibility
+
         if not user_agent:
-            user_agent = getattr(self.settings, 'GEOCODING_USER_AGENT', 
+            user_agent = getattr(self.settings, 'GEOCODING_USER_AGENT',
                                  'Mozilla/5.0 (compatible; OpenPoliticsHQ/1.0; +https://open-politics.org)')
-        
+
         headers = {
             'User-Agent': user_agent,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
+            'Accept': '*/*',
+            'Accept-Encoding': 'identity',  # disable gzip — we need accurate content-length for progress
             'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Referer': url  # Some sites require referrer
         }
-        
-        logger.info(f"Downloading with User-Agent: {user_agent[:60]}...")
-        
+
+        logger.info(f"Downloading archive from {url} to {filepath}")
+
+        # 256 KiB chunks: far fewer async hops than 8 KiB for slow/large transfers.
+        CHUNK = 256 * 1024
+        PROGRESS_INTERVAL = 0.5  # seconds
+
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=3600)) as response:
                 response.raise_for_status()
-                
-                # Stream download in chunks (avoid loading entire file in memory)
+                total = response.content_length  # may be None
+
                 with open(filepath, 'wb') as f:
-                    chunk_size = 8192
                     downloaded = 0
-                    async for chunk in response.content.iter_chunked(chunk_size):
+                    last_tick = time.monotonic()
+                    last_log_mb = 0
+                    if on_progress:
+                        on_progress(0, total)
+                    async for chunk in response.content.iter_chunked(CHUNK):
                         f.write(chunk)
                         downloaded += len(chunk)
-                        
-                        # Log progress every 10MB
-                        if downloaded % (10 * 1024 * 1024) < chunk_size:
-                            logger.info(f"Downloaded {downloaded // (1024 * 1024)}MB...")
-        
+                        now = time.monotonic()
+                        if on_progress and (now - last_tick) >= PROGRESS_INTERVAL:
+                            on_progress(downloaded, total)
+                            last_tick = now
+                        # Log once per 50 MB to avoid log spam on slow tunnels.
+                        cur_mb = downloaded // (50 * 1024 * 1024)
+                        if cur_mb > last_log_mb:
+                            last_log_mb = cur_mb
+                            logger.info(f"Downloaded {downloaded // (1024 * 1024)}MB"
+                                        f"{f' / {total // (1024 * 1024)}MB' if total else ''}...")
+                    if on_progress:
+                        on_progress(downloaded, total)
+
         logger.info(f"Archive download complete: {os.path.getsize(filepath)} bytes")
         return filepath
     
-    async def _extract_archive(self, archive_path: str, extract_dir: str) -> str:
+    @staticmethod
+    def _is_macos_sidecar(member_name: str) -> bool:
+        """True for macOS Finder metadata: __MACOSX/ trees and ._ AppleDouble files.
+
+        A Mac-zipped folder carries both. Neither represents real content;
+        ingesting them pollutes the tree with fake PDFs, images, etc.
         """
-        Extract archive to directory.
-        
-        Supports ZIP, TAR, TAR.GZ, etc.
-        
+        normalized = member_name.replace("\\", "/").lstrip("/")
+        parts = normalized.split("/")
+        if any(p == "__MACOSX" for p in parts):
+            return True
+        basename = parts[-1] if parts else ""
+        return basename.startswith("._")
+
+    @staticmethod
+    async def extract_archive(archive_path: str, extract_dir: str) -> str:
+        """
+        Extract a zip/tar archive to `extract_dir`, safely.
+
+        Rejects entries whose resolved path escapes `extract_dir` (zip-slip),
+        symlinks and device files (via tarfile's `data` filter), and skips
+        macOS Finder sidecars (``__MACOSX/``, ``._*``).
+
         Returns path to extraction directory.
         """
         os.makedirs(extract_dir, exist_ok=True)
-        
+        extract_root = Path(extract_dir).resolve()
+
         logger.info(f"Extracting archive {archive_path} to {extract_dir}")
-        
-        # Detect archive type and extract
+
+        skipped = 0
         if zipfile.is_zipfile(archive_path):
-            with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
+            with zipfile.ZipFile(archive_path, 'r') as zf:
+                for info in zf.infolist():
+                    member = info.filename
+                    if ArchiveHandler._is_macos_sidecar(member):
+                        skipped += 1
+                        continue
+                    target = (extract_root / member).resolve()
+                    if extract_root != target and extract_root not in target.parents:
+                        raise ValueError(f"Archive entry escapes target directory: {member!r}")
+                    zf.extract(info, extract_dir)
         elif tarfile.is_tarfile(archive_path):
-            with tarfile.open(archive_path, 'r:*') as tar_ref:
-                tar_ref.extractall(extract_dir)
+            with tarfile.open(archive_path, 'r:*') as tf:
+                def _filter(member, dest):
+                    if ArchiveHandler._is_macos_sidecar(member.name):
+                        nonlocal skipped
+                        skipped += 1
+                        return None
+                    # Chain the data filter for absolute-path / traversal / symlink / device rejection.
+                    return tarfile.data_filter(member, dest)
+                tf.extractall(extract_dir, filter=_filter)
         else:
             raise ValueError(f"Unsupported archive format: {archive_path}")
-        
-        logger.info(f"Archive extraction complete")
+
+        if skipped:
+            logger.info(f"Archive extraction complete (skipped {skipped} macOS sidecars)")
+        else:
+            logger.info("Archive extraction complete")
         return extract_dir
     
     def _detect_archive_type(self, url: str) -> str:

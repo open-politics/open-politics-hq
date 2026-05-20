@@ -168,7 +168,7 @@ class InboxPollHandler:
         skipped = 0
 
         for file_path in stable_files:
-            result = self._process_file(
+            result = await self._process_file(
                 file_path=file_path,
                 context=context,
                 source=source,
@@ -237,7 +237,7 @@ class InboxPollHandler:
     #  Per-file processing with layered version detection
     # ------------------------------------------------------------------ #
 
-    def _process_file(
+    async def _process_file(
         self,
         *,
         file_path: Path,
@@ -260,7 +260,7 @@ class InboxPollHandler:
                 context, bundle.id, sidecar["supersedes"]
             )
             if old_asset:
-                return self._create_version_asset(
+                return await self._create_version_asset(
                     file_path, file_hash, context, source, bundle,
                     old_asset=old_asset, sidecar=sidecar,
                 )
@@ -276,7 +276,7 @@ class InboxPollHandler:
         if not existing_by_name:
             existing_by_name = self._find_by_filename(context, bundle.id, context.infospace_id, file_path.name)
         if existing_by_name and not existing_by_name.is_superseded:
-            return self._create_version_asset(
+            return await self._create_version_asset(
                 file_path, file_hash, context, source, bundle,
                 old_asset=existing_by_name, sidecar=sidecar,
             )
@@ -308,7 +308,7 @@ class InboxPollHandler:
     #  Asset creation helpers
     # ------------------------------------------------------------------ #
 
-    def _create_version_asset(
+    async def _create_version_asset(
         self,
         file_path: Path,
         file_hash: str,
@@ -319,20 +319,8 @@ class InboxPollHandler:
         old_asset: Asset,
         sidecar: Optional[Dict[str, Any]] = None,
     ) -> Asset:
-        """Create a new asset that supersedes *old_asset*."""
-        old_asset.is_superseded = True
-        context.session.add(old_asset)
-        # Cascade: mark children as having a superseded parent
-        from sqlalchemy import update as sql_update
-
-        context.session.execute(
-            sql_update(Asset)
-            .where(Asset.parent_asset_id == old_asset.id)
-            .values(parent_is_superseded=True)
-        )
-
+        """Create a new asset that supersedes *old_asset* via AssetBuilder."""
         asset = self._build_asset(file_path, file_hash, context, source, bundle)
-        asset.previous_asset_id = old_asset.id
 
         file_info = dict(asset.file_info or {})
         file_info["supersedes_asset_id"] = old_asset.id
@@ -343,11 +331,18 @@ class InboxPollHandler:
                 file_info["version_label"] = sidecar["version_label"]
         asset.file_info = file_info
 
+        from app.api.modules.content.services.asset_builder import AssetBuilder
+        result = await (
+            AssetBuilder(context.session, context.user_id, context.infospace_id)
+            .supersedes(old_asset)
+            .load(asset)
+        )
+
         logger.info(
             "Version link: %s supersedes asset %d (%s)",
             file_path.name, old_asset.id, old_asset.title,
         )
-        return asset
+        return result
 
     def _create_new_asset(
         self,

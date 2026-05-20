@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from fastapi import UploadFile
+from starlette.datastructures import UploadFile as _StarletteUploadFile
 
 from .base import IngestionContext
 
@@ -98,7 +99,9 @@ def _text_kwargs(loc, ctx, title, opts):
 # Register handlers (priority: specific before generic)
 register_handler(HandlerRegistration(
     handler_cls=FileHandler,
-    can_handle=lambda loc, _: isinstance(loc, UploadFile),
+    # Starlette's UploadFile is the runtime class FastAPI delivers; fastapi.UploadFile
+    # is a subclass so this match covers both.
+    can_handle=lambda loc, _: isinstance(loc, _StarletteUploadFile),
     method="handle",
     priority=100,
     build_kwargs=_file_kwargs,

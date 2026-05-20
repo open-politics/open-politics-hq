@@ -3,6 +3,9 @@ RSS Handler
 ===========
 
 Handles RSS feed ingestion, preview, and discovery from awesome-rss-feeds.
+RSSHandler owns the shape of a feedparser entry (content:encoded extraction,
+media:content image shape, publication-date parsing) and composes AssetBuilder
+setters directly.
 
 Instance methods (require IngestionContext):
 - handle(locator, title, options): Ingest RSS feed at URL, create article assets.
@@ -11,10 +14,6 @@ Static/class methods (no context needed):
 - preview_rss_feed(feed_url, max_items): Parse feed, return feed_info + items (no DB).
 - discover_rss_feeds_from_awesome_repo(country, category, limit): Fetch OPML from
   plenaryapp/awesome-rss-feeds, return list of {title, url, description, ...}.
-
-Class methods (require IngestionContext):
-- ingest_from_awesome_repo(context, country, ...): Discover feeds for country,
-  ingest each via handle(), add to bundle if specified.
 """
 
 import asyncio
@@ -23,20 +22,168 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import dateutil.parser
 import feedparser
 
-from app.models import Asset, AssetKind
+from app.models import Asset, AssetKind, ProcessingStatus
 from app.api.modules.content.services.asset_builder import AssetBuilder
 from .base import BaseHandler, IngestionContext
 
 logger = logging.getLogger(__name__)
 
 
-class RSSHandler(BaseHandler):
-    """
-    Handle RSS feed ingestion.
+def _extract_rss_content(entry: Any) -> str:
+    """Prefer <content:encoded> via feedparser's entry.content; fall back to summary."""
+    if hasattr(entry, "content") and entry.content:
+        return entry.content[0].get("value", "")
+    return entry.get("summary", "") or entry.get("description", "")
 
-    Uses AssetBuilder's from_rss_entry() pattern.
+
+def _extract_rss_images(entry: Any) -> List[Dict[str, Any]]:
+    """Extract media:content images from an RSS entry.
+
+    Returns a list of {url, title, role, media_credit, part_index} dicts.
+    """
+    images: List[Dict[str, Any]] = []
+    if not hasattr(entry, "media_content"):
+        return images
+
+    for idx, media in enumerate(entry.media_content):
+        media_type = media.get("type", "")
+        image_url = media.get("url")
+        if not image_url:
+            continue
+
+        is_image = (
+            (media_type and media_type.startswith("image"))
+            or media_type == "application/octet-stream"
+            or any(image_url.lower().endswith(ext) for ext in [
+                ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"
+            ])
+        )
+        if not is_image:
+            continue
+
+        image_title = None
+        if "media_title" in media:
+            image_title = media.get("media_title")
+        elif hasattr(media, "title"):
+            image_title = media.title
+        if not image_title and hasattr(entry, "media_title"):
+            image_title = entry.media_title
+
+        images.append({
+            "url": image_url,
+            "title": image_title,
+            "role": "featured" if idx == 0 else "content",
+            "media_credit": media.get("media_credit") or media.get("credit"),
+            "part_index": idx,
+        })
+    return images
+
+
+def _compose_rss_entry(
+    builder: AssetBuilder, entry: Any, feed_url: str, part_index: int = 0
+) -> AssetBuilder:
+    """Configure builder from a feedparser entry. Private helper — RSS-only."""
+    title = entry.get("title", "RSS Item")
+    content_text = _extract_rss_content(entry)
+    image_urls = _extract_rss_images(entry)
+
+    metadata = {
+        "content_format": "html",
+        "content_source": "rss_feed",
+        "ingestion_method": "rss_content_extraction",
+        "guid": entry.get("id", ""),
+        "author": entry.get("author", ""),
+        "publication_date": entry.get("published", ""),
+        "summary": entry.get("summary", ""),
+        "top_image": image_urls[0]["url"] if image_urls else None,
+        "rss_feed_url": feed_url,
+        "rss_item_id": entry.get("id", ""),
+        "rss_published_date": entry.get("published", ""),
+        "rss_updated_date": entry.get("updated", ""),
+        "rss_author": entry.get("author", ""),
+        "rss_summary": entry.get("summary", ""),
+        "rss_tags": [tag.get("term", "") for tag in entry.get("tags", [])],
+        "rss_link": entry.get("link", ""),
+        "has_full_content": bool(hasattr(entry, "content") and entry.content),
+        "content_length": len(content_text),
+        "rss_images": image_urls,
+    }
+
+    composed = (
+        builder
+        .as_kind(AssetKind.ARTICLE)
+        .with_title(title)
+        .with_text(content_text)
+        .with_source(entry.get("link", ""))
+        .with_part_index(part_index)
+        .with_metadata(**metadata)
+        .with_processing_status(ProcessingStatus.READY)
+        # Dedupe by RSS GUID (or link fallback). on_match="supersede" combined
+        # with AssetBuilder's skip-if-content-identical semantics gives us
+        # supersede-on-content-change: same GUID + same content → skip,
+        # same GUID + different content → old superseded, new row linked via
+        # previous_asset_id. Closes a silent-duplicate bug in the RSS handler.
+        .dedup_on(source_identifier=entry.get("id") or entry.get("link", ""))
+        .on_match("supersede")
+    )
+
+    pub_date = entry.get("published") or entry.get("updated")
+    if pub_date:
+        try:
+            composed = composed.with_timestamp(dateutil.parser.parse(pub_date))
+        except Exception:
+            pass
+
+    return composed
+
+
+def _build_rss_image_children(
+    session,
+    user_id: int,
+    infospace_id: int,
+    image_urls: List[Dict[str, Any]],
+) -> List[Asset]:
+    """Construct Asset rows for RSS-entry media:content images.
+
+    Stub image assets — just URL references, no download. Handler later
+    calls builder.build_children(parent_id, children) to insert them.
+    """
+    children: List[Asset] = []
+    for idx, img in enumerate(image_urls):
+        image_url = img.get("url")
+        if not image_url:
+            continue
+        is_featured = idx == 0
+        role = img.get("role", "featured" if is_featured else "content")
+        children.append(Asset(
+            kind=AssetKind.IMAGE,
+            stub=True,
+            title=img.get("title") or ("Featured image" if is_featured else f"Image {idx + 1}"),
+            source_identifier=image_url,
+            user_id=user_id,
+            infospace_id=infospace_id,
+            processing_status=ProcessingStatus.READY,
+            file_info={
+                "source": "rss_media_content",
+                "image_role": role,
+                "is_hero_image": is_featured,
+                "image_url": image_url,
+                "media_credit": img.get("media_credit"),
+                "extracted_from_rss": True,
+                "ingestion_method": "url_bookmark",
+            },
+        ))
+    return children
+
+
+class RSSHandler(BaseHandler):
+    """Handle RSS feed ingestion.
+
+    Composes AssetBuilder setters directly — no from_X entry point.
+    RSSHandler owns feedparser shape, content extraction, image extraction.
     """
 
     async def handle(
@@ -45,8 +192,7 @@ class RSSHandler(BaseHandler):
         title: Optional[str] = None,
         options: Optional[Dict[str, Any]] = None,
     ) -> List[Asset]:
-        """
-        Handle RSS feed ingestion.
+        """Handle RSS feed ingestion.
 
         Args:
             locator: URL of RSS feed
@@ -78,22 +224,26 @@ class RSSHandler(BaseHandler):
                 f"{len(feed.entries[:max_items])} entries"
             )
 
-            articles = []
+            articles: List[Asset] = []
             for i, entry in enumerate(feed.entries[:max_items]):
                 try:
-                    article = await (
-                        AssetBuilder(
+                    builder = AssetBuilder(
+                        self.session, self.user_id, self.infospace_id
+                    )
+                    builder = _compose_rss_entry(builder, entry, feed_url, i)
+                    builder = builder.with_metadata(**feed_metadata)
+                    article = await builder.build()
+
+                    # Create child image assets (stub bookmarks)
+                    image_urls = _extract_rss_images(entry)
+                    if image_urls:
+                        children = _build_rss_image_children(
+                            self.session, self.user_id, self.infospace_id, image_urls,
+                        )
+                        child_builder = AssetBuilder(
                             self.session, self.user_id, self.infospace_id
                         )
-                        .from_rss_entry(entry, feed_url, i)
-                        .as_kind(AssetKind.ARTICLE)
-                        .build()
-                    )
-
-                    file_info = article.file_info or {}
-                    file_info.update(feed_metadata)
-                    article.file_info = file_info
-                    self.session.add(article)
+                        await child_builder.build_children(article.id, children)
 
                     articles.append(article)
                     logger.debug(f"Created article: {article.title}")
