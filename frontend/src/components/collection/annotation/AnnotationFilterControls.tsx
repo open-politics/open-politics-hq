@@ -12,9 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { format, startOfDay, endOfDay } from 'date-fns';
-import { getTargetKeysForScheme } from '@/lib/annotations/utils';
+import { walkOutputContract, flattenFieldPaths, type FieldPath, type FieldShape } from '@/lib/annotations/fieldPaths';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
+import { FieldPicker } from './FieldPicker';
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { cn } from '@/lib/utils';
@@ -27,11 +28,49 @@ export interface FilterSet {
   logic: FilterLogicMode;
   rules: ResultFilter[];
 }
+
+/**
+ * UI operator names. These mirror the thirteen backend operators in
+ * ``core/filters.py::Operator`` with user-friendly aliases. The canonical
+ * mapping lives in ``FILTER_UI_OP_TO_BACKEND`` below — keep both in sync.
+ */
+export type FilterUIOperator =
+  | 'equals'
+  | 'not_equals'
+  | 'contains'
+  | 'not_contains'
+  | 'range'
+  | 'greater_than'
+  | 'greater_or_equal'
+  | 'less_than'
+  | 'less_or_equal'
+  | 'in'
+  | 'not_in'
+  | 'exists'
+  | 'not_exists';
+
+/** UI operator → backend operator. Serializers MUST route through this map. */
+export const FILTER_UI_OP_TO_BACKEND: Record<FilterUIOperator, string> = {
+  equals: 'eq',
+  not_equals: 'ne',
+  contains: 'contains',
+  not_contains: 'not_contains',
+  range: 'between',
+  greater_than: 'gt',
+  greater_or_equal: 'ge',
+  less_than: 'lt',
+  less_or_equal: 'le',
+  in: 'in',
+  not_in: 'not_in',
+  exists: 'exists',
+  not_exists: 'not_exists',
+};
+
 export interface ResultFilter {
   id: string;
   schemaId: number;
   fieldKey?: string;
-  operator: 'equals' | 'contains' | 'range' | 'greater_than' | 'less_than';
+  operator: FilterUIOperator;
   value: any;
   isActive: boolean;
 }
@@ -65,51 +104,94 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
     const activeFilterCount = filters.filter(f => f.isActive).length;
 
     // --- Start of logic from AnnotationResultFilters ---
-    const getTargetFieldDefinition = (filter: Omit<ResultFilter, 'id'>, schemas: AnnotationSchemaRead[]): { type: FieldType | "bool" | "float" | null; definition: any | null; } => {
-        const schema = schemas.find(s => s.id === filter.schemaId);
-        if (!schema || !schema.output_contract) return { type: null, definition: null };
-        const properties = (schema.output_contract as any).properties;
-        if(!properties) return { type: null, definition: null };
-        const targetKeyName = filter.fieldKey ?? (Object.keys(properties)[0] || null);
-        if (!targetKeyName) return { type: null, definition: null };
-        
-        const getFieldDefinitionFromSchema = (schema: AnnotationSchemaRead, fieldKey: string): any => {
-            if (!schema.output_contract) return null;
-            const properties = (schema.output_contract as any).properties;
-            if (!properties) return null;
-            const keys = fieldKey.split('.');
-            let currentSchema = properties;
-            for (let i = 0; i < keys.length; i++) {
-                const key = keys[i];
-                if (currentSchema[key]) {
-                    if (i === keys.length - 1) return currentSchema[key];
-                    else {
-                        if (currentSchema[key].type === 'object' && currentSchema[key].properties) currentSchema = currentSchema[key].properties;
-                        else if (currentSchema[key].type === 'array' && currentSchema[key].items?.type === 'object' && currentSchema[key].items.properties) currentSchema = currentSchema[key].items.properties;
-                        else return null;
-                    }
-                } else return null;
-            }
-            return null;
-        };
+    // Map the structural FieldShape (inferred via walkOutputContract) onto the
+    // operator/UI type the filter controls reason about. Array-of-object and
+    // triplet shapes get their own bucket so the "complex" operator set surfaces
+    // correctly — the previous flat-string map collapsed them onto List[str].
+    const SHAPE_TO_FIELD_TYPE: Record<FieldShape, FieldType | 'bool' | 'float' | null> = {
+        string: 'str',
+        enum_string: 'str',
+        date: 'str',
+        number: 'float',
+        boolean: 'bool',
+        array_string: 'List[str]',
+        array_string_enum: 'List[str]',
+        array_number: 'List[str]',
+        object: 'str',
+        array_object: 'List[Dict[str, any]]',
+        triplet: 'List[Dict[str, any]]',
+        // Entity references resolve to {name, type} objects; for filter
+        // purposes users match on the name path, so str operators apply.
+        // array_entity uses List[str]-style semantics so cooccurs / array
+        // operators surface in the picker.
+        entity: 'str',
+        array_entity: 'List[str]',
+        unknown: null,
+    };
 
-        const fieldDef = getFieldDefinitionFromSchema(schema, targetKeyName);
-        if (fieldDef) {
-            const typeMap: Record<string, FieldType | 'bool' | 'float'> = { "integer": "int", "number": "float", "string": "str", "boolean": "bool", "array": "List[str]", };
-            return { type: typeMap[fieldDef.type] || 'str', definition: fieldDef };
-        }
-        return { type: null, definition: null };
+    const getTargetFieldDefinition = (
+        filter: Omit<ResultFilter, 'id'>,
+        schemas: AnnotationSchemaRead[],
+    ): { type: FieldType | 'bool' | 'float' | null; node: FieldPath | null } => {
+        const schema = schemas.find(s => s.id === filter.schemaId);
+        if (!schema) return { type: null, node: null };
+        const paths = flattenFieldPaths(walkOutputContract(schema));
+        const targetKey = filter.fieldKey ?? paths.find(p => p.shape !== 'unknown')?.path ?? null;
+        if (!targetKey) return { type: null, node: null };
+        // findFieldPath equivalent on the flat list — also tolerates `[*]`-stripped
+        // legacy paths so saved filters keep round-tripping.
+        const norm = (p: string) => p.replace(/\[\*\]/g, '');
+        const target = norm(targetKey);
+        const node = paths.find(p => p.path === targetKey)
+            ?? paths.find(p => norm(p.path) === target)
+            ?? null;
+        if (!node) return { type: null, node: null };
+        return { type: SHAPE_TO_FIELD_TYPE[node.shape] ?? null, node };
+    };
+
+    const firstSelectableFieldPath = (schemaId: number, opts?: { acceptedShapes?: ReadonlyArray<FieldShape> }): string | undefined => {
+        const schema = allSchemas.find(s => s.id === schemaId);
+        if (!schema) return undefined;
+        const paths = flattenFieldPaths(walkOutputContract(schema));
+        const accepts = opts?.acceptedShapes;
+        const candidates = paths.filter(p => p.shape !== 'unknown' && (!accepts || accepts.includes(p.shape)));
+        if (candidates.length === 0) return undefined;
+        // Prefer leaves over container nodes so the default isn't an unhelpful
+        // top-level `document` / `per_*` parent.
+        const leaf = candidates.find(p => p.shape !== 'object' && p.shape !== 'array_object' && p.shape !== 'triplet');
+        return (leaf ?? candidates[0]).path;
+    };
+
+    const TIME_AXIS_SHAPES: ReadonlyArray<FieldShape> = ['string', 'enum_string', 'date', 'number'];
+
+    // Default value shape per operator. `range` needs [min, max], `in`/`not_in`
+    // need an array, `exists`/`not_exists` take no value. All other operators
+    // take a scalar (bool field defaults to 'False' for the existing Select UI).
+    const defaultValueForOp = (
+        op: ResultFilter['operator'],
+        type: FieldType | 'bool' | 'float' | null,
+    ): any => {
+        if (op === 'range') return [null, null];
+        if (op === 'in' || op === 'not_in') return [];
+        if (op === 'exists' || op === 'not_exists') return null;
+        return type === 'bool' ? 'False' : '';
     };
 
     const addFilter = () => {
         if (allSchemas.length === 0) return;
         const defaultSchema = allSchemas[0];
-        const targetKeys = getTargetKeysForScheme(defaultSchema.id, allSchemas, { includeArrayItemFields: true });
-        const initialFieldKey = targetKeys.length > 0 ? targetKeys[0].key : undefined;
+        const initialFieldKey = firstSelectableFieldPath(defaultSchema.id);
         const { type: initialType } = getTargetFieldDefinition({ schemaId: defaultSchema.id, fieldKey: initialFieldKey, operator: 'equals', value: '', isActive: true }, allSchemas);
         const initialOperators = getOperatorsForType(initialType);
         const initialOperator = initialOperators[0];
-        const newRule: ResultFilter = { id: `filter_${Date.now()}`, schemaId: defaultSchema.id, fieldKey: initialFieldKey, operator: initialOperator, value: initialOperator === 'range' ? [null, null] : initialType === 'bool' ? 'False' : '', isActive: true };
+        const newRule: ResultFilter = {
+            id: `filter_${Date.now()}`,
+            schemaId: defaultSchema.id,
+            fieldKey: initialFieldKey,
+            operator: initialOperator,
+            value: defaultValueForOp(initialOperator, initialType),
+            isActive: true,
+        };
         onFilterSetChange({ ...filterSet, rules: [...filters, newRule] });
     };
 
@@ -124,9 +206,7 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
         }
         let needsValueReset = false;
         if (updatedFilterData.schemaId && updatedFilterData.schemaId !== currentFilter.schemaId) {
-            const newSchemaId = updatedFilterData.schemaId;
-            const targetKeys = getTargetKeysForScheme(newSchemaId, allSchemas, { includeArrayItemFields: true });
-            mergedFilter.fieldKey = targetKeys.length > 0 ? targetKeys[0].key : undefined;
+            mergedFilter.fieldKey = firstSelectableFieldPath(updatedFilterData.schemaId);
             needsValueReset = true;
         } else if ('fieldKey' in updatedFilterData && updatedFilterData.fieldKey !== currentFilter.fieldKey) {
             needsValueReset = true;
@@ -137,7 +217,7 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
             const { type: newType } = getTargetFieldDefinition(mergedFilter, allSchemas);
             const newOperators = getOperatorsForType(newType);
             if (!newOperators.includes(mergedFilter.operator)) mergedFilter.operator = newOperators[0];
-            mergedFilter.value = mergedFilter.operator === 'range' ? [null, null] : newType === 'bool' ? 'False' : '';
+            mergedFilter.value = defaultValueForOp(mergedFilter.operator, newType);
         }
         newFilters[index] = mergedFilter;
         onFilterSetChange({ ...filterSet, rules: newFilters });
@@ -152,12 +232,33 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
     };
 
     const getOperatorsForType = (type: FieldType | 'bool' | 'float' | null): Array<ResultFilter['operator']> => {
+        // Every type also accepts `exists`/`not_exists` for nullability checks —
+        // matches the backend, which evaluates both via ``jsonb ?`` / ``IS NOT NULL``.
+        const nullChecks: Array<ResultFilter['operator']> = ['exists', 'not_exists'];
         switch (type) {
-            case 'int': case 'float': return ['equals', 'range', 'greater_than', 'less_than'];
-            case 'List[str]': case 'str': return ['equals', 'contains'];
-            case 'List[Dict[str, any]]': return ['contains', 'equals'];
-            case 'bool': return ['equals'];
-            default: return ['equals', 'contains'];
+            case 'int':
+            case 'float':
+                return [
+                    'equals', 'not_equals', 'range',
+                    'greater_than', 'greater_or_equal',
+                    'less_than', 'less_or_equal',
+                    'in', 'not_in',
+                    ...nullChecks,
+                ];
+            case 'List[str]':
+            case 'str':
+                return [
+                    'equals', 'not_equals',
+                    'contains', 'not_contains',
+                    'in', 'not_in',
+                    ...nullChecks,
+                ];
+            case 'List[Dict[str, any]]':
+                return ['contains', 'not_contains', 'equals', 'not_equals', ...nullChecks];
+            case 'bool':
+                return ['equals', 'not_equals', ...nullChecks];
+            default:
+                return ['equals', 'not_equals', 'contains', 'not_contains', ...nullChecks];
         }
     };
     
@@ -176,19 +277,42 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
     };
 
     const renderValueInput = (filter: ResultFilter, index: number, type: FieldType | 'bool' | 'float' | null) => {
+        // Existence checks carry no value — backend ignores it.
+        if (filter.operator === 'exists' || filter.operator === 'not_exists') {
+            return <span className="text-[11px] text-muted-foreground italic">no value</span>;
+        }
+        // List operators take comma-separated values. Stored as Array<string|number>.
+        if (filter.operator === 'in' || filter.operator === 'not_in') {
+            const asList = Array.isArray(filter.value) ? filter.value : [];
+            const displayValue = asList.join(', ');
+            return (
+                <Input
+                    placeholder="value1, value2, …"
+                    value={displayValue}
+                    onChange={(e) => {
+                        const next = e.target.value
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter((s) => s.length > 0);
+                        updateFilter(index, { value: next });
+                    }}
+                    className="h-7 text-xs"
+                />
+            );
+        }
         switch (type) {
             case 'int':
             case 'float':
                 if (filter.operator === 'range') {
                     return (
                         <div className="flex items-center gap-1.5">
-                            <Input type="number" placeholder="Min" value={filter.value[0] ?? ''} onChange={(e) => updateFilter(index, { value: [e.target.value, filter.value[1]] })} className="h-7 text-xs"/>
+                            <Input type="number" placeholder="Min" value={filter.value?.[0] ?? ''} onChange={(e) => updateFilter(index, { value: [e.target.value, filter.value?.[1]] })} className="h-7 text-xs"/>
                             <span className="text-muted-foreground text-xs">-</span>
-                            <Input type="number" placeholder="Max" value={filter.value[1] ?? ''} onChange={(e) => updateFilter(index, { value: [filter.value[0], e.target.value] })} className="h-7 text-xs"/>
+                            <Input type="number" placeholder="Max" value={filter.value?.[1] ?? ''} onChange={(e) => updateFilter(index, { value: [filter.value?.[0], e.target.value] })} className="h-7 text-xs"/>
                         </div>
                     );
                 }
-                return <Input type="number" value={filter.value} onChange={(e) => updateFilter(index, { value: e.target.value })} className="h-7 text-xs"/>;
+                return <Input type="number" value={filter.value ?? ''} onChange={(e) => updateFilter(index, { value: e.target.value })} className="h-7 text-xs"/>;
             case 'bool':
                 return (
                     <Select value={filter.value} onValueChange={(v) => updateFilter(index, { value: v })}>
@@ -197,7 +321,7 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
                     </Select>
                 );
             default:
-                return <Input value={filter.value} onChange={(e) => updateFilter(index, { value: e.target.value })} className="h-7 text-xs"/>;
+                return <Input value={filter.value ?? ''} onChange={(e) => updateFilter(index, { value: e.target.value })} className="h-7 text-xs"/>;
         }
     };
     // --- End of logic from AnnotationResultFilters ---
@@ -208,21 +332,22 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
     const selectedFieldKey = timeAxisConfig?.type === 'schema' ? timeAxisConfig.fieldKey ?? null : null;
     const timeFrame = timeAxisConfig?.timeFrame ?? { enabled: false };
 
-    const fieldOptions = useMemo(() => {
-        if (sourceType !== 'schema' || !selectedSchemaId) return [];
-        const targetKeys = getTargetKeysForScheme(selectedSchemaId, allSchemas, { includeArrayItemFields: true });
-        return targetKeys
-            .filter(tk => tk.type === 'string' || tk.type === 'integer' || tk.type === 'number')
-            .map(tk => ({ value: tk.key, label: `${tk.name} (${tk.type})` }));
+    // Count of selectable time-axis fields in the chosen schema. Drives the
+    // "no text/number fields" empty-state hint without re-walking the contract
+    // inside the JSX.
+    const timeFieldCount = useMemo(() => {
+        if (sourceType !== 'schema' || !selectedSchemaId) return 0;
+        const schema = allSchemas.find(s => s.id === selectedSchemaId);
+        if (!schema) return 0;
+        return flattenFieldPaths(walkOutputContract(schema)).filter(p => TIME_AXIS_SHAPES.includes(p.shape)).length;
     }, [sourceType, selectedSchemaId, allSchemas]);
 
     const handleSourceTypeChange = (newType: TimeAxisSourceType) => {
         if (newType === 'schema') {
             const defaultSchemaId = allSchemas.length > 0 ? allSchemas[0].id : null;
             if (defaultSchemaId) {
-                const defaultFields = getTargetKeysForScheme(defaultSchemaId, allSchemas, { includeArrayItemFields: true }).filter(tk => tk.type === 'string' || tk.type === 'integer' || tk.type === 'number');
-                const defaultFieldKey = defaultFields.length > 0 ? defaultFields[0].key : null;
-                onTimeAxisConfigChange({ ...timeAxisConfig, type: 'schema', schemaId: defaultSchemaId, fieldKey: defaultFieldKey || undefined });
+                const defaultFieldKey = firstSelectableFieldPath(defaultSchemaId, { acceptedShapes: TIME_AXIS_SHAPES });
+                onTimeAxisConfigChange({ ...timeAxisConfig, type: 'schema', schemaId: defaultSchemaId, fieldKey: defaultFieldKey });
             } else {
                 onTimeAxisConfigChange({ ...timeAxisConfig, type: 'schema' });
             }
@@ -234,16 +359,15 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
     const handleSchemaChange = (schemaIdStr: string) => {
         const newSchemaId = schemaIdStr ? parseInt(schemaIdStr, 10) : null;
         if (newSchemaId) {
-            const defaultFields = getTargetKeysForScheme(newSchemaId, allSchemas, { includeArrayItemFields: true }).filter(tk => tk.type === 'string' || tk.type === 'integer' || tk.type === 'number');
-            const defaultFieldKey = defaultFields.length > 0 ? defaultFields[0].key : null;
-            onTimeAxisConfigChange({ ...timeAxisConfig, type: 'schema', schemaId: newSchemaId, fieldKey: defaultFieldKey || undefined });
+            const defaultFieldKey = firstSelectableFieldPath(newSchemaId, { acceptedShapes: TIME_AXIS_SHAPES });
+            onTimeAxisConfigChange({ ...timeAxisConfig, type: 'schema', schemaId: newSchemaId, fieldKey: defaultFieldKey });
         } else {
             onTimeAxisConfigChange({ ...timeAxisConfig, type: 'schema' });
         }
     };
 
-    const handleFieldChange = (newFieldKey: string) => {
-        onTimeAxisConfigChange({ ...timeAxisConfig, type: 'schema', schemaId: selectedSchemaId!, fieldKey: newFieldKey || undefined });
+    const handleFieldChange = (newFieldKey: string | null) => {
+        onTimeAxisConfigChange({ ...timeAxisConfig, type: 'schema', schemaId: selectedSchemaId!, fieldKey: newFieldKey ?? undefined });
     };
 
     const handleTimeFrameToggle = () => {
@@ -290,20 +414,22 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
         <Popover open={isOpen} onOpenChange={setIsOpen}>
             <PopoverTrigger asChild>
                 <Button
-                    variant={hasActiveFilters ? "secondary" : "ghost"}
+                    variant="ghost"
                     size="sm"
-                    className={cn("h-6 px-2 text-xs gap-1", hasActiveFilters && "border border-primary/20")}
+                    className="h-6 px-2 text-xs gap-1"
                 >
                     <SlidersHorizontal className="h-3 w-3" />
-                    Filters
+                    <span>&</span>
+                    <Clock />
                     {activeFilterCount > 0 && (<span className="text-[10px] bg-primary text-primary-foreground rounded-full h-4 w-4 flex items-center justify-center">{activeFilterCount}</span>)}
                     {timeAxisConfig?.timeFrame?.enabled && (<span className="text-[10px] bg-secondary text-secondary-foreground rounded-md px-1 py-0.5 leading-none">T</span>)}
                 </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-[420px] max-h-[70vh] overflow-y-auto p-3" align="end" side="bottom">
+            <PopoverContent className="w-[420px] max-h-[40vh] overflow-y-auto p-3" align="end" side="bottom">
                 <div className="space-y-3">
                 <div className="flex items-center justify-between mb-1">
-                    <h4 className="font-semibold text-xs">Filters & Time</h4>
+                    <h4 className="font-semibold text-xs">Filters, Time Source, and Range</h4>
+               
                     {hasActiveFilters && (
                         <Button
                             variant="ghost"
@@ -339,9 +465,9 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
                     <ScrollArea className="max-h-60 pr-2">
                         <div className="space-y-2">
                             {filters.map((filter, index) => {
-                                const { type, definition } = getTargetFieldDefinition(filter, allSchemas);
+                                const { type } = getTargetFieldDefinition(filter, allSchemas);
                                 const operators = getOperatorsForType(type);
-                                const targetKeys = getTargetKeysForScheme(filter.schemaId, allSchemas, { includeArrayItemFields: true });
+                                const filterSchema = allSchemas.find(s => s.id === filter.schemaId) ?? null;
                                 return (
                                     <div key={filter.id} className={cn("flex items-start gap-1.5 p-2 rounded-lg border", !filter.isActive && "bg-muted/50")}>
                                         <div className="flex-1 space-y-1.5">
@@ -350,10 +476,14 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
                                                     <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Schema" /></SelectTrigger>
                                                     <SelectContent>{allSchemas.map(s => <SelectItem key={s.id} value={s.id.toString()} className="text-xs">{s.name}</SelectItem>)}</SelectContent>
                                                 </Select>
-                                                <Select value={filter.fieldKey} onValueChange={(v) => updateFilter(index, { fieldKey: v })} disabled={targetKeys.length === 0}>
-                                                    <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Field" /></SelectTrigger>
-                                                    <SelectContent>{targetKeys.map(tk => <SelectItem key={tk.key} value={tk.key} className="text-xs">{tk.name} ({tk.type})</SelectItem>)}</SelectContent>
-                                                </Select>
+                                                <FieldPicker
+                                                    schema={filterSchema}
+                                                    value={filter.fieldKey ?? null}
+                                                    onChange={(v) => updateFilter(index, { fieldKey: v ?? undefined })}
+                                                    placeholder="Field"
+                                                    triggerClassName="w-full"
+                                                    disabled={!filterSchema}
+                                                />
                                                 <Select value={filter.operator} onValueChange={(v) => updateFilter(index, { operator: v as any })}>
                                                     <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Operator" /></SelectTrigger>
                                                     <SelectContent>{operators.map(op => <SelectItem key={op} value={op} className="text-xs">{op.replace(/_/g, ' ')}</SelectItem>)}</SelectContent>
@@ -398,18 +528,24 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
                                             <Label htmlFor="time-schema-select" className="text-[10px] mb-1 block text-muted-foreground">Schema</Label>
                                             <Select value={selectedSchemaId?.toString() ?? ""} onValueChange={handleSchemaChange} disabled={allSchemas.length === 0}>
                                                 <SelectTrigger id="time-schema-select" className="h-7 text-xs w-full"><SelectValue placeholder="Schema..." /></SelectTrigger>
-                                                <SelectContent><ScrollArea className="max-h-60 w-full">{allSchemas.map(s => (<SelectItem key={s.id} value={s.id.toString()} className="text-xs">{s.name}</SelectItem>))}{allSchemas.length === 0 && <div className="p-2 text-xs text-center italic text-muted-foreground">No schemas</div>}</ScrollArea></SelectContent>
+                                                <SelectContent><ScrollArea className="max-h-60 w-full overflow-y-auto">{allSchemas.map(s => (<SelectItem key={s.id} value={s.id.toString()} className="text-xs">{s.name}</SelectItem>))}{allSchemas.length === 0 && <div className="p-2 text-xs text-center italic text-muted-foreground">No schemas</div>}</ScrollArea></SelectContent>
                                             </Select>
                                         </div>
                                         <div>
                                             <Label htmlFor="time-field-select" className="text-[10px] mb-1 block text-muted-foreground">Field</Label>
-                                            <Select value={selectedFieldKey ?? ""} onValueChange={handleFieldChange} disabled={!selectedSchemaId || fieldOptions.length === 0}>
-                                                <SelectTrigger id="time-field-select" className="h-7 text-xs w-full"><SelectValue placeholder="Field..." /></SelectTrigger>
-                                                <SelectContent><ScrollArea className="max-h-60 w-full">{fieldOptions.map(opt => (<SelectItem key={opt.value} value={opt.value} className="text-xs">{opt.label}</SelectItem>))}{fieldOptions.length === 0 && selectedSchemaId && <div className="p-2 text-xs text-center italic">No text/number fields</div>}{!selectedSchemaId && <div className="p-2 text-xs text-center italic">Select schema first</div>}</ScrollArea></SelectContent>
-                                            </Select>
+                                            <FieldPicker
+                                                schema={selectedSchemaId ? allSchemas.find(s => s.id === selectedSchemaId) ?? null : null}
+                                                value={selectedFieldKey}
+                                                onChange={handleFieldChange}
+                                                acceptedShapes={TIME_AXIS_SHAPES}
+                                                placeholder={selectedSchemaId ? 'Field...' : 'Select schema first'}
+                                                disabled={!selectedSchemaId || timeFieldCount === 0}
+                                                triggerClassName="w-full"
+                                                emptyMessage="No text or number fields in this schema."
+                                            />
                                         </div>
                                     </div>
-                                    {selectedSchemaId && fieldOptions.length === 0 && (<p className="text-[10px] text-muted-foreground italic pt-1">No text or number fields in schema.</p>)}
+                                    {selectedSchemaId && timeFieldCount === 0 && (<p className="text-[10px] text-muted-foreground italic pt-1">No text or number fields in schema.</p>)}
                                 </div>
                             )}
                             <div className="border-t pt-2">

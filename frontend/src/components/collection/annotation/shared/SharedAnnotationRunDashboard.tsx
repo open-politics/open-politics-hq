@@ -7,6 +7,7 @@ import { PanelRenderer } from '@/components/collection/annotation/PanelRenderer'
 import { FormattedAnnotation, AnnotationResultStatus } from '@/lib/annotations/types';
 import { AnnotationSchemaRead, AssetRead, AssetKind } from '@/client';
 import { PanelViewConfig } from '@/zustand_stores/useAnnotationRunStore';
+import type { PanelConfig } from '@/lib/annotations/types';
 import { 
   Calendar, 
   Clock, 
@@ -30,6 +31,7 @@ import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
 import { ImportResourceDialog } from '@/components/collection/assets/Helper/ImportResourceDialog';
 import useAuth from '@/hooks/useAuth';
+import AssetDetailProvider from '@/components/collection/assets/Views/AssetDetailProvider';
 
 interface AnnotationRunPreview {
   id: number;
@@ -208,7 +210,7 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
   }, []);
 
   // Compute initial panels from shared config
-  const initialPanels = useMemo<PanelViewConfig[]>(() => {
+  const initialPanels = useMemo<PanelConfig[]>(() => {
     if (runData.views_config && runData.views_config.length > 0) {
       const dashboardConfig = runData.views_config[0];
       const originalPanels = dashboardConfig.panels || [];
@@ -340,31 +342,31 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
         id: 'table-panel',
         name: 'Annotation Results',
         description: 'Detailed view of all annotation results',
-        type: 'table',
-        gridPos: { x: 0, y: 0, w: 12, h: 8 },
-        filters: { logic: 'and', rules: [] },
-        settings: {},
+        type: 'table' as const,
+        grid_position: { x: 0, y: 0, w: 12, h: 8 },
+        projection: { field_mappings: {}, explosion: null },
+        aggregation: {},
+        local_filters: { logic: 'and' as const, conditions: [] },
+        incoming_scopes: [],
+        merge_maps: [],
+        settings:{},
         collapsed: false,
       },
       {
         id: 'chart-panel',
         name: 'Results Over Time',
         description: 'Timeline view of annotation results',
-        type: 'chart',
-        gridPos: { x: 0, y: 8, w: 8, h: 6 },
-        filters: { logic: 'and', rules: [] },
-        settings: {
+        type: 'chart' as const,
+        grid_position: { x: 0, y: 8, w: 8, h: 6 },
+        projection: { field_mappings: {}, explosion: null },
+        aggregation: { interval: 'day' },
+        local_filters: { logic: 'and' as const, conditions: [] },
+        incoming_scopes: [],
+        merge_maps: [],
+        settings:{
           selectedTimeInterval: 'day',
           aggregateSources: true,
           selectedSourceIds: [],
-          timeAxisConfig: {
-            type: 'default' as const,
-            schemaId: null,
-            fieldKey: null,
-            timeFrame: {
-              enabled: false
-            }
-          }
         },
         collapsed: false,
       },
@@ -372,10 +374,14 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
         id: 'pie-panel',
         name: 'Results by Schema',
         description: 'Distribution of results across schemas',
-        type: 'pie',
-        gridPos: { x: 8, y: 8, w: 4, h: 6 },
-        filters: { logic: 'and', rules: [] },
-        settings: {
+        type: 'pie' as const,
+        grid_position: { x: 8, y: 8, w: 4, h: 6 },
+        projection: { field_mappings: {}, explosion: null },
+        aggregation: { top_n: 10 },
+        local_filters: { logic: 'and' as const, conditions: [] },
+        incoming_scopes: [],
+        merge_maps: [],
+        settings:{
           aggregateSources: true,
           selectedSourceIds: [],
         },
@@ -385,7 +391,7 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
   }, [runData.views_config, formattedSchemas, runData.target_schemas]);
 
   // Local state for editable dashboard panels (starts with shared config)
-  const [dashboardPanels, setDashboardPanels] = useState<PanelViewConfig[]>(initialPanels);
+  const [dashboardPanels, setDashboardPanels] = useState<PanelConfig[]>(initialPanels);
   const [hasChanges, setHasChanges] = useState(false);
 
   // Update local panels when shared config changes
@@ -395,29 +401,29 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
   }, [initialPanels]);
 
   // Panel update handler
-  const handleUpdatePanel = useCallback((panelId: string, updates: Partial<PanelViewConfig>) => {
+  const handleUpdatePanel = useCallback((panelId: string, updates: Partial<PanelConfig>) => {
     setDashboardPanels(prevPanels => {
       const panelIndex = prevPanels.findIndex(p => p.id === panelId);
       if (panelIndex === -1) return prevPanels;
 
       const currentPanel = prevPanels[panelIndex];
-      const updatedPanel: PanelViewConfig = {
+      const updatedPanel: PanelConfig = {
         ...currentPanel,
         ...updates,
-        gridPos: updates.gridPos 
+        grid_position: updates.grid_position
           ? {
-              x: Math.max(0, Math.min(11, updates.gridPos.x ?? currentPanel.gridPos.x)),
-              y: Math.max(0, updates.gridPos.y ?? currentPanel.gridPos.y),
-              w: Math.max(1, Math.min(12, updates.gridPos.w ?? currentPanel.gridPos.w)),
-              h: Math.max(1, updates.gridPos.h ?? currentPanel.gridPos.h),
+              x: Math.max(0, Math.min(11, updates.grid_position.x ?? currentPanel.grid_position.x)),
+              y: Math.max(0, updates.grid_position.y ?? currentPanel.grid_position.y),
+              w: Math.max(1, Math.min(12, updates.grid_position.w ?? currentPanel.grid_position.w)),
+              h: Math.max(1, updates.grid_position.h ?? currentPanel.grid_position.h),
             }
-          : currentPanel.gridPos,
-        settings: updates.settings 
+          : currentPanel.grid_position,
+        settings: updates.settings
           ? { ...currentPanel.settings, ...updates.settings }
           : currentPanel.settings,
-        filters: updates.filters 
-          ? { ...currentPanel.filters, ...updates.filters }
-          : currentPanel.filters,
+        local_filters: updates.local_filters
+          ? { ...currentPanel.local_filters, ...updates.local_filters }
+          : currentPanel.local_filters,
       };
 
       const newPanels = [...prevPanels];
@@ -477,6 +483,11 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
   }, [token, importResourceFromToken, router]);
 
   return (
+    <AssetDetailProvider
+      annotationResults={formattedResults}
+      schemas={formattedSchemas}
+      activeRunId={runData.id}
+    >
     <div className="min-h-screen py-8">
       <div className="container mx-auto px-4 max-w-full">
         {/* Header */}
@@ -612,20 +623,18 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
                 className="shared-dashboard-panel transition-all duration-200 ease-in-out"
                 style={{
                   // CSS custom properties for responsive behavior
-                  '--grid-x': panel.gridPos.x,
-                  '--grid-y': panel.gridPos.y,
-                  '--grid-w': panel.gridPos.w,
-                  '--grid-h': panel.gridPos.h,
+                  '--grid-x': panel.grid_position.x,
+                  '--grid-y': panel.grid_position.y,
+                  '--grid-w': panel.grid_position.w,
+                  '--grid-h': panel.grid_position.h,
                 } as React.CSSProperties}
               >
               <PanelRenderer
-                panel={panel}
-                allResults={formattedResults}
+                panel={panel as any}
+                infospaceId={0}
+                runId={runData.id}
                 allSchemas={formattedSchemas}
-                allSources={formattedSources}
-                allAssets={formattedAssets}
-                activeRunId={runData.id}
-                onUpdatePanel={handleUpdatePanel}
+                onUpdatePanel={handleUpdatePanel as any}
                 onRemovePanel={handleRemovePanel}
                 // Editable mode: allow filter/config changes but disable asset navigation
                 // Assets don't exist in viewer's infospace, so navigation would fail
@@ -690,6 +699,7 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
         )}
       </div>
     </div>
+    </AssetDetailProvider>
   );
 };
 

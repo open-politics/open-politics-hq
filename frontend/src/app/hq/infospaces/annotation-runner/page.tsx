@@ -132,9 +132,30 @@ export default function AnnotationRunnerPage() {
       setRunResults([]);
     }
   }, [activeRun?.id, fetchRunResults]);
-  
+
+  // Debug: log when activeRun's status / progress changes so we can see which
+  // pieces of state the SSE handler actually updates.
+  useEffect(() => {
+    // eslint-disable-next-line no-console
+    console.log('[page] activeRun snapshot', activeRun ? {
+      id: activeRun.id,
+      status: activeRun.status,
+      progress_current: activeRun.progress_current,
+      progress_total: activeRun.progress_total,
+    } : null);
+  }, [activeRun?.id, activeRun?.status, activeRun?.progress_current, activeRun?.progress_total]);
+
   // Presence: subscribe to annotation run stream for live progress
-  const isRunActive = activeRun?.status === 'running' || activeRun?.status === 'pending';
+  // ``effective_status`` rolls up family activity: when an extension run is
+  // mid-flight the parent's stored ``status`` is still ``completed`` (we
+  // never lie about the parent's own lifecycle), but ``effective_status``
+  // flips to ``running``. Listening on either keeps SSE + polling alive
+  // during extensions without changing the parent's underlying status.
+  const isRunActive =
+    activeRun?.status === 'running' ||
+    activeRun?.status === 'pending' ||
+    activeRun?.effective_status === 'running' ||
+    activeRun?.effective_status === 'pending';
   const { isConnected: streamConnected } = useStream<{
     run_id: number;
     progress_current?: number;
@@ -148,26 +169,55 @@ export default function AnnotationRunnerPage() {
     enabled: !!activeInfospace?.id && !!activeRun?.id && !!isRunActive,
     onEvent: (event) => {
       if (event.type === 'progress') {
-        // Refresh run list to pick up progress_current/total
-        loadRuns();
+        // Apply progress directly from the event (no full refetch) so the
+        // header's progress bar updates per-annotation without hammering
+        // /runs. Also silently refresh row results so the table fills in.
+        setActiveRun((prev) =>
+          prev && prev.id === event.data.run_id
+            ? {
+                ...prev,
+                progress_current: event.data.progress_current ?? prev.progress_current,
+                progress_total: event.data.progress_total ?? prev.progress_total,
+                status: (event.data.status as AnnotationRunRead['status']) ?? prev.status,
+              }
+            : prev,
+        );
+        if (event.data.run_id) {
+          fetchRunResults(event.data.run_id, true);
+        }
       }
       if (event.type === 'completed' || event.type === 'completed_with_errors' || event.type === 'failed') {
-        // Terminal event: refresh everything
+        // Terminal event: apply status immediately so isRunning flips off
+        // without waiting for /runs to round-trip. Then refresh everything
+        // (picks up final error_message, aggregates, progress totals).
+        const terminalStatus =
+          event.type === 'failed' ? 'failed'
+          : event.type === 'completed_with_errors' ? 'completed_with_errors'
+          : 'completed';
+        setActiveRun((prev) =>
+          prev && prev.id === event.data.run_id
+            ? { ...prev, status: terminalStatus as AnnotationRunRead['status'] }
+            : prev,
+        );
         loadRuns();
-        if (activeRun?.id) fetchRunResults(activeRun.id);
+        if (event.data.run_id) fetchRunResults(event.data.run_id);
       }
     },
   });
 
-  // Fallback polling: if SSE stream fails to connect, poll every 5s
+  // Polling baseline: every 3s while the run is active, regardless of SSE.
+  // SSE is the low-latency path; this is the always-works fallback so the UI
+  // updates even if the stream silently drops events. The small duplicate
+  // cost is worth the reliability — loadRuns + results are already cached by
+  // the server and both requests are cheap.
   useEffect(() => {
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
 
-    if (isRunActive && !streamConnected) {
-      const runId = activeRun!.id;
+    if (isRunActive && activeRun?.id) {
+      const runId = activeRun.id;
       pollIntervalRef.current = setInterval(async () => {
         await loadRuns();
         await fetchRunResults(runId, true);
@@ -182,7 +232,7 @@ export default function AnnotationRunnerPage() {
         pollIntervalRef.current = null;
       }
     };
-  }, [activeRun?.id, activeRun?.status, streamConnected, loadRuns, fetchRunResults]);
+  }, [activeRun?.id, activeRun?.status, isRunActive, loadRuns, fetchRunResults]);
 
   const handleSelectRunFromHistory = (runId: number) => {
     const runToLoad = runs.find(r => r.id === runId);
@@ -246,7 +296,7 @@ export default function AnnotationRunnerPage() {
         {runError && <p className="text-red-500 mt-4 text-center">{runError}</p>}
       </div>
       
-      <AnnotationRunnerDock 
+      <AnnotationRunnerDock
         allAssets={assets}
         allSchemes={schemas}
         allRuns={runs}
@@ -254,6 +304,7 @@ export default function AnnotationRunnerPage() {
         onSelectRun={handleSelectRunFromHistory}
         activeRunId={activeRun?.id || null}
         isCreatingRun={isCreatingRun}
+        isLoadingRuns={isLoadingRuns}
         onClearRun={clearActiveRun}
       />
     </div>

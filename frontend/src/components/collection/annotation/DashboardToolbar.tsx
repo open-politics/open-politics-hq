@@ -317,7 +317,7 @@ export function DashboardToolbar({
 
       {/* Dashboard Settings Dialog */}
       <Dialog open={isSettingsDialogOpen} onOpenChange={setIsSettingsDialogOpen}>
-        <DialogContent className="sm:max-w-[600px] max-h-[80vh] overflow-hidden flex flex-col">
+        <DialogContent className="overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle>Dashboard Settings</DialogTitle>
             <DialogDescription>

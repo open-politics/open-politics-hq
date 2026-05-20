@@ -22,7 +22,8 @@ import {
     Legend
 } from 'recharts';
 import { HelpCircle, FileText, ImageIcon, PanelLeft, PanelLeftClose } from 'lucide-react';
-import { getTargetKeysForScheme, getAnnotationFieldValue, formatFieldNameForDisplay as formatFieldNameUtil, getModalityIcon, checkFilterMatch } from '@/lib/annotations/utils';
+import { getTargetKeysForScheme, getAnnotationFieldValue, getFieldDefinitionFromSchema, formatFieldNameForDisplay as formatFieldNameUtil, getModalityIcon, checkFilterMatch } from '@/lib/annotations/utils';
+import TypedCell, { type Density, type FieldRangeCache, smartIsoDisplay, isMissingValue } from './cellRenderers';
 import { searchInAnnotationValue } from '@/lib/annotations/search';
 import { TextSpanSnippets } from '@/components/ui/highlighted-text';
 // Text span extraction is now handled by AnnotationFieldsPanel on field click
@@ -52,6 +53,56 @@ import {
 } from '@/lib/annotations/utils';
 // Color system
 import { getEntityBadgeClasses } from '@/lib/annotations/colors';
+// Inline graph preview for triplet fields in the detail overlay
+import { ForceGraph, tripletsArrayToGraphData, defaultGraphViewConfig } from '@/components/collection/graph';
+
+// =============================================================================
+// TripletInlinePreview — extracts the inline 260px graph preview into a
+// memoized component. Without this, the parent re-rendering for any unrelated
+// reason (theme flip, sibling state, etc) would call ``tripletsArrayToGraphData``
+// fresh and force ``ForceGraph`` to re-init its simulation. ``viewMode`` is
+// hardcoded to '2d' so the Three.js bundle never loads on detail-view routes.
+// =============================================================================
+
+const TRIPLET_PREVIEW_CONFIG = {
+  ...defaultGraphViewConfig,
+  zoomOnNodeClick: false,
+  showEdgeArrows: true,
+  labelFontSize: 10,
+  // Stronger repulsion + longer links so node labels in the small inline
+  // viewer don't visually collide. The S5 size-aware tuning further
+  // multiplies these for graphs ≤30 nodes.
+  chargeStrength: -360,
+  linkDistance: 120,
+  warmupTicks: 80,
+  autoFitOnLoad: true,
+  // Inline preview zooms-to-fit in a 260px box → effective scale often
+  // <0.4, which would normally hide labels. Lower the gate so the small
+  // graph stays labeled.
+  labelMinScale: 0.1,
+  viewMode: '2d' as const,
+};
+
+const TripletInlinePreview: React.FC<{ triplets: any[] }> = React.memo(({ triplets }) => {
+  const { nodes, edges } = useMemo(() => tripletsArrayToGraphData(triplets as any), [triplets]);
+  // Edges shallow-clone — same gotcha as panel/curated consumers, in case the
+  // inline overlay re-mounts or a parent reads from these arrays later.
+  const renderEdges = useMemo(() => edges.map(e => ({ ...e })), [edges]);
+  if (nodes.length === 0 || edges.length === 0) return null;
+  return (
+    <div className="w-full h-[260px] rounded border border-border/50 bg-background/40 overflow-hidden min-w-0">
+      <ForceGraph
+        nodes={nodes}
+        edges={renderEdges}
+        chrome="minimal"
+        autoResize
+        viewMode="2d"
+        config={TRIPLET_PREVIEW_CONFIG}
+      />
+    </div>
+  );
+});
+TripletInlinePreview.displayName = 'TripletInlinePreview';
 
 // Local interface for schema fields
 interface SchemaField {
@@ -59,6 +110,11 @@ interface SchemaField {
   type: string;
   description: string;
   config: any;
+  /** Optional render hint set by callers that want to override the default
+   *  type-driven rendering — e.g. forcing the triplets field to show as the
+   *  raw mini-table even in detail-overlay contexts where the graph would
+   *  otherwise win. */
+  renderHint?: 'graph' | 'table';
 }
 
 // Utility function to format field names for display (now uses shared utility)
@@ -108,6 +164,10 @@ interface AnnotationResultDisplayProps {
   searchTerm?: string | null;
   /** NEW: Active filters for matching array items */
   filters?: any[];
+  /** Density tier — 'expanded' preserves legacy rendering; 'comfortable'/'compact' route through TypedCell. */
+  density?: Density;
+  /** Per-(schema, field) numeric range cache for inferred bars. */
+  rangeCache?: FieldRangeCache;
 }
 
 interface SingleAnnotationResultProps {
@@ -130,6 +190,8 @@ interface SingleAnnotationResultProps {
   filterArrayItems?: boolean;
   searchTerm?: string | null;
   filters?: any[];
+  density?: Density;
+  rangeCache?: FieldRangeCache;
 }
 
 interface ConsolidatedSchemasViewProps {
@@ -153,6 +215,8 @@ interface ConsolidatedSchemasViewProps {
   filterArrayItems?: boolean;
   searchTerm?: string | null;
   filters?: any[];
+  density?: Density;
+  rangeCache?: FieldRangeCache;
 }
 
 /**
@@ -177,7 +241,9 @@ function SingleAnnotationResult({
   onLocationClick,
   filterArrayItems = false,
   searchTerm = null,
-  filters = []
+  filters = [],
+  density = 'expanded',
+  rangeCache,
 }: SingleAnnotationResultProps) {
   const renderedRef = useRef<HTMLDivElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -390,8 +456,42 @@ function SingleAnnotationResult({
       // Use hierarchical field access with the full path (e.g., "document.topics")
       const valueForField = getAnnotationFieldValue(rawValueObject, field.name);
 
-      if (valueForField === null || valueForField === undefined) {
-           return <span className="text-muted-foreground italic text-xs">N/A</span>;
+      if (isMissingValue(valueForField)) {
+           // Distinguish "annotation failed" from "field is just missing":
+           //  • status==='failure'                       → errored (backend authority)
+           //  • value is the canonical {error, details}  → errored (whole-result failure)
+           //  • value happens to contain an 'error' key alongside real data → NOT errored
+           //    (the field is just missing; some other field carries data)
+           const isErrorEnvelope = (() => {
+             if (result.status === 'failure') return true;
+             if (!rawValueObject || typeof rawValueObject !== 'object') return false;
+             if ('error' in rawValueObject && 'details' in rawValueObject) {
+               const keys = Object.keys(rawValueObject);
+               if (keys.every((k) => k === 'error' || k === 'details' || k.startsWith('_'))) {
+                 return true;
+               }
+             }
+             return false;
+           })();
+           if (isErrorEnvelope) {
+             return (
+               <span className="text-destructive/70 italic text-xs inline-flex items-center gap-1" title={String((rawValueObject as any)?.error ?? 'Annotation failed')}>
+                 <AlertCircle className="h-3 w-3" />
+                 errored
+               </span>
+             );
+           }
+           // Missing value — muted × in the value column. For numeric / boolean
+           // fields, render in the same w-8 right-aligned slot NumberCell uses
+           // so × lines up with the number column across rows. For other types,
+           // default left alignment.
+           const ftype = (field as any).type;
+           const isNumericLike = ftype === 'number' || ftype === 'integer' || ftype === 'boolean';
+           return isNumericLike ? (
+             <span className="text-muted-foreground/50 text-xs font-mono tabular-nums w-8 inline-block text-right" title="No value">×</span>
+           ) : (
+             <span className="text-muted-foreground/50 text-xs" title="No value">×</span>
+           );
       }
 
       // Check if this is a timestamp field for cross-panel linking
@@ -431,12 +531,12 @@ function SingleAnnotationResult({
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
-              <span className="text-xs tabular-nums min-w-0 truncate">{String(valueForField)}</span>
+              <span className="text-xs tabular-nums min-w-0 truncate">{smartIsoDisplay(String(valueForField))}</span>
             </div>
           );
         }
       }
-      
+
       // Handle location fields with click support
       if (isClickableLocation) {
         const locations = parseLocationValue(valueForField);
@@ -475,8 +575,8 @@ function SingleAnnotationResult({
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
-                  <Badge 
-                    variant="outline" 
+                  <Badge
+                    variant="outline"
                     className={cn(
                       "text-[10px] px-1.5 py-0 whitespace-nowrap font-normal border-border/40",
                       highlightValue === location && "ring-2 ring-offset-2 ring-primary ring-offset-background"
@@ -527,381 +627,52 @@ function SingleAnnotationResult({
 
       // Determine if we're in table context for compact rendering
       const isTableContext = context === 'table';
-      
-      // Clean, consistent value rendering - lighter weight, smaller text with proper overflow handling
-      switch ((field as any).type) {
-          case "integer":
-          case "number":
-              const badge = (
-                <Badge 
-                  variant="secondary" 
-                  className={cn(
-                    "text-xs tabular-nums font-medium px-2 py-0.5",
-                    "bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300",
-                    "border-blue-200 dark:border-blue-800",
-                    "hover:bg-blue-100 dark:hover:bg-blue-900/50",
-                    highlightValue === String(valueForField) && "ring-2 ring-offset-2 ring-blue-500 ring-offset-background"
-                  )}
-                >
-                  {String(valueForField)}
-                </Badge>
-              );
-              return wrapWithTooltipIfNeeded(badge, field, justificationValue, showIntegratedTooltip); 
-          case "string":
-          case "boolean":
-              const stringValue = String(valueForField);
-              const highlightedString = searchTerm ? highlightTextInValue(stringValue, searchTerm) : stringValue;
-              
-              let stringContent: React.ReactNode;
-              // In table context, break longer strings to new line like arrays for better layout
-              if (isTableContext && stringValue.length > 50) {
-                stringContent = (
-                  <div className="w-full">
-                    <div className="text-xs leading-tight break-words max-w-full">
-                      {highlightedString}
-                    </div>
-                  </div>
-                );
-              } else {
-                // For shorter strings or non-table context, use inline wrapping
-                stringContent = (
-                  <div className="text-xs leading-tight max-w-full min-w-0 ml-1">
-                    <span className="break-words">{highlightedString}</span>
-                  </div>
-                );
-              }
-              return wrapWithTooltipIfNeeded(stringContent, field, justificationValue, showIntegratedTooltip);
-          case "array":
-              if (Array.isArray(valueForField)) {
-                  if (valueForField.length === 0) return <span className="text-muted-foreground italic text-xs">empty</span>;
-                  
-                  // NEW: Special handling for Knowledge Graph arrays
-                  const fieldName = (field as any).name || '';
-                  if (isKnowledgeGraphField(fieldName, valueForField)) {
-                    // Check if this is entities or triplets
-                    const isEntitiesField = fieldName === 'entities' || fieldName.endsWith('.entities');
-                    const isTripletsField = fieldName === 'triplets' || fieldName.endsWith('.triplets');
-                    
-                    if (isEntitiesField) {
-                      // Render entities as colored badges with type
-                      // TODO: Extract schema colors from schema.output_contract when available
-                      const kgContent = (
-                        <div className="w-full">
-                          <div className="flex flex-wrap gap-1 items-center">
-                            {(valueForField as KGEntity[]).map((entity, i) => {
-                              const badgeClasses = getEntityBadgeClasses(entity.type);
-                              return (
-                                <Badge 
-                                  key={i} 
-                                  variant="outline"
-                                  className={cn(
-                                    "text-xs px-2 py-0.5 font-medium whitespace-nowrap",
-                                    badgeClasses
-                                  )}
-                                  title={`${entity.name} (${entity.type}) - ID: ${entity.id}`}
-                                >
-                                  <Network className="h-3 w-3 mr-1 inline" />
-                                  {entity.name}
-                                  <span className="ml-1 text-[10px] opacity-70">({entity.type})</span>
-                                </Badge>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                      return wrapWithTooltipIfNeeded(kgContent, field, justificationValue, showIntegratedTooltip);
-                    }
-                    
-                    if (isTripletsField) {
-                      // Extract entities from the annotation for formatting triplets
-                      const entities = extractEntities(rawValueObject);
-                      
-                      const tripletsContent = (
-                        <div className="w-full space-y-1">
-                          {(valueForField as KGTriplet[]).map((triplet, i) => {
-                            const formatted = formatTriplet(triplet, entities);
-                            const source = getEntityById(entities, triplet.source_id);
-                            const target = getEntityById(entities, triplet.target_id);
-                            
-                            return (
-                              <div 
-                                key={i}
-                                className={cn(
-                                  "flex items-center gap-1.5 text-xs p-1.5 rounded border bg-background/50",
-                                  "hover:bg-accent/50 transition-colors"
-                                )}
-                                title={triplet.description || formatted}
-                              >
-                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-medium shrink-0">
-                                  {source?.name || `ID:${triplet.source_id}`}
-                                </Badge>
-                                <span className="text-[10px] text-muted-foreground shrink-0">→</span>
-                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-normal shrink-0">
-                                  {triplet.predicate}
-                                </Badge>
-                                <span className="text-[10px] text-muted-foreground shrink-0">→</span>
-                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-medium shrink-0">
-                                  {target?.name || `ID:${triplet.target_id}`}
-                                </Badge>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                      return wrapWithTooltipIfNeeded(tripletsContent, field, justificationValue, showIntegratedTooltip);
-                    }
-                  }
-                  
-                  // Check if this is an array of objects - render as structured cards
-                  if (valueForField.length > 0 && typeof valueForField[0] === 'object') {
-                    // Filter array items if filterArrayItems is enabled
-                    // NOTE: Cannot use useMemo here as this is inside a nested function (formatFieldValue)
-                    // which violates React's Rules of Hooks. Calculate inline instead.
-                    const activeFiltersForArray = filters ? filters.filter((f: any) => f.isActive !== false) : [];
-                    const hasActiveFiltersForArray = activeFiltersForArray.length > 0;
-                    const hasSearchTermForArray = searchTerm && searchTerm.trim().length > 0;
-                    
-                    let arrayItemsToShow = valueForField;
-                    
-                    if (filterArrayItems && (hasSearchTermForArray || hasActiveFiltersForArray)) {
-                      arrayItemsToShow = valueForField.filter((item: any) => {
-                        // Check search term match
-                        if (hasSearchTermForArray && searchInAnnotationValue(item, searchTerm)) {
-                          return true;
-                        }
-                        
-                        // Check filter matches (only if we have active filters)
-                        if (hasActiveFiltersForArray) {
-                          // Create a mock annotation result for filter checking
-                          const mockResult = { ...result, value: item };
-                          return activeFiltersForArray.some((filter: any) => checkFilterMatch(filter, [mockResult], [schema]));
-                        }
-                        
-                        return false;
-                      });
-                    }
-                    
-                    const arrayOfObjectsContent = (
-                      <div className="w-full space-y-3">
-                        <div className="text-[10px] text-muted-foreground mb-1">
-                          {filterArrayItems && arrayItemsToShow.length !== valueForField.length
-                            ? `${arrayItemsToShow.length} of ${valueForField.length} item${valueForField.length > 1 ? 's' : ''}`
-                            : `${valueForField.length} item${valueForField.length > 1 ? 's' : ''}`}
-                        </div>
-                        {arrayItemsToShow.map((item: any, i: number) => {
-                          // Find original index for highlighting and display
-                          const originalIndex = valueForField.indexOf(item);
-                          const isMatch = searchTerm ? searchInAnnotationValue(item, searchTerm) : false;
-                          
-                          return (
-                          <div 
-                            key={originalIndex} 
-                            className={cn(
-                              "border-2 rounded-md p-3 space-y-1 shadow-sm transition-colors",
-                              isMatch 
-                                ? "border-yellow-400/60 bg-yellow-50/50 dark:bg-yellow-950/20" 
-                                : "border-border/60 bg-muted/25"
-                            )}
-                          >
-                            <div className="flex items-center gap-2 mb-2">
-                              <Badge variant="outline" className="text-[10px] border-border/60">
-                                Item {originalIndex + 1}
-                              </Badge>
-                            </div>
-                            <div className="text-xs space-y-0 divide-y divide-border/40">
-                              {Object.entries(item)
-                                .filter(([_, val]) => val !== null && val !== undefined)
-                                .map(([key, val]: [string, any], fieldIndex: number, filteredEntries: [string, any][]) => {
-                                
-                                // Handle arrays
-                                if (Array.isArray(val)) {
-                                  if (val.length === 0) return null;
-                                  return (
-                                    <div key={key} className="py-2.5 first:pt-0">
-                                      <span className="font-medium text-muted-foreground">{key}:</span>{' '}
-                                      <div className="flex flex-wrap gap-1 mt-1">
-                                        {val.map((v: any, idx: number) => (
-                                          <Badge key={idx} variant="outline" className="text-[10px]">
-                                            {typeof v === 'string' ? highlightTextInValue(String(v), searchTerm) : String(v)}
-                                          </Badge>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  );
-                                }
-                                
-                                // Handle objects (nested)
-                                if (typeof val === 'object') {
-                                  return (
-                                    <div key={key} className="py-2.5 first:pt-0 bg-muted/20 -mx-3 px-3">
-                                      <div className="text-[10px] text-muted-foreground mb-2 font-medium">{key}:</div>
-                                      <div className="max-h-72 overflow-auto text-xs whitespace-pre-wrap break-words bg-background/50 p-2 rounded border border-border/30">
-                                        {JSON.stringify(val, null, 2)}
-                                      </div>
-                                    </div>
-                                  );
-                                }
-                                
-                                // Handle strings (especially long ones)
-                                if (typeof val === 'string' && val.length > 100) {
-                                  return (
-                                    <div key={key} className="py-2.5 first:pt-0 bg-muted/20 -mx-3 px-3">
-                                      <div className="text-[10px] text-muted-foreground mb-2 font-medium">{key}:</div>
-                                      <div className="max-h-72 overflow-auto text-xs whitespace-pre-wrap break-words bg-background/50 p-2 rounded border border-border/30">
-                                        {highlightTextInValue(val, searchTerm)}
-                                      </div>
-                                    </div>
-                                  );
-                                }
-                                
-                                // Handle simple values
-                                return (
-                                  <div key={key} className="py-2.5 first:pt-0">
-                                    <span className="font-medium text-muted-foreground">{key}:</span>{' '}
-                                    <span className="text-foreground">
-                                      {typeof val === 'string' ? highlightTextInValue(val, searchTerm) : String(val)}
-                                    </span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                          );
-                        })}
-                      </div>
-                    );
-                    return wrapWithTooltipIfNeeded(arrayOfObjectsContent, field, justificationValue, showIntegratedTooltip);
-                  }
-                  
-                  let arrayContent: React.ReactNode;
-                  // In table context, break arrays to new line like long strings
-                  if (isTableContext) {
-                    arrayContent = (
-                      <div className="w-full">
-                        <div className="flex flex-wrap gap-1 items-center">
-                          {valueForField.map((item, i) => {
-                            const itemText = typeof item === 'object' ? JSON.stringify(item) : String(item);
-                            return (
-                              <Badge 
-                                key={i} 
-                                variant="outline" 
-                                className={cn(
-                                  "text-[10px] px-1.5 py-0 font-normal border-border/40",
-                                  // In table context, allow badges to wrap naturally
-                                  "whitespace-nowrap",
-                                  highlightValue === String(item) && "ring-2 ring-offset-2 ring-primary ring-offset-background"
-                                )}
-                                title={itemText.length > 30 ? itemText : undefined}
-                              >
-                                {itemText}
-                              </Badge>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  } else {
-                    // Non-table context: keep inline
-                    arrayContent = (
-                        <div className="flex flex-wrap gap-1 items-center max-w-full min-w-0">
-                            {valueForField.map((item, i) => {
-                              const itemText = typeof item === 'object' ? JSON.stringify(item) : String(item);
-                              return (
-                                <Badge 
-                                  key={i} 
-                                  variant="outline" 
-                                  className={cn(
-                                    "text-[10px] px-1.5 py-0 font-normal border-border/40 max-w-full",
-                                    // Handle long badge content
-                                    itemText.length > 50 ? "break-all" : "whitespace-nowrap",
-                                    highlightValue === String(item) && "ring-2 ring-offset-2 ring-primary ring-offset-background"
-                                  )}
-                                  title={itemText.length > 50 ? itemText : undefined}
-                                >
-                                  <span className={cn(
-                                    "truncate block",
-                                    itemText.length > 50 && "max-w-[200px]"
-                                  )}>
-                                    {itemText}
-                                  </span>
-                                </Badge>
-                              );
-                            })}
-                        </div>
-                    );
-                  }
-                  return wrapWithTooltipIfNeeded(arrayContent, field, justificationValue, showIntegratedTooltip);
-              }
-              return <span className="text-destructive italic text-xs">Expected Array, got: {typeof valueForField}</span>;
-          default:
-              if (typeof valueForField === 'object' && valueForField !== null) {
-                  // Check if this is a metadata object (small, structured)
-                  const isMetadataObject = Object.keys(valueForField).length <= 10 && 
-                                           !Array.isArray(valueForField);
-                  
-                  if (isMetadataObject) {
-                    const metadataContent = (
-                      <div className="w-full space-y-1">
-                        {Object.entries(valueForField).map(([key, val]) => {
-                          const valString = Array.isArray(val) 
-                            ? `[${(val as any[]).map(v => String(v)).join(', ')}]`
-                            : typeof val === 'object' && val !== null
-                            ? JSON.stringify(val)
-                            : String(val);
-                          const highlightedVal = searchTerm ? highlightTextInValue(valString, searchTerm) : valString;
-                          
-                          return (
-                            <div key={key} className="flex gap-2 text-xs">
-                              <span className="font-medium text-muted-foreground">{key}:</span>
-                              <span className="flex-1 break-words">
-                                {highlightedVal}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                    return wrapWithTooltipIfNeeded(metadataContent, field, justificationValue, showIntegratedTooltip);
-                  }
-                  
-                  // Fallback to JSON for complex objects
-                  const jsonString = JSON.stringify(valueForField, null, 2);
-                  const highlightedJsonString = searchTerm ? highlightTextInValue(jsonString, searchTerm) : jsonString;
-                  const objectContent = (
-                    <div className="max-w-full min-w-0">
-                      <pre className={cn(
-                        "text-[10px] bg-muted/30 p-1.5 rounded border border-border/30 max-w-full min-w-0",
-                        isTableContext ? "max-h-20 overflow-auto" : "max-h-32 overflow-auto",
-                        "whitespace-pre-wrap break-words"
-                      )}>
-                        {highlightedJsonString}
-                      </pre>
-                    </div>
-                  );
-                  return wrapWithTooltipIfNeeded(objectContent, field, justificationValue, showIntegratedTooltip);
-              }
-              const defaultStringValue = String(valueForField);
-              const highlightedDefaultString = searchTerm ? highlightTextInValue(defaultStringValue, searchTerm) : defaultStringValue;
-              
-              let defaultContent: React.ReactNode;
-              // In table context, break longer strings to new line like arrays
-              if (isTableContext && defaultStringValue.length > 50) {
-                defaultContent = (
-                  <div className="w-full">
-                    <div className="text-xs leading-tight break-words max-w-full">
-                      {highlightedDefaultString}
-                    </div>
-                  </div>
-                );
-              } else {
-                defaultContent = (
-                  <div className="text-xs leading-tight max-w-full min-w-0 ml-1">
-                    <span className="break-words">{highlightedDefaultString}</span>
-                  </div>
-                );
-              }
-              return wrapWithTooltipIfNeeded(defaultContent, field, justificationValue, showIntegratedTooltip);
+
+      // Inline graph preview for triplet fields — only in detail-overlay
+      // contexts (default / enhanced / dialog), never in the table cell.
+      // Triplets in this system are self-contained — each row carries its
+      // own subject/object names — so we feed the array straight into the
+      // adapter without an entities lookup. Falls through to the typed
+      // mini-table when the array doesn't yield any usable edges OR when
+      // the caller passes `renderHint: 'table'` (e.g. the panel renders
+      // the same field twice — graph at top, raw table at bottom).
+      const isTripletsField =
+        (field.name || '').split('.').pop()?.toLowerCase() === 'triplets';
+      if (isTripletsField && Array.isArray(valueForField) && valueForField.length > 0 && !isTableContext && field.renderHint !== 'table') {
+        // Adapter + render are inside TripletInlinePreview so React.memo can
+        // stabilize the work across unrelated parent re-renders. The "N
+        // entities · M triplets" summary lives next to the field label in
+        // the panel header (AnnotationFieldsPanel) — surfaced once, not twice.
+        return <TripletInlinePreview triplets={valueForField as any[]} />;
       }
+
+      // All densities route through the schema-typed renderer. The density
+      // spec drives clipping / preview / chip vs mini-table — `expanded`
+      // means "no limits" rather than "different code path".
+      {
+        const def = getFieldDefinitionFromSchema(schema, field.name);
+        const typed = (
+          <TypedCell
+            field={{ key: field.name, name: field.name, type: (field as any).type, definition: def }}
+            value={valueForField}
+            density={density}
+            schema={schema}
+            searchTerm={searchTerm ?? undefined}
+            highlightValue={highlightValue ?? undefined}
+            rangeCache={rangeCache}
+            onSelect={onResultSelect ? () => onResultSelect(result) : undefined}
+            onTimestampClick={onTimestampClick}
+            onLocationClick={onLocationClick}
+          />
+        );
+
+        // Density tiers differ only in truncation/preview limits (handled by
+        // density spec inside TypedCell). Layout and visual style are uniform
+        // across tiers — justifications stay in the existing tooltip + the
+        // detail overlay's evidence pane, not duplicated inline here.
+        return wrapWithTooltipIfNeeded(typed, field, justificationValue, showIntegratedTooltip);
+      }
+
   };
 
   if (!schema || !schema.output_contract) {
@@ -916,6 +687,16 @@ function SingleAnnotationResult({
   // NEW: Enhanced layout for unified annotation and asset viewing
   // Use enhanced layout if explicitly set OR if Justification & Evidence Inspection toggle is on (only in default context)
   const shouldUseEnhanced = renderContext === 'enhanced' || (renderContext === 'default' && showEvidencePanel && !compact);
+  const hasActiveFieldJustification = useMemo(() => {
+    if (!activeFieldState || !result.value || typeof result.value !== 'object') return false;
+    const normalize = (fieldKey: string) => fieldKey.replace(/^document\./, '').replace(/\s+/g, '');
+    const normalizedActive = normalize(activeFieldState);
+    return Object.keys(result.value as Record<string, unknown>).some((key) => {
+      if (!key.endsWith('_justification')) return false;
+      const fieldKey = key.replace('_justification', '');
+      return normalize(fieldKey) === normalizedActive;
+    });
+  }, [activeFieldState, result.value]);
   
   if (shouldUseEnhanced) {
 
@@ -941,23 +722,36 @@ function SingleAnnotationResult({
           </div>
         )}
         
-        {/* Single column: Evidence at top, fields beneath */}
-        <div className="flex-1 min-h-0 flex flex-col gap-3 p-3">
-          {/* Evidence / Justifications - at top for immediate visibility */}
-          <div className="flex-1 min-h-0 border rounded-lg bg-background overflow-hidden">
-            <JustificationSidebar
-              result={result}
-              activeField={activeFieldState}
-              onSpanClick={handleSpanClick}
-              onSpanSelect={handleSpanSelect}
-              selectedSpan={selectedSpan ? { fieldKey: selectedSpan.fieldKey, spanIndex: selectedSpan.spanIndex } : null}
-              searchTerm={searchTerm}
-              filters={filters}
-            />
-          </div>
+        {/* Single column: Evidence pinned at top, fields flow beneath.
+            The justification card uses `position: sticky` against the
+            outer scroll container (the right pane in AssetDetailOverlay)
+            so it stays visible while the user scrolls through the field
+            list and clicks rows further down — clicked field's reasoning
+            stays in view without needing to scroll back up. */}
+        <div className="flex flex-col p-3 min-w-0">
+          {/* Evidence / Justifications - sticky to top of the scroll
+              container; max-h capped so a tall justification doesn't push
+              the fields list below the fold on small viewports. Internal
+              overflow keeps long evidence scrollable in place. */}
+          {hasActiveFieldJustification && (
+            <div className="mx-0 my-1 sticky top-0 z-10 max-h-[45vh] overflow-auto border rounded-md bg-background">
+              <div className="m-1">
+                  <JustificationSidebar
+                    result={result}
+                    activeField={activeFieldState}
+                    onSpanClick={handleSpanClick}
+                    onSpanSelect={handleSpanSelect}
+                    selectedSpan={selectedSpan ? { fieldKey: selectedSpan.fieldKey, spanIndex: selectedSpan.spanIndex } : null}
+                    searchTerm={searchTerm}
+                    filters={filters}
+                  />
+                </div>
+              </div>
+          )}
 
-          {/* Annotation fields - compact view beneath evidence */}
-          <div className="flex-none bg-background max-h-[40vh] overflow-y-auto scrollbar-hide">
+          {/* Annotation fields flow naturally below the sticky panel —
+              no inner overflow, the right pane owns the vertical scroll. */}
+          <div className="mt-1 bg-background min-w-0">
             <AnnotationFieldsPanel
               result={result}
               schema={schema}
@@ -1052,185 +846,416 @@ function SingleAnnotationResult({
               effectiveExpanded && isPotentiallyLong && renderContext !== 'table' && 'max-h-[500px] overflow-y-auto'
             )}
           >
-            <div className={cn(renderContext === 'table' ? 'min-w-0 max-w-full' : 'space-y-0 min-w-0 max-w-full')}>
-              {fieldsToDisplay.map((schemaField, idx) => {
-                  // Note: filtering is already handled in fieldsToDisplay useMemo
-                  // No need for additional filtering here
+            {(() => {
+              const isFoldedTable = renderContext === 'table' && !targetFieldKey;
+              const isUnfoldedTable = renderContext === 'table' && compact && targetFieldKey;
 
-                  const justificationValue = (() => {
-                    if (typeof result.value === 'object' && result.value !== null) {
-                      // For hierarchical schemas, the field name might be like "document.topics"
-                      // So the justification field would be "document.topics_justification"
-                      const justificationFieldPath = `${schemaField.name}_justification`;
-                      
-                      // Quick check if justification field might exist before calling expensive lookup
-                      const flatJustificationName = justificationFieldPath.includes('.') 
-                        ? justificationFieldPath.split('.').pop() 
-                        : justificationFieldPath;
-                      
-                      // Only attempt lookup if the field potentially exists
-                      if (flatJustificationName && 
-                          (flatJustificationName in result.value || 
-                           Object.keys(result.value).some(key => 
-                             key.toLowerCase().includes('justification') || 
-                             key.toLowerCase().includes('reasoning')
-                           ))) {
-                        const justificationObj = getAnnotationFieldValue(result.value, justificationFieldPath);
-                        
-                        // Handle structured justification objects (JustificationSubModel)
-                        if (justificationObj && typeof justificationObj === 'object') {
-                          return justificationObj; // Return the full object for rich display
-                        }
-                        // Handle legacy string justifications
-                        else if (typeof justificationObj === 'string') {
-                          return justificationObj;
-                        }
-                      }
-                    }
-                    return undefined;
-                  })();
-                  
-                  // Check if field is array type for special layout
-                  const fieldValue = getAnnotationFieldValue(result.value, schemaField.name);
-                  const isArrayField = (schemaField as any).type === 'array' || Array.isArray(fieldValue);
-                  
-                  return (
-                      <div key={idx} className={cn(
-                        renderContext === 'table' ? 'mb-1 min-w-0 max-w-full' : 'space-y-1 min-w-0 max-w-full',
-                        renderContext !== 'table' && ''
-                      )}>
-                          {/* Use flexible layout: allow values to wrap to new line for long content */}
-                          {/* In unfolded column mode (table + compact + targetFieldKey), skip field names - headers show them */}
-                          {renderContext === 'table' && compact && targetFieldKey ? (
-                            // Unfolded column: show value + justification icon if available
-                            <div className="min-w-0 max-w-full">
-                              {formatFieldValueWithTypeIndicator(result.value, schemaField, highlightValue, renderContext, true, justificationValue)}
+              // Build per-field render data once. Captures justification + label JSX
+              // so the layout below picks how to arrange them per density/mode.
+              const buildFieldRender = (schemaField: SchemaField) => {
+                const justificationValue = (() => {
+                  if (!result.value || typeof result.value !== 'object') return undefined;
+                  const justificationObj = getAnnotationFieldValue(result.value, `${schemaField.name}_justification`);
+                  if (justificationObj && typeof justificationObj === 'object') return justificationObj;
+                  if (typeof justificationObj === 'string') return justificationObj;
+                  return undefined;
+                })();
+
+                const formatted = formatFieldNameUtil(schemaField.name);
+                const labelInner = formatted.modality && formatted.modality !== 'document' ? (
+                  <span className="flex items-center gap-1">
+                    {getModalityIcon(formatted.modality, 'sm')}
+                    <span className="leading-tight whitespace-nowrap">{formatted.displayName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}:</span>
+                  </span>
+                ) : (
+                  <span className="leading-tight whitespace-nowrap">{formatted.displayName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}:</span>
+                );
+
+                const justificationIcon = justificationValue ? (
+                  <TooltipProvider delayDuration={100}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpCircle
+                          className={cn(
+                            'cursor-help opacity-60 hover:opacity-100 hover:text-primary transition-colors',
+                            renderContext === 'table' ? 'ml-0.5 h-3 w-3' : 'ml-1 h-3.5 w-3.5',
+                          )}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (onFieldInteraction) {
+                              onFieldInteraction(schemaField.name, justificationValue);
+                              return;
+                            }
+                            if (onResultSelect) {
+                              onResultSelect({ ...result, _selectedField: schemaField.name } as FormattedAnnotation);
+                            }
+                          }}
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent side="top" align="start" className="max-w-sm z-[1001]">
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold">Justification & Evidence</p>
+                          {typeof justificationValue === 'object' && justificationValue !== null ? (
+                            <div className="space-y-1">
+                              {(justificationValue as any).reasoning && (
+                                <p className="text-xs">{(justificationValue as any).reasoning}</p>
+                              )}
+                              {Array.isArray((justificationValue as any).text_spans) && (justificationValue as any).text_spans.length > 0 && (
+                                <div className="space-y-2">
+                                  <p className="text-xs">📝 {(justificationValue as any).text_spans.length} text span{(justificationValue as any).text_spans.length > 1 ? 's' : ''}</p>
+                                  <Separator className="my-2" />
+                                  <div className="text-xs">
+                                    {(justificationValue as any).text_spans.slice(0, 10).map((span: any, sidx: number) => (
+                                      <div key={sidx} className="italic border border-border p-1 rounded text-wrap break-words mb-1">"{span.text_snippet}"</div>
+                                    ))}
+                                    {(justificationValue as any).text_spans.length > 3 && (
+                                      <p className="text-muted-foreground">...and {(justificationValue as any).text_spans.length - 3} more</p>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ) : (
-                            // Regular mode: show field name + value
-                            <div className={cn(
-                              "min-w-0 max-w-full",
-                              renderContext === 'table' ? 'flex flex-wrap items-start gap-x-1 gap-y-0.5' : 'flex items-start gap-1'
-                            )}>
-                              <div className={cn(
-                                "flex items-center gap-1 flex-shrink-0",
-                                renderContext === 'table' ? 'text-xs text-muted-foreground' : 'text-xs text-muted-foreground font-medium'
-                              )}>
-                                {/* Show modality icon if applicable */}
-                                {(() => {
-                                  const formatted = formatFieldNameUtil(schemaField.name);
-                                  if (formatted.modality && formatted.modality !== 'document') {
-                                    return (
-                                      <span className="flex items-center gap-1">
-                                        {getModalityIcon(formatted.modality, renderContext === 'table' ? 'sm' : 'sm')}
-                                        <span className={cn(renderContext === 'table' && 'leading-tight', "whitespace-nowrap")}>
-                                          {formatted.displayName}:
-                                        </span>
-                                      </span>
-                                    );
-                                  }
+                            <p className="text-xs">{String(justificationValue)}</p>
+                          )}
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : null;
+
+                return { schemaField, justificationValue, labelInner, justificationIcon };
+              };
+
+              // Unfolded column mode (one cell == one field): just the value, no label.
+              if (isUnfoldedTable) {
+                return fieldsToDisplay.map((schemaField, idx) => {
+                  const fr = buildFieldRender(schemaField);
+                  return (
+                    <div key={idx} className="min-w-0 max-w-full">
+                      {formatFieldValueWithTypeIndicator(result.value, schemaField, highlightValue, renderContext, true, fr.justificationValue)}
+                    </div>
+                  );
+                });
+              }
+
+              // Folded table mode: 3-section layout — strings | numerics | lists.
+              // Each section is its own (label / value) sub-grid so values align in
+              // their own column and lists get full horizontal width for chips.
+              if (isFoldedTable) {
+                type Bucket = 'strings' | 'numerics' | 'lists';
+                const buckets: Record<Bucket, SchemaField[]> = { strings: [], numerics: [], lists: [] };
+                fieldsToDisplay.forEach((sf) => {
+                  const t = (sf as any).type as string;
+                  const def = getFieldDefinitionFromSchema(schema, sf.name);
+                  const isEnumString = t === 'string' && Array.isArray(def?.enum);
+                  // Entity fields (single or array of `x-entityField` objects)
+                  // read as protagonist references, not as enum chips — they
+                  // belong with the strings/first column where the row's named
+                  // actors and free-text live. EntityArrayCell flows them
+                  // inline with subtle type swatches, so they pack into the
+                  // strings section as text-with-typing rather than competing
+                  // with badge strips in the lists section.
+                  const isEntityField =
+                    def?.['x-entityField'] === true
+                    || (t === 'array' && def?.items?.['x-entityField'] === true);
+                  // Booleans live with strings (column 1) — they read as flags
+                  // attached to the protagonist info, not as numeric quantities,
+                  // and pairing them with bars in column 2 felt mismatched.
+                  if (t === 'number' || t === 'integer') {
+                    buckets.numerics.push(sf);
+                  } else if (isEntityField) {
+                    buckets.strings.push(sf);
+                  } else if (t === 'array' || t === 'object' || isEnumString) {
+                    buckets.lists.push(sf);
+                  } else {
+                    buckets.strings.push(sf);
+                  }
+                });
+
+                // Comfortable hides noise — empty numerics/lists fields and
+                // triplets — to keep rows tight without scrolling. Strings
+                // (column 1) is left intact since it carries the protagonist
+                // information for each row. Expanded shows everything.
+                const filterForComfortable = (key: Bucket, fields: SchemaField[]): SchemaField[] => {
+                  if (density !== 'comfortable') return fields;
+                  if (key === 'strings') return fields;
+                  return fields.filter((sf) => {
+                    if (sf.name && sf.name.split('.').pop()?.toLowerCase() === 'triplets') return false;
+                    const v = getAnnotationFieldValue(result.value, sf.name);
+                    return !isMissingValue(v);
+                  });
+                };
+
+                const sections = (['strings', 'numerics', 'lists'] as Bucket[])
+                  .map((k) => ({ key: k, fields: filterForComfortable(k, buckets[k]) }))
+                  .filter((s) => s.fields.length > 0);
+
+                if (sections.length === 0) return null;
+
+                // Each section's label column auto-sizes to its own widest
+                // label (via grid `max-content`). We previously enforced a
+                // shared min-width across sections so labels lined up when
+                // the layout wrapped onto fewer columns at narrow widths,
+                // but that padded the lists section's "Schlagworte:" column
+                // out to the width of the longest numerics label, pushing
+                // badges visibly to the right. Trade-off chosen: keep badge
+                // values close to their label; accept that on narrow widths
+                // section labels won't share an x.
+                const isObjectArrayFieldEarly = (sf: SchemaField) => {
+                  const t = (sf as any).type as string;
+                  if (t !== 'array') return false;
+                  const def = getFieldDefinitionFromSchema(schema, sf.name);
+                  return def?.items?.type === 'object';
+                };
+
+                const gridGapY = density === 'compact' ? 'gap-y-0.5' : density === 'expanded' ? 'gap-y-2' : 'gap-y-1';
+                // Across-row snap: the GRID itself enforces a minimum row
+                // height via grid-auto-rows minmax(min, max-content). Rows
+                // shorter than min pad out to min (empty space below); rows
+                // with naturally taller content (wrapped values, mini-tables)
+                // grow as needed. Crucially we apply this at the row level,
+                // not the cell level, and we don't add `items-center` on
+                // cells — content stays anchored at the top of each cell, so
+                // row N's content top in section A and section B both sit at
+                // y = N*(rowMin + gap) regardless of whether one row has an
+                // icon and another doesn't. This is what fixes the cross-
+                // column drift the user observed earlier.
+                const gridRowMinPx = density === 'compact' ? 18 : density === 'expanded' ? 26 : 22;
+                const gridRowsStyle: React.CSSProperties = { gridAutoRows: `minmax(${gridRowMinPx}px, max-content)` };
+                // Per-section min widths used by the flex-wrap layout below.
+                // When the cell is wide enough, sections sit side-by-side.
+                // When narrow, sections wrap onto their own row so each gets
+                // the full width — avoids the case where mini-tables in
+                // column 3 get squeezed to a min-width column that the user
+                // can't bring fully into view by scrolling.
+                const sectionMinWidth = (k: Bucket): string => {
+                  if (k === 'numerics') return 'auto';
+                  if (k === 'strings') return '220px';
+                  return '260px'; // lists
+                };
+
+                // Lists ordering rules within column 3, low → high:
+                //   0  primitive arrays (badge fields)
+                //   1  object arrays (mini-tables)
+                //   2  "triplets" arrays — KG payloads whose real value is in
+                //      the graph view, kept in the table for completeness only
+                // Each field still gets its own grid row so values stay aligned
+                // at the same x within the section.
+                const isObjectArrayField = (sf: SchemaField) => {
+                  const t = (sf as any).type as string;
+                  if (t !== 'array') return false;
+                  const def = getFieldDefinitionFromSchema(schema, sf.name);
+                  return def?.items?.type === 'object';
+                };
+                const isTripletsField = (sf: SchemaField) => {
+                  const last = (sf.name || '').split('.').pop()?.toLowerCase();
+                  return last === 'triplets';
+                };
+                const fieldHasValue = (sf: SchemaField) => {
+                  const v = getAnnotationFieldValue(result.value, sf.name);
+                  return !isMissingValue(v);
+                };
+                // Lists section ordering — type-coherent with empty fields
+                // grouped within their type so the eye doesn't bounce between
+                // badge-list / table / badge-list:
+                //   0  badges with values
+                //   1  badges without values
+                //   2  tables with values
+                //   3  triplets table (regardless)
+                //   4  tables without values
+                const listsOrderRank = (sf: SchemaField): number => {
+                  const isObj = isObjectArrayField(sf);
+                  const isTrip = isTripletsField(sf);
+                  const hasVal = fieldHasValue(sf);
+                  if (!isObj) return hasVal ? 0 : 1;
+                  if (isTrip) return 3;
+                  return hasVal ? 2 : 4;
+                };
+                const orderedFieldsForSection = (section: { key: Bucket; fields: SchemaField[] }) => {
+                  if (section.key !== 'lists') return section.fields;
+                  return section.fields.slice().sort((a, b) => listsOrderRank(a) - listsOrderRank(b));
+                };
+
+                return (
+                  <div className="flex flex-wrap items-start gap-x-4 gap-y-3 min-w-0 max-w-full">
+                    {sections.map((section) => {
+                      const minW = sectionMinWidth(section.key);
+                      // numerics is shrink-0 and natural width; the others
+                      // grow with flex-1 above their minimum so they share
+                      // remaining space.
+                      const sectionWrapClass =
+                        section.key === 'numerics'
+                          ? 'shrink-0 max-w-full min-w-0'
+                          : 'flex-1 min-w-0';
+                      const orderedFields = orderedFieldsForSection(section);
+                      // Lists section gets a special two-tier layout:
+                      //  • Badge fields render in the standard label/value grid
+                      //    (values aligned at same x).
+                      //  • Object-array fields (mini-tables) get their label
+                      //    on its own row with the table beneath it spanning
+                      //    the full section width — readability of multi-column
+                      //    tables breaks much earlier than badge wrap when the
+                      //    column is narrow, so they get the room.
+                      if (section.key === 'lists') {
+                        const badgeFields = orderedFields.filter((sf) => !isObjectArrayField(sf));
+                        const tableFields = orderedFields.filter((sf) => isObjectArrayField(sf));
+                        return (
+                          <div key={section.key} className={cn(sectionWrapClass, 'space-y-2')} style={{ flexBasis: minW }}>
+                            {badgeFields.length > 0 && (
+                              <div className={cn('grid grid-cols-[max-content_minmax(0,1fr)] gap-x-2 min-w-0', gridGapY)} style={gridRowsStyle}>
+                                {badgeFields.map((sf, fidx) => {
+                                  const fr = buildFieldRender(sf);
                                   return (
-                                    <span className={cn(renderContext === 'table' && 'leading-tight', "whitespace-nowrap")}>
-                                      {formatted.displayName}:
-                                    </span>
+                                    <React.Fragment key={`lists-badge-${fidx}`}>
+                                      <div className="text-xs text-muted-foreground self-start flex items-center gap-1 min-w-0">
+                                        {fr.labelInner}
+                                        {fr.justificationIcon}
+                                      </div>
+                                      <div className="self-start text-xs leading-snug min-w-0">
+                                        {formatFieldValue(result.value, sf, highlightValue, renderContext, fr.justificationValue, false)}
+                                      </div>
+                                    </React.Fragment>
                                   );
-                                })()}
-                              {/* Show justification tooltip */}
-                              {justificationValue && (
-                                  <TooltipProvider delayDuration={100}>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                          <HelpCircle 
-                                            className={cn(
-                                              "cursor-help opacity-60 hover:opacity-100 hover:text-primary transition-colors",
-                                              renderContext === 'table' ? 'ml-0.5 h-3 w-3' : 'ml-1 h-3.5 w-3.5'
-                                            )} 
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              // Priority 1: Call onFieldInteraction if available (for enhanced dialog with specific field)
-                                              if (onFieldInteraction) {
-                                                onFieldInteraction(schemaField.name, justificationValue);
-                                                return;
-                                              }
-                                              // Priority 2: Fall back to onResultSelect with field context
-                                              if (onResultSelect) {
-                                                const resultWithContext = {
-                                                  ...result,
-                                                  _selectedField: schemaField.name // Add field context
-                                                };
-                                                onResultSelect(resultWithContext as FormattedAnnotation);
-                                              }
-                                            }}
-                                          />
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top" align="start" className="max-w-sm z-[1001]">
-                                        <div className="space-y-2">
-                                          <div className="flex items-center justify-between">
-                                            <p className="text-xs font-semibold">Justification & Evidence</p>
-                                          </div>
-                                          {(() => {
-                                            // Handle structured justification objects
-                                            if (typeof justificationValue === 'object' && justificationValue !== null) {
-                                              return (
-                                                <div className="space-y-1">
-                                                  {justificationValue.reasoning && (
-                                                    <p className="text-xs">{justificationValue.reasoning}</p>
-                                                  )}
-                                                  {justificationValue.text_spans && justificationValue.text_spans.length > 0 && (
-                                                    <div className="space-y-2">
-                                                      <p className="text-xs">
-                                                        📝 {justificationValue.text_spans.length} text span{justificationValue.text_spans.length > 1 ? 's' : ''}
-                                                      </p>
-                                                      <Separator className="my-2" />
-                                                      <div className="text-xs">
-                                                        {justificationValue.text_spans.slice(0, 10).map((span: any, idx: number) => (
-                                                          <div key={idx} className="italic border border-border p-1 rounded text-wrap break-words mb-1">
-                                                            "{span.text_snippet}"
-                                                          </div>
-                                                        ))}
-                                                        {justificationValue.text_spans.length > 3 && (
-                                                          <p className="text-muted-foreground">...and {justificationValue.text_spans.length - 3} more</p>
-                                                        )}
-                                                      </div>
-                                                    </div>
-                                                  )}
-                                                  {justificationValue.image_regions && justificationValue.image_regions.length > 0 && (
-                                                    <p className="text-xs text-muted-foreground">
-                                                      🖼️ {justificationValue.image_regions.length} image region{justificationValue.image_regions.length > 1 ? 's' : ''}
-                                                    </p>
-                                                  )}
-                                                  {justificationValue.audio_segments && justificationValue.audio_segments.length > 0 && (
-                                                    <p className="text-xs text-muted-foreground">
-                                                      🎵 {justificationValue.audio_segments.length} audio segment{justificationValue.audio_segments.length > 1 ? 's' : ''}
-                                                    </p>
-                                                  )}
-                                                </div>
-                                              );
-                                            }
-                                            // Handle string justifications
-                                            return <p className="text-xs">{String(justificationValue)}</p>;
-                                          })()}
-                                        </div>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                              )}
+                                })}
                               </div>
-                              {/* Value container - flexible and can wrap to new line for long content */}
-                              <div className={cn(
-                                "leading-snug min-w-0 overflow-hidden",
-                                renderContext === 'table' ? 'flex-1' : 'flex-1'
-                              )}>
-                                {formatFieldValue(result.value, schemaField, highlightValue, renderContext)}
-                              </div>
+                            )}
+                            {tableFields.map((sf, fidx) => {
+                              const fr = buildFieldRender(sf);
+                              return (
+                                <div key={`lists-table-${fidx}`} className="min-w-0 max-w-full">
+                                  <div className="text-xs text-muted-foreground flex items-center gap-1 min-w-0 mb-0.5">
+                                    {fr.labelInner}
+                                    {fr.justificationIcon}
+                                  </div>
+                                  <div className="leading-snug min-w-0">
+                                    {formatFieldValue(result.value, sf, highlightValue, renderContext, fr.justificationValue, false)}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      }
+                      // Strings section gets a two-tier sub-layout:
+                      //  • Short string + boolean fields render in the
+                      //    standard label/value grid (values aligned at
+                      //    same x within the section).
+                      //  • Long-text fields (>100 chars in THIS row's value)
+                      //    get their label on its own row with the value
+                      //    beneath spanning the full section width — same
+                      //    pattern the lists section uses for mini-tables.
+                      //    Long paragraphs need horizontal room more than
+                      //    they need to align with short labels.
+                      // Also: a max-width cap so wide screens don't let one
+                      // long string section push the other columns far to
+                      // the right. On narrow widths the cap doesn't engage,
+                      // preserving the existing tight layout.
+                      // Summary always wins — even when long it floats above
+                      // the short grid. Other long fields stack beneath the
+                      // short grid in their schema order.
+                      // Numerics keeps the simple grid.
+                      const stringsLongCharThreshold = 100;
+                      const isSummaryField = (sf: SchemaField) => (sf.name || '').split('.').pop()?.toLowerCase() === 'summary';
+                      let stringsShortFields: SchemaField[] = orderedFields;
+                      let stringsLongFields: SchemaField[] = [];
+                      let stringsLeadField: SchemaField | null = null; // long summary, rendered above short grid
+                      if (section.key === 'strings') {
+                        stringsShortFields = [];
+                        // Sort summary first so it leads the grid when short.
+                        const sorted = orderedFields.slice().sort((a, b) => {
+                          const aS = isSummaryField(a) ? 0 : 1;
+                          const bS = isSummaryField(b) ? 0 : 1;
+                          return aS - bS;
+                        });
+                        for (const sf of sorted) {
+                          const t = (sf as any).type as string;
+                          if (t === 'boolean') {
+                            stringsShortFields.push(sf);
+                            continue;
+                          }
+                          const v = getAnnotationFieldValue(result.value, sf.name);
+                          const isLong = typeof v === 'string' && v.length > stringsLongCharThreshold;
+                          if (isLong && isSummaryField(sf)) {
+                            stringsLeadField = sf;
+                          } else if (isLong) {
+                            stringsLongFields.push(sf);
+                          } else {
+                            stringsShortFields.push(sf);
+                          }
+                        }
+                      }
+                      const stringsCapClass = section.key === 'strings' ? 'max-w-[44rem]' : '';
+                      const renderLongStack = (sf: SchemaField, key: string) => {
+                        const fr = buildFieldRender(sf);
+                        return (
+                          <div key={key} className="min-w-0 max-w-full">
+                            <div className="text-xs text-muted-foreground flex items-center gap-1 min-w-0 mb-0.5">
+                              {fr.labelInner}
+                              {fr.justificationIcon}
+                            </div>
+                            <div className="leading-snug min-w-0">
+                              {formatFieldValue(result.value, sf, highlightValue, renderContext, fr.justificationValue, false)}
+                            </div>
+                          </div>
+                        );
+                      };
+                      return (
+                        <div key={section.key} className={cn(sectionWrapClass, stringsCapClass)} style={{ flexBasis: minW }}>
+                          {stringsLeadField && renderLongStack(stringsLeadField, 'strings-lead')}
+                          {stringsShortFields.length > 0 && (
+                            <div className={cn('grid grid-cols-[max-content_minmax(0,1fr)] gap-x-2 min-w-0', gridGapY, stringsLeadField && 'mt-2')} style={gridRowsStyle}>
+                              {stringsShortFields.map((sf, fidx) => {
+                                const fr = buildFieldRender(sf);
+                                return (
+                                  <React.Fragment key={`${section.key}-${fidx}`}>
+                                    <div className="text-xs text-muted-foreground self-start flex items-center gap-1 min-w-0">
+                                      {fr.labelInner}
+                                      {fr.justificationIcon}
+                                    </div>
+                                    {/* No overflow-hidden — bars and chips need to render
+                                        fully or wrap. TruncatedText handles long-string
+                                        clipping internally. */}
+                                    <div className="self-start text-xs leading-snug min-w-0">
+                                      {formatFieldValue(result.value, sf, highlightValue, renderContext, fr.justificationValue, false)}
+                                    </div>
+                                  </React.Fragment>
+                                );
+                              })}
                             </div>
                           )}
+                          {stringsLongFields.length > 0 && (
+                            <div className={cn('space-y-2', (stringsShortFields.length > 0 || stringsLeadField) && 'mt-2')}>
+                              {stringsLongFields.map((sf, fidx) => renderLongStack(sf, `strings-long-${fidx}`))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              }
+
+              // Non-table contexts (dialog/default/enhanced): inline label + value.
+              return fieldsToDisplay.map((schemaField, idx) => {
+                const fr = buildFieldRender(schemaField);
+                return (
+                  <div key={idx} className="space-y-1 min-w-0 max-w-full">
+                    <div className="flex items-start gap-1 min-w-0 max-w-full">
+                      <div className="flex items-center gap-1 flex-shrink-0 text-xs text-muted-foreground font-medium">
+                        {fr.labelInner}
+                        {fr.justificationIcon}
                       </div>
-                  );
-              })}
-            </div>
+                      <div className="leading-snug min-w-0 overflow-hidden flex-1">
+                        {formatFieldValue(result.value, schemaField, highlightValue, renderContext, fr.justificationValue, false)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
           </div>
-          
+
           {/* Expand/collapse button for non-table contexts */}
           {isPotentiallyLong && !compact && !forceExpanded && renderContext !== 'table' && (
             <Button
@@ -1281,6 +1306,8 @@ interface ConsolidatedModalityViewProps {
   filterArrayItems?: boolean;
   searchTerm?: string | null;
   filters?: any[];
+  density?: Density;
+  rangeCache?: FieldRangeCache;
 }
 
 const ConsolidatedModalityView: React.FC<ConsolidatedModalityViewProps> = ({
@@ -1302,7 +1329,9 @@ const ConsolidatedModalityView: React.FC<ConsolidatedModalityViewProps> = ({
   onLocationClick,
   filterArrayItems = false,
   searchTerm = null,
-  filters = []
+  filters = [],
+  density = 'expanded',
+  rangeCache,
 }) => {
   // Determine which result is document vs image based on asset kind or field structure
   const docResult = results.find(r => {
@@ -1405,6 +1434,8 @@ const ConsolidatedModalityView: React.FC<ConsolidatedModalityViewProps> = ({
                         filterArrayItems={filterArrayItems}
                         searchTerm={searchTerm}
                         filters={filters}
+                        density={density}
+                        rangeCache={rangeCache}
                       />
                     </div>
                   ) : (
@@ -1461,6 +1492,8 @@ const ConsolidatedModalityView: React.FC<ConsolidatedModalityViewProps> = ({
                         filterArrayItems={filterArrayItems}
                         searchTerm={searchTerm}
                         filters={filters}
+                        density={density}
+                        rangeCache={rangeCache}
                       />
                     </div>
                   ) : (
@@ -1499,7 +1532,9 @@ const ConsolidatedSchemasView: React.FC<ConsolidatedSchemasViewProps> = ({
     onLocationClick,
     filterArrayItems = false,
     searchTerm = null,
-    filters = []
+    filters = [],
+    density = 'expanded',
+    rangeCache,
 }) => {
   const actuallyUseTabs = useTabs && renderContext !== 'dialog';
 
@@ -1539,6 +1574,8 @@ const ConsolidatedSchemasView: React.FC<ConsolidatedSchemasViewProps> = ({
                   filterArrayItems={filterArrayItems}
                   searchTerm={searchTerm}
                   filters={filters}
+                  density={density}
+                  rangeCache={rangeCache}
                 />
               ) : (
                 <div className="text-sm text-gray-500 italic">No results for this schema</div>
@@ -1578,6 +1615,8 @@ const ConsolidatedSchemasView: React.FC<ConsolidatedSchemasViewProps> = ({
             filterArrayItems={filterArrayItems}
             searchTerm={searchTerm}
             filters={filters}
+            density={density}
+            rangeCache={rangeCache}
           />
         );
       })}
@@ -1610,9 +1649,11 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
     onLocationClick,
     filterArrayItems = false,
     searchTerm = null,
-    filters = []
+    filters = [],
+    density = 'expanded',
+    rangeCache,
 }) => {
-    
+
   const findSchemaForResult = (res: FormattedAnnotation, sch: AnnotationSchemaRead | AnnotationSchemaRead[]): AnnotationSchemaRead | null => {
     if (!res || !sch) return null;
     if (Array.isArray(sch)) {
@@ -1653,6 +1694,8 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
           filterArrayItems={filterArrayItems}
           searchTerm={searchTerm}
           filters={filters}
+          density={density}
+          rangeCache={rangeCache}
         />
       );
     }
@@ -1684,6 +1727,8 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
           filterArrayItems={filterArrayItems}
           searchTerm={searchTerm}
           filters={filters}
+          density={density}
+          rangeCache={rangeCache}
         />
       );
     }
@@ -1710,10 +1755,12 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
         filterArrayItems={filterArrayItems}
         searchTerm={searchTerm}
         filters={filters}
+        density={density}
+        rangeCache={rangeCache}
       />
     );
   }
-  
+
   if (!Array.isArray(result)) {
     const matchingSchema = findSchemaForResult(result, schema);
     if (matchingSchema) {
@@ -1738,6 +1785,8 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
           filterArrayItems={filterArrayItems}
           searchTerm={searchTerm}
           filters={filters}
+          density={density}
+          rangeCache={rangeCache}
         />
       );
     }

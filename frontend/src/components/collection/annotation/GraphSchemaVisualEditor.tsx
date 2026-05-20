@@ -23,12 +23,16 @@ import {
   Plus,
   Trash2,
   PlusCircle,
-  Settings,
   Sparkles,
   Eye,
   EyeOff,
   ChevronRight,
   Zap,
+  CalendarClock,
+  Clock,
+  MapPin,
+  MessageSquareText,
+  Gauge,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { nanoid } from "nanoid";
@@ -37,7 +41,6 @@ import {
   SchemaSection,
   JsonSchemaType,
   GraphFieldConfig,
-  GraphConfig,
 } from "@/lib/annotations/types";
 import { DEFAULT_ENTITY_COLORS, getEntityColorSet, resolveEntityColor } from "@/lib/annotations/colors";
 import { IconPickerDialog } from "@/components/collection/utilities/icons/IconPickerOverlay";
@@ -88,7 +91,7 @@ const PREDICATE_PRESETS = [
 // TAG INPUT COMPONENT
 // =============================================================================
 
-interface TagInputProps {
+export interface TagInputProps {
   tags: string[];
   onChange: (tags: string[]) => void;
   presets: string[];
@@ -104,7 +107,7 @@ interface TagInputProps {
   showColorPicker?: boolean; // whether to show color picker dots
 }
 
-const TagInput: React.FC<TagInputProps> = ({
+export const TagInput: React.FC<TagInputProps> = ({
   tags,
   onChange,
   presets,
@@ -591,28 +594,21 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
     });
   };
 
-  const updateDeduplicationConfig = (update: Partial<GraphConfig["deduplication"]>) => {
-    updateGraphConfig({
-      graphConfig: {
-        ...graphConfig.graphConfig,
-        deduplication: {
-          ...graphConfig.graphConfig.deduplication,
-          ...update,
-        },
-      },
-    });
-  };
-
   // Entity types
   const entityTypes = graphConfig.entityTypes.typeEnum ?? [];
   const setEntityTypes = (types: string[]) => {
+    // Drop metadata keyed by types that no longer exist — otherwise stale
+    // colors/icons persist into saved output_contract and leak into imports.
+    const keep = new Set(types);
+    const prune = <V,>(map: Record<string, V> | undefined): Record<string, V> | undefined =>
+      map ? Object.fromEntries(Object.entries(map).filter(([k]) => keep.has(k))) : map;
     updateGraphConfig({
       entityTypes: {
         ...graphConfig.entityTypes,
         typeEnum: types,
         typeConstrained: types.length > 0 ? (graphConfig.entityTypes.typeConstrained ?? true) : false,
-        // Preserve colors when updating types
-        typeColors: graphConfig.entityTypes.typeColors,
+        typeColors: prune(graphConfig.entityTypes.typeColors),
+        typeIcons: prune(graphConfig.entityTypes.typeIcons),
       },
     });
   };
@@ -633,13 +629,18 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
   // Predicates
   const predicates = graphConfig.relationshipSchema.predicateEnum ?? [];
   const setPredicates = (preds: string[]) => {
+    // Drop metadata keyed by predicates that no longer exist.
+    const keep = new Set(preds);
+    const prune = <V,>(map: Record<string, V> | undefined): Record<string, V> | undefined =>
+      map ? Object.fromEntries(Object.entries(map).filter(([k]) => keep.has(k))) : map;
     updateGraphConfig({
       relationshipSchema: {
         ...graphConfig.relationshipSchema,
         predicateEnum: preds,
         predicateConstrained: preds.length > 0 ? (graphConfig.relationshipSchema.predicateConstrained ?? true) : false,
-        // Preserve colors when updating predicates
-        predicateColors: graphConfig.relationshipSchema.predicateColors,
+        predicateColors: prune(graphConfig.relationshipSchema.predicateColors),
+        predicateIcons: prune(graphConfig.relationshipSchema.predicateIcons),
+        predicateArrows: prune(graphConfig.relationshipSchema.predicateArrows),
       },
     });
   };
@@ -866,6 +867,17 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
                 />
               </div>
             )}
+
+            {/* Anchored-triplet sources — pin subject/object to entity fields
+               elsewhere in the schema. When set, the LLM can only emit
+               triplets whose endpoints come from those entity populations
+               (enum constraints inherited automatically). */}
+            <AnchorSourcePickers
+              section={section}
+              graphConfig={graphConfig}
+              disabled={disabled}
+              onUpdate={updateGraphConfig}
+            />
           </div>
 
           {/* Predicates / Relationships */}
@@ -1076,126 +1088,195 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
                         className="h-12 text-xs resize-none"
                         rows={2}
                       />
+
+                      {/* Per-edge constraints — round-trip via JSON Schema's
+                          enum / minimum / maximum keywords. Phase B prompt
+                          shows these to the model. */}
+                      {optField.type === 'string' && (
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-medium">Allowed values (one per line) — leave empty for free text</Label>
+                          <Textarea
+                            value={(optField.enum || []).join('\n')}
+                            onChange={(e) => {
+                              const lines = e.target.value.split('\n').map(s => s.trim()).filter(Boolean);
+                              updateOptionalField(optField.id, { enum: lines.length > 0 ? lines : undefined });
+                            }}
+                            placeholder="ja&#10;nein&#10;verzoegert"
+                            rows={2}
+                            disabled={disabled}
+                            className="text-[11px] resize-none font-mono"
+                          />
+                        </div>
+                      )}
+                      {(optField.type === 'number' || optField.type === 'integer') && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-[10px] font-medium">Min</Label>
+                            <Input
+                              type="number" placeholder="—"
+                              value={optField.minimum ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value === '' ? undefined : parseFloat(e.target.value);
+                                updateOptionalField(optField.id, { minimum: isNaN(v as number) ? undefined : v });
+                              }}
+                              disabled={disabled}
+                              className="h-7 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-[10px] font-medium">Max</Label>
+                            <Input
+                              type="number" placeholder="—"
+                              value={optField.maximum ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value === '' ? undefined : parseFloat(e.target.value);
+                                updateOptionalField(optField.id, { maximum: isNaN(v as number) ? undefined : v });
+                              }}
+                              disabled={disabled}
+                              className="h-7 text-xs"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
               )}
 
-              {!disabled && (
-                <div className="space-y-2">
-                  <div className="text-xs text-muted-foreground bg-muted/30 p-2.5 rounded-lg border border-dashed">
-                    <div className="font-medium mb-1">Common optional fields:</div>
-                    <div className="space-y-0.5">
-                      <div>
-                        <code className="bg-background px-1 rounded text-[10px]">context</code>{" "}
-                        <span className="text-muted-foreground/70">(string)</span> - Supporting text quote
-                      </div>
-                      <div>
-                        <code className="bg-background px-1 rounded text-[10px]">confidence</code>{" "}
-                        <span className="text-muted-foreground/70">(number)</span> - Extraction confidence 0-1
-                      </div>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-full h-8 text-xs border-dashed"
-                    onClick={addOptionalField}
-                  >
-                    <PlusCircle className="h-3 w-3 mr-1.5" />
-                    Add Optional Field
-                  </Button>
-                </div>
-              )}
-            </div>
-          </AccordionContent>
-        </AccordionItem>
-
-        {/* Deduplication */}
-        <AccordionItem value="deduplication" className="border rounded-xl px-4 bg-card/50">
-          <AccordionTrigger className="text-sm font-semibold py-3 hover:no-underline">
-            <div className="flex items-center gap-2">
-              <Settings className="h-3.5 w-3.5 text-muted-foreground" />
-              <span>Entity Deduplication</span>
-              {graphConfig.graphConfig.deduplication.enabled && (
-                <div className="h-2 w-2 rounded-full bg-green-500" />
-              )}
-            </div>
-          </AccordionTrigger>
-          <AccordionContent className="pb-4">
-            <div className="space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Entities are extracted from triplets and deduplicated during aggregation.
-              </p>
-
-              <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border">
-                <div>
-                  <Label htmlFor="dedup-enabled" className="text-sm font-medium cursor-pointer">
-                    Enable Deduplication
-                  </Label>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Merge duplicate entities across triplets
-                  </p>
-                </div>
-                <Switch
-                  id="dedup-enabled"
-                  checked={graphConfig.graphConfig.deduplication.enabled}
-                  onCheckedChange={(checked) => updateDeduplicationConfig({ enabled: checked })}
-                  disabled={disabled}
-                />
-              </div>
-
-              {graphConfig.graphConfig.deduplication.enabled && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="space-y-3"
-                >
+              {!disabled && (() => {
+                const existingNames = new Set(graphConfig.relationshipSchema.optionalFields.map(f => f.name));
+                const edgeSuggestions: Array<{ key: string; name: string; label: string; icon: React.ElementType; color: string; type: JsonSchemaType; description: string }> = [
+                  { key: 'timestamp', name: 'timestamp', label: 'Timestamp', icon: CalendarClock, color: 'text-amber-600', type: 'string', description: 'ISO 8601 datetime of when this relationship/interaction occurred.' },
+                  { key: 'end_timestamp', name: 'end_timestamp', label: 'End time', icon: Clock, color: 'text-amber-500', type: 'string', description: 'ISO 8601 end datetime for interactions spanning a period.' },
+                  { key: 'location', name: 'location', label: 'Location', icon: MapPin, color: 'text-emerald-600', type: 'string', description: 'Where this interaction took place. As specific as available, from specific to general: street, neighborhood, city, state/province, country. Always enough levels to be unambiguous. Use full names, not abbreviations.' },
+                  { key: 'context', name: 'context', label: 'Context', icon: MessageSquareText, color: 'text-blue-500', type: 'string', description: 'Supporting quote or context from the source text.' },
+                  { key: 'confidence', name: 'confidence', label: 'Confidence', icon: Gauge, color: 'text-violet-500', type: 'number', description: 'Extraction confidence score from 0 to 1.' },
+                ];
+                return (
                   <div className="space-y-2">
-                    <Label htmlFor="dedup-strategy" className="text-sm font-medium">
-                      Strategy
-                    </Label>
-                    <Select
-                      value={graphConfig.graphConfig.deduplication.strategy}
-                      onValueChange={(value: "exact" | "normalized" | "fuzzy") =>
-                        updateDeduplicationConfig({ strategy: value })
-                      }
-                      disabled={disabled}
-                    >
-                      <SelectTrigger id="dedup-strategy" className="h-9">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="exact">Exact Match</SelectItem>
-                        <SelectItem value="normalized">Normalized (case-insensitive)</SelectItem>
-                        <SelectItem value="fuzzy">Fuzzy Match (future)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {graphConfig.graphConfig.deduplication.strategy === "normalized" && (
-                    <div className="flex items-center justify-between p-3 bg-muted/20 rounded-lg border">
-                      <Label htmlFor="dedup-case" className="text-sm font-medium cursor-pointer">
-                        Case Sensitive
-                      </Label>
-                      <Switch
-                        id="dedup-case"
-                        checked={graphConfig.graphConfig.deduplication.caseSensitive}
-                        onCheckedChange={(checked) =>
-                          updateDeduplicationConfig({ caseSensitive: checked })
-                        }
-                        disabled={disabled}
-                      />
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wider font-medium shrink-0">Suggest:</span>
+                      {edgeSuggestions.map(s => {
+                        const exists = existingNames.has(s.name);
+                        const needsTimestamp = s.key === 'end_timestamp' && !existingNames.has('timestamp');
+                        const isDisabledSugg = exists || needsTimestamp;
+                        return (
+                          <Button
+                            key={s.key}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isDisabledSugg}
+                            className={cn(
+                              "h-6 px-1.5 gap-1 text-[10px] border-dashed",
+                              isDisabledSugg ? "opacity-30" : "hover:border-solid hover:bg-primary/5"
+                            )}
+                            title={exists ? `${s.label} already added` : needsTimestamp ? 'Add a timestamp field first' : s.description}
+                            onClick={() => {
+                              const newField: AdvancedSchemeField = {
+                                id: nanoid(), name: s.name, type: s.type, required: false, description: s.description,
+                              };
+                              updateGraphConfig({
+                                relationshipSchema: {
+                                  ...graphConfig.relationshipSchema,
+                                  optionalFields: [...graphConfig.relationshipSchema.optionalFields, newField],
+                                },
+                              });
+                            }}
+                          >
+                            <s.icon className={cn("h-2.5 w-2.5", s.color)} />
+                            {s.label}
+                          </Button>
+                        );
+                      })}
                     </div>
-                  )}
-                </motion.div>
-              )}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full h-8 text-xs border-dashed"
+                      onClick={addOptionalField}
+                    >
+                      <PlusCircle className="h-3 w-3 mr-1.5" />
+                      Add Custom Field
+                    </Button>
+                  </div>
+                );
+              })()}
             </div>
           </AccordionContent>
         </AccordionItem>
+
       </Accordion>
+    </div>
+  );
+};
+
+// =============================================================================
+// AnchorSourcePickers — pins triplet subject/object to entity fields in
+// the same schema section. The adapter uses these to inject enum and prose
+// constraints onto subject_name/object_name in the LLM-facing JSON Schema.
+// =============================================================================
+
+const AnchorSourcePickers: React.FC<{
+  section: SchemaSection;
+  graphConfig: GraphFieldConfig;
+  disabled: boolean;
+  onUpdate: (update: Partial<GraphFieldConfig>) => void;
+}> = ({ section, graphConfig, disabled, onUpdate }) => {
+  // v1 picks from top-level entity fields in the same section. Cross-level
+  // refs (e.g. mails[*].sender) are recognized by the adapter but not
+  // exposed in this picker yet — keeps the v1 UX tight.
+  const candidates = (section.fields || []).filter(f => f.type === 'entity' && f.name);
+  if (candidates.length === 0) return null;
+
+  const noneSentinel = '__none__';
+  const renderPicker = (
+    role: 'subject' | 'object',
+    current: string | undefined,
+    update: (val: string | undefined) => void,
+  ) => (
+    <div className="space-y-1">
+      <Label className="text-[11px] font-medium">
+        {role === 'subject' ? 'Subjects come from' : 'Objects come from'}
+      </Label>
+      <Select
+        value={current ?? noneSentinel}
+        onValueChange={(v) => update(v === noneSentinel ? undefined : v)}
+        disabled={disabled}
+      >
+        <SelectTrigger className="h-8 text-xs">
+          <SelectValue placeholder="Open extraction (default)" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={noneSentinel} className="text-xs">
+            Open extraction (default)
+          </SelectItem>
+          {candidates.map(c => (
+            <SelectItem key={c.id} value={c.name} className="text-xs">
+              <span className="font-mono">{c.name}</span>
+              {c.entityConfig?.entity_type && (
+                <span className="text-muted-foreground ml-1.5">({c.entityConfig.entity_type})</span>
+              )}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+
+  return (
+    <div className="mt-3 pt-3 border-t border-blue-200/30 dark:border-blue-800/20">
+      <Label className="text-xs font-semibold">Anchor triplets to entity fields</Label>
+      <p className="text-[10px] text-muted-foreground mt-0.5 mb-2">
+        Pin subjects / objects to entity populations defined elsewhere in this schema.
+        When set, the model can only extract triplets between those entities (enum
+        constraints inherit automatically; off-list endpoints get rejected).
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        {renderPicker('subject', graphConfig.from_source, (v) => onUpdate({ from_source: v }))}
+        {renderPicker('object', graphConfig.to_source, (v) => onUpdate({ to_source: v }))}
+      </div>
     </div>
   );
 };

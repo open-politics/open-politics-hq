@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, ChevronsUp, ChevronsDownUp, ChevronsUpDown, Grip, Edit, Check, XCircle, RotateCcw, Maximize2, Minimize2, Copy, Edit2, Settings, GripVertical } from 'lucide-react';
+import { X, ChevronsUp, Edit, Check, XCircle, RotateCcw, Maximize2, Minimize2, Copy, Edit2, Settings, LayoutPanelTop } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ButtonGroup } from '@/components/ui/button-group';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
+import { FormattedAnnotation, TimeAxisConfig, PanelConfig } from '@/lib/annotations/types';
 import { AnnotationSchemaRead } from '@/client';
-import { FilterSet } from './AnnotationFilterControls';
+import { FilterSet, FILTER_UI_OP_TO_BACKEND } from './AnnotationFilterControls';
+import type { Scope } from '@/lib/annotations/types';
 import AnnotationResultsChart from './AnnotationResultsChart';
 import AnnotationResultsPieChart from './AnnotationResultsPieChart';
 import AnnotationResultsTable from './AnnotationResultsTable';
@@ -23,93 +24,142 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
-import { PanelViewConfig, useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
+import { PanelViewConfig, useAnnotationRunStore, DashboardConfig } from '@/zustand_stores/useAnnotationRunStore';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { nanoid } from 'nanoid';
 
-import { AnnotationMapControls, MapControlsConfig } from './AnnotationMapControls';
-import useGeocode from '@/hooks/useGeocder';
-import { useGeocodingCacheStore } from '@/zustand_stores/storeGeocodingCache';
-import { extractLocationString, getAnnotationFieldValue } from '@/lib/annotations/utils';
-import AssetDetailProvider from '../assets/Views/AssetDetailProvider';
-import { checkFilterMatch } from '@/lib/annotations/utils';
+// Panels used to wrap in AssetDetailProvider, but ``allResults`` is
+// EMPTY_ANNOTATIONS now that panels self-fetch — which made the per-panel
+// overlay open with no annotations. Dropping that wrap lets ``useAssetDetail``
+// inside panels resolve up to the AnnotationRunner bridge (which has the
+// real run results + schemas + activeRunId), so the drawer's asset clicks
+// open the same rich split view the table uses.
+// checkFilterMatch removed — filtering is now server-side via /view endpoint
 import { TextSpanHighlightProvider } from '@/components/collection/contexts/TextSpanHighlightContext';
+import { ScopeBadge, ScopeTargetPicker } from './ScopeOverlay';
+import { createScopeFromSelection, GestureType } from '@/lib/annotations/scopes';
+import { useDragScope, DraggableScopeChip } from './panels/DragScopeProvider';
+import { PanelHeaderSlotProvider, PanelHeaderSlotRenderer } from './panels/PanelHeaderSlot';
 
 // Grid constants
 const GRID_COLUMNS = 12;
 const MIN_WIDTH = 1;
 const MIN_HEIGHT = 1;
 
+// Stable empty-array references for legacy shims. Panels now self-fetch via
+// useAnnotationView, so these paths never carry data.
+const EMPTY_ANNOTATIONS: FormattedAnnotation[] = [];
+const EMPTY_ANY_ARRAY: any[] = [];
+
 interface PanelRendererProps {
-  panel: PanelViewConfig;
-  allResults: FormattedAnnotation[];
+  panel: PanelConfig;
+  infospaceId: number;
+  runId: number;
   allSchemas: AnnotationSchemaRead[];
-  allSources: any[];
-  allAssets: any[];
-  onUpdatePanel: (panelId: string, updates: Partial<PanelViewConfig>) => void;
+  onUpdatePanel: (panelId: string, updates: Partial<PanelConfig>) => void;
   onRemovePanel: (panelId: string) => void;
   onMapPointClick?: (point: MapPoint) => void;
-  activeRunId?: number;
-  // NEW: Result interaction callbacks
   onResultSelect?: (result: any) => void;
   onRetrySingleResult?: (resultId: number, customPrompt?: string) => Promise<any>;
   retryingResultId?: number | null;
-  // NEW: Field interaction callback for enhanced dialog
   onFieldInteraction?: (result: FormattedAnnotation, fieldKey: string) => void;
-  // NEW: Cross-panel navigation callbacks
   onTimestampClick?: (timestamp: Date, fieldKey: string, sourcePanelId: string) => void;
   onLocationClick?: (location: string, fieldKey: string, sourcePanelId: string) => void;
-  // NEW: Cross-panel state (passed from parent to enable highlighting)
   mapHighlightLocation?: { location: string; fieldKey: string } | null;
   chartHighlightTimestamp?: { timestamp: Date; fieldKey: string } | null;
 }
 
-export const PanelRenderer: React.FC<PanelRendererProps> = ({ 
-  panel, 
-  allResults, 
+export const PanelRenderer: React.FC<PanelRendererProps> = ({
+  panel,
+  infospaceId,
+  runId,
   allSchemas,
-  allSources,
-  allAssets,
   onUpdatePanel,
   onRemovePanel,
   onMapPointClick,
-  activeRunId,
-  // NEW: Result interaction callbacks
   onResultSelect,
   onRetrySingleResult,
   retryingResultId,
-  // NEW: Field interaction callback for enhanced dialog
   onFieldInteraction,
-  // NEW: Cross-panel navigation callbacks
   onTimestampClick,
   onLocationClick,
-  // NEW: Cross-panel state
   mapHighlightLocation,
   chartHighlightTimestamp,
 }) => {
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [isEditingDescription, setIsEditingDescription] = useState(false);
+  // Shims for code that still references old props
+  const activeRunId = runId;
+  const allResults = EMPTY_ANNOTATIONS; // Panels now self-fetch
+  const allSources = EMPTY_ANY_ARRAY;
+  const allAssets = EMPTY_ANY_ARRAY;
+  const [isEditingMetadata, setIsEditingMetadata] = useState(false);
   const [editingName, setEditingName] = useState(panel.name);
   const [editingDescription, setEditingDescription] = useState(panel.description || '');
   const [showLayoutControls, setShowLayoutControls] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStartPosition, setDragStartPosition] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [dragOverZone, setDragOverZone] = useState<'left' | 'right' | 'top' | 'bottom' | 'center' | null>(null);
+
+  // --- Scope gesture state ---
+  // The local `pendingScopeGesture` powers the legacy ScopeTargetPicker
+  // popover; the provider-level pending gesture powers the new drag chip.
+  // Both surfaces coexist during the Phase 5 transition.
+  const [pendingScopeGesture, setPendingScopeGesture] = useState<{
+    fieldPath: string;
+    value: any;
+    gestureType: GestureType;
+  } | null>(null);
+
+  const dragScope = useDragScope();
+
+  const handleScopeGesture = useCallback((fieldPath: string, value: any, gestureType: GestureType) => {
+    setPendingScopeGesture({ fieldPath, value, gestureType });
+    // Also announce to the DragScopeProvider so the floating chip appears.
+    dragScope.setPending({
+      sourcePanelId: panel.id,
+      fieldPath,
+      value,
+      gestureType,
+      // groupValue is filled later if the source panel is grouped (the
+      // receiver honors it through the scope.group_context). For now, we
+      // pass undefined — the chart's own onScopeGesture can enhance later.
+    });
+  }, [dragScope, panel.id]);
+
+  const handleScopeTarget = useCallback((targetPanelId: string, mode: 'push' | 'link') => {
+    if (!pendingScopeGesture) return;
+    const scope = createScopeFromSelection(
+      panel.id,
+      { type: pendingScopeGesture.gestureType, fieldPath: pendingScopeGesture.fieldPath, data: pendingScopeGesture.value },
+      panel,
+      mode,
+    );
+    const { addScope } = useAnnotationRunStore.getState();
+    addScope(targetPanelId, scope);
+    setPendingScopeGesture(null);
+  }, [pendingScopeGesture, panel]);
+
+  // Memoized panel update callback — stable reference across PanelRenderer re-renders
+  // prevents child panel effects that depend on onUpdatePanel from firing on every parent render
+  const handlePanelUpdate = useCallback((updates: Partial<PanelConfig>) => {
+    onUpdatePanel(panel.id, updates);
+  }, [onUpdatePanel, panel.id]);
   
-  // Geocoding state
-  const [geocodedPoints, setGeocodedPoints] = useState<MapPoint[]>([]);
-  const [isGeocoding, setIsGeocoding] = useState(false);
-  const [geocodingError, setGeocodingError] = useState<string | null>(null);
-  const { geocodeLocation } = useGeocode();
-  const { getCache, setCache } = useGeocodingCacheStore();
-  
+  // Geocoding is now owned by AnnotationResultsMap — it kicks the
+  // `POST /runs/{rid}/action/geocode` endpoint and subscribes via
+  // useActionWatch. PanelRenderer no longer threads stubbed marker state.
+
   // Use cross-panel highlight state for appropriate panel types
   const highlightLocation = panel.type === 'map' ? mapHighlightLocation : null;
   const highlightTimestamp = panel.type === 'chart' ? chartHighlightTimestamp : null;
   
-  // Get run-wide global variable splitting settings from Zustand store
-  const { getGlobalVariableSplitting } = useAnnotationRunStore();
+  // Get run-wide settings from Zustand store — use selectors to avoid unnecessary re-renders
+  const dashboardConfig = useAnnotationRunStore(state => state.dashboardConfig);
+  const getGlobalVariableSplitting = useAnnotationRunStore(state => state.getGlobalVariableSplitting);
   const globalVariableSplitting = getGlobalVariableSplitting();
+  // Focus mode — when on, hide the per-panel header bar so panel content
+  // gets the full canvas. Drag/resize handles + drop zones still work since
+  // they're absolute-positioned hover reveals on the wrapper.
+  const focusMode = useAnnotationRunStore(state => state.focusMode);
   
   // Convert to component format if exists - MEMOIZED to prevent constant re-rendering
   const globalVariableSplittingConfig = useMemo(() => {
@@ -147,16 +197,16 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   const handleDragStart = (e: React.DragEvent) => {
     setIsDragging(true);
     setDragStartPosition({ 
-      x: panel.gridPos.x, 
-      y: panel.gridPos.y,
-      w: panel.gridPos.w,
-      h: panel.gridPos.h
+      x: panel.grid_position.x, 
+      y: panel.grid_position.y,
+      w: panel.grid_position.w,
+      h: panel.grid_position.h
     });
     
     // Store panel information in dataTransfer for access by drop target
     const dragData = {
       panelId: panel.id,
-      gridPos: panel.gridPos
+      grid_position: panel.grid_position
     };
     
     e.dataTransfer.setData('text/plain', JSON.stringify(dragData));
@@ -207,10 +257,10 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
     try {
       const dragData = JSON.parse(dragDataStr);
       const draggedPanelId = dragData.panelId;
-      const draggedPanelGridPos = dragData.gridPos;
+      const draggedPanelGridPos = dragData.grid_position;
       
       if (draggedPanelId && draggedPanelId !== panel.id && draggedPanelGridPos) {
-        const targetPos = { x: panel.gridPos.x, y: panel.gridPos.y };
+        const targetPos = { x: panel.grid_position.x, y: panel.grid_position.y };
         
         // Get the bounds of the drop target
         const rect = e.currentTarget.getBoundingClientRect();
@@ -221,8 +271,8 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         
         // Determine if we should place side-by-side or swap
         const targetPanel = panel;
-        const targetWidth = targetPanel.gridPos.w;
-        const targetHeight = targetPanel.gridPos.h;
+        const targetWidth = targetPanel.grid_position.w;
+        const targetHeight = targetPanel.grid_position.h;
         
         let newPosition = { x: targetPos.x, y: targetPos.y };
         let shouldSwap = false;
@@ -269,8 +319,8 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
           newPosition = targetPos;
           // Move the target panel to where the dragged panel was
           onUpdatePanel(panel.id, {
-            gridPos: {
-              ...panel.gridPos,
+            grid_position: {
+              ...panel.grid_position,
               x: draggedPanelGridPos.x,
               y: draggedPanelGridPos.y,
             }
@@ -279,7 +329,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         
         // Update the dragged panel's position (keep its original size)
         onUpdatePanel(draggedPanelId, {
-          gridPos: {
+          grid_position: {
             x: newPosition.x,
             y: newPosition.y,
             w: draggedPanelGridPos.w, // Keep original width
@@ -292,36 +342,80 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
     }
   };
 
-  // Calculate filtered results based on panel's filter configuration
-  const filteredResults = useMemo(() => {
-    const filterSet = panel.filters || { logic: 'and', rules: [] };
-    const activeRules = filterSet.rules.filter(r => r.isActive);
+  // Panels now self-fetch with server-side filtering via useAnnotationView
+  const filteredResults = allResults;
 
-    if (activeRules.length === 0) return allResults;
-    
-    const resultsByAssetId = allResults.reduce<Record<number, FormattedAnnotation[]>>((acc, result) => {
-        const assetId = result.asset_id;
-        if (!acc[assetId]) acc[assetId] = [];
-        acc[assetId].push(result);
-        return acc;
-    }, {});
+  // Filter UI uses its own shape (``FilterSet { logic, rules[] }``) because
+  // it was built before the backend adopted the flat ``{path, operator, value}``
+  // FieldCondition shape. Persist the UI state opaquely in panel settings so
+  // users don't lose their rules, AND translate to the backend shape on every
+  // change so ``local_filters`` actually drives the ``/view`` query. The
+  // picker emits paths with ``[*]`` for array-item fields natively, so the
+  // translation is a 1:1 passthrough at save time.
+  //
+  // Migration shim for filters authored before the picker emitted ``[*]``
+  // natively: walk the schema, inject ``[*]`` at the first array node in the
+  // stored path so the Select renders a match and the backend query still
+  // fans over the array. Idempotent on already-normalized paths.
+  const migrateLegacyPath = useCallback((path: string, schemaId?: number): string => {
+    if (!path || path.includes('[*]') || !schemaId) return path;
+    const schema = allSchemas.find((s) => s.id === schemaId);
+    const props = (schema?.output_contract as any)?.properties;
+    if (!props || typeof props !== 'object') return path;
+    const parts = path.split('.');
+    const out: string[] = [];
+    let cursor: any = props;
+    for (let i = 0; i < parts.length; i++) {
+      const key = parts[i];
+      const node = cursor?.[key];
+      if (!node) { out.push(...parts.slice(i)); break; }
+      if (node.type === 'array') {
+        out.push(`${key}[*]`);
+        const items = node.items;
+        if (items?.type === 'object' && items.properties) {
+          cursor = items.properties;
+        } else {
+          out.push(...parts.slice(i + 1));
+          break;
+        }
+      } else {
+        out.push(key);
+        if (node.type === 'object' && node.properties) cursor = node.properties;
+        else { out.push(...parts.slice(i + 1)); break; }
+      }
+    }
+    return out.join('.');
+  }, [allSchemas]);
 
-    const filteredAssetIds = Object.keys(resultsByAssetId)
-        .map(Number)
-        .filter(assetId => {
-          const assetResults = resultsByAssetId[assetId];
-          if (filterSet.logic === 'and') {
-            return activeRules.every(filter => checkFilterMatch(filter, assetResults, allSchemas));
-          } else {
-            return activeRules.some(filter => checkFilterMatch(filter, assetResults, allSchemas));
-          }
-        });
-
-    return allResults.filter(result => filteredAssetIds.includes(result.asset_id));
-  }, [allResults, panel.filters, allSchemas]);
+  const migratedFilterSet = useMemo<FilterSet | undefined>(() => {
+    const raw = panel.settings?.filterUIState as FilterSet | undefined;
+    if (!raw) return undefined;
+    let changed = false;
+    const rules = (raw.rules ?? []).map((r) => {
+      if (!r.fieldKey) return r;
+      const next = migrateLegacyPath(r.fieldKey, r.schemaId);
+      if (next !== r.fieldKey) changed = true;
+      return changed && next !== r.fieldKey ? { ...r, fieldKey: next } : r;
+    });
+    return changed ? { ...raw, rules } : raw;
+  }, [panel.settings?.filterUIState, migrateLegacyPath]);
 
   const handleFilterChange = (newFilterSet: FilterSet) => {
-    onUpdatePanel(panel.id, { filters: newFilterSet });
+    const conditions = (newFilterSet.rules ?? [])
+      .filter((rule) => rule.isActive !== false && rule.fieldKey)
+      .map((rule) => ({
+        path: migrateLegacyPath(rule.fieldKey!, rule.schemaId),
+        operator: FILTER_UI_OP_TO_BACKEND[rule.operator] ?? 'eq',
+        value: rule.value,
+      }));
+
+    onUpdatePanel(panel.id, {
+      local_filters: { logic: newFilterSet.logic ?? 'and', conditions },
+      settings: {
+        ...(panel.settings ?? {}),
+        filterUIState: newFilterSet,
+      },
+    } as any);
   };
 
   const handleSaveName = () => {
@@ -331,25 +425,26 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
       setEditingName(panel.name);
       return;
     }
-    onUpdatePanel(panel.id, { name: trimmedName });
-    setIsEditingName(false);
-    toast.success('Panel name updated');
+    onUpdatePanel(panel.id, { 
+      name: trimmedName,
+      description: editingDescription.trim() || undefined
+    });
+    setIsEditingMetadata(false);
+    toast.success('Panel details updated');
   };
 
   const handleSaveDescription = () => {
-    onUpdatePanel(panel.id, { description: editingDescription.trim() || undefined });
-    setIsEditingDescription(false);
-    toast.success('Panel description updated');
+    handleSaveName();
   };
 
   const handleCancelNameEdit = () => {
     setEditingName(panel.name);
-    setIsEditingName(false);
+    setEditingDescription(panel.description || '');
+    setIsEditingMetadata(false);
   };
 
   const handleCancelDescriptionEdit = () => {
-    setEditingDescription(panel.description || '');
-    setIsEditingDescription(false);
+    handleCancelNameEdit();
   };
 
   const handleNameKeyDown = (e: React.KeyboardEvent) => {
@@ -361,8 +456,8 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
     }
   };
 
-  const handleDescriptionKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && e.ctrlKey) {
+  const handleDescriptionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       handleSaveDescription();
     } else if (e.key === 'Escape') {
@@ -374,10 +469,10 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   const handleWidthChange = (newWidth: number) => {
     try {
       const clampedWidth = Math.max(MIN_WIDTH, Math.min(GRID_COLUMNS, newWidth));
-      const currentGridPos = panel.gridPos || { x: 0, y: 0, w: 6, h: 4 };
+      const currentGridPos = panel.grid_position || { x: 0, y: 0, w: 6, h: 4 };
       
       onUpdatePanel(panel.id, { 
-        gridPos: { 
+        grid_position: { 
           ...currentGridPos,
           w: clampedWidth 
         } 
@@ -390,10 +485,10 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   const handleHeightChange = (newHeight: number) => {
     try {
       const clampedHeight = Math.max(MIN_HEIGHT, newHeight);
-      const currentGridPos = panel.gridPos || { x: 0, y: 0, w: 6, h: 4 };
+      const currentGridPos = panel.grid_position || { x: 0, y: 0, w: 6, h: 4 };
       
       onUpdatePanel(panel.id, { 
-        gridPos: { 
+        grid_position: { 
           ...currentGridPos,
           h: clampedHeight 
         } 
@@ -413,14 +508,14 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
     
     const newSize = sizeMap[size];
     onUpdatePanel(panel.id, { 
-      gridPos: { ...panel.gridPos, ...newSize } 
+      grid_position: { ...panel.grid_position, ...newSize } 
     });
     toast.success(`Panel resized to ${size}`);
   };
 
   const handleResetLayout = () => {
     onUpdatePanel(panel.id, { 
-      gridPos: { x: 0, y: 0, w: 12, h: 4 } 
+      grid_position: { x: 0, y: 0, w: 12, h: 4 } 
     });
     toast.success('Panel layout reset');
   };
@@ -444,555 +539,6 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   }, [panel.id, panel.settings, onUpdatePanel]);
 
   // =============================================================================
-  // GEOCODING CACHE SHARING SYSTEM - COMPLETE ROUND-TRIP SUPPORT
-  // =============================================================================
-  // 
-  // This system enables full round-trip sharing of geocoded map points across users:
-  //
-  // 1. STABLE CACHE KEYS: Uses schema+field-based keys (not panel IDs) for consistency
-  // 2. SCHEMA ID REMAPPING: Automatically handles schema ID changes during import
-  // 3. FALLBACK MECHANISMS: Multiple cache lookup strategies for maximum compatibility
-  // 4. ERROR HANDLING: Graceful handling of geocoding failures with helpful messages
-  // 5. SHARED CONFIGURATION: Geocoded points stored in panel settings for sharing
-  //
-  // TROUBLESHOOTING:
-  // - Check console for "[Geocoding]" and "[Geocoding Cache]" logs
-  // - Verify annotation results exist for the selected schema
-  // - Check that location field contains valid geographic data
-  // - Generic locations like "EU" may fail geocoding - use specific cities/countries
-  // - Cache misses are normal on first load - points will regenerate
-  // =============================================================================
-
-  // Generate cache key for geocoded results (stable across imports)
-  const generateGeocodeKey = useCallback(() => {
-    const geocodeSource = panel.settings?.geocodeSource;
-    if (!geocodeSource) return null;
-    
-    const relevantResults = filteredResults.filter(r => r.schema_id === geocodeSource.schemaId);
-    
-    console.log(`[Geocoding Debug] Schema ID: ${geocodeSource.schemaId}, Field: ${geocodeSource.fieldKey}`);
-    console.log(`[Geocoding Debug] Relevant results count: ${relevantResults.length}`);
-    
-    if (relevantResults.length > 0) {
-      console.log(`[Geocoding Debug] Sample result values:`, relevantResults.slice(0, 2).map(r => ({
-        asset_id: r.asset_id,
-        value: r.value,
-        valueKeys: Object.keys(r.value || {})
-      })));
-    }
-    
-    const locationStrings = relevantResults
-      .map(r => {
-        const fieldValue = getAnnotationFieldValue(r.value, geocodeSource.fieldKey);
-        console.log(`[Geocoding Debug] Asset ${r.asset_id} field value for "${geocodeSource.fieldKey}":`, fieldValue);
-        
-        const locationString = extractLocationString(fieldValue, geocodeSource.fieldKey);
-        console.log(`[Geocoding Debug] Asset ${r.asset_id} extracted location:`, locationString);
-        
-        return locationString;
-      })
-      .filter(Boolean)
-      .sort();
-    
-    console.log(`[Geocoding Debug] Final location strings:`, locationStrings);
-    
-    // Use a stable key based on schema and field, not panel ID (which changes on import)
-    return `geocode_${geocodeSource.schemaId}_${geocodeSource.fieldKey}_${JSON.stringify(locationStrings)}`;
-  }, [panel.settings?.geocodeSource, filteredResults]);
-
-  // Generate a simpler cache key that doesn't depend on location strings (for fallback)
-  const generateSimpleGeocodeKey = useCallback(() => {
-    const geocodeSource = panel.settings?.geocodeSource;
-    if (!geocodeSource) return null;
-    
-    return `geocode_${geocodeSource.schemaId}_${geocodeSource.fieldKey}`;
-  }, [panel.settings?.geocodeSource]);
-
-  // Load cached geocoded points when panel settings change
-  useEffect(() => {
-    const cacheKey = generateGeocodeKey();
-    
-    // Debug schema and geocode source configuration
-    const geocodeSource = panel.settings?.geocodeSource;
-    if (geocodeSource) {
-      console.log(`[Geocoding Debug] Geocode source config:`, geocodeSource);
-      console.log(`[Geocoding Debug] Available schemas:`, allSchemas.map(s => ({ id: s.id, name: s.name })));
-      console.log(`[Geocoding Debug] Available results schemas:`, [...new Set(filteredResults.map(r => r.schema_id))]);
-      
-      const targetSchema = allSchemas.find(s => s.id === geocodeSource.schemaId);
-      if (!targetSchema) {
-        console.log(`[Geocoding Debug] ⚠️ Target schema ${geocodeSource.schemaId} not found in available schemas!`);
-        
-        // Try to find a schema with the same name
-        const schemaByName = allSchemas.find(s => 
-          s.name.toLowerCase().includes('speech') || // Assuming this might be the Speech Analyser schema
-          s.name.toLowerCase() === geocodeSource.schemaId.toString()
-        );
-        if (schemaByName) {
-          console.log(`[Geocoding Debug] 💡 Found potential matching schema by name: ${schemaByName.name} (ID: ${schemaByName.id})`);
-        }
-        
-        // Auto-remap schema ID if we found a matching schema by name
-        if (schemaByName && schemaByName.id !== geocodeSource.schemaId) {
-          console.log(`[Geocoding Debug] 🔄 Auto-remapping schema ID ${geocodeSource.schemaId} -> ${schemaByName.id}`);
-          
-          // Update the panel settings with the correct schema ID
-          const updatedGeocodeSource = {
-            ...geocodeSource,
-            schemaId: schemaByName.id
-          };
-          
-          // Update panel settings (but don't trigger infinite loops)
-          queueMicrotask(() => {
-            onUpdatePanel(panel.id, {
-              settings: {
-                ...(panel.settings || {}),
-                geocodeSource: updatedGeocodeSource
-              }
-            });
-          });
-          
-          return; // Exit early, let the effect re-run with correct schema ID
-        }
-      } else {
-        console.log(`[Geocoding Debug] ✓ Found target schema: ${targetSchema.name}`);
-      }
-    }
-    
-    if (cacheKey) {
-      console.log(`[Geocoding Cache] Looking for cache key: ${cacheKey}`);
-      
-      // First try to load from panel settings cache
-      const panelCache = panel.settings?.geocodedPointsCache;
-      
-      if (panelCache && panelCache.cacheKey === cacheKey) {
-        const cacheAge = Date.now() - panelCache.timestamp;
-        const cacheExpiry = 60 * 60 * 1000; // 1 hour
-        
-        if (cacheAge < cacheExpiry) {
-          console.log(`[Geocoding Cache] ✓ Loaded ${panelCache.points.length} geocoded points from shared config`);
-          
-          // Check if asset IDs need remapping (for shared/imported runs)
-          const remappedPoints = remapAssetIdsInGeocodedPoints(panelCache.points, filteredResults, allAssets);
-          setGeocodedPoints(remappedPoints);
-          setGeocodingError(null);
-          return;
-        } else {
-          console.log(`[Geocoding Cache] Cache expired (${Math.round(cacheAge / 60000)} minutes old)`);
-        }
-      }
-      
-      // Fallback to old cache store (for backward compatibility)
-      const cachedPoints = getCache(cacheKey);
-      
-      if (cachedPoints && cachedPoints.length > 0) {
-        console.log(`[Geocoding Cache] ✓ Loaded ${cachedPoints.length} geocoded points from local cache`);
-        
-        // Check if asset IDs need remapping (for shared/imported runs)
-        const remappedPoints = remapAssetIdsInGeocodedPoints(cachedPoints, filteredResults, allAssets);
-        setGeocodedPoints(remappedPoints);
-        setGeocodingError(null);
-        
-        // Only migrate if we don't already have a matching cache entry
-        const currentPanelCache = panel.settings?.geocodedPointsCache;
-        if (!currentPanelCache || currentPanelCache.cacheKey !== cacheKey) {
-          // Migrate to panel settings (debounced to avoid infinite loops)
-          queueMicrotask(() => {
-            onUpdatePanel(panel.id, {
-              settings: {
-                ...panel.settings,
-                geocodedPointsCache: {
-                  cacheKey,
-                  points: remappedPoints,
-                  timestamp: Date.now(),
-                }
-              }
-            });
-          });
-        }
-      } else {
-        // Try to find cached points with the same field configuration (for shared views)
-        const panelCache = panel.settings?.geocodedPointsCache;
-        if (panelCache && panelCache.points && panelCache.points.length > 0) {
-          const simpleKey = generateSimpleGeocodeKey();
-          
-          console.log(`[Geocoding Cache] Checking for similar cache configuration...`);
-          console.log(`[Geocoding Cache] Panel cache key: ${panelCache.cacheKey}`);
-          console.log(`[Geocoding Cache] Simple key pattern: ${simpleKey}`);
-          
-          // Check if the cache key matches the simple key pattern (schema + field)
-          if (panelCache.cacheKey && simpleKey) {
-            const cacheKeyParts = panelCache.cacheKey.split('_');
-            const simpleKeyParts = simpleKey.split('_');
-            
-            // Compare schema ID and field key parts
-            if (cacheKeyParts.length >= 3 && simpleKeyParts.length >= 3 &&
-                cacheKeyParts[1] === simpleKeyParts[1] && // schema ID
-                cacheKeyParts[2] === simpleKeyParts[2]) { // field key
-              console.log(`[Geocoding Cache] ✓ Using ${panelCache.points.length} cached points from similar configuration`);
-              
-              // Check if asset IDs need remapping (for shared/imported runs)
-              const remappedPoints = remapAssetIdsInGeocodedPoints(panelCache.points, filteredResults, allAssets);
-              setGeocodedPoints(remappedPoints);
-              setGeocodingError(null);
-              return;
-            } else {
-              console.log(`[Geocoding Cache] Cache key mismatch - schema or field different`);
-            }
-          }
-        }
-        
-        console.log(`[Geocoding Cache] No cached points found for current configuration`);
-        setGeocodedPoints([]);
-      }
-    } else {
-      console.log(`[Geocoding Cache] No geocode source configured`);
-      setGeocodedPoints([]);
-    }
-  }, [generateGeocodeKey, generateSimpleGeocodeKey, getCache, panel.settings?.geocodedPointsCache?.cacheKey, panel.id, onUpdatePanel, filteredResults, allAssets]);
-
-  // Function to remap asset IDs in geocoded points when they don't match current results
-  const remapAssetIdsInGeocodedPoints = useCallback((
-    cachedPoints: MapPoint[], 
-    currentResults: FormattedAnnotation[], 
-    currentAssets: any[]
-  ): MapPoint[] => {
-    if (!cachedPoints.length || !currentResults.length) {
-      return cachedPoints;
-    }
-
-    // Check if any of the asset IDs in cached points exist in current results
-    const currentAssetIds = new Set(currentResults.map(r => r.asset_id));
-    const cachedAssetIds = new Set(cachedPoints.flatMap(p => p.documentIds));
-    
-    const hasMatchingIds = Array.from(cachedAssetIds).some(id => currentAssetIds.has(id));
-    
-    if (hasMatchingIds) {
-      // Asset IDs match, no remapping needed
-      console.log(`[Geocoding Cache] Asset IDs match current results, no remapping needed`);
-      return cachedPoints;
-    }
-
-    console.log(`[Geocoding Cache] Asset IDs don't match current results, attempting to remap...`);
-    
-    // Create mapping from old assets to new assets based on title and uuid
-    const assetMapping = new Map<number, number>();
-    
-    // Get asset information from current annotations
-    const currentAssetsInfo = new Map<number, { title: string; uuid?: string }>();
-    currentResults.forEach(result => {
-      if (result.asset) {
-        currentAssetsInfo.set(result.asset_id, {
-          title: result.asset.title || 'Unknown Asset',
-          uuid: (result.asset as any).uuid || undefined
-        });
-      }
-    });
-
-    // Try to map cached asset IDs to current asset IDs
-    cachedPoints.forEach(point => {
-      point.documentIds.forEach(oldId => {
-        if (!assetMapping.has(oldId)) {
-          // Find a matching asset by looking for one with same location annotation value
-          const geocodeSource = panel.settings?.geocodeSource;
-          if (geocodeSource) {
-            // Find current results with the same location string as this point
-            const matchingResults = currentResults.filter(result => {
-              if (result.schema_id !== geocodeSource.schemaId) return false;
-              
-              const fieldValue = getAnnotationFieldValue(result.value, geocodeSource.fieldKey);
-              const locationString = extractLocationString(fieldValue, geocodeSource.fieldKey);
-              
-              return locationString && locationString.trim().toLowerCase() === point.locationString.trim().toLowerCase();
-            });
-            
-            if (matchingResults.length > 0) {
-              // Map to the first matching result's asset ID
-              assetMapping.set(oldId, matchingResults[0].asset_id);
-              console.log(`[Geocoding Cache] Mapped asset ${oldId} -> ${matchingResults[0].asset_id} via location "${point.locationString}"`);
-            }
-          }
-        }
-      });
-    });
-
-    // Apply the mapping to create new points
-    const remappedPoints = cachedPoints.map(point => ({
-      ...point,
-      documentIds: point.documentIds
-        .map(oldId => assetMapping.get(oldId) || oldId)
-        .filter(newId => currentAssetIds.has(newId)) // Only keep asset IDs that exist in current results
-    })).filter(point => point.documentIds.length > 0); // Remove points with no valid assets
-
-    const originalCount = cachedPoints.reduce((sum, p) => sum + p.documentIds.length, 0);
-    const remappedCount = remappedPoints.reduce((sum, p) => sum + p.documentIds.length, 0);
-    
-    console.log(`[Geocoding Cache] Remapped ${assetMapping.size} assets: ${originalCount} -> ${remappedCount} total references`);
-    
-    return remappedPoints;
-  }, [panel.settings?.geocodeSource]);
-
-  // Geocoding function implementation
-  const handleGeocodeRequest = useCallback(async () => {
-    const geocodeSource = panel.settings?.geocodeSource;
-    if (!geocodeSource) {
-      console.log('[Geocoding] No geocode source configured');
-      toast.error('Please select a geocoding source first');
-      return;
-    }
-
-    console.log(`[Geocoding] Starting geocode for schema ${geocodeSource.schemaId}, field "${geocodeSource.fieldKey}"`);
-    setIsGeocoding(true);
-    setGeocodingError(null);
-
-    try {
-      // Filter results for the selected schema
-      const relevantResults = filteredResults.filter(r => r.schema_id === geocodeSource.schemaId);
-      
-      if (relevantResults.length === 0) {
-        console.log(`[Geocoding] ✗ No annotation results found for schema ${geocodeSource.schemaId}`);
-        toast.warning('No annotation results found for the selected schema');
-        setIsGeocoding(false);
-        return;
-      }
-
-      // Extract unique location strings from annotation results
-      const locationMap = new Map<string, number[]>(); // location -> asset IDs
-      
-      relevantResults.forEach(result => {
-        const locationValue = getAnnotationFieldValue(result.value, geocodeSource.fieldKey);
-        const locationString = extractLocationString(locationValue, geocodeSource.fieldKey);
-        
-        if (locationString) {
-          const normalizedLocation = locationString.trim().toLowerCase();
-          if (!locationMap.has(normalizedLocation)) {
-            locationMap.set(normalizedLocation, []);
-          }
-          locationMap.get(normalizedLocation)!.push(result.asset_id);
-        }
-      });
-
-      if (locationMap.size === 0) {
-        console.log(`[Geocoding] ✗ No location data found in field "${geocodeSource.fieldKey}" across ${relevantResults.length} results`);
-        
-        // Help users debug by suggesting available fields
-        if (relevantResults.length > 0) {
-          const sampleResult = relevantResults[0];
-          if (sampleResult.value && typeof sampleResult.value === 'object') {
-            const availableFields = Object.keys(sampleResult.value);
-            
-            // Look for fields that might contain location data
-            const potentialLocationFields = availableFields.filter(field => 
-              field.toLowerCase().includes('location') || 
-              field.toLowerCase().includes('address') || 
-              field.toLowerCase().includes('place') || 
-              field.toLowerCase().includes('city') || 
-              field.toLowerCase().includes('country')
-            );
-            
-            if (potentialLocationFields.length > 0) {
-              console.log('[Geocoding] Potential location fields found:', potentialLocationFields);
-              toast.error(`No location data found in field "${geocodeSource.fieldKey}". Try these fields instead: ${potentialLocationFields.join(', ')}`);
-            } else {
-              toast.warning(`No valid location strings found in field "${geocodeSource.fieldKey}". Check your schema configuration.`);
-            }
-          }
-        } else {
-          toast.warning('No valid location strings found in the annotation results');
-        }
-        
-        setIsGeocoding(false);
-        return;
-      }
-      
-      console.log(`[Geocoding] ✓ Found ${locationMap.size} unique locations from ${relevantResults.length} results`);
-
-      // Geocode each unique location
-      const newPoints: MapPoint[] = [];
-      let successCount = 0;
-      let errorCount = 0;
-      const failedLocations: string[] = [];
-
-      for (const [locationString, assetIds] of locationMap.entries()) {
-        try {
-          const geocodeResult = await geocodeLocation(locationString);
-          
-          if (geocodeResult && geocodeResult.latitude && geocodeResult.longitude) {
-            newPoints.push({
-              id: `${panel.id}_${locationString}`,
-              locationString,
-              coordinates: {
-                latitude: geocodeResult.latitude,
-                longitude: geocodeResult.longitude,
-              },
-              documentIds: assetIds,
-              bbox: geocodeResult.bbox,
-              type: geocodeResult.type,
-            });
-            successCount++;
-          } else {
-            console.warn(`[Geocoding] ✗ Failed to geocode location: "${locationString}"`);
-            failedLocations.push(locationString);
-            errorCount++;
-          }
-        } catch (error) {
-          console.error(`[Geocoding] ✗ Error geocoding location "${locationString}":`, error);
-          failedLocations.push(locationString);
-          errorCount++;
-        }
-      }
-
-      // Update state and cache
-      setGeocodedPoints(newPoints);
-      
-      // Cache the results in panel settings
-      const cacheKey = generateGeocodeKey();
-      
-      if (cacheKey) {
-        // Save to panel settings for sharing
-        const cacheEntry = {
-          cacheKey,
-          points: newPoints,
-          timestamp: Date.now(),
-        };
-        
-        onUpdatePanel(panel.id, {
-          settings: {
-            ...panel.settings,
-            geocodedPointsCache: cacheEntry
-          }
-        });
-        
-        // Also save to local cache store for backward compatibility
-        setCache(cacheKey, newPoints);
-        
-        console.log(`[Geocoding Cache] ✓ Cached ${newPoints.length} geocoded points for sharing`);
-      }
-
-      // Show result toast
-      if (successCount > 0) {
-        const message = `Successfully geocoded ${successCount} location${successCount === 1 ? '' : 's'}${errorCount > 0 ? ` (${errorCount} failed)` : ''}`;
-        toast.success(message);
-        console.log(`[Geocoding] ✓ ${message}`);
-        
-        if (errorCount > 0) {
-          console.log(`[Geocoding] Failed locations: ${failedLocations.join(', ')}`);
-        }
-      } else {
-        const message = `Failed to geocode any locations: ${failedLocations.join(', ')}`;
-        toast.error(message);
-        setGeocodingError(message);
-        console.log(`[Geocoding] ✗ ${message}`);
-      }
-
-    } catch (error) {
-      console.error('Geocoding error:', error);
-      setGeocodingError('An error occurred during geocoding');
-      toast.error('An error occurred during geocoding');
-    } finally {
-      setIsGeocoding(false);
-    }
-  }, [panel.settings?.geocodeSource, filteredResults, geocodeLocation, generateGeocodeKey, setCache, panel.id]);
-
-  // Auto-remap schema IDs in panel settings for imported runs
-  useEffect(() => {
-    let needsUpdate = false;
-    const updatedSettings = { ...panel.settings };
-
-    // Handle pie chart schema remapping
-    if (panel.type === 'pie' && panel.settings?.selectedSchemaId) {
-      const originalSchemaId = panel.settings.selectedSchemaId;
-      const targetSchema = allSchemas.find(s => s.id === originalSchemaId);
-      
-      if (!targetSchema) {
-        console.log(`[Panel Settings] Pie chart panel "${panel.name}" (${panel.id}) references non-existent schema ${originalSchemaId}`);
-        
-        // Try to find a schema with similar characteristics
-        const schemaByName = allSchemas.find(s => {
-          // Check if any schema name matches what we might expect
-          return s.name.toLowerCase().includes('speech') || 
-                 s.name.toLowerCase().includes('location') ||
-                 s.name.toLowerCase().includes('sentiment') ||
-                 s.name.toLowerCase().includes('analyser') ||
-                 allSchemas.length === 1; // If only one schema, use it
-        });
-        
-        if (schemaByName) {
-          console.log(`[Panel Settings] Auto-remapping pie chart schema ID ${originalSchemaId} -> ${schemaByName.id} (${schemaByName.name}) for panel ${panel.id}`);
-          updatedSettings.selectedSchemaId = schemaByName.id;
-          // Reset field selection since schema changed
-          updatedSettings.selectedFieldKey = undefined;
-          needsUpdate = true;
-        } else if (allSchemas.length > 0) {
-          console.log(`[Panel Settings] Using fallback schema ${allSchemas[0].id} (${allSchemas[0].name}) for pie chart panel ${panel.id}`);
-          updatedSettings.selectedSchemaId = allSchemas[0].id;
-          updatedSettings.selectedFieldKey = undefined;
-          needsUpdate = true;
-        }
-      }
-    }
-
-    // Handle map panel schema remapping (geocodeSource and labelSource)
-    if (panel.type === 'map' && panel.settings) {
-      // Check geocodeSource schema ID
-      if (panel.settings.geocodeSource?.schemaId) {
-        const originalSchemaId = panel.settings.geocodeSource.schemaId;
-        const targetSchema = allSchemas.find(s => s.id === originalSchemaId);
-        
-        if (!targetSchema) {
-          console.log(`[Panel Settings] Map panel "${panel.name}" (${panel.id}) geocodeSource references non-existent schema ${originalSchemaId}`);
-          
-          const schemaByName = allSchemas.find(s => 
-            s.name.toLowerCase().includes('speech') || 
-            s.name.toLowerCase().includes('location') ||
-            allSchemas.length === 1
-          );
-          
-          if (schemaByName) {
-            console.log(`[Panel Settings] Auto-remapping map geocodeSource schema ID ${originalSchemaId} -> ${schemaByName.id} for panel ${panel.id}`);
-            updatedSettings.geocodeSource = {
-              ...panel.settings.geocodeSource,
-              schemaId: schemaByName.id
-            };
-            needsUpdate = true;
-          }
-        }
-      }
-      
-      // Check labelSource schema ID
-      if (panel.settings.labelSource?.schemaId) {
-        const originalSchemaId = panel.settings.labelSource.schemaId;
-        const targetSchema = allSchemas.find(s => s.id === originalSchemaId);
-        
-        if (!targetSchema) {
-          console.log(`[Panel Settings] Map panel "${panel.name}" (${panel.id}) labelSource references non-existent schema ${originalSchemaId}`);
-          
-          const schemaByName = allSchemas.find(s => 
-            s.name.toLowerCase().includes('speech') || 
-            s.name.toLowerCase().includes('location') ||
-            allSchemas.length === 1
-          );
-          
-          if (schemaByName) {
-            console.log(`[Panel Settings] Auto-remapping map labelSource schema ID ${originalSchemaId} -> ${schemaByName.id} for panel ${panel.id}`);
-            updatedSettings.labelSource = {
-              ...panel.settings.labelSource,
-              schemaId: schemaByName.id
-            };
-            needsUpdate = true;
-          }
-        }
-      }
-    }
-
-    // Apply updates if needed
-    if (needsUpdate) {
-      console.log(`[Panel Settings] Updating panel ${panel.id} with remapped schema IDs`);
-      queueMicrotask(() => {
-        onUpdatePanel(panel.id, { settings: updatedSettings });
-      });
-    }
-  }, [panel.type, panel.id, panel.name, panel.settings?.selectedSchemaId, panel.settings?.geocodeSource?.schemaId, panel.settings?.labelSource?.schemaId, allSchemas, onUpdatePanel]);
 
   const renderPanelContent = () => {
     switch(panel.type) {
@@ -1000,42 +546,20 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         return (
           <div className="h-full flex flex-col overflow-y-auto">
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas} activeRunId={activeRunId}>
-                <AnnotationResultsTable 
-                  results={filteredResults as any} 
-                  schemas={allSchemas} 
-                  sources={allSources} 
-                  assets={allAssets} 
-                  onResultSelect={onResultSelect} 
+              <TextSpanHighlightProvider>
+                <AnnotationResultsTable
+                  infospaceId={infospaceId}
+                  runId={runId}
+                  schemas={allSchemas}
+                  panelConfig={panel}
+                  onUpdatePanel={handlePanelUpdate}
+                  onResultSelect={onResultSelect}
                   onRetrySingleResult={onRetrySingleResult}
                   retryingResultId={retryingResultId}
-                  excludedRecordIds={new Set()} 
-                  onToggleRecordExclusion={() => {}} 
-                  initialTableConfig={{
-                    ...panel.settings?.tableConfig,
-                    selectedFieldsPerScheme: panel.settings?.selectedFieldsPerScheme
-                  }}
-                  onTableConfigChange={(config) => {
-                    // Separate selectedFieldsPerScheme from tableConfig to avoid duplication
-                    const { selectedFieldsPerScheme, ...tableConfigOnly } = config;
-                    onUpdatePanel(panel.id, {
-                      settings: {
-                        ...panel.settings,
-                        tableConfig: tableConfigOnly,
-                        selectedFieldsPerScheme: selectedFieldsPerScheme,
-                      }
-                    });
-                  }}
-                  // NEW: Time frame filtering and variable splitting
-                  timeAxisConfig={panel.settings?.timeAxisConfig || null}
-                  variableSplittingConfig={globalVariableSplittingConfig} // Use global settings
-                  // NEW: Cross-panel navigation
                   onTimestampClick={onTimestampClick ? (timestamp, fieldKey) => onTimestampClick(timestamp, fieldKey, panel.id) : undefined}
                   onLocationClick={onLocationClick ? (location, fieldKey) => onLocationClick(location, fieldKey, panel.id) : undefined}
-                  // CSV Export
-                  runId={activeRunId}
                 />
-              </AssetDetailProvider>
+              </TextSpanHighlightProvider>
             </div>
           </div>
         );
@@ -1044,29 +568,20 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         return (
           <div className="h-full flex flex-col overflow-y-auto">
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas} activeRunId={activeRunId}>
+              <TextSpanHighlightProvider>
                 <AnnotationResultsChart
-                  results={filteredResults}
+                  infospaceId={infospaceId}
+                  runId={runId}
                   schemas={allSchemas}
-                  assets={allAssets}
-                  sources={allSources}
-                  timeAxisConfig={panel.settings?.timeAxisConfig || null}
-                  selectedTimeInterval={panel.settings?.selectedTimeInterval as any || "day"}
-                  aggregateSourcesDefault={panel.settings?.aggregateSources ?? true}
-                  selectedDataSourceIds={panel.settings?.selectedSourceIds || allSources.map(s => s.id)}
+                  panelConfig={panel}
+                  onUpdatePanel={handlePanelUpdate}
                   showControls={!isCollapsed}
-                  // NEW: Variable splitting
-                  variableSplittingConfig={globalVariableSplittingConfig} // Use global settings
-                  // NEW: Fix interval handling
-                  onSettingsChange={handlePanelSettingsUpdate}
-                  initialSettings={panel.settings}
-                  // NEW: Result selection callback
                   onResultSelect={onResultSelect}
                   onFieldInteraction={onFieldInteraction}
-                  // NEW: Cross-panel timestamp highlighting
                   highlightedTimestamp={highlightTimestamp}
+                  onScopeGesture={handleScopeGesture}
                 />
-              </AssetDetailProvider>
+              </TextSpanHighlightProvider>
             </div>
           </div>
         );
@@ -1074,132 +589,59 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
       case 'pie':
         return (
           <div className="h-full flex flex-col space-y-2 overflow-y-auto">
-            {!isCollapsed && (
-              <div className="flex-shrink-0">
-                {/* Removed embedded VariableSplittingControls */}
-              </div>
-            )}
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas} activeRunId={activeRunId}>
+              <TextSpanHighlightProvider>
                 <AnnotationResultsPieChart
-                results={filteredResults}
-                schemas={allSchemas}
-                assets={allAssets}
-                sources={allSources}
-                selectedSourceIds={panel.settings?.selectedSourceIds || allSources.map(s => s.id)}
-                aggregateSourcesDefault={panel.settings?.aggregateSources ?? true}
-                onSettingsChange={handlePanelSettingsUpdate}
-                initialSettings={panel.settings}
-                showControls={!isCollapsed}
-                // NEW: Time frame filtering and variable splitting
-                timeAxisConfig={panel.settings?.timeAxisConfig || null}
-                variableSplittingConfig={globalVariableSplittingConfig} // Use global settings
-                // NEW: Result selection callback
-                onResultSelect={onResultSelect}
-                onFieldInteraction={onFieldInteraction}
+                  infospaceId={infospaceId}
+                  runId={runId}
+                  schemas={allSchemas}
+                  panelConfig={panel}
+                  onUpdatePanel={handlePanelUpdate}
+                  showControls={!isCollapsed}
+                  onResultSelect={onResultSelect}
+                  onFieldInteraction={onFieldInteraction}
+                  onScopeGesture={handleScopeGesture}
                 />
-              </AssetDetailProvider>
+              </TextSpanHighlightProvider>
             </div>
           </div>
         );
       
       case 'map':
         return (
-          <div className="h-full flex flex-col space-y-2 overflow-y-auto">
-            {!isCollapsed && (
-              <div className="flex-shrink-0 space-y-2">
-                <AnnotationMapControls
-                  schemas={allSchemas}
-                  value={{
-                    geocodeSource: panel.settings?.geocodeSource || null,
-                    labelSource: panel.settings?.labelSource || null,
-                    showLabels: panel.settings?.showLabels ?? false,
-                    showAreas: panel.settings?.showAreas ?? false
-                  }}
-                  onChange={(config) => {
-                    handlePanelSettingsUpdate({
-                      geocodeSource: config.geocodeSource ?? undefined,
-                      labelSource: config.labelSource ?? undefined,
-                      showLabels: config.showLabels,
-                      showAreas: config.showAreas
-                    });
-                  }}
-                  onGeocodeRequest={handleGeocodeRequest}
-                  isLoadingGeocoding={isGeocoding}
-                  geocodingError={geocodingError}
-                />
-              </div>
-            )}
-            <div className="flex-1 min-h-0 overflow-y-auto">
-              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas} activeRunId={activeRunId}>
+          <div className="h-full flex flex-col overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <TextSpanHighlightProvider>
                 <AnnotationResultsMap
-                  points={geocodedPoints}
-                  results={filteredResults}
+                  infospaceId={infospaceId}
+                  runId={runId}
                   schemas={allSchemas}
-                  labelConfig={panel.settings?.showLabels && panel.settings?.labelSource ? {
-                    schemaId: panel.settings.labelSource.schemaId,
-                    fieldKey: panel.settings.labelSource.fieldKey
-                  } : undefined}
-                  onPointClick={(point) => {
-                    // Set the selected map point for the dialog
-                    onMapPointClick?.(point);
-                  }}
-                  assets={allAssets}
-                  // NEW: Time frame filtering and variable splitting
-                  timeAxisConfig={panel.settings?.timeAxisConfig || null}
-                  variableSplittingConfig={globalVariableSplittingConfig} // Use global settings
-                  // NEW: Field selection controls
-                  selectedFieldsPerScheme={panel.settings?.selectedFieldsPerScheme}
-                  onSelectedFieldsChange={(selectedFieldsPerScheme) => {
-                    handlePanelSettingsUpdate({
-                      selectedFieldsPerScheme: selectedFieldsPerScheme
-                    });
-                  }}
-                  // NEW: Result selection callback
+                  panelConfig={panel}
+                  onUpdatePanel={handlePanelUpdate}
+                  onPointClick={onMapPointClick}
                   onResultSelect={onResultSelect}
-                  // NEW: Show areas toggle
-                  showAreas={panel.settings?.showAreas ?? false}
-                  // NEW: External location highlighting (to be wired up by parent)
                   highlightLocation={highlightLocation}
                 />
-              </AssetDetailProvider>
+              </TextSpanHighlightProvider>
             </div>
           </div>
         );
       
       case 'graph':
         return (
-          <div className="h-full flex flex-col space-y-2 overflow-hidden">
-            {!isCollapsed && (
-              <div className="flex-shrink-0">
-                {/* Removed embedded VariableSplittingControls */}
-              </div>
-            )}
+          <div className="h-full flex flex-col overflow-hidden">
             <div className="flex-1 min-h-0 overflow-hidden">
-              <AssetDetailProvider annotationResults={allResults} schemas={allSchemas} activeRunId={activeRunId}>
+              <TextSpanHighlightProvider>
                 <AnnotationResultsGraph
-                  results={filteredResults}
+                  infospaceId={infospaceId}
+                  runId={runId}
                   schemas={allSchemas}
-                  assets={allAssets}
-                  activeRunId={activeRunId}
+                  panelConfig={panel}
+                  onUpdatePanel={handlePanelUpdate}
                   allSchemas={allSchemas}
-                  // NEW: Time frame filtering and variable splitting
-                  timeAxisConfig={panel.settings?.timeAxisConfig || null}
-                  variableSplittingConfig={globalVariableSplittingConfig} // Use global settings
-                  // NEW: Result selection callback
                   onResultSelect={onResultSelect}
-                  // NEW: Graph editing support
-                  graphEdits={panel.settings?.graphEdits || null}
-                  onGraphEditsChange={(edits) => {
-                    handlePanelSettingsUpdate({ graphEdits: edits });
-                  }}
-                  // NEW: Settings persistence
-                  initialSettings={panel.settings}
-                  onSettingsChange={(settings) => {
-                    handlePanelSettingsUpdate(settings);
-                  }}
                 />
-              </AssetDetailProvider>
+              </TextSpanHighlightProvider>
             </div>
           </div>
         );
@@ -1215,12 +657,12 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   };
 
   return (
-    <Card 
+    <PanelHeaderSlotProvider>
+    <div
       className={cn(
-        "flex flex-col relative group transition-all duration-200 h-full w-full overflow-y-auto",
-        // Remove min-height constraints - let grid system control height
+        "flex flex-col relative group transition-all duration-200 h-full rounded-sm w-full overflow-y-auto",
+        "border",
         isDragging && "opacity-50 scale-95 rotate-1",
-        "hover:shadow-md transition-shadow"
       )}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -1260,27 +702,32 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         </>
       )}
 
-      {/* Drag Handle - Top Center */}
-      <div 
-        className="absolute top-1 left-1/2 transform -translate-x-1/2 w-8 h-4 cursor-move opacity-0 group-hover:opacity-100 transition-opacity z-20 flex items-center justify-center bg-muted/80 rounded-md"
-        draggable
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
-        <GripVertical className="h-3 w-3 text-muted-foreground" />
-      </div>
+      {/* Drag target — top-center invisible strip. The cursor flips to
+          ``move`` on hover so the affordance is discoverable without a
+          painted handle. Hidden entirely in focus mode. */}
+      {!focusMode && (
+        <div
+          className="absolute top-0 left-1/2 transform -translate-x-1/2 w-8 h-3 cursor-move z-20"
+          draggable
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          aria-label="Drag panel"
+        />
+      )}
 
-      {/* Resize Handle - Bottom Right (only when not collapsed) */}
-      {!isCollapsed && (
-        <div 
-          className="absolute bottom-1 right-1 w-4 h-4 cursor-se-resize opacity-0 group-hover:opacity-100 transition-opacity z-10"
+      {/* Resize target — bottom-right invisible corner. Same pattern as
+          the drag target: cursor change carries the affordance. */}
+      {!isCollapsed && !focusMode && (
+        <div
+          className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize z-10"
+          aria-label="Resize panel"
         onMouseDown={(e) => {
           e.preventDefault();
           e.stopPropagation(); // Prevent drag start when resizing
           const startX = e.clientX;
           const startY = e.clientY;
-          const startWidth = panel.gridPos.w;
-          const startHeight = panel.gridPos.h;
+          const startWidth = panel.grid_position.w;
+          const startHeight = panel.grid_position.h;
           
           // Get the grid container to calculate actual grid cell size
           const gridContainer = e.currentTarget.closest('[style*="grid"]') as HTMLElement;
@@ -1305,7 +752,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
             const newHeight = Math.max(MIN_HEIGHT, startHeight + heightChange);
             
             // Only update if the size actually changed to prevent unnecessary updates
-            if (newWidth !== panel.gridPos.w || newHeight !== panel.gridPos.h) {
+            if (newWidth !== panel.grid_position.w || newHeight !== panel.grid_position.h) {
               handleWidthChange(newWidth);
               handleHeightChange(newHeight);
             }
@@ -1319,84 +766,110 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
           document.addEventListener('mousemove', handleMouseMove);
           document.addEventListener('mouseup', handleMouseUp);
         }}
-      >
-          <div className="w-full h-full bg-gray-400 rounded-br-lg opacity-50 hover:opacity-100">
-            <div className="w-2 h-2 bg-white rounded-full absolute bottom-0.5 right-0.5"></div>
-          </div>
-        </div>
+        />
       )}
 
-      <CardHeader className="flex flex-row items-center justify-between border-b px-2 py-1 space-y-0 flex-shrink-0">
+      {!focusMode && (
+      <div className="flex flex-row items-center justify-between border-b px-2 py-1 flex-shrink-0">
         {/* Panel Name */}
         <div className="flex items-center gap-1.5 min-w-0 flex-shrink-1">
-          {isEditingName ? (
-            <div className="flex items-center gap-1 min-w-0">
-              <Input
-                value={editingName}
-                onChange={(e) => setEditingName(e.target.value)}
-                onKeyDown={handleNameKeyDown}
-                className="text-xs font-semibold h-6 w-32 min-w-0"
-                placeholder="Panel name"
-                autoFocus
-              />
-              <Button size="icon" variant="ghost" className="h-5 w-5 flex-shrink-0" onClick={handleSaveName}>
-                <Check className="h-2.5 w-2.5" />
-              </Button>
-              <Button size="icon" variant="ghost" className="h-5 w-5 flex-shrink-0" onClick={handleCancelNameEdit}>
-                <XCircle className="h-2.5 w-2.5" />
-              </Button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1 group min-w-0">
-              <CardTitle className="text-xs truncate">{panel.name}</CardTitle>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                onClick={() => setIsEditingName(true)}
-              >
-                <Edit2 className="h-2.5 w-2.5" />
-              </Button>
-            </div>
-          )}
+          <div className="flex items-center gap-1 min-w-0">
+            <span className="text-xs font-semibold truncate">{panel.name}</span>
+          </div>
           {/* Inline description hint */}
-          {panel.description && !isEditingDescription && (
-            <span className="text-[10px] text-muted-foreground truncate max-w-[120px] hidden sm:inline" title={panel.description}>
-              — {panel.description}
+          {panel.description && !isEditingMetadata && (
+            <span className="text-[10px] text-muted-foreground truncate max-w-[200px] hidden sm:inline" title={panel.description}>
+              {panel.description}
             </span>
+          )}
+          {/* Scope badge — shows count of incoming cross-panel scopes */}
+          <ScopeBadge
+            panelConfig={panel}
+            allPanels={dashboardConfig?.panels || []}
+            onRemoveScope={(scopeId) => {
+              const { removeScope } = useAnnotationRunStore.getState();
+              removeScope(panel.id, scopeId);
+            }}
+          />
+          {/* Scope target picker — click-based fallback. Drag-based handoff
+              is live via DraggableScopeChip alongside. Both resolve the same
+              pendingScopeGesture. */}
+          {pendingScopeGesture && (
+            <>
+              <ScopeTargetPicker
+                sourcePanelId={panel.id}
+                allPanels={dashboardConfig?.panels || []}
+                onPush={(targetId) => handleScopeTarget(targetId, 'push')}
+                onLink={(targetId) => handleScopeTarget(targetId, 'link')}
+                trigger={
+                  <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] animate-pulse">
+                    Push selection...
+                  </Button>
+                }
+              />
+              {dragScope.pending?.sourcePanelId === panel.id && (
+                <DraggableScopeChip />
+              )}
+            </>
           )}
         </div>
 
         {/* Description editing overlay */}
-        {isEditingDescription && (
-          <div className="absolute top-8 left-2 right-2 z-20 bg-background border rounded-md shadow-lg p-2">
-            <div className="flex items-start gap-2">
-              <Textarea
-                value={editingDescription}
-                onChange={(e) => setEditingDescription(e.target.value)}
-                onKeyDown={handleDescriptionKeyDown}
-                className="text-xs min-h-[50px] flex-1 min-w-0"
-                placeholder="Panel description (optional)"
+        {isEditingMetadata && (
+          <div className="absolute top-8 left-2 right-2 z-20 bg-background border p-2">
+            <div className="space-y-2">
+              <Input
+                value={editingName}
+                onChange={(e) => setEditingName(e.target.value)}
+                onKeyDown={handleNameKeyDown}
+                className="text-xs h-8"
+                placeholder="Panel name"
                 autoFocus
               />
-              <div className="flex flex-col gap-1 flex-shrink-0">
-                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleSaveDescription}>
-                  <Check className="h-3 w-3" />
-                </Button>
-                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleCancelDescriptionEdit}>
-                  <XCircle className="h-3 w-3" />
-                </Button>
+              <div className="flex items-start gap-2">
+                <Textarea
+                  value={editingDescription}
+                  onChange={(e) => setEditingDescription(e.target.value)}
+                  onKeyDown={handleDescriptionKeyDown}
+                  className="text-xs min-h-[50px] flex-1 min-w-0"
+                  placeholder="Panel description (optional)"
+                />
+                <div className="flex flex-col gap-1 flex-shrink-0">
+                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleSaveDescription}>
+                    <Check className="h-3 w-3" />
+                  </Button>
+                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleCancelDescriptionEdit}>
+                    <XCircle className="h-3 w-3" />
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Inline Filters + Panel Controls */}
-        <div className="flex items-center gap-1 ml-1 flex-shrink-0">
-          {/* Filters inline */}
-          {!isCollapsed && (
+        
+
+        {/* Panel controls */}
+        <div className="flex items-center ml-1 flex-shrink-0">
+          <ButtonGroup >
+            {/* Per-panel extras (RolePickerPopover) slot in here as true
+                direct children of ButtonGroup — keeps the segmented look. */}
+            <PanelHeaderSlotRenderer />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              onClick={() => {
+                setEditingName(panel.name);
+                setEditingDescription(panel.description || '');
+                setIsEditingMetadata(true);
+              }}
+              title="Edit panel details"
+            >
+              <Edit2 className="h-3 w-3" />
+            </Button>
             <UnifiedFilterControls
-              filterSet={panel.filters || { logic: 'and', rules: [] }}
+              filterSet={migratedFilterSet ?? { logic: 'and', rules: [] }}
               onFilterSetChange={handleFilterChange}
               timeAxisConfig={panel.settings?.timeAxisConfig || null}
               onTimeAxisConfigChange={(config) => {
@@ -1405,125 +878,102 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
               showTimeControls={true}
               allSchemas={allSchemas}
             />
-          )}
-
-          {/* Description edit trigger */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-5 w-5 opacity-40 hover:opacity-100"
-            onClick={() => setIsEditingDescription(true)}
-            title="Edit description"
-          >
-            <Edit2 className="h-2.5 w-2.5" />
-          </Button>
-
-          {/* Collapse/Expand Toggle */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-5 w-5 opacity-60 hover:opacity-100"
-            onClick={handleToggleCollapse}
-          >
-            {isCollapsed ? <ChevronsDownUp className="h-2.5 w-2.5" /> : <ChevronsUpDown className="h-2.5 w-2.5" />}
-          </Button>
-
-          {/* Layout Controls */}
-          <Popover open={showLayoutControls} onOpenChange={setShowLayoutControls}>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-5 w-5 opacity-60 hover:opacity-100">
-                <Settings className="h-2.5 w-2.5" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-72 p-3" align="end" side="bottom">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-medium text-xs">Panel Layout</h4>
-                  <span className="text-[10px] text-muted-foreground">
-                    {panel.gridPos.w} × {panel.gridPos.h}
-                  </span>
-                </div>
-
-                {/* Quick Size Buttons */}
-                <div>
-                  <Label className="text-[10px] text-muted-foreground mb-1.5 block">Quick Sizes</Label>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleQuickSize('small')}>
-                      Small (4×3)
-                    </Button>
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleQuickSize('medium')}>
-                      Medium (6×4)
-                    </Button>
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleQuickSize('large')}>
-                      Large (8×5)
-                    </Button>
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleQuickSize('full')}>
-                      Full (12×6)
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Manual Size Controls */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <Label htmlFor="panel-width" className="text-[10px] text-muted-foreground">Width</Label>
-                    <Select value={panel.gridPos.w.toString()} onValueChange={(v) => handleWidthChange(parseInt(v))}>
-                      <SelectTrigger className="h-7 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: GRID_COLUMNS - MIN_WIDTH + 1 }, (_, i) => i + MIN_WIDTH).map(w => (
-                          <SelectItem key={w} value={w.toString()}>
-                            {w} / {GRID_COLUMNS}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="panel-height" className="text-[10px] text-muted-foreground">Height</Label>
-                    <Select value={panel.gridPos.h.toString()} onValueChange={(v) => handleHeightChange(parseInt(v))}>
-                      <SelectTrigger className="h-7 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 10 }, (_, i) => i + MIN_HEIGHT).map(h => (
-                          <SelectItem key={h} value={h.toString()}>
-                            {h} units
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {/* Reset Button */}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full h-7 text-xs"
-                  onClick={handleResetLayout}
-                >
-                  <RotateCcw className="h-2.5 w-2.5 mr-1.5" />
-                  Reset
+            <Popover open={showLayoutControls} onOpenChange={setShowLayoutControls}>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">
+                  <LayoutPanelTop className="h-3 w-3" />
                 </Button>
-              </div>
-            </PopoverContent>
-          </Popover>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 p-3" align="end" side="bottom">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium text-xs">Panel Layout</h4>
+                    <span className="text-[10px] text-muted-foreground">
+                      {panel.grid_position.w} × {panel.grid_position.h}
+                    </span>
+                  </div>
 
-          {/* Remove Panel */}
-          <Button variant="ghost" size="icon" className="h-5 w-5 opacity-60 hover:opacity-100" onClick={() => onRemovePanel(panel.id)}>
-            <X className="h-3 w-3" />
-          </Button>
+                  {/* Quick Size Buttons */}
+                  <div>
+                    <Label className="text-[10px] text-muted-foreground mb-1.5 block">Quick Sizes</Label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleQuickSize('small')}>
+                        Small (4×3)
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleQuickSize('medium')}>
+                        Medium (6×4)
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleQuickSize('large')}>
+                        Large (8×5)
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleQuickSize('full')}>
+                        Full (12×6)
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Manual Size Controls */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label htmlFor="panel-width" className="text-[10px] text-muted-foreground">Width</Label>
+                      <Select value={panel.grid_position.w.toString()} onValueChange={(v) => handleWidthChange(parseInt(v))}>
+                        <SelectTrigger className="h-7 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: GRID_COLUMNS - MIN_WIDTH + 1 }, (_, i) => i + MIN_WIDTH).map(w => (
+                            <SelectItem key={w} value={w.toString()}>
+                              {w} / {GRID_COLUMNS}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label htmlFor="panel-height" className="text-[10px] text-muted-foreground">Height</Label>
+                      <Select value={panel.grid_position.h.toString()} onValueChange={(v) => handleHeightChange(parseInt(v))}>
+                        <SelectTrigger className="h-7 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 10 }, (_, i) => i + MIN_HEIGHT).map(h => (
+                            <SelectItem key={h} value={h.toString()}>
+                              {h} units
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Reset Button */}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="w-full h-7 text-xs"
+                    onClick={handleResetLayout}
+                  >
+                    <RotateCcw className="h-2.5 w-2.5 mr-1.5" />
+                    Reset
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => onRemovePanel(panel.id)}>
+              <X className="h-3 w-3" />
+            </Button>
+          </ButtonGroup>
         </div>
-      </CardHeader>
+      </div>
+      )}
 
-      <CardContent className="flex-1 flex flex-col p-1.5 min-h-0 overflow-y-auto">
+      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
         {/* Main Content */}
         <div className="flex-1 min-h-0 overflow-y-auto">
           {renderPanelContent()}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
+    </PanelHeaderSlotProvider>
   );
 }; 

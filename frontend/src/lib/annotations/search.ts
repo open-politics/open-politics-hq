@@ -1,13 +1,45 @@
 /**
  * Search utilities for annotation values with nested array support.
- * 
+ *
  * This module provides functions for searching within annotation values,
  * including recursive traversal of nested arrays and objects.
- * 
+ *
  * Backend Migration Path:
  * When migrating to backend search, these functions will be replaced
  * with API calls to GET /api/v1/infospaces/{id}/runs/{run_id}/search
  */
+
+import React from 'react';
+
+/**
+ * Wrap occurrences of `term` in `text` with a <mark> for inline highlighting.
+ * Returns a ReactNode (string when no matches, fragment when matches present).
+ */
+export function highlightTextInValue(text: string, term: string | null | undefined): React.ReactNode {
+  if (!term || !text) return text;
+  const searchLower = term.toLowerCase();
+  const textLower = text.toLowerCase();
+
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let index = textLower.indexOf(searchLower, lastIndex);
+
+  while (index !== -1) {
+    if (index > lastIndex) parts.push(text.slice(lastIndex, index));
+    parts.push(
+      React.createElement(
+        'mark',
+        { key: index, className: 'bg-yellow-300 dark:bg-yellow-600 px-0.5 rounded' },
+        text.slice(index, index + term.length),
+      ),
+    );
+    lastIndex = index + term.length;
+    index = textLower.indexOf(searchLower, lastIndex);
+  }
+
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts.length > 0 ? React.createElement(React.Fragment, null, ...parts) : text;
+}
 
 /**
  * Recursively search for a term within an annotation value.

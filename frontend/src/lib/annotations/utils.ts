@@ -51,7 +51,7 @@ const getNestedValue = (obj: any, path: string): any => {
 };
 
 // Helper function to get field definition from hierarchical schema
-const getFieldDefinitionFromSchema = (schema: AnnotationSchemaRead, fieldKey: string): any => {
+export const getFieldDefinitionFromSchema = (schema: AnnotationSchemaRead, fieldKey: string): any => {
     if (!schema.output_contract) return null;
     
     const properties = (schema.output_contract as any).properties;
@@ -238,14 +238,13 @@ export const getTargetKeysForScheme = (
             }
             
             // Handle array of objects (per_modality patterns and mail arrays)
-            // NEW: Conditionally recurse into array item properties when includeArrayItemFields is true
+            // Conditionally recurse into array item properties when includeArrayItemFields is true.
+            // The child path carries `[*]` so downstream consumers (filters, time-axis picker) can
+            // round-trip to the backend path grammar in `core/filters.py` without a rewrite step.
             if (value.type === 'array' && value.items?.type === 'object' && value.items.properties && !insideArrayOfObjects) {
-                // If includeArrayItemFields is enabled, recurse into array item properties
-                // This allows fields like "document.mails.date" to be available for time axis selection
                 if (options?.includeArrayItemFields) {
-                    extractFromProperties(value.items.properties, fullKey, true); // Mark as inside array
+                    extractFromProperties(value.items.properties, `${fullKey}[*]`, true);
                 }
-                // Otherwise, don't recurse - prevents showing nested fields as columns
             }
         });
     };
@@ -499,10 +498,45 @@ export const formatDisplayValue = (value: any, schema: AnnotationSchemaRead): st
   return String(value);
 };
 
+/**
+ * Resolve a path that contains ``[*]`` (array explosion) to the list of
+ * values produced by walking each element. One ``[*]`` per path is supported
+ * (matches the backend grammar in ``core/filters.py``).
+ *
+ * - ``document.events[*].when`` → [`when` of event 0, `when` of event 1, …]
+ * - ``document.topics[*]``      → the array itself (primitives)
+ * - Path without ``[*]``        → single-element array with the scalar value
+ */
+export const getAnnotationFieldValuesExploded = (annotationValue: any, fieldKey: string): any[] => {
+    if (!annotationValue || !fieldKey) return [];
+    const bracketIdx = fieldKey.indexOf('[*]');
+    if (bracketIdx === -1) {
+        const v = getAnnotationFieldValue(annotationValue, fieldKey);
+        return v == null ? [] : [v];
+    }
+    const arrayPath = fieldKey.slice(0, bracketIdx);
+    const remainder = fieldKey.slice(bracketIdx + 3).replace(/^\./, '');
+    const arr = getAnnotationFieldValue(annotationValue, arrayPath);
+    if (!Array.isArray(arr)) return [];
+    if (!remainder) return arr.filter((x) => x != null);
+    return arr
+        .map((elem) => (elem && typeof elem === 'object' ? getNestedValue(elem, remainder) : undefined))
+        .filter((x) => x != null);
+};
+
 // Smart function to get annotation field value - tries multiple access patterns
 export const getAnnotationFieldValue = (annotationValue: any, fieldKey: string): any => {
     if (!annotationValue || !fieldKey) return undefined;
-    
+
+    // ``[*]`` paths (e.g. ``document.events[*].when``) mean "fan across the
+    // array". When a caller expects a scalar, we collapse to the first valid
+    // value. Callers that need every element should use
+    // ``getAnnotationFieldValuesExploded`` instead.
+    if (fieldKey.includes('[*]')) {
+        const values = getAnnotationFieldValuesExploded(annotationValue, fieldKey);
+        return values.length > 0 ? values[0] : undefined;
+    }
+
     // Strategy 0: Direct access to the fieldKey itself (exact match)
     if (fieldKey in annotationValue) {
         return annotationValue[fieldKey];

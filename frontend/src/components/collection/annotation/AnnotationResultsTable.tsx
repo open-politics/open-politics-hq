@@ -24,12 +24,24 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { AnnotationSchemaRead, AnnotationRead, AssetRead } from '@/client';
+import type { FilterSet as ClientFilterSet, MergeMap } from '@/client';
 import AnnotationResultDisplay from './AnnotationResultDisplay';
 import AssetLink from '../assets/Helper/AssetLink';
-import { adaptEnhancedAnnotationToFormattedAnnotation } from '@/lib/annotations/adapters';
 import { ResultFilter } from './AnnotationFilterControls';
-import { checkFilterMatch, getTargetKeysForScheme, getAnnotationFieldValue, getTargetFieldDefinition, formatFieldNameForDisplay as formatFieldNameUtil, getModalityIcon } from '@/lib/annotations/utils';
+import { getTargetKeysForScheme, getAnnotationFieldValue, getTargetFieldDefinition, getFieldDefinitionFromSchema, formatFieldNameForDisplay as formatFieldNameUtil, getModalityIcon } from '@/lib/annotations/utils';
 import { searchInAnnotationValue } from '@/lib/annotations/search';
+import { useAnnotationView } from '@/hooks/useAnnotationView';
+import type { AnnotationResultRow, AssetSummary, PanelConfig } from '@/lib/annotations/types';
+import { type RolePickerValue } from './panels/RolePicker';
+import { RolePickerPopover } from './panels/RolePickerPopover';
+import { PanelHeaderSlot } from './panels/PanelHeaderSlot';
+import { PanelFormulaBinder } from './formulas/PanelFormulaBinder';
+import { useResolvedProjection } from '@/hooks/useResolvedProjection';
+import { ValueAliasManager } from './panels/ValueAliasManager';
+import { PANEL_ROLE_SCHEMAS } from '@/lib/annotations/panelRoleSchema';
+import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
+import { effectiveMergeMaps } from '@/lib/annotations/valueAliases';
+import { mergeFiltersAndScopes } from '@/lib/annotations/scopes';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Button } from '@/components/ui/button';
@@ -55,10 +67,21 @@ import { AnnotationResultStatus, FormattedAnnotation, TimeAxisConfig } from '@/l
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
 import { AlertCircle } from 'lucide-react';
-import { VariableSplittingConfig, applySplittingToResults } from './VariableSplittingControls';
+import { VariableSplittingConfig } from './VariableSplittingControls';
 import GuidedRetryModal from './GuidedRetryModal';
 import { useFragmentCuration } from '@/hooks/useFragmentCuration';
 import AnnotationCurationModal from './AnnotationCurationModal';
+import {
+  type Density,
+  type FieldRangeCache,
+  type NumericRange,
+  inferFieldRange,
+  valueFitsRange,
+  writeCachedRange,
+  getDensitySpec,
+} from './cellRenderers';
+import { Rows3, Rows4, AlignJustify } from 'lucide-react';
+import { AssetDetailContext } from '@/components/collection/assets/Views/AssetDetailProvider';
 
 // Extend TableMeta type if needed for onRowClick
 declare module '@tanstack/react-table' {
@@ -116,42 +139,22 @@ const getTimestamp = (result: FormattedAnnotation, assetsMap: Map<number, AssetR
 };
 
 interface AnnotationResultsTableProps {
-  results: ResultWithSourceInfo[];
+  infospaceId: number;
+  runId: number;
   schemas: AnnotationSchemaRead[];
-  sources: { id: number; name: string }[];
-  assets: AssetRead[];
-  filters?: ResultFilter[];
-  isLoading?: boolean;
+  panelConfig: PanelConfig;
+  onUpdatePanel: (updates: Partial<PanelConfig>) => void;
+  // Keep backward-compatible props for features not yet migrated
+  sources?: { id: number; name: string }[];
   onResultSelect?: (result: ResultWithSourceInfo) => void;
   onResultDelete?: (resultId: number) => void;
   onResultAction?: (action: string, result: ResultWithSourceInfo) => void;
   onRetrySingleResult?: (resultId: number, customPrompt?: string) => Promise<AnnotationRead | null>;
   retryingResultId?: number | null;
-  excludedRecordIds: Set<number>;
-  onToggleRecordExclusion: (recordId: number) => void;
-  // NEW: Table configuration settings
-  initialTableConfig?: {
-    columnVisibility?: Record<string, boolean>;
-    sorting?: Array<{ id: string; desc: boolean }>;
-    pagination?: {
-      pageIndex: number;
-      pageSize: number;
-    };
-    globalFilter?: string;
-    expanded?: Record<string, boolean>;
-    selectedFieldsPerScheme?: Record<number, string[]>;
-  };
-  onTableConfigChange?: (config: any) => void;
-  // NEW: Time frame filtering
-  timeAxisConfig?: TimeAxisConfig | null;
-  // NEW: Variable splitting
-  variableSplittingConfig?: VariableSplittingConfig | null;
-  onVariableSplittingChange?: (config: VariableSplittingConfig | null) => void;
-  // NEW: Cross-panel navigation
+  excludedRecordIds?: Set<number>;
+  onToggleRecordExclusion?: (recordId: number) => void;
   onTimestampClick?: (timestamp: Date, fieldKey: string) => void;
   onLocationClick?: (location: string, fieldKey: string) => void;
-  // CSV Export
-  runId?: number;
 }
 
 // --- UTILITY FUNCTIONS (Keep existing helpers like getHeaderClassName) --- //
@@ -190,33 +193,114 @@ const SubResultsTable: React.FC<SubResultsTableProps> = ({
   );
 };
 
+// --- Adapter: map /view response rows to the legacy ResultWithSourceInfo shape --- //
+function adaptViewRowToResult(row: AnnotationResultRow): ResultWithSourceInfo {
+  return {
+    id: row.annotation_id,
+    asset_id: row.asset_id,
+    schema_id: row.schema_id,
+    run_id: row.run_id,
+    value: row.value,
+    timestamp: row.timestamp,
+    status: row.status as AnnotationResultStatus,
+  };
+}
+
+function adaptAssetSummaryToAssetRead(summary: AssetSummary): AssetRead {
+  return {
+    id: summary.id,
+    title: summary.title,
+    kind: summary.kind as any,
+    parent_asset_id: summary.parent_asset_id,
+    uuid: '',
+    infospace_id: 0,
+    source_id: null,
+    created_at: '',
+    updated_at: '',
+    is_container: false,
+    stub: false,
+    part_index: null,
+  } as AssetRead;
+}
+
 // --- MAIN COMPONENT --- //
 export function AnnotationResultsTable({
-  results,
+  infospaceId,
+  runId,
   schemas,
-  sources,
-  assets,
-  filters = [],
-  isLoading = false,
+  panelConfig,
+  onUpdatePanel,
+  sources = [],
   onResultSelect,
   onResultDelete,
   onResultAction,
   onRetrySingleResult,
   retryingResultId,
-  excludedRecordIds,
+  excludedRecordIds = new Set<number>(),
   onToggleRecordExclusion,
-  initialTableConfig,
-  onTableConfigChange,
-  // NEW props
-  timeAxisConfig = null,
-  variableSplittingConfig = null,
-  onVariableSplittingChange,
-  // NEW: Cross-panel navigation
   onTimestampClick,
   onLocationClick,
-  // CSV Export
-  runId,
 }: AnnotationResultsTableProps) {
+  // --- Server-side data fetching via /view endpoint --- //
+  const [cursor, setCursor] = useState<number | null>(null);
+  const pageSize = panelConfig.settings?.tableConfig?.pagination?.pageSize || 100;
+
+  const mergedFilters = useMemo(
+    () => mergeFiltersAndScopes(panelConfig.local_filters, panelConfig.incoming_scopes),
+    [panelConfig.local_filters, panelConfig.incoming_scopes],
+  );
+
+  // Value-alias wiring — the table targets the first selected column.
+  const [aliasManagerOpen, setAliasManagerOpen] = useState(false);
+  const getGlobalVariableSplitting = useAnnotationRunStore(s => s.getGlobalVariableSplitting);
+  const setGlobalVariableSplitting = useAnnotationRunStore(s => s.setGlobalVariableSplitting);
+  // Focus mode hides the in-panel toolbar (search/columns/export/etc.).
+  // Pagination at the footer stays — it's functional, not settings.
+  const focusMode = useAnnotationRunStore(s => s.focusMode);
+  const gvs = getGlobalVariableSplitting();
+  const runWideAliasesByField = gvs?.valueAliasesByField ?? {};
+
+  const effectiveMergeMapsForView = useMemo(
+    () => effectiveMergeMaps(panelConfig.merge_maps, runWideAliasesByField),
+    [panelConfig.merge_maps, runWideAliasesByField],
+  );
+
+  const { data: viewData, isLoading, error: viewError, refetch } = useAnnotationView({
+    infospaceId,
+    runId,
+    rows: { limit: pageSize, cursor },
+    filters: mergedFilters,
+    merge_maps: effectiveMergeMapsForView,
+    enabled: !!runId && !!infospaceId,
+  });
+
+  // Adapt server response to the formats the rendering code expects
+  const results = useMemo<ResultWithSourceInfo[]>(() => {
+    if (!viewData?.rows?.items) return [];
+    return viewData.rows.items.map(adaptViewRowToResult);
+  }, [viewData?.rows?.items]);
+
+  const assets = useMemo<AssetRead[]>(() => {
+    if (!viewData?.rows?.assets) return [];
+    return Object.values(viewData.rows.assets).map(adaptAssetSummaryToAssetRead);
+  }, [viewData?.rows?.assets]);
+
+  const totalRows = viewData?.rows?.total ?? 0;
+  const cursorNext = viewData?.rows?.cursor_next ?? null;
+
+  // Table config from panel settings
+  const initialTableConfig = panelConfig.settings?.tableConfig;
+  const tableSettingsRef = useRef(panelConfig.settings);
+  tableSettingsRef.current = panelConfig.settings;
+  const onTableConfigChange = useCallback((config: any) => {
+    onUpdatePanel({ settings: { ...tableSettingsRef.current, tableConfig: config } });
+  }, [onUpdatePanel]);
+
+  const filters: ResultFilter[] = []; // Legacy filters replaced by server-side FilterSet
+  const timeAxisConfig: TimeAxisConfig | null = null; // Time filtering now handled server-side
+  // Variable splitting TBD — will be re-enabled via aggregation config
+  const [variableSplittingConfig] = useState<VariableSplittingConfig | null>(null);
+  const onVariableSplittingChange: ((config: VariableSplittingConfig | null) => void) | undefined = undefined;
   const [sorting, setSorting] = useState<SortingState>(() => {
     if (initialTableConfig?.sorting) {
       return initialTableConfig.sorting.map(s => ({ id: s.id, desc: s.desc }));
@@ -242,12 +326,22 @@ export function AnnotationResultsTable({
     }
     return {
       pageIndex: 0,
-      pageSize: 10, // Start with smaller default for better panel performance
+      pageSize: 50,
     };
   });
   const [globalFilter, setGlobalFilter] = useState(initialTableConfig?.globalFilter || '');
   const [expanded, setExpanded] = useState<Record<string, boolean>>(initialTableConfig?.expanded || {});
-  const [expandAllAnnotations, setExpandAllAnnotations] = useState(false); // NEW: Global expand state for annotation cards
+  const [density, setDensity] = useState<Density>(
+    (initialTableConfig?.density as Density) || 'comfortable',
+  );
+  const [fieldRangeCache, setFieldRangeCache] = useState<FieldRangeCache>(
+    initialTableConfig?.fieldRangeCache || {},
+  );
+  // Failed-row visibility: hidden by default. The toolbar surfaces the count
+  // and lets the user opt in (e.g. to use the "…" menu retry).
+  const [showFailed, setShowFailed] = useState<boolean>(
+    initialTableConfig?.showFailed ?? false,
+  );
   const [unfoldFields, setUnfoldFields] = useState(false); // NEW: Toggle for unfolding schema fields into separate columns
   const [filterArrayItems, setFilterArrayItems] = useState(false); // NEW: Toggle to filter array items to matching ones only
   const { activeInfospace } = useInfospaceStore();
@@ -416,7 +510,7 @@ export function AnnotationResultsTable({
         include_metadata: String(exportOptions.includeMetadata),
         include_justifications: String(exportOptions.includeJustifications),
       });
-      const apiUrl = `/api/v1/annotation_jobs/infospaces/${activeInfospace.id}/runs/${runId}/export/csv?${params}`;
+      const apiUrl = `/api/v1/infospaces/${activeInfospace.id}/runs/${runId}/export/csv?${params}`;
       
       const response = await fetch(
         apiUrl,
@@ -496,34 +590,40 @@ export function AnnotationResultsTable({
       globalFilter,
       expanded,
       selectedFieldsPerScheme,
+      density,
+      fieldRangeCache,
+      showFailed,
     };
-    
+
     // Only call if config actually changed (more stable comparison)
     const prevConfig = previousConfigRef.current;
     let hasChanged = false;
-    
+
     if (!prevConfig) {
       hasChanged = true;
     } else {
       // Check each property more carefully
-      hasChanged = 
+      hasChanged =
         config.globalFilter !== prevConfig.globalFilter ||
         config.pagination.pageIndex !== prevConfig.pagination.pageIndex ||
         config.pagination.pageSize !== prevConfig.pagination.pageSize ||
+        config.density !== prevConfig.density ||
+        config.showFailed !== prevConfig.showFailed ||
         config.sorting.length !== prevConfig.sorting.length ||
-        config.sorting.some((sort, i) => 
-          !prevConfig.sorting[i] || 
-          sort.id !== prevConfig.sorting[i].id || 
+        config.sorting.some((sort, i) =>
+          !prevConfig.sorting[i] ||
+          sort.id !== prevConfig.sorting[i].id ||
           sort.desc !== prevConfig.sorting[i].desc
         );
-        
+
       // Only check complex objects if basic properties haven't changed
       if (!hasChanged) {
         try {
-          hasChanged = 
+          hasChanged =
             JSON.stringify(config.columnVisibility) !== JSON.stringify(prevConfig.columnVisibility) ||
             JSON.stringify(config.expanded) !== JSON.stringify(prevConfig.expanded) ||
-            JSON.stringify(config.selectedFieldsPerScheme) !== JSON.stringify(prevConfig.selectedFieldsPerScheme);
+            JSON.stringify(config.selectedFieldsPerScheme) !== JSON.stringify(prevConfig.selectedFieldsPerScheme) ||
+            JSON.stringify(config.fieldRangeCache) !== JSON.stringify(prevConfig.fieldRangeCache);
         } catch (error) {
           // If JSON.stringify fails, assume changed to be safe
           hasChanged = true;
@@ -535,7 +635,7 @@ export function AnnotationResultsTable({
       previousConfigRef.current = { ...config }; // Deep copy to avoid reference issues
       debouncedConfigUpdate(config);
     }
-  }, [columnVisibility, sorting, pagination, globalFilter, expanded, selectedFieldsPerScheme, debouncedConfigUpdate]);
+  }, [columnVisibility, sorting, pagination, globalFilter, expanded, selectedFieldsPerScheme, density, fieldRangeCache, showFailed, debouncedConfigUpdate]);
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -555,87 +655,99 @@ export function AnnotationResultsTable({
     }
   }, [activeInfospace, schemas.length, refreshSchemasFromHook]);
 
-  // NEW: Apply time frame filtering and variable splitting
-  const assetsMap = useMemo(() => new Map(assets.map(asset => [asset.id, asset])), [assets]);
-  
-  const timeFilteredResults = useMemo(() => {
-    if (!timeAxisConfig?.timeFrame?.enabled || !timeAxisConfig.timeFrame.startDate || !timeAxisConfig.timeFrame.endDate) {
-      return results;
-    }
+  // Register the current row order with the asset-detail provider so the overlay
+  // can navigate ↑↓ between rows. Subscription is via context — when no provider
+  // is mounted (e.g. table used outside AnnotationRunner) we no-op.
+  // The effect itself lives further down, after `flattenedTableData` is declared.
+  const detailContext = React.useContext(AssetDetailContext);
 
-    const { startDate, endDate } = timeAxisConfig.timeFrame;
-    
-    // Ensure startDate and endDate are Date objects
-    const startDateObj = startDate instanceof Date ? startDate : new Date(startDate);
-    const endDateObj = endDate instanceof Date ? endDate : new Date(endDate);
-    
-    // Validate that the dates are valid
-    if (isNaN(startDateObj.getTime()) || isNaN(endDateObj.getTime())) {
-      console.warn('Invalid date range in timeAxisConfig:', { startDate, endDate });
-      return results; // Skip time filtering if dates are invalid
-    }
-    
-    // Create assetsMap locally to avoid dependency instability
-    const localAssetsMap = new Map(assets.map(asset => [asset.id, asset]));
-    
-    return results.filter(result => {
-      const timestamp = getTimestamp(result, localAssetsMap, timeAxisConfig);
-      if (!timestamp) return false;
-      
-      return timestamp >= startDateObj && timestamp <= endDateObj;
+  // Numeric range inference for bar rendering.
+  // Walks all loaded results once per (results, schemas) change, caches per (schema, field).
+  // Re-validates existing cache against new data: any value that breaks the cached range → downgrade.
+  useEffect(() => {
+    if (results.length === 0 || schemas.length === 0) return;
+
+    setFieldRangeCache((prev) => {
+      let next = prev;
+      let changed = false;
+
+      for (const schema of schemas) {
+        const targetKeys = getTargetKeysForScheme(schema.id, schemas);
+        const numericFields = targetKeys.filter((tk) => tk.type === 'number' || tk.type === 'integer');
+        if (numericFields.length === 0) continue;
+
+        const schemaResults = results.filter((r) => r.schema_id === schema.id);
+        if (schemaResults.length === 0) continue;
+
+        for (const tk of numericFields) {
+          const fieldDef = getFieldDefinitionFromSchema(schema, tk.key);
+          const field = { key: tk.key, name: tk.name, type: tk.type, definition: fieldDef };
+          const existing = prev[String(schema.id)]?.[tk.key];
+
+          if (existing && existing.source === 'declared') continue; // declared bounds are stable
+
+          // Validate existing observed range against new data; downgrade if any value breaks.
+          if (existing) {
+            let stillValid = true;
+            for (const r of schemaResults) {
+              const v = getAnnotationFieldValue(r.value, tk.key);
+              if (typeof v === 'number' && !valueFitsRange(existing, v)) {
+                stillValid = false;
+                break;
+              }
+            }
+            if (stillValid) continue;
+          }
+
+          // (Re-)infer from observed values.
+          const fresh = inferFieldRange(field, schemaResults, getAnnotationFieldValue);
+          const before = existing ?? null;
+          if (JSON.stringify(before) !== JSON.stringify(fresh)) {
+            next = writeCachedRange(next === prev ? { ...prev } : next, schema.id, tk.key, fresh);
+            changed = true;
+          }
+        }
+      }
+
+      return changed ? next : prev;
     });
-  }, [
-    results, 
-    timeAxisConfig?.timeFrame?.enabled,
-    // Safe handling of date dependencies - convert to timestamps or use string representation
-    timeAxisConfig?.timeFrame?.startDate instanceof Date ? timeAxisConfig.timeFrame.startDate.getTime() : String(timeAxisConfig?.timeFrame?.startDate || ''),
-    timeAxisConfig?.timeFrame?.endDate instanceof Date ? timeAxisConfig.timeFrame.endDate.getTime() : String(timeAxisConfig?.timeFrame?.endDate || ''),
-    timeAxisConfig?.type,
-    timeAxisConfig?.schemaId,
-    timeAxisConfig?.fieldKey,
-    assets.map(a => a.id).sort().join(',') // FIXED: Use stable asset IDs instead of assetsMap
-  ]);
+  }, [results, schemas]);
 
-  const processedResults = useMemo(() => {
-    if (variableSplittingConfig?.enabled) {
-      const splitResults = applySplittingToResults(timeFilteredResults, variableSplittingConfig);
-      return splitResults;
+  // Data is now server-filtered — use results directly
+  const assetsMap = useMemo(() => new Map(assets.map(asset => [asset.id, asset])), [assets]);
+
+  // Failure detection covers two shapes the backend can produce:
+  //  1. status === 'failure'  (backend-authoritative)
+  //  2. value === {error, details} envelope, even when status='success'
+  //     (some providers mark "success" while returning an error blob)
+  // Both treated as failed so the toolbar count + filter + sort stay aligned
+  // with what the cell actually renders as "errored".
+  const isFailedResult = useCallback((r: { status?: string; value?: any }) => {
+    if (r.status === 'failure') return true;
+    const v = r.value;
+    if (!v || typeof v !== 'object') return false;
+    if ('error' in v && 'details' in v) {
+      const keys = Object.keys(v);
+      return keys.every((k) => k === 'error' || k === 'details' || k.startsWith('_'));
     }
-    
-    return { all: timeFilteredResults };
-  }, [
-    timeFilteredResults, 
-    variableSplittingConfig?.enabled,
-    variableSplittingConfig?.schemaId,
-    variableSplittingConfig?.fieldKey,
-    variableSplittingConfig?.visibleSplits ? Array.from(variableSplittingConfig.visibleSplits).sort().join(',') : '',
-    variableSplittingConfig?.valueAliases ? JSON.stringify(variableSplittingConfig.valueAliases) : ''
-  ]);
+    return false;
+  }, []);
 
-  // Use the appropriate results for table display
+  const failedCount = useMemo(
+    () => results.reduce((n, r) => n + (isFailedResult(r) ? 1 : 0), 0),
+    [results, isFailedResult],
+  );
+
+  // When failed rows are hidden, drop them. When shown, sort them to the
+  // bottom so the valid annotations come first.
   const resultsForTable = useMemo(() => {
-    if (variableSplittingConfig?.enabled && Object.keys(processedResults).length > 1) {
-      // Flatten all split results for table display with split identifiers
-      const flattenedResults: ResultWithSourceInfo[] = [];
-      Object.entries(processedResults).forEach(([splitValue, splitResults]) => {
-        splitResults.forEach(result => {
-          flattenedResults.push({
-            ...result,
-            // Add split value as metadata for display
-            splitValue: splitValue !== 'all' ? splitValue : undefined
-          } as ResultWithSourceInfo & { splitValue?: string });
-        });
-      });
-      return flattenedResults;
-    }
-    
-    const finalResults = processedResults.all || timeFilteredResults;
-    return finalResults;
-  }, [
-    processedResults, 
-    timeFilteredResults, 
-    variableSplittingConfig?.enabled
-  ]);
+    if (!showFailed) return results.filter((r) => !isFailedResult(r));
+    return results.slice().sort((a, b) => {
+      const af = isFailedResult(a) ? 1 : 0;
+      const bf = isFailedResult(b) ? 1 : 0;
+      return af - bf;
+    });
+  }, [results, showFailed, isFailedResult]);
 
   type EnrichedAssetRecord = AssetRead & {
     sourceName: string | null;
@@ -969,33 +1081,8 @@ export function AnnotationResultsTable({
       
       if (!hasResults) return false;
 
-      // Second check: Filter matching
-      const matchesFilters = (() => {
-        if (activeFilters.length === 0) return true;
-        
-        if (record.hasChildren && record.children) {
-          return record.children.some(child => {
-            const childResults = Object.values(child.resultsMap);
-            return childResults.length > 0 && activeFilters.every(filter => checkFilterMatch(filter, childResults, schemas));
-          });
-        }
-        
-        if (record.consolidatedResultsMap) {
-          const allResults: ResultWithSourceInfo[] = [];
-          Object.values(record.consolidatedResultsMap).forEach(consolidated => {
-            if (consolidated.document) allResults.push(consolidated.document);
-            if (consolidated.image) allResults.push(consolidated.image);
-          });
-          if (allResults.length === 0) return false;
-          return activeFilters.every(filter => checkFilterMatch(filter, allResults, schemas));
-        }
-        
-        const assetResults = Object.values(record.resultsMap);
-        if (assetResults.length === 0) return false;
-        return activeFilters.every(filter => checkFilterMatch(filter, assetResults, schemas));
-      })();
-      
-      if (!matchesFilters) return false;
+      // Filter matching is now handled server-side via the /view endpoint
+      // Legacy client-side filters are no longer applied here
 
       // Third check: Search term matching
       if (hasSearchTerm) {
@@ -1035,6 +1122,161 @@ export function AnnotationResultsTable({
     return flattened;
   }, [tableData, Object.keys(expanded).sort().join(',')]); // FIXED: Use stable representation of expanded state
 
+  // Sync row order to AssetDetailProvider for overlay ↑↓ navigation.
+  // Depend only on the (stable) setter and the row data — NOT on the context
+  // object, since the provider re-memos its value when nav state bumps and
+  // would otherwise drive a setState loop.
+  const setNavAssetIds = detailContext?.setNavAssetIds;
+  const lastNavSigRef = useRef<string>('');
+  useEffect(() => {
+    if (!setNavAssetIds) return;
+    const ids = flattenedTableData
+      .map((r) => r.id)
+      .filter((id): id is number => typeof id === 'number');
+    const sig = ids.join(',');
+    if (sig === lastNavSigRef.current) return;
+    lastNavSigRef.current = sig;
+    setNavAssetIds(ids);
+  }, [setNavAssetIds, flattenedTableData]);
+
+  // Single-schema folded layout: long-text string fields move under the
+  // asset header (checkbox/title/#id), giving them the natural width of the
+  // asset column. The schema cell then carries only numerics and lists,
+  // which the 3-section grid renders side-by-side without strings competing
+  // for horizontal space. Multi-schema views can't redistribute (no clean
+  // mapping to "the" asset column), so each schema cell keeps all 3 sections.
+  // Single-schema string redistribution. With one schema, free-text strings
+  // and booleans flow under the asset title in the asset cell — that's
+  // "column 1" of the visual layout (title at top, strings beneath). The
+  // schema cell then carries only numerics and lists/tables/nested-objects,
+  // which the folded layout renders side-by-side as columns 2 and 3 on
+  // wide rows; on narrower rows the schema cell's flex-wrap collapses
+  // those two sub-sections into one stacked column. Multi-schema views
+  // can't redistribute (no clean mapping to "the" asset column), so each
+  // schema cell keeps its own full 3-section layout internally.
+  const stringSplit = useMemo(() => {
+    if (unfoldFields || schemas.length !== 1) return null;
+    const schema = schemas[0];
+    const allFields = getTargetKeysForScheme(schema.id, schemas);
+    const selectedKeys = selectedFieldsPerScheme[schema.id] || allFields.map((f) => f.key);
+    // Asset-cell fields = strings (non-enum) + booleans + entities. Booleans
+    // read as flags on the protagonist info and pair naturally with the free-
+    // text strings under the title. Entities are protagonist references —
+    // EntityCell renders them text-forward (swatch + name + type) so they
+    // belong with the strings, not with the badge strip in the lists section.
+    // Enums stay on the schema side because they render as chips that pack
+    // well with the lists section.
+    const isAssetSideField = (f: { key: string; type: string }) => {
+      if (f.type === 'boolean') return true;
+      const def = getFieldDefinitionFromSchema(schema, f.key);
+      const isEntityField =
+        def?.['x-entityField'] === true
+        || (f.type === 'array' && def?.items?.['x-entityField'] === true);
+      if (isEntityField) return true;
+      if (f.type !== 'string') return false;
+      return !Array.isArray(def?.enum);
+    };
+    const assetSideKeys = allFields.filter((f) => selectedKeys.includes(f.key) && isAssetSideField(f)).map((f) => f.key);
+    const schemaSideKeys = allFields.filter((f) => selectedKeys.includes(f.key) && !isAssetSideField(f)).map((f) => f.key);
+    if (assetSideKeys.length === 0) return null;
+    return { schema, assetSideKeys, schemaSideKeys };
+  }, [unfoldFields, schemas, selectedFieldsPerScheme]);
+
+  // Per-row actions overlay — replaces the old fixed actions column. Rendered
+  // as a `<td>` absolute-positioned to the right edge of each row so it
+  // costs zero horizontal space when not hovered. Visible on row hover
+  // (group-hover) and always visible while the menu is open (the dropdown
+  // keeps focus). Closure captures retry handlers + on* prop callbacks
+  // declared above; same behavior as the prior column cell.
+  const renderRowActionsOverlay = (record: EnrichedAssetRecord) => {
+    const firstResult = Object.values(record.resultsMap)[0];
+    if (!firstResult) return null;
+    const isCurrentlyRetryingThis = retryingResultId === firstResult.id;
+    return (
+      <td
+        className="absolute right-1 top-1 z-10 p-0 border-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity bg-transparent"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="h-7 w-7 p-0 bg-background/90 backdrop-blur-sm shadow-sm border border-border/40" disabled={isCurrentlyRetryingThis}>
+              <span className="sr-only">Open menu</span>
+              {isCurrentlyRetryingThis ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MoreHorizontal className="h-3.5 w-3.5" />}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+            {onResultSelect && (
+              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultSelect(firstResult); }} disabled={isCurrentlyRetryingThis}>
+                <Eye className="mr-2 h-4 w-4" /> View Details
+              </DropdownMenuItem>
+            )}
+            {onResultAction && (
+              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultAction('load_in_runner', firstResult); }} disabled={isCurrentlyRetryingThis}>
+                <ExternalLink className="mr-2 h-4 w-4" /> Load in Runner
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => handleCurationClick('single', record)}>
+              <ArrowUpToLine className="mr-2 h-4 w-4" /> Curate...
+            </DropdownMenuItem>
+            {(onResultSelect || onResultAction || onResultDelete) && <DropdownMenuSeparator />}
+            {onRetrySingleResult && (
+              <>
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (firstResult && typeof firstResult.id === 'number') handleQuickRetry(firstResult);
+                  }}
+                  disabled={isCurrentlyRetryingThis}
+                  className="text-orange-600 hover:text-orange-700 focus:bg-orange-100 focus:text-orange-800"
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" /> Quick Retry
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (firstResult && typeof firstResult.id === 'number') handleGuidedRetry(firstResult);
+                  }}
+                  disabled={isCurrentlyRetryingThis}
+                  className="text-blue-600 hover:text-blue-700 focus:bg-blue-100 focus:text-blue-800"
+                >
+                  <Wand2 className="mr-2 h-4 w-4" /> Guided Retry
+                </DropdownMenuItem>
+              </>
+            )}
+            {onResultDelete && (
+              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultDelete(firstResult.id); }} className="text-red-600 hover:text-red-700" disabled={isCurrentlyRetryingThis}>
+                <Trash2 className="mr-2 h-4 w-4" /> Delete Result
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </td>
+    );
+  };
+
+  // Invisible spacer that lifts a non-asset cell's first field to the same y
+  // as column 1's first strings field. Total height equals exactly the asset
+  // cell's [outer py-1 top + inner py-1 top + header row + (optional gap-1 +
+  // mt-1.5 + pt-1.5 + border-t for the strings separator)]. No bottom padding
+  // — the spacer ends where strings starts, so the next sibling sits exactly
+  // there. visibility:hidden keeps layout while removing paint/interaction.
+  const AssetHeaderAlignmentSpacer: React.FC<{ withSeparator: boolean }> = ({ withSeparator }) => (
+    <div className="invisible select-none" aria-hidden>
+      {/* pt-2 collapses asset cell's outer-py-1-top (4px) + inner-py-1-top (4px) */}
+      <div className="flex flex-col gap-1 pt-2 min-w-0">
+        <div className="flex items-center gap-1.5">
+          <div className="h-3.5 w-3.5 shrink-0" />
+          <span className="text-xs font-semibold">A</span>
+        </div>
+        {withSeparator && (
+          <div className="mt-1.5 pt-1.5 border-t border-border/40 h-0" />
+        )}
+      </div>
+    </div>
+  );
+
   const columns = useMemo((): ColumnDef<EnrichedAssetRecord>[] => {
     const staticColumns: ColumnDef<EnrichedAssetRecord>[] = [
       {
@@ -1057,9 +1299,11 @@ export function AnnotationResultsTable({
           const record = row.original;
           const isExpanded = expanded[record.id.toString()];
           const hasChildren = record.hasChildren && record.children && record.children.length > 0;
-          
+
+          // Cell content centers vertically so the asset title doesn't float
+          // at the top of a row whose height was set by a tall annotation cell.
           return (
-            <div className="flex items-start gap-2 min-w-0 py-1">
+            <div className="flex items-center gap-2 min-w-0 py-1">
               {/* Expander (only render when needed) */}
               {hasChildren && (
                 <Button
@@ -1104,36 +1348,32 @@ export function AnnotationResultsTable({
                 </div>
               )}
               
-              {/* Compact Asset Cell - Vertical layout with thumbnail below title */}
-              <div className="flex-1 min-w-0 flex flex-col gap-1.5 py-1">
-                {/* Content column */}
-                <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                  {/* Row 1: Checkbox */}
-                  <div className="flex items-center">
-                    <Checkbox
-                      checked={row.getIsSelected()}
-                      onCheckedChange={(value) => row.toggleSelected(!!value)}
-                      aria-label="Select row"
-                      className="h-3.5 w-3.5 flex-shrink-0"
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </div>
-                  
-                  {/* Row 2: Title */}
-                  <AssetLink 
-                    assetId={record.id} 
-                    className="text-xs truncate hover:text-primary transition-colors"
+              {/* Asset cell — single header line with checkbox, truncated title, and #id */}
+              <div className="flex-1 min-w-0 flex flex-col gap-1 py-1">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Checkbox
+                    checked={row.getIsSelected()}
+                    onCheckedChange={(value) => row.toggleSelected(!!value)}
+                    aria-label="Select row"
+                    className="h-3.5 w-3.5 flex-shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <AssetLink
+                    assetId={record.id}
+                    className="text-xs truncate hover:text-primary font-semibold transition-colors min-w-0 flex-1"
                   >
                     {record.title || <span className="italic text-muted-foreground/70">No Title</span>}
                   </AssetLink>
-                  
-                  {/* Row 3: ID Badge */}
-                  <span className="text-[10px] text-muted-foreground/70 font-mono">
+                  {/* Asset Type */}
+                  <span className="text-[10px] text-muted-foreground/60 uppercase tracking-wide shrink-0">
+                    {record.kind?.replace(/_/g, ' ')}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground/70 font-mono shrink-0">
                     #{record.id}
                   </span>
                 </div>
-                
-                {/* Thumbnail below title (if image sub-assets exist) */}
+
+                {/* Thumbnail (image sub-assets) */}
                 {record.imageSubAssets && record.imageSubAssets.length > 0 && (
                   <div className="flex-shrink-0">
                     {record.imageSubAssets.map((imageAsset) => (
@@ -1141,13 +1381,49 @@ export function AnnotationResultsTable({
                     ))}
                   </div>
                 )}
+
+                {/* Single-schema redistribution: strings flow under the asset header,
+                    forming column 1 of the cell layout. Columns 2 and 3 (numerics +
+                    lists) live in the schema cell. */}
+                {stringSplit && (() => {
+                  const schemaId = stringSplit.schema.id;
+                  const stringResult =
+                    record.consolidatedResultsMap?.[schemaId]?.document
+                    ?? record.consolidatedResultsMap?.[schemaId]?.image
+                    ?? record.resultsMap[schemaId];
+                  if (!stringResult) return null;
+                  return (
+                    <div className="mt-1.5 pt-1.5 border-t border-border/40 min-w-0">
+                      <AnnotationResultDisplay
+                        result={stringResult}
+                        schema={stringSplit.schema}
+                        compact={false}
+                        selectedFieldKeys={stringSplit.assetSideKeys}
+                        renderContext="table"
+                        onResultSelect={onResultSelect}
+                        forceExpanded={false}
+                        onTimestampClick={onTimestampClick}
+                        onLocationClick={onLocationClick}
+                        filterArrayItems={filterArrayItems}
+                        searchTerm={globalFilter}
+                        filters={filters}
+                        density={density}
+                        rangeCache={fieldRangeCache}
+                      />
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           );
         },
-        maxSize: 200,
-        minSize: 100,
-        size: 140,
+        // With stringSplit active the asset cell carries column-1 content
+        // (title + summary + booleans), so it gets a generous 380px default
+        // and can grow to 600px for long summaries. Without stringSplit the
+        // asset cell is just title/checkbox/id and can stay slim.
+        maxSize: stringSplit ? 600 : 200,
+        minSize: stringSplit ? 320 : 100,
+        size: stringSplit ? 380 : 140,
         enableSorting: true,
         sortingFn: (rowA, rowB) => {
           // Sort by title
@@ -1341,6 +1617,8 @@ export function AnnotationResultsTable({
                   filterArrayItems={filterArrayItems}
                   searchTerm={globalFilter}
                   filters={filters}
+                  density={density}
+                  rangeCache={fieldRangeCache}
                 />
               </div>
             </div>
@@ -1415,8 +1693,14 @@ export function AnnotationResultsTable({
       },
       cell: ({ row }) => {
         const record = row.original;
-        const fieldKeysToShow = selectedFieldsPerScheme[schema.id] || [];
-        
+        // When the redistribution is active, the asset cell renders the
+        // string fields; the schema cell handles only the structured rest
+        // (numerics + lists), which the 3-section grid will collapse to two
+        // visible sections.
+        const fieldKeysToShow = stringSplit && stringSplit.schema.id === schema.id
+          ? stringSplit.schemaSideKeys
+          : (selectedFieldsPerScheme[schema.id] || []);
+
         // Use consolidated results map if available (for document + image consolidation)
         const consolidatedResults = record.consolidatedResultsMap?.[schema.id];
         const hasConsolidatedResults = consolidatedResults && (consolidatedResults.document || consolidatedResults.image);
@@ -1424,8 +1708,14 @@ export function AnnotationResultsTable({
         // Fallback to regular resultsMap if no consolidated results
         const resultForThisCell = hasConsolidatedResults ? null : record.resultsMap[schema.id];
 
-        // FIXED: Hide cell content when zero fields are selected
+        // Hide cell content when zero fields are selected. Special-case: when
+        // single-schema redistribution moved every selected field to the asset
+        // cell, leave the schema cell visually empty rather than say "Hidden"
+        // (the data isn't hidden, just relocated).
         if (fieldKeysToShow.length === 0) {
+          if (stringSplit && stringSplit.schema.id === schema.id) {
+            return <div className="h-full" aria-hidden />;
+          }
           return <div className="text-muted-foreground/50 italic text-xs h-full flex items-center justify-center">Hidden</div>;
         }
 
@@ -1474,7 +1764,8 @@ export function AnnotationResultsTable({
           });
 
           return (
-            <div className={cn("relative h-full min-w-0 max-w-full overflow-hidden space-y-2 px-2 py-1.5", (docFailed || imgFailed) && "border-l-2 border-destructive pl-1")}>
+            <div className={cn("relative h-full min-w-0 max-w-full overflow-hidden", (docFailed || imgFailed) && "border-l-2 border-destructive pl-1")}>
+              <AssetHeaderAlignmentSpacer withSeparator={Boolean(stringSplit && stringSplit.schema.id === schema.id)} />
               {(docFailed || imgFailed) && (
                 <TooltipProvider delayDuration={100}>
                   <Tooltip>
@@ -1495,6 +1786,7 @@ export function AnnotationResultsTable({
                 </TooltipProvider>
               )}
               
+              <div className="space-y-2">
               {/* Document modality section */}
               {docResult && docFields.length > 0 && (
                 <div className="space-y-1">
@@ -1521,12 +1813,14 @@ export function AnnotationResultsTable({
                                 targetFieldKey={field.key}
                                 renderContext="table"
                                 onResultSelect={onResultSelect}
-                                forceExpanded={expandAllAnnotations}
+                                forceExpanded={false}
                                 onTimestampClick={onTimestampClick}
                                 onLocationClick={onLocationClick}
                                 filterArrayItems={filterArrayItems}
                                 searchTerm={globalFilter}
                                 filters={filters}
+                                density={density}
+                                rangeCache={fieldRangeCache}
                               />
                             </div>
                           ) : (
@@ -1570,12 +1864,14 @@ export function AnnotationResultsTable({
                                 targetFieldKey={field.key}
                                 renderContext="table"
                                 onResultSelect={onResultSelect}
-                                forceExpanded={expandAllAnnotations}
+                                forceExpanded={false}
                                 onTimestampClick={onTimestampClick}
                                 onLocationClick={onLocationClick}
                                 filterArrayItems={filterArrayItems}
                                 searchTerm={globalFilter}
                                 filters={filters}
+                                density={density}
+                                rangeCache={fieldRangeCache}
                               />
                             </div>
                           ) : (
@@ -1591,6 +1887,7 @@ export function AnnotationResultsTable({
               {(!docResult || docFields.length === 0) && (!imgResult || imgFields.length === 0) && (
                 <div className="text-muted-foreground/50 italic text-xs h-full flex items-center justify-center">N/A</div>
               )}
+              </div>
             </div>
           );
         }
@@ -1604,6 +1901,7 @@ export function AnnotationResultsTable({
 
         return (
           <div className={cn("relative h-full min-w-0 max-w-full overflow-hidden", isFailed && "border-l-2 border-destructive pl-1")}>
+            <AssetHeaderAlignmentSpacer withSeparator={Boolean(stringSplit && stringSplit.schema.id === schema.id)} />
             {isFailed && (
               <TooltipProvider delayDuration={100}>
                 <Tooltip>
@@ -1630,21 +1928,27 @@ export function AnnotationResultsTable({
                 maxFieldsToShow={undefined}
                 renderContext="table"
                 onResultSelect={onResultSelect}
-                forceExpanded={expandAllAnnotations}
+                forceExpanded={false}
                 onTimestampClick={onTimestampClick}
                 onLocationClick={onLocationClick}
                 filterArrayItems={filterArrayItems}
                 searchTerm={globalFilter}
                 filters={filters}
+                density={density}
+                rangeCache={fieldRangeCache}
               />
             </div>
           </div>
         );
       },
-      // Make schema columns flexible based on content - increased for arrays
-      maxSize: 400,
-      minSize: 150,
-      size: 250,
+      // Schema column flexes to fill the row's remaining width (the inline
+      // `width` is suppressed for non-asset cells in TableCell). minSize is
+      // generous (~480px) so the inner 2-section flex-wrap layout (numerics
+      // + lists) has room to render side-by-side; if the viewport is too
+      // narrow, sections wrap. maxSize is removed so wide screens get the
+      // full flex-fill instead of capping at 400px.
+      minSize: 480,
+      size: 600,
       enableResizing: true,
       enableHiding: true,
     })) : [];
@@ -1669,86 +1973,10 @@ export function AnnotationResultsTable({
            enableResizing: true,
            enableHiding: true,
         },
-        {
-          id: 'actions',
-          header: '',
-          cell: ({ row }) => {
-             const recordContext = row.original;
-             const firstResult = Object.values(recordContext.resultsMap)[0];
-
-             if (!firstResult) return null;
-
-             const isCurrentlyRetryingThis = retryingResultId === firstResult.id;
-
-             return (
-               <DropdownMenu>
-                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className="h-8 w-8 p-0" disabled={isCurrentlyRetryingThis}>
-                    <span className="sr-only">Open menu</span>
-                    {isCurrentlyRetryingThis ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreHorizontal className="h-4 w-4" />}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                  {onResultSelect && (
-                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultSelect(firstResult); }} disabled={isCurrentlyRetryingThis}>
-                      <Eye className="mr-2 h-4 w-4" /> View Details
-                    </DropdownMenuItem>
-                  )}
-                  {onResultAction && (
-                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultAction('load_in_runner', firstResult); }} disabled={isCurrentlyRetryingThis}>
-                       <ExternalLink className="mr-2 h-4 w-4" /> Load in Runner
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => handleCurationClick('single', recordContext)}>
-                    <ArrowUpToLine className="mr-2 h-4 w-4" /> Curate...
-                  </DropdownMenuItem>
-                  {(onResultSelect || onResultAction || onResultDelete) && <DropdownMenuSeparator />}
-                   {onRetrySingleResult && (
-                     <>
-                       <DropdownMenuItem
-                         onClick={(e) => {
-                           e.stopPropagation();
-                           if (firstResult && typeof firstResult.id === 'number') {
-                               handleQuickRetry(firstResult);
-                           }
-                         }}
-                         disabled={isCurrentlyRetryingThis}
-                         className="text-orange-600 hover:text-orange-700 focus:bg-orange-100 focus:text-orange-800"
-                       >
-                         <RefreshCw className="mr-2 h-4 w-4" /> Quick Retry
-                       </DropdownMenuItem>
-                       <DropdownMenuItem
-                         onClick={(e) => {
-                           e.stopPropagation();
-                           if (firstResult && typeof firstResult.id === 'number') {
-                               handleGuidedRetry(firstResult);
-                           }
-                         }}
-                         disabled={isCurrentlyRetryingThis}
-                         className="text-blue-600 hover:text-blue-700 focus:bg-blue-100 focus:text-blue-800"
-                       >
-                         <Wand2 className="mr-2 h-4 w-4" /> Guided Retry
-                       </DropdownMenuItem>
-                     </>
-                   )}
-                  {onResultDelete && (
-                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onResultDelete(firstResult.id); }} className="text-red-600 hover:text-red-700" disabled={isCurrentlyRetryingThis}>
-                      <Trash2 className="mr-2 h-4 w-4" /> Delete Result
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-               </DropdownMenu>
-             );
-          },
-          maxSize: 50,
-          minSize: 50,
-          size: 50,
-          enableSorting: false,
-          enableHiding: false,
-          enableResizing: false,
-        },
+        // Actions are no longer a fixed column — see `renderRowActionsOverlay`
+        // below. We render the per-row 3-dot menu as a hover-revealed overlay
+        // pinned to the row's right edge so the table doesn't carry a
+        // permanent ~44px dead-space column on the trailing side.
     ];
 
     // Choose between unfolded field columns or grouped schema columns
@@ -1769,11 +1997,13 @@ export function AnnotationResultsTable({
       // onToggleRecordExclusion,
       Object.keys(expanded).sort().join(','), // FIXED: Use stable representation of expanded state
       variableSplittingConfig?.enabled, // Only track enabled state for column changes
-      expandAllAnnotations, // NEW: Track expand all state for annotation display
+      density, // Track density tier for cell rendering
+      JSON.stringify(fieldRangeCache), // Track range cache for bar inference
       unfoldFields, // NEW: Track unfold fields state for column generation
       filterArrayItems, // NEW: Track filter array items state
       globalFilter, // NEW: Track global filter for array filtering
       filters.length, // NEW: Track filters for array filtering
+      stringSplit, // single-schema redistribution to asset cell
   ]);
   
   // Custom global filter function that searches within nested arrays
@@ -1843,16 +2073,121 @@ export function AnnotationResultsTable({
     autoResetAll: false,
   });
 
+  // --- RolePicker wiring --------------------------------------------------
+  // The picker drives `columns` (multi) + `row_explode` (array-of-objects row
+  // expansion). Schema is single-picked, and the selection writes into the
+  // existing `selectedFieldsPerScheme` map so the column-rendering pipeline
+  // picks it up without any refactor.
+  const rolePickerSchemaId =
+    (panelConfig.settings?.selectedSchemaId as number | undefined) ??
+    (schemas.length === 1 ? schemas[0].id : null);
+
+  const rolePickerValue: RolePickerValue = useMemo(() => {
+    const fieldsByRole: Record<string, string[]> = {};
+    if (rolePickerSchemaId != null) {
+      const columns = selectedFieldsPerScheme[rolePickerSchemaId] ?? [];
+      if (columns.length > 0) fieldsByRole['columns'] = columns;
+    }
+    const mappings = panelConfig.projection?.field_mappings ?? {};
+    const explode = mappings['row_explode'];
+    if (typeof explode === 'string') fieldsByRole['row_explode'] = [explode];
+    return {
+      schemaId: rolePickerSchemaId,
+      fieldsByRole,
+      // Always populate the key so the ternary doesn't produce a union with
+      // `{ row_explode?: undefined }`, which clashes with the picker's
+      // `Record<string, string | null>` index signature. RolePicker reads
+      // `value.explosionByRole[k] ?? null`, so missing-key and null-value are
+      // already equivalent at the consumer.
+      explosionByRole: { row_explode: panelConfig.projection?.explosion ?? null },
+      aggregation: panelConfig.aggregation ?? {},
+    };
+  }, [rolePickerSchemaId, selectedFieldsPerScheme, panelConfig.projection, panelConfig.aggregation]);
+
+  const handleRolePickerChange = useCallback((next: RolePickerValue) => {
+    const pc = panelConfig;
+    // Fold `columns` role into selectedFieldsPerScheme for the picked schema.
+    const cols = next.fieldsByRole['columns'] ?? [];
+    const explode = next.fieldsByRole['row_explode']?.[0];
+    const nextSelectedPerScheme = { ...selectedFieldsPerScheme };
+    if (next.schemaId != null) {
+      nextSelectedPerScheme[next.schemaId] = cols;
+    }
+    setSelectedFieldsPerScheme(nextSelectedPerScheme);
+    const field_mappings: Record<string, string | string[]> = {};
+    if (cols.length > 0) field_mappings['columns'] = cols.length > 1 ? cols : cols[0];
+    if (explode) field_mappings['row_explode'] = explode;
+    onUpdatePanel({
+      projection: {
+        field_mappings,
+        explosion: Object.values(next.explosionByRole).find((e) => !!e) ?? null,
+      },
+      aggregation: { ...(pc.aggregation ?? {}), ...(next.aggregation ?? {}) },
+      settings: {
+        ...(pc.settings ?? {}),
+        selectedSchemaId: next.schemaId ?? undefined,
+        tableConfig: {
+          ...(pc.settings?.tableConfig ?? {}),
+          selectedFieldsPerScheme: nextSelectedPerScheme,
+        },
+      },
+    });
+  }, [onUpdatePanel, selectedFieldsPerScheme, panelConfig]);
+
+  // Alias target field — first column or row_explode path.
+  const aliasTargetField = (
+    (rolePickerValue.fieldsByRole['columns']?.[0] as string | undefined) ??
+    (rolePickerValue.fieldsByRole['row_explode']?.[0] as string | undefined)
+  ) ?? null;
+  const aliasesForField = aliasTargetField ? runWideAliasesByField[aliasTargetField] ?? {} : {};
+
   return (
     <div className="w-full min-w-0 flex flex-col h-full">
-      <div className="flex items-center justify-between py-1.5 flex-shrink-0 gap-2">
-         <div className="relative flex-1 max-w-xs pl-1">
-           <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+      <PanelHeaderSlot>
+          <PanelFormulaBinder
+            formulaId={(panelConfig as any).formula_id ?? (panelConfig as any).observation_id ?? null}
+            onBind={(id) => onUpdatePanel({ formula_id: id, observation_id: undefined } as any)}
+          />
+          <RolePickerPopover
+          schema={PANEL_ROLE_SCHEMAS.table}
+          availableSchemas={schemas}
+          value={rolePickerValue}
+          onChange={handleRolePickerChange}
+          onOpenValueAliases={aliasTargetField ? () => setAliasManagerOpen(true) : undefined}
+        />
+      </PanelHeaderSlot>
+      {aliasTargetField && (
+        <ValueAliasManager
+          open={aliasManagerOpen}
+          onOpenChange={setAliasManagerOpen}
+          infospaceId={infospaceId}
+          runId={runId}
+          fieldPath={aliasTargetField}
+          aliases={aliasesForField}
+          schemaIds={rolePickerSchemaId ? [rolePickerSchemaId] : undefined}
+          filters={mergedFilters}
+          onSave={(next) => {
+            const current = getGlobalVariableSplitting() ?? { enabled: true };
+            setGlobalVariableSplitting({
+              ...current,
+              enabled: true,
+              valueAliasesByField: {
+                ...(current.valueAliasesByField ?? {}),
+                [aliasTargetField]: next,
+              },
+            });
+          }}
+        />
+      )}
+      {!focusMode && (
+      <div className="flex items-center justify-between px-2 py-1.5 border-b bg-muted/20 flex-shrink-0 gap-2">
+         <div className="relative flex-1 max-w-xs">
+           <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
            <Input
              placeholder="Search..."
              value={globalFilter ?? ''}
              onChange={(event) => setGlobalFilter(event.target.value)}
-             className="pl-8 pr-8 h-7 text-xs"
+             className="pl-7 pr-7 h-6 text-[11px]"
            />
            {globalFilter && (
              <TooltipProvider delayDuration={100}>
@@ -1883,14 +2218,47 @@ export function AnnotationResultsTable({
          </div>
          
          <div className="flex items-center gap-0.5">
+           {/* Failed badge: clickable count chip toggling visibility of failed
+               rows. Hidden by default; clicking flips it. The "…" row menu's
+               Quick/Guided Retry items work on whichever rows are visible. */}
+           {failedCount > 0 && (
+             <TooltipProvider delayDuration={100}>
+               <Tooltip>
+                 <TooltipTrigger asChild>
+                   <Button
+                     variant="ghost"
+                     size="sm"
+                     onClick={() => setShowFailed((v) => !v)}
+                     className={cn(
+                       'h-6 px-2 gap-1 text-[11px] border',
+                       showFailed
+                         ? 'bg-destructive/15 border-destructive/40 text-destructive hover:bg-destructive/25'
+                         : 'bg-destructive/5 border-destructive/30 text-destructive/80 hover:bg-destructive/10',
+                     )}
+                     aria-pressed={showFailed}
+                   >
+                     <AlertCircle className="h-3 w-3" />
+                     <span className="font-mono tabular-nums">{failedCount}</span>
+                     <span>failed</span>
+                   </Button>
+                 </TooltipTrigger>
+                 <TooltipContent side="bottom">
+                   <p className="text-xs">
+                     {showFailed ? 'Hide failed rows' : 'Show failed rows (use the row menu to retry)'}
+                   </p>
+                 </TooltipContent>
+               </Tooltip>
+             </TooltipProvider>
+           )}
+
            {/* CSV Export Button */}
            {runId && (
              <Popover open={exportOptionsOpen} onOpenChange={setExportOptionsOpen}>
                <PopoverTrigger asChild>
-                 <Button 
-                   variant="ghost"
-                   size="sm" 
-                   className="h-6 px-2 gap-1 text-xs"
+                 <Button
+                   variant="outline"
+                   size="sm"
+                   className="h-6 px-2 gap-1 text-[11px]"
                    disabled={isExporting}
                  >
                    {isExporting ? (
@@ -2000,30 +2368,38 @@ export function AnnotationResultsTable({
              </Tooltip>
            </TooltipProvider>
            
-           {/* Expand/Collapse All Annotations - only show when grouped */}
-           {!unfoldFields && (
-             <TooltipProvider delayDuration={100}>
-               <Tooltip>
-                 <TooltipTrigger asChild>
-                   <Button 
-                     variant="ghost"
-                     size="sm" 
-                     className="h-6 w-6 p-0"
-                     onClick={() => setExpandAllAnnotations(!expandAllAnnotations)}
-                   >
-                     {expandAllAnnotations ? (
-                       <FoldVertical className="h-3 w-3" />
-                     ) : (
-                       <UnfoldVertical className="h-3 w-3" />
-                     )}
-                   </Button>
-                 </TooltipTrigger>
-                 <TooltipContent side="bottom">
-                   <p className="text-xs">{expandAllAnnotations ? 'Collapse all' : 'Expand all'}</p>
-                 </TooltipContent>
-               </Tooltip>
-             </TooltipProvider>
-           )}
+           {/* Density tier control — Compact / Comfortable / Expanded */}
+           <TooltipProvider delayDuration={100}>
+             <div className="inline-flex items-center rounded-md border border-border/60 overflow-hidden">
+               {([
+                 { v: 'compact', icon: AlignJustify, label: 'Compact' },
+                 { v: 'comfortable', icon: Rows4, label: 'Comfortable' },
+                 { v: 'expanded', icon: Rows3, label: 'Expanded' },
+               ] as const).map(({ v, icon: Icon, label }) => (
+                 <Tooltip key={v}>
+                   <TooltipTrigger asChild>
+                     <button
+                       type="button"
+                       onClick={() => setDensity(v)}
+                       className={cn(
+                         'h-6 w-7 inline-flex items-center justify-center transition-colors',
+                         density === v
+                           ? 'bg-primary/10 text-primary'
+                           : 'text-muted-foreground hover:bg-muted',
+                       )}
+                       aria-label={label}
+                       aria-pressed={density === v}
+                     >
+                       <Icon className="h-3 w-3" />
+                     </button>
+                   </TooltipTrigger>
+                   <TooltipContent side="bottom">
+                     <p className="text-xs">{label}</p>
+                   </TooltipContent>
+                 </Tooltip>
+               ))}
+             </div>
+           </TooltipProvider>
            
            {/* Column Visibility Controls */}
            <DropdownMenu>
@@ -2117,9 +2493,14 @@ export function AnnotationResultsTable({
          </div>
 
       </div>
-      
-      <div className="rounded-md border min-w-0 flex-1 flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-auto min-w-0"> 
+      )}
+
+      <div className="min-w-0 flex-1 flex flex-col overflow-hidden">
+        {/* Outer padding gives the row content visible breathing room
+            from the panel's left/right edges — the row chrome (asset cell
+            on the left, lists section on the right) no longer hugs the
+            panel border. */}
+        <div className="flex-1 overflow-auto min-w-0 px-3">
           <Table className="min-w-0 w-full">
             <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
               {table.getHeaderGroups().map((headerGroup) => (
@@ -2129,9 +2510,13 @@ export function AnnotationResultsTable({
                       key={header.id} 
                       className="whitespace-nowrap p-1.5 text-xs"
                       style={{ 
-                        width: header.getSize() > 0 ? `${header.getSize()}px` : undefined,
+                        // Match the data row's width strategy: asset stays
+                        // fixed, schema columns flex to fill remaining space.
+                        width: header.column.id === 'asset' && header.getSize() > 0
+                          ? `${header.getSize()}px`
+                          : undefined,
                         minWidth: header.column.columnDef.minSize ? `${header.column.columnDef.minSize}px` : undefined,
-                        maxWidth: header.column.columnDef.maxSize ? `${header.column.columnDef.maxSize}px` : undefined
+                        maxWidth: header.column.columnDef.maxSize ? `${header.column.columnDef.maxSize}px` : undefined,
                       }}
                     >
                       {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
@@ -2147,7 +2532,7 @@ export function AnnotationResultsTable({
                     key={row.id}
                     data-state={row.getIsSelected() && "selected"}
                     className={cn(
-                      "cursor-pointer hover:bg-muted/30 transition-opacity", 
+                      "group relative cursor-pointer hover:bg-muted/30 transition-opacity",
                       row.original.isChildRow && "bg-muted/5",
                       row.original.hasChildren && "font-medium"
                     )}
@@ -2184,28 +2569,55 @@ export function AnnotationResultsTable({
                     }}
                   >
                     {row.getVisibleCells().map((cell) => (
-                      <TableCell 
-                        key={cell.id} 
+                      <TableCell
+                        key={cell.id}
                         className={cn(
-                          "h-full align-top min-w-0 max-w-full",
-                          // Minimal padding for schema result cells, slightly more for asset cell
-                          cell.column.id === 'asset' ? 'p-1.5' : 'px-2 py-1'
+                          "align-top min-w-0 max-w-full",
+                          cell.column.id === 'asset' ? 'p-1.5' : 'px-1.5 py-1.5'
                         )}
-                        style={{ 
-                          width: cell.column.getSize() > 0 ? `${cell.column.getSize()}px` : undefined,
+                        style={{
+                          // Asset and other fixed-purpose columns get explicit
+                          // widths from their column def. Schema columns leave
+                          // `width` unset so they flex to fill the row's
+                          // remaining horizontal space — that's what lets the
+                          // 3-section folded layout (strings | numerics |
+                          // lists) actually have room to render side-by-side
+                          // on wide screens, and gracefully wrap to 2 then 1
+                          // sections as the viewport narrows. With a fixed
+                          // 250px schema width, the sections could never fit
+                          // and the layout collapsed to 1 column always.
+                          width: cell.column.id === 'asset' && cell.column.getSize() > 0
+                            ? `${cell.column.getSize()}px`
+                            : undefined,
                           minWidth: cell.column.columnDef.minSize ? `${cell.column.columnDef.minSize}px` : undefined,
-                          maxWidth: cell.column.columnDef.maxSize ? `${cell.column.columnDef.maxSize}px` : undefined
+                          maxWidth: cell.column.columnDef.maxSize ? `${cell.column.columnDef.maxSize}px` : undefined,
                         }}
                       >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        <div
+                          className={cn(
+                            'min-w-0 max-w-full',
+                            // Only compact bounds the row — comfortable and expanded
+                            // let rows grow naturally so x-scroll inside (e.g. mini-tables)
+                            // doesn't sit inside a y-clipped container.
+                            density === 'compact' ? 'overflow-auto' : 'overflow-x-auto',
+                          )}
+                          style={
+                            Number.isFinite(getDensitySpec(density).rowMaxHeight)
+                              ? { maxHeight: getDensitySpec(density).rowMaxHeight }
+                              : undefined
+                          }
+                        >
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </div>
                       </TableCell>
                     ))}
+                    {renderRowActionsOverlay(row.original)}
                   </TableRow>
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={columns.length} className="h-24 text-center">
-                    {isLoading ? "Loading results..." : "No results found."}
+                  <TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground text-sm">
+                    No results yet.
                   </TableCell>
                 </TableRow>
               )}
@@ -2214,7 +2626,7 @@ export function AnnotationResultsTable({
         </div>
       </div>
       
-      <div className="flex items-center justify-between py-1.5 flex-shrink-0 border-t text-xs">
+      <div className="flex items-center justify-between py-1.5 px-1 flex-shrink-0 border-t text-xs">
          <div className="flex items-center gap-1.5">
            <Select
              value={`${table.getState().pagination.pageSize}`}

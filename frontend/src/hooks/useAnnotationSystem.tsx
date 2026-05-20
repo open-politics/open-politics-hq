@@ -21,7 +21,7 @@ import {
 } from '@/client';
 import {
     AnnotationSchemasService,
-    AnnotationJobsService,
+    RunsService,
     AnnotationsService,
     AssetsService,
 } from '@/client';
@@ -118,6 +118,54 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     }
   }, [activeInfospace]);
 
+  const extendRun = useCallback(async (params: {
+    runId: number;
+    assetIds?: number[];
+    bundleId?: number | null;
+    schemaIds?: number[];
+    configurationOverrides?: Record<string, any>;
+  }): Promise<AnnotationRunRead | null> => {
+    if (!activeInfospace?.id) {
+      toast.error("An active infospace is required to extend a run.");
+      return null;
+    }
+    try {
+      const newRun = await RunsService.extendRun({
+        infospaceId: activeInfospace.id,
+        runId: params.runId,
+        requestBody: {
+          asset_ids: params.assetIds && params.assetIds.length > 0 ? params.assetIds : null,
+          bundle_id: params.bundleId ?? null,
+          schema_ids: params.schemaIds && params.schemaIds.length > 0 ? params.schemaIds : null,
+          configuration_overrides: params.configurationOverrides ?? null,
+        },
+      });
+      toast.success(`Extension queued — ${newRun.description || `run ${newRun.id}`}.`);
+      // Re-fetch the parent so its rolled-up ``effective_status`` flips to
+      // RUNNING immediately. That re-enables the page-level SSE listener and
+      // the 5s poll, and the header's progress bar reads from the rollup —
+      // so the user sees live activity without a manual refresh. Parent's
+      // own ``status`` stays ``completed`` (we never lie about its lifecycle).
+      try {
+        const parentRefreshed = await RunsService.getRun({
+          infospaceId: activeInfospace.id,
+          runId: params.runId,
+        });
+        setActiveRun(prev => (prev && prev.id === params.runId ? parentRefreshed : prev));
+      } catch {
+        // Best-effort — even if the refresh fails, the polling baseline will
+        // pick up the rollup on the next tick.
+      }
+      // Don't prepend the child to the runs list — extensions are hidden
+      // from the history (parent_run_id IS NOT NULL). Keeping the list as-is
+      // matches the backend's default filter.
+      return newRun;
+    } catch (e: any) {
+      toast.error("Failed to extend run.", { description: e.body?.detail || e.message });
+      return null;
+    }
+  }, [activeInfospace]);
+
   const createRun = useCallback(async (params: AnnotationRunParams): Promise<AnnotationRunRead | null> => {
     if (!activeInfospace?.id) {
         toast.error("An active infospace is required to create a run.");
@@ -135,7 +183,7 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
             configuration: params.configuration || {},
         };
 
-        const newRun = await AnnotationJobsService.createRun({
+        const newRun = await RunsService.createRun({
             infospaceId: activeInfospace.id,
             requestBody: runCreatePayload
         });
@@ -155,7 +203,7 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     if (!activeInfospace?.id) return;
     setIsLoadingRuns(true);
     try {
-      const response = await AnnotationJobsService.listRuns({infospaceId: activeInfospace.id, limit: 1000 });
+      const response = await RunsService.listRuns({infospaceId: activeInfospace.id, limit: 1000 });
       setRuns(response.data);
       
       // Update activeRun if it exists in the updated runs
@@ -179,7 +227,7 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
   const deleteRun = useCallback(async (runId: number) => {
     if (!activeInfospace?.id) return;
     try {
-      await AnnotationJobsService.deleteRun({infospaceId: activeInfospace.id, runId: runId});
+      await RunsService.deleteRun({infospaceId: activeInfospace.id, runId: runId});
       setRuns(p => p.filter(r => r.id !== runId));
       if (activeRun?.id === runId) {
         setActiveRun(null);
@@ -198,7 +246,7 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
       setActiveRun(run);
     } else {
       try {
-        const fetchedRun = await AnnotationJobsService.getRun({infospaceId: activeInfospace.id, runId: runId});
+        const fetchedRun = await RunsService.getRun({infospaceId: activeInfospace.id, runId: runId});
         setActiveRun(fetchedRun);
       } catch (e: any) {
         toast.error(`Failed to load run ${runId}.`, { description: e.body?.detail || e.message });
@@ -210,7 +258,7 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     if (!activeInfospace?.id) return null;
     setIsRetryingRun(true);
     try {
-      const response = await AnnotationJobsService.retryFailedAnnotations({infospaceId: activeInfospace.id, runId: runId});
+      const response = await RunsService.retryFailedAnnotations({infospaceId: activeInfospace.id, runId: runId});
       toast.info(`Retrying failures for run ${runId}`);
       // After triggering, we should probably poll or refresh the run details
       loadRun(runId);
@@ -249,7 +297,7 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
   const updateJob = useCallback(async (jobId: number, data: AnnotationRunUpdate): Promise<AnnotationRunRead | null> => {
     if(!activeInfospace?.id) return null;
     try {
-      const updatedRun = await AnnotationJobsService.updateRun({ infospaceId: activeInfospace.id, runId: jobId, requestBody: data });
+      const updatedRun = await RunsService.updateRun({ infospaceId: activeInfospace.id, runId: jobId, requestBody: data });
       setRuns(prev => prev.map(r => r.id === jobId ? updatedRun : r));
       if (activeRun?.id === jobId) {
         setActiveRun(updatedRun);
@@ -270,6 +318,7 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
 
   return {
     createRun,
+    extendRun,
     runs,
     loadRuns,
     deleteRun,

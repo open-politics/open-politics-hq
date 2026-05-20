@@ -112,6 +112,7 @@ interface AnnotationRunnerDockProps {
   onSelectRun: (runId: number) => void;
   activeRunId: number | null;
   isCreatingRun: boolean;
+  isLoadingRuns: boolean;
   onClearRun: () => void;
 }
 
@@ -123,10 +124,11 @@ export default function AnnotationRunnerDock({
   onSelectRun,
   activeRunId,
   isCreatingRun,
+  isLoadingRuns,
   onClearRun,
 }: AnnotationRunnerDockProps) {
   
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [selectedAssetItems, setSelectedAssetItems] = useState<Set<string>>(new Set());
   const [selectedSchemeIds, setSelectedSchemeIds] = useState<Set<number>>(new Set());
@@ -140,8 +142,15 @@ export default function AnnotationRunnerDock({
   const [processPdfsAsImages, setProcessPdfsAsImages] = useState(false);
   const [includeThoughts, setIncludeThoughts] = useState(false);
   const [annotationConcurrency, setAnnotationConcurrency] = useState(5);
-  const [enableParallelProcessing, setEnableParallelProcessing] = useState(true);
-  const [justificationOverride, setJustificationOverride] = useState<'schema' | 'all'>('schema');
+  // Justifications now use a master on/off switch (see P2 — per-field configs
+  // moved inline into output_contract). Default ON: schema-configured fields
+  // collect justifications; OFF suppresses everything regardless of schema.
+  const [justificationsEnabled, setJustificationsEnabled] = useState<boolean>(true);
+  // Track 2 controls. ``auto`` lets the backend pick single-shot vs two-phase
+  // based on schema shape + doc size + provider capability. Power users can
+  // pin a specific strategy to debug.
+  const [extractionStrategy, setExtractionStrategy] = useState<'auto' | 'two-phase' | 'single-shot'>('auto');
+  const [maxToolIterations, setMaxToolIterations] = useState<number>(40);
   const [tempApiKey, setTempApiKey] = useState('');
   const [enableVisionProcessing, setEnableVisionProcessing] = useState(false);
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem();
@@ -222,6 +231,10 @@ export default function AnnotationRunnerDock({
     }));
   };
 
+  // Auto-expand effect is declared below `pdfProcessingInfo` / `csvProcessingInfo`
+  // memos to avoid a TDZ reference error. See `processingAutoExpandedRef` usage.
+  const processingAutoExpandedRef = useRef(false);
+
   const handleRunClick = useCallback(async () => {
     if (selectedAssetItems.size === 0) {
       toast.error("Please select at least one asset to annotate.");
@@ -251,13 +264,20 @@ export default function AnnotationRunnerDock({
     });
 
     const configuration: Record<string, any> = {};
-    configuration.justification_mode = justificationOverride === 'all' ? "ALL_WITH_SCHEMA_OR_DEFAULT_PROMPT" : "SCHEMA_DEFAULT";
+    // P2: master on/off; per-field opt-in lives inline in each schema's
+    // output_contract. The dead "ALL_WITH_SCHEMA_OR_DEFAULT_PROMPT" mode
+    // is gone — backend ignored it after we dropped field_specific_justification_configs.
+    configuration.justifications_enabled = justificationsEnabled;
     configuration.csv_row_processing = csvRowProcessing;
     configuration.pdf_page_processing = pdfPageProcessing;
     configuration.process_pdfs_as_images = processPdfsAsImages;
     configuration.include_thoughts = includeThoughts;
     configuration.annotation_concurrency = annotationConcurrency;
-    configuration.enable_parallel_processing = enableParallelProcessing;
+    // Track 2 routing.
+    configuration.extraction_strategy = extractionStrategy;
+    if (extractionStrategy !== 'single-shot') {
+      configuration.max_tool_iterations = maxToolIterations;
+    }
     configuration.provider = selectedProvider;
     configuration.model = selectedModel;
     configuration.include_images = enableVisionProcessing;
@@ -279,7 +299,7 @@ export default function AnnotationRunnerDock({
     setIsExpanded(false);
     setNewRunName('');
     setNewRunDescription('');
-  }, [selectedAssetItems, selectedSchemeIds, isAiConfigured, selectedProvider, justificationOverride, csvRowProcessing, includeThoughts, annotationConcurrency, enableParallelProcessing, selectedModel, enableVisionProcessing, apiKeys, newRunName, newRunDescription, onCreateRun]);
+  }, [selectedAssetItems, selectedSchemeIds, isAiConfigured, selectedProvider, justificationsEnabled, csvRowProcessing, includeThoughts, annotationConcurrency, extractionStrategy, maxToolIterations, selectedModel, enableVisionProcessing, apiKeys, newRunName, newRunDescription, onCreateRun]);
 
   const handleSchemeToggle = (id: number) => {
     if (selectedSchemeIds.has(id)) {
@@ -390,6 +410,20 @@ export default function AnnotationRunnerDock({
     }
   }, [pdfProcessingInfo.pdfAssetCount]);
 
+  // Auto-expand Processing Settings the first time any asset enters the
+  // selection. Previously this was gated on detected CSV/PDF counts, but
+  // client-side detection is unreliable in production (paginated ``allAssets``,
+  // bundle selections that hide children, kind casing drift), so we expand
+  // whenever the run has assets and trust the user to collapse if irrelevant.
+  useEffect(() => {
+    if (processingAutoExpandedRef.current) return;
+    if (selectedAssetItems.size === 0) return;
+    processingAutoExpandedRef.current = true;
+    setExpandedSections((prev) =>
+      prev.processing ? prev : { ...prev, processing: true },
+    );
+  }, [selectedAssetItems]);
+
   // Handler for saving API keys
   const handleSaveApiKey = useCallback(() => {
     if (selectedProvider && tempApiKey.trim()) {
@@ -413,6 +447,54 @@ export default function AnnotationRunnerDock({
   useEffect(() => {
     console.log('DOCK Store Changed:', { selectedProvider, apiKeys });
   }, [selectedProvider, apiKeys]);
+
+  // Drive dock open/closed/minimized from the run lifecycle:
+  //   selecting a run → minimize (give panels the screen)
+  //   clearing a run  → close to the peek bar (or open if no runs exist)
+  //   first load with zero runs → open (so a new user sees the controls)
+  // Only fires on transitions of activeRunId, plus once after the first load
+  // settles, so manual Ctrl+O/Ctrl+M toggles aren't fought.
+  const prevActiveRunIdRef = useRef<number | null | undefined>(undefined);
+  const hasObservedLoadRef = useRef(false);
+  const initialDefaultAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (isLoadingRuns) hasObservedLoadRef.current = true;
+    // Wait until at least one load cycle has been observed; otherwise the
+    // brief "no runs, not loading" gap on initial mount would force the
+    // dock open before the fetch even fires.
+    if (isLoadingRuns || !hasObservedLoadRef.current) return;
+
+    if (!initialDefaultAppliedRef.current) {
+      initialDefaultAppliedRef.current = true;
+      prevActiveRunIdRef.current = activeRunId;
+      if (activeRunId != null) {
+        setIsMinimized(true);
+        setIsExpanded(false);
+      } else if (allRuns.length === 0) {
+        setIsExpanded(true);
+        setIsMinimized(false);
+      }
+      return;
+    }
+
+    const prev = prevActiveRunIdRef.current;
+    if (prev === activeRunId) return;
+    prevActiveRunIdRef.current = activeRunId;
+
+    if (prev == null && activeRunId != null) {
+      setIsMinimized(true);
+      setIsExpanded(false);
+    } else if (prev != null && activeRunId == null) {
+      if (allRuns.length === 0) {
+        setIsExpanded(true);
+        setIsMinimized(false);
+      } else {
+        setIsExpanded(false);
+        setIsMinimized(false);
+      }
+    }
+  }, [activeRunId, allRuns.length, isLoadingRuns]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -527,7 +609,7 @@ export default function AnnotationRunnerDock({
             "flex items-center justify-center w-full h-full",
             isMinimized ? "sm:flex" : "sm:hidden"
           )}>
-            <div className="p-1.5 mt-1 flex items-center justify-center rounded bg-blue-50/20 dark:bg-transparent border border-blue-200 dark:border-blue-800 shadow-sm">
+            <div className={cn("p-1.5 mt-1 flex items-center justify-center rounded bg-blue-50/20 dark:bg-transparent border border-blue-200 dark:border-blue-800 shadow-sm", isMinimized ? 'mt-0' : 'mt-0')}>
               <Terminal className="h-7 w-7 text-blue-700 dark:text-blue-400" />
             </div>
           </div>
@@ -704,113 +786,145 @@ export default function AnnotationRunnerDock({
                       
                       {expandedSections.processing && (
                         <div className="p-2.5 pt-0 space-y-3 border-t">
-                          {/* CSV Row Processing Configuration */}
-                          {csvProcessingInfo.csvAssetCount > 0 && (
-                            <div className="space-y-1.5">
-                              <div className="flex items-center space-x-2">
-                                <Switch
-                                  id="csv-row-processing"
-                                  checked={csvRowProcessing}
-                                  onCheckedChange={setCsvRowProcessing}
-                                />
-                                <Label htmlFor="csv-row-processing" className="text-xs font-medium cursor-pointer">
-                                  Process CSV Rows Individually
-                                </Label>
-                              </div>
-                              <p className="text-[11px] text-muted-foreground ml-6">
-                                {csvRowProcessing 
-                                  ? `Process each row as a separate asset (~${csvProcessingInfo.totalRowsEstimate} rows)`
-                                  : `Process CSV files as complete documents (${csvProcessingInfo.csvAssetCount} files)`
-                                }
-                              </p>
-                            </div>
-                          )}
-                          
-                          {/* PDF Page Processing Configuration */}
-                          {pdfProcessingInfo.pdfAssetCount > 0 && (
-                            <div className="space-y-3">
-                              <div className="space-y-1.5">
-                                <div className="flex items-center space-x-2">
-                                  <Switch
-                                    id="pdf-page-processing"
-                                    checked={pdfPageProcessing}
-                                    onCheckedChange={setPdfPageProcessing}
-                                  />
-                                  <Label htmlFor="pdf-page-processing" className="text-xs font-medium cursor-pointer">
-                                    Process PDF Pages Individually
-                                  </Label>
-                                </div>
-                                <p className="text-[11px] text-muted-foreground ml-6">
-                                  {pdfPageProcessing 
-                                    ? `Process each page as a separate asset (~${pdfProcessingInfo.totalPagesEstimate} pages)`
-                                    : `Process PDF files as complete documents (${pdfProcessingInfo.pdfAssetCount} files)`
-                                  }
-                                </p>
-                              </div>
-                              
-                              <div className="space-y-1.5">
-                                <div className="flex items-center space-x-2">
-                                  <Switch
-                                    id="process-pdfs-as-images"
-                                    checked={processPdfsAsImages}
-                                    onCheckedChange={setProcessPdfsAsImages}
-                                  />
-                                  <Label htmlFor="process-pdfs-as-images" className="text-xs font-medium cursor-pointer">
-                                    Process PDFs as Images (OCR)
-                                  </Label>
-                                </div>
-                                <p className="text-[11px] text-muted-foreground ml-6">
-                                  {processPdfsAsImages
-                                    ? `Use vision models for OCR (for scanned PDFs without text)`
-                                    : `Use extracted text content (faster, cheaper for text-based PDFs)`
-                                  }
-                                </p>
-                              </div>
-                            </div>
-                          )}
-                          
-                          {/* Parallel Processing Configuration */}
-                          <div className="space-y-2">
+                          {/* CSV Row Processing — always shown. Client-side detection of
+                              CSV kinds is unreliable against paginated asset lists / bundle
+                              selections / kind-casing drift, and the flag only affects CSV
+                              assets on the backend, so exposing it unconditionally is the
+                              safe default. Counts degrade gracefully when none detected. */}
+                          <div className="space-y-1.5">
                             <div className="flex items-center space-x-2">
                               <Switch
-                                id="enable-parallel-processing"
-                                checked={enableParallelProcessing}
-                                onCheckedChange={setEnableParallelProcessing}
+                                id="csv-row-processing"
+                                checked={csvRowProcessing}
+                                onCheckedChange={setCsvRowProcessing}
                               />
-                              <Label htmlFor="enable-parallel-processing" className="text-xs font-medium cursor-pointer">
-                                Enable Parallel Processing
+                              <Label htmlFor="csv-row-processing" className="text-xs font-medium cursor-pointer">
+                                Process CSV Rows Individually
                               </Label>
                             </div>
                             <p className="text-[11px] text-muted-foreground ml-6">
-                              {enableParallelProcessing 
-                                ? 'Process multiple assets concurrently for faster completion'
-                                : 'Process assets one at a time (slower but more reliable)'
-                              }
+                              {csvProcessingInfo.csvAssetCount > 0
+                                ? (csvRowProcessing
+                                    ? `Process each row as a separate asset (~${csvProcessingInfo.totalRowsEstimate} rows)`
+                                    : `Process CSV files as complete documents (${csvProcessingInfo.csvAssetCount} files)`)
+                                : (csvRowProcessing
+                                    ? 'When CSVs are in the run, process each row as a separate asset.'
+                                    : 'When CSVs are in the run, process each file as one complete document.')}
                             </p>
-                            
-                            {enableParallelProcessing && (
-                              <div className="ml-6 space-y-1.5">
-                                <Label htmlFor="annotation-concurrency" className="text-xs font-medium">
-                                  Concurrency Level: {annotationConcurrency}
-                                </Label>
-                                <div className="flex items-center space-x-2">
-                                  <span className="text-[11px] text-muted-foreground">1</span>
-                                  <input
-                                    id="annotation-concurrency"
-                                    type="range"
-                                    min="1"
-                                    max="20"
-                                    value={annotationConcurrency}
-                                    onChange={(e) => setAnnotationConcurrency(parseInt(e.target.value))}
-                                    className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-                                  />
-                                  <span className="text-[11px] text-muted-foreground">20</span>
+                          </div>
+
+                          {/* PDF Processing Mode — single-choice radio across the three
+                              combinations the backend actually supports. Radio state is derived
+                              from ``pdfPageProcessing`` + ``processPdfsAsImages`` so the two
+                              flags remain the source of truth for the run configuration.
+                              Always shown: the flags only affect PDF assets on the backend, and
+                              gating on client-side detection misfired when ``allAssets`` was
+                              paginated / bundles hid children / kind casing drifted. */}
+                          {(() => {
+                            const pdfMode: 'per-page-text' | 'per-page-ocr' | 'whole-document-text' =
+                              processPdfsAsImages
+                                ? 'per-page-ocr'
+                                : (pdfPageProcessing ? 'per-page-text' : 'whole-document-text');
+                            const setPdfMode = (mode: typeof pdfMode) => {
+                              if (mode === 'per-page-text') {
+                                setPdfPageProcessing(true); setProcessPdfsAsImages(false);
+                              } else if (mode === 'per-page-ocr') {
+                                setPdfPageProcessing(true); setProcessPdfsAsImages(true);
+                              } else {
+                                setPdfPageProcessing(false); setProcessPdfsAsImages(false);
+                              }
+                            };
+                            const optionClass = (m: typeof pdfMode) => cn(
+                              "flex items-start gap-2 p-2 rounded-md border cursor-pointer transition-colors",
+                              pdfMode === m
+                                ? "border-primary/60 bg-primary/5"
+                                : "border-transparent hover:border-border hover:bg-muted/30",
+                            );
+                            return (
+                              <div className="space-y-1.5">
+                                <Label className="text-xs font-medium">PDF Processing Mode</Label>
+                                <div className="space-y-1">
+                                  <label htmlFor="pdf-mode-per-page-text" className={optionClass('per-page-text')}>
+                                    <input
+                                      type="radio"
+                                      id="pdf-mode-per-page-text"
+                                      name="pdf-mode"
+                                      checked={pdfMode === 'per-page-text'}
+                                      onChange={() => setPdfMode('per-page-text')}
+                                      className="mt-0.5 w-3.5 h-3.5 text-primary focus:ring-primary"
+                                    />
+                                    <div className="flex-1">
+                                      <div className="text-xs font-medium">Per-page text</div>
+                                      <div className="text-[11px] text-muted-foreground">
+                                        Split each PDF into page assets and annotate each page's extracted text.
+                                        {pdfProcessingInfo.pdfAssetCount > 0 && (
+                                          <> (~{pdfProcessingInfo.totalPagesEstimate} pages from {pdfProcessingInfo.pdfAssetCount} file{pdfProcessingInfo.pdfAssetCount > 1 ? 's' : ''})</>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </label>
+                                  <label htmlFor="pdf-mode-per-page-ocr" className={optionClass('per-page-ocr')}>
+                                    <input
+                                      type="radio"
+                                      id="pdf-mode-per-page-ocr"
+                                      name="pdf-mode"
+                                      checked={pdfMode === 'per-page-ocr'}
+                                      onChange={() => setPdfMode('per-page-ocr')}
+                                      className="mt-0.5 w-3.5 h-3.5 text-primary focus:ring-primary"
+                                    />
+                                    <div className="flex-1">
+                                      <div className="text-xs font-medium">Per-page OCR (vision)</div>
+                                      <div className="text-[11px] text-muted-foreground">
+                                        Split into page assets and send each as an image to a vision model. Use for scanned PDFs without reliable text.
+                                      </div>
+                                    </div>
+                                  </label>
+                                  <label htmlFor="pdf-mode-whole-document-text" className={optionClass('whole-document-text')}>
+                                    <input
+                                      type="radio"
+                                      id="pdf-mode-whole-document-text"
+                                      name="pdf-mode"
+                                      checked={pdfMode === 'whole-document-text'}
+                                      onChange={() => setPdfMode('whole-document-text')}
+                                      className="mt-0.5 w-3.5 h-3.5 text-primary focus:ring-primary"
+                                    />
+                                    <div className="flex-1">
+                                      <div className="text-xs font-medium">Whole document as text</div>
+                                      <div className="text-[11px] text-muted-foreground">
+                                        Annotate each PDF's full extracted text as one asset
+                                        {pdfProcessingInfo.pdfAssetCount > 0 && (
+                                          <> ({pdfProcessingInfo.pdfAssetCount} file{pdfProcessingInfo.pdfAssetCount > 1 ? 's' : ''})</>
+                                        )}. Best for text-based PDFs where per-page splitting would fragment context.
+                                      </div>
+                                    </div>
+                                  </label>
                                 </div>
-                                <p className="text-[11px] text-muted-foreground">
-                                  Higher values process faster but may overwhelm external APIs
-                                </p>
                               </div>
-                            )}
+                            );
+                          })()}
+                          
+                          {/* Concurrency. ``annotation_concurrency=1`` is the
+                              old "sequential" mode — same primitive, one at a time. */}
+                          <div className="space-y-1.5">
+                            <Label htmlFor="annotation-concurrency" className="text-xs font-medium">
+                              Concurrency: {annotationConcurrency}{annotationConcurrency === 1 ? ' (sequential)' : ''}
+                            </Label>
+                            <div className="flex items-center space-x-2">
+                              <span className="text-[11px] text-muted-foreground">1</span>
+                              <input
+                                id="annotation-concurrency"
+                                type="range"
+                                min="1"
+                                max="20"
+                                value={annotationConcurrency}
+                                onChange={(e) => setAnnotationConcurrency(parseInt(e.target.value))}
+                                className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+                              />
+                              <span className="text-[11px] text-muted-foreground">20</span>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground">
+                              Number of assets processed simultaneously. Set to 1 for serial execution; higher values speed up batches but may rate-limit external APIs.
+                            </p>
                           </div>
                         </div>
                       )}
@@ -831,44 +945,70 @@ export default function AnnotationRunnerDock({
                       
                       {expandedSections.advanced && (
                         <div className="p-2.5 pt-0 space-y-3 border-t">
-                          {/* Justification Configuration */}
-                          <div className="space-y-2">
-                            <Label className="text-xs font-medium">Justification Mode</Label>
-                            <div className="space-y-1.5">
-                              <div className="flex items-center space-x-2">
-                                <input
-                                  type="radio"
-                                  id="justification-schema"
-                                  name="justification-mode"
-                                  checked={justificationOverride === 'schema'}
-                                  onChange={() => setJustificationOverride('schema')}
-                                  className="w-3.5 h-3.5 text-primary bg-background border-border focus:ring-primary"
-                                />
-                                <Label htmlFor="justification-schema" className="text-xs font-medium cursor-pointer">
-                                  Schema Default
-                                </Label>
-                              </div>
-                              <p className="text-[11px] text-muted-foreground ml-5">
-                                Only request justifications for fields specifically configured in each schema
-                              </p>
-                              
-                              <div className="flex items-center space-x-2">
-                                <input
-                                  type="radio"
-                                  id="justification-all"
-                                  name="justification-mode"
-                                  checked={justificationOverride === 'all'}
-                                  onChange={() => setJustificationOverride('all')}
-                                  className="w-3.5 h-3.5 text-primary bg-background border-border focus:ring-primary"
-                                />
-                                <Label htmlFor="justification-all" className="text-xs font-medium cursor-pointer">
-                                  All Fields
-                                </Label>
-                              </div>
-                              <p className="text-[11px] text-muted-foreground ml-5">
-                                Request justifications for all fields in all schemas, regardless of configuration
-                              </p>
+                          {/* Justifications — master switch. Per-field opt-in lives
+                              inline in each schema's output_contract (P2). */}
+                          <div className="space-y-1.5">
+                            <div className="flex items-center space-x-2">
+                              <Switch
+                                id="justifications-enabled"
+                                checked={justificationsEnabled}
+                                onCheckedChange={setJustificationsEnabled}
+                              />
+                              <Label htmlFor="justifications-enabled" className="text-xs font-medium cursor-pointer">
+                                Collect Justifications
+                              </Label>
                             </div>
+                            <p className="text-[11px] text-muted-foreground ml-6">
+                              {justificationsEnabled
+                                ? 'Schema-configured fields will collect justifications inline (per-edge / per-node graph evidence).'
+                                : 'Suppress justifications for this run, regardless of schema configuration.'}
+                            </p>
+                          </div>
+
+                          {/* Extraction Strategy (Track 2). Auto-routes to two-phase
+                              when a schema has list-of-object fields and the doc
+                              fits comfortably in context. Pin a value to debug. */}
+                          <div className="space-y-1.5">
+                            <Label htmlFor="extraction-strategy" className="text-xs font-medium">
+                              Extraction Strategy
+                            </Label>
+                            <select
+                              id="extraction-strategy"
+                              value={extractionStrategy}
+                              onChange={(e) => setExtractionStrategy(e.target.value as 'auto' | 'two-phase' | 'single-shot')}
+                              className="w-full h-8 text-xs rounded-md border border-border bg-background px-2"
+                            >
+                              <option value="auto">Auto (recommended)</option>
+                              <option value="two-phase">Two-phase (force open-ended list extraction)</option>
+                              <option value="single-shot">Single-shot (force one structured call)</option>
+                            </select>
+                            <p className="text-[11px] text-muted-foreground">
+                              Auto picks two-phase for schemas with list-of-object fields when the doc fits in context. Two-phase escapes max_tokens truncation on long lists; single-shot keeps the legacy one-call path.
+                            </p>
+                            {extractionStrategy !== 'single-shot' && (
+                              <div className="space-y-1 pt-1">
+                                <Label htmlFor="max-tool-iterations" className="text-xs font-medium">
+                                  Max tool iterations: {maxToolIterations}
+                                </Label>
+                                <div className="flex items-center space-x-2">
+                                  <span className="text-[11px] text-muted-foreground">10</span>
+                                  <input
+                                    id="max-tool-iterations"
+                                    type="range"
+                                    min="10"
+                                    max="100"
+                                    step="5"
+                                    value={maxToolIterations}
+                                    onChange={(e) => setMaxToolIterations(parseInt(e.target.value))}
+                                    className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+                                  />
+                                  <span className="text-[11px] text-muted-foreground">100</span>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground">
+                                  Cap on Phase B turns. The model usually calls done() well before this; raise for very dense docs (lots of triplets / actors / events).
+                                </p>
+                              </div>
+                            )}
                           </div>
                           
                           {/* Vision Processing Configuration */}
@@ -1043,19 +1183,25 @@ export default function AnnotationRunnerDock({
                             </Badge>
                           </div>
                         )}
-                        {pdfProcessingInfo.pdfAssetCount > 0 && (
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-2 h-2 rounded-full bg-blue-600 shadow-sm"></div>
-                              <span className="text-xs font-medium">
-                                {pdfPageProcessing ? 'PDF Pages to Process' : 'PDF Files to Process'}
-                              </span>
+                        {pdfProcessingInfo.pdfAssetCount > 0 && (() => {
+                          const label = processPdfsAsImages
+                            ? 'PDF Pages (OCR)'
+                            : (pdfPageProcessing ? 'PDF Pages to Process' : 'PDF Files (Whole Text)');
+                          const count = pdfPageProcessing
+                            ? `~${pdfProcessingInfo.totalPagesEstimate}`
+                            : `${pdfProcessingInfo.pdfAssetCount}`;
+                          return (
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <div className="w-2 h-2 rounded-full bg-blue-600 shadow-sm"></div>
+                                <span className="text-xs font-medium">{label}</span>
+                              </div>
+                              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-800 text-xs">
+                                {count}
+                              </Badge>
                             </div>
-                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-800 text-xs">
-                              {pdfPageProcessing ? `~${pdfProcessingInfo.totalPagesEstimate}` : pdfProcessingInfo.pdfAssetCount}
-                            </Badge>
-                          </div>
-                        )}
+                          );
+                        })()}
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
                             <div className="w-2 h-2 rounded-full bg-sky-500 shadow-sm"></div>
@@ -1107,24 +1253,29 @@ export default function AnnotationRunnerDock({
                             </div>
                           </div>
                         )}
-                        {pdfProcessingInfo.pdfAssetCount > 0 && (
+                        {pdfProcessingInfo.pdfAssetCount > 0 && (() => {
+                          const title = processPdfsAsImages
+                            ? 'PDF Per-Page OCR (Vision)'
+                            : (pdfPageProcessing ? 'PDF Per-Page Text' : 'PDF Whole-Document Text');
+                          const detail = processPdfsAsImages
+                            ? `${pdfProcessingInfo.pdfAssetCount} PDF file${pdfProcessingInfo.pdfAssetCount > 1 ? 's' : ''} will be split into ~${pdfProcessingInfo.totalPagesEstimate} pages and sent to a vision model.`
+                            : (pdfPageProcessing
+                                ? `${pdfProcessingInfo.pdfAssetCount} PDF file${pdfProcessingInfo.pdfAssetCount > 1 ? 's' : ''} will be expanded to process individual pages (~${pdfProcessingInfo.totalPagesEstimate} total pages).`
+                                : `${pdfProcessingInfo.pdfAssetCount} PDF file${pdfProcessingInfo.pdfAssetCount > 1 ? 's' : ''} will be processed as complete text documents (extracted text).`);
+                          return (
                           <div className="mt-2 p-2 rounded-md bg-blue-50 border border-blue-200 dark:bg-blue-950/20 dark:border-blue-800">
                             <div className="flex items-start gap-1.5">
                               <div className="w-3 h-3 rounded-full bg-blue-500 shadow-sm mt-0.5 flex-shrink-0"></div>
                               <div className="text-[11px] text-blue-700 dark:text-blue-400">
                                 <p className="font-medium mb-0.5">
-                                  {pdfPageProcessing ? 'PDF Page Processing Enabled' : 'PDF File Processing'}
+                                  {title}
                                 </p>
-                                <p>
-                                  {pdfPageProcessing 
-                                    ? `${pdfProcessingInfo.pdfAssetCount} PDF file${pdfProcessingInfo.pdfAssetCount > 1 ? 's' : ''} will be expanded to process individual pages (~${pdfProcessingInfo.totalPagesEstimate} total pages).`
-                                    : `${pdfProcessingInfo.pdfAssetCount} PDF file${pdfProcessingInfo.pdfAssetCount > 1 ? 's' : ''} will be processed as complete documents.`
-                                  }
-                                </p>
+                                <p>{detail}</p>
                               </div>
                             </div>
                           </div>
-                        )}
+                          );
+                        })()}
                         {/* Vision Processing Toggle - Show when images are selected or schema has per_image */}
                         {(Array.from(selectedAssetItems).some(id => {
                           if (!id.startsWith('asset-')) return false;

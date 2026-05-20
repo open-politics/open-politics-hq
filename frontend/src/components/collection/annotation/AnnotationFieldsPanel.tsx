@@ -10,6 +10,25 @@ import { getTargetKeysForScheme, getAnnotationFieldValue, formatFieldNameForDisp
 import { useTextSpanHighlight } from '@/components/collection/contexts/TextSpanHighlightContext';
 import { resolveSpans } from '@/lib/annotations/textSpanCorrection';
 
+/**
+ * Preferred top-of-panel ordering. Matches against the field's last path
+ * segment (case-insensitive). Trailing `*` is a prefix match, so `'source*'`
+ * catches `source`, `source_name`, `source_url`, etc. Anything not in this
+ * list keeps its natural order after the matched ones. `duplicateAtEnd` lists
+ * fields that should also render again at the bottom — useful for triplets
+ * where the top instance is a graph and the bottom instance is the raw table
+ * (granular but redundant; kept observable on demand).
+ */
+export interface FieldOrderConfig {
+  preferred: string[];
+  duplicateAtEnd?: string[];
+}
+
+export const DEFAULT_FIELD_ORDER: FieldOrderConfig = {
+  preferred: ['triplets', 'summary', 'keywords', 'source*', 'timestamp', 'date', 'datetime', 'location'],
+  duplicateAtEnd: ['triplets'],
+};
+
 interface AnnotationFieldsPanelProps {
   result: FormattedAnnotation;
   schema: AnnotationSchemaRead;
@@ -20,7 +39,10 @@ interface AnnotationFieldsPanelProps {
   onFieldInteraction?: (fieldKey: string, justification: any) => void;
   highlightValue?: string | null;
   /** Optional: use shared formatFieldValue from parent for badges, arrays, etc. */
-  formatFieldValue?: (field: { name: string; type: string; description?: string; config?: any }) => React.ReactNode;
+  formatFieldValue?: (field: { name: string; type: string; description?: string; config?: any; renderHint?: 'graph' | 'table' }) => React.ReactNode;
+  /** Override the default top/bottom field ordering. Pass `null` to disable
+   *  reordering entirely (natural schema order). */
+  fieldOrder?: FieldOrderConfig | null;
 }
 
 const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
@@ -32,25 +54,85 @@ const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
   selectedSpan = null,
   onFieldInteraction,
   highlightValue = null,
-  formatFieldValue: formatFieldValueProp
+  formatFieldValue: formatFieldValueProp,
+  fieldOrder = DEFAULT_FIELD_ORDER,
 }) => {
   const { showFieldSpans, clearHighlights } = useTextSpanHighlight();
 
-  const fieldsToDisplay = useMemo(() => {
+  type DisplayField = {
+    name: string;
+    type: string;
+    description: string;
+    config: any;
+    renderHint?: 'graph' | 'table';
+    /** Stable key — the same field can appear twice (e.g. triplets at top as
+     *  graph, at bottom as table), so we can't key by name alone. */
+    rowKey: string;
+  };
+
+  const fieldsToDisplay = useMemo<DisplayField[]>(() => {
     const targetKeys = getTargetKeysForScheme(schema.id, [schema]);
-    let fields = targetKeys.map(tk => ({
+    let fields: DisplayField[] = targetKeys.map(tk => ({
         name: tk.key,
         type: tk.type,
         description: '',
-        config: {}
+        config: {},
+        rowKey: tk.key,
     }));
 
     if (selectedFieldKeys && selectedFieldKeys.length > 0) {
       fields = fields.filter(f => selectedFieldKeys.includes(f.name));
     }
-    
-    return fields;
-  }, [schema, selectedFieldKeys]);
+
+    // No reordering when caller opts out.
+    if (!fieldOrder) return fields;
+
+    // Match a field's last path segment against an entry from the preferred
+    // list. `name*` is a prefix match; otherwise exact (case-insensitive).
+    // Returns the entry's index in the preferred list, or -1 if no match.
+    const lastSegment = (n: string) => (n || '').split('.').pop()?.toLowerCase() ?? '';
+    const matchIndex = (fieldName: string): number => {
+      const seg = lastSegment(fieldName);
+      for (let i = 0; i < fieldOrder.preferred.length; i++) {
+        const pat = fieldOrder.preferred[i].toLowerCase();
+        if (pat.endsWith('*')) {
+          if (seg.startsWith(pat.slice(0, -1))) return i;
+        } else if (seg === pat) {
+          return i;
+        }
+      }
+      return -1;
+    };
+
+    // Stable sort: matched fields first in preferred-list order, then the
+    // rest in original schema order.
+    const indexed = fields.map((f, originalIdx) => ({ f, originalIdx, prefIdx: matchIndex(f.name) }));
+    indexed.sort((a, b) => {
+      if (a.prefIdx === -1 && b.prefIdx === -1) return a.originalIdx - b.originalIdx;
+      if (a.prefIdx === -1) return 1;
+      if (b.prefIdx === -1) return -1;
+      if (a.prefIdx !== b.prefIdx) return a.prefIdx - b.prefIdx;
+      return a.originalIdx - b.originalIdx;
+    });
+    let ordered = indexed.map(x => x.f);
+
+    // Duplicate selected fields at the end with a `'table'` render hint —
+    // used for triplets where the top instance renders as a graph and the
+    // bottom instance renders as the raw mini-table for granular inspection.
+    if (fieldOrder.duplicateAtEnd && fieldOrder.duplicateAtEnd.length > 0) {
+      const dupPatterns = fieldOrder.duplicateAtEnd.map(p => p.toLowerCase());
+      const matchesDup = (n: string) => {
+        const seg = lastSegment(n);
+        return dupPatterns.some(p => p.endsWith('*') ? seg.startsWith(p.slice(0, -1)) : seg === p);
+      };
+      const duplicates: DisplayField[] = ordered
+        .filter(f => matchesDup(f.name))
+        .map(f => ({ ...f, renderHint: 'table' as const, rowKey: `${f.name}::table` }));
+      ordered = [...ordered, ...duplicates];
+    }
+
+    return ordered;
+  }, [schema, selectedFieldKeys, fieldOrder]);
 
   const renderFieldValueFallback = (fieldValue: any) => {
     if (fieldValue === null || fieldValue === undefined) {
@@ -204,14 +286,23 @@ const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
     onFieldInteraction(fieldKey, justification);
   }, [fieldEvidenceCache, result.asset_id, result.asset, asset, onFieldInteraction, schema.name, showFieldSpans, clearHighlights]);
 
-  // Minimal evidence indicator - just a small dot
+  // Evidence indicator — single phrase ("explanation provided") for any
+  // justification, with an optional span counter appended when text spans
+  // are available. Reasoning alone is enough to surface the indicator;
+  // span-only is unusual but handled symmetrically. Returns null only when
+  // no justification of any kind exists for the field.
   const renderEvidenceDot = (field: any) => {
     const evidenceInfo = getEvidenceInfo(field);
     if (!evidenceInfo) return null;
-    const { spanCount } = evidenceInfo;
-    if (spanCount === 0) return null;
+    const { spanCount, hasReasoning } = evidenceInfo;
+    if (!hasReasoning && spanCount === 0) return null;
     return (
-      <span className="text-[10px] text-muted-foreground tabular-nums">{spanCount} piece{spanCount > 1 ? 's' : ''} of evidence</span>
+      <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+        explanation provided
+        {spanCount > 0 && (
+          <span className="ml-1 tabular-nums">· {spanCount} {spanCount === 1 ? 'piece' : 'pieces'} of evidence</span>
+        )}
+      </span>
     );
   };
 
@@ -232,17 +323,54 @@ const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
   }
 
   return (
-    <div className="h-full flex flex-col">
-      <ScrollArea className="flex-1">
-        <div className="py-1 px-1 space-y-2">
+    <div className="h-full flex flex-col min-w-0">
+      {/* Plain overflow-auto rather than radix ScrollArea — radix Viewport
+          uses display:table and grows to content width, which gets clipped
+          by ScrollArea root's overflow:hidden when something inside (e.g. a
+          mini-table) is wider than the available pane. Native overflow-auto
+          gives both axes a real scrollbar at the field-list level when the
+          inner content forces it. */}
+      <div className="flex-1 min-w-0 overflow-auto">
+        <div className="py-1 px-1 space-y-2 min-w-0">
           {fieldsToDisplay.map((field) => {
             const fieldValue = getAnnotationFieldValue(result.value, field.name);
             const isActive = activeField === field.name;
-            const displayName = formatFieldNameUtil(field.name).displayName;
+            const isTripletsLastSeg = (field.name || '').split('.').pop()?.toLowerCase() === 'triplets';
+            // Append a subtle suffix when this is the duplicated table copy
+            // so the user can distinguish the two triplet rows visually.
+            const displayName = field.renderHint === 'table'
+              ? `${formatFieldNameUtil(field.name).displayName} (table)`
+              : formatFieldNameUtil(field.name).displayName;
+            // Only the primary (non-duplicate) row carries the evidence
+            // indicator — duplicating it on the table copy would be noise.
+            const showEvidence = field.renderHint !== 'table';
+
+            // Inline summary for the triplets graph row: "N entities · M
+            // triplets" lives next to the label instead of consuming a full
+            // row above the graph. Cheap to compute (small arrays).
+            let inlineSummary: React.ReactNode = null;
+            if (isTripletsLastSeg && field.renderHint !== 'table' && Array.isArray(fieldValue) && fieldValue.length > 0) {
+              const labels = new Set<string>();
+              for (const t of fieldValue as any[]) {
+                const s = (t?.subject_name ?? t?.subject ?? '').toString().trim().toLowerCase();
+                const o = (t?.object_name ?? t?.object ?? '').toString().trim().toLowerCase();
+                if (s) labels.add(s);
+                if (o) labels.add(o);
+              }
+              const entityCount = labels.size;
+              const tripletCount = fieldValue.length;
+              if (entityCount > 0 && tripletCount > 0) {
+                inlineSummary = (
+                  <span className="text-[10px] text-muted-foreground tabular-nums whitespace-nowrap">
+                    {entityCount} {entityCount === 1 ? 'entity' : 'entities'} · {tripletCount} {tripletCount === 1 ? 'triplet' : 'triplets'}
+                  </span>
+                );
+              }
+            }
 
             return (
               <div
-                key={field.name}
+                key={field.rowKey}
                 className={cn(
                   "rounded-md px-2.5 py-2 cursor-pointer transition-colors",
                   isActive
@@ -251,19 +379,23 @@ const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
                 )}
                 onClick={() => handleFieldClick(field.name)}
               >
-                <div className="flex items-center justify-between gap-2 min-w-0">
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "text-[10px] px-1.5 py-0.5 font-medium truncate max-w-full",
-                      isActive
-                        ? "bg-primary/10 text-primary border-primary/40"
-                        : "bg-background"
-                    )}
-                  >
-                    {displayName}
-                  </Badge>
-                  {renderEvidenceDot(field)}
+                {/* Field label as inline section header — uppercase tracking-
+                    wide muted text reads as a label rather than a tag. The
+                    optional inline summary (triplets counts) sits next to it
+                    instead of taking its own row. */}
+                <div className="flex items-baseline justify-between gap-3 min-w-0">
+                  <div className="flex items-baseline gap-2 min-w-0 flex-1">
+                    <span
+                      className={cn(
+                        "text-[11px] font-semibold tracking-tight truncate",
+                        isActive ? "text-primary" : "text-foreground/85",
+                      )}
+                    >
+                      {displayName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                    </span>
+                    {inlineSummary}
+                  </div>
+                  {showEvidence && renderEvidenceDot(field)}
                 </div>
                 <div className="mt-1.5 text-foreground">
                   {formatFieldValueProp
@@ -274,7 +406,7 @@ const AnnotationFieldsPanel: React.FC<AnnotationFieldsPanelProps> = ({
             );
           })}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 };

@@ -1,6 +1,11 @@
 import { AnnotationRunRead, AnnotationRunCreate, AnnotationRunUpdate, AssetRead, AnnotationSchemaRead } from '@/client';
+import type {
+  FilterSet as ClientFilterSet,
+  Formula as ClientFormula,
+  MergeMap,
+} from '@/client';
 import { RunsService as AnnotationRunsServiceApi } from '@/client';
-import { FormattedAnnotation } from '@/lib/annotations/types';
+import { FormattedAnnotation, PanelConfig, Scope } from '@/lib/annotations/types';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { produce } from 'immer';
@@ -46,28 +51,29 @@ const deserializeTimeAxisConfig = (config: any): any => {
   return config;
 };
 
-// Helper function to deserialize entire dashboard config
+// Helper function to deserialize entire dashboard config (handles both old and new formats)
 const deserializeDashboardConfig = (config: DashboardConfig | null): DashboardConfig | null => {
   if (!config) return null;
-  
+
   const deserializedConfig = { ...config };
-  
-  // Deserialize timeAxisConfig in each panel's settings
+
+  // Deserialize timeAxisConfig in old panel format settings
   if (deserializedConfig.panels) {
     deserializedConfig.panels = deserializedConfig.panels.map(panel => {
-      if (panel.settings?.timeAxisConfig) {
+      const settings = (panel as any).settings;
+      if (settings?.timeAxisConfig) {
         return {
           ...panel,
           settings: {
-            ...panel.settings,
-            timeAxisConfig: deserializeTimeAxisConfig(panel.settings.timeAxisConfig)
+            ...settings,
+            timeAxisConfig: deserializeTimeAxisConfig(settings.timeAxisConfig)
           }
         };
       }
       return panel;
     });
   }
-  
+
   return deserializedConfig;
 };
 
@@ -99,18 +105,18 @@ export interface TableConfig {
 }
 
 // Helper function to compact panels by removing gaps in the grid layout
-const compactPanels = (panels: PanelViewConfig[]): PanelViewConfig[] => {
+const compactPanels = (panels: PanelConfig[]): PanelConfig[] => {
   if (panels.length === 0) return panels;
 
   const GRID_COLUMNS = 12;
-  
+
   // Sort panels by their current position (top to bottom, left to right)
   const sortedPanels = [...panels].sort((a, b) => {
-    const aY = a.gridPos?.y || 0;
-    const bY = b.gridPos?.y || 0;
-    const aX = a.gridPos?.x || 0;
-    const bX = b.gridPos?.x || 0;
-    
+    const aY = a.grid_position?.y || 0;
+    const bY = b.grid_position?.y || 0;
+    const aX = a.grid_position?.x || 0;
+    const bX = b.grid_position?.x || 0;
+
     if (aY !== bY) {
       return aY - bY;
     }
@@ -162,16 +168,16 @@ const compactPanels = (panels: PanelViewConfig[]): PanelViewConfig[] => {
 
   // Reposition each panel to remove gaps
   const compactedPanels = sortedPanels.map(panel => {
-    const w = Math.max(1, Math.min(GRID_COLUMNS, panel.gridPos?.w || 6));
-    const h = Math.max(1, panel.gridPos?.h || 4);
-    
+    const w = Math.max(1, Math.min(GRID_COLUMNS, panel.grid_position?.w || 6));
+    const h = Math.max(1, panel.grid_position?.h || 4);
+
     const newPosition = findBestPosition(w, h);
     markPosition(newPosition.x, newPosition.y, w, h);
-    
+
     return {
       ...panel,
-      gridPos: {
-        ...panel.gridPos,
+      grid_position: {
+        ...panel.grid_position,
         x: newPosition.x,
         y: newPosition.y,
         w,
@@ -226,6 +232,38 @@ export interface PanelViewConfig {
   gridPos: { x: number; y: number; w: number; h: number }; // For react-grid-layout
 }
 
+/**
+ * Formula — a run-scoped, named, structured-question artifact (the
+ * intelligence layer's third primitive — see docs/intelligence/HOW_TO.md).
+ *
+ * Lives in `DashboardConfig.formulas[]` (JSON on `AnnotationRun.views_config`,
+ * no DB table). Carries the six verbs as flat fields — ``group``, ``measures``,
+ * ``derives``, ``filter``, ``weight``, ``snippet``, ``order_by``. The backend
+ * reads each entry via ``Formula.model_validate(f)`` so the wire shape and
+ * the store shape are the same Pydantic ``Formula`` from
+ * ``backend/app/api/modules/annotation/formula.py``.
+ *
+ * Store-side timestamps (``created_at``, ``updated_at``) are stamped by
+ * ``addFormula`` / ``updateFormula``; the backend ignores them.
+ *
+ * The legacy ``projection: any`` field is kept as ``projection?: any`` so
+ * pre-cut dashboards don't crash the persist middleware on first load —
+ * but new formulas never write it. ``useResolvedProjection`` reads
+ * ``projection`` when present (legacy panels) and falls back to the new
+ * flat shape (new panels).
+ */
+export type Formula = ClientFormula & {
+  description?: string;
+  created_at?: string;
+  updated_at?: string;
+  /** @deprecated legacy carrier from the PanelProjection era. New formulas
+   *  store the body as flat verb fields (``group``, ``measures``, …). */
+  projection?: any;
+};
+
+/** @deprecated alias for Formula; remove after consumers update. */
+export type Observation = Formula;
+
 // Dashboard configuration that gets persisted in the backend
 export interface DashboardConfig {
   name: string;
@@ -234,7 +272,18 @@ export interface DashboardConfig {
     type: 'grid';
     columns: number;
   };
-  panels: PanelViewConfig[];
+  panels: PanelConfig[];
+  /** Run-scoped saved Formulas (the intelligence layer's third primitive).
+   *  JSON-only for now; lifts into a real table when usage patterns prove out.
+   *  Legacy persistence stored these under `observations` — the dashboard
+   *  migrator promotes the old key on load. */
+  formulas?: Formula[];
+  /** Immutable Observation snapshots — frozen outputs of formulas (M5 of
+   *  the intelligence-primitive plan). Editing the source Formula does NOT
+   *  mutate prior snapshots; re-snapshotting creates a new one. */
+  observations?: import('@/lib/annotations/types').ObservationSnapshot[];
+  /** Dossier note (markdown). Supports @cite[obs_id, key:(...)] markers. */
+  notes_md?: string;
   // NEW: Run-wide settings that apply to all panels
   runWideSettings?: {
     // Global variable splitting configuration (shared across all panels)
@@ -245,7 +294,15 @@ export interface DashboardConfig {
       visibleSplits?: string[]; // Convert Set to array for serialization
       maxSplits?: number;
       groupOthers?: boolean;
-      valueAliases?: Record<string, string[]>; // Enhanced: many-to-one mapping
+      valueAliases?: Record<string, string[]>; // Legacy field-agnostic mapping (kept for back-compat)
+      /**
+       * Per-field value aliases. Preferred shape — keyed by backend field
+       * path (e.g. "document.party"), value is canonical → raw-names list.
+       * The ValueAliasManager writes here; every panel hydrates its
+       * `merge_maps` /view param from this map keyed on the panel's
+       * primary categorical axis.
+       */
+      valueAliasesByField?: Record<string, Record<string, string[]>>;
     };
     // Global time axis preferences
     defaultTimeInterval?: 'day' | 'week' | 'month' | 'quarter' | 'year';
@@ -254,6 +311,104 @@ export interface DashboardConfig {
     // Global schema visibility
     defaultSelectedSchemaIds?: number[];
   };
+}
+
+/** Detect and migrate old PanelViewConfig format to PanelConfig */
+function migratePanelIfNeeded(panel: any): PanelConfig {
+  // Already a PanelConfig — backfill any missing required fields defensively.
+  // `inspection_granularity` is intentionally dropped; legacy panels with it
+  // set drop the field on first rehydration.
+  if (panel.projection && panel.local_filters) {
+    const { inspection_granularity: _drop, ...rest } = panel;
+    return {
+      ...rest,
+      aggregation: panel.aggregation || {},
+      incoming_scopes: panel.incoming_scopes || [],
+      merge_maps: panel.merge_maps || [],
+      settings: panel.settings || {},
+    } as PanelConfig;
+  }
+
+  // Old PanelViewConfig — has filters with rules and settings bag
+  const old = panel as PanelViewConfig;
+  return {
+    id: old.id,
+    type: old.type,
+    name: old.name,
+    description: old.description,
+    projection: { field_mappings: {}, explosion: null },
+    aggregation: {},
+    local_filters: { logic: 'and', conditions: [] },
+    incoming_scopes: [],
+    merge_maps: [],
+    grid_position: old.gridPos || { x: 0, y: 0, w: 6, h: 4 },
+    collapsed: old.collapsed,
+    settings: old.settings,
+  };
+}
+
+/** Migrate an entire dashboard config, converting any old panels and
+ *  promoting legacy `observations[]` (which were saved-projections, the
+ *  thing we now call Formulas) into `formulas[]`. The legacy
+ *  `observation_id` key on a panel is also rewritten to `formula_id`.
+ *  This is a forward-only migration; persisted configs catch up to the
+ *  new shape on the next dashboard save. */
+function migrateDashboardConfig(raw: any): DashboardConfig {
+  const config = raw as DashboardConfig;
+  if (config.panels) {
+    config.panels = config.panels.map(migratePanelIfNeeded);
+  }
+  // Promote legacy `observations[]` (saved-projections) → `formulas[]`.
+  // Only when `formulas[]` is absent or empty so we don't clobber a
+  // forward-migrated config that happens to still carry the legacy key
+  // (e.g. partial frontend rollout).
+  const cfgAny = config as any;
+  const legacyObs: any[] | undefined = cfgAny.observations;
+  if (legacyObs && legacyObs.length > 0 && !(config.formulas && config.formulas.length > 0)) {
+    // Heuristic: legacy observations are saved-projections — they have a
+    // `projection` field. Snapshot-shaped observations (the M5 primitive)
+    // have `formula_inline` / `output_blob`. Only the saved-projection
+    // shape should migrate to formulas[]; snapshots stay in observations[].
+    const looksLikeSavedProjection = (o: any) => o && typeof o === 'object' && 'projection' in o && !('formula_inline' in o);
+    const toFormulas = legacyObs.filter(looksLikeSavedProjection);
+    const remaining = legacyObs.filter(o => !looksLikeSavedProjection(o));
+    if (toFormulas.length > 0) {
+      config.formulas = toFormulas;
+      cfgAny.observations = remaining;
+    }
+  }
+  // Promote legacy `panel.observation_id` → `panel.formula_id`.
+  if (config.panels) {
+    for (const p of config.panels as any[]) {
+      if (p && typeof p === 'object' && 'observation_id' in p && !('formula_id' in p)) {
+        p.formula_id = p.observation_id;
+      }
+    }
+  }
+  return config;
+}
+
+/**
+ * Fire-and-forget dashboard auto-save. Reads ``activeRun`` from the store
+ * and calls ``saveDashboardToBackend`` if both ids are known. Debounced via
+ * a module-level timer so a burst of formula CRUD (e.g. agent edits across
+ * multiple turns) collapses to a single backend write.
+ *
+ * Errors surface via the existing toast in ``saveDashboardToBackend``; the
+ * caller doesn't need to await.
+ */
+let _autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+function _autoSaveDashboard(get: () => AnnotationRunState): void {
+    if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
+    _autoSaveTimer = setTimeout(() => {
+        const { activeRun, saveDashboardToBackend } = get();
+        if (!activeRun) return;
+        const infospaceId = (activeRun as any).infospace_id;
+        if (!infospaceId) return;
+        saveDashboardToBackend(infospaceId, activeRun.id).catch(() => {
+            // Toast already handled inside the action.
+        });
+    }, 400);
 }
 
 interface AnnotationRunState {
@@ -269,32 +424,66 @@ interface AnnotationRunState {
   retryRunFailures: (infospaceId: number, runId: number) => Promise<void>;
   exportAnnotationRun: (infospaceId: number, runId: number) => Promise<void>;
   importAnnotationRun: (infospaceId: number, file: File) => Promise<AnnotationRunRead | null>;
-  
+
   // Dashboard persistence
   saveDashboardToBackend: (infospaceId: number, runId: number) => Promise<void>;
   loadDashboardFromRun: (run: AnnotationRunRead) => void;
 
   // Dashboard state
   activeRun: AnnotationRunRead | null;
+  /** @deprecated — panels now self-fetch via useAnnotationView. Kept for migration. */
   currentRunResults: FormattedAnnotation[];
   isProcessing: boolean;
   dashboardConfig: DashboardConfig | null;
   isDashboardDirty: boolean;
   setActiveRun: (run: AnnotationRunRead | null) => void;
+  /** Shallow-patch activeRun without recomputing dashboardConfig. Used by the
+   *  presence-stream handler for live progress_current / progress_total / status
+   *  updates so we avoid a full re-fetch on every event. */
+  patchActiveRun: (updates: Partial<AnnotationRunRead>) => void;
+  /** @deprecated — panels now self-fetch via useAnnotationView */
   setCurrentRunResults: (results: FormattedAnnotation[]) => void;
   setIsProcessing: (processing: boolean) => void;
   setDashboardConfig: (config: DashboardConfig | null) => void;
   updateDashboardConfig: (config: Partial<DashboardConfig>) => void;
-  addPanel: (panel: Omit<PanelViewConfig, 'id' | 'gridPos' | 'filters'>) => void;
-  updatePanel: (panelId: string, updates: Partial<PanelViewConfig>) => void;
+  addPanel: (panel: Omit<PanelConfig, 'id' | 'grid_position' | 'local_filters' | 'incoming_scopes' | 'merge_maps' | 'projection' | 'aggregation'>) => void;
+  updatePanel: (panelId: string, updates: Partial<PanelConfig>) => void;
   removePanel: (panelId: string) => void;
   compactLayout: () => void;
   setDashboardDirty: (isDirty: boolean) => void;
-  
-  // NEW: Run-wide settings management
+
+  // Scope management
+  addScope: (targetPanelId: string, scope: Scope) => void;
+  removeScope: (targetPanelId: string, scopeId: string) => void;
+  updateScope: (targetPanelId: string, scopeId: string, updates: Partial<Scope>) => void;
+  /** Update all scopes originating from a source panel (for live-linked propagation) */
+  updateScopesFromSource: (sourcePanelId: string, newFilter: ClientFilterSet, newLabel: string) => void;
+
+  // Formula CRUD (run-scoped, lives in dashboardConfig.formulas)
+  addFormula: (data: Omit<Formula, 'id' | 'created_at' | 'updated_at'>) => Formula | null;
+  updateFormula: (id: string, updates: Partial<Omit<Formula, 'id' | 'created_at'>>) => void;
+  removeFormula: (id: string) => void;
+  getFormula: (id: string) => Formula | null;
+  /** @deprecated use addFormula */
+  addObservation?: (data: Omit<Formula, 'id' | 'created_at' | 'updated_at'>) => Formula | null;
+  /** @deprecated use updateFormula */
+  updateObservation?: (id: string, updates: Partial<Omit<Formula, 'id' | 'created_at'>>) => void;
+  /** @deprecated use removeFormula */
+  removeObservation?: (id: string) => void;
+  /** @deprecated use getFormula */
+  getObservation?: (id: string) => Formula | null;
+
+  // Run-wide settings management
   updateRunWideSettings: (updates: Partial<NonNullable<DashboardConfig['runWideSettings']>>) => void;
   getGlobalVariableSplitting: () => NonNullable<DashboardConfig['runWideSettings']>['globalVariableSplitting'] | null;
   setGlobalVariableSplitting: (config: NonNullable<DashboardConfig['runWideSettings']>['globalVariableSplitting']) => void;
+
+  // Focus mode — hides the dashboard-level header and every per-panel header
+  // bar so panels get the full canvas. UI-only flag; not persisted, not part
+  // of dashboardConfig (so it never leaks into views_config on save).
+  focusMode: boolean;
+  toggleFocusMode: () => void;
+  setFocusMode: (value: boolean) => void;
 }
 
 export const useAnnotationRunStore = create<AnnotationRunState>()(
@@ -433,23 +622,27 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
         isDashboardDirty: false,
 
         setActiveRun: (run) => {
+            // Only rebuild dashboardConfig when the RUN IDENTITY changes (null → id,
+            // id → different id, or id → null). Progress/status updates from the
+            // SSE + polling path call setActiveRun repeatedly on the same id; if
+            // we rebuilt the config each time, every panel would re-mount, losing
+            // useAnnotationView's cached `data` and flashing empty-state between
+            // incremental commits.
+            const prevRunId = get().activeRun?.id ?? null;
+            const nextRunId = run?.id ?? null;
             set({ activeRun: run });
-            // Load dashboard configuration from run or initialize default
+            if (prevRunId === nextRunId) return;
+
             if (run) {
-                // Call loadDashboardFromRun logic directly to avoid potential binding issues
                 if (run.views_config && run.views_config.length > 0) {
                     const rawConfig = run.views_config[0] as unknown as DashboardConfig;
-                    const config = deserializeDashboardConfig(rawConfig);
+                    const config = migrateDashboardConfig(deserializeDashboardConfig(rawConfig) || rawConfig);
                     set({ dashboardConfig: config, isDashboardDirty: false });
                 } else {
-                    // Initialize default config if none exists
                     const defaultConfig: DashboardConfig = {
                         name: `Dashboard for ${run.name}`,
                         description: `Analytics dashboard for annotation run: ${run.name}`,
-                        layout: {
-                            type: 'grid',
-                            columns: 12,
-                        },
+                        layout: { type: 'grid', columns: 12 },
                         panels: [],
                     };
                     set({ dashboardConfig: defaultConfig, isDashboardDirty: false });
@@ -457,6 +650,14 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
             } else {
                 set({ dashboardConfig: null, isDashboardDirty: false });
             }
+        },
+
+        patchActiveRun: (updates) => {
+            set(produce((state: AnnotationRunState) => {
+                if (state.activeRun) {
+                    Object.assign(state.activeRun, updates);
+                }
+            }));
         },
 
         setCurrentRunResults: (results) => {
@@ -483,139 +684,75 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
         addPanel: (panelData) => {
             set(produce((state: AnnotationRunState) => {
                 if (state.dashboardConfig) {
-                    // Find the best position for the new panel
-                    const findBestPosition = (width: number, height: number) => {
-                        const GRID_COLUMNS = 12;
-                        const existingPanels = state.dashboardConfig?.panels || [];
-                        
-                        // Create a grid to track occupied spaces
-                        const grid: boolean[][] = [];
-                        let maxY = 0;
-                        
-                        // Initialize grid and mark occupied spaces
-                        existingPanels.forEach(panel => {
-                            if (!panel?.gridPos) return;
-                            
-                            const { x, y, w, h } = panel.gridPos;
-                            const safeX = Math.max(0, Math.min(GRID_COLUMNS - 1, x || 0));
-                            const safeY = Math.max(0, y || 0);
-                            const safeW = Math.max(1, Math.min(GRID_COLUMNS - safeX, w || 1));
-                            const safeH = Math.max(1, h || 1);
-                            
-                            maxY = Math.max(maxY, safeY + safeH);
-                            
-                            for (let row = safeY; row < safeY + safeH; row++) {
-                                if (!grid[row]) grid[row] = new Array(GRID_COLUMNS).fill(false);
-                                for (let col = safeX; col < safeX + safeW; col++) {
-                                    if (col < GRID_COLUMNS) {
-                                        grid[row][col] = true;
-                                    }
-                                }
-                            }
-                        });
-                        
-                        // Find the first available position
-                        for (let y = 0; y <= maxY + height; y++) {
-                            for (let x = 0; x <= GRID_COLUMNS - width; x++) {
-                                let canPlace = true;
-                                
-                                // Check if this position is available
-                                for (let row = y; row < y + height && canPlace; row++) {
-                                    if (!grid[row]) grid[row] = new Array(GRID_COLUMNS).fill(false);
-                                    for (let col = x; col < x + width && canPlace; col++) {
-                                        if (grid[row] && grid[row][col]) {
-                                            canPlace = false;
-                                        }
-                                    }
-                                }
-                                
-                                if (canPlace) {
-                                    return { x, y };
-                                }
+                    const GRID_COLUMNS = 12;
+                    const existingPanels = state.dashboardConfig.panels || [];
+
+                    // Find best position in the grid
+                    const grid: boolean[][] = [];
+                    let maxY = 0;
+                    existingPanels.forEach(panel => {
+                        if (!panel?.grid_position) return;
+                        const { x, y, w, h } = panel.grid_position;
+                        const safeX = Math.max(0, Math.min(GRID_COLUMNS - 1, x || 0));
+                        const safeY = Math.max(0, y || 0);
+                        const safeW = Math.max(1, Math.min(GRID_COLUMNS - safeX, w || 1));
+                        const safeH = Math.max(1, h || 1);
+                        maxY = Math.max(maxY, safeY + safeH);
+                        for (let row = safeY; row < safeY + safeH; row++) {
+                            if (!grid[row]) grid[row] = new Array(GRID_COLUMNS).fill(false);
+                            for (let col = safeX; col < safeX + safeW; col++) {
+                                if (col < GRID_COLUMNS) grid[row][col] = true;
                             }
                         }
-                        
-                        // Fallback: place at the bottom
+                    });
+
+                    const findPos = (w: number, h: number) => {
+                        for (let y = 0; y <= maxY + h; y++) {
+                            for (let x = 0; x <= GRID_COLUMNS - w; x++) {
+                                let ok = true;
+                                for (let r = y; r < y + h && ok; r++) {
+                                    if (!grid[r]) grid[r] = new Array(GRID_COLUMNS).fill(false);
+                                    for (let c = x; c < x + w && ok; c++) {
+                                        if (grid[r][c]) ok = false;
+                                    }
+                                }
+                                if (ok) return { x, y };
+                            }
+                        }
                         return { x: 0, y: maxY };
                     };
 
-                    // Determine default size based on panel type
-                    const getDefaultSize = (type: string) => {
-                        switch (type) {
-                            case 'table':
-                                return { w: 12, h: 6 }; // Full width for tables
-                            case 'chart':
-                                return { w: 8, h: 5 }; // Large for time series
-                            case 'pie':
-                                return { w: 6, h: 4 }; // Medium for pie charts
-                            case 'map':
-                                return { w: 8, h: 6 }; // Large for maps
-                            case 'graph':
-                                return { w: 10, h: 6 }; // Large for knowledge graphs
-                            default:
-                                return { w: 6, h: 4 }; // Default medium size
-                        }
-                    };
-                    
-                    // Determine default settings based on panel type
-                    const getDefaultSettings = (type: string) => {
-                        switch (type) {
-                            case 'chart':
-                                return {
-                                    selectedTimeInterval: 'day',
-                                    aggregateSources: true,
-                                    selectedSourceIds: [],
-                                    timeAxisConfig: {
-                                        type: 'default' as const,
-                                        schemaId: null,
-                                        fieldKey: null,
-                                        timeFrame: {
-                                            enabled: false
-                                        }
-                                    }
-                                };
-                            case 'pie':
-                                return {
-                                    aggregateSources: true,
-                                    selectedSourceIds: []
-                                };
-                            case 'table':
-                                return {};
-                            case 'map':
-                                return {
-                                    aggregateSources: true,
-                                    selectedSourceIds: []
-                                };
-                            case 'graph':
-                                return {};
-                            default:
-                                return {};
-                        }
+                    const defaultSizes: Record<string, { w: number; h: number }> = {
+                        table: { w: 12, h: 6 },
+                        chart: { w: 8, h: 5 },
+                        pie: { w: 6, h: 4 },
+                        map: { w: 8, h: 6 },
+                        graph: { w: 10, h: 6 },
                     };
 
-                    const defaultSize = getDefaultSize(panelData.type);
-                    const position = findBestPosition(defaultSize.w, defaultSize.h);
+                    const size = defaultSizes[panelData.type] || { w: 6, h: 4 };
+                    const position = findPos(size.w, size.h);
 
-                    // Create a completely new panel object to avoid any read-only issues
-                    const newPanel: PanelViewConfig = {
+                    const newPanel: PanelConfig = {
                         id: nanoid(),
                         name: panelData.name,
                         description: panelData.description,
                         type: panelData.type,
                         collapsed: false,
-                        settings: getDefaultSettings(panelData.type),
-                        filters: {
-                            logic: 'and',
-                            rules: [],
-                        },
-                        gridPos: {
+                        projection: { field_mappings: {}, explosion: null },
+                        aggregation: {},
+                        local_filters: { logic: 'and', conditions: [] },
+                        incoming_scopes: [],
+                        merge_maps: [],
+                        settings: panelData.settings || {},
+                        grid_position: {
                             x: Math.max(0, Math.min(11, position.x)),
                             y: Math.max(0, position.y),
-                            w: Math.max(1, Math.min(12, defaultSize.w)),
-                            h: Math.max(1, defaultSize.h),
+                            w: Math.max(1, Math.min(12, size.w)),
+                            h: Math.max(1, size.h),
                         },
                     };
-                    
+
                     state.dashboardConfig.panels.push(newPanel);
                     state.isDashboardDirty = true;
                 }
@@ -628,30 +765,28 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                     const panelIndex = state.dashboardConfig.panels.findIndex(p => p.id === panelId);
                     if (panelIndex !== -1) {
                         const currentPanel = state.dashboardConfig.panels[panelIndex];
-                        
-                        // Create a new panel object with the updates to avoid mutations
-                        const updatedPanel: PanelViewConfig = {
+
+                        const updatedPanel: PanelConfig = {
                             ...currentPanel,
                             ...updates,
-                            // Ensure gridPos is properly merged and safe
-                            gridPos: updates.gridPos 
+                            grid_position: updates.grid_position
                                 ? {
-                                    x: Math.max(0, Math.min(11, updates.gridPos.x ?? currentPanel.gridPos.x)),
-                                    y: Math.max(0, updates.gridPos.y ?? currentPanel.gridPos.y),
-                                    w: Math.max(1, Math.min(12, updates.gridPos.w ?? currentPanel.gridPos.w)),
-                                    h: Math.max(1, updates.gridPos.h ?? currentPanel.gridPos.h),
+                                    x: Math.max(0, Math.min(11, updates.grid_position.x ?? currentPanel.grid_position.x)),
+                                    y: Math.max(0, updates.grid_position.y ?? currentPanel.grid_position.y),
+                                    w: Math.max(1, Math.min(12, updates.grid_position.w ?? currentPanel.grid_position.w)),
+                                    h: Math.max(1, updates.grid_position.h ?? currentPanel.grid_position.h),
                                 }
-                                : currentPanel.gridPos,
-                            // Ensure settings is properly merged
-                            settings: updates.settings 
+                                : currentPanel.grid_position,
+                            settings: updates.settings
                                 ? { ...currentPanel.settings, ...updates.settings }
                                 : currentPanel.settings,
-                            // Ensure filters is properly merged
-                            filters: updates.filters 
-                                ? { ...currentPanel.filters, ...updates.filters }
-                                : currentPanel.filters,
+                            local_filters: updates.local_filters
+                                ? { ...currentPanel.local_filters, ...updates.local_filters }
+                                : currentPanel.local_filters,
+                            incoming_scopes: updates.incoming_scopes ?? currentPanel.incoming_scopes,
+                            merge_maps: updates.merge_maps ?? currentPanel.merge_maps,
                         };
-                        
+
                         state.dashboardConfig.panels[panelIndex] = updatedPanel;
                         state.isDashboardDirty = true;
                     }
@@ -699,99 +834,47 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
 
         loadDashboardFromRun: (run) => {
             if (run.views_config && run.views_config.length > 0) {
-                const config = run.views_config[0] as unknown as DashboardConfig;
-                
-                // Check if we need to remap schema IDs for imported runs
-                // This handles cases where schema IDs change during import/sharing
+                const rawConfig = run.views_config[0] as unknown as DashboardConfig;
+                const config = migrateDashboardConfig(rawConfig);
+
+                // Schema ID remapping for imported runs
                 const runConfig = run.configuration as any;
                 const currentSchemaIds = runConfig?.schema_ids || (run as any)?.schema_ids || (run as any)?.target_schema_ids || [];
-                
+
                 if (currentSchemaIds.length > 0) {
-                    console.log('[Dashboard] Current run schema IDs:', currentSchemaIds);
-                    
-                    // Extract existing schema IDs from config for debugging
-                    const existingSchemaIds = new Set<number>();
-                    config.panels.forEach(panel => {
-                        if (panel.settings?.geocodeSource?.schemaId) existingSchemaIds.add(panel.settings.geocodeSource.schemaId);
-                        if (panel.settings?.labelSource?.schemaId) existingSchemaIds.add(panel.settings.labelSource.schemaId);
-                        if (panel.settings?.selectedSchemaId) existingSchemaIds.add(panel.settings.selectedSchemaId);
-                        if (panel.settings?.selectedGraphSchemaId) existingSchemaIds.add(panel.settings.selectedGraphSchemaId);
-                    });
-                    console.log('[Dashboard] Config referenced schema IDs:', Array.from(existingSchemaIds));
-                    
-                    // Create a simple remapping based on position (first schema in config maps to first schema in run, etc.)
-                    const remappedConfig = { ...config };
-                    remappedConfig.panels = config.panels.map(panel => {
-                        if (panel.settings) {
-                            const updatedSettings = { ...panel.settings };
-                            
-                            // Remap geocodeSource schema ID
-                            if (updatedSettings.geocodeSource && updatedSettings.geocodeSource.schemaId) {
-                                const oldSchemaId = updatedSettings.geocodeSource.schemaId;
-                                const newSchemaId = currentSchemaIds[0];
-                                updatedSettings.geocodeSource.schemaId = newSchemaId;
-                                
-                                // Clear geocoded cache since schema ID changed - let it regenerate naturally
-                                // The cache key depends on actual data which might be different in the new run
-                                if (updatedSettings.geocodedPointsCache) {
-                                    console.log(`[Dashboard] Clearing geocoded cache due to schema ID change: ${oldSchemaId} -> ${newSchemaId}`);
-                                    delete updatedSettings.geocodedPointsCache;
-                                }
-                            }
-                            
-                            // Remap labelSource schema ID  
-                            if (updatedSettings.labelSource && updatedSettings.labelSource.schemaId) {
-                                updatedSettings.labelSource.schemaId = currentSchemaIds[0];
-                            }
-                            
-                            // Remap other schema-specific settings
-                            if (updatedSettings.selectedSchemaId) {
-                                updatedSettings.selectedSchemaId = currentSchemaIds[0];
-                            }
-                            
-                            if (updatedSettings.selectedGraphSchemaId) {
-                                updatedSettings.selectedGraphSchemaId = currentSchemaIds[0];
-                            }
-                            
-                            // Remap selectedSchemaIds array
-                            if (updatedSettings.selectedSchemaIds && Array.isArray(updatedSettings.selectedSchemaIds)) {
-                                updatedSettings.selectedSchemaIds = currentSchemaIds;
-                            }
-                            
-                            // Remap selectedFieldsPerScheme keys
-                            if (updatedSettings.selectedFieldsPerScheme) {
-                                const newFieldsPerScheme: Record<number, string[]> = {};
-                                const oldKeys = Object.keys(updatedSettings.selectedFieldsPerScheme);
-                                if (oldKeys.length > 0 && currentSchemaIds.length > 0) {
-                                    // Map the first old schema's fields to the first new schema
-                                    const firstOldKey = oldKeys[0];
-                                    newFieldsPerScheme[currentSchemaIds[0]] = updatedSettings.selectedFieldsPerScheme[parseInt(firstOldKey)];
-                                }
-                                updatedSettings.selectedFieldsPerScheme = newFieldsPerScheme;
-                            }
-                            
-                            return { ...panel, settings: updatedSettings };
+                    config.panels = config.panels.map(panel => {
+                        if (!panel.settings) return panel;
+                        const s = { ...panel.settings };
+                        if (s.geocodeSource?.schemaId) {
+                            s.geocodeSource = { ...s.geocodeSource, schemaId: currentSchemaIds[0] };
+                            delete s.geocodedPointsCache;
                         }
-                        return panel;
+                        if (s.labelSource?.schemaId) s.labelSource = { ...s.labelSource, schemaId: currentSchemaIds[0] };
+                        if (s.selectedSchemaId) s.selectedSchemaId = currentSchemaIds[0];
+                        if (s.selectedGraphSchemaId) s.selectedGraphSchemaId = currentSchemaIds[0];
+                        if (s.selectedFieldsPerScheme) {
+                            const oldKeys = Object.keys(s.selectedFieldsPerScheme);
+                            if (oldKeys.length > 0) {
+                                const newFields: Record<number, string[]> = {};
+                                newFields[currentSchemaIds[0]] = s.selectedFieldsPerScheme[parseInt(oldKeys[0])];
+                                s.selectedFieldsPerScheme = newFields;
+                            }
+                        }
+                        return { ...panel, settings: s };
                     });
-                    
-                    console.log('[Dashboard] Remapped schema IDs in dashboard config for imported run');
-                    set({ dashboardConfig: remappedConfig, isDashboardDirty: false });
-                } else {
-                    set({ dashboardConfig: config, isDashboardDirty: false });
                 }
+
+                set({ dashboardConfig: config, isDashboardDirty: false });
             } else {
-                // Initialize default config if none exists
-                const defaultConfig: DashboardConfig = {
-                    name: `Dashboard for ${run.name}`,
-                    description: `Analytics dashboard for annotation run: ${run.name}`,
-                    layout: {
-                        type: 'grid',
-                        columns: 12,
+                set({
+                    dashboardConfig: {
+                        name: `Dashboard for ${run.name}`,
+                        description: `Analytics dashboard for annotation run: ${run.name}`,
+                        layout: { type: 'grid', columns: 12 },
+                        panels: [],
                     },
-                    panels: [],
-                };
-                set({ dashboardConfig: defaultConfig, isDashboardDirty: false });
+                    isDashboardDirty: false,
+                });
             }
         },
 
@@ -804,7 +887,129 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
             }));
         },
 
-        // NEW: Run-wide settings management
+        // --- Scope management ---
+        addScope: (targetPanelId, scope) => {
+            set(produce((state: AnnotationRunState) => {
+                const panel = state.dashboardConfig?.panels.find(p => p.id === targetPanelId);
+                if (panel) {
+                    panel.incoming_scopes.push(scope);
+                    state.isDashboardDirty = true;
+                }
+            }));
+        },
+
+        removeScope: (targetPanelId, scopeId) => {
+            set(produce((state: AnnotationRunState) => {
+                const panel = state.dashboardConfig?.panels.find(p => p.id === targetPanelId);
+                if (panel) {
+                    panel.incoming_scopes = panel.incoming_scopes.filter(s => s.id !== scopeId);
+                    state.isDashboardDirty = true;
+                }
+            }));
+        },
+
+        updateScope: (targetPanelId, scopeId, updates) => {
+            set(produce((state: AnnotationRunState) => {
+                const panel = state.dashboardConfig?.panels.find(p => p.id === targetPanelId);
+                if (panel) {
+                    const scope = panel.incoming_scopes.find(s => s.id === scopeId);
+                    if (scope) Object.assign(scope, updates);
+                    state.isDashboardDirty = true;
+                }
+            }));
+        },
+
+        updateScopesFromSource: (sourcePanelId, newFilter, newLabel) => {
+            set(produce((state: AnnotationRunState) => {
+                if (!state.dashboardConfig) return;
+                for (const panel of state.dashboardConfig.panels) {
+                    for (const scope of panel.incoming_scopes) {
+                        if (scope.source_panel_id === sourcePanelId && scope.mode === 'link') {
+                            scope.filter = newFilter;
+                            scope.label = newLabel;
+                        }
+                    }
+                }
+                state.isDashboardDirty = true;
+            }));
+        },
+
+        // Formula CRUD — JSON-only, lives in dashboardConfig.formulas.
+        // Renamed from Observation in M2 of the intelligence-primitive plan.
+        // The legacy method names (addObservation/updateObservation/...) are
+        // wired below as aliases for back-compat with consumers mid-migration.
+        //
+        // Auto-save flow: agent-authored formulas land on the backend
+        // immediately (via MCP). For symmetry, user-driven CRUD also
+        // auto-persists in the background — otherwise a "delete" would do
+        // nothing visible to the backend and the formula would reappear on
+        // reload. The save is fire-and-forget (toast on failure); the local
+        // store mutates synchronously so the UI updates instantly.
+        addFormula: (data) => {
+            let created: Formula | null = null;
+            set(produce((state: AnnotationRunState) => {
+                if (!state.dashboardConfig) return;
+                if (!state.dashboardConfig.formulas) state.dashboardConfig.formulas = [];
+                const now = new Date().toISOString();
+                // Spread the new flat-Formula body (group/measures/derives/…)
+                // and stamp store-side metadata. The backend ignores the
+                // timestamps; the ``Formula.model_validate`` call there
+                // tolerates extra keys defensively.
+                const f: Formula = {
+                    ...data,
+                    id: nanoid(),
+                    created_at: now,
+                    updated_at: now,
+                    version: 1,
+                };
+                state.dashboardConfig.formulas.push(f);
+                state.isDashboardDirty = true;
+                created = f;
+            }));
+            _autoSaveDashboard(get);
+            return created;
+        },
+
+        updateFormula: (id, updates) => {
+            set(produce((state: AnnotationRunState) => {
+                if (!state.dashboardConfig?.formulas) return;
+                const idx = state.dashboardConfig.formulas.findIndex(f => f.id === id);
+                if (idx === -1) return;
+                const current = state.dashboardConfig.formulas[idx];
+                state.dashboardConfig.formulas[idx] = {
+                    ...current,
+                    ...updates,
+                    id: current.id,
+                    created_at: current.created_at,
+                    updated_at: new Date().toISOString(),
+                };
+                state.isDashboardDirty = true;
+            }));
+            _autoSaveDashboard(get);
+        },
+
+        removeFormula: (id) => {
+            set(produce((state: AnnotationRunState) => {
+                if (!state.dashboardConfig?.formulas) return;
+                state.dashboardConfig.formulas = state.dashboardConfig.formulas.filter(f => f.id !== id);
+                state.isDashboardDirty = true;
+            }));
+            _autoSaveDashboard(get);
+        },
+
+        getFormula: (id) => {
+            const { dashboardConfig } = get();
+            return dashboardConfig?.formulas?.find(f => f.id === id) ?? null;
+        },
+
+        // Legacy aliases — same implementations, renamed parameters. Remove
+        // after all consumers (workspace, popover, binder) are renamed.
+        addObservation(data) { return this.addFormula(data); },
+        updateObservation(id, updates) { return this.updateFormula(id, updates); },
+        removeObservation(id) { return this.removeFormula(id); },
+        getObservation(id) { return this.getFormula(id); },
+
+        // Run-wide settings management
         updateRunWideSettings: (updates) => {
             set(produce((state: AnnotationRunState) => {
                 if (state.dashboardConfig) {
@@ -833,6 +1038,11 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                 }
             }));
         },
+
+        // Focus mode — see interface comment.
+        focusMode: false,
+        toggleFocusMode: () => set((s) => ({ focusMode: !s.focusMode })),
+        setFocusMode: (value) => set({ focusMode: value }),
     }),
     {
         name: 'annotation-run-store',

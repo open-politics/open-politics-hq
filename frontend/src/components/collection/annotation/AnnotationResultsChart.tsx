@@ -20,9 +20,12 @@ import {
 } from 'recharts';
 import { format, startOfDay, startOfWeek, startOfMonth, startOfQuarter, startOfYear } from 'date-fns';
 import { AnnotationRead, AnnotationSchemaRead, AssetRead } from '@/client';
-import { TimeAxisConfig, FormattedAnnotation, TimeFrameFilter } from '@/lib/annotations/types';
-import { getTargetKeysForScheme, checkFilterMatch, formatDisplayValue, getAnnotationFieldValue, getDateFieldsForScheme } from '@/lib/annotations/utils';
+import type { AggregateViewConfig as AggregateConfig } from '@/client';
+import { TimeAxisConfig, FormattedAnnotation, TimeFrameFilter, PanelConfig, ViewAggregatePhase, AggregateBucket } from '@/lib/annotations/types';
+import { getTargetKeysForScheme, formatDisplayValue, getAnnotationFieldValue, getAnnotationFieldValuesExploded, getDateFieldsForScheme } from '@/lib/annotations/utils';
 import { VariableSplittingConfig, applySplittingToResults, applyAmbiguityResolution } from './VariableSplittingControls';
+import { useAnnotationView } from '@/hooks/useAnnotationView';
+import { mergeFiltersAndScopes } from '@/lib/annotations/scopes';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from '@/components/ui/switch';
@@ -36,10 +39,35 @@ import { ResultFilter } from './AnnotationFilterControls';
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Settings2, ArrowDownUp, SortAsc, SortDesc, Info, Layers, Maximize2 } from 'lucide-react';
+import { Settings2, ArrowDownUp, SortAsc, SortDesc, Info, Layers, Maximize2, SlidersHorizontal } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
+import { type RolePickerValue } from './panels/RolePicker';
+import { RolePickerPopover } from './panels/RolePickerPopover';
+import { PanelHeaderSlot } from './panels/PanelHeaderSlot';
+import { PanelFormulaBinder } from './formulas/PanelFormulaBinder';
+import { useResolvedProjection } from '@/hooks/useResolvedProjection';
+import { EmptyStateCard } from './panels/EmptyStateCard';
+import { ValueAliasManager } from './panels/ValueAliasManager';
+import { EvidenceDrawer } from './panels/EvidenceDrawer';
+import {
+  AnalyticsOverlayToolbar,
+  type AnalyticsOverlayConfig,
+  DEFAULT_ANALYTICS_OVERLAYS,
+} from './panels/AnalyticsOverlayToolbar';
+import {
+  rollingAverage,
+  trendLine,
+  findPeaks,
+  descriptiveStats,
+} from './panels/analytics';
+import { PANEL_ROLE_SCHEMAS } from '@/lib/annotations/panelRoleSchema';
+import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
+import { effectiveMergeMaps } from '@/lib/annotations/valueAliases';
+import { createScopeFromSelection } from '@/lib/annotations/scopes';
+import { inferFieldShape } from '@/lib/annotations/fieldPaths';
+import type { Scope } from '@/lib/annotations/types';
 
 
 const PIE_COLORS = [
@@ -90,36 +118,16 @@ interface FieldStatistics {
 
 // --- COMPONENT PROPS --- //
 interface Props {
-  results: FormattedAnnotation[];
+  infospaceId: number;
+  runId: number;
   schemas: AnnotationSchemaRead[];
-  assets?: AssetRead[];
-  sources?: { id: number; name: string }[];
-  analysisData?: any[] | null;
-  timeAxisConfig: TimeAxisConfig | null;
-  selectedTimeInterval: 'day' | 'week' | 'month' | 'quarter' | 'year';
-  aggregateSourcesDefault?: boolean;
-  selectedDataSourceIds?: number[];
+  panelConfig: PanelConfig;
+  onUpdatePanel: (updates: Partial<PanelConfig>) => void;
   showControls?: boolean;
-  // Variable splitting configuration
-  variableSplittingConfig?: VariableSplittingConfig | null;
-  onVariableSplittingChange?: (config: VariableSplittingConfig | null) => void;
-  // Settings callback for persistence
-  onSettingsChange?: (settings: any) => void;
-  initialSettings?: any;
-  // NEW: Result selection callback
   onResultSelect?: (result: FormattedAnnotation) => void;
-  // NEW: Field interaction callback for opening enhanced dialog
   onFieldInteraction?: (result: FormattedAnnotation, fieldKey: string) => void;
-  // NEW: Cross-panel timestamp highlighting (similar to map's highlightLocation)
   highlightedTimestamp?: { timestamp: Date; fieldKey: string } | null;
-  // NEW: Monitoring mode props
-  monitoringMode?: boolean;
-  allAssets?: AssetRead[];  // All assets in bundle (annotated + pending)
-  expectedSchemaIds?: number[];  // Schemas to expect for completion
-  showPendingAssets?: boolean;  // Toggle for pending assets visibility
-  onShowPendingChange?: (show: boolean) => void;
-  // NEW: Array handling mode for charts
-  arrayHandling?: 'aggregate' | 'explode';
+  onScopeGesture?: (fieldPath: string, value: any, gestureType: 'click' | 'brush' | 'select') => void;
 }
 
 // NEW: Interface for group selection in timeline charts
@@ -284,9 +292,18 @@ const safeStringify = (value: any): string => {
   if (value === null || value === undefined) return 'N/A';
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  try { return JSON.stringify(value); } 
+  try { return JSON.stringify(value); }
   catch { return 'Complex Data'; }
 };
+
+// Recharts resolves `dataKey` via lodash `get`, which treats `.` as nested
+// path. Our aggregate metric keys are dotted field paths (``document.price``),
+// which would read as `point.document.price`. Encode to a dot-free slug so
+// the literal key we write on the point is the key recharts looks up.
+const METRIC_KEY_SEP = '__';
+const encodeMetricKey = (path: string): string => path.replace(/\./g, METRIC_KEY_SEP);
+const decodeMetricKey = (encoded: string): string =>
+  encoded.replace(new RegExp(METRIC_KEY_SEP, 'g'), '.');
 
 // Helper function to normalize timestamps to interval starts to prevent duplicate x-axis points
 const getNormalizedTimestampForInterval = (dateKey: string, groupingInterval: 'day' | 'week' | 'month' | 'quarter' | 'year'): number => {
@@ -1068,7 +1085,8 @@ const CustomTooltipContent = ({ active, payload, label, keyToSplitValueMap, coor
   if (!displayPayload || displayPayload.length === 0) return null;
     
   const pointData = displayPayload[0].payload;
-  const formattedDate = format(new Date(pointData.timestamp), 'yyyy-MM-dd');
+  const tsDate = new Date(pointData.timestamp);
+  const formattedDate = isNaN(tsDate.getTime()) ? String(pointData.timestamp ?? '') : format(tsDate, 'yyyy-MM-dd');
   const groups = new Map<string, any[]>();
 
   // Filter out annotation count and min/max statistical lines for cleaner display
@@ -1374,54 +1392,518 @@ interface ProcessedChartData {
 
 // === MAIN COMPONENT === //
 const AnnotationResultsChart: React.FC<Props> = ({
-  results,
+  infospaceId,
+  runId,
   schemas,
-  assets = [],
-  sources = [],
-  analysisData = null,
-  timeAxisConfig,
-  selectedTimeInterval,
-  aggregateSourcesDefault = true,
-  selectedDataSourceIds = [],
+  panelConfig,
+  onUpdatePanel,
   showControls = true,
-  variableSplittingConfig = null,
-  onVariableSplittingChange,
-  onSettingsChange,
-  initialSettings,
-  // NEW: Result selection callback
   onResultSelect,
-  // NEW: Field interaction callback for opening enhanced dialog
   onFieldInteraction,
-  // NEW: Cross-panel timestamp highlighting
   highlightedTimestamp = null,
-  // NEW: Monitoring mode props
-  monitoringMode = false,
-  allAssets = [],
-  expectedSchemaIds = [],
-  showPendingAssets: showPendingAssetsProp,
-  onShowPendingChange,
-  // NEW: Array handling mode
-  arrayHandling = 'aggregate',
+  onScopeGesture,
 }) => {
-  const [isGrouped, setIsGrouped] = useState(false);
-  const [aggregateSources, setAggregateSources] = useState(aggregateSourcesDefault);
-  const [arrayHandlingState, setArrayHandlingState] = useState<'aggregate' | 'explode'>(arrayHandling);
-  const [groupingSchemeId, setGroupingSchemeId] = useState<number | null>(() => {
-    const initialId = schemas.length > 0 ? schemas[0].id : null;
-    return initialId;
-  });
+  // Derive aggregation config from panel
+  const aggregation = panelConfig.aggregation;
+
+  // Server-side data fetching
+  const mergedFilters = useMemo(
+    () => mergeFiltersAndScopes(panelConfig.local_filters, panelConfig.incoming_scopes),
+    [panelConfig.local_filters, panelConfig.incoming_scopes],
+  );
+
+  // The schema we infer field shapes against. Matches the resolution used by
+  // the RolePicker (settings.selectedSchemaId, falling back to the sole schema).
+  const selectedSchemaForRoles = useMemo(() => {
+    const id = panelConfig.settings?.selectedSchemaId as number | undefined;
+    if (id != null) return schemas.find((s) => s.id === id) ?? null;
+    return schemas.length === 1 ? schemas[0] : null;
+  }, [panelConfig.settings?.selectedSchemaId, schemas]);
+
+  // All Y paths. Each numeric entry becomes its own measure → one parallel
+  // /view fetch → one Line on the chart. Non-numeric entries route to
+  // ``split_by`` (single value only; the backend split_by is 1-D today).
+  const yPaths = useMemo<string[]>(() => {
+    const ym = panelConfig.projection?.field_mappings?.['y'];
+    if (Array.isArray(ym)) return ym.map(String).filter(Boolean);
+    if (typeof ym === 'string' && ym.length > 0) return [ym];
+    return [];
+  }, [panelConfig.projection]);
+
+  const yFirstPath = yPaths[0];
+
+  const yShape = useMemo(
+    () => (yFirstPath ? inferFieldShape(selectedSchemaForRoles, yFirstPath) : null),
+    [yFirstPath, selectedSchemaForRoles],
+  );
+  const yIsNumeric = yShape === 'number';
+
+  // Numeric Y paths become measures (one fetch per path). Non-numeric Y
+  // falls through to split_by below. Mixed types get the numeric entries as
+  // measures and the first non-numeric as split_by.
+  const yNumericPaths = useMemo<string[]>(() => {
+    return yPaths.filter((p) => inferFieldShape(selectedSchemaForRoles, p) === 'number');
+  }, [yPaths, selectedSchemaForRoles]);
+
+  // split_by: explicit `group_by` role wins (Split by); else the first
+  // non-numeric Y auto-routes here so picking Y=stance produces multi-series
+  // instead of a single useless count. Numeric Ys become value_fields below.
+  const splitByField = useMemo<string | undefined>(() => {
+    const groupByRole = panelConfig.projection?.field_mappings?.['group_by'] as string | undefined;
+    if (groupByRole) return groupByRole;
+    const firstNonNumeric = yPaths.find(
+      (p) => inferFieldShape(selectedSchemaForRoles, p) !== 'number',
+    );
+    if (firstNonNumeric) return firstNonNumeric;
+    return undefined;
+  }, [panelConfig.projection, yPaths, selectedSchemaForRoles]);
+
+  // --- UI state (must be declared before useAnnotationView which reads them) ---
+  const initialSettings = panelConfig.settings;
+  const [isGrouped, setIsGrouped] = useState(initialSettings?.isGrouped ?? false);
+  const [selectedTimeInterval, setSelectedTimeInterval] = useState<'day' | 'week' | 'month' | 'quarter' | 'year'>(
+    (aggregation.interval as any) || initialSettings?.selectedTimeInterval || 'month'
+  );
+  const [groupingSchemeId, setGroupingSchemeId] = useState<number | null>(
+    initialSettings?.groupingSchemeId ?? (schemas.length > 0 ? schemas[0].id : null)
+  );
   const [groupingFieldKey, setGroupingFieldKey] = useState<string | null>(() => {
-    // Initialize with first available field if schema is selected
+    if (initialSettings?.groupingFieldKey) return initialSettings.groupingFieldKey;
     if (schemas.length > 0) {
-      const firstSchema = schemas[0];
-      const availableFields = getTargetKeysForScheme(firstSchema.id, schemas);
+      const availableFields = getTargetKeysForScheme(schemas[0].id, schemas);
       return availableFields.length > 0 ? availableFields[0].key : null;
     }
     return null;
   });
+  const [groupedSortOrder, setGroupedSortOrder] = useState<'count-desc' | 'value-asc' | 'value-desc'>(
+    initialSettings?.groupedSortOrder || 'count-desc'
+  );
+
+  // Single source of truth for what we ask the backend to compute. We derive
+  // this from current state — picker selections, isGrouped toggle, grouping
+  // controls, selectedTimeInterval — instead of reading a saved aggregation
+  // blob, so toggling Grouped or changing X never collides with stale state
+  // written by a different code path. `aggregation` from panelConfig is read
+  // only for hints (function preference, value_field carryover).
+  const aggregateConfig = useMemo((): AggregateConfig | undefined => {
+    // Grouped (categorical) mode: count rows per category. Picker x is
+    // ignored — the categorical field is chosen via the Grouped controls.
+    if (isGrouped) {
+      if (!groupingFieldKey) return undefined;
+      // If the chosen field is array-typed, append ``[*]`` so the backend
+      // explodes array elements into individual rows. Without this, each
+      // distinct stringified array becomes its own bucket (count=1 each).
+      // The shape lookup matches whichever schema actually owns the path —
+      // grouped mode doesn't constrain to `selectedSchemaForRoles`.
+      let groupByPath = groupingFieldKey;
+      if (!groupByPath.includes('[*]')) {
+        const owningSchema = schemas.find((s) =>
+          s.id === groupingSchemeId,
+        ) ?? selectedSchemaForRoles ?? null;
+        const shape = inferFieldShape(owningSchema, groupingFieldKey);
+        if (shape === 'array_string' || shape === 'array_string_enum' ||
+            shape === 'array_number' || shape === 'array_object') {
+          groupByPath = `${groupingFieldKey}[*]`;
+        }
+      }
+      return {
+        group_by: groupByPath,
+        interval: null,
+        function: 'count',
+        value_field: null,
+        top_n: aggregation.top_n || null,
+        split_by: null,
+      };
+    }
+
+    // Timeline mode: picker x drives bucketing. Date X auto-applies the
+    // selected interval; non-date X buckets by raw value. One numeric Y
+    // becomes the sole measure (single fetch); multi-numeric Y routes
+    // through ``aggregateConfigs`` below (one fetch per measure, merged).
+    const xPath = panelConfig.projection?.field_mappings?.['x'] as string | undefined;
+    if (!xPath) return undefined;
+    if (yNumericPaths.length > 1) return undefined;  // multi-measure path
+    const xShape = inferFieldShape(selectedSchemaForRoles, xPath);
+    const xIsDate = xShape === 'date';
+    const fn = yIsNumeric
+      ? (aggregation.function && aggregation.function !== 'count' ? aggregation.function : 'sum')
+      : 'count';
+    const valueField = yIsNumeric ? (yFirstPath ?? null) : (aggregation.value_field || null);
+    // Only apply a bucketing interval when X is a declared date OR the user
+    // explicitly picked one (covers the case where schema forgot
+    // ``format: date-time`` on a string that actually holds ISO timestamps).
+    // Never default to ``day`` on a string/number X — would crash
+    // ``date_trunc`` on non-parseable values (e.g. ``subject_name = "Bundesländer"``).
+    const explicitInterval = (aggregation.interval as any) || undefined;
+    const interval = explicitInterval ?? (xIsDate ? 'day' : null);
+    return {
+      group_by: xPath,
+      interval,
+      function: fn,
+      value_field: valueField,
+      top_n: aggregation.top_n || null,
+      split_by: splitByField || null,
+    };
+  }, [
+    isGrouped,
+    groupingFieldKey,
+    groupingSchemeId,
+    schemas,
+    panelConfig.projection,
+    selectedSchemaForRoles,
+    selectedTimeInterval,
+    yIsNumeric,
+    yFirstPath,
+    yNumericPaths,
+    splitByField,
+    aggregation.interval,
+    aggregation.function,
+    aggregation.value_field,
+    aggregation.top_n,
+  ]);
+
+  // Multi-measure mode: one AggregateConfig per numeric Y path. Fires
+  // parallel ``/view`` fetches in ``useAnnotationView``; returned buckets are
+  // merged by key so every bucket carries all measures' stats.
+  const aggregateConfigs = useMemo<AggregateConfig[] | undefined>(() => {
+    if (isGrouped) return undefined;
+    if (yNumericPaths.length <= 1) return undefined;
+    const xPath = panelConfig.projection?.field_mappings?.['x'] as string | undefined;
+    if (!xPath) return undefined;
+    const xShape = inferFieldShape(selectedSchemaForRoles, xPath);
+    const xIsDate = xShape === 'date';
+    const fn = aggregation.function && aggregation.function !== 'count'
+      ? aggregation.function : 'sum';
+    // Same guard as the singular path — never apply an interval to a
+    // non-date X unless the user explicitly picked one.
+    const explicitInterval = (aggregation.interval as any) || undefined;
+    const interval = explicitInterval ?? (xIsDate ? 'day' : null);
+    return yNumericPaths.map((path) => ({
+      group_by: xPath,
+      interval,
+      function: fn,
+      value_field: path,
+      top_n: aggregation.top_n || null,
+      split_by: null,
+    }));
+  }, [
+    isGrouped,
+    yNumericPaths,
+    panelConfig.projection,
+    selectedSchemaForRoles,
+    selectedTimeInterval,
+    aggregation.interval,
+    aggregation.function,
+    aggregation.top_n,
+  ]);
+
+  // Value-alias store readers — must come before any memo that reads
+  // `runWideAliasesByField` (TDZ otherwise on first render).
+  const [aliasManagerOpen, setAliasManagerOpen] = useState(false);
+  const getGlobalVariableSplitting = useAnnotationRunStore(s => s.getGlobalVariableSplitting);
+  const setGlobalVariableSplitting = useAnnotationRunStore(s => s.setGlobalVariableSplitting);
+  const gvs = getGlobalVariableSplitting();
+  const runWideAliasesByField = gvs?.valueAliasesByField ?? {};
+  const aliasTargetField = (
+    (panelConfig.projection?.field_mappings?.['group_by'] as string | undefined) ??
+    (panelConfig.projection?.field_mappings?.['x'] as string | undefined)
+  ) ?? null;
+  const aliasesForField = aliasTargetField ? runWideAliasesByField[aliasTargetField] ?? {} : {};
+
+  const effectiveMergeMapsForView = useMemo(
+    () => effectiveMergeMaps(panelConfig.merge_maps, runWideAliasesByField),
+    [panelConfig.merge_maps, runWideAliasesByField],
+  );
+
+  const { data: viewData, isLoading: isViewLoading } = useAnnotationView({
+    infospaceId,
+    runId,
+    aggregate: aggregateConfigs ? undefined : aggregateConfig,
+    aggregates: aggregateConfigs,
+    filters: mergedFilters,
+    merge_maps: effectiveMergeMapsForView,
+    schema_ids: isGrouped && groupingSchemeId ? [groupingSchemeId] : undefined,
+    enabled:
+      !!runId && !!infospaceId && (!!aggregateConfig || (aggregateConfigs?.length ?? 0) > 0),
+  });
+
+  // Parallel rows fetch — lets us show the legacy ``ChartDialogDetails``
+  // panel on bucket click with real annotations + assets (the dialog reads
+  // ``results``/``assets`` which were permanent empty stubs in the
+  // server-aggregate rewrite). Compact limit: one dialog renders ≤ a few
+  // dozen docs; 500 rows is a generous cap for a typical run.
+  const { data: rowsViewData } = useAnnotationView({
+    infospaceId,
+    runId,
+    rows: { limit: 500 },
+    filters: mergedFilters,
+    merge_maps: effectiveMergeMapsForView,
+    schema_ids: isGrouped && groupingSchemeId ? [groupingSchemeId] : undefined,
+    enabled: !!runId && !!infospaceId,
+  });
+
+  // Map server buckets to chart data format.
+  //
+  // When the backend carries a `split_field_path`, rows arrive as pairs of
+  // (date, split_value) → count. We pivot so each date has one ChartDataPoint
+  // with keys `grp:<value>` per distinct split value, plus `count` = total.
+
+  // For each fetched result, figure out which bucket key it belongs to so
+  // clicking a bucket in the chart can surface the real annotations
+  // (``selectedPoint.documents``). We recompute the interval-normalized
+  // bucket start in JS to mirror PostgreSQL's ``date_trunc`` — that's what
+  // the backend key is. (Built from ``rowsViewData`` directly rather than
+  // closing over ``results`` to avoid TDZ — ``results`` is declared below.)
+  const bucketAssetsByKey = useMemo(() => {
+    const map = new Map<string, Set<number>>();
+    const rawItems = rowsViewData?.rows?.items;
+    if (!rawItems || rawItems.length === 0) return map;
+    const xPath = panelConfig.projection?.field_mappings?.['x'] as string | undefined;
+    const interval = (panelConfig.aggregation?.interval as string | undefined)
+      ?? (selectedTimeInterval as string | undefined);
+
+    const normalizeDate = (raw: any): string | null => {
+      const d = new Date(raw as any);
+      if (isNaN(d.getTime())) return null;
+      if (!interval) return String(raw);
+      let start: Date;
+      switch (interval) {
+        case 'year':    start = startOfYear(d); break;
+        case 'quarter': start = startOfQuarter(d); break;
+        case 'month':   start = startOfMonth(d); break;
+        case 'week':    start = startOfWeek(d, { weekStartsOn: 1 }); break;
+        case 'day':
+        default:        start = startOfDay(d); break;
+      }
+      return String(start.getTime());
+    };
+
+    const xKeysForRow = (value: any, timestamp: string | undefined): string[] => {
+      if (isGrouped) {
+        if (!groupingFieldKey) return [];
+        const vs = getAnnotationFieldValuesExploded(value, groupingFieldKey);
+        return vs.map((v) => String(v));
+      }
+      if (!xPath) return [];
+      const rawValues = getAnnotationFieldValuesExploded(value, xPath);
+      const source = rawValues.length > 0 ? rawValues : (timestamp != null ? [timestamp] : []);
+      const out: string[] = [];
+      for (const raw of source) {
+        const k = normalizeDate(raw);
+        if (k != null) out.push(k);
+      }
+      return out;
+    };
+
+    for (const r of rawItems) {
+      const keys = xKeysForRow(r.value, r.timestamp);
+      for (const k of keys) {
+        let bucket = map.get(k);
+        if (!bucket) { bucket = new Set<number>(); map.set(k, bucket); }
+        bucket.add(r.asset_id);
+      }
+    }
+    return map;
+  }, [
+    rowsViewData?.rows?.items, isGrouped, groupingFieldKey,
+    panelConfig.projection, panelConfig.aggregation?.interval, selectedTimeInterval,
+  ]);
+
+  const bucketLookupKey = useCallback((bucket: { key: string }): string => {
+    if (isGrouped) return bucket.key;
+    const d = new Date(bucket.key);
+    if (isNaN(d.getTime())) return bucket.key;
+    return String(d.getTime());
+  }, [isGrouped]);
+
+  const { serverChartData, groupValues } = useMemo((): {
+    serverChartData: ChartDataPoint[];
+    groupValues: string[];
+  } => {
+    // While a fetch is in flight, viewData still holds the previous query's
+    // buckets — rendering them against the new mode (e.g. toggled Grouped)
+    // produces a transient wrong view. Treat loading as no-data here; the
+    // empty-state / fallback paths take over until the new fetch lands.
+    if (isViewLoading) return { serverChartData: [], groupValues: [] };
+    const buckets = viewData?.aggregate?.buckets;
+    if (!buckets || buckets.length === 0) return { serverChartData: [], groupValues: [] };
+
+    // Drop buckets whose key isn't a parseable date — backend bucket keys for a
+    // date axis are ISO strings; anything else (empty key from NULL field, a
+    // categorical string keyed onto a date axis by mistake) would silently
+    // collapse to epoch 0 and stack as a phantom 1970 bar.
+    const isSplit = !!viewData?.aggregate?.split_field_path;
+    if (!isSplit) {
+      const points: ChartDataPoint[] = [];
+      for (const bucket of buckets) {
+        const ts = new Date(bucket.key).getTime();
+        if (Number.isNaN(ts)) continue;
+        // Flatten stats: backend returns {fieldPath: {fnName: value}} for the
+        // value_field. Hoist the metric to a top-level key so chart Lines /
+        // Bars can render it via dataKey. Recharts resolves dataKey via
+        // lodash `get`, which treats dots as nested-path lookup — so a
+        // dotted fieldPath like ``document.price`` written as a literal key
+        // is invisible to it. Encode dots as ``__`` before use.
+        const flatMetrics: Record<string, number> = {};
+        if (bucket.stats) {
+          for (const [k, v] of Object.entries(bucket.stats)) {
+            const safeKey = encodeMetricKey(k);
+            for (const fnVal of Object.values(v as any)) {
+              if (typeof fnVal === 'number') { flatMetrics[safeKey] = fnVal; break; }
+            }
+          }
+        }
+        const docs = Array.from(bucketAssetsByKey.get(bucketLookupKey(bucket)) ?? []);
+        points.push({
+          timestamp: ts,
+          dateString: bucket.key,
+          count: bucket.count,
+          documents: docs,
+          ...flatMetrics,
+          stats: bucket.stats ? Object.fromEntries(
+            Object.entries(bucket.stats).map(([k, v]) => [k, { min: 0, max: 0, avg: 0, count: bucket.count, ...(v as any) }])
+          ) : undefined,
+        });
+      }
+      return { serverChartData: points, groupValues: [] };
+    }
+
+    // Pivot: { dateString: { 'grp:<value>': count, count: total } }
+    const byDate = new Map<string, ChartDataPoint>();
+    const groups = new Set<string>();
+    for (const bucket of buckets) {
+      const ts = new Date(bucket.key).getTime();
+      if (Number.isNaN(ts)) continue;
+      const splitVal = bucket.split_value ?? '(none)';
+      groups.add(splitVal);
+      let point = byDate.get(bucket.key);
+      if (!point) {
+        point = {
+          timestamp: ts,
+          dateString: bucket.key,
+          count: 0,
+          documents: [],
+        };
+        byDate.set(bucket.key, point);
+      }
+      point[`grp:${splitVal}`] = bucket.count;
+      point.count += bucket.count;
+    }
+    const sorted = Array.from(byDate.values()).sort((a, b) => a.timestamp - b.timestamp);
+    // Sort group values by total count desc for stable legend order.
+    const groupTotals = new Map<string, number>();
+    for (const bucket of buckets) {
+      const sv = bucket.split_value ?? '(none)';
+      groupTotals.set(sv, (groupTotals.get(sv) ?? 0) + bucket.count);
+    }
+    const rankedGroups = Array.from(groups).sort(
+      (a, b) => (groupTotals.get(b) ?? 0) - (groupTotals.get(a) ?? 0),
+    );
+    return { serverChartData: sorted, groupValues: rankedGroups };
+  }, [viewData?.aggregate?.buckets, viewData?.aggregate?.split_field_path, isViewLoading]);
+
+  // High-cardinality guard: many groups produce unreadable charts. Past 20,
+  // show a warning and truncate to the top-N (backend already returns all;
+  // we slice in the renderer so the user can lift the cap if needed).
+  const HIGH_CARDINALITY_THRESHOLD = 20;
+  const hasHighCardinality = groupValues.length > HIGH_CARDINALITY_THRESHOLD;
+  const maxGroupsToRender = (panelConfig.settings?.maxGroupsToRender as number | undefined) ?? HIGH_CARDINALITY_THRESHOLD;
+  const renderedGroupValues = hasHighCardinality
+    ? groupValues.slice(0, maxGroupsToRender)
+    : groupValues;
+
+  // Legend visibility — default all groups visible.
+  const [hiddenGroupValues, setHiddenGroupValues] = useState<Set<string>>(new Set());
+  const toggleGroupVisibility = useCallback((value: string) => {
+    setHiddenGroupValues(prev => {
+      const next = new Set(prev);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      return next;
+    });
+  }, []);
+
+  // Auto-detect date field for timeline mode
+  const autoDateField = useMemo(() => {
+    for (const schema of schemas) {
+      const dateFields = getDateFieldsForScheme(schema.id, schemas);
+      if (dateFields.length > 0) return { schemaId: schema.id, fieldKey: dateFields[0].key };
+    }
+    return null;
+  }, [schemas]);
+
+  // Stable ref for panelConfig (used by handlers to persist UI changes)
+  const chartPanelConfigRef = useRef(panelConfig);
+  chartPanelConfigRef.current = panelConfig;
+
+  // Persist UI → panelConfig on user interaction (no auto-sync effects).
+  // Settings only — `aggregateConfig` is now derived from settings + picker
+  // every render, so writing aggregation here would just race with itself
+  // and clobber whatever the picker set.
+  const persistChartState = useCallback((localUpdates: {
+    isGrouped?: boolean;
+    selectedTimeInterval?: 'day' | 'week' | 'month' | 'quarter' | 'year';
+    groupingSchemeId?: number | null;
+    groupingFieldKey?: string | null;
+    groupedSortOrder?: 'count-desc' | 'value-asc' | 'value-desc';
+  }) => {
+    const pc = chartPanelConfigRef.current;
+    const newSettings = {
+      ...(pc.settings || {}),
+      ...(localUpdates.isGrouped !== undefined ? { isGrouped: localUpdates.isGrouped } : {}),
+      ...(localUpdates.selectedTimeInterval !== undefined ? { selectedTimeInterval: localUpdates.selectedTimeInterval } : {}),
+      ...(localUpdates.groupingSchemeId !== undefined ? { groupingSchemeId: localUpdates.groupingSchemeId ?? undefined } : {}),
+      ...(localUpdates.groupingFieldKey !== undefined ? { groupingFieldKey: localUpdates.groupingFieldKey ?? undefined } : {}),
+      ...(localUpdates.groupedSortOrder !== undefined ? { groupedSortOrder: localUpdates.groupedSortOrder } : {}),
+    };
+    onUpdatePanel({ settings: newSettings });
+  }, [onUpdatePanel]);
+
+  // Compatibility shims for rendering code that still references these
+  const results = useMemo<FormattedAnnotation[]>(() => {
+    if (!rowsViewData?.rows?.items) return [];
+    return rowsViewData.rows.items.map((row) => ({
+      id: row.annotation_id,
+      asset_id: row.asset_id,
+      schema_id: row.schema_id,
+      run_id: row.run_id,
+      value: row.value,
+      timestamp: row.timestamp,
+      status: row.status as any,
+    }));
+  }, [rowsViewData?.rows?.items]);
+  const assets = useMemo<AssetRead[]>(() => {
+    if (!rowsViewData?.rows?.assets) return [];
+    return Object.values(rowsViewData.rows.assets).map((s) => ({
+      id: s.id,
+      title: s.title,
+      kind: s.kind,
+      parent_asset_id: s.parent_asset_id,
+    } as AssetRead));
+  }, [rowsViewData?.rows?.assets]);
+  const sources = useMemo<{ id: number; name: string }[]>(() => [], []);
+  const [analysisData] = useState<any[] | null>(null);
+  const [timeAxisConfig] = useState<TimeAxisConfig | null>(null);
+  const aggregateSourcesDefault = true;
+  const selectedDataSourceIds: number[] = [];
+  const [variableSplittingConfig] = useState<VariableSplittingConfig | null>(null);
+  const onVariableSplittingChange: ((config: VariableSplittingConfig | null) => void) | undefined = undefined;
+  const chartSettingsRef = useRef(panelConfig.settings);
+  chartSettingsRef.current = panelConfig.settings;
+  const onSettingsChange = useCallback((settings: any) => {
+    onUpdatePanel({ settings: { ...chartSettingsRef.current, ...settings } });
+  }, [onUpdatePanel]);
+  const monitoringMode = false;
+  const allAssets = useMemo<AssetRead[]>(() => [], []);
+  const expectedSchemaIds: number[] = [];
+  const showPendingAssetsProp: boolean | undefined = undefined;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  let onShowPendingChange: ((show: boolean) => void) | undefined;
+  const arrayHandling: 'aggregate' | 'explode' = 'aggregate';
+  const [aggregateSources, setAggregateSources] = useState(aggregateSourcesDefault);
+  const [arrayHandlingState, setArrayHandlingState] = useState<'aggregate' | 'explode'>(arrayHandling);
   const [selectedPoint, setSelectedPoint] = useState<ChartDataPoint | GroupedDataPoint | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [groupedSortOrder, setGroupedSortOrder] = useState<'count-desc' | 'value-asc' | 'value-desc'>('count-desc');
   
   // --- Statistical visualization controls ---
   const [showStatistics, setShowStatistics] = useState(false);
@@ -1432,7 +1914,99 @@ const AnnotationResultsChart: React.FC<Props> = ({
   
   // --- SIMPLIFIED STATE: Only individual field visibility ---
   const [visibleFields, setVisibleFields] = useState<Set<string>>(new Set());
-  
+
+  // --- RolePicker wiring -------------------------------------------------
+  // The RolePicker is the canonical surface for configuring the chart.
+  // Its value is derived from `projection.field_mappings` + `aggregation` +
+  // `settings.selectedSchemaId`; onChange writes back through `onUpdatePanel`
+  // so every control in the panel agrees on one source of truth.
+  const rolePickerValue = useMemo<RolePickerValue>(() => {
+    const fieldsByRole: Record<string, string[]> = {};
+    const mapping = panelConfig.projection?.field_mappings ?? {};
+    for (const [key, val] of Object.entries(mapping)) {
+      if (Array.isArray(val)) fieldsByRole[key] = val.map(String);
+      else if (typeof val === 'string' && val.length > 0) fieldsByRole[key] = [val];
+    }
+    const explosionPath = panelConfig.projection?.explosion ?? null;
+    const explosionByRole: Record<string, string | null> = {};
+    if (explosionPath) {
+      // The explosion belongs to whichever role references a path containing it.
+      for (const [key, paths] of Object.entries(fieldsByRole)) {
+        if (paths.some((p) => p.startsWith(explosionPath.replace(/\[\*\]$/, '')))) {
+          explosionByRole[key] = explosionPath;
+          break;
+        }
+      }
+    }
+    return {
+      schemaId:
+        (panelConfig.settings?.selectedSchemaId as number | undefined) ??
+        (schemas.length === 1 ? schemas[0].id : null),
+      fieldsByRole,
+      explosionByRole,
+      aggregation: panelConfig.aggregation ?? {},
+    };
+  }, [panelConfig.projection, panelConfig.aggregation, panelConfig.settings?.selectedSchemaId, schemas]);
+
+  // Value-alias wiring: declared above (TDZ guard). The manager targets
+  // whichever field is the primary categorical axis (x for bar, group_by
+  // when grouping; the x date field is not a useful alias target → guarded).
+
+  const handleRolePickerChange = useCallback((next: RolePickerValue) => {
+    // Fold role → field_mappings, pick the first non-empty explosion as the
+    // projection.explosion, then derive the aggregation contract from role
+    // semantics. Y stays in projection — splitByField / aggregateConfig below
+    // resolve it based on shape (numeric → value_field, enum → split_by).
+    const field_mappings: Record<string, string | string[]> = {};
+    for (const [role, paths] of Object.entries(next.fieldsByRole)) {
+      if (paths.length === 0) continue;
+      field_mappings[role] = paths.length > 1 ? paths : paths[0];
+    }
+    const firstExplosion = Object.values(next.explosionByRole).find((e) => !!e) ?? null;
+    const projection = { field_mappings, explosion: firstExplosion };
+
+    const xPath = next.fieldsByRole['x']?.[0] ?? null;
+    const groupByPath = next.fieldsByRole['group_by']?.[0] ?? null;
+
+    // Resolve X shape — used only to seed a sensible default interval for
+    // date-typed X. Schema author may forget `format: date-time` on a string
+    // field that actually holds dates (e.g. our `document.timestamp` is just
+    // `type: string`); shape detection is heuristic, so we always honor an
+    // explicit picker `interval` even when xIsDate is false. Backend will
+    // surface a cast error if the values aren't parseable.
+    const selectedSchema = next.schemaId
+      ? schemas.find((s) => s.id === next.schemaId) ?? null
+      : (schemas.length === 1 ? schemas[0] : null);
+    const xIsDate = xPath ? inferFieldShape(selectedSchema, xPath) === 'date' : false;
+
+    const explicitInterval = next.aggregation?.interval ?? panelConfig.aggregation?.interval;
+    // Default interval only when X IS a date; never invent one for a string
+    // / number / enum X — the aggregate SQL would date_trunc on the raw
+    // value and crash. If the user explicitly picked an interval we honor
+    // it regardless (schema may have missed ``format: date-time``).
+    const aggregation = {
+      ...(panelConfig.aggregation ?? {}),
+      ...(next.aggregation ?? {}),
+      group_by: xPath ?? groupByPath ?? next.aggregation?.group_by ?? undefined,
+      interval: explicitInterval
+        ?? (panelConfig.settings?.selectedTimeInterval as any)
+        ?? (xIsDate ? 'day' : undefined),
+      function: next.aggregation?.function ?? panelConfig.aggregation?.function ?? 'count',
+    };
+
+    onUpdatePanel({
+      projection,
+      aggregation,
+      settings: {
+        ...(panelConfig.settings ?? {}),
+        selectedSchemaId: next.schemaId ?? undefined,
+        selectedTimeInterval:
+          (aggregation.interval as 'day' | 'week' | 'month' | 'quarter' | 'year' | undefined) ??
+          (panelConfig.settings?.selectedTimeInterval as any),
+      },
+    });
+  }, [onUpdatePanel, panelConfig.aggregation, panelConfig.settings, schemas]);
+
   // --- Monitoring mode state ---
   const [showPendingAssets, setShowPendingAssets] = useState(showPendingAssetsProp ?? true);
   
@@ -1559,8 +2133,105 @@ const AnnotationResultsChart: React.FC<Props> = ({
     arrayHandlingState // NEW: Include arrayHandlingState in dependencies
   ]);
 
-  // === UNIFIED DATA PROCESSING: Single pass that handles both splitting and field detection ===
+  // === UNIFIED DATA PROCESSING: Prefer server aggregate data, fall back to client-side ===
   const processedData = useMemo((): ProcessedChartData => {
+    // While a fetch is in flight, `viewData` still holds the previous query's
+    // buckets. Rendering them against the current mode (e.g. after toggling
+    // Grouped) paints the wrong chart for the debounce + server-roundtrip
+    // window — e.g. timeline buckets showing up as categorical bars with ISO
+    // timestamp labels. Treat loading as no-data; the empty-state / fallback
+    // paths take over until the new fetch lands.
+    if (isViewLoading) {
+      return {
+        type: 'no-splitting',
+        chartData: [],
+        fields: [],
+        groups: [],
+        debugInfo: { processedGroups: [], totalDataPoints: 0, fieldsPerGroup: {} },
+      };
+    }
+    // Server data path — use aggregate response when available
+    const serverBuckets = viewData?.aggregate?.buckets;
+    if (serverBuckets && serverBuckets.length > 0) {
+      if (isGrouped) {
+        // Map server buckets to GroupedDataPoint format (categorical bar chart)
+        const groupedData: GroupedDataPoint[] = serverBuckets.map(b => {
+          const key = b.key || 'N/A';
+          const assetIds = Array.from(bucketAssetsByKey.get(key) ?? []);
+          // sourceDocuments is a Map<sourceKey, assetId[]>; with no per-source
+          // breakdown in the server path we use "all" as a single bucket.
+          const sourceDocuments = new Map<number | string, number[]>();
+          if (assetIds.length > 0) sourceDocuments.set('all', assetIds);
+          return {
+            valueString: key,
+            totalCount: b.count,
+            sourceDocuments,
+            schemeName: schemas.find(s => s.id === groupingSchemeId)?.name || '',
+            valueKey: key,
+          };
+        });
+        groupedData.sort((a, b) => {
+          if (groupedSortOrder === 'value-asc') return a.valueString.localeCompare(b.valueString);
+          if (groupedSortOrder === 'value-desc') return b.valueString.localeCompare(a.valueString);
+          return b.totalCount - a.totalCount;
+        });
+        return {
+          type: 'grouped',
+          chartData: groupedData,
+          fields: [],
+          groups: [],
+          debugInfo: { processedGroups: [], totalDataPoints: groupedData.length, fieldsPerGroup: {} },
+        };
+      }
+
+      // Timeline mode — map buckets to chart data points. When the aggregate
+      // carries a value_field metric (sum/avg/min/max), surface it as the
+      // primary renderable field so Lines/Bars plot the metric instead of
+      // just the row count.
+      const metricKeys = new Set<string>();
+      for (const p of serverChartData) {
+        if (p && typeof p === 'object') {
+          for (const k of Object.keys(p)) {
+            if (k === 'timestamp' || k === 'dateString' || k === 'count' || k === 'documents' || k === 'stats') continue;
+            if (k.startsWith('grp:')) continue;
+            if (typeof (p as any)[k] === 'number') metricKeys.add(k);
+          }
+        }
+      }
+      const metricFields = Array.from(metricKeys).map(k => {
+        // k is the encoded key (dots replaced with __). Recover the original
+        // dotted field path for display; the leaf (after last dot) reads best.
+        const original = decodeMetricKey(k);
+        const leaf = original.includes('.') ? original.split('.').pop()! : original;
+        return {
+          key: k,                // what Lines consume as dataKey
+          schemaName: '',
+          fieldName: original,   // full dotted path for tooltips / debugging
+          displayName: leaf,     // legend label
+          type: 'number' as any,
+          hasData: true,
+        };
+      });
+      const fields = serverChartData.length > 0
+        ? (metricFields.length > 0 ? metricFields : [{
+            key: 'count',
+            schemaName: '',
+            fieldName: 'Count',
+            displayName: 'Count',
+            type: 'integer',
+            hasData: true,
+          }])
+        : [];
+      return {
+        type: 'no-splitting',
+        chartData: serverChartData,
+        fields,
+        groups: [],
+        debugInfo: { processedGroups: [], totalDataPoints: serverChartData.length, fieldsPerGroup: {} },
+      };
+    }
+
+    // --- Legacy client-side path (fallback for when server data is empty) ---
     // Create assetsMap locally to avoid dependency instability
     const localAssetsMap = new Map(assets.map(asset => [asset.id, asset]));
     // In monitoring mode, include allAssets
@@ -1571,7 +2242,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
         }
       });
     }
-    
+
     if (analysisData) {
       return {
         type: 'no-splitting',
@@ -1580,7 +2251,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
           timestamp: new Date(d.timestamp).getTime(),
           dateString: format(new Date(d.timestamp), 'yyyy-MM-dd'),
         })),
-        fields: [], // Analysis data doesn't have structured fields
+        fields: [],
         groups: [],
         debugInfo: { processedGroups: [], totalDataPoints: analysisData.length, fieldsPerGroup: {} }
       };
@@ -1867,19 +2538,23 @@ const AnnotationResultsChart: React.FC<Props> = ({
     variableSplittingConfig?.fieldKey,
     variableSplittingConfig?.visibleSplits ? Array.from(variableSplittingConfig.visibleSplits).sort().join(',') : '',
     variableSplittingConfig?.valueAliases ? JSON.stringify(variableSplittingConfig.valueAliases) : '',
+    // Server data (primary)
+    viewData?.aggregate?.buckets,
+    isViewLoading,
+    serverChartData,
+    // Client-side fallback deps
     resultsForChart,
-    schemas.map(s => s.id).sort().join(','), // FIXED: Use stable schema IDs
-    assets.map(a => a.id).sort().join(','), // FIXED: Use stable asset IDs instead of assetsMap
+    schemas.map(s => s.id).sort().join(','),
+    assets.map(a => a.id).sort().join(','),
     timeAxisConfig?.type,
     timeAxisConfig?.schemaId,
     timeAxisConfig?.fieldKey,
     selectedTimeInterval,
-    groupingSchemeId,      
-    groupingFieldKey,       
+    groupingSchemeId,
+    groupingFieldKey,
     aggregateSources,
     groupedSortOrder,
     selectedSchemaIds.sort().join(','),
-    // Monitoring mode dependencies
     monitoringMode,
     allAssets.map(a => a.id).sort().join(','),
     expectedSchemaIds.sort().join(','),
@@ -1895,11 +2570,145 @@ const AnnotationResultsChart: React.FC<Props> = ({
     }
   }, [processedData.fields.map(f => f.key).sort().join(',')]); // FIXED: Use stable field key representation
 
-   const handlePointClick = (data: any) => {
+  // Evidence drawer state — double-click to drill into the annotations that
+  // contributed to the clicked bar/point.
+  const [evidenceScope, setEvidenceScope] = useState<Scope | null>(null);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const chartLastClickRef = useRef<{ key: string; at: number } | null>(null);
+
+  // Analytics overlays — client-side derived series over the rendered data.
+  const analyticsConfig: AnalyticsOverlayConfig = {
+    ...DEFAULT_ANALYTICS_OVERLAYS,
+    ...(panelConfig.settings?.analyticsOverlays as Partial<AnalyticsOverlayConfig> | undefined),
+  };
+  const setAnalyticsConfig = (next: AnalyticsOverlayConfig) => {
+    onUpdatePanel({
+      settings: { ...(panelConfig.settings ?? {}), analyticsOverlays: next },
+    });
+  };
+
+  // Rolling avg + trend + peak computations. Only runs on the ungrouped
+  // timeline path — the grouped-series case would need per-series folds that
+  // would overcrowd the visualization; leave that for a follow-up.
+  //
+  // The computed values are folded BACK onto each point in `serverChartData`
+  // via a mutation inside this memo — recharts reads them as plain fields on
+  // the data rows. Mutation is safe here because `serverChartData` itself is
+  // a fresh memoized array (we own the lifetime).
+  const overlayData = useMemo(() => {
+    if (isGrouped || !serverChartData || serverChartData.length === 0) return null;
+    if (renderedGroupValues.length > 0) return null; // grouped timeline, skip
+    // Clear any prior overlay fields so toggles disappear cleanly.
+    for (const p of serverChartData) {
+      delete (p as any).rollingAvg;
+      delete (p as any).trendLine;
+    }
+    const points = serverChartData.map((p) => ({
+      timestamp: p.timestamp,
+      count: p.count,
+    }));
+    const rolling = analyticsConfig.rollingAvg
+      ? rollingAverage(points, analyticsConfig.rollingAvgWindow)
+      : null;
+    const trend = analyticsConfig.trendLine ? trendLine(points) : null;
+    const peaks = analyticsConfig.peakMarkers ? findPeaks(points, 'max') : null;
+    const stats = analyticsConfig.statsBands ? descriptiveStats(points) : null;
+    serverChartData.forEach((p, i) => {
+      if (rolling) (p as any).rollingAvg = rolling[i];
+      if (trend) (p as any).trendLine = trend[i];
+    });
+    return { peaks: peaks ?? [], stats };
+  }, [
+    isGrouped,
+    renderedGroupValues.length,
+    serverChartData,
+    analyticsConfig.rollingAvg,
+    analyticsConfig.rollingAvgWindow,
+    analyticsConfig.trendLine,
+    analyticsConfig.peakMarkers,
+    analyticsConfig.statsBands,
+  ]);
+
+  const openEvidenceForPoint = useCallback((pointData: any) => {
+    // eslint-disable-next-line no-console
+    console.log('[chart] openEvidenceForPoint', {
+      isGrouped, groupingFieldKey,
+      groupBy: panelConfig.aggregation?.group_by,
+      interval: panelConfig.aggregation?.interval,
+      pointData,
+    });
+    // Grouped (categorical) → equality on the grouping field.
+    // Timeline (date bucket) → range on [bucket_start, bucket_end] because
+    // the bucket key is the start of an interval (e.g. "2008-06-01" for a
+    // monthly bucket) but each annotation's timestamp is an exact datetime
+    // inside that interval. Equality would match nothing — we need
+    // ``>= start AND < next_start``.
+    const fieldPath =
+      isGrouped && groupingFieldKey
+        ? groupingFieldKey
+        : panelConfig.aggregation?.group_by ?? null;
+    if (!fieldPath) return;
+
+    let scope;
+    if (isGrouped) {
+      const value = pointData.valueString;
+      if (value == null) return;
+      scope = createScopeFromSelection(
+        panelConfig.id,
+        { type: 'click', fieldPath, data: value },
+        panelConfig,
+        'push',
+      );
+    } else {
+      const bucketKey = pointData.dateString;
+      if (bucketKey == null) return;
+      const start = new Date(bucketKey);
+      if (isNaN(start.getTime())) return;
+      const interval = (panelConfig.aggregation?.interval as string | undefined)
+        || selectedTimeInterval
+        || 'day';
+      const end = new Date(start);
+      switch (interval) {
+        case 'year':    end.setUTCFullYear(end.getUTCFullYear() + 1); break;
+        case 'quarter': end.setUTCMonth(end.getUTCMonth() + 3); break;
+        case 'month':   end.setUTCMonth(end.getUTCMonth() + 1); break;
+        case 'week':    end.setUTCDate(end.getUTCDate() + 7); break;
+        case 'day':
+        default:        end.setUTCDate(end.getUTCDate() + 1); break;
+      }
+      scope = createScopeFromSelection(
+        panelConfig.id,
+        {
+          type: 'brush',
+          fieldPath,
+          data: [start.toISOString(), end.toISOString()],
+        },
+        panelConfig,
+        'push',
+      );
+    }
+    setEvidenceScope(scope);
+    setEvidenceOpen(true);
+  }, [isGrouped, groupingFieldKey, panelConfig, selectedTimeInterval]);
+
+  const handlePointClick = (data: any) => {
       if (data && data.activePayload && data.activePayload.length > 0) {
           const pointData = data.activePayload[0].payload;
-          setSelectedPoint(pointData);
-          setIsDialogOpen(true);
+          // Drill-down: open the EvidenceDrawer for the clicked bucket. The
+          // drawer lists the underlying annotations (with real asset titles,
+          // kinds, timestamps) and each row opens the shared AssetDetailOverlay
+          // — same affordance as the table/pie/graph panels. Replaces the old
+          // in-dialog ``ChartDialogDetails`` which showed bare "Asset #123"
+          // headings that weren't clickable.
+          openEvidenceForPoint(pointData);
+
+          // Emit scope gesture for cross-panel filtering
+          if (onScopeGesture && isGrouped && groupingFieldKey && pointData.valueString) {
+            onScopeGesture(groupingFieldKey, pointData.valueString, 'click');
+          } else if (onScopeGesture && !isGrouped && pointData.dateString) {
+            const dateField = panelConfig.aggregation.group_by;
+            if (dateField) onScopeGesture(dateField, pointData.dateString, 'click');
+          }
       }
   };
 
@@ -1965,12 +2774,14 @@ const AnnotationResultsChart: React.FC<Props> = ({
     return targetKey;
   };
 
-  // NEW: Enhanced click handler for timeline charts
+  // Timeline click — same drill-down as handlePointClick: open the
+  // EvidenceDrawer for the clicked time bucket. openEvidenceForPoint
+  // constructs a range scope (>= bucket_start AND < next_bucket_start)
+  // so all annotations inside the interval are fetched.
   const handleTimelinePointClick = (data: any, event: any) => {
     if (data && data.activePayload && data.activePayload.length > 0) {
       const pointData = data.activePayload[0].payload;
-      setSelectedPoint(pointData);
-      setIsDialogOpen(true);
+      openEvidenceForPoint(pointData);
     }
   };
 
@@ -2030,336 +2841,260 @@ const AnnotationResultsChart: React.FC<Props> = ({
      return true;
    })();
 
+  // Empty-state detection for the RolePicker-driven timeline.
+  const needsSchemaPick = !rolePickerValue.schemaId && schemas.length > 1;
+  const needsXPick = !isGrouped && (rolePickerValue.fieldsByRole['x']?.length ?? 0) === 0;
+  const showPickerEmptyState = !isGrouped && (needsSchemaPick || needsXPick);
+
   return (
     <div className="h-full flex flex-col space-y-3">
+      {/* Picker button lives in the PanelRenderer header via a portal so
+          every panel type surfaces it in the same place. */}
+      <PanelHeaderSlot>
+          <PanelFormulaBinder
+            formulaId={(panelConfig as any).formula_id ?? (panelConfig as any).observation_id ?? null}
+            onBind={(id) => onUpdatePanel({ formula_id: id, observation_id: undefined } as any)}
+          />
+          <RolePickerPopover
+          schema={PANEL_ROLE_SCHEMAS.chart}
+          availableSchemas={schemas}
+          value={rolePickerValue}
+          onChange={handleRolePickerChange}
+          onOpenValueAliases={
+            aliasTargetField ? () => setAliasManagerOpen(true) : undefined
+          }
+        />
+      </PanelHeaderSlot>
       {showControls && (
-        <div className="flex-shrink-0 space-y-3">
-          {/* Chart Type Toggle */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Label className="text-sm font-medium">Chart Type:</Label>
-              <ToggleGroup
-                type="single"
-                value={isGrouped ? 'grouped' : 'timeline'}
-                onValueChange={(value) => setIsGrouped(value === 'grouped')}
-                size="sm"
-              >
-                <ToggleGroupItem value="timeline" disabled={!timeAxisConfig}>
-                  Timeline
-                </ToggleGroupItem>
-                <ToggleGroupItem value="grouped">
-                  Grouped
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </div>
-            
-            {!isGrouped && timeAxisConfig && (
-              <>
-                <div className="flex items-center space-x-2">
-                  <Label className="text-sm font-medium">Interval:</Label>
-                  <Select
-                    value={selectedTimeInterval}
-                    onValueChange={(value) => {
-                      if (onSettingsChange) {
-                        onSettingsChange({ selectedTimeInterval: value });
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="w-24">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="day">Day</SelectItem>
-                      <SelectItem value="week">Week</SelectItem>
-                      <SelectItem value="month">Month</SelectItem>
-                      <SelectItem value="quarter">Quarter</SelectItem>
-                      <SelectItem value="year">Year</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                {/* NEW: Array Handling Toggle */}
-                {timeAxisConfig.fieldKey && timeAxisConfig.fieldKey.includes('.') && (
-                  <div className="flex items-center space-x-2">
-                    <Label className="text-sm font-medium">Array Mode:</Label>
-                    <TooltipProvider delayDuration={100}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <ToggleGroup 
-                            type="single" 
-                            value={arrayHandlingState} 
-                            onValueChange={(v) => {
-                              if (v === 'aggregate' || v === 'explode') {
-                                setArrayHandlingState(v);
-                              }
-                            }}
-                            size="sm"
-                          >
-                            <ToggleGroupItem value="aggregate" className="h-7 px-2 text-xs">
-                              <Layers className="h-3 w-3 mr-1" />
-                              Aggregate
-                            </ToggleGroupItem>
-                            <ToggleGroupItem value="explode" className="h-7 px-2 text-xs">
-                              <Maximize2 className="h-3 w-3 mr-1" />
-                              Explode
-                            </ToggleGroupItem>
-                          </ToggleGroup>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p className="text-xs">
-                            Aggregate: One point per annotation<br/>
-                            Explode: One point per array item
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+        <div className="flex flex-col gap-1.5 px-2 py-1.5 border-b bg-muted/20 flex-shrink-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Chart Type Toggle */}
+            <ToggleGroup
+              type="single"
+              value={isGrouped ? 'grouped' : 'timeline'}
+              onValueChange={(value) => {
+                const next = value === 'grouped';
+                setIsGrouped(next);
+                persistChartState({ isGrouped: next });
+              }}
+              size="sm"
+              className="h-6"
+            >
+              <ToggleGroupItem value="timeline" className="h-6 px-2 text-[11px]">
+                Timeline
+              </ToggleGroupItem>
+              <ToggleGroupItem value="grouped" className="h-6 px-2 text-[11px]">
+                Grouped
+              </ToggleGroupItem>
+            </ToggleGroup>
 
-          {/* Grouped Chart Controls */}
+          {/* Grouped controls */}
           {isGrouped && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-muted/20 rounded-lg">
-              <div>
-                <Label className="text-sm font-medium mb-1 block">Group By Schema</Label>
-                <Select
-                  value={groupingSchemeId?.toString() ?? ""}
-                  onValueChange={(v) => setGroupingSchemeId(v ? parseInt(v) : null)}
-                >
-                  <SelectTrigger className="h-8">
-                    <SelectValue placeholder="Select schema..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {schemas.map(s => (
-                      <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label className="text-sm font-medium mb-1 block">Group By Field</Label>
-                <Select
-                  value={groupingFieldKey ?? ""}
-                  onValueChange={(v) => setGroupingFieldKey(v || null)}
-                  disabled={!groupingSchemeId}
-                >
-                  <SelectTrigger className="h-8">
-                    <SelectValue placeholder="Select field..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {groupingSchemeId && getTargetKeysForScheme(groupingSchemeId, schemas).map(tk => (
-                      <SelectItem key={tk.key} value={tk.key}>{tk.name} ({tk.type})</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label className="text-sm font-medium mb-1 block">Sort Order</Label>
-                <Select
-                  value={groupedSortOrder}
-                  onValueChange={(v) => setGroupedSortOrder(v as any)}
-                >
-                  <SelectTrigger className="h-8">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="count-desc">Count (High to Low)</SelectItem>
-                    <SelectItem value="value-asc">Value (A to Z)</SelectItem>
-                    <SelectItem value="value-desc">Value (Z to A)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            <>
+              <Select
+                value={groupingSchemeId?.toString() ?? ""}
+                onValueChange={(v) => {
+                  const next = v ? parseInt(v) : null;
+                  setGroupingSchemeId(next);
+                  persistChartState({ groupingSchemeId: next });
+                }}
+              >
+                <SelectTrigger className="w-28 h-6 text-[11px]">
+                  <SelectValue placeholder="Schema..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {schemas.map(s => (
+                    <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={groupingFieldKey ?? ""}
+                onValueChange={(v) => {
+                  const next = v || null;
+                  setGroupingFieldKey(next);
+                  persistChartState({ groupingFieldKey: next });
+                }}
+                disabled={!groupingSchemeId}
+              >
+                <SelectTrigger className="w-28 h-6 text-[11px]">
+                  <SelectValue placeholder="Field..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {groupingSchemeId && getTargetKeysForScheme(groupingSchemeId, schemas).map(tk => (
+                    <SelectItem key={tk.key} value={tk.key}>{tk.name} ({tk.type})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={groupedSortOrder}
+                onValueChange={(v) => {
+                  const next = v as 'count-desc' | 'value-asc' | 'value-desc';
+                  setGroupedSortOrder(next);
+                  persistChartState({ groupedSortOrder: next });
+                }}
+              >
+                <SelectTrigger className="w-24 h-6 text-[11px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="count-desc">Count desc</SelectItem>
+                  <SelectItem value="value-asc">A → Z</SelectItem>
+                  <SelectItem value="value-desc">Z → A</SelectItem>
+                </SelectContent>
+              </Select>
+            </>
           )}
 
-          {/* Timeline Chart Controls */}
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Schemas (timeline, multi-schema) */}
           {!isGrouped && schemas.length > 1 && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <Label className="text-sm font-medium">Schemas:</Label>
+            <ToggleGroup
+              type="multiple"
+              value={selectedSchemaIds.map(String)}
+              onValueChange={(values) => setSelectedSchemaIds(values.map(Number))}
+              size="sm"
+              variant="outline"
+              className="h-6"
+            >
               {schemas.map(schema => {
-                // Check if any field from this schema has data in processed data
                 const hasData = processedData.fields.some(field => field.schemaName === schema.name);
-                const isSelected = selectedSchemaIds.includes(schema.id);
                 return (
-                  <div key={schema.id} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`schema-${schema.id}`}
-                      checked={isSelected}
-                      onCheckedChange={(checked) => {
-                        if (checked) {
-                          setSelectedSchemaIds([...selectedSchemaIds, schema.id]);
-                        } else {
-                          setSelectedSchemaIds(selectedSchemaIds.filter(id => id !== schema.id));
-                        }
-                      }}
-                      disabled={!hasData}
-                    />
-                    <Label htmlFor={`schema-${schema.id}`} className={cn("text-sm", !hasData && "opacity-50")}>
-                      {schema.name}
-                    </Label>
-                  </div>
+                  <ToggleGroupItem
+                    key={schema.id}
+                    value={schema.id.toString()}
+                    disabled={!hasData}
+                    className={cn("h-6 px-2 text-[11px]", !hasData && "opacity-50")}
+                  >
+                    {schema.name}
+                  </ToggleGroupItem>
                 );
               })}
-              
-              <div className="flex gap-1 ml-2">
-                {selectedSchemaIds.length < schemas.length && (
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => setSelectedSchemaIds(schemas.map(s => s.id))}
-                    className="text-xs px-2 py-1 h-auto"
-                  >
-                    All
-                  </Button>
-                )}
-                {selectedSchemaIds.length > 1 && (
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => {
-                      // Keep only the first schema with data
-                      const firstWithData = schemas.find(s => 
-                        processedData.fields.some(field => field.schemaName === s.name)
-                      );
-                      if (firstWithData) {
-                        setSelectedSchemaIds([firstWithData.id]);
-                      }
-                    }}
-                    className="text-xs px-2 py-1 h-auto"
-                  >
-                    One
-                  </Button>
-                )}
-              </div>
-            </div>
+            </ToggleGroup>
           )}
 
-
-
-          {/* Individual Field Visibility Controls */}
+          {/* Fields (popover — unbounded list) */}
           {!isGrouped && processedData.fields.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">Fields:</Label>
-                <div className="flex gap-1">
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => handleToggleAllFields(true)}
-                    disabled={visibleFields.size === processedData.fields.length}
-                    className="text-xs px-2 py-1 h-auto"
-                  >
-                    All
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => handleToggleAllFields(false)}
-                    disabled={visibleFields.size === 0}
-                    className="text-xs px-2 py-1 h-auto"
-                  >
-                    None
-                  </Button>
-                </div>
-              </div>
-              
-              <div className="max-h-32 overflow-y-auto">
-                {processedData.type === 'splitting' ? (
-                  // Group fields by group for variable splitting
-                  (() => {
-                    const fieldsByGroup = processedData.fields.reduce((acc, field) => {
-                      const group = field.groupName || 'Other';
-                      if (!acc[group]) acc[group] = [];
-                      acc[group].push(field);
-                      return acc;
-                    }, {} as Record<string, typeof processedData.fields>);
-                    
-                    return Object.entries(fieldsByGroup).map(([groupName, groupFields]) => (
-                      <div key={groupName} className="mb-3">
-                        <div className="text-xs font-medium text-muted-foreground mb-1 border-b pb-1">
-                          {groupName} ({groupFields.length} fields)
-                        </div>
-                        <div className="flex flex-wrap gap-2 pl-2">
-                          {groupFields.map(field => (
-                            <div key={field.key} className="flex items-center space-x-2">
-                              <Checkbox
-                                id={`field-${field.key}`}
-                                checked={visibleFields.has(field.key)}
-                                onCheckedChange={() => handleFieldVisibilityToggle(field.key)}
-                              />
-                              <Label htmlFor={`field-${field.key}`} className="text-xs">
-                                {field.fieldName}
-                              </Label>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ));
-                  })()
-                ) : (
-                  // Flat display for non-splitting
-                  <div className="flex flex-wrap gap-2">
-                    {processedData.fields.map(field => (
-                      <div key={field.key} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`field-${field.key}`}
-                          checked={visibleFields.has(field.key)}
-                          onCheckedChange={() => handleFieldVisibilityToggle(field.key)}
-                        />
-                        <Label htmlFor={`field-${field.key}`} className="text-xs">
-                          {field.displayName}
-                        </Label>
-                      </div>
-                    ))}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]">
+                  Fields ({visibleFields.size}/{processedData.fields.length})
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-56 max-h-[50vh] overflow-y-auto p-3" align="end" side="bottom">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium">Fields</Label>
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => handleToggleAllFields(true)} disabled={visibleFields.size === processedData.fields.length} className="text-[10px] px-1.5 h-5">All</Button>
+                      <Button variant="ghost" size="sm" onClick={() => handleToggleAllFields(false)} disabled={visibleFields.size === 0} className="text-[10px] px-1.5 h-5">None</Button>
+                    </div>
                   </div>
-                )}
-              </div>
-              
-
-            </div>
+                  {processedData.type === 'splitting' ? (
+                    (() => {
+                      const fieldsByGroup = processedData.fields.reduce((acc, field) => {
+                        const group = field.groupName || 'Other';
+                        if (!acc[group]) acc[group] = [];
+                        acc[group].push(field);
+                        return acc;
+                      }, {} as Record<string, typeof processedData.fields>);
+                      return Object.entries(fieldsByGroup).map(([groupName, groupFields]) => (
+                        <div key={groupName} className="mb-2">
+                          <div className="text-[10px] font-medium text-muted-foreground mb-1 border-b pb-0.5">{groupName} ({groupFields.length})</div>
+                          <div className="flex flex-wrap gap-1.5 pl-1">
+                            {groupFields.map(field => (
+                              <div key={field.key} className="flex items-center space-x-1.5">
+                                <Checkbox id={`field-${field.key}`} checked={visibleFields.has(field.key)} onCheckedChange={() => handleFieldVisibilityToggle(field.key)} />
+                                <Label htmlFor={`field-${field.key}`} className="text-[11px]">{field.fieldName}</Label>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ));
+                    })()
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {processedData.fields.map(field => (
+                        <div key={field.key} className="flex items-center space-x-1.5">
+                          <Checkbox id={`field-${field.key}`} checked={visibleFields.has(field.key)} onCheckedChange={() => handleFieldVisibilityToggle(field.key)} />
+                          <Label htmlFor={`field-${field.key}`} className="text-[11px]">{field.displayName}</Label>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
           )}
 
-          {/* Statistical Analysis Toggle */}
+          {/* Display toggles */}
           {!isGrouped && (
-            <div className="space-y-2">
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="show-statistics"
-                  checked={showStatistics}
-                  onCheckedChange={setShowStatistics}
-                />
-                <Label htmlFor="show-statistics" className="text-sm font-medium">
-                  Show Min/Max/Avg Statistics
-                </Label>
-              </div>
-              
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="show-annotation-bars"
-                  checked={showAnnotationBars}
-                  onCheckedChange={setShowAnnotationBars}
-                />
-                <Label htmlFor="show-annotation-bars" className="text-sm font-medium">
-                  Show Annotation Count Bars
-                </Label>
-              </div>
-
-              {/* Monitoring Mode Toggle */}
+            <ToggleGroup
+              type="multiple"
+              value={[
+                ...(showStatistics ? ['stats'] : []),
+                ...(showAnnotationBars ? ['bars'] : []),
+                ...(showPendingAssets ? ['pending'] : []),
+              ]}
+              onValueChange={(values) => {
+                setShowStatistics(values.includes('stats'));
+                setShowAnnotationBars(values.includes('bars'));
+                if (monitoringMode) handleShowPendingChange(values.includes('pending'));
+              }}
+              size="sm"
+              variant="outline"
+              className="h-6"
+            >
+              <ToggleGroupItem value="stats" className="h-6 px-2 text-[11px]">Stats</ToggleGroupItem>
+              <ToggleGroupItem value="bars" className="h-6 px-2 text-[11px]">Bars</ToggleGroupItem>
               {monitoringMode && (
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    id="show-pending-assets"
-                    checked={showPendingAssets}
-                    onCheckedChange={handleShowPendingChange}
-                  />
-                  <Label htmlFor="show-pending-assets" className="text-sm font-medium">
-                    Show Pending Assets
-                  </Label>
-                </div>
+                <ToggleGroupItem value="pending" className="h-6 px-2 text-[11px]">Pending</ToggleGroupItem>
+              )}
+            </ToggleGroup>
+          )}
+          {!isGrouped && renderedGroupValues.length === 0 && (
+            <AnalyticsOverlayToolbar
+              value={analyticsConfig}
+              onChange={setAnalyticsConfig}
+              disabled={serverChartData.length < 2}
+            />
+          )}
+          </div>
+
+          {/* Grouped-timeline legend + high-cardinality warning */}
+          {renderedGroupValues.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <span className="text-[10px] font-medium text-muted-foreground">
+                Split by {viewData?.aggregate?.split_field_path}:
+              </span>
+              {renderedGroupValues.map((value, idx) => {
+                const hidden = hiddenGroupValues.has(value);
+                const color = PIE_COLORS[idx % PIE_COLORS.length];
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => toggleGroupVisibility(value)}
+                    className={cn(
+                      'inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 border rounded',
+                      hidden && 'opacity-40',
+                    )}
+                    title={hidden ? 'Show' : 'Hide'}
+                  >
+                    <span
+                      className="inline-block w-2 h-2 rounded-sm"
+                      style={{ backgroundColor: color }}
+                    />
+                    {value}
+                  </button>
+                );
+              })}
+              {hasHighCardinality && (
+                <span className="text-[10px] text-amber-700 dark:text-amber-400 ml-2">
+                  {groupValues.length} distinct values — showing top {maxGroupsToRender}.
+                </span>
               )}
             </div>
           )}
@@ -2368,19 +3103,25 @@ const AnnotationResultsChart: React.FC<Props> = ({
 
       {/* Chart Display */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        {hasNoData ? (
-          <div className="flex items-center justify-center h-full text-muted-foreground">
-            <div className="text-center">
-              <Info className="mx-auto h-12 w-12 mb-4 opacity-50" />
-              <p className="text-lg font-medium">No Chart Data Available</p>
-              <p className="text-sm mt-2">
-                {!timeAxisConfig && !isGrouped ? 
-                  "Configure time axis settings to display timeline charts." :
-                  "No data matches the current filters and settings."
-                }
-              </p>
-            </div>
-          </div>
+        {showPickerEmptyState ? (
+          <EmptyStateCard
+            reason={
+              needsSchemaPick
+                ? { kind: 'no_schema' }
+                : { kind: 'role_unfilled', roleLabel: 'X axis' }
+            }
+            className="h-full"
+          />
+        ) : hasNoData ? (
+          <EmptyStateCard
+            reason={{
+              kind: 'no_data',
+              filtersActive:
+                (panelConfig.local_filters?.conditions?.length ?? 0) > 0 ||
+                (panelConfig.incoming_scopes?.length ?? 0) > 0,
+            }}
+            className="h-full"
+          />
         ) : processedData.type === 'grouped-splitting' ? (
           // NEW: Render multiple bar charts for variable splitting
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 h-full p-4 overflow-auto">
@@ -2397,12 +3138,12 @@ const AnnotationResultsChart: React.FC<Props> = ({
                     <ResponsiveContainer width="100%" height="100%">
                       <ComposedChart
                         data={data}
-                        margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                        margin={{ top: 4, right: 4, left: 4, bottom: 0 }}
                       >
                         <XAxis 
                           dataKey="valueString" 
                           tick={{ fontSize: 12 }}
-                          angle={-45}
+                          angle={-25}
                           textAnchor="end"
                           height={60}
                         />
@@ -2440,12 +3181,12 @@ const AnnotationResultsChart: React.FC<Props> = ({
             {processedData.type === 'grouped' ? (
               <ComposedChart
                 data={processedData.chartData as GroupedDataPoint[]}
-                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                margin={{ top: 4, right: 4, left: 4, bottom: 0 }}
               >
                 <XAxis 
                   dataKey="valueString" 
                   tick={{ fontSize: 12 }}
-                  angle={-45}
+                  angle={-25}
                   textAnchor="end"
                   height={60}
                 />
@@ -2476,15 +3217,31 @@ const AnnotationResultsChart: React.FC<Props> = ({
             ) : (
               <ComposedChart
                 data={processedData.chartData as ChartDataPoint[]}
-                margin={{ top: 10, right: 60, left: 10, bottom: 20 }}
+                margin={{ top: 8, right: 4, left: 4, bottom: 0 }}
                 onClick={handleTimelinePointClick}
               >
-                <XAxis 
-                  dataKey="dateString" 
+                <XAxis
+                  dataKey="dateString"
                   tick={{ fontSize: 12 }}
-                  angle={-45}
+                  angle={-25}
                   textAnchor="end"
                   height={60}
+                  tickFormatter={(value: string) => {
+                    // Backend returns postgres-rendered timestamps like
+                    // ``2005-06-01 00:00:00+00:00``. Strip the time part and
+                    // format by the active interval so axes stay legible.
+                    const d = new Date(value);
+                    if (isNaN(d.getTime())) return String(value);
+                    const iv = (panelConfig.aggregation?.interval as any) || selectedTimeInterval;
+                    switch (iv) {
+                      case 'year':    return format(d, 'yyyy');
+                      case 'quarter': return format(d, "'Q'Q yyyy");
+                      case 'month':   return format(d, 'MMM yyyy');
+                      case 'week':    return format(d, "MMM d");
+                      case 'day':
+                      default:        return format(d, 'MMM d, yyyy');
+                    }
+                  }}
                 />
                 <YAxis yAxisId="left" tick={{ fontSize: 12 }} />
                 <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} />
@@ -2499,22 +3256,39 @@ const AnnotationResultsChart: React.FC<Props> = ({
                   shared={false}
                 />
                 
-                {/* Timestamp highlighting from cross-panel navigation */}
+                {/* Timestamp highlighting from cross-panel navigation.
+                    The previous matcher compared ``point.dateString`` against
+                    a formatted display string — but ``dateString`` is the raw
+                    postgres timestamp (e.g. ``2005-06-01 00:00:00+00:00``),
+                    so the equality never fired and the highlight never drew.
+                    Parse both sides and compare at the interval's start. */}
                 {highlightedTimestamp && (() => {
-                  console.log('[Chart] Received highlightedTimestamp:', highlightedTimestamp);
                   const chartData = processedData.chartData as ChartDataPoint[];
-                  console.log('[Chart] Chart data points:', chartData.length, chartData.map(p => p.dateString));
                   const highlightedDate = highlightedTimestamp.timestamp;
-                  
-                  // Find the matching data point based on the timestamp
-                  // Match by date (ignore time) since charts group by day/week/month etc
-                  const matchingPoint = chartData.find(point => {
-                    const pointDate = new Date(point.timestamp);
-                    // Compare dates at the interval level (day, week, month etc)
-                    return point.dateString === format(highlightedDate, selectedTimeInterval === 'day' ? 'MMM d, yyyy' : 
-                                                                        selectedTimeInterval === 'week' ? 'MMM d, yyyy' :
-                                                                        selectedTimeInterval === 'month' ? 'MMM yyyy' :
-                                                                        selectedTimeInterval === 'quarter' ? 'QQQ yyyy' : 'yyyy');
+                  const intervalStart = (d: Date): number => {
+                    switch (selectedTimeInterval) {
+                      case 'year':    return startOfYear(d).getTime();
+                      case 'quarter': return startOfQuarter(d).getTime();
+                      case 'month':   return startOfMonth(d).getTime();
+                      case 'week':    return startOfWeek(d).getTime();
+                      case 'day':
+                      default:        return startOfDay(d).getTime();
+                    }
+                  };
+                  const targetBucket = intervalStart(highlightedDate);
+                  const matchingPoint = chartData.find((point) => {
+                    const pointDate = new Date(point.timestamp || point.dateString);
+                    if (isNaN(pointDate.getTime())) return false;
+                    return intervalStart(pointDate) === targetBucket;
+                  });
+                  console.log('[Chart] highlight attempt', {
+                    interval: selectedTimeInterval,
+                    targetIso: new Date(targetBucket).toISOString(),
+                    bucketsCount: chartData.length,
+                    firstBucket: chartData[0]?.dateString,
+                    lastBucket: chartData[chartData.length - 1]?.dateString,
+                    matched: !!matchingPoint,
+                    matchedDateString: matchingPoint?.dateString,
                   });
                   
                   if (matchingPoint) {
@@ -2557,8 +3331,8 @@ const AnnotationResultsChart: React.FC<Props> = ({
                     verticalAlign="bottom" 
                     align="center"
                     wrapperStyle={{ 
-                      paddingTop: '12px',
-                      paddingBottom: '8px',
+                      paddingTop: '0px',
+                      paddingBottom: 'px',
                     }}
                   />
                 )}
@@ -2642,7 +3416,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
                                  {/* Render lines for each visible field */}
                  {fieldsToRender.map((field, index) => {
                    const fieldColor = PIE_COLORS[index % PIE_COLORS.length];
-                   
+
                    return (
                      <Line
                        key={field.key}
@@ -2652,8 +3426,8 @@ const AnnotationResultsChart: React.FC<Props> = ({
                        stroke={fieldColor}
                        strokeWidth={2}
                        dot={{ fill: fieldColor, strokeWidth: 0, r: 4 }}
-                       activeDot={{ 
-                         r: 8, 
+                       activeDot={{
+                         r: 8,
                          strokeWidth: 0,
                          fill: fieldColor,
                          style: { cursor: 'pointer' }
@@ -2665,11 +3439,141 @@ const AnnotationResultsChart: React.FC<Props> = ({
                      />
                    );
                  })}
+
+                {/* Analytics overlays — client-side derived series. */}
+                {overlayData && analyticsConfig.rollingAvg && (
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="rollingAvg"
+                    stroke="#0ea5e9"
+                    strokeWidth={2}
+                    strokeDasharray="4 2"
+                    dot={false}
+                    name={`Rolling avg (${analyticsConfig.rollingAvgWindow})`}
+                    connectNulls={true}
+                    isAnimationActive={false}
+                  />
+                )}
+                {overlayData && analyticsConfig.trendLine && (
+                  <Line
+                    yAxisId="left"
+                    type="linear"
+                    dataKey="trendLine"
+                    stroke="#f97316"
+                    strokeWidth={1.5}
+                    strokeDasharray="6 3"
+                    dot={false}
+                    name="Trend"
+                    connectNulls={true}
+                    isAnimationActive={false}
+                  />
+                )}
+                {overlayData && analyticsConfig.statsBands && overlayData.stats && (
+                  <>
+                    <ReferenceLine
+                      yAxisId="left"
+                      y={overlayData.stats.mean}
+                      stroke="#6366f1"
+                      strokeDasharray="2 2"
+                      label={{ value: 'mean', fontSize: 9, fill: '#6366f1', position: 'right' }}
+                    />
+                    <ReferenceLine
+                      yAxisId="left"
+                      y={overlayData.stats.max}
+                      stroke="#10b981"
+                      strokeDasharray="1 3"
+                      label={{ value: 'max', fontSize: 9, fill: '#10b981', position: 'right' }}
+                    />
+                    <ReferenceLine
+                      yAxisId="left"
+                      y={overlayData.stats.min}
+                      stroke="#ef4444"
+                      strokeDasharray="1 3"
+                      label={{ value: 'min', fontSize: 9, fill: '#ef4444', position: 'right' }}
+                    />
+                  </>
+                )}
+                {overlayData && analyticsConfig.peakMarkers && overlayData.peaks.map((idx) => {
+                  const point = serverChartData[idx];
+                  if (!point) return null;
+                  return (
+                    <ReferenceLine
+                      key={`peak-${idx}`}
+                      yAxisId="left"
+                      x={point.dateString}
+                      stroke="#a855f7"
+                      strokeWidth={1}
+                      label={{ value: '▲', fontSize: 10, fill: '#a855f7', position: 'top' }}
+                    />
+                  );
+                })}
+
+                {/* Grouped-timeline: one line per distinct split_value. The
+                    dataKey matches the pivoted column we added in the
+                    (bucket, split_value) → ChartDataPoint mapping above. */}
+                {renderedGroupValues
+                  .filter(g => !hiddenGroupValues.has(g))
+                  .map((groupValue, idx) => {
+                    const color = PIE_COLORS[idx % PIE_COLORS.length];
+                    return (
+                      <Line
+                        key={`grp-${groupValue}`}
+                        yAxisId="left"
+                        type="monotone"
+                        dataKey={`grp:${groupValue}`}
+                        stroke={color}
+                        strokeWidth={2}
+                        dot={{ fill: color, strokeWidth: 0, r: 3 }}
+                        activeDot={{ r: 6, strokeWidth: 0, fill: color }}
+                        name={groupValue}
+                        connectNulls={false}
+                        isAnimationActive={false}
+                      />
+                    );
+                  })}
               </ComposedChart>
             )}
           </ResponsiveContainer>
         )}
       </div>
+
+      <EvidenceDrawer
+        open={evidenceOpen}
+        onOpenChange={setEvidenceOpen}
+        infospaceId={infospaceId}
+        runId={runId}
+        scope={evidenceScope}
+        baseFilters={panelConfig.local_filters}
+        mergeMaps={effectiveMergeMapsForView}
+        schemas={schemas}
+      />
+
+      {/* Value Alias Manager — edits run-wide aliases for the panel's
+          primary categorical axis. */}
+      {aliasTargetField && (
+        <ValueAliasManager
+          open={aliasManagerOpen}
+          onOpenChange={setAliasManagerOpen}
+          infospaceId={infospaceId}
+          runId={runId}
+          fieldPath={aliasTargetField}
+          aliases={aliasesForField}
+          schemaIds={rolePickerValue.schemaId ? [rolePickerValue.schemaId] : undefined}
+          filters={mergedFilters}
+          onSave={(nextAliases) => {
+            const current = getGlobalVariableSplitting() ?? { enabled: true };
+            setGlobalVariableSplitting({
+              ...current,
+              enabled: true,
+              valueAliasesByField: {
+                ...(current.valueAliasesByField ?? {}),
+                [aliasTargetField]: nextAliases,
+              },
+            });
+          }}
+        />
+      )}
 
       {/* Details Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>

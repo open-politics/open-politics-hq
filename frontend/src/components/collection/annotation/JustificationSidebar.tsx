@@ -231,17 +231,17 @@ const JustificationSidebar: React.FC<JustificationSidebarProps> = ({
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <Badge
-          variant="outline"
+        <div
           className={cn(
-            "text-[10px] px-1.5 py-0 font-medium",
+            "text-[10px] py-0 font-medium",
             isActive
-              ? "bg-primary/10 text-primary border-primary/40"
-              : "bg-background"
+              ? " text-primary "
+              : ""
           )}
         >
-          {justification.fieldDisplayName}
-        </Badge>
+          {justification.fieldDisplayName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+     
+        </div>
         {justification.textSpans && justification.textSpans.length > 0 && (
           <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
             {justification.textSpans.length} span{justification.textSpans.length !== 1 ? 's' : ''}

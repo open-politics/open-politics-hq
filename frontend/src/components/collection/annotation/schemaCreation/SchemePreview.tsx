@@ -142,7 +142,7 @@ const FieldCard = ({ field, depth = 0, scheme }: { field: any; depth?: number; s
                         {justificationConfig.custom_prompt && (
                           <div className="pt-1 border-t">
                             <p className="text-xs font-semibold mb-1">Custom Prompt:</p>
-                            <p className="text-xs bg-muted p-1 rounded text-wrap break-words">
+                            <p className="text-xs p-1 rounded text-wrap break-words">
                               {justificationConfig.custom_prompt}
                             </p>
                           </div>

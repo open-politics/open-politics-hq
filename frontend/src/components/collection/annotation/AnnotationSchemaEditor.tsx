@@ -1,1529 +1,2435 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace";
 import { useAnnotationSystem } from "@/hooks/useAnnotationSystem";
-import { 
+import {
   AnnotationSchemaFormData,
   SchemaSection,
   AdvancedSchemeField,
   ADVANCED_SCHEME_TYPE_OPTIONS,
+  TYPE_GROUP_LABELS,
   JsonSchemaType,
+  TypeOption,
+  EntityFieldConfig,
+  AxisKind,
+  AxisDecl,
+  AxesBlock,
 } from "@/lib/annotations/types";
-import { useTutorialStore } from "@/zustand_stores/storeTutorial";
 import { Switch } from "@/components/ui/switch";
-import AnnotationSchemaCard from "./AnnotationSchemaCard";
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
-import { Trash2, PlusCircle, Info, AlertTriangle, FileJson, FileText, Image, Mic, Video, Network, Settings } from 'lucide-react';
-import GraphSchemaVisualEditor from './GraphSchemaVisualEditor';
-import { AnnotationSchemaRead, AnnotationSchemaUpdate } from '@/client';
-import { adaptSchemaReadToSchemaFormData, adaptSchemaFormDataToSchemaCreate } from '@/lib/annotations/adapters';
-import { useToast } from "@/components/ui/use-toast"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
-import { nanoid } from 'nanoid';
-import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion"
+  Trash2, PlusCircle, AlertTriangle, FileJson, FileText, Image, Mic, Video,
+  ChevronRight, ChevronDown, Type, Hash, ToggleLeft, List, Tags, ListOrdered,
+  Braces, LayoutList, GitFork, ChevronsUpDown, Check, BarChart3, Table2, PieChart,
+  Map, Clock, Network, CalendarClock, MapPin, CalendarRange, Users, Globe, AtSign,
+  Link2, Unlink, Sparkles, Ruler, X,
+} from "lucide-react";
+import GraphSchemaVisualEditor, { TagInput } from "./GraphSchemaVisualEditor";
+import { HexColorPicker } from "react-colorful";
+import { IconPickerDialog } from "@/components/collection/utilities/icons/IconPickerOverlay";
+import { IconRenderer } from "@/components/collection/utilities/icons/icon-picker";
+import { resolveEntityColor } from "@/lib/annotations/colors";
+import { AnnotationSchemaRead, AnnotationSchemaUpdate } from "@/client";
+import { adaptSchemaReadToSchemaFormData, adaptSchemaFormDataToSchemaCreate } from "@/lib/annotations/adapters";
+import { useToast } from "@/components/ui/use-toast";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { cn } from "@/lib/utils";
+import { nanoid } from "nanoid";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Command, CommandList, CommandGroup, CommandItem, CommandEmpty } from "@/components/ui/command";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@/components/ui/button";
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+function isValidFieldName(name: string): boolean {
+  return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
+}
+
+function getTypeValue(field: AdvancedSchemeField): string {
+  if (field.type === "graph") return "graph";
+  if (field.type === "entity") return "entity";
+  if (field.type === "array" && field.items) {
+    if (field.items.type === "entity") return "array_entity";
+    if (field.items.type === "string" && field.items.enum !== undefined) return "array_string_enum";
+    if (field.items.type === "object") return "array_object";
+    return `array_${field.items.type}`;
+  }
+  return field.type || "string";
+}
+
+function computeTypeChangeUpdate(field: AdvancedSchemeField, value: string): Partial<AdvancedSchemeField> {
+  const update: Partial<AdvancedSchemeField> = {};
+
+  if (value === "graph") {
+    update.type = "graph";
+    update.graphConfig = {
+      entityTypes: { typeEnum: [], typeConstrained: false },
+      relationshipSchema: { predicateEnum: [], predicateConstrained: false, optionalFields: [] },
+    };
+    delete update.items;
+    delete update.properties;
+    if (field.type === "entity") update.entityConfig = undefined;
+  } else if (value === "entity") {
+    update.type = "entity";
+    update.entityConfig = field.entityConfig || { entity_type: "", typeConstrained: true };
+    delete update.items;
+    delete update.properties;
+    if (field.type === "graph") update.graphConfig = undefined;
+  } else if (value.startsWith("array_")) {
+    update.type = "array";
+    const itemType = value.split("_")[1] as JsonSchemaType;
+    update.items = { type: itemType };
+    if (itemType === "object") {
+      update.items.properties = field.items?.properties || [];
+    } else if (itemType === "entity") {
+      update.items.entityConfig = field.items?.entityConfig
+        ?? field.entityConfig
+        ?? { entity_type: "", typeConstrained: true };
+    } else if (value === "array_string_enum") {
+      update.items.enum = [];
+      update.items.includeOther = true;
+    } else if (value === "array_string" && field.items?.enum !== undefined) {
+      const existingItems = field.items || { type: "string" };
+      update.items = { type: existingItems.type };
+      if (existingItems.properties) update.items.properties = existingItems.properties;
+    }
+    if (field.type === "graph") update.graphConfig = undefined;
+    if (field.type === "entity") update.entityConfig = undefined;
+  } else {
+    update.type = value as JsonSchemaType;
+    delete update.items;
+    if (field.type === "graph") update.graphConfig = undefined;
+    if (field.type === "entity") update.entityConfig = undefined;
+  }
+
+  if (update.type === "object") {
+    update.properties = field.properties || [];
+  } else if (update.type !== "graph") {
+    delete update.properties;
+  }
+
+  return update;
+}
+
+function getCompactTypeLabel(field: AdvancedSchemeField): string {
+  if (field.type === "graph") return "graph";
+  if (field.type === "entity") return "entity";
+  if (field.type === "array" && field.items) {
+    if (field.items.type === "entity") return "entity[]";
+    if (field.items.type === "string" && field.items.enum !== undefined) return "labels";
+    if (field.items.type === "object") return "obj[]";
+    return `${field.items.type}[]`;
+  }
+  if (field.type === "object") return "obj";
+  if (field.type === "boolean") return "bool";
+  return field.type;
+}
+
+function getTypeChipClass(field: AdvancedSchemeField): string {
+  if (field.type === "graph") return "bg-purple-100/70 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300";
+  if (field.type === "entity" || (field.type === "array" && field.items?.type === "entity"))
+    return "bg-cyan-100/70 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300";
+  return "bg-muted text-muted-foreground";
+}
+
+// =============================================================================
+// Tree walking — selection at any depth
+// =============================================================================
+
+function getChildren(field: AdvancedSchemeField): AdvancedSchemeField[] | null {
+  if (field.type === "object") return field.properties ?? null;
+  if (field.type === "array" && field.items?.type === "object") return field.items.properties ?? null;
+  return null;
+}
+
+function setChildren(field: AdvancedSchemeField, children: AdvancedSchemeField[]): AdvancedSchemeField {
+  if (field.type === "object") return { ...field, properties: children };
+  if (field.type === "array" && field.items?.type === "object") {
+    return { ...field, items: { ...field.items, properties: children } };
+  }
+  return field;
+}
+
+function fieldCanHostChildren(field: AdvancedSchemeField): boolean {
+  return field.type === "object" || (field.type === "array" && field.items?.type === "object");
+}
+
+type Resolution =
+  | { kind: "none"; sectionId: null; section: null; fieldPath: string[]; field: null; ancestors: AdvancedSchemeField[] }
+  | { kind: "section"; sectionId: string; section: SchemaSection; fieldPath: string[]; field: null; ancestors: AdvancedSchemeField[] }
+  | { kind: "field"; sectionId: string; section: SchemaSection; fieldPath: string[]; field: AdvancedSchemeField; ancestors: AdvancedSchemeField[] };
+
+function findFieldPath(
+  fields: AdvancedSchemeField[],
+  targetId: string,
+  ancestors: AdvancedSchemeField[] = [],
+): { path: string[]; ancestors: AdvancedSchemeField[]; field: AdvancedSchemeField } | null {
+  for (const f of fields) {
+    if (f.id === targetId) {
+      return { path: [...ancestors.map(a => a.id), f.id], ancestors: [...ancestors], field: f };
+    }
+    const children = getChildren(f);
+    if (children) {
+      const r = findFieldPath(children, targetId, [...ancestors, f]);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+function resolveSelection(structure: SchemaSection[], nodeId: string | null): Resolution {
+  if (!nodeId) return { kind: "none", sectionId: null, section: null, fieldPath: [], field: null, ancestors: [] };
+  for (const sec of structure) {
+    if (sec.id === nodeId) {
+      return { kind: "section", sectionId: sec.id, section: sec, fieldPath: [], field: null, ancestors: [] };
+    }
+    const r = findFieldPath(sec.fields, nodeId);
+    if (r) return { kind: "field", sectionId: sec.id, section: sec, fieldPath: r.path, field: r.field, ancestors: r.ancestors };
+  }
+  return { kind: "none", sectionId: null, section: null, fieldPath: [], field: null, ancestors: [] };
+}
+
+function applyAtPath(
+  fields: AdvancedSchemeField[],
+  path: string[],
+  update: Partial<AdvancedSchemeField>,
+): AdvancedSchemeField[] {
+  if (path.length === 0) return fields;
+  const [head, ...tail] = path;
+  return fields.map(f => {
+    if (f.id !== head) return f;
+    if (tail.length === 0) return { ...f, ...update };
+    const children = getChildren(f);
+    if (!children) return f;
+    return setChildren(f, applyAtPath(children, tail, update));
+  });
+}
+
+function updateFieldAtPath(
+  structure: SchemaSection[],
+  sectionId: string,
+  path: string[],
+  update: Partial<AdvancedSchemeField>,
+): SchemaSection[] {
+  return structure.map(s => (s.id !== sectionId ? s : { ...s, fields: applyAtPath(s.fields, path, update) }));
+}
+
+function addInPath(
+  fields: AdvancedSchemeField[],
+  parentPath: string[],
+  newField: AdvancedSchemeField,
+): AdvancedSchemeField[] {
+  if (parentPath.length === 0) return [...fields, newField];
+  const [head, ...tail] = parentPath;
+  return fields.map(f => {
+    if (f.id !== head) return f;
+    if (tail.length === 0) {
+      const children = getChildren(f) ?? [];
+      return setChildren(f, [...children, newField]);
+    }
+    const children = getChildren(f);
+    if (!children) return f;
+    return setChildren(f, addInPath(children, tail, newField));
+  });
+}
+
+function addPropertyAtPath(
+  structure: SchemaSection[],
+  sectionId: string,
+  parentPath: string[],
+  newField: AdvancedSchemeField,
+): SchemaSection[] {
+  return structure.map(s => (s.id !== sectionId ? s : { ...s, fields: addInPath(s.fields, parentPath, newField) }));
+}
+
+function removeInPath(
+  fields: AdvancedSchemeField[],
+  parentPath: string[],
+  targetId: string,
+): AdvancedSchemeField[] {
+  if (parentPath.length === 0) return fields.filter(f => f.id !== targetId);
+  const [head, ...tail] = parentPath;
+  return fields.map(f => {
+    if (f.id !== head) return f;
+    if (tail.length === 0) {
+      const children = getChildren(f);
+      if (!children) return f;
+      return setChildren(f, children.filter(c => c.id !== targetId));
+    }
+    const children = getChildren(f);
+    if (!children) return f;
+    return setChildren(f, removeInPath(children, tail, targetId));
+  });
+}
+
+function removeFieldAtPath(structure: SchemaSection[], sectionId: string, path: string[]): SchemaSection[] {
+  if (path.length === 0) return structure;
+  const targetId = path[path.length - 1];
+  const parentPath = path.slice(0, -1);
+  return structure.map(s => (s.id !== sectionId ? s : { ...s, fields: removeInPath(s.fields, parentPath, targetId) }));
+}
+
+// =============================================================================
+// Data Type Picker — same Popover+Command UI, restyled trigger
+// =============================================================================
+
+const TYPE_ICONS: Record<string, React.ElementType> = {
+  Type, Hash, ToggleLeft, List, Tags, ListOrdered, Braces, LayoutList, GitFork, AtSign,
+};
+
+const UNLOCK_ICONS: Record<string, { icon: React.ElementType; label: string }> = {
+  table:    { icon: Table2,    label: "Table" },
+  chart:    { icon: BarChart3, label: "Chart" },
+  pie:      { icon: PieChart,  label: "Pie" },
+  map:      { icon: Map,       label: "Map" },
+  timeline: { icon: Clock,     label: "Timeline" },
+  graph:    { icon: Network,   label: "Graph" },
+};
+
+const DataTypePicker: React.FC<{
+  value: string;
+  onValueChange: (value: string) => void;
+  disabled?: boolean;
+  size?: "sm" | "md";
+  align?: "start" | "end";
+}> = ({ value, onValueChange, disabled, size = "md", align = "start" }) => {
+  const [open, setOpen] = useState(false);
+  const selected = ADVANCED_SCHEME_TYPE_OPTIONS.find(o => o.value === value);
+
+  const groups = useMemo(() => {
+    const order: TypeOption["group"][] = ["primitives", "collections", "structured", "relational"];
+    return order.map(g => ({
+      group: g,
+      label: TYPE_GROUP_LABELS[g],
+      options: ADVANCED_SCHEME_TYPE_OPTIONS.filter(o => o.group === g),
+    }));
+  }, []);
+
+  const triggerClass = size === "sm" ? "h-7 text-xs px-2.5" : "h-9 text-sm px-3";
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          disabled={disabled}
+          className={cn("justify-between font-normal", triggerClass)}
+        >
+          {selected ? (
+            <span className="flex items-center gap-2 min-w-0">
+              {TYPE_ICONS[selected.icon] && React.createElement(TYPE_ICONS[selected.icon], { className: "h-3.5 w-3.5 shrink-0 text-muted-foreground" })}
+              <span className="truncate">{selected.label}</span>
+            </span>
+          ) : (
+            <span className="text-muted-foreground">Type…</span>
+          )}
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50 ml-2" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[360px] p-0" align={align} onWheel={(e) => e.stopPropagation()}>
+        <Command>
+          <CommandList
+            className="max-h-[420px]"
+            onWheel={(e) => {
+              const el = e.currentTarget;
+              if ((e.deltaY > 0 && el.scrollTop < el.scrollHeight - el.clientHeight) || (e.deltaY < 0 && el.scrollTop > 0)) {
+                e.stopPropagation();
+              }
+            }}
+          >
+            <CommandEmpty>No matching type.</CommandEmpty>
+            {groups.map(({ group, label, options }) => (
+              <CommandGroup key={group} heading={label}>
+                {options.map(opt => {
+                  const IconComp = TYPE_ICONS[opt.icon];
+                  const isSelected = opt.value === value;
+                  return (
+                    <CommandItem
+                      key={opt.value}
+                      value={opt.value}
+                      keywords={[opt.label, opt.description]}
+                      onSelect={() => { onValueChange(opt.value); setOpen(false); }}
+                      className="flex items-start gap-2.5 py-2 px-2"
+                    >
+                      <div className={cn(
+                        "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border",
+                        isSelected ? "bg-primary/10 border-primary/30 text-primary" : "bg-muted/50 text-muted-foreground"
+                      )}>
+                        {IconComp && <IconComp className="h-3.5 w-3.5" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className={cn("text-sm font-medium", isSelected && "text-primary")}>{opt.label}</span>
+                          {isSelected && <Check className="h-3 w-3 text-primary" />}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">{opt.description}</p>
+                        {opt.unlocks && opt.unlocks.length > 0 && (
+                          <div className="flex items-center gap-1 mt-1.5">
+                            {opt.unlocks.map(u => {
+                              const info = UNLOCK_ICONS[u];
+                              if (!info) return null;
+                              return (
+                                <span key={u} className="inline-flex items-center gap-0.5 text-[9px] bg-muted/80 text-muted-foreground px-1.5 py-0.5 rounded-full">
+                                  <info.icon className="h-2.5 w-2.5" />
+                                  {info.label}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+};
+
+// =============================================================================
+// Field templates / suggestions — kept
+// =============================================================================
+
+const LOCATION_DESCRIPTION =
+  "Geographic location. As specific as the source allows, from specific to general: " +
+  "street, neighborhood, city, state/province, country, supranational region. " +
+  "Always include enough levels to be unambiguous. Use full names, not abbreviations.";
+
+interface FieldSuggestion {
+  key: string;
+  label: string;
+  icon: React.ElementType;
+  color: string;
+  field: Omit<AdvancedSchemeField, "id">;
+}
+
+const FIELD_SUGGESTIONS: FieldSuggestion[] = [
+  {
+    key: "timestamp", label: "Timestamp", icon: CalendarClock, color: "text-amber-600",
+    field: { name: "timestamp", type: "string", required: false, description: "ISO 8601 datetime of when this event or observation occurred. E.g. 2024-03-15T14:30:00Z" },
+  },
+  {
+    key: "location", label: "Location", icon: MapPin, color: "text-emerald-600",
+    field: { name: "location", type: "string", required: false, description: LOCATION_DESCRIPTION },
+  },
+];
+
+const NESTED_FIELD_SUGGESTIONS: FieldSuggestion[] = [
+  {
+    key: "timestamp", label: "Timestamp", icon: CalendarClock, color: "text-amber-600",
+    field: { name: "timestamp", type: "string", required: false, description: "ISO 8601 datetime." },
+  },
+  {
+    key: "end_timestamp", label: "End time", icon: Clock, color: "text-amber-500",
+    field: { name: "end_timestamp", type: "string", required: false, description: "ISO 8601 end datetime for ranges/durations." },
+  },
+  {
+    key: "location", label: "Location", icon: MapPin, color: "text-emerald-600",
+    field: { name: "location", type: "string", required: false, description: LOCATION_DESCRIPTION },
+  },
+];
+
+interface FieldTemplate {
+  key: string;
+  label: string;
+  icon: React.ElementType;
+  color: string;
+  description: string;
+  fields?: Omit<AdvancedSchemeField, "id">[];
+  factory?: () => AdvancedSchemeField;
+}
+
+const FIELD_TEMPLATES: FieldTemplate[] = [
+  {
+    key: "events", label: "Events", icon: CalendarRange, color: "text-orange-500",
+    description: "A list of events the document describes — one row per event with when, where, who, and what happened",
+    fields: [
+      { name: "description", type: "string", required: true, description: "What happened — one or two sentences." },
+      { name: "timestamp", type: "string", required: true, description: "ISO 8601 datetime of when the event occurred. E.g. 2024-03-15T14:30:00Z" },
+      { name: "end_timestamp", type: "string", required: false, description: "ISO 8601 end datetime, if the event spans a period." },
+      { name: "location", type: "string", required: false, description: LOCATION_DESCRIPTION },
+      { name: "participants", type: "array", required: false, description: "Names of people or organizations involved.", items: { type: "string" } },
+    ],
+  },
+  {
+    key: "entities", label: "Entities (canon-resolved)", icon: Users, color: "text-blue-500",
+    description: "A list of canonical entities — each item resolves to the canon at curation, so the same name in different fields links automatically.",
+    factory: () => ({
+      id: nanoid(),
+      name: "entities",
+      type: "array",
+      required: false,
+      description: "Entities named in this document — people, organizations, places, or whatever vocabulary you anchor below.",
+      items: {
+        type: "entity",
+        entityConfig: { entity_type: "", typeConstrained: true },
+      },
+    }),
+  },
+  {
+    key: "graph", label: "Knowledge graph", icon: GitFork, color: "text-purple-500",
+    description: "Triplet extraction — subject → predicate → object. Use to capture relationships (worked_for, located_in, met_with).",
+    factory: () => ({
+      id: nanoid(),
+      name: "relationships",
+      type: "graph",
+      required: false,
+      description: "Triplets describing relationships between the entities and concepts in this document.",
+      graphConfig: {
+        entityTypes: { typeEnum: [], typeConstrained: false },
+        relationshipSchema: { predicateEnum: [], predicateConstrained: false, optionalFields: [] },
+      },
+    }),
+  },
+  {
+    key: "locations", label: "Locations (free text)", icon: Globe, color: "text-emerald-500",
+    description: "A list of geographic locations the document mentions. Plain strings — for canon-resolved places, use Entities with entity_type = \"Location\".",
+    fields: [],
+  },
+];
+
+function createFieldFromSuggestion(s: FieldSuggestion): AdvancedSchemeField {
+  return { ...s.field, id: nanoid() };
+}
+
+function createFieldFromTemplate(t: FieldTemplate): AdvancedSchemeField {
+  if (t.factory) return t.factory();
+  if (!t.fields || t.fields.length === 0) {
+    return { id: nanoid(), name: t.key, type: "array", required: false, description: t.description, items: { type: "string" } };
+  }
+  return {
+    id: nanoid(),
+    name: t.key,
+    type: "array",
+    required: false,
+    description: t.description,
+    items: {
+      type: "object",
+      properties: t.fields.map(f => ({ ...f, id: nanoid() })),
+    },
+  };
+}
+
+// =============================================================================
+// Justification helpers
+// =============================================================================
+
+const RIGOR_TEMPLATE = (level: "minimal" | "standard" | "thorough" | "exhaustive"): string => {
+  const counts = { minimal: "1-2", standard: "3-5", thorough: "5-8", exhaustive: "8+" };
+  return `Explain your reasoning for this value and provide ${counts[level]} direct quotations from the text that support your answer. Each quotation should be a complete sentence or meaningful phrase.`;
+};
+
+function isCustomPromptDefault(customPrompt: string | undefined, rigorLevel: string | undefined): boolean {
+  if (!customPrompt || !rigorLevel) return true;
+  return customPrompt.trim() === RIGOR_TEMPLATE(rigorLevel as any).trim();
+}
+
+// =============================================================================
+// Section meta (icons, labels)
+// =============================================================================
+
+const SECTION_META: Record<string, { icon: React.ElementType; color: string; title: string; sub: string }> = {
+  document: { icon: FileText, color: "text-blue-600", title: "Document", sub: "Fields extracted once from the document body" },
+  per_image: { icon: Image, color: "text-green-600", title: "Per image", sub: "Fields extracted once per image asset" },
+  per_audio: { icon: Mic, color: "text-purple-600", title: "Per audio", sub: "Fields extracted once per audio asset" },
+  per_video: { icon: Video, color: "text-orange-600", title: "Per video", sub: "Fields extracted once per video asset" },
+};
+
+// =============================================================================
+// Top bar — schema name, description, instructions popover, save/cancel
+// =============================================================================
+
+// ─── Axes editor (intelligence-layer M3) ────────────────────────────────────
+// Schemas declare typed measurement dimensions (axes) at the top level so
+// formulas can compose by axis name across heterogeneous fields. Fields then
+// reference an axis via ``xAxis`` on the field config (emitted as ``x-axis``
+// in the JSON Schema). Until now axes were JSON-only; this panel surfaces
+// them in the editor.
+
+const AXIS_KIND_LABELS: Record<AxisKind, string> = {
+  ordinal_llm: "Ordinal (LLM)",
+  categorical_llm: "Categorical (LLM)",
+  scalar_1_10_llm: "Scalar 1–10 (LLM)",
+  factual_enum: "Factual enum",
+  ordinal_doc: "Ordinal (doc-level)",
+  categorical_doc: "Categorical (doc-level)",
+  exposure: "Exposure (numeric)",
+};
+
+const AXIS_KINDS: AxisKind[] = [
+  "ordinal_llm",
+  "categorical_llm",
+  "scalar_1_10_llm",
+  "factual_enum",
+  "ordinal_doc",
+  "categorical_doc",
+  "exposure",
+];
+
+const ENUM_AXIS_KINDS = new Set<AxisKind>([
+  "ordinal_llm",
+  "categorical_llm",
+  "factual_enum",
+  "ordinal_doc",
+  "categorical_doc",
+]);
+
+interface AxisRowProps {
+  name: string;
+  axis: AxisDecl;
+  allNames: string[];
+  onRename: (next: string) => void;
+  onChange: (patch: Partial<AxisDecl>) => void;
+  onRemove: () => void;
+  disabled?: boolean;
+}
+
+const AxisRow: React.FC<AxisRowProps> = ({ name, axis, allNames, onRename, onChange, onRemove, disabled }) => {
+  const [nameDraft, setNameDraft] = useState(name);
+  useEffect(() => { setNameDraft(name); }, [name]);
+  const [valuesDraft, setValuesDraft] = useState((axis.values ?? []).join(", "));
+  useEffect(() => { setValuesDraft((axis.values ?? []).join(", ")); }, [axis.values]);
+  const isEnumKind = ENUM_AXIS_KINDS.has(axis.kind);
+
+  const commitName = () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed || trimmed === name) { setNameDraft(name); return; }
+    if (allNames.includes(trimmed)) {
+      // collision — bounce back
+      setNameDraft(name);
+      return;
+    }
+    onRename(trimmed);
+  };
+
+  const commitValues = () => {
+    const parsed = valuesDraft
+      .split(/[,\n]/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    onChange({ values: parsed.length > 0 ? parsed : undefined });
+  };
+
+  return (
+    <div className="border rounded-md p-2 space-y-1.5 bg-background">
+      <div className="flex items-center gap-2">
+        <Input
+          value={nameDraft}
+          onChange={(e) => setNameDraft(e.target.value)}
+          onBlur={commitName}
+          disabled={disabled}
+          placeholder="axis name (e.g. source_weight)"
+          className="h-7 text-[12px] font-mono flex-1 min-w-0"
+        />
+        <Select
+          value={axis.kind}
+          onValueChange={(v: AxisKind) => onChange({ kind: v })}
+          disabled={disabled}
+        >
+          <SelectTrigger className="h-7 text-[11px] w-[170px] shrink-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {AXIS_KINDS.map(k => (
+              <SelectItem key={k} value={k} className="text-[11px]">
+                {AXIS_KIND_LABELS[k]}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={onRemove}
+          disabled={disabled}
+          className="h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive"
+          title="Delete axis"
+        >
+          <Trash2 className="h-3 w-3" />
+        </Button>
+      </div>
+      {isEnumKind && (
+        <div>
+          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Allowed values (comma-separated)
+          </Label>
+          <Input
+            value={valuesDraft}
+            onChange={(e) => setValuesDraft(e.target.value)}
+            onBlur={commitValues}
+            disabled={disabled}
+            placeholder="favors, neutral, disfavors"
+            className="h-7 text-[11px] mt-0.5 font-mono"
+          />
+        </div>
+      )}
+      <div>
+        <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          Description (surfaced to LLM)
+        </Label>
+        <Input
+          value={axis.description ?? ""}
+          onChange={(e) => onChange({ description: e.target.value || undefined })}
+          disabled={disabled}
+          placeholder="What this axis measures"
+          className="h-7 text-[11px] mt-0.5"
+        />
+      </div>
+    </div>
+  );
+};
+
+const AxesPanel: React.FC<{
+  axes: AxesBlock;
+  onChange: (next: AxesBlock) => void;
+  disabled?: boolean;
+}> = ({ axes, onChange, disabled }) => {
+  const entries = Object.entries(axes);
+  const allNames = entries.map(([n]) => n);
+
+  const addAxis = () => {
+    let i = 1;
+    let key = "new_axis";
+    while (axes[key]) {
+      i += 1;
+      key = `new_axis_${i}`;
+    }
+    onChange({ ...axes, [key]: { kind: "categorical_llm", values: [] } });
+  };
+
+  const updateAxis = (name: string, patch: Partial<AxisDecl>) => {
+    const cur = axes[name];
+    if (!cur) return;
+    onChange({ ...axes, [name]: { ...cur, ...patch } });
+  };
+
+  const renameAxis = (oldName: string, newName: string) => {
+    if (oldName === newName || !axes[oldName]) return;
+    const next: AxesBlock = {};
+    for (const [k, v] of Object.entries(axes)) {
+      next[k === oldName ? newName : k] = v;
+    }
+    onChange(next);
+  };
+
+  const removeAxis = (name: string) => {
+    const next = { ...axes };
+    delete next[name];
+    onChange(next);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-start gap-3">
+        <div className="flex-1">
+          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            Axes — measurement vocabulary
+          </Label>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Typed dimensions formulas aggregate over. Reference an axis from a
+            field with the per-field "x-axis" property. See{" "}
+            <code className="text-[10px]">docs/intelligence/HOW_TO.md</code> § Axes.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={addAxis}
+          disabled={disabled}
+          className="h-7 text-[11px] shrink-0"
+        >
+          <PlusCircle className="h-3 w-3 mr-1" /> Add axis
+        </Button>
+      </div>
+      {entries.length === 0 ? (
+        <div className="text-[11px] italic text-muted-foreground border-dashed border rounded-md p-3 text-center">
+          No axes declared. Add one to enable axis-aware formula aggregation.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {entries.map(([name, axis]) => (
+            <AxisRow
+              key={name}
+              name={name}
+              axis={axis}
+              allNames={allNames.filter(n => n !== name)}
+              onRename={(next) => renameAxis(name, next)}
+              onChange={(patch) => updateAxis(name, patch)}
+              onRemove={() => removeAxis(name)}
+              disabled={disabled}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+const TopBar: React.FC<{
+  formData: AnnotationSchemaFormData;
+  onFormChange: (d: AnnotationSchemaFormData) => void;
+  formErrors: Record<string, string | string[]>;
+  isReady: boolean;
+  isLoading: boolean;
+  mode: "create" | "edit" | "watch";
+  disabled: boolean;
+  onCancel: () => void;
+}> = ({ formData, onFormChange, formErrors, isReady, isLoading, mode, disabled, onCancel }) => {
+  const titleByMode = { create: "New schema", edit: "Edit schema", watch: "View schema" }[mode];
+  const [showInstructions, setShowInstructions] = useState(false);
+  const [showAxes, setShowAxes] = useState(false);
+  const axesCount = Object.keys(formData.axes ?? {}).length;
+
+  return (
+    <div className="border-b flex flex-col">
+      <div className="h-14 flex items-center gap-3 px-5 shrink-0">
+        <div className="h-8 w-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+          <FileJson className="h-4 w-4 text-primary" />
+        </div>
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold w-[80px] shrink-0">
+          {titleByMode}
+        </div>
+        <div className="flex-1 min-w-0 flex items-center gap-3">
+          <Input
+            value={formData.name}
+            onChange={(e) => onFormChange({ ...formData, name: e.target.value })}
+            placeholder="Schema name"
+            disabled={disabled}
+            className={cn(
+              "h-9 text-base font-medium border-0 focus-visible:ring-0 shadow-none px-2",
+              "bg-transparent hover:bg-muted/30 focus-visible:bg-muted/40 transition-colors",
+              formErrors.name && "ring-1 ring-destructive",
+            )}
+          />
+          <div className="hidden md:block h-5 w-px bg-border/60" />
+          <Input
+            value={formData.description || ""}
+            onChange={(e) => onFormChange({ ...formData, description: e.target.value })}
+            placeholder="Description"
+            disabled={disabled}
+            className="hidden md:block h-9 text-sm border-0 focus-visible:ring-0 shadow-none px-2 bg-transparent hover:bg-muted/30 focus-visible:bg-muted/40 transition-colors"
+          />
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowAxes(s => !s)}
+          className="h-8 text-xs gap-1.5 shrink-0"
+        >
+          <Ruler className="h-3.5 w-3.5" />
+          Axes
+          {axesCount > 0 && (
+            <span className="ml-0.5 text-[10px] tabular-nums text-muted-foreground">
+              {axesCount}
+            </span>
+          )}
+          <ChevronDown className={cn("h-3 w-3 transition-transform", showAxes && "rotate-180")} />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowInstructions(s => !s)}
+          className="h-8 text-xs gap-1.5 shrink-0"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          AI instructions
+          <ChevronDown className={cn("h-3 w-3 transition-transform", showInstructions && "rotate-180")} />
+        </Button>
+        <div className="h-5 w-px bg-border/60 shrink-0" />
+        <div className="flex items-center gap-1.5 shrink-0">
+          <div className={cn("h-1.5 w-1.5 rounded-full", isReady ? "bg-green-500" : "bg-amber-500")} />
+          <span className="text-[11px] text-muted-foreground hidden lg:inline">
+            {isReady ? "Ready" : "Fill required fields"}
+          </span>
+        </div>
+        <Button
+          type="button" variant="ghost" size="sm"
+          onClick={onCancel} disabled={isLoading}
+          className="h-8 text-xs"
+        >
+          Cancel
+        </Button>
+        {mode !== "watch" && (
+          <Button type="submit" size="sm" className="h-8 text-xs px-4" disabled={isLoading || !isReady}>
+            {isLoading ? "Saving…" : mode === "create" ? "Create" : "Update"}
+          </Button>
+        )}
+      </div>
+      {showAxes && (
+        <div className="px-5 py-3 border-t bg-muted/20">
+          <AxesPanel
+            axes={formData.axes ?? {}}
+            onChange={(next) => onFormChange({ ...formData, axes: next })}
+            disabled={disabled}
+          />
+        </div>
+      )}
+      {showInstructions && (
+        <div className="px-5 py-3 border-t bg-muted/20">
+          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            Schema-level AI instructions
+          </Label>
+          <p className="text-[11px] text-muted-foreground mt-0.5 mb-2">
+            Optional preamble the LLM reads before annotating any field. Useful for global tone, time conventions, language preferences.
+          </p>
+          <Textarea
+            value={formData.instructions || ""}
+            onChange={(e) => onFormChange({ ...formData, instructions: e.target.value })}
+            placeholder="e.g. All dates ISO 8601 in UTC. Names are German official. If unsure, leave the field empty."
+            rows={3}
+            disabled={disabled}
+            className="text-sm resize-y"
+          />
+        </div>
+      )}
+      {formErrors.name && (
+        <div className="px-5 pb-2 text-[11px] text-destructive">{formErrors.name as string}</div>
+      )}
+    </div>
+  );
+};
+
+// =============================================================================
+// Nav tree (left rail)
+// =============================================================================
+
+const NavFieldRow: React.FC<{
+  field: AdvancedSchemeField;
+  sectionId: string;
+  path: string[];
+  depth: number;
+  selectedNodeId: string | null;
+  onSelect: (id: string) => void;
+  onRemove: (sectionId: string, path: string[]) => void;
+  navExpanded: Set<string>;
+  onToggleExpanded: (id: string) => void;
+  disabled: boolean;
+}> = ({ field, sectionId, path, depth, selectedNodeId, onSelect, onRemove, navExpanded, onToggleExpanded, disabled }) => {
+  const children = getChildren(field);
+  const hasChildren = children !== null && children.length > 0;
+  const expanded = navExpanded.has(field.id);
+  const selected = selectedNodeId === field.id;
+
+  return (
+    <>
+      <div
+        className={cn(
+          "group flex items-center gap-1.5 pr-1 rounded-md cursor-pointer transition-colors",
+          selected ? "bg-primary/10 text-foreground" : "hover:bg-muted/40 text-foreground/90",
+        )}
+        style={{ paddingLeft: 6 + depth * 12 }}
+        onClick={() => onSelect(field.id)}
+      >
+        <button
+          type="button"
+          className={cn(
+            "h-5 w-5 flex items-center justify-center shrink-0 text-muted-foreground/60 hover:text-foreground",
+            !hasChildren && "invisible",
+          )}
+          onClick={(e) => { e.stopPropagation(); onToggleExpanded(field.id); }}
+          tabIndex={hasChildren ? 0 : -1}
+        >
+          {hasChildren && (expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />)}
+        </button>
+        {field.ref && <Link2 className="h-3 w-3 text-cyan-600 shrink-0" />}
+        <span className={cn("text-xs font-mono truncate flex-1 py-1", !isValidFieldName(field.name) && field.name && "text-amber-600")}>
+          {field.name || <span className="italic text-muted-foreground">unnamed</span>}
+        </span>
+        <span className={cn("text-[9px] px-1.5 py-0.5 rounded-full font-mono shrink-0", getTypeChipClass(field))}>
+          {getCompactTypeLabel(field)}
+        </span>
+        {field.required && (
+          <span className="h-1 w-1 rounded-full bg-red-500 shrink-0" title="Required" />
+        )}
+        {!disabled && (
+          <button
+            type="button"
+            className="h-5 w-5 opacity-0 group-hover:opacity-100 flex items-center justify-center text-muted-foreground hover:text-destructive transition-opacity shrink-0"
+            onClick={(e) => { e.stopPropagation(); onRemove(sectionId, path); }}
+            title="Remove field"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+      {hasChildren && expanded && children!.map(child => (
+        <NavFieldRow
+          key={child.id}
+          field={child}
+          sectionId={sectionId}
+          path={[...path, child.id]}
+          depth={depth + 1}
+          selectedNodeId={selectedNodeId}
+          onSelect={onSelect}
+          onRemove={onRemove}
+          navExpanded={navExpanded}
+          onToggleExpanded={onToggleExpanded}
+          disabled={disabled}
+        />
+      ))}
+    </>
+  );
+};
+
+const NavTree: React.FC<{
+  structure: SchemaSection[];
+  selectedNodeId: string | null;
+  onSelect: (id: string) => void;
+  navExpanded: Set<string>;
+  onToggleExpanded: (id: string) => void;
+  onAddTopLevel: (sectionId: string, field?: AdvancedSchemeField) => void;
+  onRemoveSection: (sectionId: string) => void;
+  onRemoveField: (sectionId: string, path: string[]) => void;
+  onAddSection: (name: SchemaSection["name"]) => void;
+  disabled: boolean;
+  mode: "create" | "edit" | "watch";
+  formErrors: Record<string, string | string[]>;
+}> = ({ structure, selectedNodeId, onSelect, navExpanded, onToggleExpanded, onAddTopLevel, onRemoveSection, onRemoveField, onAddSection, disabled, mode, formErrors }) => {
+  const mediaOptions = [
+    { value: "per_image" as const, icon: Image, label: "Images", color: "text-green-600" },
+    { value: "per_audio" as const, icon: Mic, label: "Audio", color: "text-purple-600" },
+    { value: "per_video" as const, icon: Video, label: "Video", color: "text-orange-600" },
+  ];
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="h-10 flex items-center px-4 border-b shrink-0">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Outline</span>
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
+        {structure.map(section => {
+          const meta = SECTION_META[section.name] || { icon: FileText, color: "text-muted-foreground", title: section.name, sub: "" };
+          const SectIcon = meta.icon;
+          const isSectionSelected = selectedNodeId === section.id;
+          return (
+            <div key={section.id} className="mb-3">
+              <div
+                className={cn(
+                  "group flex items-center gap-2 px-2 h-7 rounded-md cursor-pointer",
+                  isSectionSelected ? "bg-primary/10" : "hover:bg-muted/40",
+                )}
+                onClick={() => onSelect(section.id)}
+              >
+                <SectIcon className={cn("h-3.5 w-3.5 shrink-0", meta.color)} />
+                <span className="text-[10px] uppercase tracking-wider font-semibold flex-1 truncate">
+                  {meta.title}
+                </span>
+                <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">{section.fields.length}</span>
+                {section.name !== "document" && mode !== "watch" && (
+                  <button
+                    type="button"
+                    className="h-5 w-5 opacity-0 group-hover:opacity-100 flex items-center justify-center text-muted-foreground hover:text-destructive transition-opacity shrink-0"
+                    onClick={(e) => { e.stopPropagation(); onRemoveSection(section.id); }}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+              <div className="space-y-px mt-0.5">
+                {section.fields.map(f => (
+                  <NavFieldRow
+                    key={f.id}
+                    field={f}
+                    sectionId={section.id}
+                    path={[f.id]}
+                    depth={0}
+                    selectedNodeId={selectedNodeId}
+                    onSelect={onSelect}
+                    onRemove={onRemoveField}
+                    navExpanded={navExpanded}
+                    onToggleExpanded={onToggleExpanded}
+                    disabled={disabled}
+                  />
+                ))}
+              </div>
+              {mode !== "watch" && (
+                <div className="mt-1 px-1 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onAddTopLevel(section.id)}
+                    className="flex-1 flex items-center gap-1.5 h-6 px-2 rounded-md text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
+                  >
+                    <PlusCircle className="h-3 w-3" />
+                    Add field
+                  </button>
+                  <TemplatePopover
+                    existingFieldNames={section.fields.map(f => f.name)}
+                    onAdd={(field) => onAddTopLevel(section.id, field)}
+                  />
+                  {FIELD_SUGGESTIONS.map(s => {
+                    const exists = section.fields.some(f => f.name === s.field.name);
+                    return (
+                      <button
+                        key={s.key}
+                        type="button"
+                        disabled={exists}
+                        onClick={() => onAddTopLevel(section.id, createFieldFromSuggestion(s))}
+                        className={cn(
+                          "h-6 w-6 flex items-center justify-center rounded-md transition-colors",
+                          exists ? "opacity-30" : "hover:bg-muted/60",
+                        )}
+                        title={exists ? `${s.label} already exists` : `Add ${s.label.toLowerCase()}`}
+                      >
+                        <s.icon className={cn("h-3 w-3", s.color)} />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {formErrors.structure && (
+          <div className="flex items-center gap-1.5 text-destructive px-2 py-1.5">
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+            <p className="text-[11px]">{formErrors.structure as string}</p>
+          </div>
+        )}
+      </div>
+
+      {mode !== "watch" && (
+        <div className="border-t px-3 py-2.5 shrink-0 space-y-1">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+            Add section
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {mediaOptions.map(opt => {
+              const exists = structure.some(s => s.name === opt.value);
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  disabled={exists || disabled}
+                  onClick={() => onAddSection(opt.value)}
+                  className={cn(
+                    "flex items-center gap-1 h-6 px-2 rounded-md text-[10px] transition-colors",
+                    exists ? "opacity-30" : "hover:bg-muted/60 text-foreground/80",
+                  )}
+                >
+                  <opt.icon className={cn("h-3 w-3", opt.color)} />
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// =============================================================================
+// Templates popover
+// =============================================================================
+
+const TemplatePopover: React.FC<{
+  existingFieldNames: string[];
+  onAdd: (field: AdvancedSchemeField) => void;
+}> = ({ existingFieldNames, onAdd }) => {
+  const [open, setOpen] = useState(false);
+  const existing = new Set(existingFieldNames);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="h-6 px-2 flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted/60 rounded-md transition-colors"
+          title="Insert a field template"
+        >
+          <Sparkles className="h-3 w-3" />
+          Templates
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[280px] p-1.5" align="start" side="bottom" onWheel={(e) => e.stopPropagation()}>
+        <div className="space-y-0.5">
+          {FIELD_TEMPLATES.map(t => {
+            const exists = existing.has(t.key);
+            return (
+              <button
+                key={t.key}
+                type="button"
+                disabled={exists}
+                className={cn(
+                  "w-full flex items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+                  exists ? "opacity-40 cursor-not-allowed" : "hover:bg-accent cursor-pointer",
+                )}
+                onClick={() => { onAdd(createFieldFromTemplate(t)); setOpen(false); }}
+              >
+                <t.icon className={cn("h-3.5 w-3.5 mt-0.5 shrink-0", t.color)} />
+                <div className="min-w-0">
+                  <div className="text-xs font-medium">{t.label}</div>
+                  <div className="text-[10px] text-muted-foreground leading-snug">{t.description}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+};
+
+// =============================================================================
+// Section group label — used inside canvas
+// =============================================================================
+
+const SectionLabel: React.FC<{ children: React.ReactNode; className?: string; right?: React.ReactNode }> = ({ children, className, right }) => (
+  <div className={cn("flex items-center justify-between gap-3 py-1", className)}>
+    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{children}</span>
+    {right}
+  </div>
+);
+
+// =============================================================================
+// Canvas (center pane) — the field's identity + content
+// =============================================================================
+
+const FieldCanvas: React.FC<{
+  resolution: Resolution;
+  structure: SchemaSection[];
+  axes: AxesBlock;
+  onUpdateField: (update: Partial<AdvancedSchemeField>) => void;
+  onSelectNode: (id: string | null) => void;
+  onAddNested: (field?: AdvancedSchemeField) => void;
+  onRemoveField: () => void;
+  disabled: boolean;
+}> = ({ resolution, structure, axes, onUpdateField, onSelectNode, onAddNested, onRemoveField, disabled }) => {
+  if (resolution.kind === "none") return <EmptyCanvas />;
+  if (resolution.kind === "section") return <SectionCanvas section={resolution.section} />;
+
+  const { field, section, fieldPath, ancestors } = resolution;
+  const SectIcon = SECTION_META[section.name]?.icon || FileText;
+  const sectMeta = SECTION_META[section.name];
+
+  return (
+    <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="max-w-[860px] mx-auto px-8 py-6">
+        {/* Breadcrumb */}
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-4">
+          <button
+            type="button"
+            onClick={() => onSelectNode(section.id)}
+            className="flex items-center gap-1 hover:text-foreground transition-colors"
+          >
+            <SectIcon className={cn("h-3 w-3", sectMeta?.color)} />
+            <span>{sectMeta?.title || section.name}</span>
+          </button>
+          {ancestors.map(a => (
+            <React.Fragment key={a.id}>
+              <ChevronRight className="h-3 w-3 opacity-50" />
+              <button
+                type="button"
+                onClick={() => onSelectNode(a.id)}
+                className="hover:text-foreground transition-colors font-mono"
+              >
+                {a.name}
+              </button>
+            </React.Fragment>
+          ))}
+          <ChevronRight className="h-3 w-3 opacity-50" />
+          <span className="font-mono text-foreground/80">{field.name}</span>
+        </div>
+
+        {/* Identity row: name + type */}
+        <div className="flex items-start gap-3 mb-4">
+          <Input
+            value={field.name}
+            onChange={(e) => onUpdateField({ name: e.target.value })}
+            placeholder="field_name"
+            disabled={disabled}
+            className={cn(
+              "flex-1 h-11 text-xl font-mono border-0 focus-visible:ring-0 shadow-none px-2 -mx-2",
+              "bg-transparent hover:bg-muted/30 focus-visible:bg-muted/40 transition-colors",
+              !isValidFieldName(field.name) && field.name && "text-amber-600",
+            )}
+          />
+          <div className="shrink-0">
+            <DataTypePicker
+              value={getTypeValue(field)}
+              onValueChange={(value) => onUpdateField(computeTypeChangeUpdate(field, value))}
+              disabled={disabled || !!field.ref}
+              align="end"
+            />
+          </div>
+        </div>
+
+        {/* Validation hint */}
+        {field.name && !isValidFieldName(field.name) && (
+          <div className="text-[11px] text-amber-600 mb-3 -mt-2 px-0.5">
+            Use only letters, numbers, and underscores (start with a letter).
+          </div>
+        )}
+
+        {/* Description (the prompt) */}
+        <div className="space-y-1.5 mb-6">
+          <SectionLabel>Description (LLM prompt)</SectionLabel>
+          <Textarea
+            value={field.description || ""}
+            onChange={(e) => onUpdateField({ description: e.target.value })}
+            placeholder={field.ref
+              ? "Override the inherited description, or leave blank to keep the target's."
+              : "What should the model extract here? Be specific. Mention edge cases. This text is the LLM's only prompt for this field."}
+            rows={4}
+            disabled={disabled}
+            className="text-sm resize-y min-h-[88px] leading-relaxed"
+          />
+        </div>
+
+        {/* Axis reference — bind this field to one of the schema's axes so
+            formulas can aggregate / validate axis-kind rules against it. */}
+        {(field.type === "string" || field.type === "number" || field.type === "integer") && (
+          <div className="space-y-1.5 mb-6">
+            <SectionLabel>Axis reference (optional)</SectionLabel>
+            <div className="flex items-center gap-2">
+              <Select
+                value={(field as any).xAxis ?? "__none__"}
+                onValueChange={(v) =>
+                  onUpdateField({ xAxis: v === "__none__" ? undefined : v } as any)
+                }
+                disabled={disabled}
+              >
+                <SelectTrigger className="h-8 text-xs flex-1">
+                  <SelectValue placeholder="No axis bound" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__" className="text-xs italic text-muted-foreground">
+                    No axis
+                  </SelectItem>
+                  {Object.entries(axes).map(([name, axis]) => (
+                    <SelectItem key={name} value={name} className="text-xs">
+                      <span className="font-mono">{name}</span>
+                      <span className="text-muted-foreground ml-2">
+                        · {AXIS_KIND_LABELS[axis.kind]}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {Object.keys(axes).length === 0 && (
+                <span className="text-[10px] text-muted-foreground italic">
+                  Declare axes in the top bar first.
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Type-specific surface */}
+        <FieldTypeSurface
+          field={field}
+          section={section}
+          fieldPath={fieldPath}
+          structure={structure}
+          onUpdateField={onUpdateField}
+          onSelectNode={onSelectNode}
+          onAddNested={onAddNested}
+          disabled={disabled}
+        />
+      </div>
+    </div>
+  );
+};
+
+const EmptyCanvas: React.FC = () => (
+  <div className="flex-1 min-h-0 flex flex-col items-center justify-center text-center px-6">
+    <FileJson className="h-10 w-10 text-muted-foreground/30 mb-4" />
+    <p className="text-sm text-muted-foreground">Select a section or field on the left to configure it.</p>
+  </div>
+);
+
+const SectionCanvas: React.FC<{ section: SchemaSection }> = ({ section }) => {
+  const meta = SECTION_META[section.name] || { icon: FileText, color: "text-muted-foreground", title: section.name, sub: "" };
+  const Icon = meta.icon;
+  return (
+    <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="max-w-[860px] mx-auto px-8 py-6">
+        <div className="flex items-center gap-3 mb-2">
+          <Icon className={cn("h-6 w-6", meta.color)} />
+          <h2 className="text-2xl font-semibold tracking-tight">{meta.title}</h2>
+        </div>
+        <p className="text-sm text-muted-foreground mb-6 leading-relaxed">{meta.sub}</p>
+        <div className="space-y-1 text-sm">
+          <div className="flex items-center justify-between py-2 border-b">
+            <span className="text-muted-foreground">Fields</span>
+            <span className="font-medium tabular-nums">{section.fields.length}</span>
+          </div>
+          <div className="flex items-center justify-between py-2 border-b">
+            <span className="text-muted-foreground">Required</span>
+            <span className="font-medium tabular-nums">{section.fields.filter(f => f.required).length}</span>
+          </div>
+        </div>
+        {section.fields.length === 0 && (
+          <p className="mt-6 text-sm text-muted-foreground italic">
+            No fields yet. Add one from the outline on the left.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// =============================================================================
+// Type-specific canvas surfaces
+// =============================================================================
+
+const FieldTypeSurface: React.FC<{
+  field: AdvancedSchemeField;
+  section: SchemaSection;
+  fieldPath: string[];
+  structure: SchemaSection[];
+  onUpdateField: (update: Partial<AdvancedSchemeField>) => void;
+  onSelectNode: (id: string | null) => void;
+  onAddNested: (field?: AdvancedSchemeField) => void;
+  disabled: boolean;
+}> = ({ field, section, fieldPath, structure, onUpdateField, onSelectNode, onAddNested, disabled }) => {
+  // Ref'd fields inherit type-specific config from target — show explanation only
+  if (field.ref) {
+    return (
+      <div className="rounded-md border border-cyan-200/70 dark:border-cyan-900/50 bg-cyan-50/30 dark:bg-cyan-950/15 px-4 py-3 text-[12px]">
+        <div className="flex items-center gap-1.5 text-cyan-700 dark:text-cyan-300 font-medium mb-1">
+          <Link2 className="h-3.5 w-3.5" /> Inherited from <code className="font-mono">{field.ref.target}</code>
+        </div>
+        <p className="text-muted-foreground leading-relaxed">
+          Type, allowed values, and entity vocabulary come from the target field. Description above is the only override.
+          Break the reference in the right rail to make this field independent.
+        </p>
+      </div>
+    );
+  }
+
+  // graph
+  if (field.type === "graph" && field.graphConfig) {
+    return (
+      <div className="-mx-2">
+        <GraphSchemaVisualEditor
+          field={field}
+          section={section}
+          disabled={disabled}
+          onFieldUpdate={onUpdateField}
+        />
+      </div>
+    );
+  }
+
+  // entity (scalar) and array_entity
+  if (field.type === "entity") {
+    return (
+      <EntityVocabularyBlock
+        ec={field.entityConfig}
+        onChange={(next) => onUpdateField({ entityConfig: next })}
+        disabled={disabled}
+      />
+    );
+  }
+  if (field.type === "array" && field.items?.type === "entity") {
+    return (
+      <EntityVocabularyBlock
+        ec={field.items.entityConfig}
+        onChange={(next) => onUpdateField({ items: { ...field.items!, entityConfig: next } })}
+        disabled={disabled}
+      />
+    );
+  }
+
+  // array_string_enum
+  if (field.type === "array" && field.items?.type === "string" && field.items.enum !== undefined) {
+    return (
+      <EnumLabelsBlock
+        items={field.items}
+        onChange={(items) => onUpdateField({ items })}
+        disabled={disabled}
+      />
+    );
+  }
+
+  // string with enum
+  if (field.type === "string" && Array.isArray(field.enum)) {
+    return (
+      <StringEnumBlock
+        values={field.enum}
+        onChange={(enumVals) => onUpdateField({ enum: enumVals })}
+        disabled={disabled}
+      />
+    );
+  }
+
+  // number / integer
+  if (field.type === "number" || field.type === "integer") {
+    return (
+      <NumberBoundsBlock
+        minimum={field.minimum} maximum={field.maximum}
+        onChange={(b) => onUpdateField(b)}
+        disabled={disabled}
+      />
+    );
+  }
+
+  // object / array_object — children outline
+  if (fieldCanHostChildren(field)) {
+    const children = getChildren(field) ?? [];
+    return (
+      <NestedChildrenList
+        parent={field}
+        children={children}
+        onSelect={onSelectNode}
+        onAdd={onAddNested}
+        onUpdate={(childId, update) => {
+          const next = applyAtPath(children, [childId], update);
+          if (field.type === "object") onUpdateField({ properties: next });
+          else if (field.type === "array" && field.items?.type === "object") onUpdateField({ items: { ...field.items, properties: next } });
+        }}
+        onRemove={(childId) => {
+          const next = children.filter(c => c.id !== childId);
+          if (field.type === "object") onUpdateField({ properties: next });
+          else if (field.type === "array" && field.items?.type === "object") onUpdateField({ items: { ...field.items, properties: next } });
+        }}
+        disabled={disabled}
+      />
+    );
+  }
+
+  // Plain string — option to convert to enum
+  if (field.type === "string") {
+    return (
+      <div className="rounded-md border border-dashed border-border/70 px-4 py-4 text-[11px] text-muted-foreground">
+        Free-form text. Want to restrict to a closed list?{" "}
+        <button
+          type="button"
+          onClick={() => onUpdateField({ enum: [""] })}
+          disabled={disabled}
+          className="text-primary hover:underline disabled:opacity-50"
+        >
+          Add allowed values
+        </button>
+        .
+      </div>
+    );
+  }
+
+  // boolean / array_string / array_number — nothing extra
+  return null;
+};
+
+// =============================================================================
+// Entity vocabulary block (replaces the cyan box)
+// =============================================================================
+
+const EntityVocabularyBlock: React.FC<{
+  ec?: EntityFieldConfig;
+  onChange: (next: EntityFieldConfig) => void;
+  disabled: boolean;
+}> = ({ ec, onChange, disabled }) => {
+  const cfg: EntityFieldConfig = ec ?? { entity_type: "", typeConstrained: true };
+  const update = (partial: Partial<EntityFieldConfig>) => onChange({ ...cfg, ...partial });
+
+  const allTypes: string[] = cfg.entity_type ? [cfg.entity_type, ...(cfg.alternate_types || [])] : (cfg.alternate_types || []);
+  const onTypesChange = (next: string[]) => {
+    if (next.length === 0) update({ entity_type: "", alternate_types: undefined });
+    else update({ entity_type: next[0], alternate_types: next.length > 1 ? next.slice(1) : undefined });
+  };
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <SectionLabel right={<AtSign className="h-3 w-3 text-cyan-600" />}>Entity vocabulary</SectionLabel>
+        <p className="text-[11px] text-muted-foreground -mt-1 mb-3">
+          The kinds of entities this field carries. First tag = primary type (used as the canon resolution key). Add more if the model can pick from several.
+        </p>
+        <TagInput
+          tags={allTypes}
+          onChange={onTypesChange}
+          presets={["PERSON", "ORGANIZATION", "LOCATION", "EVENT", "CONCEPT"]}
+          placeholder="Type a type and press Enter (e.g. Konzern, Person, Behörde)"
+          disabled={disabled}
+          label=""
+        />
+      </div>
+
+      <div>
+        <SectionLabel>Allowed names <span className="lowercase text-muted-foreground/70 normal-case font-normal tracking-normal text-[11px]">— optional</span></SectionLabel>
+        <p className="text-[11px] text-muted-foreground -mt-1 mb-3">
+          Closed list anchors the model to known names. Leave empty for open extraction; canon resolution still merges duplicates after curation.
+        </p>
+        <TagInput
+          tags={cfg.enum || []}
+          onChange={(names) => update({ enum: names.length > 0 ? names : undefined })}
+          presets={[]}
+          placeholder="Type an allowed name and press Enter"
+          disabled={disabled}
+          label=""
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-4 py-2 border-t">
+        <div className="min-w-0">
+          <Label className="text-xs font-medium">Strict type</Label>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            On: the model must pick a declared type. Off: it may emit something else (useful as an audit signal for discovering new entity kinds).
+          </p>
+        </div>
+        <Switch
+          checked={cfg.typeConstrained !== false}
+          onCheckedChange={(checked) => update({ typeConstrained: checked })}
+          disabled={disabled}
+        />
+      </div>
+
+      <div className="flex items-center gap-5 pt-2 border-t">
+        <div className="flex items-center gap-2">
+          <Label className="text-[11px] font-medium text-muted-foreground">Color</Label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="h-5 w-5 rounded-full border border-border shadow-sm hover:scale-110 transition-transform"
+                style={{ backgroundColor: cfg.color || resolveEntityColor(cfg.entity_type || "DEFAULT") }}
+                title="Pick color"
+                disabled={disabled}
+              />
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-3">
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Color for {cfg.entity_type || "entity"}</Label>
+                <HexColorPicker
+                  color={cfg.color || resolveEntityColor(cfg.entity_type || "DEFAULT")}
+                  onChange={(c) => update({ color: c })}
+                />
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={cfg.color || ""}
+                    onChange={(e) => { if (/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) update({ color: e.target.value }); }}
+                    className="h-7 text-xs font-mono"
+                    placeholder="#000000"
+                  />
+                  <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => update({ color: undefined })}>
+                    Reset
+                  </Button>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+        <div className="flex items-center gap-2">
+          <Label className="text-[11px] font-medium text-muted-foreground">Icon</Label>
+          {cfg.icon ? <IconRenderer icon={cfg.icon} className="h-4 w-4" /> : <div className="h-4 w-4 rounded bg-muted" />}
+          <IconPickerDialog onIconSelect={(iconKey) => update({ icon: iconKey })} defaultIcon={cfg.icon} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// =============================================================================
+// Enum / number / nested children blocks
+// =============================================================================
+
+const StringEnumBlock: React.FC<{
+  values: string[];
+  onChange: (values: string[]) => void;
+  disabled: boolean;
+}> = ({ values, onChange, disabled }) => (
+  <div>
+    <SectionLabel>Allowed values</SectionLabel>
+    <p className="text-[11px] text-muted-foreground -mt-1 mb-3">
+      The model is restricted to one of these values. Empty list = remove the constraint.
+    </p>
+    <TagInput
+      tags={values}
+      onChange={(next) => onChange(next)}
+      presets={[]}
+      placeholder="Type a value and press Enter"
+      disabled={disabled}
+      label=""
+    />
+    {values.length === 0 && (
+      <button
+        type="button"
+        onClick={() => onChange([])}
+        disabled={disabled}
+        className="mt-2 text-[11px] text-muted-foreground hover:text-foreground"
+      >
+        Remove constraint (back to free text)
+      </button>
+    )}
+  </div>
+);
+
+const EnumLabelsBlock: React.FC<{
+  items: NonNullable<AdvancedSchemeField["items"]>;
+  onChange: (items: NonNullable<AdvancedSchemeField["items"]>) => void;
+  disabled: boolean;
+}> = ({ items, onChange, disabled }) => {
+  const enumVals = items.enum || [];
+  return (
+    <div className="space-y-5">
+      <div>
+        <SectionLabel>Allowed labels</SectionLabel>
+        <p className="text-[11px] text-muted-foreground -mt-1 mb-3">
+          The model picks zero or more labels from this list per item.
+        </p>
+        <TagInput
+          tags={enumVals}
+          onChange={(next) => onChange({ ...items, enum: next })}
+          presets={[]}
+          placeholder="Type a label and press Enter"
+          disabled={disabled}
+          label=""
+        />
+      </div>
+      <div className="flex items-center justify-between gap-4 py-2 border-t">
+        <div>
+          <Label className="text-xs font-medium">Include &ldquo;Other&rdquo; fallback</Label>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Lets the model record an unmatched label rather than dropping it.</p>
+        </div>
+        <Switch
+          checked={items.includeOther ?? false}
+          onCheckedChange={(checked) => onChange({ ...items, includeOther: checked })}
+          disabled={disabled}
+        />
+      </div>
+      {enumVals.length === 0 && (
+        <div className="flex items-start gap-1.5 text-[11px] text-amber-600">
+          <AlertTriangle className="h-3 w-3 mt-0.5" />
+          Add at least one label, otherwise the model has no valid choices.
+        </div>
+      )}
+    </div>
+  );
+};
+
+const NumberBoundsBlock: React.FC<{
+  minimum?: number;
+  maximum?: number;
+  onChange: (b: { minimum?: number; maximum?: number }) => void;
+  disabled: boolean;
+}> = ({ minimum, maximum, onChange, disabled }) => (
+  <div>
+    <SectionLabel>Value range</SectionLabel>
+    <p className="text-[11px] text-muted-foreground -mt-1 mb-3">Optional bounds. Leave empty for unconstrained.</p>
+    <div className="grid grid-cols-2 gap-3 max-w-md">
+      <div className="space-y-1.5">
+        <Label className="text-[11px] font-medium text-muted-foreground">Minimum</Label>
+        <Input
+          type="number"
+          value={minimum ?? ""}
+          onChange={(e) => {
+            const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
+            onChange({ minimum: isNaN(v as number) ? undefined : v, maximum });
+          }}
+          placeholder="—"
+          disabled={disabled}
+          className="h-8 text-sm"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-[11px] font-medium text-muted-foreground">Maximum</Label>
+        <Input
+          type="number"
+          value={maximum ?? ""}
+          onChange={(e) => {
+            const v = e.target.value === "" ? undefined : parseFloat(e.target.value);
+            onChange({ minimum, maximum: isNaN(v as number) ? undefined : v });
+          }}
+          placeholder="—"
+          disabled={disabled}
+          className="h-8 text-sm"
+        />
+      </div>
+    </div>
+  </div>
+);
+
+// Children outline rendered inside the canvas — clicking a row selects that
+// nested field (the canvas re-renders for it). No nested cards.
+const NestedChildrenList: React.FC<{
+  parent: AdvancedSchemeField;
+  children: AdvancedSchemeField[];
+  onSelect: (id: string) => void;
+  onAdd: (field?: AdvancedSchemeField) => void;
+  onUpdate: (childId: string, update: Partial<AdvancedSchemeField>) => void;
+  onRemove: (childId: string) => void;
+  disabled: boolean;
+}> = ({ parent, children, onSelect, onAdd, onUpdate, onRemove, disabled }) => {
+  const isArrayObj = parent.type === "array" && parent.items?.type === "object";
+  return (
+    <div>
+      <SectionLabel right={<span className="text-[10px] text-muted-foreground tabular-nums">{children.length} {children.length === 1 ? "property" : "properties"}</span>}>
+        {isArrayObj ? `Each "${parent.name}" item has` : "Properties"}
+      </SectionLabel>
+      <p className="text-[11px] text-muted-foreground -mt-1 mb-3">
+        {isArrayObj
+          ? "Click a property to configure it on its own. The model emits one row per item, each filled with these properties."
+          : "Click a property to configure it on its own."}
+      </p>
+      {children.length === 0 ? (
+        <div className="rounded-md border border-dashed border-border/70 px-4 py-6 text-[12px] text-muted-foreground text-center">
+          No properties yet.
+        </div>
+      ) : (
+        <div className="rounded-md border divide-y">
+          {children.map(child => (
+            <NestedChildRow
+              key={child.id}
+              child={child}
+              onSelect={() => onSelect(child.id)}
+              onUpdate={(u) => onUpdate(child.id, u)}
+              onRemove={() => onRemove(child.id)}
+              disabled={disabled}
+            />
+          ))}
+        </div>
+      )}
+      {!disabled && (
+        <div className="mt-2 flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => onAdd()}
+            className="flex items-center gap-1.5 h-7 px-3 rounded-md text-[12px] text-foreground/80 hover:bg-muted/50 transition-colors"
+          >
+            <PlusCircle className="h-3.5 w-3.5" />
+            Add property
+          </button>
+          {NESTED_FIELD_SUGGESTIONS.map(s => {
+            const exists = children.some(c => c.name === s.field.name);
+            const needsTimestamp = s.key === "end_timestamp" && !children.some(c => c.name === "timestamp");
+            const isDisabled = exists || needsTimestamp;
+            return (
+              <button
+                key={s.key}
+                type="button"
+                disabled={isDisabled}
+                onClick={() => onAdd({ ...s.field, id: nanoid() })}
+                className={cn(
+                  "flex items-center gap-1 h-7 px-2 rounded-md text-[11px] transition-colors",
+                  isDisabled ? "opacity-30" : "hover:bg-muted/50 text-foreground/80",
+                )}
+                title={exists ? `${s.label} already exists` : needsTimestamp ? "Add a timestamp first" : `Add ${s.label.toLowerCase()}`}
+              >
+                <s.icon className={cn("h-3 w-3", s.color)} />
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const NestedChildRow: React.FC<{
+  child: AdvancedSchemeField;
+  onSelect: () => void;
+  onUpdate: (update: Partial<AdvancedSchemeField>) => void;
+  onRemove: () => void;
+  disabled: boolean;
+}> = ({ child, onSelect, onUpdate, onRemove, disabled }) => {
+  const sub = child.description?.trim() || (child.ref ? `→ ${child.ref.target}` : "");
+  return (
+    <div
+      className="group flex items-center gap-3 px-3 py-2 hover:bg-muted/30 cursor-pointer transition-colors"
+      onClick={onSelect}
+    >
+      <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full font-mono shrink-0", getTypeChipClass(child))}>
+        {child.ref && <Link2 className="inline h-2.5 w-2.5 mr-0.5" />}
+        {getCompactTypeLabel(child)}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className={cn("text-sm font-mono truncate", !isValidFieldName(child.name) && child.name && "text-amber-600")}>
+            {child.name || <span className="italic text-muted-foreground">unnamed</span>}
+          </span>
+          {child.required && <span className="h-1 w-1 rounded-full bg-red-500" title="Required" />}
+          {child.justification?.enabled && <span className="h-1 w-1 rounded-full bg-green-500" title="Justification on" />}
+        </div>
+        {sub && <p className="text-[11px] text-muted-foreground truncate mt-0.5">{sub}</p>}
+      </div>
+      <Checkbox
+        checked={child.required ?? false}
+        onCheckedChange={(checked) => onUpdate({ required: !!checked })}
+        onClick={(e) => e.stopPropagation()}
+        disabled={disabled}
+        className="h-3.5 w-3.5 shrink-0"
+        title="Required"
+      />
+      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/60 shrink-0" />
+      {!disabled && (
+        <button
+          type="button"
+          className="h-6 w-6 opacity-0 group-hover:opacity-100 flex items-center justify-center text-muted-foreground hover:text-destructive transition-opacity shrink-0"
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      )}
+    </div>
+  );
+};
+
+// =============================================================================
+// Aux panel (right rail) — required, ref, justification
+// =============================================================================
+
+const AuxPanel: React.FC<{
+  resolution: Resolution;
+  onUpdateField: (update: Partial<AdvancedSchemeField>) => void;
+  onRemoveField: () => void;
+  disabled: boolean;
+}> = ({ resolution, onUpdateField, onRemoveField, disabled }) => {
+  if (resolution.kind !== "field") {
+    return (
+      <div className="h-full flex flex-col">
+        <div className="h-10 flex items-center px-4 border-b">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Settings</span>
+        </div>
+        <div className="flex-1 flex items-center justify-center text-center px-6 text-[12px] text-muted-foreground">
+          {resolution.kind === "section"
+            ? "Select a field to configure its settings."
+            : "No selection."}
+        </div>
+      </div>
+    );
+  }
+  const { field, section } = resolution;
+  return (
+    <div className="h-full flex flex-col min-h-0">
+      <div className="h-10 flex items-center px-4 border-b shrink-0">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex-1">Settings</span>
+        {!disabled && (
+          <button
+            type="button"
+            onClick={onRemoveField}
+            className="h-6 px-2 flex items-center gap-1 text-[10px] text-muted-foreground hover:text-destructive rounded-md transition-colors"
+          >
+            <Trash2 className="h-3 w-3" />
+            Remove
+          </button>
+        )}
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="px-5 py-4 space-y-6">
+          {/* Required */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <Label className="text-xs font-semibold">Required</Label>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                The model must produce a value. Use sparingly — overly required schemas hallucinate more.
+              </p>
+            </div>
+            <Switch
+              checked={field.required ?? false}
+              onCheckedChange={(checked) => onUpdateField({ required: !!checked })}
+              disabled={disabled}
+            />
+          </div>
+
+          <div className="border-t" />
+
+          {/* Inheritance */}
+          <RefRow field={field} section={section} disabled={disabled} onFieldUpdate={onUpdateField} />
+
+          <div className="border-t" />
+
+          {/* Justification */}
+          <JustificationPanel field={field} disabled={disabled} onUpdateField={onUpdateField} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// =============================================================================
+// RefRow — restyled, no colored bg
+// =============================================================================
+
+const RefRow: React.FC<{
+  field: AdvancedSchemeField;
+  section: SchemaSection;
+  disabled: boolean;
+  onFieldUpdate: (update: Partial<AdvancedSchemeField>) => void;
+}> = ({ field, section, disabled, onFieldUpdate }) => {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const candidates = (section.fields || [])
+    .filter(f => f.id !== field.id && f.name)
+    .sort((a, b) => {
+      const score = (f: AdvancedSchemeField) =>
+        f.type === "entity" || (f.type === "array" && f.items?.type === "entity")
+          ? 0
+          : f.type === "graph" ? 2 : 1;
+      return score(a) - score(b);
+    });
+
+  if (field.ref) {
+    return (
+      <div>
+        <SectionLabel>Inheritance</SectionLabel>
+        <div className="flex items-center gap-2 mt-1">
+          <Link2 className="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-400 shrink-0" />
+          <span className="text-xs flex-1 truncate">
+            <span className="text-muted-foreground">references </span>
+            <code className="text-[11px] bg-muted px-1 py-0.5 rounded font-mono">{field.ref.target}</code>
+          </span>
+          {!disabled && (
+            <button
+              type="button"
+              onClick={() => onFieldUpdate({ ref: undefined })}
+              className="h-6 px-2 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground rounded-md hover:bg-muted/50 transition-colors"
+              title="Break reference — restore independent type configuration"
+            >
+              <Unlink className="h-3 w-3" />
+              Break
+            </button>
+          )}
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-1.5">
+          Type, allowed values, and entity vocabulary inherited from the target. Description is the only override.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <SectionLabel>Inheritance</SectionLabel>
+      <p className="text-[11px] text-muted-foreground -mt-1 mb-2">
+        Reuse another top-level field's vocabulary instead of redefining it. Keeps the canon clean.
+      </p>
+      {disabled || candidates.length === 0 ? (
+        <div className="text-[11px] text-muted-foreground italic">
+          {disabled ? "—" : "No top-level fields to reference yet."}
+        </div>
+      ) : (
+        <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button" variant="outline" size="sm"
+              className="h-7 text-[11px] gap-1 border-dashed text-muted-foreground hover:text-foreground"
+            >
+              <Link2 className="h-3 w-3" />
+              Use vocabulary from another field
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[280px] p-1" align="start">
+            <div className="space-y-0.5 max-h-[260px] overflow-y-auto">
+              {candidates.map(cand => (
+                <button
+                  key={cand.id}
+                  type="button"
+                  className="w-full flex items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent transition-colors"
+                  onClick={() => { onFieldUpdate({ ref: { target: cand.name } }); setPickerOpen(false); }}
+                >
+                  <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full font-mono shrink-0 mt-0.5", getTypeChipClass(cand))}>
+                    {getCompactTypeLabel(cand)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-medium font-mono">{cand.name}</div>
+                    {cand.description && (
+                      <div className="text-[10px] text-muted-foreground line-clamp-2">{cand.description}</div>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+      )}
+    </div>
+  );
+};
+
+// =============================================================================
+// Justification panel
+// =============================================================================
+
+const JustificationPanel: React.FC<{
+  field: AdvancedSchemeField;
+  disabled: boolean;
+  onUpdateField: (update: Partial<AdvancedSchemeField>) => void;
+}> = ({ field, disabled, onUpdateField }) => {
+  const j = field.justification;
+  const enabled = !!j?.enabled;
+  const rigor = (j?.rigor_level || "standard") as "minimal" | "standard" | "thorough" | "exhaustive";
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 mb-1.5">
+        <SectionLabel className="py-0">Justification</SectionLabel>
+        <Switch
+          checked={enabled}
+          onCheckedChange={(checked) => {
+            if (checked) {
+              const level = j?.rigor_level || "standard";
+              onUpdateField({
+                justification: {
+                  enabled: true,
+                  rigor_level: level as any,
+                  custom_prompt: j?.custom_prompt || RIGOR_TEMPLATE(level as any),
+                } as any,
+              });
+            } else {
+              onUpdateField({ justification: { ...(j as any), enabled: false } as any });
+            }
+          }}
+          disabled={disabled}
+        />
+      </div>
+      <p className="text-[11px] text-muted-foreground mb-3">
+        Have the model explain itself with quotations. For array&lt;object&gt; fields the explanation lands inside each row; for scalars it lands as a sibling field.
+      </p>
+
+      {enabled && (
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <Label className="text-[11px] font-medium text-muted-foreground">Evidence rigor</Label>
+            <Select
+              value={rigor}
+              onValueChange={(value) => {
+                const level = value as "minimal" | "standard" | "thorough" | "exhaustive";
+                const wasDefault = isCustomPromptDefault(j?.custom_prompt, j?.rigor_level);
+                onUpdateField({
+                  justification: {
+                    enabled: true,
+                    rigor_level: level,
+                    custom_prompt: wasDefault ? RIGOR_TEMPLATE(level) : j?.custom_prompt,
+                  } as any,
+                });
+              }}
+              disabled={disabled}
+            >
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="minimal" className="text-xs">Minimal · 1-2 snippets</SelectItem>
+                <SelectItem value="standard" className="text-xs">Standard · 3-5 snippets</SelectItem>
+                <SelectItem value="thorough" className="text-xs">Thorough · 5-8 snippets</SelectItem>
+                <SelectItem value="exhaustive" className="text-xs">Exhaustive · 8+ snippets</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-[11px] font-medium text-muted-foreground">Custom prompt</Label>
+            <Textarea
+              value={j?.custom_prompt || ""}
+              onChange={(e) => onUpdateField({ justification: { ...(j as any), enabled: true, custom_prompt: e.target.value } as any })}
+              placeholder="What should the model explain?"
+              rows={4}
+              disabled={disabled}
+              className="text-[12px] resize-y"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// =============================================================================
+// Main editor
+// =============================================================================
 
 interface AnnotationSchemaEditorProps {
   show: boolean;
   onClose: () => void;
   schemeId?: number;
-  mode: 'create' | 'edit' | 'watch';
+  mode: "create" | "edit" | "watch";
   defaultValues?: AnnotationSchemaRead | null;
 }
 
 const defaultSchemeFormData: AnnotationSchemaFormData = {
-  name: '',
-  description: '',
-  instructions: '',
-  structure: [{
-      id: nanoid(),
-      name: 'document',
-      fields: []
-  }],
+  name: "",
+  description: "",
+  instructions: "",
+  structure: [{ id: nanoid(), name: "document", fields: [] }],
 };
 
-// --- Main Editor Component ---
 const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
-  show,
-  onClose,
-  schemeId,
-  mode,
-  defaultValues = null,
+  show, onClose, schemeId, mode, defaultValues = null,
 }) => {
   const { activeInfospace } = useInfospaceStore();
   const { createSchema, updateScheme, isLoadingSchemas, error: apiError, loadSchemas } = useAnnotationSystem();
-  const { showSchemaBuilderTutorial, toggleSchemaBuilderTutorial } = useTutorialStore();
   const { toast } = useToast();
 
   const [formData, setFormData] = useState<AnnotationSchemaFormData>(defaultSchemeFormData);
   const [formErrors, setFormErrors] = useState<Record<string, string | string[]>>({});
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [navExpanded, setNavExpanded] = useState<Set<string>>(new Set());
 
-  // --- Structure Manipulation Handlers ---
-  const handleAddSection = (sectionName: SchemaSection['name']) => {
-      if (formData.structure.some(s => s.name === sectionName)) {
-          toast({ title: "Section exists", description: `A section for '${sectionName}' already exists.`, variant: "default" });
-          return;
-      }
-      const newSection: SchemaSection = {
-          id: nanoid(),
-          name: sectionName,
-          fields: []
-      };
-      setFormData(prev => ({
-          ...prev,
-          structure: [...prev.structure, newSection]
-      }));
-      setSelectedNodeId(newSection.id);
+  const isDisabled = isLoadingSchemas || mode === "watch";
+  const resolution = useMemo(() => resolveSelection(formData.structure, selectedNodeId), [formData.structure, selectedNodeId]);
+
+  // ---- mutators ----
+
+  const updateSelectedField = (update: Partial<AdvancedSchemeField>) => {
+    if (resolution.kind !== "field") return;
+    setFormData(prev => ({
+      ...prev,
+      structure: updateFieldAtPath(prev.structure, resolution.sectionId, resolution.fieldPath, update),
+    }));
+  };
+
+  const handleAddSection = (sectionName: SchemaSection["name"]) => {
+    if (formData.structure.some(s => s.name === sectionName)) {
+      toast({ title: "Section exists", description: `A section for '${sectionName}' already exists.` });
+      return;
+    }
+    const newSection: SchemaSection = { id: nanoid(), name: sectionName, fields: [] };
+    setFormData(prev => ({ ...prev, structure: [...prev.structure, newSection] }));
+    setSelectedNodeId(newSection.id);
   };
 
   const handleRemoveSection = (sectionId: string) => {
+    setFormData(prev => ({ ...prev, structure: prev.structure.filter(s => s.id !== sectionId) }));
+    setSelectedNodeId(null);
+  };
+
+  const handleAddTopLevelField = (sectionId: string, field?: AdvancedSchemeField) => {
+    const newField: AdvancedSchemeField = field ?? { id: nanoid(), name: `new_field_${nanoid(4)}`, type: "string", required: false };
     setFormData(prev => ({
-        ...prev,
-        structure: prev.structure.filter(s => s.id !== sectionId)
+      ...prev,
+      structure: addPropertyAtPath(prev.structure, sectionId, [], newField),
     }));
-    // If the selected node was in the removed section, deselect it
-    if(selectedNodeId === sectionId || formData.structure.find(s => s.id === sectionId)?.fields.some(f => f.id === selectedNodeId)) {
-        setSelectedNodeId(null);
+    setSelectedNodeId(newField.id);
+  };
+
+  const handleAddNestedField = (field?: AdvancedSchemeField) => {
+    if (resolution.kind !== "field") return;
+    const newField: AdvancedSchemeField = field ?? { id: nanoid(), name: `property_${nanoid(4)}`, type: "string", required: false };
+    setFormData(prev => ({
+      ...prev,
+      structure: addPropertyAtPath(prev.structure, resolution.sectionId, resolution.fieldPath, newField),
+    }));
+    setSelectedNodeId(newField.id);
+    setNavExpanded(prev => {
+      const next = new Set(prev);
+      resolution.fieldPath.forEach(id => next.add(id));
+      return next;
+    });
+  };
+
+  const handleRemoveSelectedField = () => {
+    if (resolution.kind !== "field") return;
+    setFormData(prev => ({
+      ...prev,
+      structure: removeFieldAtPath(prev.structure, resolution.sectionId, resolution.fieldPath),
+    }));
+    setSelectedNodeId(resolution.fieldPath.length > 1 ? resolution.fieldPath[resolution.fieldPath.length - 2] : null);
+  };
+
+  const removeFieldByPath = (sectionId: string, path: string[]) => {
+    setFormData(prev => ({
+      ...prev,
+      structure: removeFieldAtPath(prev.structure, sectionId, path),
+    }));
+    if (selectedNodeId && path.includes(selectedNodeId)) {
+      setSelectedNodeId(path.length > 1 ? path[path.length - 2] : null);
     }
   };
 
-  const handleAddField = (sectionId: string) => {
-      const newField: AdvancedSchemeField = {
-          id: nanoid(),
-          name: `new_field_${nanoid(4)}`,
-          type: 'string',
-          required: false
-      };
-      setFormData(prev => ({
-          ...prev,
-          structure: prev.structure.map(s => 
-              s.id === sectionId ? { ...s, fields: [...s.fields, newField] } : s
-          )
-      }));
-      setSelectedNodeId(newField.id);
+  const toggleNavExpanded = (id: string) => {
+    setNavExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
-  const handleRemoveField = (sectionId: string, fieldId: string) => {
-      setFormData(prev => ({
-          ...prev,
-          structure: prev.structure.map(s => 
-              s.id === sectionId ? { ...s, fields: s.fields.filter(f => f.id !== fieldId) } : s
-          )
-      }));
-      if (selectedNodeId === fieldId) {
-          setSelectedNodeId(null);
-      }
-  };
+  // ---- init ----
 
-  // Adapt ClassificationSchemeRead to the new FormData structure
   useEffect(() => {
-    if (mode === 'create') {
-        const initialField = { id: nanoid(), name: 'summary', type: 'string' as JsonSchemaType, description: 'A summary of the document.', required: true };
-        const initialStructure = {
-            id: nanoid(),
-            name: 'document' as const,
-            fields: [ initialField ]
-        };
-        setFormData({
-            name: '',
-            description: '',
-            instructions: '',
-            structure: [initialStructure],
-        });
-        setSelectedNodeId(initialField.id); // Select the first field by default
-    } else if (mode === 'edit' || mode === 'watch') {
-        if (defaultValues) {
-            try {
-                const adaptedData = adaptSchemaReadToSchemaFormData(defaultValues);
-                setFormData(adaptedData);
-                // Select the first field if available
-                if (adaptedData.structure.length > 0 && adaptedData.structure[0].fields.length > 0) {
-                    setSelectedNodeId(adaptedData.structure[0].fields[0].id);
-                }
-            } catch (error) {
-                toast({ title: "Error", description: "Failed to load schema data for editing.", variant: "destructive" });
-                setFormData(defaultSchemeFormData);
-            }
-        } else {
-             setFormData(defaultSchemeFormData);
+    if (mode === "create") {
+      const initialField: AdvancedSchemeField = { id: nanoid(), name: "summary", type: "string", description: "A summary of the document.", required: true };
+      const initialStructure = { id: nanoid(), name: "document" as const, fields: [initialField] };
+      setFormData({ name: "", description: "", instructions: "", structure: [initialStructure] });
+      setSelectedNodeId(initialField.id);
+    } else if (mode === "edit" || mode === "watch") {
+      if (defaultValues) {
+        try {
+          const adapted = adaptSchemaReadToSchemaFormData(defaultValues);
+          setFormData(adapted);
+          if (adapted.structure[0]?.fields[0]) {
+            setSelectedNodeId(adapted.structure[0].fields[0].id);
+          }
+        } catch {
+          toast({ title: "Error", description: "Failed to load schema data for editing.", variant: "destructive" });
+          setFormData(defaultSchemeFormData);
         }
+      } else {
+        setFormData(defaultSchemeFormData);
+      }
     }
   }, [defaultValues, mode, toast]);
 
-  // Helper function to validate field names
-  const isValidFieldName = (name: string): boolean => {
-      // Only allow alphanumeric characters and underscores (Python-safe identifiers)
-      return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
+  // ---- validation & save ----
+
+  const validateForm = (): boolean => {
+    const errors: Record<string, string | string[]> = {};
+    let isValid = true;
+    if (!formData.name.trim()) { errors.name = "Schema name cannot be empty"; isValid = false; }
+    if (formData.structure.length === 0) {
+      errors.structure = "At least one section is required"; isValid = false;
+    } else if (formData.structure.every(s => s.fields.length === 0)) {
+      errors.structure = "At least one field in one section is required"; isValid = false;
+    } else {
+      for (const section of formData.structure) {
+        for (const f of section.fields) {
+          if (!f.name.trim()) { errors.structure = "All fields must have a name"; isValid = false; break; }
+        }
+        if (!isValid) break;
+      }
+    }
+    setFormErrors(errors);
+    return isValid;
   };
 
-
-
-  // Validation for the new structure
-  const validateForm = (): boolean => {
-      const errors: Record<string, string | string[]> = {};
-      let isValid = true;
-      
-      if (!formData.name.trim()) {
-          errors.name = "Scheme name cannot be empty";
-          isValid = false;
+  const collectMissingDescriptions = (
+    fields: AdvancedSchemeField[],
+    parentPath = "",
+  ): string[] => {
+    const missing: string[] = [];
+    for (const f of fields) {
+      const path = parentPath ? `${parentPath}.${f.name}` : f.name;
+      if (f.ref) continue;
+      const isSelfExplanatory =
+        f.type === "boolean"
+        || (f.type === "string" && Array.isArray(f.enum) && f.enum.length > 0)
+        || (f.type === "array" && f.items?.type === "string" && Array.isArray(f.items.enum) && f.items.enum.length > 0);
+      if (!isSelfExplanatory && !(f.description && f.description.trim())) {
+        missing.push(path);
       }
-      
-      if(formData.structure.length === 0) {
-          errors.structure = "At least one section is required";
-          isValid = false;
-      } else if (formData.structure.every(s => s.fields.length === 0)) {
-          errors.structure = "At least one field in one section is required";
-          isValid = false;
-      } else {
-          // Validate field names are not empty and don't contain special characters
-          for (const section of formData.structure) {
-              for (const field of section.fields) {
-                  if (!field.name.trim()) {
-                      errors.structure = "All fields must have a name";
-                      isValid = false;
-                      break;
-                  }
-
-              }
-              if (!isValid) break;
-          }
-      }
-      
-      setFormErrors(errors);
-      return isValid;
+      if (f.properties) missing.push(...collectMissingDescriptions(f.properties, path));
+      if (f.items?.properties) missing.push(...collectMissingDescriptions(f.items.properties, `${path}[*]`));
+    }
+    return missing;
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
-      event.preventDefault();
-      const isValid = validateForm();
-      
-      if (!activeInfospace?.id || mode === 'watch' || !isValid) {
-          return;
-      }
+    event.preventDefault();
+    if (!validateForm() || !activeInfospace?.id || mode === "watch") return;
+    setFormErrors({});
 
-      setFormErrors({});
+    const missing = formData.structure.flatMap(s => collectMissingDescriptions(s.fields));
+    if (missing.length > 0) {
+      const head = missing.slice(0, 8).join(", ");
+      const more = missing.length - 8;
+      toast({
+        title: "Heads up — some fields have no description",
+        description: `LLMs use descriptions as prompts. Empty: ${head}${more > 0 ? ` (+${more} more)` : ""}`,
+      });
+    }
 
-      try {
-          let response: AnnotationSchemaRead | null = null;
-          
-          if (mode === 'create') {
-              response = await createSchema(formData);
-              toast({ title: "Schema Created", description: `Schema "${response?.name}" created successfully.`, variant: "default" });
-          } else if (mode === 'edit' && schemeId) {
-              const updateData: AnnotationSchemaUpdate = adaptSchemaFormDataToSchemaCreate(formData);
-              response = await updateScheme(schemeId, updateData); 
-              toast({ title: "Schema Updated", description: `Schema "${response?.name}" updated successfully.`, variant: "default" });
-          }
-          
-          await loadSchemas({ force: true }); // Force refresh schema list
-          onClose(); // Close dialog on success
-      } catch (error: any) { 
-          const errorMsg = error.message || apiError || "An unexpected error occurred while saving.";
-          setFormErrors({ submit: errorMsg });
-          toast({ title: "Save Failed", description: errorMsg, variant: "destructive" });
+    try {
+      let response: AnnotationSchemaRead | null = null;
+      if (mode === "create") {
+        response = await createSchema(formData);
+        toast({ title: "Schema Created", description: `Schema "${response?.name}" created successfully.` });
+      } else if (mode === "edit" && schemeId) {
+        const updateData: AnnotationSchemaUpdate = adaptSchemaFormDataToSchemaCreate(formData);
+        response = await updateScheme(schemeId, updateData);
+        toast({ title: "Schema Updated", description: `Schema "${response?.name}" updated successfully.` });
       }
+      await loadSchemas({ force: true });
+      onClose();
+    } catch (error: any) {
+      const errorMsg = error.message || apiError || "An unexpected error occurred while saving.";
+      setFormErrors({ submit: errorMsg });
+      toast({ title: "Save Failed", description: errorMsg, variant: "destructive" });
+    }
   };
 
-  const title = {
-    create: "Create New Annotation Schema",
-    edit: `Edit: ${formData.name || 'Schema'}`,
-    watch: `View: ${formData.name || 'Schema'}`
-  }[mode];
+  const isReady = !!formData.name && formData.structure.some(s => s.fields.length > 0);
 
   return (
-    <AnnotationSchemaCard
-      show={show}
-      onClose={onClose}
-      title={title}
-      mode={mode}
-      width="w-[95vw] max-w-[1600px]"
-      height="h-[90vh]"
-      className="border-2 border-schemes"
-    >
-        <form onSubmit={handleSubmit} className="flex flex-col h-full w-full overflow-hidden gap-4">
-          {/* TOP SECTION: Schema Details (left) + Structure (right) */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 flex-shrink-0">
-            {/* Left: Schema Details */}
-            <div className="bg-card/50 border rounded-lg p-4 lg:p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <FileText className="h-5 w-5 text-primary shrink-0" />
-                <h3 className="text-lg font-semibold">Schema Details</h3>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                      <Label htmlFor="scheme-name" className="text-sm font-medium">Name *</Label>
-                      <Input
-                          id="scheme-name"
-                          value={formData.name}
-                          onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                          placeholder="e.g., Article Analysis Schema"
-                          disabled={isLoadingSchemas || mode === 'watch'}
-                          className={cn(formErrors.name && "border-destructive focus-visible:ring-destructive")}
-                      />
-                       {formErrors.name && (
-                         <div className="flex items-center gap-1.5 text-destructive">
-                           <AlertTriangle className="h-3 w-3 shrink-0" />
-                           <p className="text-xs">{formErrors.name as string}</p>
-                         </div>
-                       )}
-                  </div>
-                  <div className="space-y-2">
-                      <Label htmlFor="scheme-description" className="text-sm font-medium">Description</Label>
-                      <Input
-                          id="scheme-description"
-                          value={formData.description}
-                          onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                          placeholder="Brief description of what this schema analyzes..."
-                          disabled={isLoadingSchemas || mode === 'watch'}
-                      />
-                  </div>
-                  <div className="space-y-2 md:col-span-2">
-                      <Label htmlFor="model-instructions" className="text-sm font-medium">AI Instructions</Label>
-                      <Textarea
-                         id="model-instructions"
-                         value={formData.instructions || ''}
-                         onChange={(e) => setFormData(prev => ({ ...prev, instructions: e.target.value }))}
-                         placeholder="Detailed instructions for the AI model on how to analyze content..."
-                         rows={2}
-                         disabled={isLoadingSchemas || mode === 'watch'}
-                         className="text-sm font-mono resize-none"
-                      />
-                  </div>
-              </div>
-              
-              {/* Action buttons inline */}
-              {mode !== 'watch' && (
-                <div className="flex items-center gap-3 mt-4 pt-4 border-t">
-                    <div className="flex items-center gap-2 flex-1">
-                        <div className={cn("h-2.5 w-2.5 rounded-full transition-colors", 
-                          formData.name && formData.structure.some(s => s.fields.length > 0) 
-                            ? "bg-green-500" 
-                            : "bg-yellow-500"
-                        )} />
-                        <span className="text-sm text-muted-foreground">
-                            {formData.name && formData.structure.some(s => s.fields.length > 0) 
-                                ? 'Ready to save' 
-                                : 'Complete required fields'
-                            }
-                        </span>
-                    </div>
-                    <Button 
-                        type="button" 
-                        variant="outline" 
-                        size="sm"
-                        onClick={onClose} 
-                        disabled={isLoadingSchemas}
-                    >
-                        Cancel
-                    </Button>
-                    <Button 
-                        type="submit" 
-                        size="sm"
-                        disabled={isLoadingSchemas || (!formData.name || !formData.structure.some(s => s.fields.length > 0))}
-                    >
-                        {isLoadingSchemas ? 'Saving...' : (mode === 'create' ? 'Create Schema' : 'Update Schema')}
-                    </Button>
-                </div>
-              )}
-            </div>
+    <Dialog open={show} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-[98vw] w-[98vw] h-[96vh] max-h-none p-0 gap-0 rounded-xl overflow-hidden flex flex-col [&>button]:hidden">
+        <DialogTitle className="sr-only">
+          {mode === "create" ? "Create Schema" : mode === "edit" ? "Edit Schema" : "Schema"}
+        </DialogTitle>
 
-            {/* Right: Schema Structure */}
-            <div className="bg-card/50 border rounded-lg p-4 lg:p-5 flex flex-col min-h-[200px]">
-               <div className="flex items-center justify-between gap-2 mb-3 flex-shrink-0">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <FileJson className="h-5 w-5 text-primary shrink-0" />
-                    <h3 className="text-lg font-semibold truncate">Structure</h3>
-                  </div>
-                  <div className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full shrink-0 whitespace-nowrap">
-                    {formData.structure.reduce((total, section) => total + section.fields.length, 0)} fields
-                  </div>
-               </div>
-               
-               <ScrollArea className="flex-1 min-h-0">
-                  <div className="space-y-3 pr-2">
-                      {formData.structure.map((section, sectionIndex) => (
-                          <div key={section.id} className={cn(
-                              "rounded-lg border-2 transition-all duration-200",
-                              selectedNodeId === section.id 
-                                ? "border-primary bg-primary/5 shadow-md" 
-                                : "border-border bg-card/50 hover:border-primary/30 hover:shadow-sm"
-                          )}>
-                              <div 
-                                  className="flex items-center justify-between p-3 lg:p-4 cursor-pointer group"
-                                  onClick={() => setSelectedNodeId(section.id)}
-                              >
-                                  <div className="flex items-center gap-2 lg:gap-3 flex-1 min-w-0">
-                                      {section.name === 'document' ? (
-                                          <FileText className="h-5 w-5 text-blue-600 shrink-0" />
-                                      ) : section.name === 'per_image' ? (
-                                          // eslint-disable-next-line jsx-a11y/alt-text
-                                          <Image className="h-5 w-5 text-green-600 shrink-0" />
-                                      ) : section.name === 'per_audio' ? (
-                                          <Mic className="h-5 w-5 text-purple-600 shrink-0" />
-                                      ) : (
-                                          <Video className="h-5 w-5 text-orange-600 shrink-0" />
-                                      )}
-                                      <div className="min-w-0">
-                                          <span className="font-semibold text-sm lg:text-base capitalize block truncate">
-                                              {section.name.replace('per_', '')} Analysis
-                                          </span>
-                                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                              <span className="text-xs text-muted-foreground">
-                                                  {section.fields.length} field{section.fields.length !== 1 ? 's' : ''}
-                                              </span>
-                                              {section.fields.some(f => f.required) && (
-                                                  <span className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full">
-                                                      {section.fields.filter(f => f.required).length} required
-                                                  </span>
-                                              )}
-                                          </div>
-                                      </div>
-                                  </div>
-                                  {section.name !== 'document' && mode !== 'watch' && (
-                                      <Button 
-                                          type="button" 
-                                          variant="ghost" 
-                                          size="icon" 
-                                          className="h-8 w-8 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-opacity shrink-0"
-                                          onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleRemoveSection(section.id);
-                                          }}
-                                          title="Remove section"
-                                      >
-                                          <Trash2 className="h-4 w-4"/>
-                                      </Button>
-                                  )}
-                              </div>
-                              
-                              {section.fields.length > 0 && (
-                                  <div className="px-3 lg:px-4 pb-3 lg:pb-4">
-                                      <div className="pl-6 lg:pl-8 space-y-1 border-l-2 border-muted ml-2">
-                                          {section.fields.map((field, fieldIndex) => (
-                                              <div 
-                                                  key={field.id}
-                                                  className={cn(
-                                                      "flex items-center justify-between p-2 lg:p-3 rounded-md cursor-pointer group transition-all duration-150",
-                                                      selectedNodeId === field.id 
-                                                        ? "bg-primary/15 border border-primary/30 shadow-sm" 
-                                                        : "hover:bg-muted/70 border border-transparent hover:border-border"
-                                                  )}
-                                                  onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      setSelectedNodeId(field.id);
-                                                  }}
-                                              >
-                                                  <div className="flex items-center gap-2 lg:gap-3 flex-1 min-w-0">
-                                                      <div className="flex items-center gap-2 min-w-0">
-                                                          {field.type === 'graph' && (
-                                                              <div title="Knowledge Graph">
-                                                                  <Network className="h-3.5 w-3.5 text-purple-600 shrink-0" />
-                                                              </div>
-                                                          )}
-                                                          <span className="text-sm font-medium truncate">{field.name}</span>
-                                                          {field.required && (
-                                                              <span className="text-destructive text-sm font-bold shrink-0" title="Required field">*</span>
-                                                          )}
-                                                      </div>
-                                                      {field.description && (
-                                                          <span className="text-xs text-muted-foreground truncate hidden lg:inline max-w-[120px] xl:max-w-[200px]">
-                                                              {field.description}
-                                                          </span>
-                                                      )}
-                                                  </div>
-                                                  <div className="flex items-center gap-2 shrink-0">
-                                                      <span className={cn(
-                                                          "text-xs px-2 lg:px-2.5 py-1 rounded-full font-mono shrink-0 whitespace-nowrap",
-                                                          field.type === 'graph' 
-                                                              ? "bg-purple-100 text-purple-700 border border-purple-300"
-                                                              : "bg-muted text-muted-foreground"
-                                                      )}>
-                                                          {field.type === 'graph' 
-                                                              ? 'Graph' 
-                                                              : field.type === 'array' && field.items 
-                                                                  ? `${field.items.type}[]` 
-                                                                  : field.type}
-                                                      </span>
-                                                      {mode !== 'watch' && (
-                                                          <Button
-                                                              type="button"
-                                                              variant="ghost"
-                                                              size="icon"
-                                                              className="h-7 w-7 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-opacity shrink-0"
-                                                              onClick={(e) => {
-                                                                  e.stopPropagation();
-                                                                  handleRemoveField(section.id, field.id);
-                                                              }}
-                                                              title="Remove field"
-                                                          >
-                                                              <Trash2 className="h-3.5 w-3.5" />
-                                                          </Button>
-                                                      )}
-                                                  </div>
-                                              </div>
-                                          ))}
-                                      </div>
-                                  </div>
-                              )}
-                              
-                              {mode !== 'watch' && (
-                                  <div className="px-3 lg:px-4 pb-3 lg:pb-4">
-                                      <Button 
-                                          type="button" 
-                                          variant="outline" 
-                                          size="sm"
-                                          className="w-full h-9 border-dashed hover:border-solid hover:bg-primary/5 hover:border-primary/30 transition-all text-xs lg:text-sm"
-                                          onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleAddField(section.id);
-                                          }}
-                                      >
-                                          <PlusCircle className="h-4 w-4 mr-2 shrink-0" />
-                                          <span className="truncate">Add Field to {section.name.replace('per_', '').charAt(0).toUpperCase() + section.name.replace('per_', '').slice(1)}</span>
-                                      </Button>
-                                  </div>
-                              )}
-                          </div>
-                      ))}
-                  </div>
-                  {formErrors.structure && (
-                      <div className="flex items-center gap-2 text-destructive mt-3 p-3 bg-destructive/5 rounded-lg border border-destructive/20 mx-2">
-                          <AlertTriangle className="h-4 w-4 shrink-0" />
-                          <p className="text-sm">{formErrors.structure as string}</p>
-                      </div>
-                  )}
-               </ScrollArea>
-               
-               {/* Add Media Analysis - inline */}
-               {mode !== 'watch' && (
-                   <div className="flex items-center gap-2 mt-3 pt-3 border-t flex-shrink-0">
-                      <Label className="text-xs font-medium text-muted-foreground shrink-0">Add:</Label>
-                      {[
-                          { value: 'per_image', icon: Image, label: 'Images', color: 'text-green-600', disabled: formData.structure.some(s => s.name === 'per_image') },
-                          { value: 'per_audio', icon: Mic, label: 'Audio', color: 'text-purple-600', disabled: formData.structure.some(s => s.name === 'per_audio') },
-                          { value: 'per_video', icon: Video, label: 'Video', color: 'text-orange-600', disabled: formData.structure.some(s => s.name === 'per_video') }
-                      ].map((mediaType) => (
-                          <Button
-                              key={mediaType.value}
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={mediaType.disabled}
-                              className={cn(
-                                  "h-8 px-2 gap-1.5 border-dashed hover:border-solid transition-all",
-                                  mediaType.disabled 
-                                      ? "opacity-50 cursor-not-allowed" 
-                                      : "hover:bg-primary/5 hover:border-primary/30"
-                              )}
-                              onClick={() => handleAddSection(mediaType.value as SchemaSection['name'])}
-                          >
-                              <mediaType.icon className={cn("h-3.5 w-3.5", mediaType.color)} />
-                              <span className="text-xs">{mediaType.label}</span>
-                          </Button>
-                      ))}
-                   </div>
-               )}
-            </div>
-          </div>
+        <form onSubmit={handleSubmit} className="flex flex-col h-full min-h-0">
+          <TopBar
+            formData={formData}
+            onFormChange={setFormData}
+            formErrors={formErrors}
+            isReady={isReady}
+            isLoading={isLoadingSchemas}
+            mode={mode}
+            disabled={isDisabled}
+            onCancel={onClose}
+          />
 
-          {/* BOTTOM SECTION: Field Configuration (full width) */}
-          <div className="bg-card/50 border rounded-lg p-4 lg:p-5 flex-1 min-h-0 flex flex-col overflow-hidden">
-             <div className="flex items-center gap-2 mb-3 flex-shrink-0">
-               <Settings className="h-5 w-5 text-primary shrink-0" />
-               <h3 className="text-lg font-semibold">Field Configuration</h3>
-               <span className="text-sm text-muted-foreground ml-2">
-                 {selectedNodeId ? 'Configure the selected item' : 'Select a section or field above'}
-               </span>
-             </div>
-             <ScrollArea className="flex-1 min-h-0">
-                <div className="pr-4">
-                  <PropertyInspector 
-                     selectedNodeId={selectedNodeId}
-                     formData={formData}
-                     onFormChange={setFormData}
-                     disabled={isLoadingSchemas || mode === 'watch'}
-                  />
-                </div>
-             </ScrollArea>
-          </div>
-
-          {/* Global Submit/API Error Display */} 
           {formErrors.submit && (
-                <Alert variant="destructive" className="mt-4 flex-shrink-0">
-                    <AlertTriangle className="h-4 w-4" />
-                    <AlertTitle>Error Saving Schema</AlertTitle>
-                    <AlertDescription>{formErrors.submit as string}</AlertDescription>
-                </Alert>
-            )}
+            <Alert variant="destructive" className="rounded-none border-x-0 border-t-0">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>{formErrors.submit as string}</AlertDescription>
+            </Alert>
+          )}
+
+          <div className="flex-1 min-h-0 flex">
+            <aside className="w-[256px] shrink-0 border-r min-h-0">
+              <NavTree
+                structure={formData.structure}
+                selectedNodeId={selectedNodeId}
+                onSelect={setSelectedNodeId}
+                navExpanded={navExpanded}
+                onToggleExpanded={toggleNavExpanded}
+                onAddTopLevel={handleAddTopLevelField}
+                onRemoveSection={handleRemoveSection}
+                onRemoveField={removeFieldByPath}
+                onAddSection={handleAddSection}
+                disabled={isDisabled}
+                mode={mode}
+                formErrors={formErrors}
+              />
+            </aside>
+            <main className="flex-1 min-w-0 flex flex-col min-h-0">
+              <FieldCanvas
+                resolution={resolution}
+                structure={formData.structure}
+                axes={formData.axes ?? {}}
+                onUpdateField={updateSelectedField}
+                onSelectNode={setSelectedNodeId}
+                onAddNested={handleAddNestedField}
+                onRemoveField={handleRemoveSelectedField}
+                disabled={isDisabled}
+              />
+            </main>
+            <aside className="w-[360px] shrink-0 border-l min-h-0">
+              <AuxPanel
+                resolution={resolution}
+                onUpdateField={updateSelectedField}
+                onRemoveField={handleRemoveSelectedField}
+                disabled={isDisabled}
+              />
+            </aside>
+          </div>
         </form>
-    </AnnotationSchemaCard>
+      </DialogContent>
+    </Dialog>
   );
 };
 
-// --- Property Inspector Component ---
-const PropertyInspector: React.FC<{
-    selectedNodeId: string | null;
-    formData: AnnotationSchemaFormData;
-    onFormChange: (data: AnnotationSchemaFormData) => void;
-    disabled: boolean;
-}> = ({ selectedNodeId, formData, onFormChange, disabled }) => {
-
-    const { node, section, field } = React.useMemo(() => {
-        if (!selectedNodeId) return { node: null, section: null, field: null };
-
-        for (const sec of formData.structure) {
-            if (sec.id === selectedNodeId) {
-                return { node: 'section', section: sec, field: null };
-            }
-            for (const fld of sec.fields) {
-                if (fld.id === selectedNodeId) {
-                    return { node: 'field', section: sec, field: fld };
-                }
-            }
-        }
-        return { node: null, section: null, field: null };
-    }, [selectedNodeId, formData]);
-    
-    const handleFieldUpdate = (update: Partial<AdvancedSchemeField>) => {
-        if (!section || !field) return;
-
-        const updatedField = { ...field, ...update };
-        const newStructure = formData.structure.map(s => {
-            if (s.id === section.id) {
-                return {
-                    ...s,
-                    fields: s.fields.map(f => f.id === field.id ? updatedField : f)
-                };
-            }
-            return s;
-        });
-        onFormChange({ ...formData, structure: newStructure });
-    };
-
-    const handleTypeChange = (value: string) => {
-        if (!section || !field) return;
-        
-        const update: Partial<AdvancedSchemeField> = {};
-        
-        if (value === 'graph') {
-            // Initialize graph field with default triplet configuration
-            update.type = 'graph';
-            update.graphConfig = {
-                entityTypes: {
-                    typeEnum: [],
-                    typeConstrained: false
-                },
-                relationshipSchema: {
-                    predicateEnum: [],
-                    predicateConstrained: false,
-                    optionalFields: []
-                },
-                graphConfig: {
-                    deduplication: {
-                        enabled: true,
-                        strategy: 'normalized',
-                        fields: ['name', 'type'],
-                        caseSensitive: false,
-                        normalizeWhitespace: true
-                    }
-                }
-            };
-            // Clean up non-graph properties
-            delete update.items;
-            delete update.properties;
-        } else if (value.startsWith('array_')) {
-            update.type = 'array';
-            const itemType = value.split('_')[1] as JsonSchemaType;
-            update.items = { type: itemType };
-            if (itemType === 'object') {
-                // Preserve existing properties when converting to array of objects
-                update.items.properties = field.items?.properties || [];
-            } else if (value === 'array_string_enum') {
-                // Initialize enum array with empty labels and auto-enable "other" option
-                update.items.enum = [];
-                update.items.includeOther = true;
-            } else if (value === 'array_string' && field.items?.enum !== undefined) {
-                // Switching from array_string_enum to array_string - clean up enum properties
-                const existingItems = field.items || { type: 'string' };
-                update.items = { type: existingItems.type };
-                // Remove enum and includeOther properties
-                if (existingItems.properties) {
-                    update.items.properties = existingItems.properties;
-                }
-            }
-            // Clean up graph config if switching away from graph
-            if (field.type === 'graph') {
-                delete update.graphConfig;
-            }
-        } else {
-            update.type = value as JsonSchemaType;
-            delete update.items; // Remove items if not an array
-            // Clean up graph config if switching away from graph
-            if (field.type === 'graph') {
-                delete update.graphConfig;
-            }
-        }
-        
-        if (update.type === 'object') {
-            update.properties = field.properties || [];
-        } else if (update.type !== 'graph') {
-            delete update.properties;
-        }
-
-        handleFieldUpdate(update);
-    }
-    
-    const getTypeValue = (): string => {
-        if (field?.type === 'graph') {
-            return 'graph';
-        }
-        if(field?.type === 'array' && field.items) {
-            // Check if this is an array of strings with enum constraints
-            if (field.items.type === 'string' && field.items.enum !== undefined) {
-                return 'array_string_enum';
-            }
-            // Handle array of objects explicitly
-            if (field.items.type === 'object') {
-                return 'array_object';
-            }
-            return `array_${field.items.type}`;
-        }
-        return field?.type || 'string';
-    }
-
-    // Template generator for evidence prompts based on rigor level
-    const getEvidencePromptTemplate = (rigorLevel: 'minimal' | 'standard' | 'thorough' | 'exhaustive'): string => {
-        const snippetCounts = {
-            minimal: '1-2',
-            standard: '3-5',
-            thorough: '5-8',
-            exhaustive: '8+'
-        };
-        
-        return `Explain your reasoning for this value and provide ${snippetCounts[rigorLevel]} direct quotations from the text that support your answer. Each quotation should be a complete sentence or meaningful phrase.`;
-    };
-
-    // Check if custom_prompt matches a template (to detect if it's still the default)
-    const isCustomPromptDefault = (customPrompt: string | undefined, rigorLevel: string | undefined): boolean => {
-        if (!customPrompt || !rigorLevel) return true;
-        const template = getEvidencePromptTemplate(rigorLevel as 'minimal' | 'standard' | 'thorough' | 'exhaustive');
-        return customPrompt.trim() === template.trim();
-    };
-
-    if (!node) {
-        return (
-            <div className="flex flex-col items-center justify-center h-64 text-center p-6 border-2 border-dashed rounded-md bg-muted/20">
-                <div className="bg-primary/10 p-4 rounded-full mb-4">
-                    <FileJson className="h-8 w-8 text-primary" />
-                </div>
-                <h4 className="font-semibold text-lg mb-2">Nothing Selected</h4>
-                <p className="text-sm text-muted-foreground max-w-xs">
-                    Click on any section or field in the schema structure to configure its properties here.
-                </p>
-            </div>
-        );
-    }
-    
-    if (node === 'section' && section) {
-        const getSectionInfo = () => {
-            switch (section.name) {
-                case 'document':
-                    return {
-                        icon: <FileText className="h-6 w-6 text-blue-600" />,
-                        title: 'Document Analysis',
-                        description: 'Fields extracted from the main document content (text, metadata, etc.)',
-                        color: 'border-blue-200'
-                    };
-                case 'per_image':
-                    return {
-                        // eslint-disable-next-line jsx-a11y/alt-text
-                        icon: <Image className="h-6 w-6 text-green-600" />,
-                        title: 'Image Analysis',
-                        description: 'Fields extracted from each individual image in the document',
-                        color: 'border-green-200'
-                    };
-                case 'per_audio':
-                    return {
-                        icon: <Mic className="h-6 w-6 text-purple-600" />,
-                        title: 'Audio Analysis',
-                        description: 'Fields extracted from each individual audio file in the document',
-                        color: 'border-purple-200'
-                    };
-                case 'per_video':
-                    return {
-                        icon: <Video className="h-6 w-6 text-orange-600" />,
-                        title: 'Video Analysis',
-                        description: 'Fields extracted from each individual video file in the document',
-                        color: 'border-orange-200'
-                    };
-                default:
-                    return {
-                        icon: <FileJson className="h-6 w-6 text-muted-foreground" />,
-                        title: section.name,
-                        description: 'Section configuration',
-                        color: 'border-border'
-                    };
-            }
-        };
-
-        const sectionInfo = getSectionInfo();
-
-        return (
-             <div className={cn("space-y-4 p-5 border-2 rounded-md", sectionInfo.color)}>
-                <div className="flex items-center gap-3">
-                    {sectionInfo.icon}
-                    <div>
-                        <h3 className="text-xl font-semibold">{sectionInfo.title}</h3>
-                        <div className="flex items-center gap-2 mt-1">
-                            <span className="text-sm text-muted-foreground">
-                                {section.fields.length} field{section.fields.length !== 1 ? 's' : ''}
-                            </span>
-                            {section.fields.some(f => f.required) && (
-                                <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
-                                    {section.fields.filter(f => f.required).length} required
-                                </span>
-                            )}
-                        </div>
-                    </div>
-                </div>
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                    {sectionInfo.description}
-                </p>
-                {section.fields.length === 0 && (
-                    <div className="p-3 bg-muted/50 rounded-lg border border-dashed">
-                        <p className="text-sm text-muted-foreground text-center">
-                            No fields defined yet. Click "Add Field" to get started.
-                        </p>
-                    </div>
-                )}
-             </div>
-        );
-    }
-    
-    if (node === 'field' && field) {
-        return (
-            <div className="space-y-6">
-                {/* Field Header */}
-                <div className="bg-card/50 border-2 rounded-md p-4">
-                    <div className="flex items-center gap-3 mb-3">
-                        <div className="bg-primary/10 p-2 rounded-lg">
-                            <FileJson className="h-5 w-5 text-primary" />
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-semibold">Field Configuration</h3>
-                            <p className="text-sm text-muted-foreground">Configure how the AI extracts this data</p>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Basic Properties */}
-                <div className="space-y-4 p-2">
-                    <div className="space-y-2">
-                        <Label htmlFor="field-name" className="text-sm font-semibold">Field Name *</Label>
-                        <Input 
-                            id="field-name"
-                            value={field.name}
-                            onChange={(e) => handleFieldUpdate({ name: e.target.value })}
-                            placeholder="e.g., summary, threat_level, article_type"
-                            disabled={disabled}
-                            className={cn(
-                                "transition-all",
-                                !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field.name) && field.name 
-                                    ? "border-yellow-400 focus-visible:ring-yellow-400" 
-                                    : ""
-                            )}
-                        />
-                        {field.name && !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field.name) && (
-                            <div className="flex items-start gap-2 p-2 bg-yellow-50 border border-yellow-200 rounded-lg">
-                                <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
-                                <p className="text-xs text-yellow-700">
-                                    Consider using only letters, numbers, and underscores for better compatibility (e.g., summary_text, threat_level).
-                                </p>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="space-y-2">
-                        <Label htmlFor="field-desc" className="text-sm font-semibold">Description</Label>
-                        <Textarea 
-                            id="field-desc"
-                            value={field.description || ''}
-                            onChange={(e) => handleFieldUpdate({ description: e.target.value })}
-                            placeholder="Describe what this field should contain and how the AI should extract it..."
-                            rows={3}
-                            disabled={disabled}
-                            className="text-sm resize-none"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                            A clear description helps the AI understand what to extract.
-                        </p>
-                    </div>
-
-                    <div className="space-y-2">
-                        <Label htmlFor="field-type" className="text-sm font-semibold">Data Type</Label>
-                        <Select 
-                            value={getTypeValue()}
-                            onValueChange={handleTypeChange}
-                            disabled={disabled}
-                        >
-                            <SelectTrigger id="field-type" className="h-10">
-                                <SelectValue placeholder="Select a type" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {ADVANCED_SCHEME_TYPE_OPTIONS.map(opt => (
-                                    <SelectItem key={opt.value} value={opt.value} className="text-sm py-2">
-                                        {opt.label}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        {field.type === 'object' && field.properties && field.properties.length > 0 && (
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="w-full mt-2 border-dashed hover:border-solid hover:bg-primary/5"
-                                onClick={() => {
-                                    // Convert object to array of objects, preserving properties
-                                    handleFieldUpdate({
-                                        type: 'array',
-                                        items: {
-                                            type: 'object',
-                                            properties: field.properties || []
-                                        }
-                                    });
-                                }}
-                                disabled={disabled}
-                                title="Convert this object field to a list of objects (preserves all nested fields)"
-                            >
-                                <PlusCircle className="h-4 w-4 mr-2" />
-                                Convert to List of Objects
-                            </Button>
-                        )}
-                    </div>
-
-                    {/* Graph Field Configuration */}
-                    {field.type === 'graph' && field.graphConfig && (
-                        <GraphSchemaVisualEditor
-                            field={field}
-                            section={section!}
-                            disabled={disabled}
-                            onFieldUpdate={handleFieldUpdate}
-                        />
-                    )}
-
-                    {/* Enum Labels Configuration for array_string_enum */}
-                    {field.type === 'array' && field.items?.type === 'string' && field.items.enum !== undefined && (
-                        <div className="space-y-4 p-4 bg-gradient-to-br from-primary/5 to-primary/10 border-2 border-primary/20 rounded-lg">
-                            <div className="flex items-center gap-2 mb-2">
-                                <div className="h-2 w-2 bg-primary rounded-full" />
-                                <Label className="text-sm font-semibold">Allowed Labels</Label>
-                            </div>
-                            <p className="text-xs text-muted-foreground mb-3">
-                                Define the specific labels that can be selected. Each label will be a valid choice in the array.
-                            </p>
-                            
-                            <div className="space-y-2">
-                                {(field.items.enum || []).map((label, index) => (
-                                    <div key={index} className="flex items-center gap-2 group">
-                                        <Input
-                                            value={label}
-                                            onChange={(e) => {
-                                                const newEnum = [...(field.items?.enum || [])];
-                                                newEnum[index] = e.target.value;
-                                                handleFieldUpdate({
-                                                    items: {
-                                                        ...field.items!,
-                                                        enum: newEnum
-                                                    }
-                                                });
-                                            }}
-                                            placeholder={`Label ${index + 1}`}
-                                            disabled={disabled}
-                                            className="h-9 text-sm flex-1"
-                                        />
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-9 w-9 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
-                                            onClick={() => {
-                                                const newEnum = (field.items?.enum || []).filter((_, i) => i !== index);
-                                                handleFieldUpdate({
-                                                    items: {
-                                                        ...field.items!,
-                                                        enum: newEnum
-                                                    }
-                                                });
-                                            }}
-                                            disabled={disabled}
-                                            title="Remove label"
-                                        >
-                                            <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                ))}
-                                
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="w-full border-dashed hover:border-solid hover:bg-primary/5 h-9"
-                                    onClick={() => {
-                                        const newEnum = [...(field.items?.enum || []), ''];
-                                        handleFieldUpdate({
-                                            items: {
-                                                ...field.items!,
-                                                enum: newEnum
-                                            }
-                                        });
-                                    }}
-                                    disabled={disabled}
-                                >
-                                    <PlusCircle className="h-4 w-4 mr-2" />
-                                    Add Label
-                                </Button>
-                            </div>
-
-                            <div className="mt-4 pt-4 border-t border-primary/20">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex-1">
-                                        <Label htmlFor="include-other" className="text-sm font-medium cursor-pointer">
-                                            Include "Other" Option
-                                        </Label>
-                                        <p className="text-xs text-muted-foreground mt-1">
-                                            Allow AI to select "other" as a fallback when none of the labels fit
-                                        </p>
-                                    </div>
-                                    <Switch
-                                        id="include-other"
-                                        checked={field.items.includeOther ?? false}
-                                        onCheckedChange={(checked) => handleFieldUpdate({
-                                            items: {
-                                                ...field.items!,
-                                                includeOther: checked
-                                            }
-                                        })}
-                                        disabled={disabled}
-                                    />
-                                </div>
-                            </div>
-
-                            {(field.items.enum || []).length === 0 && (
-                                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                                    <div className="flex items-start gap-2">
-                                        <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
-                                        <p className="text-xs text-yellow-700">
-                                            Add at least one label to restrict choices. Without labels, this will behave as a free-form list of text.
-                                        </p>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    <div className="bg-muted/30 border rounded-lg p-4">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <Label htmlFor="field-required" className="text-sm font-semibold cursor-pointer">
-                                    Required Field
-                                </Label>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                    AI must provide a value for this field
-                                </p>
-                            </div>
-                            <Switch
-                                id="field-required"
-                                checked={field.required}
-                                onCheckedChange={(checked) => handleFieldUpdate({ required: checked })}
-                                disabled={disabled}
-                            />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Advanced Configuration */}
-                <Accordion type="multiple" className="w-full space-y-3">
-                  {/* Type-Specific Config */}
-                  {field.type === 'string' && (
-                    <AccordionItem value="type-config" className="border rounded-lg px-3">
-                      <AccordionTrigger className="text-sm font-semibold py-3">
-                        Value Constraints
-                      </AccordionTrigger>
-                      <AccordionContent className="pb-3">
-                        <div className="space-y-3">
-                          <div className="space-y-2">
-                            <Label htmlFor="field-enum" className="text-sm font-medium">Allowed Values (Optional)</Label>
-                            <Textarea
-                              id="field-enum"
-                              value={(field.enum || []).join('\n')}
-                              onChange={(e) => handleFieldUpdate({ enum: e.target.value.split('\n').filter(v => v) })}
-                              placeholder="One value per line to restrict choices"
-                              rows={3}
-                              disabled={disabled}
-                              className="text-sm resize-none"
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Restrict the AI to only these specific values.
-                            </p>
-                          </div>
-                        </div>
-                      </AccordionContent>
-                    </AccordionItem>
-                  )}
-
-                  {field.type === 'number' && (
-                    <AccordionItem value="number-constraints" className="border rounded-lg px-3">
-                      <AccordionTrigger className="text-sm font-semibold py-3">
-                        Value Constraints
-                      </AccordionTrigger>
-                      <AccordionContent className="pb-3">
-                        <div className="space-y-3">
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-2">
-                              <Label htmlFor="field-minimum" className="text-sm font-medium">Minimum Value (Optional)</Label>
-                              <Input
-                                id="field-minimum"
-                                type="number"
-                                value={field.minimum ?? ''}
-                                onChange={(e) => {
-                                  const value = e.target.value === '' ? undefined : parseFloat(e.target.value);
-                                  handleFieldUpdate({ minimum: isNaN(value as number) ? undefined : value });
-                                }}
-                                placeholder="No minimum"
-                                disabled={disabled}
-                                className="text-sm"
-                              />
-                              <p className="text-xs text-muted-foreground">
-                                Minimum allowed value (inclusive)
-                              </p>
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor="field-maximum" className="text-sm font-medium">Maximum Value (Optional)</Label>
-                              <Input
-                                id="field-maximum"
-                                type="number"
-                                value={field.maximum ?? ''}
-                                onChange={(e) => {
-                                  const value = e.target.value === '' ? undefined : parseFloat(e.target.value);
-                                  handleFieldUpdate({ maximum: isNaN(value as number) ? undefined : value });
-                                }}
-                                placeholder="No maximum"
-                                disabled={disabled}
-                                className="text-sm"
-                              />
-                              <p className="text-xs text-muted-foreground">
-                                Maximum allowed value (inclusive)
-                              </p>
-                            </div>
-                          </div>
-                          {(field.minimum !== undefined || field.maximum !== undefined) && (
-                            <div className="p-2 bg-blue-50 border border-blue-200 rounded-lg">
-                              <p className="text-xs text-blue-700">
-                                {field.minimum !== undefined && field.maximum !== undefined
-                                  ? `Value must be between ${field.minimum} and ${field.maximum}`
-                                  : field.minimum !== undefined
-                                  ? `Value must be at least ${field.minimum}`
-                                  : `Value must be at most ${field.maximum}`
-                                }
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </AccordionContent>
-                    </AccordionItem>
-                  )}
-
-                  {(field.type === 'object' || (field.type === 'array' && field.items?.type === 'object')) && (
-                    <AccordionItem value="object-config" className="border rounded-lg px-3">
-                      <AccordionTrigger className="text-sm font-semibold py-3">
-                        {field.type === 'array' ? 'Array Item Properties' : 'Object Properties'}
-                      </AccordionTrigger>
-                      <AccordionContent className="pb-3">
-                        <NestedPropertyEditor
-                          field={field}
-                          section={section}
-                          disabled={disabled}
-                          onFieldUpdate={handleFieldUpdate}
-                        />
-                      </AccordionContent>
-                    </AccordionItem>
-                  )}
-
-                  {/* Justification Section */}
-                  <AccordionItem value="justification" className="border rounded-lg px-3">
-                    <AccordionTrigger className="text-sm font-semibold py-3">
-                      <div className="flex items-center gap-2">
-                        <span>AI Justification</span>
-                        {field.justification?.enabled && (
-                          <div className="h-2 w-2 bg-green-500 rounded-full" />
-                        )}
-                      </div>
-                    </AccordionTrigger>
-                    <AccordionContent className="pb-3">
-                      <div className="space-y-4">
-                        <div className="bg-muted/20 border rounded-lg p-3">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <Label htmlFor="justification-enabled" className="text-sm font-medium cursor-pointer">
-                                Request Justification
-                              </Label>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                Ask AI to explain how it determined this value
-                              </p>
-                            </div>
-                            <Switch
-                              id="justification-enabled"
-                              checked={field.justification?.enabled ?? false}
-                              onCheckedChange={(checked) => {
-                                const rigorLevel = checked && !field.justification?.rigor_level 
-                                  ? 'standard' 
-                                  : (field.justification?.rigor_level as 'minimal' | 'standard' | 'thorough' | 'exhaustive' | undefined);
-                                
-                                // Pre-fill custom_prompt with template if enabling and no custom prompt exists
-                                const customPrompt = checked && !field.justification?.custom_prompt && rigorLevel
-                                  ? getEvidencePromptTemplate(rigorLevel)
-                                  : field.justification?.custom_prompt;
-                                
-                                handleFieldUpdate({ 
-                                  justification: { 
-                                    ...field.justification, 
-                                    enabled: !!checked,
-                                    rigor_level: rigorLevel,
-                                    custom_prompt: customPrompt
-                                  } as any
-                                });
-                              }}
-                              disabled={disabled}
-                            />
-                          </div>
-                        </div>
-                        
-                        {field.justification?.enabled && (
-                          <div className="space-y-3">
-                            {/* Evidence Rigor Level */}
-                            <div className="space-y-2">
-                              <Label htmlFor="evidence-rigor" className="text-sm font-medium">
-                                Evidence Rigor Level
-                              </Label>
-                              <Select
-                                value={(field.justification as any)?.rigor_level || 'standard'}
-                                onValueChange={(value) => {
-                                  const rigorLevel = value as 'minimal' | 'standard' | 'thorough' | 'exhaustive';
-                                  
-                                  // Auto-fill custom_prompt with template if it's empty or matches previous template
-                                  const currentPrompt = field.justification?.custom_prompt;
-                                  const currentRigor = field.justification?.rigor_level || 'standard';
-                                  const shouldUpdatePrompt = !currentPrompt || isCustomPromptDefault(currentPrompt, currentRigor);
-                                  
-                                  handleFieldUpdate({ 
-                                    justification: { 
-                                      ...field.justification, 
-                                      rigor_level: rigorLevel,
-                                      custom_prompt: shouldUpdatePrompt 
-                                        ? getEvidencePromptTemplate(rigorLevel)
-                                        : currentPrompt
-                                    } as any
-                                  });
-                                }}
-                                disabled={disabled}
-                              >
-                                <SelectTrigger id="evidence-rigor" className="text-sm">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="minimal">
-                                    <div className="flex flex-col items-start gap-0.5">
-                                      <span className="font-medium">Minimal</span>
-                                      <span className="text-xs text-muted-foreground">1-2 evidence snippets</span>
-                                    </div>
-                                  </SelectItem>
-                                  <SelectItem value="standard">
-                                    <div className="flex flex-col items-start gap-0.5">
-                                      <span className="font-medium">Standard</span>
-                                      <span className="text-xs text-muted-foreground">3-5 snippets (recommended)</span>
-                                    </div>
-                                  </SelectItem>
-                                  <SelectItem value="thorough">
-                                    <div className="flex flex-col items-start gap-0.5">
-                                      <span className="font-medium">Thorough</span>
-                                      <span className="text-xs text-muted-foreground">5-8 evidence snippets</span>
-                                    </div>
-                                  </SelectItem>
-                                  <SelectItem value="exhaustive">
-                                    <div className="flex flex-col items-start gap-0.5">
-                                      <span className="font-medium">Exhaustive</span>
-                                      <span className="text-xs text-muted-foreground">8+ evidence snippets</span>
-                                    </div>
-                                  </SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <p className="text-xs text-muted-foreground">
-                                Specifies how many text quotations the AI should provide when justifying this field.
-                              </p>
-                            </div>
-
-                            {/* Custom Prompt */}
-                            <div className="space-y-2">
-                              <Label htmlFor="justification-prompt" className="text-sm font-medium">
-                                Custom Prompt (Optional, use e.g. to adapt to language assets or schema are in)
-                              </Label>
-                              <Textarea
-                                id="justification-prompt"
-                                value={field.justification.custom_prompt || ''}
-                                onChange={(e) => handleFieldUpdate({ 
-                                  justification: { 
-                                    enabled: field.justification?.enabled ?? true, 
-                                    custom_prompt: e.target.value 
-                                  }
-                                })}
-                                placeholder="e.g., Explain step-by-step how you determined this value..."
-                                rows={3}
-                                disabled={disabled}
-                                className="text-sm resize-none"
-                              />
-                              <p className="text-xs text-muted-foreground">
-                                This prompt will be sent to the AI. You can edit it or write your own.
-                              </p>
-                            </div>
-                            
-                            {field.provider && field.model_name && (
-                              <div className="flex items-center gap-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
-                                <div className="flex-shrink-0 h-8 w-8 rounded-full bg-background flex items-center justify-center border">
-                                  {field.provider?.includes('anthropic') && <img src="/anthropic-logo.png" className="h-5 w-5" alt="Anthropic" />}
-                                  {field.provider?.includes('openai') && <img src="/openai-logo.png" className="h-5 w-5" alt="OpenAI" />}
-                                  {field.provider?.includes('google') && <img src="/google-logo.png" className="h-4 w-4" alt="Google" />}
-                                  {field.provider?.includes('groq') && <img src="/groq-logo.png" className="h-4 w-4" alt="Groq" />}
-                                  {field.provider?.includes('together') && <img src="/together-logo.png" className="h-4 w-4" alt="Together" />}
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-sm font-medium truncate">{field.model_name}</p>
-                                  <p className="text-xs text-muted-foreground">Justification model</p>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </AccordionContent>
-                  </AccordionItem>
-                </Accordion>
-            </div>
-        )
-    }
-
-    return null;
-}
-
-// --- Nested Property Editor Component ---
-const NestedPropertyEditor: React.FC<{
-    field: AdvancedSchemeField;
-    section: SchemaSection;
-    disabled: boolean;
-    onFieldUpdate: (update: Partial<AdvancedSchemeField>) => void;
-}> = ({ field, section, disabled, onFieldUpdate }) => {
-    
-    const isArrayOfObjects = field.type === 'array' && field.items?.type === 'object';
-    const properties = isArrayOfObjects ? (field.items?.properties || []) : (field.properties || []);
-    
-    const handleAddProperty = () => {
-        const newProperty: AdvancedSchemeField = {
-            id: nanoid(),
-            name: `property_${nanoid(4)}`,
-            type: 'string',
-            required: false
-        };
-        
-        if (isArrayOfObjects) {
-            onFieldUpdate({
-                items: {
-                    ...field.items!,
-                    properties: [...properties, newProperty]
-                }
-            });
-        } else {
-            onFieldUpdate({
-                properties: [...properties, newProperty]
-            });
-        }
-    };
-    
-    const handleUpdateProperty = (propertyId: string, update: Partial<AdvancedSchemeField>) => {
-        const updatedProperties = properties.map(prop => 
-            prop.id === propertyId ? { ...prop, ...update } : prop
-        );
-        
-        if (isArrayOfObjects) {
-            onFieldUpdate({
-                items: {
-                    ...field.items!,
-                    properties: updatedProperties
-                }
-            });
-        } else {
-            onFieldUpdate({
-                properties: updatedProperties
-            });
-        }
-    };
-    
-    const handleRemoveProperty = (propertyId: string) => {
-        const updatedProperties = properties.filter(prop => prop.id !== propertyId);
-        
-        if (isArrayOfObjects) {
-            onFieldUpdate({
-                items: {
-                    ...field.items!,
-                    properties: updatedProperties
-                }
-            });
-        } else {
-            onFieldUpdate({
-                properties: updatedProperties
-            });
-        }
-    };
-    
-    return (
-        <div className="space-y-3">
-            <div className="flex items-center justify-between p-2 bg-muted/20 rounded-md">
-                <div className="text-xs text-muted-foreground">
-                    {isArrayOfObjects 
-                        ? `Define properties for each item in the "${field.name}" array`
-                        : `Define properties for the "${field.name}" object`}
-                </div>
-                <Badge variant="secondary" className="text-xs">
-                    {properties.length} {properties.length === 1 ? 'property' : 'properties'}
-                </Badge>
-            </div>
-            
-            {properties.length === 0 ? (
-                <div className="p-4 bg-muted/30 border border-dashed rounded-lg text-center">
-                    <p className="text-sm text-muted-foreground">
-                        No properties defined yet.
-                    </p>
-                </div>
-            ) : (
-                <div className="space-y-2">
-                    {properties.map((prop, index) => (
-                        <div key={prop.id} className="border rounded-md p-3 space-y-2 bg-background">
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs font-medium text-muted-foreground w-6">#{index + 1}</span>
-                                <Input
-                                    value={prop.name}
-                                    onChange={(e) => handleUpdateProperty(prop.id, { name: e.target.value })}
-                                    placeholder="property_name"
-                                    disabled={disabled}
-                                    className="h-8 text-sm flex-1"
-                                />
-                                <Select
-                                    value={prop.type === 'array' && prop.items?.type === 'string' ? 'array_string' : prop.type === 'array' && prop.items?.type === 'number' ? 'array_number' : prop.type}
-                                    onValueChange={(value) => {
-                                        if (value === 'array_string') {
-                                            handleUpdateProperty(prop.id, { type: 'array', items: { type: 'string' } });
-                                        } else if (value === 'array_number') {
-                                            handleUpdateProperty(prop.id, { type: 'array', items: { type: 'number' } });
-                                        } else {
-                                            handleUpdateProperty(prop.id, { type: value as JsonSchemaType });
-                                        }
-                                    }}
-                                    disabled={disabled}
-                                >
-                                    <SelectTrigger className="h-8 w-[140px] text-xs">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="string" className="text-xs">Text</SelectItem>
-                                        <SelectItem value="integer" className="text-xs">Integer</SelectItem>
-                                        <SelectItem value="number" className="text-xs">Number</SelectItem>
-                                        <SelectItem value="boolean" className="text-xs">True/False</SelectItem>
-                                        <SelectItem value="array_string" className="text-xs">List of Text</SelectItem>
-                                        <SelectItem value="array_number" className="text-xs">List of Numbers</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                                <div className="flex items-center gap-1">
-                                    <Checkbox
-                                        id={`nested-required-${prop.id}`}
-                                        checked={prop.required}
-                                        onCheckedChange={(checked) => handleUpdateProperty(prop.id, { required: !!checked })}
-                                        disabled={disabled}
-                                    />
-                                    <Label htmlFor={`nested-required-${prop.id}`} className="text-xs cursor-pointer">
-                                        Req
-                                    </Label>
-                                </div>
-                                <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                                    onClick={() => handleRemoveProperty(prop.id)}
-                                    disabled={disabled}
-                                    title="Remove property"
-                                >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                            </div>
-                            
-                            {prop.description !== undefined && (
-                                <Textarea
-                                    value={prop.description || ''}
-                                    onChange={(e) => handleUpdateProperty(prop.id, { description: e.target.value })}
-                                    placeholder="Property description (optional)"
-                                    rows={2}
-                                    disabled={disabled}
-                                    className="text-xs resize-none"
-                                />
-                            )}
-                            
-                            {!prop.description && (
-                                <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-6 w-full text-xs"
-                                    onClick={() => handleUpdateProperty(prop.id, { description: '' })}
-                                    disabled={disabled}
-                                >
-                                    <PlusCircle className="h-3 w-3 mr-1" />
-                                    Add Description
-                                </Button>
-                            )}
-                        </div>
-                    ))}
-                </div>
-            )}
-            
-            {!disabled && (
-                <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="w-full border-dashed hover:border-solid hover:bg-primary/5"
-                    onClick={handleAddProperty}
-                >
-                    <PlusCircle className="h-4 w-4 mr-2" />
-                    Add Property
-                </Button>
-            )}
-        </div>
-    );
-};
-
-// GraphFieldEditor has been replaced by GraphSchemaVisualEditor (imported from ./GraphSchemaVisualEditor)
-
-export default AnnotationSchemaEditor; 
+export default AnnotationSchemaEditor;

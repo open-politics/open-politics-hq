@@ -67,7 +67,7 @@ const AnnotationSchemaManager: React.FC = () => {
     const [schemaToDelete, setSchemaToDelete] = useState<AnnotationSchemaRead | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
-    const [viewMode, setViewMode] = useState<'list' | 'grid'>(isMobile ? 'grid' : 'list');
+    const [viewMode, setViewMode] = useState<'grid' | 'list'>(isMobile ? 'grid' : 'list');
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [selectedSchemaIds, setSelectedSchemaIds] = useState<Set<number>>(new Set());
     const [exportDialogState, setExportDialogState] = useState<ExportDialogState>({
