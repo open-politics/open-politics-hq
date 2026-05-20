@@ -2,7 +2,7 @@
 
 This is the authoritative reference for the backend architecture — the concrete implementation detail.
 
-For the philosophy behind these decisions, see [FOUNDATION.md](../../docs/FOUNDATION.md). For code conventions, see [PRACTICE.md](../../docs/PRACTICE.md). For feature status and outstanding work, see [FEATURE_STATUS.md](../../docs/internal/FEATURE_STATUS.md).
+For the philosophy behind these decisions, see [FOUNDATION.md](../../docs/FOUNDATION.md). For code conventions, see [PRACTICE.md](../../docs/PRACTICE.md). For the v2 primitives foundation (AnnotationQuery, views, user-initiated actions, graph streaming), see [`docs/plans/hq-v2/ROADMAP.md`](../../docs/plans/hq-v2/ROADMAP.md). For feature status and outstanding work, see [FEATURE_STATUS.md](../../docs/internal/FEATURE_STATUS.md).
 
 ---
 
@@ -55,7 +55,6 @@ app/
                                 # + strategy.py (immediate vs background decision)
                                 # + csv_materializer.py (rows → file, on ContentTypeDescriptor)
         services/
-          asset_service.py      # Asset CRUD, deduplication, batch create, transfer
           asset_builder.py      # Fluent builder: from_url(), from_search_result(), from_rss_entry(), etc.
           bundle_service.py     # Bundle CRUD, hierarchy, vfolder materialization
           source_service.py     # Source CRUD, stream activate/pause, inbox management, execute_poll (PollHandler registry)
@@ -79,10 +78,47 @@ app/
         detection.py            # MIME-based kind reclassification (Phase 1)
         query.py                # AssetQuery composable builder (FTS, facets, semantic, annotation values)
 
-      annotation/               # Annotation lifecycle (Layer 3)
+      annotation/               # Annotation + Intelligence lifecycle (Layer 3)
         models.py               # AnnotationSchema, AnnotationRun, Annotation,
                                 # Justification, RunSchemaLink, RunAggregate
         services/               # AnnotationService (CRUD, run creation, curation, aggregates)
+        formula.py              # THE FORMULA PRIMITIVE — Formula/Dimension/Measure/Panel/
+                                # OrderBy + eligible_panels(formula). Dimension kinds:
+                                # field|entity|time|doc|geo. No axes, no per-row
+                                # resolution, no compile bifurcation. docs/intelligence/HOW_TO.md
+        formulas.py             # Composition resolver: resolve_formula() returns Formula;
+                                # attach_formula_lookup(aq, dashboard) wires @formula[k].col
+                                # via DashboardFormulaLookup (cycle-guarded; nested composition
+                                # via shared lookup; index keys on derives; rejects evidence-mode
+                                # source loudly)
+        snapshots.py            # Observation snapshot model — immutable, formula
+                                # body inlined for cite-stability (JSON on run config)
+        panel_config.py         # Per-type render settings — PanelType / GridPosition /
+                                # Scope / ForwardPropertySpec + GraphPanelSettings /
+                                # ChartPanelSettings / MapPanelSettings / TablePanelSettings /
+                                # PiePanelSettings. Legacy PanelProjection/RoleBinding/
+                                # EdgeSpec/migrate_panel_config DELETED in T6;
+                                # migrate_views_config kept as no-op shim for alembic
+                                # back-compat on fresh DBs.
+        query.py                # AnnotationQuery — composable SQL builder. Grouping core
+                                # = relation(formula) → OutputRelation: one SQL GROUP BY
+                                # (N dims × N measures), merge_case + date_trunc + enum_weights
+                                # CASE-lift + weighted sum/mean + safe_float casts + cursor
+                                # pagination, bounded ROW_NUMBER window for top/snippet
+                                # evidence. Multi-level explosion: paths like
+                                # ``mails[*].recipients[*].email`` build a LATERAL ladder
+                                # via parse_explosion_chain + _collect_explosion_tree;
+                                # paths sharing an outer array share a LATERAL; disjoint
+                                # outer arrays raise a Cartesian-product error. ORDER BY:
+                                # default = time ASC / first measure DESC; Formula.order_by
+                                # overrides (dim/measure → SQL; derive → post-eval Python
+                                # sort via _apply_post_sort). Distribution + other measures
+                                # auto-decomposed via _merge_relation_rows. state save/restore
+                                # so multiple relation() calls on one AQ don't compound
+                                # conditions. ZERO entity resolution (merge maps only).
+                                # results()/aggregate()/graph() untouched.
+                                # Legacy projection()/ProjectionRow/_ProjectionBranch
+                                # all DELETED in T6.
         tasks/
           annotate.py           # LLM annotation pipeline (self-chaining, parallel/sequential,
                                 # multimodal context, hierarchical schemas, demultiplexing)
@@ -90,9 +126,10 @@ app/
           followup.py           # @task: version_gap_annotation (follow-up runs for versioned assets)
 
       graph/                    # Knowledge graph (Layer 4)
-        models.py               # KnowledgeGraph, EntityCanonical, EntityEditLog, GraphEdge, FragmentCuration
+        models.py               # Canon, Entity, EntityRelationship, KnowledgeGraph, GraphEdge, FragmentCuration, EntityEditLog
         services/               # GraphService (neighborhood traversal via GraphEdge)
         resolution.py           # Entity resolution: find_by_alias (SQL), find_by_embedding (pgvector)
+        tasks/proposals.py      # propose_resolutions @task (user-invocable scan, no auto-resolution)
         tasks/
           curation.py           # @task: annotated_to_curate (entity triplet extraction + resolution)
           maintenance.py        # @task: superseded_entity_retire, re_resolve_singletons
@@ -108,11 +145,15 @@ app/
           schedule.py           # check_recurring_tasks (cron-based Task dispatch)
 
       embedding/                # Shared embedding infrastructure (Layer 2.5)
-        services/               # EmbeddingService, ChunkingService, VectorSearchService
+        chunk.py                # Token-based chunking (shared strategy + split fn)
+        embed.py                # embed_texts(), reset_for_assets(), embedding_stats()
+        similarity.py           # search_by_text() — pgvector query over AssetChunk
+        vectors.py              # Raw embedding vector CRUD
 
-      search/                   # Internal asset search (Layer 3)
-        services/               # SearchService: text (FTS/ILIKE), semantic (pgvector), tree multi-phase
-                                # Searches EXISTING assets. NOT external web search.
+      search/                   # Internal + external search (Layer 3)
+        web.py                  # search_web(), search_and_ingest(), create_assets_from_urls(), create_assets_from_results()
+        assets.py               # search_assets() (JSON), stream_search_assets() (SSE). Composes AssetQuery + content/views.
+        models.py               # SearchHistory
 
       conversational_intelligence/  # AI interaction (Layer 5)
         services/               # IntelligenceConversationService
@@ -130,7 +171,7 @@ app/
         base.py                 # 7 provider protocols + ModelSpec types + ProviderSelection/ProviderDefaults
                                 # + EnrichmentConfig (uses ProviderSelection per enricher)
         registry.py             # Framework: Setting, Capability, @provider, ProviderDescriptor,
-                                # registry core, CAPABILITIES, select_provider(), capability_name()
+                                # registry core, CAPABILITIES, resolve(), Resolved, ProviderError
         providers.py            # All 15 provider declarations + convenience getters
         implemented/            # Concrete providers (storage_local, web_search_tavily, etc.)
 
@@ -200,7 +241,6 @@ One registration, everything derives. Never branch on kind/type with if/elif —
 | ContentTypeRegistry | `kind → ContentTypeDescriptor` | ProcessingService (processor routing), detection.py (extension→kind), handlers (importability), tree builder (preview), ProcessingService (materializer) |
 | PollHandler | `source_kind → PollHandler class` | `SourceService.execute_poll()` dispatches generically |
 | @task registry | `name → TaskDescriptor` | Beat dispatcher, kick_tasks, event subscribers |
-| AnalysisAdapter | `DB record → module_path` | Flow ANALYZE step, `/analysis/adapters/execute` route |
 | Provider registry | `(protocol, type_key) → ProviderDescriptor` | `registry.py`: framework (`ProviderDescriptor`, `@provider` decorator, `_build_config`). `providers.py`: 15 `@provider` class declarations. Descriptor fields: `impl`, `api_key_setting`, `base_url_setting`, `contexts`, `models` (`List[ModelSpec]`). Properties: `requires_api_key`, `is_local`, `get_model()`. |
 
 ### Dimension 3: Composables
@@ -221,7 +261,7 @@ AssetQuery(session, infospace_id)
     .paginate(cursor, limit)      # Cursor pagination
     .execute()
 ```
-Consumers: SearchService, FilterService (flow FILTER step), routes, any service needing asset access.
+Consumers: routes (`/search/assets`, `/tree/*`, `/infospaces/{id}/assets`), FilterService (flow FILTER step), MCP tools, any background task needing asset access. No dedicated "search service" class — composition lives in `modules/search/assets.py`.
 
 Package scope is applied via `.scope(package_scope)` — a single method that adds the full visibility predicate (bundle GIN overlap, direct asset PK lookup, run-derived semi-join). No-op when scope is None. Every consumer of AssetQuery gets scope filtering for free.
 
@@ -325,12 +365,11 @@ Domains own their models, services, tasks, and reactions. Each domain is a bound
 | Core Infrastructure | L0 | DB, Celery, dispatch, events, @task, grove | `@task`, `kick_tasks()`, `emit()`, `cached_resolve()`, `grove.copy()`, `grove.move()`, `grove.delete()`, `grove.subtree_ids()` |
 | Identity / Infospace | L1 | User, Infospace, access control | `Requires()`, `resolve_access()`, `Access`, `PackageScope` |
 | Content | L2 | Asset, Bundle, Source, handlers, processors, enrichers | ContentTypeRegistry, `ingest()`, AssetQuery, AssetBuilder. Tree operations via `core/grove.py`: `copy()` (structural fork for bundles, membership link for assets), `move()` (relocation, always has destination), `delete()` (contextual removal with cascade). `subtree_ids()` for scope resolution. Sealed bundles: immutable membership, protects source data from curator modifications. |
-| Embedding | L2.5 | AssetChunk, HNSW indexes | EmbeddingService, ChunkingService, VectorSearchService |
-| Annotation | L3 | AnnotationSchema, AnnotationRun, Annotation | LLM pipeline (`annotate.py`), version_gap @task |
-| Search | L3 | SearchHistory | SearchService (FTS, semantic, tree multi-phase) |
-| Graph | L4 | EntityCanonical, FragmentCuration, KnowledgeGraph | `resolve_entities_batch()`, GraphService |
+| Embedding | L2.5 | AssetChunk, HNSW indexes | `chunk.py`, `embed.py`, `similarity.py`, `vectors.py` (flat primitives) |
+| Annotation | L3 | AnnotationSchema, AnnotationRun, Annotation | LLM pipeline (`annotate.py`), version_gap @task, `AnnotationQuery`, `views.py`, `graph/stream.py` |
+| Search | L3 | SearchHistory | `search/web.py` (web-search composition), `search/assets.py` (JSON+SSE over `AssetQuery`) |
+| Graph | L4 | Canon, Entity, EntityRelationship, KnowledgeGraph, GraphEdge, FragmentCuration | `resolve_entities_batch(canon_id=…)`, GraphService, `_resolve_target_canon()`, `_normalize_pair()` |
 | Flow | L4 | Flow, FlowExecution, Task | FlowService (reentrant state machine, 7 step types) |
-| Analysis | L4 | AnalysisAdapter | DB-registered adapters, dynamic import |
 | Conversational Intelligence | L5 | ChatConversation | MCP server, conversation service |
 | Sharing | L6 | Package, PackageItem, ShareableLink, InfospaceBackup | PackageService, BackupService. PackageItem uses typed FK columns (bundle_id, run_id, etc.) with CHECK constraint. |
 
@@ -358,14 +397,30 @@ Route receives locator (URL, file, text)
       → Enricher function: load assets → external API → write facets
 ```
 
-**Knowledge Promotion (annotation → graph, @task):**
+**Knowledge Promotion (annotation → graph, explicit user/flow action — never automatic):**
 ```
-Annotation run completes (annotation domain)
-  → annotated_to_curate @task (schedule=120) finds annotations needing curation
-    → Extracts triplets from annotation JSONB values
-      → resolve_entities_batch() matches to EntityCanonical (pgvector SQL per entity)
-        → Creates FragmentCuration (FK columns) + GraphEdge records
-          → GraphService.get_entity_neighborhood() traverses via GraphEdge (O(1) indexed lookup)
+User or flow CURATE step explicitly invokes curate_annotated @task or
+POST /annotations/{id}/curate (no schedule, no auto-trigger)
+  → _resolve_target_canon(): graph.canon_id, or infospace.default_canon_id
+    → Extracts triplets from annotation JSONB (LLM-side subject_name/object_name)
+      → resolve_entities_batch(canon_id=…) matches Entity rows in the canon
+        → Translates to DB-side source_entity_id / target_entity_id at write time
+          → Creates FragmentCuration + GraphEdge; reactivates any tombstone
+            EntityRelationship for the canonical-ordered pair
+              → GraphService.get_entity_neighborhood() traverses via GraphEdge
+                (graph-scoped indexes: ix_graph_edge_graph_source/target)
+```
+
+**Vocabulary Management (no auto-resolution; user-invocable proposals only):**
+```
+POST /infospaces/{iid}/canons/action/propose-resolutions
+  → propose_resolutions @task (params_model, no schedule, no triggers)
+    → Scans entities (within canon_id) and/or predicates (within graph_id)
+      via embedding similarity
+    → Streams proposals on resolution.proposals topic (ctx.send)
+    → User reviews; submits accepted merges via existing routes:
+        - /canons/{cid}/action/merge-entities (entity proposals)
+        - /knowledge-graphs/predicates/rename   (predicate proposals)
 ```
 
 **Flow Execution (composition of everything):**
@@ -402,7 +457,6 @@ Preview is a read-only query against external sources. It lives at the route lev
 | PollHandler registry | `content/services/poll_handlers/__init__.py` | `@register_poll_handler("kind")` decorator | Source polling dispatch in StreamSourceService |
 | @task registry | `core/tasks.py` | `@task` decorator at import time | Beat dispatcher finds work and dispatches tasks |
 | @enricher registry | `content/enrichers.py` | `@enricher` decorator (wraps `@task`) | Enrichment dispatch, provider gating, ENABLED_ENRICHERS filter |
-| AnalysisAdapter registry | DB table `AnalysisAdapter` | `module_path` for dynamic import | Flow ANALYZE step, `/analysis/adapters/execute` route |
 
 ### Handlers (how data enters)
 
@@ -464,14 +518,166 @@ The beat dispatcher iterates `@task` registry × infospaces in topological order
 
 ---
 
-## Two "Search" Domains
+## Search Topology
 
-| Concern | Module | Layer | What it does |
+Two orthogonal concerns under a single `/search` router prefix. One looks out (find things on the internet). The other looks in (find things we already have).
+
+| Concern | Entry | Layer | Composition |
 |---|---|---|---|
-| Internal asset search | `search/services/search_service.py` | 3 | FTS, ILIKE, pgvector over existing assets via AssetQuery |
-| External web search | `foundation_service_providers/base.py` | 0 | WebSearchProvider protocol wrapping Tavily, etc. |
+| External web search | `POST /search/web` (+ `/web/from-urls`, `/web/from-results`) | Route → `modules/search/web.py` → `WebSearchProvider` (L0) + `SearchHandler` (content) | `search_web()`, `search_and_ingest()`, `create_assets_from_urls()`, `create_assets_from_results()` |
+| Internal asset search | `POST /search/infospaces/{iid}/assets` (JSON), `POST /search/infospaces/{iid}/assets/stream` (SSE) | Route → `modules/search/assets.py` → `AssetQuery` | `search_assets()` returns `AssetSearch`, `stream_search_assets()` yields `StreamEvent`s |
 
-The `search.py` route composes WebSearchProvider (Layer 0) + SearchHandler (content handler) to search the web and ingest results. This is route-level primitive composition. SearchService is for "find things we already have." WebSearchProvider is for "go find things on the internet."
+**Asset search split into JSON + native SSE sibling.** The JSON endpoint returns a full `AssetSearch` envelope (`primary: ListingSection[AssetNode]`, `grouped`, `meta`). The SSE sibling uses FastAPI's native async-generator pipeline so `fastapi.sse._PING_INTERVAL = 3.0` (set in `main.py`) attaches 3-second keepalives — `SSEResponse(generate())` silently bypassed them. Event sequence: `skeleton → section(role='primary') → count → section(role='grouped')* → done`.
+
+**`/tree/*` is the same topology, scoped to structural browsing.** `/tree`, `/tree/children`, `/tree/feed` each have a JSON endpoint + `/stream` sibling. Shapes are `AssetTree` (`nav: AssetTreeNav`, `section: ListingSection[AssetNode]`, `meta`) and `AssetFeed` (`section`, `meta`).
+
+**`AssetQuery` is the single shared primitive** under `/search/assets`, `/tree/*`, `/infospaces/{id}/assets` CRUD, MCP tools, and flow FILTER step. Scope clamp via `.scope(access.scope)` is mandatory at the route; inner composition is free to compose filters over that.
+
+---
+
+## Views Pattern — One implementation, two presentations
+
+Every listing surface (`AssetTree`, `AssetSearch`, `AssetFeed`, annotation rows / aggregate / graph) comes from a single `render_X()` async generator in `modules/content/views.py` or `modules/annotation/views.py`. The generator yields `StreamEvent`s (`SkeletonEvent | SectionEvent | NavEvent | CountEvent | AggregateSectionEvent | GraphSectionEvent | GraphChunkEvent | DoneEvent | ErrorEvent`) from a single discriminated union.
+
+Two presentations from one implementation:
+
+* **SSE** — route is a native async generator, yields `ServerSentEvent(data=ev, event=ev.name)`, FastAPI's pipeline attaches keepalives automatically.
+* **JSON** — route awaits `collect_X(...)`, which is `drain(render_X(...), envelope_type)` from `core/sse.py`. The drain folds events into the envelope (resolves the `total = -1` sentinel, stitches grouped sections, etc.).
+
+**Generic `ListingSection[T]`** is the universal section shape: `items: list[T]`, `total: int`, `has_more: bool`, `cursor_next: str | None`, plus optional `at_parent` for keyed levels.
+
+**Unified `AssetNode`** is the single tree/search/feed item — `type: "bundle" | "asset" | "virtual_folder"`, structural signals (`has_children`, `children_count`, `sealed`, `stub`), match evidence (`score`, `matches: list[AssetMatch]`), and optional `preview`. One shape, three contexts.
+
+**Cursor format** is opaque base64-JSON via `core/cursor.py`. Callers never parse.
+
+---
+
+## User-initiated Actions — `@task(params_model=...)` + existing `/stream`
+
+The action pattern: a route accepts typed request params, dispatches an `@task` function with a `params_model` (Pydantic v2), and returns `ActionAcceptedResponse(task_id, watch_url)`. The `watch_url` points at the existing `GET /infospaces/{iid}/stream/{topic}/{resource_id}` endpoint — the same one every other progress stream composes on. No per-action jobs table, no bespoke polling endpoints.
+
+Inside the task, `ctx.send(topic, resource_id, event_type, data)` pushes events onto the presence stream. Consumers subscribe by topic + resource_id.
+
+```python
+# modules/annotation/schemas.py
+class GeocodeParams(BaseModel):
+    run_id: int
+    field_path: str
+    annotation_ids: list[int]
+
+# modules/annotation/tasks/geocode.py
+@task("geocode", queue="external_api", capability="geocoding",
+      params_model=GeocodeParams, tags={"geocoding"})
+def geocode(ctx: TaskContext, batch_ids: list[int], params: GeocodeParams):
+    topic = "annotation.geocoding"
+    resource_id = f"{params.run_id}:{ctx.task_id or 'direct'}"
+    ctx.send(topic, resource_id, "started", {"count": len(strings)})
+    for entity_id, coords in geocoder.resolve(strings):
+        ctx.send(topic, resource_id, "resolved", {"entity_id": entity_id, "coords": coords})
+    ctx.send(topic, resource_id, "done", {"total": len(strings)})
+
+# route
+@router.post("/{run_id}/action/geocode", response_model=ActionAcceptedResponse)
+def kick_geocode(run_id, body, access, session):
+    params = GeocodeParams(run_id=run_id, field_path=body.field_path, annotation_ids=[...])
+    result = geocode.delay(annotation_ids, access.infospace_id, params=params)
+    return ActionAcceptedResponse(
+        task_id=result.id,
+        watch_url=f"/infospaces/{access.infospace_id}/stream/annotation.geocoding/{run_id}:{result.id}",
+    )
+```
+
+**Decorator-time invariants:** `params_model` forbids `triggers` / `schedule` / `check` (params-driven tasks are direct-invocation only). Default tasks (no `params_model`) require a `check` query.
+
+**Direct invocation API:** `fn.delay(batch_ids, infospace_id, params=instance_of_params_model)` — the decorator validates the params instance type and serializes via `model_dump(mode='json')` into the Celery args.
+
+---
+
+## Graph Streaming — `stream_graph` with `GraphSource` variants
+
+Annotation triplets and persistent graphs share one streaming primitive: `stream_graph(session, iid, source, *, top_n_nodes, top_n_edges, chunk_size)` in `modules/graph/stream.py`.
+
+Sources implement a single protocol:
+
+```python
+class GraphSource(Protocol):
+    async def windows(self, chunk_size: int) -> AsyncIterator[list[TripletRow]]: ...
+```
+
+Two built-in implementations:
+
+* **`AnnotationGraphSource(query, triplet_field, dedup)`** — reads triplets from `Annotation.value[triplet_field]` via LATERAL `jsonb_array_elements`, windowed by annotation id DESC. Dedup modes: `"exact"` | `"case-insensitive"` | `"none"`.
+* **`PersistentGraphSource(session, graph_id, infospace_id, order)`** — reads `GraphEdge` + `Entity` records from a persisted knowledge graph (joins via the new `source_entity_id` / `target_entity_id` columns; canon-scoped via the graph's `canon_id`).
+
+`stream_graph` yields `GraphChunkEvent`s; `collect_graph()` drains them into `GraphResult`. Node dedup spans chunks via a `seen_nodes: set[str]` keyed by SHA256-truncated-12 of `(name, type)`. The iterator hard-stops once `top_n_nodes` or `top_n_edges` is reached, so the streaming path never materializes a 5M-row result set in Python.
+
+Invariants (enforced by the scale-marker test): first chunk latency < 500 ms, peak Python memory < 100 MB on the 5M-annotation fixture, `aggregate()` pushes GROUP BY to Postgres (no client-side materialization).
+
+**Multi-graph-field schemas** (Phase 2 of the schema-native-entities rework):
+schemas can declare multiple graph-shaped fields under any user-facing name.
+Curation walks each annotation's schema for every graph-shaped subschema
+and tags each emitted `GraphEdge` with `source_field_path`. Inspection-time
+`edge_group_by: source_field_path` splits the rendered graph by which field
+produced the edge — so loose-discovery edges and anchored-assessment edges
+stay visually distinct without needing separate panels. Legacy schemas that
+saved their graph field under the literal `"triplets"` key continue to use
+that key forever; back-compat is non-negotiable.
+
+---
+
+## Filter operators — `core/filters.py`
+
+Both `AssetQuery` and `AnnotationQuery` share one filter language:
+`FilterSet` (logic + conditions) → `FieldCondition` (path, operator, value).
+Operators today: `eq`, `ne`, `gt`, `ge`, `lt`, `le`, `in`, `not_in`,
+`contains`, `not_contains`, `between`, `exists`, `not_exists`, plus the
+relational family.
+
+**Relational filter family — `relational.cooccurs`.** Emits SQL that finds
+rows where every named entity appears in at least one of the listed
+entity-typed paths. Three reach modes:
+
+- `annotation` (default) — every entity appears somewhere on the same
+  annotation row, regardless of which path. Broadest typical default.
+- `asset` — every entity appears on at least one annotation of the same
+  asset. Wraps the body in `EXISTS (SELECT 1 FROM annotation a2 WHERE
+  a2.asset_id = a.asset_id AND ...)` per entity.
+- `same_level` — every entity appears in a *shared parent*: the same
+  array element for exploded paths (e.g. one mail with both sender=A
+  and receiver=B), or the annotation root for non-exploded paths.
+  Implemented by grouping paths by array prefix and OR-ing across
+  groups: any single shared parent that holds every entity satisfies
+  the row.
+
+Path is the placeholder `"$"` for relational ops; real config lives in
+`value`:
+
+```python
+{"path": "$", "operator": "relational.cooccurs", "value": {
+    "entities": ["Merkel", "Macron"],
+    "reach": "annotation",
+    "paths": ["document.actors[*]", "document.mails[*].sender"],
+}}
+```
+
+Pushed to a panel as a `Scope`, it narrows that panel to data where the
+entity pair co-occurs. Pushed to every panel of a dashboard (typical
+gesture from a graph view), it narrows the whole dashboard to the
+relationship between two entities. The frontend helper
+`pushCooccursToDashboard()` in `lib/annotations/scopes.ts` builds per-panel
+scopes from each panel's schema and dispatches via `useAnnotationRunStore.addScope`.
+
+Graph panels render the active cooccurs lens visually: the
+`focusedEntityNamesFromFilter()` helper extracts entity names from any
+`relational.cooccurs` condition in the merged filter; ForceGraph treats
+those names as the focused sub-network and dims everything else
+(`GraphPanelSettings.dim_unmatched` defaults to `True`; set to `False`
+to opt out). Same dim cascade as node-focus and asset-lens — context
+preserved, focus clear.
+
+`relational.*` is namespaced as a closed family root so future siblings
+(`relational.path` for multi-hop, `relational.cluster` for entity-cluster
+membership) plug in without locking the API.
 
 ---
 
@@ -558,8 +764,8 @@ Workers listening on the same queue will round-robin tasks automatically. No coo
 **3. Is it a new enrichment (language detection, EXIF, etc.)?**
 → Write an `@enricher` function in `content/enrichers.py` with a check query, capability, and queue. The task is auto-registered, auto-dispatched, and auto-scheduled. Do NOT put enrichment logic in processors or services.
 
-**4. Is it a new analysis method?**
-→ Implement `AnalysisAdapterProtocol`, register in DB. Flow ANALYZE step and `/analysis/adapters/execute` will discover it. Do NOT hardcode analysis methods.
+**4. Is it a new analysis over annotation results?**
+→ Compose an `AnnotationQuery` (`annotation/query.py`) and expose it through the `/runs/{id}/view` endpoint — the composable `/view` pipeline replaced the DB-registered `AnalysisAdapter` system. Do NOT reintroduce dynamic-import adapters.
 
 **5. Is it a new ingestion path (new route for creating assets)?**
 → Use `ingest()` from `content/ingest.py` or compose with an existing Handler + AssetBuilder. Do NOT create new IngestionContext manually in routes — use `IngestionContextFactoryDep` from DI.
@@ -604,10 +810,10 @@ The acid test: "The VPS deployment with 400GB+ of drifting PDFs should require z
 | Enrichment | Read/write phase separation; no DB hold during external I/O | Connection pool safe |
 | OCR failure | `FACET_OCR_FAILED` + `exclude_when_facet` | No infinite re-dispatch |
 | Source polling | Circuit breaker (`consecutive_failures` > threshold) | No retry storms |
-| Singleton re-resolve | `RESOLVE_SINGLETON_WINDOW_DAYS` config (0 = no limit) | No age-out |
-| Graph traversal | GraphEdge table + indexed SQL | O(1) lookup; no annotation/entity load |
-| Entity resolution | In-memory alias lookup from prefetched canonicals before SQL | ~70% fewer queries |
-| FragmentCuration lookups | FK columns (subject/object/entity_canonical_id) | Indexed joins; re_resolve uses FK filters |
+| Resolution proposals | `propose_resolutions` (user-invocable @task, no schedule) | No background scan; proposals stream via ctx.send |
+| Graph traversal | GraphEdge + `(graph_id, source/target_entity_id)` indexes | O(1) lookup; graph-scoped hot path |
+| Entity resolution | Canon-scoped in-memory alias lookup before SQL | ~70% fewer queries; one canon per resolution |
+| FragmentCuration lookups | FK columns (source/target_entity_id, entity_id) | Indexed joins; cross-table FK rewires on merge |
 | Asset search | AssetQuery (FTS, facets, semantic, bundle filter) | SQL pushdown; cursor pagination |
 | Tree search | `Asset.bundle_id == bundle_id` | No relationship load; indexed filter |
 | non_superseded_filter | `parent_is_superseded` denormalized column | No correlated EXISTS subquery; indexed partial filter |
@@ -630,9 +836,10 @@ The acid test: "The VPS deployment with 400GB+ of drifting PDFs should require z
 - **Kind checks outside registries** — `strategy.py`, `annotate.py`, `tree_renderer.py` contain direct `AssetKind` comparisons. **→ Step 6** (deferred).
 
 **Resolved gaps (for record):**
-- ~~Provider system fragmentation~~ — Unified into `registry.py` (ProviderDescriptor + `resolve()` function). `model_registry.py`, `embedding_registry.py`, `unified_registry.py`, `resolver.py` deleted.
-- ~~Credential resolution~~ — Callers provide `type_key` + `credentials` explicitly. `load_credentials()` merges runtime keys with stored user credentials. `resolve()` checks access + credentials in ~15 lines.
-- ~~Per-descriptor access control~~ — `PROVIDER_ACCESS_{PROTOCOL}_{type_key}` env vars; smart defaults based on `requires_api_key`.
+- ~~Provider system fragmentation~~ — Unified into `registry.py` (one `resolve()` function, `Resolved` wrapper, `ProviderError`). v2 (April 2026) collapsed credential loading, access checks, and construction into a single call keyed by `infospace_id`. `load_credentials`, `get_provider`, `get_*_provider` convenience getters, `select_provider`, `system_default_provider_key`, `discover_models` iterator all deleted.
+- ~~Credential resolution~~ — Credentials flow from the infospace owner. BYOK goes via `runtime_key`. `PROVIDER_ACCESS` is an upward grant — env key is never shared by default.
+- ~~Per-descriptor access control~~ — `PROVIDER_ACCESS_{CAPABILITY}_{PROVIDER_KEY}=all|superuser|none`. Legacy `PROVIDER_ACCESS_LLM_*` rewritten to `LANGUAGE_*` with deprecation warning.
+- ~~Structural-failure dispatch~~ — `@task` wrapper catches `ProviderError`, sets a no-TTL Redis block key. Dispatch + task entry skip blocked (task, infospace) pairs. Config-save handlers clear blocks.
 - ~~Provider gating fragility~~ — `is_capability_available()` circuit breaker at dispatch level; startup probe logs provider availability.
 - ~~OCR modality gating~~ — @enricher uses `requires_modality="image"` via dispatch_filter.
 - ~~Language detection enricher~~ — @enricher with auto-dispatch.
@@ -643,7 +850,11 @@ The acid test: "The VPS deployment with 400GB+ of drifting PDFs should require z
 - ~~`factory.py` if/elif chains~~ — Eliminated; declarative `@provider` classes in `providers.py`.
 - ~~`source_metadata` confusion~~ — Decomposed to `facets` + `file_info`, column dropped.
 - ~~Service-layer access validation~~ — `validate_infospace_access()` removed from all 14 service files. `global_utils.py` deleted. Routes use `Requires()` / `resolve_access()`.
-- ~~Package polymorphic FK~~ — `PackageItem.resource_type`/`resource_id` replaced with typed nullable FK columns (`bundle_id`, `run_id`, `graph_id`, `schema_id`, `asset_id`, `entity_canonical_id`). CHECK constraint enforces exactly one non-null.
+- ~~Package polymorphic FK~~ — `PackageItem.resource_type`/`resource_id` replaced with typed nullable FK columns (`bundle_id`, `run_id`, `graph_id`, `schema_id`, `asset_id`, `entity_id`, `canon_id`). CHECK constraint enforces exactly one non-null.
+- ~~`EntityCanonical` graph-id ambiguity~~ — Promoted `Canon` to a first-class table; renamed `EntityCanonical → Entity` with `canon_id NOT NULL`. `KnowledgeGraph.canon_id` is required. Multi-canon-per-infospace is structurally supported. See `docs/plans/canon-graph-rework/`.
+- ~~Per-pair relationship was buried in N edges~~ — Introduced sparse `EntityRelationship` (canonical-ordered `entity_a_id < entity_b_id`, `tags` JSONB+GIN, tombstone via `is_active`); lazy-materialized only when users pin/tag/note.
+- ~~`subject/object` direction overloading~~ — Per-triplet evidence (`GraphEdge`) uses `source_entity_id`/`target_entity_id`; per-pair aggregate is direction-agnostic. LLM-facing JSON keys (`subject_name`/`object_name`) unchanged — translation in curation.
+- ~~Auto-scheduled `re_resolve_singletons`~~ — Replaced by `propose_resolutions` user-invocable @task. No automatic merging; user reviews proposals and confirms via existing merge routes.
 - ~~Package scope incomplete~~ — `PackageScope` now precomputes all bounded derivations: recursive bundle expansion, graph→run, run→schema, ancestor asset chain. `AssetQuery.scope()` applies the three-branch visibility predicate.
 
 **Future enhancements (P3, deferred until core is stable):**
@@ -673,81 +884,125 @@ Celery-based event bus with `emit`/`subscribe`, `filter_key`/`filter_value` supp
 
 **Design constraints:** The event bus is infrastructure (Layer 0). It must NOT import from any domain. Subscribers are Celery task name strings. The bus calls `celery_app.send_task()` — same decoupling as task dispatch.
 
-### 2. Unified Provider Registry — ✅ DONE
+### 2. Unified Provider Registry — ✅ DONE (v2 — April 2026)
 
-**Three files. One function.**
+**Three files. One function. One return type. One error.**
 
-The provider system is implemented in `foundation_service_providers/`:
+The provider system lives in `foundation_service_providers/`:
 
-- **`base.py`** — Protocol classes (`StorageProvider`, `EmbeddingProvider`, `LanguageModelProvider`, etc.) + typed model specs (`ModelSpec`, `LLMModelSpec`, `EmbeddingModelSpec`) + provider selection models (`ProviderSelection`, `LanguageDefaults`, `ProviderDefaults`).
-- **`registry.py`** — Framework: `Setting` (reference to config attr), `Capability` (one capability binding), `@provider` decorator, `ProviderDescriptor` dataclass. Registry core: `_registry`, `register_provider`, `get_descriptor`, `list_providers`, `get_provider`, `_build_config`. Resolution functions: `resolve()`, `is_accessible()`, `is_capability_available()`, `discover_models()`, `load_credentials()`, `system_default_type_key()`.
-- **`providers.py`** — All 15 `@provider` class declarations (Ollama, OpenAI, Anthropic, Gemini, Mistral, Jina, Voyage, Tesseract, NominatimLocal, NominatimAPI, Mapbox, MinIO, LocalFS, Newspaper4k, Tavily) + convenience getters (`get_storage_provider`, etc.).
+- **`base.py`** — Protocol classes (`StorageProvider`, `LanguageModelProvider`, ...) + typed model specs + selection models (`ProviderSelection`, `LanguageDefaults`, `ProviderDefaults`, `EnrichmentConfig`).
+- **`registry.py`** — Framework (`Setting`, `Capability`, `@provider`, `ProviderDescriptor`) + `resolve()` + `Resolved` + `ProviderError` + `is_capability_available()` + `list_providers()` + `get_model_spec()` + `probe_providers()`.
+- **`providers.py`** — 15 `@provider` declarations. Nothing else — the convenience getters are gone.
 
-**Deleted:** `resolver.py` (CapabilityResolver), `model_registry.py` (ModelRegistryService), `embedding_registry.py` (EmbeddingProviderRegistryService), `unified_registry.py`, `factory.py`, `config/embedding_models.json`.
-
-#### Declarative provider syntax
-
-Each provider is a plain class with `key`, optional `api_key`/`base_url`/`credential_key`/`contexts`, and one or more `Capability` attributes. The `@provider` decorator reads them and registers `ProviderDescriptor` entries:
+**Public API:**
 
 ```python
-@provider
-class OpenAI:
-    key = "openai"
-    api_key = Setting("OPENAI_API_KEY")
-    base_url = Setting("OPENAI_BASE_URL", default="https://api.openai.com/v1")
-    credential_key = "openai"
-    contexts = {"cloud"}
+from app.api.modules.foundation_service_providers import resolve, Resolved, ProviderError
 
-    language = Capability("language_openai.OpenAILanguageModelProvider", models=[
-        LLMModelSpec(name="gpt-5.2", supports_tools=True, supports_streaming=True, ...),
-    ])
-    embedding = Capability("embedding_openai.OpenAIEmbeddingProvider", models=[
-        EmbeddingModelSpec(name="text-embedding-3-small", dimension=1536, max_sequence_length=8191),
-    ])
+p = resolve(
+    capability,                     # "language" | "embedding" | "ocr" | "geocoding" |
+                                    # "storage" | "scraping" | "web_search"
+    provider_key=None,              # "anthropic", "ollama"... None → from config
+    model=None,                     # None → from config (raises if model_required=True)
+    *,
+    infospace_id=None,              # REQUIRED for credential-bearing capabilities
+    context=None,                   # "chat" | "annotation" — only valid for language
+    runtime_key=None,               # BYOK for this call
+    session=None,                   # reuse the request session; auto-opens one if None
+)  # → Resolved (delegates via __getattr__; carries .model and .provider_key)
+   # → raises ProviderError on any failure
 ```
 
-`ProviderDescriptor` fields: `protocol`, `type_key`, `impl`, `credential_key`, `api_key_setting`, `base_url_setting`, `base_url_default`, `extra_config`, `models` (`List[ModelSpec]`), `contexts` (`Set[str]`). Properties: `requires_api_key` (derived from `api_key_setting`), `is_local` (derived from `contexts`), `get_model(name)`.
+Everything else is internal. Credentials, descriptor lookup, access checks, construction — all private. Nobody constructs a provider any other way.
 
-Multi-capability providers (Ollama, OpenAI) declare once, register one descriptor per capability. `_build_config` replaces all closure-based config factories — reads `api_key_setting`, `base_url_setting`, `extra_config` from the descriptor.
+#### Selection chain (first match wins)
 
-#### Provider Resolution
+| Priority | Source                                              | Applies to                                   |
+|----------|-----------------------------------------------------|----------------------------------------------|
+| 1        | Explicit `provider_key` / `model` args              | All capabilities                             |
+| 2        | `EnrichmentConfig` on infospace                     | embedding / ocr / geocoding                  |
+| 3        | Owner's `ProviderDefaults` (+ `context` override)   | language / embedding / web_search / ocr / geocoding |
+| 4        | System default env (`STORAGE_PROVIDER_TYPE` etc.)   | storage / scraping / geocoding / ocr / web_search |
 
-Every execution context calls `resolve()` with explicit parameters:
+Language and embedding have no system default — selection must come from config or args.
+
+#### Credential chain (keyed providers only)
+
+| Priority | Source                                                       | When               |
+|----------|--------------------------------------------------------------|--------------------|
+| 1        | `runtime_key` argument                                       | Per-call BYOK      |
+| 2        | Infospace **owner's** `encrypted_credentials`                | Stored profile key |
+| 3        | Deployment env key (**only** if PROVIDER_ACCESS grants it)   | Shared deployment  |
+
+**Infospace-owner-centric, not requester-centric.** A collaborator's chat/run/embedding in Alice's infospace uses Alice's credentials. If they want their own key for a one-off, they pass `runtime_key`.
+
+#### PROVIDER_ACCESS — upward grant, not downward gate
+
+- **Unset (default):** deployment env key is NOT shared. BYOK only. Secure default.
+- **`=all`:** env key available to any infospace owner.
+- **`=superuser`:** env key available only when the infospace owner is a superuser.
+- **`=none`:** provider explicitly blocked even for keyless providers.
+
+Env var: `PROVIDER_ACCESS_{CAPABILITY}_{PROVIDER_KEY}` (uppercase). Legacy `PROVIDER_ACCESS_LLM_*` is silently rewritten to `PROVIDER_ACCESS_LANGUAGE_*` with a deprecation warning.
+
+#### `model_required`
+
+A `Capability(...)` flag (default `True`). Set `False` on single-implementation providers (Tesseract, NominatimAPI, Mapbox, SearXNG, Tavily, MinIO, LocalFS, Newspaper4k) so resolve doesn't demand a model string.
+
+Save-time validation on `ProviderDefaults` and `EnrichmentConfig`: if the selected provider has `model_required=True` but no `model_name`, the save is rejected. Invalid state never reaches the DB.
+
+#### Structural block — provider-misconfig circuit breaker
+
+When a `@task` raises `ProviderError` (missing credentials, no provider configured, invalid model) the wrapper sets `task:{name}:{infospace_id}:block` in Redis with the error reason. Dispatch + task entry both check this key first and skip until it's cleared.
+
+Transient failures still use the 5-minute `:backoff` key. Structural failures stay blocked until the user fixes their setup and the save handler clears the block via `clear_structural_blocks(infospace_id)`.
+
+Helpers: `is_structurally_blocked(task_name, infospace_id)`, `set_structural_block(...)`, `clear_structural_blocks(infospace_id, task_names=None)`, `list_structural_blocks(infospace_id)`.
+
+#### Call-site patterns
 
 ```python
-from app.api.modules.foundation_service_providers.registry import resolve, load_credentials
+# Route with Access — most common
+async def generate(body: ChatRequest, access: Access = Requires(Capability.COMPUTE)):
+    p = resolve("language", context="chat",
+                infospace_id=access.infospace_id, session=db)
+    result = await p.generate(messages, model_name=p.model)
 
-# In a route (interactive, frontend passes keys)
-credentials = load_credentials(session, user.id, request.api_keys)
-provider = resolve(EmbeddingProvider, sel.type_key, settings, credentials)
+# BYOK from the request
+    p = resolve("language", body.provider_name, body.model_name,
+                infospace_id=access.infospace_id, runtime_key=body.api_key)
 
-# In an enrichment task (background, system-level only)
-type_key = system_default_type_key(OcrProvider, settings)
-provider = resolve(OcrProvider, type_key, settings)
+# Enrichment task — ctx.provider() wraps resolve with infospace_id + per-worker cache
+p = ctx.provider("embedding")
+p = ctx.provider("ocr")
 
-# In an annotation task (background, user-triggered)
-type_key = run_config.get("provider") or run_config.get("ai_provider")
-credentials = load_credentials(session, run.user_id, runtime_api_keys)
-provider = resolve(LanguageModelProvider, type_key, settings, credentials)
+# Annotation task — provider+model+BYOK come from run.configuration
+runtime_key = (config.get("api_keys") or {}).get(config["provider"])
+p = resolve("language", config["provider"], config["model"],
+            infospace_id=run.infospace_id, context="annotation",
+            runtime_key=runtime_key, session=session)
+
+# Infrastructure — no infospace needed
+storage = resolve("storage")
+scraping = resolve("scraping")
+
+# Discovery (setup UI) — inside an infospace, gated on Capability.SETUP
+p = resolve("embedding", provider_key, "probe",
+            infospace_id=access.infospace_id, runtime_key=form.api_key)
+models = await p.discover_models()
 ```
 
-**`resolve()` (~15 lines):** Look up descriptor → check access → check credentials → construct. Keyless providers (Ollama, Tesseract, local_fs) are first-class: no credential needed, just access check. Cloud providers require a key from credentials dict or system env var.
+#### Caching
 
-**`load_credentials(session, user_id, runtime_keys)`:** Merges runtime API keys with user's stored encrypted credentials. Returns a flat dict. Callers pass it to `resolve()`.
+`cached_resolve` in `core/tasks.py` keys by `(capability, provider_key, model, infospace_id, context)` — per-worker cache with credential isolation. `runtime_key` calls bypass the cache entirely (BYOK isolation). Cache invalidates when deployment-level provider env vars change.
 
-**Selection is the caller's job.** `type_key` always comes explicitly from domain objects: `ProviderSelection` on infospaces, run configuration, user defaults. `resolve()` never guesses — it takes what it's given.
+#### Provider + credential invariants
 
-**Access control:** Per-descriptor via `PROVIDER_ACCESS_{CAPABILITY}_{type_key}` env vars (`all | superuser | none`). Capability names: `language`, `embedding`, `ocr`, `geocoding`, `storage`, `scraping`, `web_search`. Smart defaults: `is_local` (Ollama, Tesseract, Nominatim) → default `"all"`; cloud providers → default `"none"`. Access control gates the system env-var key only — users who supply their own credential always get through. Operators set overrides to share the deployment key (`all`) or restrict it (`superuser`).
+`cached_resolve` keys by `(capability, provider_key, model, infospace_id, context)` — per-worker cache, credential-isolated. `runtime_key` calls bypass the cache (BYOK isolation).
 
-**Circuit breaker:** `is_capability_available(protocol, settings)` checks if ANY provider for a protocol is accessible. Used by dispatch to skip @tasks whose capability is unavailable — prevents dispatching thousands of tasks that will all fail.
+**Save-time validation is opt-in.** `validate_provider_defaults()` and `validate_enrichment_config()` in `foundation_service_providers/base.py` run only from save-path endpoints (`PATCH /me`, `PATCH /infospaces/{id}`). Pydantic model `__init__` is permissive so legacy rows with partial selections still deserialize — otherwise reads (e.g. `GET /me`) 500 for anyone who had a partial config saved before Phase A. This is an invariant; do not move the checks into `__init__`.
 
-**Model discovery:** `discover_models(protocol, settings, credentials)` aggregates typed `ModelSpec` entries from accessible descriptors + runtime discovery (Ollama `discover_models()`).
-
-**User defaults:** `ProviderSelection` (`provider_key` + optional `model_name`) is the typed unit stored on `User.provider_defaults` and `Infospace.enrichment_config.embedding`. `LanguageDefaults` provides context-specific overrides (chat vs annotation). Selection happens in the caller — `resolve()` receives the result.
-
-**Startup probe:** `probe_providers(settings)` probes each configured provider type and logs availability. Called at worker startup.
-
-**DI layer:** Routes get providers via `StorageProviderDep`, `ScrapingProviderDep`, etc. (convenience getters in `dependency_injection.py`). For multi-model protocols (LLM, embedding), routes call `resolve()` directly with credentials from `load_credentials()`. @task functions use `ctx.provider(Protocol)` which calls `cached_resolve()` internally. Triggered Celery tasks use registry convenience getters (`get_storage_provider(settings)`, `get_scraping_provider(settings)`).
+**Service flatten — completed for Search + Embedding.** Internal search lives in `modules/search/assets.py` as pure functions (`search_assets`, `stream_search_assets`, `_build_search_query`). Embedding primitives are in `modules/embedding/{chunk,embed,similarity,vectors}.py` — the old `EmbeddingService` / `ChunkingService` / `VectorSearchService` classes are gone. Remaining services (`AnnotationService`, `FlowService`, `GraphService`, `ShareableService`, `PackageService`, `BackupService`, `UserBackupService`, `IntelligenceConversationService`, `BundleService`, `SourceService`, `ProcessingService`, `InfospaceService`, `FilterService`, `DatasetService`) are the authoritative set; the service layer is a fade-out pattern (routes use `Access`, tasks carry their own sessions and call primitives directly). See `docs/plans/hq-v2/` for the v2 primitives roadmap.
 
 #### Deployment Mode Examples
 
