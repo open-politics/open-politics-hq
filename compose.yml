@@ -1,4 +1,5 @@
 services:
+  # ── Core services (always run; no profile) ──────────────────────────────────
   db:
     image: pgvector/pgvector:pg16
     restart: always
@@ -24,15 +25,14 @@ services:
       - .env
     environment:
       - PYTHONPATH=/app
-    command: ["sh", "-c", "bash /app/prestart.sh && exec uvicorn app.main:app --workers 4 --host 0.0.0.0 --port ${BACKEND_PORT}"]
+    command: ["sh", "-c", "bash /app/prestart.sh && exec uvicorn app.main:app --workers ${BACKEND_WORKERS:-4} --host 0.0.0.0 --port ${BACKEND_PORT}"]
     build:
       context: ./backend
       args:
         INSTALL_DEV: ${INSTALL_DEV-false}
-    volumes:
-      - ./backend:/app
-      - ./backend/app/alembic/versions:/app/app/alembic/versions
-      
+    # Source is baked into the image (see backend/Dockerfile COPY ./app /app/app).
+    # The dev source bind lives in compose.override.yml — prod runs the image as-is.
+
   redis:
     image: redis:alpine
     volumes:
@@ -53,7 +53,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     networks:
       - default
 
@@ -72,9 +72,8 @@ services:
       - backend
     env_file:
       - .env
-    command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info", "-P", "prefork", "--concurrency=4"]
-    volumes:
-      - ./backend:/app
+    command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info", "-P", "prefork", "--concurrency=${CELERY_CONCURRENCY:-4}"]
+    # Source bind is dev-only (compose.override.yml).
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -98,55 +97,118 @@ services:
       --loglevel=info
       --pidfile=/tmp/celerybeat.pid
       --schedule=/tmp/celerybeat-schedule
-    volumes:
-      - ./backend:/app
+    # Source bind is dev-only (compose.override.yml).
     extra_hosts:
       - "host.docker.internal:host-gateway"
-  
-  # nominatim:
-  #   image: mediagis/nominatim:5.1
-  #   restart: always
-  #   shm_size: 4g
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "curl -f http://localhost:8080/status || exit 1"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-  #     start_period: 2h
-  #   environment:
-  #     # Default: World coarse (admin boundaries only - countries, states, cities)
-  #     # Fast download (~5GB) and import (~2h), good for global coverage
-  #     - PBF_URL=${NOMINATIM_PBF_URL:-https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf}
-  #     - REPLICATION_URL=${NOMINATIM_REPLICATION_URL:-https://planet.openstreetmap.org/replication/day/}
-  #     - IMPORT_STYLE=${NOMINATIM_IMPORT_STYLE:-admin}
-  #     - UPDATE_MODE=none
-  #     - FREEZE=false
-  #     - THREADS=4
-  #     - GUNICORN_WORKERS=4
-  #     - IMPORT_WIKIPEDIA=false
-  #     - IMPORT_GB_POSTCODES=true
-  #     - POSTGRES_SHARED_BUFFERS=2GB
-  #     - POSTGRES_MAINTENANCE_WORK_MEM=4GB
-  #     - POSTGRES_WORK_MEM=50MB
-  #     - POSTGRES_EFFECTIVE_CACHE_SIZE=8GB
-  #   volumes:
-  #     - nominatim-data:/var/lib/postgresql/16/main
-  #     - nominatim-flatnode:/nominatim/flatnode
-  #   networks:
-  #     - default
-  #   env_file:
-  #     - .env
-    # Override in .env for detailed regions:
-    # Europe detailed:     NOMINATIM_PBF_URL=https://download.geofabrik.de/europe-latest.osm.pbf NOMINATIM_IMPORT_STYLE=address
-    # North America:       NOMINATIM_PBF_URL=https://download.geofabrik.de/north-america-latest.osm.pbf NOMINATIM_IMPORT_STYLE=address
-    # Full POIs:           NOMINATIM_IMPORT_STYLE=full
-    # Admin: ~5GB download, ~2h import | Address: ~28GB Europe, ~3h import | Full: ~60GB Europe, ~8h import
+
+  # ── Optional services (opt-in via COMPOSE_PROFILES; see setup.sh) ────────────
+  minio:
+    image: minio/minio:latest
+    profiles: ["minio"]
+    restart: always
+    env_file:
+      - .env
+    command: ["minio", "server", "/data", "--console-address", ":9001"]
+    volumes:
+      - ./.store/minio:/data
+    networks:
+      - default
+
+  searxng:
+    image: searxng/searxng:latest
+    profiles: ["searxng"]
+    restart: always
+    volumes:
+      - ./.config/searxng:/etc/searxng:ro
+      - searxng_data:/var/cache/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+    networks:
+      - default
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    container_name: ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_MAX_LOADED_MODELS=2
+    restart: unless-stopped
+    networks:
+      - default
+
+  nominatim:
+    image: mediagis/nominatim:5.1
+    profiles: ["nominatim"]
+    restart: always
+    shm_size: 4g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 2h
+    environment:
+      # Default: world coarse (admin boundaries: countries, states, cities).
+      # Override NOMINATIM_PBF_URL / NOMINATIM_IMPORT_STYLE in .env for detail.
+      - PBF_URL=${NOMINATIM_PBF_URL:-https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf}
+      - REPLICATION_URL=${NOMINATIM_REPLICATION_URL:-https://planet.openstreetmap.org/replication/day/}
+      - IMPORT_STYLE=${NOMINATIM_IMPORT_STYLE:-admin}
+      - UPDATE_MODE=none
+      - FREEZE=false
+      - THREADS=4
+      - GUNICORN_WORKERS=4
+      - IMPORT_WIKIPEDIA=false
+      - IMPORT_GB_POSTCODES=true
+      - POSTGRES_SHARED_BUFFERS=2GB
+      - POSTGRES_MAINTENANCE_WORK_MEM=4GB
+      - POSTGRES_WORK_MEM=50MB
+      - POSTGRES_EFFECTIVE_CACHE_SIZE=8GB
+    volumes:
+      - nominatim-data:/var/lib/postgresql/16/main
+      - nominatim-flatnode:/nominatim/flatnode
+    networks:
+      - default
+    env_file:
+      - .env
+    # Admin: ~5GB download, ~2h import | Address (Europe): ~28GB, ~3h | Full: ~60GB, ~8h
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["caddy"]
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./.config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN:?DOMAIN must be set for Caddy}
+      - BACKEND_PORT=${BACKEND_PORT:-8022}
+      - ACME_EMAIL=${ACME_EMAIL:-}
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - default
 
 volumes:
   app-db-data:
   redis_data:
-  # nominatim-data:
-  # nominatim-flatnode:
+  searxng_data:
+  ollama_data:
+    name: ollama_data
+  nominatim-data:
+  nominatim-flatnode:
+  caddy_data:
+  caddy_config:
 
 networks:
   default:

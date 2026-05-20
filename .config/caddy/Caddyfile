@@ -1,0 +1,24 @@
+# Caddy reverse proxy for HQ production deployments.
+# Reads DOMAIN, BACKEND_PORT, ACME_EMAIL from the compose service env (see compose.yml).
+# Caddy automatically obtains and renews Let's Encrypt TLS certificates for {$DOMAIN}.
+
+{
+    email {$ACME_EMAIL}
+    # Uncomment for staging certs while testing DNS / before going live:
+    # acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$DOMAIN} {
+    encode gzip zstd
+
+    # Backend API + OpenAPI + docs.
+    @api path /api/* /openapi.json /docs /docs/* /redoc /redoc/*
+    handle @api {
+        reverse_proxy backend:{$BACKEND_PORT}
+    }
+
+    # Frontend (Next.js) catches everything else.
+    handle {
+        reverse_proxy frontend:3000
+    }
+}

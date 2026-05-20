@@ -1,1 +1,31 @@
+# Dependencies (installed inside image)
 node_modules
+
+# Next.js build output (huge — was the main cause of slow context transfer)
+.next
+out
+
+# Build/test artifacts
+coverage
+dist
+tsconfig.tsbuildinfo
+
+# Local env / secrets — Compose injects via env_file
+.env
+.env.*
+!.env.example
+
+# VCS / editor
+.git
+.gitignore
+.vscode
+.idea
+
+# Logs / OS junk
+*.log
+.DS_Store
+
+# Docker / compose files don't belong in the build context
+Dockerfile
+Dockerfile.*
+.dockerignore

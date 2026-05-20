@@ -1,21 +1,17 @@
-# Use the official Node.js image as the base image
+# syntax=docker/dockerfile:1.7
 FROM oven/bun:alpine
 
-# Set the working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json (or yarn.lock)
-# Note: We copy these first to leverage Docker cache for dependencies
-COPY package.json package-lock.json* ./
+# Install deps first so source edits don't invalidate the install layer.
+# bun.lock is the current lockfile; package-lock.json is kept around for openapi tooling.
+COPY package.json bun.lock* package-lock.json* ./
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    bun install --frozen-lockfile
 
-# Copy the rest of your app's source code
+# Source comes after deps so rebuilds skip reinstall.
 COPY . .
 
-# Install dependencies based on the copied package.json and lock file
-RUN bun i
-
-# Expose the port the app runs on
 EXPOSE 3000
 
-# Command to run the app in development mode
 CMD ["bun", "run", "dev", "--turbo"]

@@ -1,19 +1,21 @@
+# syntax=docker/dockerfile:1.7
 FROM python:3.13-slim
 
-# install curl
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt \
+    apt-get update && apt-get install -y --no-install-recommends curl
 
 WORKDIR /app/
 
-# Install uv
 ENV UV_SYSTEM_PYTHON=1
 
-# Allow installing dev dependencies to run tests
-RUN pip install uv
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install uv
 
 COPY pyproject.toml /app/
 
-RUN uv pip install --no-cache-dir -e ".[dev]"
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install -e ".[dev]"
 
 ENV PYTHONPATH=/app
 

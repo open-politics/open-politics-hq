@@ -7,9 +7,42 @@ on:
     branches: [main]
 
 jobs:
+  invariants:
+    name: Architectural invariants
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Supersede uniqueness — only asset_builder.py may write is_superseded=True
+        # HQ v2 invariant (EXECUTION.md §2.4): the supersede cascade lives in
+        # exactly one place so we can reason about versioning without chasing
+        # write-sites. Tests and docstrings are exempt; everything else fails CI.
+        run: |
+          MATCHES=$(grep -rn "is_superseded\s*=\s*True" app --include='*.py' \
+            | grep -v "__pycache__" \
+            | grep -v "asset_builder.py" \
+            | grep -v "^app/tests/" \
+            | grep -v "^\s*#" \
+            || true)
+          if [ -n "$MATCHES" ]; then
+            echo "FAIL: is_superseded=True written outside asset_builder.py:"
+            echo "$MATCHES"
+            echo ""
+            echo "All supersede cascades must route through AssetBuilder._do_supersede."
+            echo "To mark a row superseded, call:"
+            echo "    await AssetBuilder(session, uid, iid).supersedes(old).load(new_asset)"
+            echo "or, for the non-replacement case, add an action to asset_ops.py."
+            exit 1
+          fi
+          echo "ok: single supersede cascade"
+
   unit-tests:
     name: Unit tests
     runs-on: ubuntu-latest
+    needs: invariants
     defaults:
       run:
         working-directory: backend

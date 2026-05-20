@@ -75,19 +75,25 @@ See the [overview](https://docs.open-politics.org/pages/app/overview) for detail
 ```bash
 git clone https://github.com/open-politics/open-politics-hq.git
 cd open-politics-hq
-cp .env.example .env
-chmod +x prepare.sh
-./prepare.sh # creates the .store/ geocoder directory and makes it writable
+./setup.sh
 ```
 
-Edit the .env file. Any values that are still set to `changeThis` will prevent the container from starting.
-```bash
-FIRST_SUPERUSER=app_user
-FIRST_SUPERUSER_PASSWORD=changeThis # e.g. generated with "openssl rand -base64 13"
-```
+`setup.sh` is the single entrypoint. Run with no arguments it opens an
+interactive **dashboard**: it shows current state (environment, profiles,
+workers, secret/placeholder status, running services) and offers menu options
+to set up, start, stop, restart, rotate secrets, and view logs — no flags
+needed. It generates `.env` with strong secrets, creates `.store/` with correct
+permissions, and lets you pick a deployment preset (`dev`, `production`,
+`local-ollama`, `local-geocoder`, `searxng` — additive). Re-running is always
+safe: existing secrets and data are never overwritten.
+
+Flags exist for automation/CI:
 
 ```bash
-docker compose up --build
+./setup.sh --preset dev -y           # lean dev, no prompts
+./setup.sh --preset production --preset local-ollama
+./setup.sh rotate --fernet           # rotate the encryption key safely
+./setup.sh --help
 ```
 
 For hosted option, Kubernetes, or hybrid setups, see the [installation guide](https://docs.open-politics.org/pages/app/installation-self-hosted).

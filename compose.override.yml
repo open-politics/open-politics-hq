@@ -1,22 +1,19 @@
+# Dev ergonomics only. Auto-applied by `docker compose` (no -f).
+# Production runs `docker compose -f compose.yml ...` which EXCLUDES this file.
+# Optional-service topology lives in compose.yml under `profiles:`; this file
+# only relaxes restart policy and adds source bind-mounts / live reload.
 services:
   db:
     restart: "no"
-    env_file:
-      - .env
-
-  # adminer:
-  #   restart: "no"
-  #   ports:
-  #     - "8080:8080"
 
   backend:
     restart: "no"
     ports:
-      - "${BACKEND_PORT}:${BACKEND_PORT}"
+      - "127.0.0.1:${BACKEND_PORT}:${BACKEND_PORT}"
     volumes:
       - ./backend/:/app
       - ./backend/openapi.json:/app/openapi.json
-      # Bind mount for local_fs storage (when STORAGE_PROVIDER_TYPE=local_fs)
+      # local_fs storage bind (when STORAGE_PROVIDER_TYPE=local_fs)
       - /data/storage:/data/storage
     environment:
       - PORT=${BACKEND_PORT}
@@ -26,18 +23,21 @@ services:
     build:
       context: ./backend
       args:
-        INSTALL_DEV: ${INSTALL_DEV-false}  
+        INSTALL_DEV: ${INSTALL_DEV-false}
     networks:
       - default
-    
-  
+
   celery_worker:
     restart: "no"
     volumes:
       - ./backend/:/app
-      # Same storage mount as backend (for local_fs)
       - /data/storage:/data/storage
-  
+
+  celery_beat:
+    restart: "no"
+    volumes:
+      - ./backend/:/app
+
   frontend:
     restart: "no"
     build:
@@ -45,8 +45,6 @@ services:
       dockerfile: Dockerfile.dev
     depends_on:
       - backend
-    ports:
-      - "3000:3000"
     environment:
       - NODE_ENV=development
       - NEXT_PUBLIC_API_URL=http://backend:${BACKEND_PORT}
@@ -59,49 +57,14 @@ services:
     networks:
       - default
 
+  # Thin dev overrides for optional services — only materialize when their
+  # profile is active (selected in COMPOSE_PROFILES). Base defs are in compose.yml.
   minio:
-    image: minio/minio:latest
-    env_file:
-      - .env
-    command: ["minio", "server", "/data", "--console-address", ":9001"]
-    volumes:
-      - ./.store/minio:/data
-    networks:
-      - default
-
+    restart: "no"
   searxng:
-    image: searxng/searxng:latest
-    volumes:
-      - ./.config/searxng:/etc/searxng:ro
-      - searxng_data:/var/cache/searxng
-    environment:
-      - SEARXNG_BASE_URL=http://searxng:8080/
-    networks:
-      - default
-
+    restart: "no"
   ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - "11434:11434" 
-    volumes:
-      - ollama_data:/root/.ollama
-    environment:
-      - OLLAMA_NUM_PARALLEL=2
-      - OLLAMA_MAX_LOADED_MODELS=2
-    restart: unless-stopped
-    networks:
-      - default
-
-networks:
-  default:
-    external: false
+    restart: "no"
 
 volumes:
-  app-db-data:
-  redis_data:
-  searxng_data:
-  minio:
-  ollama_data:
-    name: ollama_data
   frontend_node_modules: # convenience for development

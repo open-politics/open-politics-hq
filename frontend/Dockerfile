@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # Bun's official Debian-based image
 FROM oven/bun AS base
 
@@ -5,8 +6,9 @@ WORKDIR /app
 
 # Install dependencies with bun
 FROM base AS deps
-COPY package.json bun.lockb* ./
-RUN bun install --no-save --frozen-lockfile
+COPY package.json bun.lock* bun.lockb* ./
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    bun install --no-save --frozen-lockfile
 
 # Rebuild the source code only when needed
 FROM base AS builder
