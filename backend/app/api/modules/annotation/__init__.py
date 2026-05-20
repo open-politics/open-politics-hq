@@ -1,4 +1,4 @@
-"""Annotation domain: AnnotationSchema, AnnotationRun, Annotation, Justification. Use annotation.services for AnnotationService."""
+"""Annotation domain: AnnotationSchema, AnnotationRun, Annotation. Use annotation.services for AnnotationService."""
 
 from app.api.modules.annotation.models import (
     Annotation,
@@ -6,7 +6,6 @@ from app.api.modules.annotation.models import (
     AnnotationSchema,
     AnnotationRunTrigger,
     AnnotationSchemaTargetLevel,
-    Justification,
     RunAggregate,
     RunSchemaLink,
     RunStatus,
@@ -20,7 +19,6 @@ __all__ = [
     "AnnotationSchema",
     "AnnotationRunTrigger",
     "AnnotationSchemaTargetLevel",
-    "Justification",
     "RunAggregate",
     "RunSchemaLink",
     "RunStatus",

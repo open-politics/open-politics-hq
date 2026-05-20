@@ -17,13 +17,17 @@ from app.models import (
     RunStatus,
     AnnotationRun,
     ResultStatus,
-    Justification,
     AnnotationSchemaTargetLevel
 )
 from app.schemas import AnnotationCreate
 from app.core.db import engine
-from app.api.modules.foundation_service_providers.registry import get_storage_provider, resolve, load_credentials
-from app.core.task_utils import create_pydantic_model_from_json_schema, make_python_identifier, run_async_in_celery
+from app.api.modules.foundation_service_providers.registry import resolve
+from app.core.task_utils import (
+    create_pydantic_model_from_json_schema,
+    make_python_identifier,
+    run_async_in_celery,
+    split_schema_for_extraction,
+)
 from app.core.tasks import TaskContext, task
 from app.core.config import settings
 from app.api.modules.content.types import get_content_type_registry
@@ -45,7 +49,6 @@ def get_annotation_processing_config():
         return {
             'default_concurrency': settings.DEFAULT_ANNOTATION_CONCURRENCY,
             'max_concurrency': settings.MAX_ANNOTATION_CONCURRENCY,
-            'parallel_enabled': settings.ENABLE_PARALLEL_ANNOTATION_PROCESSING
         }
     except AttributeError:
         # Fallback to default values if settings not available
@@ -53,26 +56,29 @@ def get_annotation_processing_config():
         return {
             'default_concurrency': DEFAULT_ANNOTATION_CONCURRENCY,
             'max_concurrency': MAX_ANNOTATION_CONCURRENCY,
-            'parallel_enabled': True
         }
 
 async def get_cached_provider(provider_type: str, settings_instance):
-    """Get a cached provider instance."""
+    """Get a cached provider instance. Only 'storage' is supported here."""
     from app.core.tasks import cached_resolve
-    from app.api.modules.foundation_service_providers.base import StorageProvider
-    from app.api.modules.foundation_service_providers.registry import system_default_provider_key
     if provider_type == "storage":
-        key = system_default_provider_key(StorageProvider, settings_instance)
-        return cached_resolve(StorageProvider, key, settings_instance)
+        return cached_resolve("storage")
     raise ValueError(f"Unknown provider type: {provider_type}")
 
 def _get_image_asset_kinds(process_pdfs_as_images: bool = True) -> frozenset:
-    """Get asset kinds that support image modality. PDF_PAGE is conditional on process_pdfs_as_images."""
+    """Asset kinds that support image modality for the current run config.
+
+    ``process_pdfs_as_images`` flips PDFs on/off as an image class. When it's
+    off (whole-document-text mode) we remove BOTH the parent ``PDF`` and the
+    rendered ``PDF_PAGE`` kinds — otherwise a PDF parent falls into the
+    parent-is-image branch in ``assemble_multimodal_context``, which fetches
+    raw PDF bytes and sends them as media (without the extracted text).
+    """
     registry = get_content_type_registry()
     all_image = registry.kinds_supporting_modality(Modality.IMAGE)
     if process_pdfs_as_images:
         return all_image
-    return all_image - {AssetKind.PDF_PAGE}
+    return all_image - {AssetKind.PDF_PAGE, AssetKind.PDF}
 
 
 def validate_hierarchical_schema(output_contract: dict) -> bool:
@@ -538,25 +544,45 @@ async def fetch_asset_content(asset: Asset, storage_provider: 'StorageProviderDe
 def detect_image_mime_type(image_bytes: bytes, fallback: str = "image/png") -> str:
     """
     Detect image MIME type from image bytes using magic bytes.
-    Falls back to provided fallback if detection fails.
+
+    Returns a concrete MIME type only when the bytes actually match a known
+    image format. For non-image containers we detect (PDF, Office docs) we
+    return their real MIME so callers can reject them instead of silently
+    mislabeling them as PNG. Only if the bytes are entirely unrecognized do
+    we fall back — and even then, the caller should be suspicious.
     """
     if not image_bytes:
         return fallback
-    
-    # Check magic bytes for common image formats
+
+    # Known image formats — safe to send to image-only consumers.
     if image_bytes.startswith(b'\xff\xd8\xff'):
         return "image/jpeg"
-    elif image_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
+    if image_bytes.startswith(b'\x89PNG\r\n\x1a\n'):
         return "image/png"
-    elif image_bytes.startswith(b'GIF87a') or image_bytes.startswith(b'GIF89a'):
+    if image_bytes.startswith(b'GIF87a') or image_bytes.startswith(b'GIF89a'):
         return "image/gif"
-    elif image_bytes.startswith(b'RIFF') and b'WEBP' in image_bytes[8:12]:
+    if image_bytes.startswith(b'RIFF') and b'WEBP' in image_bytes[8:12]:
         return "image/webp"
-    elif image_bytes.startswith(b'BM'):
-        return "image/bmp"  # Not supported by Anthropic, but we detect it
-    
-    # If no format detected, use fallback
+    if image_bytes.startswith(b'BM'):
+        return "image/bmp"
+
+    # Not an image. Returning the real type lets callers skip or log;
+    # they must check ``allowed_types`` before sending to vision APIs.
+    if image_bytes.startswith(b'%PDF-'):
+        return "application/pdf"
+    if image_bytes.startswith(b'PK\x03\x04'):
+        # ZIP container — typically DOCX/XLSX/PPTX; we don't differentiate.
+        return "application/zip"
+
+    # Genuinely unrecognized. Return fallback but log so an operator can see
+    # that we guessed — the caller shouldn't blindly trust this.
+    logger.warning(
+        "detect_image_mime_type: unrecognized magic bytes %r — falling back to %s. "
+        "This may cause downstream vision APIs to reject the payload.",
+        image_bytes[:16], fallback,
+    )
     return fallback
+
 
 def safe_log_content(content: Any, max_length: int = 500, max_depth: int = 3) -> str:
     """
@@ -705,14 +731,34 @@ async def assemble_multimodal_context(
 
     # Check if image processing is enabled (explicitly True or auto-enabled)
     include_images_enabled = run_config.get("include_images", False)
+
+    # "Whole document as text" mode for PDFs is an explicit user choice to
+    # receive NO visual content from this PDF — not even embedded images or
+    # rendered pages. The run-wide ``include_images`` flag stays useful for
+    # other assets in the same run (plain image assets, non-PDF docs with
+    # child images), but for a PDF parent in text mode we short-circuit the
+    # child-image scan entirely. Respects the per-asset-kind mode over the
+    # run-level vision toggle, which is the semantics the UI promises.
+    pdf_text_mode = (
+        parent_asset.kind == AssetKind.PDF
+        and not process_pdfs_as_images
+    )
+
     logger.debug(
         f"assemble_multimodal_context for Asset {parent_asset.id}: "
-        f"include_images={include_images_enabled}, parent_is_image={parent_is_image}"
+        f"kind={parent_asset.kind.value}, include_images={include_images_enabled}, "
+        f"parent_is_image={parent_is_image}, pdf_text_mode={pdf_text_mode}"
     )
-    if include_images_enabled and not parent_is_image:
-        # Query for child assets of kind 'image' or 'pdf_page' if it can act as an image etc.
-        # The kind should match what the LLM is expected to process as an image.
-        image_like_kinds = list(_get_image_asset_kinds(process_pdfs_as_images=True))
+    if pdf_text_mode:
+        logger.info(
+            f"Asset {parent_asset.id} is a PDF in whole-document-text mode; "
+            f"skipping all image-child attachment regardless of include_images."
+        )
+    if include_images_enabled and not parent_is_image and not pdf_text_mode:
+        # Query for child assets of kind 'image' (and PDF_PAGE when OCR mode
+        # is on) to attach alongside the parent's text content. This powers
+        # per_image schema fields for mixed-media documents.
+        image_like_kinds = list(_get_image_asset_kinds(process_pdfs_as_images=process_pdfs_as_images))
         image_like_kind_values = [kind.value for kind in image_like_kinds]
 
         image_children = db.query(Asset).filter(
@@ -942,9 +988,16 @@ async def demultiplex_results(
     if schema_structure["document_fields"] and "document" in result:
         parent_annotation_value = result["document"]
         logger.debug(f"DEBUG: Found document result, type: {type(parent_annotation_value)}, value preview: {safe_log_content(parent_annotation_value)}")
-        
-        # Skip empty document annotations if we have per-modality data (avoids duplicate annotations on same asset)
-        if isinstance(parent_annotation_value, dict) and (parent_annotation_value or not schema_structure["per_modality_fields"]):
+
+        # Always persist a parent annotation when ``document`` is a dict — even
+        # if it's empty. Previously we silently dropped empty documents when the
+        # schema also had per_modality fields, on the assumption per_modality
+        # children would carry the data. But in whole-document-text mode the
+        # per_modality arrays are always empty (no images reach the LLM), so
+        # dropping the parent produced "0 annotations" despite a successful
+        # response. Storing the empty-but-structured document lets the UI show
+        # the result and makes the "nothing extracted" case visible.
+        if isinstance(parent_annotation_value, dict):
             parent_annotation = Annotation(
                 asset_id=parent_asset.id,
                 schema_id=schema.id,
@@ -955,9 +1008,11 @@ async def demultiplex_results(
                 user_id=run.user_id
             )
             annotations.append(parent_annotation)
-            logger.debug(f"DEBUG: Created parent annotation for Asset {parent_asset.id}, Run {run.id}")
-        elif isinstance(parent_annotation_value, dict) and not parent_annotation_value:
-            logger.debug(f"DEBUG: Skipping empty document annotation for Asset {parent_asset.id} (has per-modality fields)")
+            if not parent_annotation_value:
+                logger.info(
+                    f"Asset {parent_asset.id} Run {run.id}: LLM returned empty document. "
+                    f"Persisting empty annotation so the result is visible."
+                )
         else:
             logger.warning(f"LLM result for 'document' in Run {run.id}, Asset {parent_asset.id} was not a dict. Got: {type(parent_annotation_value)}. Skipping parent annotation.")
     else:
@@ -1108,7 +1163,11 @@ CHAINED_RUN_CURSOR_KEY = "_chained_asset_ids"
           select(AnnotationRun.id)
           .where(
               AnnotationRun.infospace_id == iid,
-              AnnotationRun.status.in_([RunStatus.PENDING, RunStatus.RUNNING]),
+              # PENDING only: this task doesn't set RUNNING itself (only the
+              # retry path does). A RUNNING run is either an active retry
+              # (handled by its own task) or a zombie from a prior crash —
+              # picking it up here caused infinite self_chain loops.
+              AnnotationRun.status == RunStatus.PENDING,
           )
           .order_by(AnnotationRun.created_at)
       ),
@@ -1121,7 +1180,7 @@ CHAINED_RUN_CURSOR_KEY = "_chained_asset_ids"
       tags=frozenset({"annotation"}))
 def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
     """
-    Process annotation runs. Discovers PENDING/RUNNING runs via check query.
+    Process annotation runs. Discovers PENDING runs via check query.
     For large runs (> ANNOTATION_CHUNK_SIZE), processes one chunk per invocation
     and self-chains to continue. Uses Redis lock per run.
     """
@@ -1132,7 +1191,20 @@ def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
     for run_id in run_ids:
         with annotation_run_lock(run_id) as acquired:
             if not acquired:
-                logger.info("Annotation run %d already in progress, skipping", run_id)
+                logger.info("Annotation run %d already in progress, skipping (setting chain_backoff)", run_id)
+                # Throttle self_chain so a live sibling-worker (or a stale
+                # lock whose TTL hasn't expired) doesn't trigger a tight
+                # 50-deep loop. The chain_backoff key is read in
+                # @task self_chain and becomes a countdown for the next
+                # invocation. Key expires so normal scheduling resumes
+                # once the lock clears.
+                try:
+                    from app.core.redis import get_redis
+                    r = get_redis()
+                    if r:
+                        r.set(f"task:process_annotation_run:{ctx.infospace_id}:chain_backoff", "60", ex=120)
+                except Exception:
+                    logger.debug("chain_backoff set failed", exc_info=True)
                 continue
 
             # Load cursor from configuration (persisted between self-chain invocations)
@@ -1159,15 +1231,29 @@ def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
                     logger.info("Annotation run %d: chunk done, cursor %d → %d", run_id, cursor, next_cursor)
                     ctx.stat("chunk_done")
                 else:
-                    # Run fully completed — emit event for flow resumption
+                    # Async returned without an int cursor — either the run
+                    # finished or the guard skipped. Only emit the completion
+                    # event when the run actually reached a terminal state, so
+                    # a skip can't cause resume_waiting_flows loops.
                     with Session(engine) as session:
                         run = session.get(AnnotationRun, run_id)
-                        if run:
+                        if run and run.status in (
+                            RunStatus.COMPLETED,
+                            RunStatus.COMPLETED_WITH_ERRORS,
+                            RunStatus.FAILED,
+                        ):
                             from app.core.events import emit
                             emit("annotation_run.completed", {
                                 "infospace_id": run.infospace_id,
                             })
-                    ctx.stat("done")
+                            ctx.stat("done")
+                        else:
+                            logger.info(
+                                "process_annotation_run run %d returned without cursor but status=%s; not emitting completion",
+                                run_id,
+                                run.status if run else "missing",
+                            )
+                            ctx.stat("skipped")
             except Exception as e:
                 logger.exception("process_annotation_run failed for run %d: %s", run_id, e)
                 with Session(engine) as session:
@@ -1181,15 +1267,605 @@ def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
                             session.add(run)
                             session.commit()
                             # Presence: push failure to watching browsers
-                            ctx.send("annotation_run", run_id, "failed", {
+                            fail_payload = {
                                 "run_id": run_id,
+                                "parent_run_id": run.parent_run_id,
                                 "status": "failed",
                                 "error": str(e),
-                            })
+                            }
+                            ctx.send("annotation_run", run_id, "failed", fail_payload)
+                            if run.parent_run_id:
+                                ctx.send("annotation_run", run.parent_run_id, "failed", fail_payload)
                     except Exception as db_exc:
                         logger.error("Could not update run %d to FAILED: %s", run_id, db_exc)
                 ctx.item_failed(run_id)
                 ctx.stat("failed")
+
+async def _drain_stream(stream_iter) -> Any:
+    """Consume a streaming AsyncIterator from a provider and return the final
+    accumulated GenerationResponse. The provider yields progressively-richer
+    GenerationResponse objects; the last one carries the full text + thinking
+    trace + tool executions. Streaming Phase A/B avoids Anthropic's
+    nonstreaming-timeout check, which trips for high ``max_tokens`` values."""
+    last = None
+    async for chunk in stream_iter:
+        last = chunk
+    return last
+
+
+# ─── Two-phase extraction helpers (Track 2) ────────────────────────────────
+#
+# When a schema has ``array<object>`` fields (triplets, key_actors, financial
+# records, …) the cardinality is model-determined and a single forced-tool call
+# can truncate at ``max_tokens``. The two-phase pipeline splits work:
+#
+#   Phase A — one forced tool call against the scalar subset (everything that
+#             isn't an array-of-object). Bounded output. Thinking ON. The doc
+#             is sent fresh; the response is one structured dict.
+#
+#   Phase B — open-ended tool loop. Tools: ``submit(field, items)`` and
+#             ``done(rationale)``. The doc is sent again but marked
+#             ``cacheable=True`` so the prefix lands in Anthropic's ephemeral
+#             cache and every subsequent loop turn re-uses it. Thinking OFF.
+#             Server-side dedup by content hash; the model gets a turn-by-turn
+#             receipt of how many items it landed.
+#
+# Merge: the scalar dict + the per-field item lists assemble back into the
+# original schema's value shape. demultiplex_results sees one combined dict
+# and can't tell the difference from a single-shot call.
+#
+# Trigger: schema has list-of-object fields AND doc fits comfortably in
+# context AND provider supports tools. Configurable via run_config
+# ``extraction_strategy ∈ {auto, two-phase, single-shot}``. Default ``auto``.
+
+_DOC_TOKEN_BUDGET_FRACTION = 0.6  # leave headroom for system + tools + thinking
+_PHASE_A_MODEL_CACHE_KEY = "_phase_a_output_model_class"
+_TOKENS_PER_CHAR = 0.25  # crude approximation; good enough for routing
+
+
+def _wrap_user_content_with_cache_marker(text_content: Any) -> List[Dict[str, Any]]:
+    """Produce a content-block list with ``cacheable=True`` on the LAST text block.
+
+    Anthropic's prompt-cache markers attach to a single block to define a
+    breakpoint; the cached prefix covers everything BEFORE and INCLUDING the
+    marked block. So we mark only the last text block — that one breakpoint
+    caches the whole user message (any preceding image blocks too).
+
+    Accepts the heterogeneous shape ``assemble_multimodal_context`` returns:
+    a plain string, or a list of structured content blocks.
+    """
+    if isinstance(text_content, str):
+        if not text_content.strip():
+            return []
+        return [{"type": "text", "text": text_content, "cacheable": True}]
+    if isinstance(text_content, list):
+        out: List[Dict[str, Any]] = []
+        last_text_idx = -1
+        for i, b in enumerate(text_content):
+            if isinstance(b, dict) and b.get("type") == "text":
+                last_text_idx = i
+        for i, b in enumerate(text_content):
+            if i == last_text_idx and isinstance(b, dict):
+                b = dict(b)
+                b.setdefault("cacheable", True)
+            out.append(b)
+        return out
+    return []
+
+
+def _capture_token_usage(provider_response: Any) -> Optional[Dict[str, Any]]:
+    """Extract a normalised token-usage dict from a provider response.
+
+    Pulls input/output and the two cache fields (``cache_creation_input_tokens``
+    and ``cache_read_input_tokens``) so we can verify caching is actually
+    paying off. Returns ``None`` when the provider didn't surface usage —
+    treated as missing telemetry, not zero usage.
+    """
+    usage = getattr(provider_response, "usage", None)
+    if not usage:
+        return None
+    if hasattr(usage, "model_dump"):
+        try:
+            usage = usage.model_dump()
+        except Exception:
+            usage = None
+    if not isinstance(usage, dict):
+        return None
+    return {
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
+        "cache_read_input_tokens": usage.get("cache_read_input_tokens"),
+    }
+
+
+def _estimate_tokens(text_content: Any) -> int:
+    """Rough character-count → token estimate. Used only for routing decisions."""
+    if isinstance(text_content, str):
+        return int(len(text_content) * _TOKENS_PER_CHAR)
+    if isinstance(text_content, list):
+        total = 0
+        for block in text_content:
+            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                total += int(len(block["text"]) * _TOKENS_PER_CHAR)
+        return total
+    return 0
+
+
+def _pick_extraction_strategy(
+    *,
+    run_config: Dict[str, Any],
+    list_fields: List[Dict[str, Any]],
+    doc_tokens: int,
+    context_length: Optional[int],
+    provider_supports_tools: bool,
+) -> str:
+    """Resolve single-shot vs two-phase.
+
+    ``auto`` (default) prefers two-phase whenever a schema has any
+    ``array<object>`` field and the provider supports tools — exhaustiveness
+    matters more than the small per-doc cache cost. Falls back to single-shot
+    when there's nothing for Phase B to do (no list fields), the provider
+    can't run tools, or the doc would blow the cached-prefix budget.
+
+    Callers can force either path via ``run_config.extraction_strategy``.
+
+    Returns: ``"single-shot"`` or ``"two-phase"``.
+    """
+    explicit = (run_config.get("extraction_strategy") or "auto").strip().lower()
+    if explicit in ("single-shot", "single_shot", "single"):
+        return "single-shot"
+    if explicit in ("two-phase", "two_phase", "two"):
+        return "two-phase"
+    # auto — two-phase by default; single-shot only when we have to.
+    if not list_fields:
+        return "single-shot"
+    if not provider_supports_tools:
+        return "single-shot"
+    if context_length and doc_tokens > int(context_length * _DOC_TOKEN_BUDGET_FRACTION):
+        # Doc would exceed the cached-prefix budget — Phase B's per-turn
+        # context would explode. P7 (windowed extraction) will fix this; for
+        # now we degrade to single-shot which at worst truncates output.
+        return "single-shot"
+    return "two-phase"
+
+
+def _summarize_phase_a_for_phase_b(phase_a_data: Dict[str, Any]) -> str:
+    """One-line summaries of Phase A scalars to ground Phase B's extraction.
+
+    Sent to the model as a short context block so it knows the document-level
+    judgments already on record. Non-truthy values, justification siblings, and
+    obvious noise are skipped.
+    """
+    if not isinstance(phase_a_data, dict):
+        return ""
+    body = phase_a_data.get("document", phase_a_data) if isinstance(phase_a_data, dict) else {}
+    if not isinstance(body, dict):
+        return ""
+    lines: List[str] = []
+    for k, v in body.items():
+        if v is None or v == "" or v == [] or v == {}:
+            continue
+        if k.endswith("_justification") or k == "_thinking_trace":
+            continue
+        if isinstance(v, (dict, list)):
+            try:
+                v_str = json.dumps(v, ensure_ascii=False)
+            except (TypeError, ValueError):
+                v_str = str(v)
+        else:
+            v_str = str(v)
+        if len(v_str) > 240:
+            v_str = v_str[:240] + "…"
+        lines.append(f"  {k}: {v_str}")
+    return "\n".join(lines)
+
+
+async def _run_phase_b_loop(
+    *,
+    asset: Asset,
+    provider,
+    model_name: str,
+    system_instructions: str,
+    text_content: Any,
+    media_inputs: List[Dict[str, Any]],
+    list_fields: List[Dict[str, Any]],
+    phase_a_data: Optional[Dict[str, Any]] = None,
+    extra_provider_kwargs: Optional[Dict[str, Any]] = None,
+    max_tool_iterations: int = 40,
+) -> Dict[str, Any]:
+    """Phase B: open-ended tool loop. Returns ``{accumulator, telemetry}``.
+
+    The provider's own tool loop (``_tool_loop_generate`` for Anthropic)
+    drives the back-and-forth — we hand it ``submit`` + ``done`` tools and a
+    closure-bound executor that maintains the accumulator across turns. ONE
+    ``provider.generate`` call suffices.
+
+    ``max_tool_iterations`` caps how many submit/done turns the provider
+    will run; default 40 (vs the provider's universal default of 20)
+    because dense docs need more headroom. ``done()`` short-circuits the
+    loop via a sentinel return so we usually don't get near the cap.
+    """
+    accumulator: Dict[str, list] = {f["name"]: [] for f in list_fields}
+    seen_keys: Dict[str, set] = {f["name"]: set() for f in list_fields}
+    items_received: Dict[str, int] = {f["name"]: 0 for f in list_fields}
+    items_dropped: Dict[str, int] = {f["name"]: 0 for f in list_fields}
+    field_names = [f["name"] for f in list_fields]
+    done_state: Dict[str, Any] = {"done": False, "rationale": ""}
+
+    submit_tool = {
+        "name": "submit",
+        "description": (
+            "Submit one or more items for a single list field. Call this tool "
+            "REPEATEDLY — once per batch you can extract — until you have "
+            "exhausted what the document supports. Each call carries items for "
+            "ONE field. The server deduplicates by content; the response tells "
+            "you how many items it accepted vs dropped as duplicates. "
+            "Items must conform to the schema of the named field."
+        ),
+        # ``parameters`` is the key the provider's tool-prep function expects
+        # for bare-format tools; it gets translated into Anthropic's native
+        # ``input_schema`` downstream.
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string",
+                    "enum": field_names,
+                    "description": "Which list field these items belong to.",
+                },
+                "items": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "One or more items matching the field's item schema.",
+                },
+            },
+            "required": ["field", "items"],
+        },
+        # NOT cacheable: a single ``cache_control`` on the LAST tool (done_tool)
+        # caches ALL preceding tools + the system prompt as one prefix. Anthropic
+        # caps requests at 4 cache breakpoints — we can't afford to spend two on
+        # the tool boundary when one suffices.
+    }
+    done_tool = {
+        "name": "done",
+        "description": (
+            "Terminate the extraction loop. Call this ONLY when you have "
+            "exhaustively mined every item the document supports across all "
+            "list fields. Provide a one-sentence rationale citing what makes "
+            "you confident you are finished."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "rationale": {"type": "string"},
+            },
+            "required": ["rationale"],
+        },
+        # NOT cacheable: Anthropic's prefix order is tools → system → messages,
+        # so a cache_control on the system message (set below) covers tools +
+        # system in one breakpoint. Marking a tool would only cache the tools
+        # — strictly less coverage.
+    }
+
+    async def tool_executor(name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+        if name == "done":
+            done_state["done"] = True
+            done_state["rationale"] = (tool_input or {}).get("rationale", "")
+            # Sentinel: tells the provider's tool loop to break instead of
+            # forcing another ``submit``/``done`` call on the next turn.
+            # Without this, ``tool_choice={"type":"any"}`` keeps the loop
+            # spinning until the iteration cap.
+            return {
+                "acknowledged": True,
+                "received_total": {f: len(accumulator[f]) for f in field_names},
+                "_terminate_loop": True,
+            }
+        if name == "submit":
+            field = (tool_input or {}).get("field")
+            items = (tool_input or {}).get("items") or []
+            if field not in accumulator:
+                return {"error": f"Unknown field '{field}'. Valid fields: {field_names}"}
+            received = 0
+            duplicates = 0
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    key = json.dumps(item, sort_keys=True, default=str)
+                except (TypeError, ValueError):
+                    key = id(item)
+                if key in seen_keys[field]:
+                    duplicates += 1
+                    continue
+                seen_keys[field].add(key)
+                accumulator[field].append(item)
+                received += 1
+            items_received[field] += received
+            items_dropped[field] += duplicates
+            return {
+                "received": received,
+                "duplicates_dropped": duplicates,
+                "total_so_far": len(accumulator[field]),
+                "all_field_totals": {f: len(accumulator[f]) for f in field_names},
+            }
+        return {"error": f"Unknown tool: {name}"}
+
+    # Build the per-field shape prompt. The submit tool's items shape is
+    # permissive (object); the per-field schema lives in the prompt so the
+    # model knows exactly what to fill.
+    #
+    # Entity-aware rendering: when a property is an entity reference (carries
+    # the x-entityField extension) or an array of entity references, render
+    # the inner {name, type} constraints inline so the model sees the closed
+    # name list / declared entity_type. Without this, the model receives
+    # `beguenstigte_firmen (object) — A Konzern entity reference.` and has to
+    # guess the {name, type} shape from convention.
+    def _format_prop_line(prop_name: str, prop: dict, required_set: set, indent: str = "    ") -> List[str]:
+        if not isinstance(prop, dict):
+            return []
+        req_marker = "*" if prop_name in required_set else " "
+        pdesc = (prop.get("description") or "").replace("\n", " ").strip()
+        if pdesc and len(pdesc) > 200:
+            pdesc = pdesc[:200] + "…"
+
+        # Entity reference — show declared entity_type + the closed name enum
+        # if present (typeConstrained=true on the source field).
+        if prop.get("x-entityField") is True:
+            etype = prop.get("x-entityType") or ""
+            ename_enum = prop.get("x-entityEnum") or []
+            type_label = f"entity[{etype}]" if etype else "entity"
+            head = f"{indent}{req_marker} {prop_name} ({type_label})"
+            if pdesc:
+                head += f" — {pdesc}"
+            lines = [head]
+            inner = f"{indent}    For each: {{ name: string"
+            if ename_enum:
+                # Cap printed names at 60 to keep prompts manageable; full enum
+                # remains structurally on the JSON Schema if/when we validate.
+                shown = list(ename_enum)[:60]
+                more = len(ename_enum) - len(shown)
+                inner += f" [one of: {shown}{f' …+{more} more' if more > 0 else ''}]"
+            inner += f", type: string"
+            if etype:
+                inner += f" [\"{etype}\"]"
+            inner += " }"
+            lines.append(inner)
+            return lines
+
+        # Array of entity references (array_entity).
+        if prop.get("type") == "array" and isinstance(prop.get("items"), dict) and prop["items"].get("x-entityField") is True:
+            items = prop["items"]
+            etype = items.get("x-entityType") or ""
+            ename_enum = items.get("x-entityEnum") or []
+            type_label = f"list of entity[{etype}]" if etype else "list of entity"
+            head = f"{indent}{req_marker} {prop_name} ({type_label})"
+            if pdesc:
+                head += f" — {pdesc}"
+            lines = [head]
+            inner = f"{indent}    Each item: {{ name: string"
+            if ename_enum:
+                shown = list(ename_enum)[:60]
+                more = len(ename_enum) - len(shown)
+                inner += f" [one of: {shown}{f' …+{more} more' if more > 0 else ''}]"
+            inner += f", type: string"
+            if etype:
+                inner += f" [\"{etype}\"]"
+            inner += " }"
+            lines.append(inner)
+            return lines
+
+        # Plain property — type + enum + min/max + description.
+        ptype = prop.get("type", "?")
+        # Collapse array<primitive> into "list of <X>" for readability.
+        if ptype == "array" and isinstance(prop.get("items"), dict):
+            items = prop["items"]
+            it = items.get("type", "?")
+            if it != "object":
+                ptype = f"list of {it}"
+                if items.get("enum"):
+                    ptype += f" enum={items['enum']}"
+        line = f"{indent}{req_marker} {prop_name} ({ptype})"
+        enum_vals = prop.get("enum")
+        if enum_vals:
+            line += f" enum={enum_vals}"
+        if prop.get("minimum") is not None or prop.get("maximum") is not None:
+            line += f" range=[{prop.get('minimum', '–')}..{prop.get('maximum', '–')}]"
+        if pdesc:
+            line += f" — {pdesc}"
+        return [line]
+
+    field_descriptions: List[str] = []
+    any_field_has_justification = False
+    for f in list_fields:
+        item_props = f["item_schema"].get("properties", {}) or {}
+        item_required = set(f["item_schema"].get("required", []) or [])
+        prop_lines: List[str] = []
+        for prop_name, prop in item_props.items():
+            prop_lines.extend(_format_prop_line(prop_name, prop, item_required))
+        desc = (f.get("description") or "").strip()
+        section_parts = [f"\nField: `{f['name']}`"]
+        if desc:
+            section_parts.append(f"\n  Field description: {desc}")
+        if prop_lines:
+            section_parts.append("\n  Item shape (* = required):\n" + "\n".join(prop_lines))
+        # When this field has per-item justification enabled (P1 inline
+        # placement), describe the typed structure the model must fill.
+        # Without this, the model invents free-text strings that downstream
+        # graph evidence consumers reject.
+        if f.get("include_justification"):
+            any_field_has_justification = True
+            jp = (f.get("justification_prompt") or "").strip()
+            section_parts.append(
+                "\n  REQUIRED inline `justification` field on each item — structured object:"
+                "\n      reasoning (string): one-paragraph explanation citing the document"
+                "\n      text_spans (array of {text_snippet: string}): 1-3 verbatim quotes from the document"
+                + (f"\n      Author guidance: {jp}" if jp else "")
+            )
+        field_descriptions.append("".join(section_parts))
+
+    user_prompt_tail_lines = [
+        "Your task: extract every item the document supports for the list fields below.",
+        "Call the `submit` tool repeatedly — once per batch — passing items for one field at a time.",
+        "When you have genuinely exhausted what the document offers, call `done` with a one-sentence rationale.",
+        "",
+        "CRITICAL: You MUST respond by calling either `submit` or `done`. Free-text responses",
+        "are not permitted. If the document has nothing to extract for any list field, call `done`",
+        "immediately with that fact as the rationale.",
+        "",
+        "Rules:",
+        "- Be exhaustive. If a single document mentions 30 relationships, submit all 30.",
+        "  Err on the side of inclusion — mark certainty per item rather than omitting.",
+        "- The server deduplicates submissions by content. Re-submitting an item is harmless but wastes tokens.",
+        "- Each submitted item must match the schema of the named field. Only include a",
+        "  `justification` field on items where the field schema below explicitly requires it.",
+        "- Items can be submitted across many turns. There is no per-call item limit.",
+        "",
+        "List fields to fill:" + "".join(field_descriptions),
+    ]
+    if phase_a_data:
+        summary = _summarize_phase_a_for_phase_b(phase_a_data)
+        if summary:
+            user_prompt_tail_lines.extend([
+                "",
+                "Phase A already produced these document-level scalars (do not re-emit them):",
+                summary,
+            ])
+    user_prompt_tail = "\n".join(user_prompt_tail_lines)
+
+    # Assemble messages with explicit cache breakpoints. Anthropic caps each
+    # request at 4 ``cache_control`` markers; we use 3 here, positioned for
+    # progressively-larger prefix coverage so a partial match (e.g. across
+    # different assets sharing the same schema) still pays cache prices:
+    #
+    #   Anthropic prefix order:  tools → system → messages
+    #
+    #   1. system block          → caches tools + system
+    #                              (cross-asset benefit: shared across every
+    #                              run that uses this schema's instructions)
+    #   2. doc text              → caches tools + system + images + doc
+    #                              (cross-run benefit: same asset + same
+    #                              schema retry within 5 min)
+    #   3. user_prompt_tail      → caches tools + system + doc + tail
+    #                              (in-loop benefit: turns 2..N of THIS
+    #                              Phase B inner loop)
+    #
+    # Tool-result blocks appended on later turns extend beyond the prefix and
+    # are intentionally NOT cached (they grow per turn).
+    messages: List[Dict[str, Any]] = []
+    if system_instructions:
+        # Structured form + cacheable so the prefix lands in cache — covers
+        # tools + system. The single most valuable marker for cross-asset
+        # caching when running batches with the same schema.
+        messages.append({
+            "role": "system",
+            "content": [{"type": "text", "text": system_instructions, "cacheable": True}],
+        })
+
+    user_content_blocks: List[Dict[str, Any]] = []
+    if isinstance(text_content, list):
+        # ``text_content`` is already structured. Mark only the LAST text
+        # block cacheable — that single breakpoint caches all preceding
+        # blocks (images, earlier text). Marking every text block would
+        # waste breakpoints with no extra cache benefit.
+        last_text_idx = -1
+        for i, b in enumerate(text_content):
+            if isinstance(b, dict) and b.get("type") == "text":
+                last_text_idx = i
+        for i, block in enumerate(text_content):
+            if i == last_text_idx and isinstance(block, dict):
+                block = dict(block)
+                block.setdefault("cacheable", True)
+            user_content_blocks.append(block)
+    elif isinstance(text_content, str) and text_content.strip():
+        user_content_blocks.append({"type": "text", "text": text_content, "cacheable": True})
+    # The prompt tail varies per asset (Phase A summary is interpolated) but
+    # is identical across all turns within an asset's loop. Mark it cacheable
+    # so the cache window extends through it — without this marker, the tail
+    # pays full input cost on every turn.
+    user_content_blocks.append({"type": "text", "text": user_prompt_tail, "cacheable": True})
+    messages.append({"role": "user", "content": user_content_blocks})
+
+    # Hand off to the provider. Its tool loop drives until the model stops
+    # emitting tool_use blocks (i.e. calls done() or the provider's internal
+    # iteration cap is hit).
+    provider_kwargs = dict(extra_provider_kwargs or {})
+    provider_kwargs.pop("response_format", None)
+    if media_inputs and "media_inputs" not in provider_kwargs:
+        provider_kwargs["media_inputs"] = media_inputs
+
+    response_iter = await provider.generate(
+        messages=messages,
+        model_name=model_name,
+        tools=[submit_tool, done_tool],
+        tool_executor=tool_executor,
+        thinking_enabled=False,  # Phase B: thinking off (per-turn cost)
+        stream=True,  # avoid Anthropic SDK nonstreaming-timeout check on long loops
+        tool_choice={"type": "any"},  # the model MUST call submit or done — no free text
+        max_tool_iterations=max_tool_iterations,
+        **{
+            k: v for k, v in provider_kwargs.items()
+            if k not in (
+                "thinking_config", "model_name", "api_keys", "tools",
+                "tool_executor", "thinking_enabled", "stream", "tool_choice",
+                "max_tool_iterations",
+            )
+        },
+    )
+    response = await _drain_stream(response_iter)
+    if response is None:
+        # No data streamed back — let the caller convert to a FAILED annotation.
+        return {
+            "accumulator": accumulator,
+            "items_received": items_received,
+            "items_dropped": items_dropped,
+            "done_called": False,
+            "done_rationale": "stream returned no events",
+            "turn_count": 0,
+            "_thinking_trace": None,
+            "_model_used": model_name,
+            "_usage": None,
+        }
+
+    tool_executions = getattr(response, "tool_executions", None) or []
+    return {
+        "accumulator": accumulator,
+        "items_received": items_received,
+        "items_dropped": items_dropped,
+        "done_called": done_state["done"],
+        "done_rationale": done_state["rationale"],
+        "turn_count": len(tool_executions),
+        "_usage": _capture_token_usage(response),
+        "_thinking_trace": getattr(response, "thinking_trace", None),
+        "_model_used": getattr(response, "model_used", model_name),
+    }
+
+
+def _merge_phase_a_b(
+    phase_a_data: Optional[Dict[str, Any]],
+    phase_b_accumulator: Dict[str, list],
+) -> Dict[str, Any]:
+    """Merge Phase A's scalar dict + Phase B's per-field list accumulators
+    into one dict matching the original schema's value shape.
+
+    Hierarchical schemas have a ``document`` wrapper; flat schemas don't.
+    The merge mirrors whichever shape Phase A produced.
+    """
+    if not isinstance(phase_a_data, dict):
+        phase_a_data = {}
+    if "document" in phase_a_data and isinstance(phase_a_data["document"], dict):
+        merged = {"document": dict(phase_a_data["document"])}
+        for field_name, items in phase_b_accumulator.items():
+            merged["document"][field_name] = items
+    else:
+        merged = dict(phase_a_data)
+        for field_name, items in phase_b_accumulator.items():
+            merged[field_name] = items
+    return merged
+
+
+# ────────────────────────────────────────────────────────────────────────────
+
 
 async def process_single_asset_schema(
     asset: Asset,
@@ -1215,19 +1891,19 @@ async def process_single_asset_schema(
         semaphore: Optional semaphore for concurrency control
 
     Returns:
-        Dict with processing results including success status, annotations, justifications, and errors
+        Dict with processing results including success status, annotations, and errors.
+        Per-field justifications, when enabled, are inlined into each annotation's value JSONB.
     """
     schema = schema_info["schema"]
     schema_structure = schema_info["schema_structure"]
     OutputModelClass = schema_info["output_model_class"]
     final_schema_instructions = schema_info["final_instructions"]
-    
+
     result = {
         "success": False,
         "asset_id": asset.id,
         "schema_id": schema.id,
         "annotations": [],
-        "justifications": [],
         "error": None
     }
     
@@ -1301,6 +1977,28 @@ async def process_single_asset_schema(
 
         logger.info(f"Task: Using model '{model_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}")
 
+        # ── Track 2: route between single-shot and two-phase iterative ──
+        list_fields = schema_info.get("list_fields") or []
+        phase_a_output_model_class = schema_info.get("phase_a_output_model_class")
+        provider_model_info = provider.get_model_info(model_name) if hasattr(provider, "get_model_info") else None
+        provider_supports_tools = bool(getattr(provider_model_info, "supports_tools", False))
+        context_length = getattr(provider_model_info, "context_length", None)
+        doc_tokens = _estimate_tokens(text_content_for_provider)
+        extraction_strategy = _pick_extraction_strategy(
+            run_config=run_config,
+            list_fields=list_fields,
+            doc_tokens=doc_tokens,
+            context_length=context_length,
+            provider_supports_tools=provider_supports_tools,
+        )
+        # Two-phase requires the Phase A model to have been pre-built.
+        if extraction_strategy == "two-phase" and phase_a_output_model_class is None:
+            extraction_strategy = "single-shot"
+        logger.info(
+            f"Task: Asset {asset.id} Schema {schema.id} extraction_strategy={extraction_strategy} "
+            f"(list_fields={len(list_fields)} doc_tokens≈{doc_tokens} ctx={context_length})"
+        )
+
         # Acquire semaphore ONLY for the actual API call to limit concurrent external requests.
         # Critical optimization: We hold the semaphore ONLY during the API call, not during
         # pre-processing (context assembly) or post-processing (result parsing, DB operations).
@@ -1309,18 +2007,149 @@ async def process_single_asset_schema(
             await semaphore.acquire()
 
         try:
-            _messages = []
-            if final_schema_instructions:
-                _messages.append({"role": "system", "content": final_schema_instructions})
-            _messages.append({"role": "user", "content": text_content_for_provider})
-            provider_response = await provider.generate(
-                messages=_messages,
-                model_name=model_name,
-                response_format=schema_to_use,
-                thinking_enabled=thinking_enabled,
-                **{k: v for k, v in full_provider_config_for_classify.items()
-                   if k not in ['thinking_config', 'model_name', 'api_keys']}
-            )
+            if extraction_strategy == "two-phase":
+                # ── Phase A: bounded scalar pass with thinking ON ────────────
+                phase_a_schema_to_use = phase_a_output_model_class.model_json_schema()
+                _messages_a: List[Dict[str, Any]] = []
+                if final_schema_instructions:
+                    # Cacheable system block: cross-asset benefit when many
+                    # assets in a batch share the same schema. Doc breakpoint
+                    # (below) extends the cache through the doc.
+                    _messages_a.append({
+                        "role": "system",
+                        "content": [{"type": "text", "text": final_schema_instructions, "cacheable": True}],
+                    })
+                # Mark the doc cacheable. Phase A is a single call, so the
+                # benefit is only realised on retries OR when Phase B's first
+                # turn lands a hit on the same doc prefix (it doesn't today
+                # because tool surface differs — but flagging is cheap and
+                # future-proofs against single-shot retries on the same doc).
+                _messages_a.append({
+                    "role": "user",
+                    "content": _wrap_user_content_with_cache_marker(text_content_for_provider),
+                })
+                logger.info(f"Task: Asset {asset.id} Phase A start ({len(list_fields)} list fields deferred)")
+                phase_a_iter = await provider.generate(
+                    messages=_messages_a,
+                    model_name=model_name,
+                    response_format=phase_a_schema_to_use,
+                    thinking_enabled=thinking_enabled,  # Phase A: thinking honors run config
+                    stream=True,
+                    **{k: v for k, v in full_provider_config_for_classify.items()
+                       if k not in ["thinking_config", "model_name", "api_keys", "stream"]},
+                )
+                phase_a_response = await _drain_stream(phase_a_iter)
+                if phase_a_response is None:
+                    raise Exception("Phase A produced no response")
+                # Streaming with response_format produces a forced tool_use
+                # rather than text. The tool call's arguments JSON IS the
+                # structured output — surface it as ``content`` so the existing
+                # JSON-parse path works identically to non-streaming.
+                if not getattr(phase_a_response, "content", None):
+                    for tc in (getattr(phase_a_response, "tool_calls", None) or []):
+                        fn = tc.get("function") or {}
+                        if fn.get("name") == "extract":
+                            phase_a_response.content = fn.get("arguments") or "{}"
+                            break
+                # Parse Phase A response
+                try:
+                    phase_a_data = (
+                        json.loads(phase_a_response.content)
+                        if phase_a_response.content else {}
+                    )
+                except json.JSONDecodeError as e:
+                    logger.error(
+                        f"Task: Phase A invalid JSON for Asset {asset.id}, Schema {schema.id}: {e}"
+                    )
+                    raise Exception(f"Phase A returned invalid JSON: {e}")
+
+                # ── Phase B: open-ended tool loop with cached doc prefix ─────
+                logger.info(f"Task: Asset {asset.id} Phase B start (tool loop)")
+                # Caller can raise the cap via run_config for dense docs.
+                # Bounded [1, 100] inside the provider; default 40 here.
+                phase_b_max_iters = run_config.get("max_tool_iterations", 40)
+                phase_b_result = await _run_phase_b_loop(
+                    asset=asset,
+                    provider=provider,
+                    model_name=model_name,
+                    system_instructions=final_schema_instructions or "",
+                    text_content=text_content_for_provider,
+                    media_inputs=provider_specific_config.get("media_inputs", []) or [],
+                    list_fields=list_fields,
+                    phase_a_data=phase_a_data,
+                    max_tool_iterations=phase_b_max_iters,
+                    extra_provider_kwargs={
+                        k: v for k, v in full_provider_config_for_classify.items()
+                        if k not in [
+                            "thinking_config", "model_name", "api_keys",
+                            "tools", "tool_executor", "thinking_enabled",
+                            "media_inputs", "max_tool_iterations",
+                        ]
+                    },
+                )
+                logger.info(
+                    f"Task: Asset {asset.id} Phase B done — turns={phase_b_result['turn_count']} "
+                    f"received={phase_b_result['items_received']} dropped_dupes={phase_b_result['items_dropped']} "
+                    f"done_called={phase_b_result['done_called']} rationale={phase_b_result['done_rationale'][:140]!r}"
+                )
+
+                # Merge phase results into a single envelope so downstream
+                # demultiplex sees the same shape as a single-shot call.
+                merged_data = _merge_phase_a_b(phase_a_data, phase_b_result["accumulator"])
+                # Synthesize a provider_response stand-in for the rest of the
+                # function. Combine thinking traces if both phases produced them.
+                phase_a_thinking = phase_a_response.thinking_trace
+                phase_b_thinking = phase_b_result.get("_thinking_trace")
+                combined_thinking = "\n\n".join(t for t in (phase_a_thinking, phase_b_thinking) if t) or None
+
+                # Sum usage across Phase A + Phase B so the parent annotation
+                # carries one combined cost ledger. cache_read on Phase B's
+                # 2nd+ turns is the only signal that prompt caching is paying
+                # off; it MUST land on the annotation for cost auditing.
+                phase_a_usage = _capture_token_usage(phase_a_response) or {}
+                phase_b_usage = phase_b_result.get("_usage") or {}
+                combined_usage: Dict[str, int] = {}
+                for src in (phase_a_usage, phase_b_usage):
+                    for k in ("input_tokens", "output_tokens",
+                              "cache_creation_input_tokens",
+                              "cache_read_input_tokens"):
+                        v = src.get(k) or 0
+                        combined_usage[k] = combined_usage.get(k, 0) + v
+
+                class _MergedResponse:
+                    pass
+                provider_response = _MergedResponse()
+                provider_response.content = json.dumps(merged_data)
+                provider_response.model_used = phase_a_response.model_used
+                provider_response.thinking_trace = combined_thinking
+                provider_response.usage = combined_usage if combined_usage else None
+            else:
+                # ── Single-shot path ──────────────────────────────────────────
+                # Mark system + doc cacheable so retries within the 5-min
+                # ephemeral window — and concurrent runs on the same doc with
+                # the same model — pay ~10% input cost instead of full freight.
+                # For huge docs (200k+ tokens) this is the difference between
+                # $3 and $0.30 per retry.
+                _messages = []
+                if final_schema_instructions:
+                    # Cacheable system block: cross-asset cache benefit when
+                    # many assets in a batch run share the same schema.
+                    _messages.append({
+                        "role": "system",
+                        "content": [{"type": "text", "text": final_schema_instructions, "cacheable": True}],
+                    })
+                _messages.append({
+                    "role": "user",
+                    "content": _wrap_user_content_with_cache_marker(text_content_for_provider),
+                })
+                provider_response = await provider.generate(
+                    messages=_messages,
+                    model_name=model_name,
+                    response_format=schema_to_use,
+                    thinking_enabled=thinking_enabled,
+                    **{k: v for k, v in full_provider_config_for_classify.items()
+                       if k not in ['thinking_config', 'model_name', 'api_keys']}
+                )
         finally:
             # Release semaphore immediately after API call completes
             if semaphore:
@@ -1411,24 +2240,50 @@ async def process_single_asset_schema(
         
         result["annotations"] = created_annotations_for_asset
         
-        # Handle _thinking_trace if present
+        # Inline thinking trace into the parent annotation's value JSONB.
         thinking_trace_content = provider_response_envelope.get("_thinking_trace")
         include_thoughts = run_config.get("thinking_config", {}).get("include_thoughts", False)
+        # Always-on cache observability: stamp token usage onto the parent
+        # doc annotation regardless of include_thoughts. Without this, the
+        # only way to verify prompt caching is firing is to trawl worker
+        # logs — and after a 5-min log rotation the evidence is gone.
+        token_usage = _capture_token_usage(provider_response)
+        parent_doc_annotation = next(
+            (ann for ann in created_annotations_for_asset if ann.asset_id == asset.id),
+            None,
+        )
 
-        if include_thoughts and thinking_trace_content:
-            # Find the parent document annotation
-            parent_doc_annotation = next((ann for ann in created_annotations_for_asset if ann.asset_id == asset.id), None)
-            if parent_doc_annotation:
-                thinking_justification = Justification(
-                    annotation_id=None,  # Will be set after annotation is saved
-                    field_name="_thinking_trace",
-                    reasoning=thinking_trace_content,
-                    model_name=provider_response_envelope.get("_model_name", run_config.get("model_name", "unknown")),
-                    evidence_payload={"trace_type": "provider_summary"}
+        if parent_doc_annotation:
+            value = dict(parent_doc_annotation.value or {})
+            if include_thoughts and thinking_trace_content:
+                value["_thinking_trace"] = {
+                    "reasoning": thinking_trace_content,
+                    "model_name": provider_response_envelope.get("_model_name", run_config.get("model_name", "unknown")),
+                    "trace_type": "provider_summary",
+                }
+            if token_usage and any(token_usage.values()):
+                in_tok = token_usage.get("input_tokens") or 0
+                cache_create = token_usage.get("cache_creation_input_tokens") or 0
+                cache_read = token_usage.get("cache_read_input_tokens") or 0
+                cached_pct = (
+                    int(round(100 * cache_read / max(1, in_tok + cache_create + cache_read)))
+                    if (in_tok + cache_create + cache_read) else 0
                 )
-                result["justifications"] = [thinking_justification]
-                result["parent_annotation_ref"] = parent_doc_annotation  # Reference for later ID assignment
-        
+                value["_token_usage"] = {
+                    **token_usage,
+                    "cached_pct": cached_pct,
+                    "model_name": provider_response_envelope.get(
+                        "_model_name", run_config.get("model_name", "unknown")
+                    ),
+                }
+                logger.info(
+                    f"Asset {asset.id} Schema {schema.id}: usage stamped "
+                    f"input={in_tok} cache_create={cache_create} cache_read={cache_read} "
+                    f"({cached_pct}% cached) output={token_usage.get('output_tokens') or 0}"
+                )
+            if value != (parent_doc_annotation.value or {}):
+                parent_doc_annotation.value = value
+
         result["success"] = True
         logger.debug(f"Task: Successfully processed Asset {asset.id} with Schema {schema.id} for Run {run.id}. Created {len(created_annotations_for_asset)} annotations.")
         
@@ -1461,14 +2316,24 @@ async def process_assets_parallel(
     storage_provider_instance,
     session: Session,
     concurrency_limit: int = DEFAULT_ANNOTATION_CONCURRENCY
-) -> Tuple[List[Annotation], List[Justification], List[str]]:
+) -> Tuple[List[Annotation], List[str], bool]:
     """
     Process assets and schemas in parallel with controlled concurrency.
 
+    Commits each annotation to the DB as soon as its LLM call returns (via
+    ``asyncio.as_completed``) and emits a ``progress`` presence event per
+    result. This lets the frontend see rows fill in live instead of waiting
+    for the chunk boundary.
+
     Returns:
-        Tuple of (all_annotations, all_justifications, errors)
+        Tuple of (all_annotations, errors, already_committed).
+        ``already_committed=True`` signals the caller to skip the chunk-boundary
+        ``session.add_all`` + progress_current bump (we've done both inline).
+        Justifications, when enabled, travel inline inside each annotation's
+        ``value`` JSONB — no separate persistence path.
     """
     import asyncio
+    from app.core.stream import stream_key, StreamWriter
 
     # Create semaphore for concurrency control
     semaphore = asyncio.Semaphore(concurrency_limit)
@@ -1488,244 +2353,100 @@ async def process_assets_parallel(
                 semaphore=semaphore
             )
             tasks.append(task)
-    
-    logger.info(f"Task: Starting parallel processing of {len(tasks)} asset-schema combinations with concurrency limit {concurrency_limit}")
-    
-    # Process all tasks in parallel
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
+    total_tasks = len(tasks)
+    logger.info(f"Task: Starting parallel processing of {total_tasks} asset-schema combinations with concurrency limit {concurrency_limit}")
+
+    from app.core.stream import FamilyStreamWriter
+    parent_key = (
+        stream_key(run.infospace_id, "annotation_run", run.parent_run_id)
+        if run.parent_run_id else None
+    )
+    writer = FamilyStreamWriter(
+        stream_key(run.infospace_id, "annotation_run", run.id),
+        parent_key,
+    )
+    base_progress = run.progress_current or 0
+
     # Collect results
     all_created_annotations = []
-    all_created_justifications = []
     errors_run_level = []
-    
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            # Task failed with exception
-            logger.error(f"Task: Parallel processing task {i} failed with exception: {result}", exc_info=True)
-            errors_run_level.append(f"Task {i} failed: {str(result)}")
+
+    completed = 0
+    # as_completed yields tasks as they finish so we can emit per-row progress
+    # AND commit each annotation to the DB immediately. This lets the frontend
+    # poll/stream see rows fill in live instead of waiting for the chunk commit
+    # boundary (which could be 30-60s away for small-but-slow runs). We still
+    # return the accumulated lists so the caller's post-loop bookkeeping
+    # (errors, run.progress_current update) stays consistent.
+    for coro in asyncio.as_completed(tasks):
+        try:
+            result = await coro
+        except Exception as ex:
+            logger.error(f"Task: Parallel processing task failed with exception: {ex}", exc_info=True)
+            errors_run_level.append(f"Task failed: {ex}")
+            completed += 1
+            try:
+                writer.send("progress", {
+                    "run_id": run.id,
+                    "progress_current": base_progress + completed,
+                    "progress_total": run.progress_total,
+                    "status": run.status.value if hasattr(run.status, "value") else str(run.status),
+                })
+            except Exception:
+                logger.debug("progress emit failed", exc_info=True)
             continue
-        
+
         if not isinstance(result, dict):
-            logger.error(f"Task: Unexpected result type from parallel task {i}: {type(result)}")
-            errors_run_level.append(f"Task {i} returned unexpected result type")
+            logger.error(f"Task: Unexpected result type from parallel task: {type(result)}")
+            errors_run_level.append("Task returned unexpected result type")
+            completed += 1
             continue
-            
-        # Collect annotations
-        if result.get("annotations"):
-            all_created_annotations.extend(result["annotations"])
-        
-        # Collect justifications (need to handle annotation ID assignment)
-        if result.get("justifications") and result.get("parent_annotation_ref"):
-            for justification in result["justifications"]:
-                # The annotation reference will be updated with the actual ID after session.add_all
-                justification._parent_annotation_ref = result["parent_annotation_ref"]
-                all_created_justifications.append(justification)
-        
-        # Collect errors
+
+        result_annotations = result.get("annotations") or []
+
+        # Commit THIS result's annotations immediately so the frontend can
+        # fetch them via polling / render live. Errors here are logged but
+        # don't abort the rest of the parallel batch.
+        try:
+            if result_annotations:
+                session.add_all(result_annotations)
+                # Bump progress_current in DB so polling clients see the count
+                # tick without needing the SSE stream.
+                run.progress_current = (run.progress_current or 0) + len(result_annotations)
+                run.updated_at = datetime.now(timezone.utc)
+                session.add(run)
+                session.commit()
+                session.refresh(run)
+        except Exception as commit_exc:
+            logger.error(f"Task: Incremental commit failed for run {run.id}: {commit_exc}", exc_info=True)
+            try:
+                session.rollback()
+            except Exception:
+                pass
+            errors_run_level.append(f"Commit failed: {commit_exc}")
+
+        # Keep accumulators for the caller (they'll skip the re-commit since
+        # these rows already have PKs, but still used for error summary).
+        all_created_annotations.extend(result_annotations)
+
         if result.get("error"):
             errors_run_level.append(result["error"])
-    
-    logger.info(f"Task: Parallel processing completed. Created {len(all_created_annotations)} annotations, {len(all_created_justifications)} justifications, {len(errors_run_level)} errors")
-    
-    return all_created_annotations, all_created_justifications, errors_run_level
 
-async def process_assets_sequential(
-    assets_map: Dict[int, Asset],
-    validated_schemas: List[Dict[str, Any]],
-    run: AnnotationRun,
-    run_config: Dict[str, Any],
-    provider,
-    storage_provider_instance,
-    session: Session
-) -> Tuple[List[Annotation], List[Justification], List[str]]:
-    """
-    Process assets and schemas sequentially (fallback for when parallel processing is disabled).
+        completed += 1
+        try:
+            writer.send("progress", {
+                "run_id": run.id,
+                "progress_current": run.progress_current or (base_progress + completed),
+                "progress_total": run.progress_total,
+                "status": run.status.value if hasattr(run.status, "value") else str(run.status),
+            })
+        except Exception:
+            logger.debug("progress emit failed", exc_info=True)
 
-    Returns:
-        Tuple of (all_annotations, all_justifications, errors)
-    """
-    all_created_annotations = []
-    all_created_justifications = []
-    errors_run_level = []
-    
-    logger.info(f"Task: Starting sequential processing of {len(assets_map)} assets with {len(validated_schemas)} schemas")
-    
-    for schema_info in validated_schemas:
-        schema = schema_info["schema"]
-        schema_structure = schema_info["schema_structure"]
-        OutputModelClass = schema_info["output_model_class"]
-        final_schema_instructions = schema_info["final_instructions"]
+    logger.info(f"Task: Parallel processing completed. Created {len(all_created_annotations)} annotations, {len(errors_run_level)} errors")
 
-        for asset_id, parent_asset in assets_map.items():
-            try:
-                logger.debug(f"Task: Sequentially processing Asset {parent_asset.id} with Schema {schema.id} for Run {run.id}")
-                
-                # Auto-detect if image processing should be enabled (same as parallel path)
-                run_config_enhanced = run_config.copy()
-                process_pdfs_as_images = run_config.get("process_pdfs_as_images", False)
-                
-                # Determine image asset kinds based on process_pdfs_as_images flag
-                image_asset_kinds = _get_image_asset_kinds(process_pdfs_as_images)
-                has_per_image_schema = "per_image" in schema_structure.get("per_modality_fields", {})
-                target_is_image = parent_asset.kind in image_asset_kinds
-                
-                # Auto-enable image processing if not explicitly set
-                if "include_images" not in run_config_enhanced:
-                    if has_per_image_schema or target_is_image:
-                        run_config_enhanced["include_images"] = True
-                        logger.info(
-                            f"Sequential - Auto-enabled image processing for Asset {parent_asset.id}: "
-                            f"asset_is_image={target_is_image}, schema_has_per_image={has_per_image_schema}"
-                        )
-                
-                # Assemble multimodal context for this asset
-                text_content_for_provider, provider_specific_config = await assemble_multimodal_context(
-                    parent_asset, run_config_enhanced, session, storage_provider_instance
-                )
-                
-                full_provider_config_for_classify = {**run_config, **provider_specific_config}
-                # Pass thinking_config from run_config to provider_specific_config if not already there.
-                if "thinking_config" in run_config and "thinking_config" not in provider_specific_config:
-                     provider_specific_config["thinking_config"] = run_config["thinking_config"]
-
-                logger.debug(f"Task: Calling provider for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
-
-                # Call the provider for structured classification
-                # Get the model name from run config (frontend sends as ai_model)
-                model_name = run_config.get("model") or run_config.get("ai_model") or run_config.get("model_name")
-                thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
-
-                logger.info(f"Task: Using model '{model_name}' for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}")
-
-                _messages = []
-                if final_schema_instructions:
-                    _messages.append({"role": "system", "content": final_schema_instructions})
-                _messages.append({"role": "user", "content": text_content_for_provider})
-                provider_response = await provider.generate(
-                    messages=_messages,
-                    model_name=model_name,
-                    response_format=OutputModelClass.model_json_schema(),
-                    thinking_enabled=thinking_enabled,
-                    **{k: v for k, v in full_provider_config_for_classify.items()
-                       if k not in ['thinking_config', 'model_name', 'api_keys']}
-                )
-                
-                # Convert to envelope format for compatibility
-                try:
-                    parsed_data = json.loads(provider_response.content) if provider_response.content else {}
-                    
-                    # Check if we got empty content but a successful response
-                    if not provider_response.content or provider_response.content.strip() == "":
-                        logger.warning(f"Provider returned empty content for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}")
-                        logger.warning(f"Model used: {provider_response.model_used}")
-                        logger.warning(f"This often happens with complex schemas. The model may need a simpler schema or different prompting.")
-                    
-                    # NEW: Normalize response format - handle schema envelope format (same as parallel path)
-                    if isinstance(parsed_data, dict):
-                        if "$schema" in parsed_data and "$content" in parsed_data:
-                            logger.warning(
-                                f"Sequential - Received schema envelope format for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}. "
-                                f"Attempting to extract actual data from $content."
-                            )
-                            content_data = parsed_data.get("$content")
-                            
-                            # Try to parse $content as JSON if it's a string
-                            if isinstance(content_data, str):
-                                try:
-                                    content_data = json.loads(content_data)
-                                except json.JSONDecodeError:
-                                    logger.warning(
-                                        f"Sequential - $content is plain text, not JSON. Content preview: {content_data[:200]}"
-                                    )
-                            
-                            # If content_data is now a dict and looks like structured data, use it
-                            if isinstance(content_data, dict):
-                                if any(key in content_data for key in ["document", "per_image", "per_audio", "per_video"]):
-                                    logger.info(f"Sequential - Successfully extracted structured data from $content")
-                                    parsed_data = content_data
-                                else:
-                                    logger.warning(
-                                        f"Sequential - $content does not contain expected structure. Keys: {list(content_data.keys())[:10]}. "
-                                        f"Will attempt to use as-is."
-                                    )
-                                    parsed_data = content_data
-                            else:
-                                logger.error(
-                                    f"Sequential - $content is not a dict after parsing. Type: {type(content_data)}. "
-                                    f"Cannot normalize response format."
-                                )
-                        
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse provider response JSON for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}: {e}")
-                    logger.error(f"Raw response content length: {len(provider_response.content) if provider_response.content else 0} chars")
-                    logger.error(f"Raw response preview: {safe_log_content(provider_response.content[:1000] if provider_response.content else '')}")
-                    raise Exception(f"Invalid JSON response from provider: {str(e)}")
-                
-                provider_response_envelope = {
-                    "data": parsed_data,
-                    "_model_name": provider_response.model_used,
-                    "_thinking_trace": provider_response.thinking_trace
-                }
-                
-                # DEBUG: Log provider response details (sequential path, safely without binary data)
-                logger.debug(f"DEBUG: Sequential - Provider response for Asset {parent_asset.id}, Schema {schema.id}, Run {run.id}")
-                logger.debug(f"DEBUG: Sequential - Raw provider response content length: {len(provider_response.content) if provider_response.content else 0} chars")
-                logger.debug(f"DEBUG: Sequential - Parsed envelope data preview: {safe_log_content(provider_response_envelope.get('data'))}")
-                logger.debug(f"DEBUG: Sequential - Schema structure keys: {list(schema_structure.keys())}")
-                
-                created_annotations_for_asset = await demultiplex_results(
-                    result=provider_response_envelope.get("data", provider_response_envelope),
-                    schema_structure=schema_structure,
-                    parent_asset=parent_asset,
-                    schema=schema,
-                    run=run,
-                    db=session
-                )
-                
-                all_created_annotations.extend(created_annotations_for_asset)
-                
-                # Handle _thinking_trace
-                thinking_trace_content = provider_response_envelope.get("_thinking_trace")
-                include_thoughts = run_config.get("thinking_config", {}).get("include_thoughts", False)
-
-                if include_thoughts and thinking_trace_content:
-                    # Find the parent document annotation among created_annotations_for_asset
-                    parent_doc_annotation = next((ann for ann in created_annotations_for_asset if ann.asset_id == parent_asset.id), None)
-                    if parent_doc_annotation:
-                        thinking_justification = Justification(
-                            annotation_id=None,  # Will be set after annotation is saved
-                            field_name="_thinking_trace",
-                            reasoning=thinking_trace_content,
-                            model_name=provider_response_envelope.get("_model_name", run_config.get("model_name", "unknown")),
-                            evidence_payload={"trace_type": "provider_summary"}
-                        )
-                        thinking_justification._parent_annotation_ref = parent_doc_annotation
-                        all_created_justifications.append(thinking_justification)
-                        logger.debug(f"Task: Created Justification object for _thinking_trace for Asset {parent_asset.id}, Run {run.id}.")
-                
-                logger.debug(f"Task: Successfully processed Asset {parent_asset.id} with Schema {schema.id} for Run {run.id}. Created {len(created_annotations_for_asset)} annotations.")
-
-            except Exception as e_classify:
-                error_msg = f"Asset {parent_asset.id}/Schema {schema.id} classification error: {str(e_classify)}"
-                logger.error(f"Task: Error classifying Asset {parent_asset.id} with Schema {schema.id} for Run {run.id}: {e_classify}", exc_info=True)
-                errors_run_level.append(error_msg)
-                
-                # Create a FAILED annotation for the parent asset
-                failed_ann = Annotation(
-                    asset_id=parent_asset.id,
-                    schema_id=schema.id,
-                    run_id=run.id,
-                    value={"error": str(e_classify), "details": traceback.format_exc()},
-                    status=ResultStatus.FAILED,
-                    infospace_id=run.infospace_id,
-                    user_id=run.user_id
-                )
-                all_created_annotations.append(failed_ann)
-    
-    logger.info(f"Task: Sequential processing completed. Created {len(all_created_annotations)} annotations, {len(all_created_justifications)} justifications, {len(errors_run_level)} errors")
-    
-    return all_created_annotations, all_created_justifications, errors_run_level
+    return all_created_annotations, errors_run_level, True
 
 async def _process_annotation_run_async(
     run_id: int, cursor: int = 0, chunk_size: int = 50
@@ -1789,15 +2510,19 @@ async def _process_annotation_run_async(
             provider_start_time = time.time()
             app_settings = settings
             try:
-                from app.api.modules.foundation_service_providers.base import LanguageModelProvider
                 run_config_for_provider = run.configuration or {}
                 model_name_for_resolve = run_config_for_provider.get("model") or run_config_for_provider.get("ai_model") or run_config_for_provider.get("model_name")
-                runtime_api_keys = run_config_for_provider.get("api_keys")
+                runtime_api_keys = run_config_for_provider.get("api_keys") or {}
                 type_key = run_config_for_provider.get("provider") or run_config_for_provider.get("ai_provider")
-                credentials = load_credentials(session, run.user_id, runtime_api_keys) if run.user_id else (runtime_api_keys or {})
-                provider = resolve(LanguageModelProvider, type_key, app_settings, credentials)
-                if not provider:
-                    raise ValueError(f"No LLM provider available for model '{model_name_for_resolve}'")
+                # BYOK: extract the key for the selected provider, if supplied in the run configuration.
+                runtime_key = runtime_api_keys.get(type_key) if type_key else None
+                provider = resolve(
+                    "language", type_key, model_name_for_resolve,
+                    infospace_id=run.infospace_id,
+                    context="annotation",
+                    runtime_key=runtime_key,
+                    session=session,
+                )
                 storage_provider_instance = await get_cached_provider("storage", app_settings)
                 provider_creation_time = time.time() - provider_start_time
                 logger.info(f"Task: Provider creation/retrieval took {provider_creation_time:.3f}s for Run {run.id}")
@@ -2063,7 +2788,6 @@ async def _process_annotation_run_async(
             
             errors_run_level = [] # Errors pertaining to the whole run or asset/schema processing that isn't an annotation status
             all_created_annotations: List[Annotation] = []
-            all_created_justifications: List[Justification] = []
 
             # OPTIMIZATION 2: Pre-validate all schemas before processing assets
             validated_schemas = []
@@ -2096,89 +2820,34 @@ async def _process_annotation_run_async(
                     errors_run_level.append(f"Schema {schema.id} ({schema.name}) - no document_fields detected in schema structure.")
                     continue
                 
-                # Prepare justification-related configurations
-                justification_mode = run_config.get("justification_mode", "NONE")
-                # field_specific_justification_configs comes from schema.field_specific_justification_configs (already a dict)
-                schema_justification_configs = schema.field_specific_justification_configs or {}
+                # Per-field opt-in is read inline from the output_contract by the
+                # builder; the run-level master switch lets a caller suppress
+                # all justifications regardless of schema config.
+                justifications_enabled = run_config.get("justifications_enabled", True)
 
                 try:
                     OutputModelClass = create_pydantic_model_from_json_schema(
                         model_name=f"DynamicOutput_{schema.name.replace(' ', '_')}_{schema.id}",
-                        json_schema=optimized_contract, # Use optimized schema instead of original
-                        justification_mode=justification_mode,
-                        field_specific_justification_configs=schema_justification_configs
-                        # The create_pydantic_model_from_json_schema now handles augmentation internally
+                        json_schema=optimized_contract,
+                        justifications_enabled=justifications_enabled,
                     )
                 except Exception as e_model_create:
                     logger.error(f"Task: Failed to create Pydantic model for Schema {schema.id} ({schema.name}) in Run {run.id}: {e_model_create}", exc_info=True)
                     errors_run_level.append(f"Schema {schema.id} Pydantic model creation failed: {e_model_create}")
                     continue
 
-                # NEW: Validate that the created model is not empty
                 if not OutputModelClass.model_fields:
                     logger.error(f"Task: Schema {schema.id} ({schema.name}) for Run {run.id} resulted in an empty model with no fields. This schema cannot be used for structured output. Skipping this schema.")
                     errors_run_level.append(f"Schema {schema.id} ('{schema.name}') is invalid or empty and was skipped.")
                     continue
 
-                # Initialize final instructions with schema-level instructions
+                # Initialize final instructions with schema-level instructions.
+                # Justification prompts come exclusively from researcher-written
+                # places: schema.instructions and per-field justification_prompt
+                # in the output_contract. No hidden prompt injection.
                 final_schema_instructions = schema.instructions or ""
-                
-                # Determine which fields will have justification submodels (for model creation)
-                fields_that_will_have_justification_submodel = []
-                potential_fields_to_check_for_justification = []
-                
-                # We need to map the python-safe field name back to its original schema and title
-                field_metadata_map = {}
 
-                # Gather all top-level field names from the optimized schema structure
-                # These are the keys that schema.field_specific_justification_configs would refer to.
-                if schema_structure.get("document_fields"): # This is the sub-schema for document
-                    doc_props = schema_structure["document_fields"].get("properties", {})
-                    for prop_name, prop_schema in doc_props.items():
-                        py_name = make_python_identifier(prop_name)
-                        potential_fields_to_check_for_justification.append(py_name)
-                        field_metadata_map[py_name] = {"original_name": prop_name, "title": prop_schema.get("title")}
-                
-                for modality, per_modality_item_schema in schema_structure.get("per_modality_fields", {}).items():
-                    # per_modality_item_schema is the sub-schema for an item (e.g., for one image)
-                    modality_props = per_modality_item_schema.get("properties", {})
-                    for prop_name, prop_schema in modality_props.items():
-                        py_name = make_python_identifier(prop_name)
-                        potential_fields_to_check_for_justification.append(py_name)
-                        field_metadata_map[py_name] = {"original_name": prop_name, "title": prop_schema.get("title")}
-                
-                # Remove duplicates if a field name could appear in multiple contexts and ensure consistent order
-                potential_fields_to_check_for_justification = sorted(list(set(potential_fields_to_check_for_justification)))
-
-                if justification_mode != "NONE":
-                    for field_name_to_check in potential_fields_to_check_for_justification:
-                        # Use original name to check config
-                        original_name = field_metadata_map.get(field_name_to_check, {}).get("original_name", field_name_to_check)
-                        
-                        # Simplified check mimicking part of create_pydantic_model_from_json_schema's decision
-                        should_add_just_for_this_field = False
-                        # schema_justification_configs uses the direct field name as key as per current examples.
-                        # It expects FieldJustificationConfig objects or dicts convertible to them.
-                        field_config_from_schema = schema_justification_configs.get(original_name)
-
-                        if justification_mode == "SCHEMA_DEFAULT":
-                            # cfg is an instance of FieldJustificationConfig (or a dict that was part of the input)
-                            if field_config_from_schema and getattr(field_config_from_schema, 'enabled', field_config_from_schema.get("enabled", False) if isinstance(field_config_from_schema, dict) else False):
-                                should_add_just_for_this_field = True
-                        elif justification_mode.startswith("ALL_"):
-                            # Not explicitly disabled (enabled is not False)
-                            if not (field_config_from_schema and getattr(field_config_from_schema, 'enabled', field_config_from_schema.get("enabled", True) if isinstance(field_config_from_schema, dict) else True) is False):
-                                should_add_just_for_this_field = True
-                        
-                        if should_add_just_for_this_field:
-                            fields_that_will_have_justification_submodel.append(field_name_to_check)
-
-                # Note: Justification prompts are now ONLY sourced from:
-                # 1. schema.instructions (researcher-written)
-                # 2. field.custom_prompt (researcher-written, visible in schema editor)
-                # No hidden prompt injection - researchers have full control over evidence guidance.
-
-                # --- System instruction for per-modality asset UUID mapping --- 
+                # --- System instruction for per-modality asset UUID mapping ---
                 # Check if the schema structure implies per-modality outputs that would need mapping
                 if schema_structure.get("per_modality_fields"):
                     system_mapping_prompt = (
@@ -2193,12 +2862,39 @@ async def _process_annotation_run_async(
                     else:
                         final_schema_instructions = system_mapping_prompt[4:] # Remove leading \n\n if no prior instructions
 
+                # Track 2: pre-compute the scalar subset + list field descriptors
+                # for two-phase iterative extraction. The scalar Pydantic model
+                # is built once per schema (here) and re-used per asset.
+                # If the schema has no array<object> fields, list_fields is
+                # empty and the auto-router will pick single-shot.
+                scalar_subset_contract, list_fields_for_phase_b = split_schema_for_extraction(
+                    optimized_contract
+                )
+                phase_a_output_model_class = None
+                if list_fields_for_phase_b:
+                    try:
+                        phase_a_output_model_class = create_pydantic_model_from_json_schema(
+                            model_name=f"PhaseA_{schema.name.replace(' ', '_')}_{schema.id}",
+                            json_schema=scalar_subset_contract,
+                            justifications_enabled=justifications_enabled,
+                        )
+                    except Exception as e_phase_a:
+                        logger.warning(
+                            f"Task: Failed to build Phase A model for Schema {schema.id}; "
+                            f"two-phase extraction unavailable for this schema: {e_phase_a}"
+                        )
+                        list_fields_for_phase_b = []
+                        scalar_subset_contract = None
+
                 # Store the validated schema with all computed values
                 validated_schemas.append({
                     "schema": schema,
                     "schema_structure": schema_structure,
                     "output_model_class": OutputModelClass,
-                    "final_instructions": final_schema_instructions
+                    "final_instructions": final_schema_instructions,
+                    "scalar_subset_contract": scalar_subset_contract,
+                    "list_fields": list_fields_for_phase_b,
+                    "phase_a_output_model_class": phase_a_output_model_class,
                 })
 
             if not validated_schemas:
@@ -2238,61 +2934,58 @@ async def _process_annotation_run_async(
             concurrency_limit = run_config.get("annotation_concurrency", processing_config['default_concurrency'])
             concurrency_limit = min(concurrency_limit, processing_config['max_concurrency'])
             concurrency_limit = max(concurrency_limit, 1)
-            parallel_enabled = processing_config['parallel_enabled'] and run_config.get("enable_parallel_processing", True)
 
+            # All execution flows through ``process_assets_parallel``. The
+            # asyncio.Semaphore inside it gives us serial behaviour for
+            # ``concurrency_limit=1`` with the bonus of per-result commits
+            # and live progress emits — strictly better than the old
+            # sequential body that committed only at chunk boundaries.
             for chunk_idx, chunk_asset_ids in enumerate(chunks):
                 chunk_assets_map = {aid: assets_map[aid] for aid in chunk_asset_ids if aid in assets_map}
                 if not chunk_assets_map:
                     continue
-                if parallel_enabled and len(chunk_assets_map) * len(validated_schemas) > 1:
-                    chunk_annotations, chunk_justifications, chunk_errors = await process_assets_parallel(
-                        assets_map=chunk_assets_map,
-                        validated_schemas=validated_schemas,
-                        run=run,
-                        run_config=run_config,
-                        provider=provider,
-                        storage_provider_instance=storage_provider_instance,
-                        session=session,
-                        concurrency_limit=concurrency_limit
-                    )
-                else:
-                    chunk_annotations, chunk_justifications, chunk_errors = await process_assets_sequential(
-                        assets_map=chunk_assets_map,
-                        validated_schemas=validated_schemas,
-                        run=run,
-                        run_config=run_config,
-                        provider=provider,
-                        storage_provider_instance=storage_provider_instance,
-                        session=session
-                    )
+                chunk_annotations, chunk_errors, already_committed = await process_assets_parallel(
+                    assets_map=chunk_assets_map,
+                    validated_schemas=validated_schemas,
+                    run=run,
+                    run_config=run_config,
+                    provider=provider,
+                    storage_provider_instance=storage_provider_instance,
+                    session=session,
+                    concurrency_limit=concurrency_limit
+                )
                 errors_run_level.extend(chunk_errors)
-                if chunk_annotations:
-                    session.add_all(chunk_annotations)
-                    session.flush()
-                for j in chunk_justifications:
-                    if hasattr(j, '_parent_annotation_ref'):
-                        parent = j._parent_annotation_ref
-                        if parent and getattr(parent, 'id', None):
-                            j.annotation_id = parent.id
-                        delattr(j, '_parent_annotation_ref')
-                if chunk_justifications:
-                    session.add_all(chunk_justifications)
-                # Update progress before commit so it's visible atomically with the new annotations
-                run.progress_current = (run.progress_current or 0) + len(chunk_asset_ids)
-                run.updated_at = datetime.now(timezone.utc)
-                session.add(run)
-                session.commit()
+                if not already_committed:
+                    if chunk_annotations:
+                        session.add_all(chunk_annotations)
+                    # Update progress before commit so it's visible atomically with the new annotations
+                    run.progress_current = (run.progress_current or 0) + len(chunk_asset_ids)
+                    run.updated_at = datetime.now(timezone.utc)
+                    session.add(run)
+                    session.commit()
+                else:
+                    # parallel path already committed rows + bumped progress_current
+                    # per result. Just make sure we're seeing the latest values.
+                    session.refresh(run)
                 logger.info(f"Task: Run {run.id} chunk {chunk_idx + 1}/{len(chunks)} committed {len(chunk_annotations)} annotations (progress: {run.progress_current}/{run.progress_total})")
-                # Presence: push progress to watching browsers
-                from app.core.stream import stream_key, StreamWriter
-                StreamWriter(stream_key(run.infospace_id, "annotation_run", run.id)).send("progress", {
+                # Presence: push progress to watching browsers (and to the
+                # parent's stream when this is an extension run).
+                from app.core.stream import stream_key, FamilyStreamWriter
+                _parent_key = (
+                    stream_key(run.infospace_id, "annotation_run", run.parent_run_id)
+                    if run.parent_run_id else None
+                )
+                FamilyStreamWriter(
+                    stream_key(run.infospace_id, "annotation_run", run.id),
+                    _parent_key,
+                ).send("progress", {
                     "run_id": run.id,
+                    "parent_run_id": run.parent_run_id,
                     "progress_current": run.progress_current,
                     "progress_total": run.progress_total,
                     "status": run.status.value if hasattr(run.status, "value") else str(run.status),
                 })
                 all_created_annotations.extend(chunk_annotations)
-                all_created_justifications.extend(chunk_justifications)
 
             # Chunk loop above handles add/commit per chunk; all_created_* accumulated
 
@@ -2323,21 +3016,27 @@ async def _process_annotation_run_async(
             session.commit()
             # Presence: push terminal status to watching browsers
             from app.core.stream import stream_key, StreamWriter
-            _sw = StreamWriter(stream_key(run.infospace_id, "annotation_run", run.id))
-            _sw.send("completed" if run.status == RunStatus.COMPLETED else "completed_with_errors", {
+            event_name = "completed" if run.status == RunStatus.COMPLETED else "completed_with_errors"
+            payload = {
                 "run_id": run.id,
+                "parent_run_id": run.parent_run_id,
                 "status": run.status.value if hasattr(run.status, "value") else str(run.status),
                 "progress_current": run.progress_current,
                 "progress_total": run.progress_total,
-            })
+            }
+            _sw = StreamWriter(stream_key(run.infospace_id, "annotation_run", run.id))
+            _sw.send(event_name, payload)
             _sw.expire(3600)
+            # If this is an extension, mirror the event into the parent's stream
+            # so panels bound to the parent can refetch without polling.
+            if run.parent_run_id:
+                _psw = StreamWriter(stream_key(run.infospace_id, "annotation_run", run.parent_run_id))
+                _psw.send(event_name, payload)
 
             # Compute aggregates for this run and update monitor aggregates if applicable
             try:
                 from app.api.modules.annotation.services.annotation_service import AnnotationService
-                from app.api.modules.content.services.asset_service import AssetService
-                asset_service = AssetService(session, storage_provider_instance)
-                annotation_service = AnnotationService(session=session, asset_service=asset_service)
+                annotation_service = AnnotationService(session=session)
                 annotation_service.compute_run_aggregates(run_id=run.id)
                 # Check for monitor_id attribute safely (may not exist on all AnnotationRun instances)
                 monitor_id = getattr(run, 'monitor_id', None)
@@ -2347,7 +3046,7 @@ async def _process_annotation_run_async(
                 logger.error(f"Task: Aggregation failed for run {run.id}: {agg_exc}", exc_info=True)
             
             total_time = time.time() - start_time
-            logger.info(f"Task: AnnotationRun {run.id} finished. Status: {run.status}. Total Annotations: {len(all_created_annotations)}, Justifications: {len(all_created_justifications)}. Total time: {total_time:.2f}s")
+            logger.info(f"Task: AnnotationRun {run.id} finished. Status: {run.status}. Total Annotations: {len(all_created_annotations)}. Total time: {total_time:.2f}s")
             
         except Exception as e_task_critical:
             logger.exception(f"Task: Critical unexpected error processing AnnotationRun {run_id}: {e_task_critical}")
@@ -2364,9 +3063,18 @@ async def _process_annotation_run_async(
                         fail_session.commit()
                         # Presence: push failure to watching browsers
                         from app.core.stream import stream_key, StreamWriter
+                        fail_payload = {
+                            "run_id": run_id,
+                            "parent_run_id": run_to_fail.parent_run_id,
+                            "status": "failed",
+                            "error": str(e_task_critical),
+                        }
                         _sw = StreamWriter(stream_key(run_to_fail.infospace_id, "annotation_run", run_id))
-                        _sw.send("failed", {"run_id": run_id, "status": "failed", "error": str(e_task_critical)})
+                        _sw.send("failed", fail_payload)
                         _sw.expire(3600)
+                        if run_to_fail.parent_run_id:
+                            _psw = StreamWriter(stream_key(run_to_fail.infospace_id, "annotation_run", run_to_fail.parent_run_id))
+                            _psw.send("failed", fail_payload)
             except Exception as db_exc:
                 logger.error(f"Task: Could not update run {run_id} to FAILED status: {db_exc}", exc_info=True)
 
@@ -2418,15 +3126,18 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
             # Set up providers (reuse from original processing)
             app_settings = settings
             try:
-                from app.api.modules.foundation_service_providers.base import LanguageModelProvider
                 run_config_for_provider = run.configuration or {}
                 model_name_for_resolve = run_config_for_provider.get("model") or run_config_for_provider.get("ai_model") or run_config_for_provider.get("model_name")
-                runtime_api_keys = run_config_for_provider.get("api_keys")
+                runtime_api_keys = run_config_for_provider.get("api_keys") or {}
                 type_key = run_config_for_provider.get("provider") or run_config_for_provider.get("ai_provider")
-                credentials = load_credentials(session, run.user_id, runtime_api_keys) if run.user_id else (runtime_api_keys or {})
-                provider = resolve(LanguageModelProvider, type_key, app_settings, credentials)
-                if not provider:
-                    raise ValueError(f"No LLM provider available for model '{model_name_for_resolve}'")
+                runtime_key = runtime_api_keys.get(type_key) if type_key else None
+                provider = resolve(
+                    "language", type_key, model_name_for_resolve,
+                    infospace_id=run.infospace_id,
+                    context="annotation",
+                    runtime_key=runtime_key,
+                    session=session,
+                )
                 storage_provider_instance = await get_cached_provider("storage", app_settings)
                 logger.info(f"Task: Providers initialized for retry of Run {run.id}")
             except Exception as e_provider:
@@ -2475,8 +3186,7 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
                         OutputModelClass = create_pydantic_model_from_json_schema(
                             model_name=f"RetryOutput_{schema.name.replace(' ', '_')}_{schema.id}",
                             json_schema=schema.output_contract,
-                            justification_mode=run_config.get("justification_mode", "NONE"),
-                            field_specific_justification_configs=schema.field_specific_justification_configs or {}
+                            justifications_enabled=run_config.get("justifications_enabled", True),
                         )
                     except Exception as e_model:
                         logger.error(f"Task: Failed to create Pydantic model for Schema {schema.id} during retry: {e_model}", exc_info=True)
@@ -2490,7 +3200,7 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
 
                     # Prepare final instructions (reuse from original processing)
                     final_schema_instructions = schema.instructions or ""
-                    
+
                     # Add system mapping prompt for per-modality fields if needed
                     if schema_structure.get("per_modality_fields"):
                         system_mapping_prompt = (
@@ -2505,11 +3215,37 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
                         else:
                             final_schema_instructions = system_mapping_prompt[4:] # Remove leading \n\n if no prior instructions
 
+                    # Mirror the validate_assets_schemas Track-2 build so retries
+                    # get the two-phase strategy when the original run did. Without
+                    # this, retries silently fall back to single-shot and re-truncate
+                    # on the same schemas that needed Phase B in the first place.
+                    scalar_subset_contract, list_fields_for_phase_b = split_schema_for_extraction(
+                        schema.output_contract
+                    )
+                    phase_a_output_model_class = None
+                    if list_fields_for_phase_b:
+                        try:
+                            phase_a_output_model_class = create_pydantic_model_from_json_schema(
+                                model_name=f"RetryPhaseA_{schema.name.replace(' ', '_')}_{schema.id}",
+                                json_schema=scalar_subset_contract,
+                                justifications_enabled=run_config.get("justifications_enabled", True),
+                            )
+                        except Exception as e_phase_a:
+                            logger.warning(
+                                f"Task: Failed to build Phase A model for retry of Schema {schema.id}; "
+                                f"two-phase extraction unavailable for this retry: {e_phase_a}"
+                            )
+                            list_fields_for_phase_b = []
+                            scalar_subset_contract = None
+
                     schema_info = {
                         "schema": schema,
                         "schema_structure": schema_structure,
                         "output_model_class": OutputModelClass,
-                        "final_instructions": final_schema_instructions
+                        "final_instructions": final_schema_instructions,
+                        "scalar_subset_contract": scalar_subset_contract,
+                        "list_fields": list_fields_for_phase_b,
+                        "phase_a_output_model_class": phase_a_output_model_class,
                     }
 
                     # Call the actual LLM processing function
@@ -2528,18 +3264,13 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
                         # Delete old failed annotations and add new ones
                         for old_annotation in annotations_for_pair:
                             session.delete(old_annotation)
-                        
+
                         # Add new annotations from the result
                         new_annotations = result.get("annotations", [])
                         if new_annotations:
                             session.add_all(new_annotations)
                             successful_retries += len(new_annotations)
                             logger.info(f"Task: Successfully retried Asset {asset.id}, Schema {schema.id} - created {len(new_annotations)} new annotations")
-                        
-                        # Add justifications if any
-                        new_justifications = result.get("justifications", [])
-                        if new_justifications:
-                            session.add_all(new_justifications)
                     else:
                         # LLM processing failed, keep original annotations as FAILED
                         error_msg = result.get("error", "Unknown error during retry")

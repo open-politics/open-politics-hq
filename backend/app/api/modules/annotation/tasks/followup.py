@@ -42,13 +42,11 @@ logger = logging.getLogger(__name__)
 def version_gap(ctx: TaskContext, ids: list[int]):
     """Create follow-up annotation runs for versioned assets missing annotations."""
     from app.api.modules.content.types import get_content_type_registry
-    from app.api.modules.content.services.asset_service import AssetService
     from app.api.modules.annotation.services.annotation_service import AnnotationService
     from app.schemas import AnnotationRunCreate
 
     with ctx.session() as session:
-        asset_service = AssetService(session)
-        ann_svc = AnnotationService(session=session, asset_service=asset_service)
+        ann_svc = AnnotationService(session=session)
 
         for asset_id in ids:
             try:

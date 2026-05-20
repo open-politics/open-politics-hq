@@ -8,7 +8,7 @@ from app.models import (
     Annotation,
     AnnotationSchema,
     FragmentCuration,
-    EntityCanonical,
+    Entity,
     Asset,
 )
 from app.schemas import (
@@ -29,8 +29,8 @@ from app.api.modules.identity_infospace_user.access import (
 from app.api.modules.graph.resolution import resolve_entity
 from app.api.modules.graph.models import GraphEdge
 from app.api.modules.graph.schemas import CurateFragmentsRequest
-from app.api.modules.embedding.services import EmbeddingService
 from sqlmodel import select, func
+from sqlalchemy import update
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -304,12 +304,20 @@ def get_run_results(
     run_id: int,
     skip: int = 0,
     limit: int = 100,
+    include_descendants: bool = Query(
+        True,
+        description=(
+            "Default True: include annotations from extension (child) runs. "
+            "Matches the dashboard's family-aware semantics — opt out only "
+            "for diagnostics that need this run's own annotations."
+        ),
+    ),
     session: SessionDep,
     annotation_service: AnnotationServiceDep,
 ) -> List[AnnotationRead]:
     """
-    Retrieve all annotations for a specific AnnotationRun.
-    The service handles run ownership and infospace context verification.
+    Retrieve all annotations for a specific AnnotationRun (and, by default,
+    its extension descendants).
     """
     access.require_in_scope("run_ids", run_id)
     try:
@@ -318,7 +326,8 @@ def get_run_results(
             user_id=access.user_id,
             infospace_id=access.infospace_id,
             skip=skip,
-            limit=limit
+            limit=limit,
+            include_descendants=include_descendants,
         )
         return results
     except ValueError as ve:
@@ -441,6 +450,12 @@ async def curate_fragments(
             if graph_id is None and run and run.graph_config and isinstance(run.graph_config, dict):
                 graph_id = run.graph_config.get("graph_id") or run.graph_config.get("target_graph_id")
 
+        # Resolve target canon: graph's canon_id when graph_id is set, otherwise
+        # the infospace's default canon. The helper enforces the "every curation
+        # targets a canon" invariant — there is no canon-less curation path.
+        from app.api.modules.graph.tasks.curation import _resolve_target_canon
+        canon_id, resolved_graph_id = _resolve_target_canon(session, infospace_id, graph_id)
+
         # Build merge normalization: request-level merges override graph_config merges.
         # This carries the user's manual merge decisions from the run-scoped graph panel.
         merge_normalize: dict[str, str] = {}
@@ -464,7 +479,6 @@ async def curate_fragments(
                 if hint.type:
                     merge_type_override[hint.keep.strip().lower()] = hint.type
 
-        embedding_service = EmbeddingService(session=session, user_id=access.user_id)
         created_curations = []
         created_edges = []
 
@@ -472,32 +486,36 @@ async def curate_fragments(
             try:
                 fragment = get_fragment_by_path(annotation.value, path)
 
-                subject_entity_id = None
-                object_entity_id = None
+                source_entity_id = None
+                target_entity_id = None
 
                 if is_triplet(fragment):
-                    # Apply merge normalization before resolution
-                    sub_name = fragment["subject_name"]
-                    sub_type = fragment.get("subject_type", "UNKNOWN")
-                    obj_name = fragment["object_name"]
-                    obj_type = fragment.get("object_type", "UNKNOWN")
-                    sub_name = merge_normalize.get(sub_name.strip().lower(), sub_name)
-                    obj_name = merge_normalize.get(obj_name.strip().lower(), obj_name)
-                    sub_type = merge_type_override.get(sub_name.strip().lower(), sub_type)
-                    obj_type = merge_type_override.get(obj_name.strip().lower(), obj_type)
+                    # LLM-side keys → DB-side neutral terms. Subject is source,
+                    # object is target (same direction, neutral naming).
+                    src_name = fragment["subject_name"]
+                    src_type = fragment.get("subject_type", "UNKNOWN")
+                    tgt_name = fragment["object_name"]
+                    tgt_type = fragment.get("object_type", "UNKNOWN")
+                    src_name = merge_normalize.get(src_name.strip().lower(), src_name)
+                    tgt_name = merge_normalize.get(tgt_name.strip().lower(), tgt_name)
+                    src_type = merge_type_override.get(src_name.strip().lower(), src_type)
+                    tgt_type = merge_type_override.get(tgt_name.strip().lower(), tgt_type)
 
-                    subject = await resolve_entity(
-                        session, infospace_id,
-                        sub_name, sub_type,
-                        embedding_service=embedding_service,
+                    source_entity = await resolve_entity(
+                        session, infospace_id, canon_id,
+                        src_name, src_type,
                     )
-                    object_entity = await resolve_entity(
-                        session, infospace_id,
-                        obj_name, obj_type,
-                        embedding_service=embedding_service,
+                    target_entity = await resolve_entity(
+                        session, infospace_id, canon_id,
+                        tgt_name, tgt_type,
                     )
-                    subject_entity_id = subject.id
-                    object_entity_id = object_entity.id
+                    # Invariant: edges always have entities matching the
+                    # graph's canon. resolve_entity scopes by canon_id, so
+                    # this is structurally guaranteed.
+                    assert source_entity.canon_id == canon_id
+                    assert target_entity.canon_id == canon_id
+                    source_entity_id = source_entity.id
+                    target_entity_id = target_entity.id
 
                 # Upsert FragmentCuration
                 existing = session.exec(
@@ -509,8 +527,8 @@ async def curate_fragments(
 
                 if existing:
                     existing.status = curation_request.status
-                    existing.subject_entity_id = subject_entity_id
-                    existing.object_entity_id = object_entity_id
+                    existing.source_entity_id = source_entity_id
+                    existing.target_entity_id = target_entity_id
                     existing.curated_by = access.user_id
                     session.add(existing)
                     session.flush()
@@ -520,8 +538,8 @@ async def curate_fragments(
                         annotation_id=annotation_id,
                         fragment_path=path,
                         status=curation_request.status,
-                        subject_entity_id=subject_entity_id,
-                        object_entity_id=object_entity_id,
+                        source_entity_id=source_entity_id,
+                        target_entity_id=target_entity_id,
                         curated_by=access.user_id,
                     )
                     session.add(fc)
@@ -529,14 +547,14 @@ async def curate_fragments(
                     created_curations.append(fc.id)
 
                 # Create materialized GraphEdge for triplets
-                if subject_entity_id and object_entity_id and is_triplet(fragment):
+                if source_entity_id and target_entity_id and is_triplet(fragment):
                     edge = GraphEdge(
-                        subject_entity_id=subject_entity_id,
-                        object_entity_id=object_entity_id,
+                        source_entity_id=source_entity_id,
+                        target_entity_id=target_entity_id,
                         predicate=fragment.get("predicate"),
                         annotation_id=annotation_id,
                         infospace_id=infospace_id,
-                        graph_id=graph_id,
+                        graph_id=resolved_graph_id,
                     )
                     session.add(edge)
                     session.flush()
@@ -596,16 +614,39 @@ def remove_curation(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Curation not found")
 
         # Remove the materialized edge for this curation
-        if curation.subject_entity_id and curation.object_entity_id:
+        if curation.source_entity_id and curation.target_entity_id:
             edge = session.exec(
                 select(GraphEdge).where(
                     GraphEdge.annotation_id == annotation_id,
-                    GraphEdge.subject_entity_id == curation.subject_entity_id,
-                    GraphEdge.object_entity_id == curation.object_entity_id,
+                    GraphEdge.source_entity_id == curation.source_entity_id,
+                    GraphEdge.target_entity_id == curation.target_entity_id,
                 )
             ).first()
             if edge:
                 session.delete(edge)
+
+            # Tombstone any materialized EntityRelationship for this pair when
+            # no other contributing GraphEdge survives in the same graph.
+            from app.api.modules.graph.models import EntityRelationship
+            if edge and edge.graph_id is not None:
+                a, b = sorted((curation.source_entity_id, curation.target_entity_id))
+                remaining = session.exec(
+                    select(GraphEdge.id).where(
+                        GraphEdge.graph_id == edge.graph_id,
+                        ((GraphEdge.source_entity_id == a) & (GraphEdge.target_entity_id == b))
+                        | ((GraphEdge.source_entity_id == b) & (GraphEdge.target_entity_id == a)),
+                    )
+                ).first()
+                if remaining is None:
+                    session.exec(
+                        update(EntityRelationship)
+                        .where(
+                            EntityRelationship.graph_id == edge.graph_id,
+                            EntityRelationship.entity_a_id == a,
+                            EntityRelationship.entity_b_id == b,
+                        )
+                        .values(is_active=False)
+                    )
 
         session.delete(curation)
         session.commit()
@@ -646,8 +687,8 @@ def get_curated_triplets(
                 Annotation.infospace_id == infospace_id,
                 FragmentCuration.status == "curated",
                 or_(
-                    FragmentCuration.subject_entity_id.isnot(None),
-                    FragmentCuration.object_entity_id.isnot(None),
+                    FragmentCuration.source_entity_id.isnot(None),
+                    FragmentCuration.target_entity_id.isnot(None),
                 ),
             )
         )
@@ -657,31 +698,25 @@ def get_curated_triplets(
             stmt = stmt.join(
                 GraphEdge,
                 (GraphEdge.annotation_id == FragmentCuration.annotation_id)
-                & (GraphEdge.subject_entity_id == FragmentCuration.subject_entity_id)
-                & (GraphEdge.object_entity_id == FragmentCuration.object_entity_id),
+                & (GraphEdge.source_entity_id == FragmentCuration.source_entity_id)
+                & (GraphEdge.target_entity_id == FragmentCuration.target_entity_id),
             ).where(GraphEdge.graph_id == graph_id)
 
         stmt = access.scope_filter(stmt, Annotation.run_id, "run_ids")
         stmt = stmt.offset(offset).limit(limit)
         curations = session.exec(stmt).all()
 
-        # Build entity map — scoped to graph if filtering
-        entity_stmt = select(EntityCanonical).where(EntityCanonical.infospace_id == infospace_id)
+        # Build entity map — scoped to the graph's canon when filtering by graph,
+        # otherwise the infospace's entities. Entities now belong to canons
+        # (not graphs); we resolve graph→canon once.
+        entity_stmt = select(Entity).where(Entity.infospace_id == infospace_id)
         if graph_id is not None:
-            entity_stmt = entity_stmt.where(EntityCanonical.graph_id == graph_id)
+            from app.api.modules.graph.models import KnowledgeGraph
+            graph = session.get(KnowledgeGraph, graph_id)
+            if graph:
+                entity_stmt = entity_stmt.where(Entity.canon_id == graph.canon_id)
         entities = session.exec(entity_stmt).all()
         entity_map = {e.id: e for e in entities}
-
-        # Also load infospace-level entities (graph_id IS NULL) as fallback
-        if graph_id is not None:
-            fallback = session.exec(
-                select(EntityCanonical).where(
-                    EntityCanonical.infospace_id == infospace_id,
-                    EntityCanonical.graph_id.is_(None),
-                )
-            ).all()
-            for e in fallback:
-                entity_map.setdefault(e.id, e)
 
         curated_triplets = []
 
@@ -692,9 +727,12 @@ def get_curated_triplets(
                 if not is_triplet(fragment):
                     continue
 
-                subject_id = curation.subject_entity_id
-                object_id = curation.object_entity_id
+                source_id = curation.source_entity_id
+                target_id = curation.target_entity_id
 
+                # Output keys keep the LLM-facing subject/object terminology
+                # so the wire format stays familiar to existing consumers; the
+                # underlying source/target columns are the DB-side rename.
                 triplet_data = {
                     "id": curation.id,
                     "annotation_id": annotation.id,
@@ -704,14 +742,14 @@ def get_curated_triplets(
                     "subject": {
                         "raw_name": fragment["subject_name"],
                         "raw_type": fragment.get("subject_type"),
-                        "canonical_id": subject_id,
-                        "canonical_name": entity_map[subject_id].canonical_name if subject_id and subject_id in entity_map else fragment["subject_name"],
+                        "canonical_id": source_id,
+                        "canonical_name": entity_map[source_id].canonical_name if source_id and source_id in entity_map else fragment["subject_name"],
                     },
                     "object": {
                         "raw_name": fragment["object_name"],
                         "raw_type": fragment.get("object_type"),
-                        "canonical_id": object_id,
-                        "canonical_name": entity_map[object_id].canonical_name if object_id and object_id in entity_map else fragment["object_name"],
+                        "canonical_id": target_id,
+                        "canonical_name": entity_map[target_id].canonical_name if target_id and target_id in entity_map else fragment["object_name"],
                     },
                     "properties": {k: v for k, v in fragment.items() if k not in ['subject_name', 'subject_type', 'predicate', 'object_name', 'object_type']},
                     "curated_at": curation.curated_at.isoformat() if curation.curated_at else None,

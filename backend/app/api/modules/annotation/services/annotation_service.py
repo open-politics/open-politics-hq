@@ -18,7 +18,6 @@ from app.models import (
 from app.schemas import AnnotationCreate
 from app.api.modules.annotation.tasks.annotate import retry_failed_annotations
 from app.core.events import emit
-from app.api.modules.content.services.asset_service import AssetService
 from collections import Counter
 from math import sqrt
 from app.schemas import AnnotationRunCreate, AnnotationSchemaCreate
@@ -63,10 +62,9 @@ logger = logging.getLogger(__name__)
 class AnnotationService:
     """Service for handling annotations."""
     
-    def __init__(self, session: Session, asset_service: AssetService):
-        """Initialize the service with a database session and dependencies."""
+    def __init__(self, session: Session):
+        """Initialize the service with a database session."""
         self.session = session
-        self.asset_service = asset_service
     
     def create_annotation(
         self,
@@ -362,21 +360,25 @@ class AnnotationService:
         user_id: int,
         infospace_id: int,
         skip: int = 0,
-        limit: int = 100
+        limit: int = 100,
+        include_descendants: bool = False,
     ) -> List[Annotation]:
         """
         Get all annotations for a specific run.
-        
+
         Args:
             run_id: ID of the run
             user_id: ID of the user requesting the annotations
             infospace_id: ID of the infospace
             skip: Number of records to skip
             limit: Maximum number of records to return
-            
+            include_descendants: When True, also return annotations from
+                child runs (``parent_run_id == run_id``). Use for family-aware
+                exports / reads on a run that has been extended.
+
         Returns:
             List of annotations
-            
+
         Raises:
             ValueError: If validation fails
         """
@@ -407,15 +409,28 @@ class AnnotationService:
         for schema_id, count in schema_breakdown:
             logger.info(f"DEBUG: Run {run_id} has {count} annotations for schema_id {schema_id}")
 
+        family_ids: List[int] = [run_id]
+        if include_descendants:
+            descendants = self.session.exec(
+                select(AnnotationRun.id).where(
+                    AnnotationRun.parent_run_id == run_id,
+                    AnnotationRun.infospace_id == infospace_id,
+                )
+            ).all()
+            family_ids.extend([d for d in descendants if d is not None])
+
         query = (
             select(Annotation)
-            .where(Annotation.run_id == run_id)
+            .where(Annotation.run_id.in_(family_ids))
             .offset(skip)
             .limit(limit)
         )
         annotations = self.session.exec(query).all()
-        
-        logger.info(f"DEBUG: Returning {len(annotations)} annotations for run {run_id}")
+
+        logger.info(
+            "DEBUG: Returning %d annotations for run %d (family=%s, include_descendants=%s)",
+            len(annotations), run_id, family_ids, include_descendants,
+        )
         return list(annotations)
     
     def update_annotation(
@@ -583,8 +598,7 @@ class AnnotationService:
             OutputModelClass = create_pydantic_model_from_json_schema(
                 model_name=f"RetryOutput_{schema.name.replace(' ', '_')}_{schema.id}_{annotation_id}",
                 json_schema=schema.output_contract,
-                justification_mode=run_config.get("justification_mode", "NONE"),
-                field_specific_justification_configs=schema.field_specific_justification_configs or {}
+                justifications_enabled=run_config.get("justifications_enabled", True),
             )
             
             if not OutputModelClass.model_fields:
@@ -618,21 +632,18 @@ class AnnotationService:
             
             # Run the async processing
             from app.core.task_utils import run_async_in_celery
-            
+
             # Define the complete async workflow to avoid event loop conflicts
             async def complete_retry_workflow():
-                from app.api.modules.foundation_service_providers.registry import (
-                    get_storage_provider, resolve as _resolve, load_credentials,
-                )
-                from app.api.modules.foundation_service_providers.base import LanguageModelProvider
+                from app.api.modules.foundation_service_providers import resolve
 
-                fresh_storage_provider_instance = get_storage_provider(settings)
+                fresh_storage_provider_instance = resolve("storage")
 
                 run_cfg = run_config or {}
                 type_key = run_cfg.get("provider") or run_cfg.get("ai_provider")
                 runtime_api_keys = run_cfg.get("api_keys")
-                credentials = runtime_api_keys or {}
-                provider = _resolve(LanguageModelProvider, type_key, settings, credentials) if type_key else None
+                runtime_key = (runtime_api_keys or {}).get(type_key) if type_key else None
+                provider = resolve("language", type_key, infospace_id=retry_run.infospace_id, runtime_key=runtime_key) if type_key else None
 
                 return await process_single_asset_schema(
                     asset=asset,
@@ -834,37 +845,37 @@ class AnnotationService:
         description: Optional[str] = None,
         instructions: Optional[str] = None,
         version: str = "1.0",
-        field_specific_justification_configs: Optional[Dict[str, Any]] = None
     ) -> AnnotationSchema:
         """
         Create a new Annotation Schema.
-        
+
         Args:
             name: Name of the schema
-            output_contract: JSON schema defining the output
+            output_contract: JSON schema defining the output. Per-field
+                justification opt-in lives inline as ``include_justification``
+                on each property — the legacy ``field_specific_justification_configs``
+                block is translated into inline keys at the route layer.
             user_id: ID of the user creating the schema
             infospace_id: ID of the infospace
             description: Optional description
             instructions: Optional instructions for the LLM
             version: Schema version
-            field_specific_justification_configs: Optional dict for field-specific justification settings
-            
+
         Returns:
             The created AnnotationSchema
-            
+
         Raises:
             ValueError: If validation fails
         """
         logger.info(f"Service: Creating annotation schema '{name}' in infospace {infospace_id}")
-        
-        # Check for existing schema with the same name and version in the infospace
+
         existing_schema = self.session.exec(
             select(AnnotationSchema)
             .where(AnnotationSchema.infospace_id == infospace_id)
             .where(AnnotationSchema.name == name)
             .where(AnnotationSchema.version == version)
         ).first()
-        
+
         if existing_schema:
             raise ValueError(f"AnnotationSchema with name '{name}' and version '{version}' already exists in infospace {infospace_id}")
 
@@ -874,7 +885,6 @@ class AnnotationService:
             output_contract=output_contract,
             instructions=instructions,
             version=version,
-            field_specific_justification_configs=field_specific_justification_configs or {},
             infospace_id=infospace_id,
             user_id=user_id,
             created_at=datetime.now(timezone.utc),
@@ -979,7 +989,209 @@ class AnnotationService:
         else:
             logger.info(f"Service: Annotation run {db_run.id} ('{db_run.name}') created without queuing task (caller handles execution).")
 
-        return db_run 
+        return db_run
+
+    def extend_run(
+        self,
+        *,
+        run_id: int,
+        user_id: int,
+        infospace_id: int,
+        asset_ids: Optional[List[int]] = None,
+        bundle_id: Optional[int] = None,
+        schema_ids: Optional[List[int]] = None,
+        configuration_overrides: Optional[Dict[str, Any]] = None,
+    ) -> AnnotationRun:
+        """
+        Extend an existing run with new assets and/or schemas.
+
+        Creates a child run (parent_run_id = root) carrying the delta — the
+        new (asset, schema) pairs that don't yet exist anywhere in the run's
+        family. The parent run stays untouched; reads via ``/view`` walk
+        descendants and surface the union transparently.
+
+        ``parent_run_id`` always points to the *root* of the family. If the
+        caller passes a child run id, this method walks up to the root so the
+        family stays flat (single-level descendant lookup).
+
+        Asset/schema delta semantics:
+          - asset_ids only: same schemas as parent, new assets minus those
+            already fully annotated for all parent schemas across the family.
+          - schema_ids only: same assets as parent (resolved from family
+            annotation history), new schemas only.
+          - both: cross-product, family-deduped on (asset, schema).
+
+        Gates:
+          - parent must exist in the infospace.
+          - parent must not be a flow_step / have flow_execution_id.
+          - parent must not have source_bundle_id (continuous runs self-extend).
+          - parent must be in a terminal state (COMPLETED / COMPLETED_WITH_ERRORS /
+            FAILED) — extending mid-flight races with the parent's own cursor.
+
+        Returns the new child run.
+        """
+        from app.api.modules.annotation.models import RunSchemaLink
+
+        if not asset_ids and not bundle_id and not schema_ids:
+            raise ValueError("Must provide asset_ids, bundle_id, or schema_ids to extend.")
+
+        parent = self.session.get(AnnotationRun, run_id)
+        if not parent or parent.infospace_id != infospace_id:
+            raise ValueError(f"Run {run_id} not found in infospace {infospace_id}.")
+
+        # Walk to root so the family stays flat.
+        root = parent
+        while root.parent_run_id:
+            next_root = self.session.get(AnnotationRun, root.parent_run_id)
+            if not next_root:
+                break
+            root = next_root
+
+        # Gates
+        if root.flow_execution_id is not None or (root.run_type or "one_off") != "one_off":
+            raise ValueError("Cannot extend a flow-driven run.")
+        if root.source_bundle_id is not None:
+            raise ValueError("Continuous runs (source_bundle_id) self-extend on poll. Cannot extend manually.")
+        if root.status not in (
+            RunStatus.COMPLETED,
+            RunStatus.COMPLETED_WITH_ERRORS,
+            RunStatus.FAILED,
+        ):
+            raise ValueError(
+                f"Cannot extend a run that is still in progress (status={root.status}). "
+                "Wait for it to finish first."
+            )
+
+        # Resolve the family: root + existing descendants.
+        descendant_ids = list(self.session.exec(
+            select(AnnotationRun.id).where(AnnotationRun.parent_run_id == root.id)
+        ).all())
+        family_run_ids = [root.id] + descendant_ids
+
+        # Resolve target schemas. If the caller passed schema_ids we use exactly
+        # those (schema extension); otherwise we inherit the parent's schemas.
+        if schema_ids:
+            child_schemas = []
+            for sid in schema_ids:
+                schema = self.session.get(AnnotationSchema, sid)
+                if not schema or schema.infospace_id != infospace_id:
+                    raise ValueError(f"AnnotationSchema {sid} not found in infospace.")
+                child_schemas.append(schema)
+        else:
+            child_schemas = list(root.target_schemas) if root.target_schemas else []
+        if not child_schemas:
+            raise ValueError("No schemas to run against. Parent has none and caller passed none.")
+        child_schema_ids = [s.id for s in child_schemas]
+
+        # Resolve target assets.
+        target_asset_ids: List[int] = []
+        target_bundle_id: Optional[int] = None
+
+        if asset_ids:
+            target_asset_ids = list(asset_ids)
+        elif bundle_id:
+            target_bundle_id = bundle_id
+        elif schema_ids:
+            # Schema-only extension: re-run all assets the family has touched.
+            family_assets = self.session.exec(
+                select(Annotation.asset_id)
+                .where(Annotation.run_id.in_(family_run_ids))
+                .distinct()
+            ).all()
+            target_asset_ids = [aid for aid in family_assets if aid is not None]
+            if not target_asset_ids:
+                raise ValueError("Schema extension requested but parent run has no annotated assets to re-run.")
+
+        # Family-scoped delta: drop (asset, schema) pairs that are already
+        # successfully annotated within the family. We keep an asset only if it
+        # is missing at least one of the target schemas across the family.
+        if target_asset_ids:
+            existing_pairs = self.session.exec(
+                select(Annotation.asset_id, Annotation.schema_id)
+                .where(
+                    Annotation.run_id.in_(family_run_ids),
+                    Annotation.asset_id.in_(target_asset_ids),
+                    Annotation.schema_id.in_(child_schema_ids),
+                    Annotation.status != ResultStatus.FAILED,
+                )
+                .distinct()
+            ).all()
+            done_per_asset: Dict[int, set] = {}
+            for asset_id, schema_id in existing_pairs:
+                done_per_asset.setdefault(asset_id, set()).add(schema_id)
+            target_set = set(child_schema_ids)
+            delta_asset_ids = [
+                aid for aid in target_asset_ids
+                if done_per_asset.get(aid, set()) != target_set
+            ]
+            target_asset_ids = delta_asset_ids
+
+        # If the delta is empty there is nothing to do — surface as a no-op
+        # instead of creating an empty run that completes instantly.
+        if not target_asset_ids and not target_bundle_id:
+            raise ValueError(
+                "Nothing to extend — every (asset, schema) pair is already annotated "
+                "in this run's family."
+            )
+
+        # Build the child run.
+        merged_config = dict(root.configuration or {})
+        # Strip self-chain cursor state from parent — child starts fresh.
+        merged_config.pop("_cursor", None)
+        merged_config.pop("_chained_asset_ids", None)
+        # Strip credentials. ``api_keys`` is a transient per-session snapshot
+        # (from the dock at submission time) — carrying it forward would pin
+        # the extension to whatever key was active when the parent ran, even
+        # if the user has since rotated keys in infospace settings or has a
+        # fresh BYOK in their browser. The runner's ``resolve()`` falls back
+        # to current infospace credentials when ``runtime_key`` is None;
+        # callers wanting BYOK pass fresh keys via ``configuration_overrides``.
+        merged_config.pop("api_keys", None)
+        if configuration_overrides:
+            merged_config.update(configuration_overrides)
+        if target_asset_ids:
+            merged_config["target_asset_ids"] = target_asset_ids
+        if target_bundle_id:
+            merged_config["target_bundle_id"] = target_bundle_id
+
+        child = AnnotationRun(
+            name=f"{root.name} (extension)",
+            description=(
+                f"Extension of run {root.id}: "
+                + (f"{len(target_asset_ids)} new assets" if target_asset_ids else f"bundle {target_bundle_id}")
+                + (f" × {len(child_schema_ids)} schemas" if schema_ids else "")
+            ),
+            configuration=merged_config,
+            status=RunStatus.PENDING,
+            infospace_id=infospace_id,
+            user_id=user_id,
+            target_schemas=child_schemas,
+            include_parent_context=root.include_parent_context,
+            context_window=root.context_window,
+            views_config=[],  # Children have no dashboards — parent owns the view.
+            parent_run_id=root.id,
+            run_type="one_off",
+            trigger_type="extension",
+            trigger_context={
+                "parent_run_id": root.id,
+                "extended_by_user_id": user_id,
+                "delta_asset_count": len(target_asset_ids),
+                "delta_schema_count": len(child_schema_ids) if schema_ids else 0,
+            },
+            tags=list(root.tags or []),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        self.session.add(child)
+        self.session.commit()
+        self.session.refresh(child)
+
+        emit("annotation_run.created", {"infospace_id": infospace_id})
+        logger.info(
+            "Service: Extension run %d created (parent=%d, %d assets × %d schemas).",
+            child.id, root.id, len(target_asset_ids), len(child_schema_ids),
+        )
+        return child
 
     def _get_or_create_curation_schema(self, infospace_id: int, user_id: int) -> AnnotationSchema:
         """Get or create the schema for manual curations."""

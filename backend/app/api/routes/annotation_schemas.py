@@ -1,6 +1,7 @@
 """Routes for annotation schemas."""
+import copy
 import logging
-from typing import Any
+from typing import Any, Dict, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -13,6 +14,7 @@ from app.schemas import (
     AnnotationSchemaCreate,
     AnnotationSchemaUpdate,
     AnnotationSchemasOut,
+    FieldJustificationConfig,
 )
 from app.api.dependency_injection import SessionDep, get_annotation_service
 from app.api.modules.identity_infospace_user.access import (
@@ -29,6 +31,134 @@ router = APIRouter(
     tags=["AnnotationSchemas"]
 )
 
+
+# ── Justification config bidirectional translator (FE compat shim) ─────────
+#
+# Storage is canonical inline on each output_contract property:
+#   {"include_justification": bool, "justification_prompt": str?, "justification_rigor_level": str?}
+#
+# The legacy API request/response shape carried a separate
+# ``field_specific_justification_configs: {field: {enabled, custom_prompt, rigor_level}}``
+# block. Until the FE schema editor is updated to write inline directly, the
+# route translates between the two shapes — write lifts into inline, read
+# derives back into the legacy block. Reading is a pure projection of the
+# inline keys; nothing is double-stored.
+
+def _find_property_anywhere(contract: Dict[str, Any], field_name: str) -> Optional[Dict[str, Any]]:
+    """Find a property by name, recursing into nested ``properties`` blocks.
+
+    HQ schemas use a hierarchical layout: output_contract.properties.document.
+    properties.<field> for document-level fields, plus per-modality wrappers
+    and array<object> items. Configs key by leaf name only — this walker
+    drills through wrappers to find the leaf.
+    """
+    if not isinstance(contract, dict):
+        return None
+    stack: list = [contract]
+    while stack:
+        node = stack.pop()
+        props = node.get("properties") if isinstance(node, dict) else None
+        if not isinstance(props, dict):
+            continue
+        if field_name in props and isinstance(props[field_name], dict):
+            return props[field_name]
+        for child in props.values():
+            if not isinstance(child, dict):
+                continue
+            if isinstance(child.get("properties"), dict):
+                stack.append(child)
+            items = child.get("items")
+            if isinstance(items, dict) and isinstance(items.get("properties"), dict):
+                stack.append(items)
+    return None
+
+
+def _lift_configs_into_contract(
+    output_contract: Optional[Dict[str, Any]],
+    configs: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Lift each config entry into inline keys on the matching field anywhere
+    in the contract (top-level, inside ``document``, inside per-modality
+    wrappers, or inside array<object> items). Returns the deep-copied contract.
+    """
+    if not configs:
+        return output_contract
+    if not isinstance(output_contract, dict):
+        return output_contract
+    contract = copy.deepcopy(output_contract)
+    if not isinstance(contract.get("properties"), dict):
+        return contract
+    for field_name, cfg in configs.items():
+        if not isinstance(cfg, dict):
+            continue
+        prop = _find_property_anywhere(contract, field_name)
+        if prop is None:
+            continue
+        enabled = bool(cfg.get("enabled"))
+        if enabled:
+            prop["include_justification"] = True
+            custom = cfg.get("custom_prompt")
+            if custom:
+                prop["justification_prompt"] = custom
+            rigor = cfg.get("rigor_level")
+            if rigor is not None:
+                prop["justification_rigor_level"] = rigor
+        else:
+            # Explicit disable removes any inline flag.
+            prop.pop("include_justification", None)
+            prop.pop("justification_prompt", None)
+            prop.pop("justification_rigor_level", None)
+    return contract
+
+
+def _derive_configs_from_contract(
+    output_contract: Optional[Dict[str, Any]],
+) -> Dict[str, FieldJustificationConfig]:
+    """Walk the contract recursively and rebuild the legacy
+    ``field_specific_justification_configs`` block from inline flags wherever
+    they appear (top-level, inside document, inside list-of-object items).
+
+    Returns FieldJustificationConfig instances (not raw dicts) so the response
+    model serializes without Pydantic ``UnexpectedValue`` warnings.
+    """
+    out: Dict[str, FieldJustificationConfig] = {}
+
+    def _walk(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        props = node.get("properties")
+        if not isinstance(props, dict):
+            return
+        for field_name, prop in props.items():
+            if not isinstance(prop, dict):
+                continue
+            if prop.get("include_justification"):
+                entry_kwargs: Dict[str, Any] = {"enabled": True}
+                if prop.get("justification_prompt"):
+                    entry_kwargs["custom_prompt"] = prop["justification_prompt"]
+                if prop.get("justification_rigor_level") is not None:
+                    entry_kwargs["rigor_level"] = prop["justification_rigor_level"]
+                # Last write wins on name collisions across nested levels —
+                # acceptable since the legacy shape is a flat dict and never
+                # supported nested disambiguation.
+                out[field_name] = FieldJustificationConfig(**entry_kwargs)
+            if isinstance(prop.get("properties"), dict):
+                _walk(prop)
+            items = prop.get("items")
+            if isinstance(items, dict) and isinstance(items.get("properties"), dict):
+                _walk(items)
+
+    _walk(output_contract)
+    return out
+
+
+def _attach_legacy_configs(schema_read: AnnotationSchemaRead, schema: AnnotationSchema) -> AnnotationSchemaRead:
+    """Populate the legacy configs block on a Read response from inline flags."""
+    schema_read.field_specific_justification_configs = _derive_configs_from_contract(
+        schema.output_contract
+    )
+    return schema_read
+
 @router.post("", response_model=AnnotationSchemaRead, status_code=status.HTTP_201_CREATED)
 @router.post("/", response_model=AnnotationSchemaRead, status_code=status.HTTP_201_CREATED)
 def create_annotation_schema(
@@ -43,26 +173,28 @@ def create_annotation_schema(
     """
     logger.info(f"Route: Creating annotation schema in infospace {access.infospace_id}")
     try:
-        # Manually convert justification configs to dicts before passing to service
-        just_configs = schema_in.field_specific_justification_configs
-        just_configs_as_dict = {}
-        if just_configs:
-            just_configs_as_dict = {
-                k: v.model_dump(exclude_unset=True) for k, v in just_configs.items()
+        # Lift legacy justification configs (if the FE still sends them) into
+        # inline keys on the output_contract. Storage is inline-only.
+        legacy_configs = schema_in.field_specific_justification_configs
+        legacy_configs_as_dict: Dict[str, Any] = {}
+        if legacy_configs:
+            legacy_configs_as_dict = {
+                k: v.model_dump(exclude_unset=True) for k, v in legacy_configs.items()
             }
+        output_contract = _lift_configs_into_contract(
+            schema_in.output_contract, legacy_configs_as_dict
+        )
 
-        # Create schema using service
         schema = annotation_service.create_annotation_schema(
             user_id=access.user_id,
             infospace_id=access.infospace_id,
             name=schema_in.name,
             description=schema_in.description,
-            output_contract=schema_in.output_contract,
+            output_contract=output_contract,
             instructions=schema_in.instructions,
             version=schema_in.version,
-            field_specific_justification_configs=just_configs_as_dict
         )
-        return schema
+        return _attach_legacy_configs(AnnotationSchemaRead.model_validate(schema), schema)
         
     except ValueError as e:
         logger.error(f"Route: Validation error creating schema: {e}")
@@ -112,16 +244,16 @@ def list_annotation_schemas(
         # Convert to read models and add counts if requested
         result_schemas = []
         for schema in schemas:
-            schema_read = AnnotationSchemaRead.model_validate(schema)
-            
-            # Add counts if requested
+            schema_read = _attach_legacy_configs(
+                AnnotationSchemaRead.model_validate(schema), schema
+            )
+
             if include_counts:
-                # Count annotations using this schema
                 annotations_count_query = select(func.count(Annotation.id)).where(
                     Annotation.schema_id == schema.id
                 )
                 schema_read.annotation_count = session.exec(annotations_count_query).one() or 0
-            
+
             result_schemas.append(schema_read)
             
         return AnnotationSchemasOut(data=result_schemas, count=total_count)
@@ -163,19 +295,20 @@ def get_annotation_schema(
             )
         access.require_in_scope("schema_ids", schema_id)
 
-        # Convert to read model
-        schema_read = AnnotationSchemaRead.model_validate(schema)
-        
+        # Convert to read model + reconstruct legacy configs from inline flags
+        schema_read = _attach_legacy_configs(
+            AnnotationSchemaRead.model_validate(schema), schema
+        )
+
         # Add counts if requested
         if include_counts:
-            # Count annotations using this schema
             annotations_count_query = select(func.count(Annotation.id)).where(
                 Annotation.schema_id == schema.id
             )
             schema_read.annotation_count = session.exec(annotations_count_query).one() or 0
-        
+
         return schema_read
-    
+
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -213,25 +346,28 @@ def update_annotation_schema(
                 detail="Annotation Schema not found in this infospace"
             )
         
-        # Validate schema if it's being updated
         update_data = schema_in.model_dump(exclude_unset=True)
-        
-        if "schema" in update_data: # This should be output_contract
-            # The validation logic will be handled by the new hierarchical schema validation
-            pass
-        
-        # Update fields
+
+        # Translate legacy justification configs (if present) into inline keys
+        # on the output_contract. The configs key itself never lands on the row.
+        legacy_configs = update_data.pop("field_specific_justification_configs", None)
+        if legacy_configs is not None or "output_contract" in update_data:
+            base_contract = update_data.get("output_contract", schema.output_contract)
+            if legacy_configs is not None:
+                update_data["output_contract"] = _lift_configs_into_contract(
+                    base_contract, legacy_configs
+                )
+
         for field, value in update_data.items():
             setattr(schema, field, value)
-        
+
         schema.updated_at = datetime.now(timezone.utc)
-        
-        # Save changes
+
         session.add(schema)
         session.commit()
         session.refresh(schema)
-        
-        return AnnotationSchemaRead.model_validate(schema)
+
+        return _attach_legacy_configs(AnnotationSchemaRead.model_validate(schema), schema)
     
     except ValueError as ve:
         session.rollback()

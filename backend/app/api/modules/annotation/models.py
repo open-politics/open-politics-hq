@@ -1,4 +1,4 @@
-"""Annotation domain models: AnnotationSchema, AnnotationRun, Annotation, Justification."""
+"""Annotation domain models: AnnotationSchema, AnnotationRun, Annotation."""
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -59,7 +59,6 @@ class AnnotationSchema(SQLModel, table=True):
     output_contract: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     instructions: Optional[str] = Field(default=None, sa_column=Column(Text))
     version: str = Field(default="1.0")
-    field_specific_justification_configs: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
     is_active: bool = Field(default=True, index=True)
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
     infospace_id: int = Field(foreign_key="infospace.id")
@@ -149,28 +148,10 @@ class Annotation(SQLModel, table=True):
     schema: Optional[AnnotationSchema] = Relationship(back_populates="annotations")
     infospace: Optional[Infospace] = Relationship(back_populates="annotations")
     user: Optional[User] = Relationship(back_populates="annotations")
-    justifications: List["Justification"] = Relationship(back_populates="annotation")
 
     __table_args__ = (
         UniqueConstraint("asset_id", "schema_id", "run_id", "uuid"),
         Index("ix_annotation_value", "value", postgresql_using="gin", postgresql_ops={"value": "jsonb_path_ops"}),
-    )
-
-
-class Justification(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    annotation_id: int = Field(foreign_key="annotation.id")
-    field_name: Optional[str] = Field(default=None)
-    reasoning: Optional[str] = Field(default=None, sa_column=Column(Text))
-    evidence_payload: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
-    model_name: Optional[str] = Field(default=None)
-    score: Optional[float] = Field(default=None)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    annotation: Optional[Annotation] = Relationship(back_populates="justifications")
-
-    __table_args__ = (
-        Index("ix_justification_annotation_field", "annotation_id", "field_name"),
     )
 
 
