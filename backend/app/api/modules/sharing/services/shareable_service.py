@@ -40,14 +40,12 @@ if TYPE_CHECKING:
     from app.api.modules.content.services.dataset_service import DatasetService
     from app.api.modules.sharing.services.package_service import PackageService
     from app.api.modules.content.services.bundle_service import BundleService
-    from app.api.modules.content.services.asset_service import AssetService
 
 from app.api.modules.annotation.services.annotation_service import AnnotationService
 from app.api.modules.content.services.dataset_service import DatasetService
 from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
 from app.api.modules.sharing.services.package_service import PackageService, PackageBuilder
 from app.api.modules.content.services.bundle_service import BundleService
-from app.api.modules.content.services.asset_service import AssetService
 
 from app.models import (
     ResourceType, 
@@ -85,23 +83,21 @@ class ShareableService:
     def __init__(
         self,
         session: Session,
-        settings: AppSettings, 
+        settings: AppSettings,
         annotation_service: AnnotationService,
         storage_provider: StorageProvider,
-        infospace_service: InfospaceService, 
-        dataset_service: DatasetService,   
+        infospace_service: InfospaceService,
+        dataset_service: DatasetService,
         package_service: PackageService,
-        asset_service: AssetService, 
-        bundle_service: BundleService 
+        bundle_service: BundleService
     ):
         self.session = session
-        self.settings = settings 
+        self.settings = settings
         self.annotation_service = annotation_service
-        self.storage_provider = storage_provider 
-        self.infospace_service = infospace_service 
-        self.dataset_service = dataset_service   
-        self.package_service = package_service   
-        self.asset_service = asset_service 
+        self.storage_provider = storage_provider
+        self.infospace_service = infospace_service
+        self.dataset_service = dataset_service
+        self.package_service = package_service
         self.bundle_service = bundle_service 
         self.source_instance_id = self.settings.INSTANCE_ID if self.settings and hasattr(self.settings, 'INSTANCE_ID') and self.settings.INSTANCE_ID else "default_shareable_instance"
         self.token_length = 24
@@ -369,9 +365,9 @@ class ShareableService:
         
         # For Assets and Bundles, handle both authenticated and unauthenticated (public view) cases.
         if rt == ResourceType.ASSET:
-            if u_id is None: # Public view: direct lookup
-                return self.session.exec(select(Asset).where(Asset.id == r_id, Asset.infospace_id == inf_id_ctx)).first()
-            return self.asset_service.get_asset_by_id(asset_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
+            return self.session.exec(
+                select(Asset).where(Asset.id == r_id, Asset.infospace_id == inf_id_ctx)
+            ).first()
         
         elif rt == ResourceType.BUNDLE:
             if u_id is None: # Public view: direct lookup

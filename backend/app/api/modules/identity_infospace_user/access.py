@@ -73,9 +73,10 @@ class PackageScope:
     bundle_ids: Tuple[int, ...] = ()               # explicit bundles (recursive expansion done)
     asset_ids: Tuple[int, ...] = ()                 # explicit assets + ancestor chain from run-derived children
     graph_ids: Tuple[int, ...] = ()                 # explicit graphs
+    canon_ids: Tuple[int, ...] = ()                 # explicit canons + derived from graphs (graph.canon_id)
     run_ids: Tuple[int, ...] = ()                   # explicit + derived from graphs (bounded)
     schema_ids: Tuple[int, ...] = ()                # explicit + derived from runs (bounded)
-    entity_canonical_ids: Tuple[int, ...] = ()      # explicit standalone entities
+    entity_ids: Tuple[int, ...] = ()                # explicit entities + derived from canons (bounded)
     downloadable_asset_ids: Tuple[int, ...] = ()    # subset of visible assets where download is allowed
     copyable_asset_ids: Tuple[int, ...] = ()        # subset of visible assets where copy is allowed
 
@@ -279,9 +280,10 @@ def _resolve_package_token(
     bundle_ids: set[int] = set()
     asset_ids: set[int] = set()
     graph_ids: set[int] = set()
+    canon_ids: set[int] = set()
     run_ids: set[int] = set()
     schema_ids: set[int] = set()
-    entity_canonical_ids: set[int] = set()
+    entity_ids: set[int] = set()
     for item in items:
         if item.bundle_id is not None:
             bundle_ids.add(item.bundle_id)
@@ -293,17 +295,19 @@ def _resolve_package_token(
             schema_ids.add(item.schema_id)
         elif item.asset_id is not None:
             asset_ids.add(item.asset_id)
-        elif item.entity_canonical_id is not None:
-            entity_canonical_ids.add(item.entity_canonical_id)
+        elif item.canon_id is not None:
+            canon_ids.add(item.canon_id)
+        elif item.entity_id is not None:
+            entity_ids.add(item.entity_id)
 
     # ── 1. Bundles → recursive expansion (child bundles) ──
     if bundle_ids:
         from app.core.tree import subtree_ids
         bundle_ids = subtree_ids(session, bundle_ids)
 
-    # ── 2. Graphs → derive run_ids (bounded: graph has few runs) ──
+    # ── 2. Graphs → derive run_ids and canon_ids ──
     if graph_ids:
-        from app.api.modules.graph.models import GraphEdge
+        from app.api.modules.graph.models import GraphEdge, KnowledgeGraph
         from app.api.modules.annotation.models import Annotation
         graph_run_rows = session.exec(
             select(Annotation.run_id).where(
@@ -315,6 +319,22 @@ def _resolve_package_token(
             ).distinct()
         ).all()
         run_ids |= {r for r in graph_run_rows if r is not None}
+        # Each graph's backing canon is implicitly in scope
+        graph_canon_rows = session.exec(
+            select(KnowledgeGraph.canon_id).where(KnowledgeGraph.id.in_(graph_ids))
+        ).all()
+        canon_ids |= {c for c in graph_canon_rows if c is not None}
+
+    # ── 2b. Canons → derive entity_ids (bounded; bulk caps at first 50K) ──
+    if canon_ids:
+        from app.api.modules.graph.models import Entity
+        MAX_CANON_ENTITIES_PER_PACKAGE = 50_000
+        canon_entity_rows = session.exec(
+            select(Entity.id)
+            .where(Entity.canon_id.in_(canon_ids))
+            .limit(MAX_CANON_ENTITIES_PER_PACKAGE)
+        ).all()
+        entity_ids |= set(canon_entity_rows)
 
     # ── 3. Runs → derive schema_ids (bounded: run has few schemas) ──
     if run_ids:
@@ -408,9 +428,10 @@ def _resolve_package_token(
         bundle_ids=tuple(bundle_ids),
         asset_ids=tuple(asset_ids),
         graph_ids=tuple(graph_ids),
+        canon_ids=tuple(canon_ids),
         run_ids=tuple(run_ids),
         schema_ids=tuple(schema_ids),
-        entity_canonical_ids=tuple(entity_canonical_ids),
+        entity_ids=tuple(entity_ids),
         downloadable_asset_ids=tuple(downloadable_asset_ids),
         copyable_asset_ids=tuple(copyable_asset_ids),
     )

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from app.core.celery_app import celery
 from app.core.db import engine
 from sqlmodel import Session
-from app.api.modules.foundation_service_providers.registry import get_storage_provider
+from app.api.modules.foundation_service_providers import resolve
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -28,11 +28,11 @@ def process_user_backup(self, backup_id: int, backup_options: Dict[str, Any]) ->
     try:
         with Session(engine) as session:
             from app.api.modules.sharing.services.user_backup_service import UserBackupService
-            
+
             # Create service dependencies
-            storage_provider = get_storage_provider(settings)
+            storage_provider = resolve("storage")
             user_backup_service = UserBackupService(session, storage_provider, settings)
-            
+
             # Execute backup
             import asyncio
             loop = asyncio.new_event_loop()
@@ -96,11 +96,11 @@ def cleanup_expired_user_backups(self) -> Dict[str, Any]:
     try:
         with Session(engine) as session:
             from app.api.modules.sharing.services.user_backup_service import UserBackupService
-            
+
             # Create service dependencies
-            storage_provider = get_storage_provider(settings)
+            storage_provider = resolve("storage")
             user_backup_service = UserBackupService(session, storage_provider, settings)
-            
+
             # Execute cleanup
             import asyncio
             loop = asyncio.new_event_loop()
@@ -149,11 +149,11 @@ def backup_all_users(self, backup_type: str = "system", admin_user_id: int = 1) 
             from app.models import User
             from app.schemas import UserBackupCreate
             from sqlmodel import select
-            
+
             # Create service dependencies
-            storage_provider = get_storage_provider(settings)
+            storage_provider = resolve("storage")
             user_backup_service = UserBackupService(session, storage_provider, settings)
-            
+
             # Get all users
             users = session.exec(select(User).where(User.is_active == True)).all()
             
@@ -227,11 +227,11 @@ def backup_specific_users(
             from app.models import User
             from app.schemas import UserBackupCreate
             from sqlmodel import select
-            
+
             # Create service dependencies
-            storage_provider = get_storage_provider(settings)
+            storage_provider = resolve("storage")
             user_backup_service = UserBackupService(session, storage_provider, settings)
-            
+
             successful_backups = 0
             failed_backups = 0
             skipped_backups = 0

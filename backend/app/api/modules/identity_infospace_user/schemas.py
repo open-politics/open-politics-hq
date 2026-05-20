@@ -204,6 +204,8 @@ class InfospaceRead(InfospaceBase):
     chunk_overlap: Optional[int] = None
     chunk_strategy: Optional[str] = None
     enrichment_config: Optional[EnrichmentConfig] = None
+    default_canon_id: Optional[int] = None
+    default_geo_canon_id: Optional[int] = None
     # Per-request context: the authenticated user's role in this infospace
     current_user_role: Optional[str] = None   # owner | analyst | curator | viewer
     is_owner: bool = False

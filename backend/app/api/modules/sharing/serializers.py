@@ -129,21 +129,13 @@ def serialize_annotation(
 ) -> Dict[str, Any]:
     """Annotation → canonical dict.
 
-    Args:
-        ann: Annotation SQLModel instance.
-        include_justifications: Whether to include justifications.
-        justifications: Pre-fetched Justification instances (or None to use ann.justifications).
-        asset_ref: Pre-built asset reference dict (from _make_asset_ref).
-        schema_ref: Pre-built schema reference dict (from _make_schema_ref).
+    Justifications travel inline inside ``ann.value`` (sibling for scalars,
+    ``justification`` per item for list-of-object fields). The model dump of
+    ``value`` carries them along — no separate ``justifications`` block needed.
+    The ``include_justifications`` and ``justifications`` parameters are kept
+    for API compatibility but no longer drive a separate emission path.
     """
     data = ann.model_dump(exclude_none=True, exclude={"justifications"})
-
-    if include_justifications:
-        justs = justifications if justifications is not None else (
-            ann.justifications if hasattr(ann, "justifications") and ann.justifications else []
-        )
-        if justs:
-            data["justifications"] = [j.model_dump(exclude_none=True) for j in justs]
 
     if asset_ref:
         data["asset_reference"] = asset_ref

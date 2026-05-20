@@ -22,20 +22,36 @@ from werkzeug.utils import secure_filename
 import dateutil.parser
 
 from app.models import (
-    Source, AnnotationSchema, AnnotationRun, Dataset, ResourceType, 
-    Annotation, Asset, Bundle, Infospace, User, AssetKind, SourceStatus, 
-    AnnotationSchemaTargetLevel, RunStatus, ResultStatus, Justification, Source
+    Source, AnnotationSchema, AnnotationRun, Dataset, ResourceType,
+    Annotation, Asset, Bundle, Infospace, User, AssetKind, SourceStatus,
+    AnnotationSchemaTargetLevel, RunStatus, ResultStatus, Source,
+    ProcessingStatus,
 )
 from app.api.modules.foundation_service_providers.base import StorageProvider
 from app.core.config import AppSettings
 from app.schemas import AssetRead, SourceRead, InfospaceCreate, InfospaceRead
 
-from app.api.modules.content.services.asset_service import AssetService
 from app.api.modules.annotation.services.annotation_service import AnnotationService
 from app.api.modules.content.services.bundle_service import BundleService
 from app.api.modules.content.services.dataset_service import DatasetService
+from app.api.modules.annotation.panel_config import migrate_views_config
 
 logger = logging.getLogger(__name__)
+
+
+def _migrate_imported_views_config(raw: Any) -> list[dict]:
+    """Route imported ``views_config`` through ``migrate_panel_config``.
+
+    Packages exported before the Pydantic PanelConfig v2 shape was defined
+    (or by a deployment still on the old shape) travel as raw dicts. The
+    import path normalizes them on the way in so receiving infospaces never
+    inherit legacy ``inspection_granularity``, ungrounded ``settings`` bags,
+    or other drift. Unknown keys land in ``legacy_extras`` so nothing is
+    silently dropped.
+    """
+    if not raw:
+        return []
+    return migrate_views_config(raw)
 
 
 def _extract_facets_from_asset_data(asset_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -412,14 +428,10 @@ class PackageBuilder:
             asset_content["annotations"] = []
             annotations = asset.annotations if hasattr(asset, 'annotations') and asset.annotations else self.session.exec(select(Annotation).where(Annotation.asset_id == asset.id)).all()
             for ann in annotations:
-                ann_data = ann.model_dump(exclude_none=True, exclude={'justifications'}) 
-                justifications_for_ann = ann.justifications if hasattr(ann, 'justifications') and ann.justifications else []
-                if not justifications_for_ann and include_justifications: # Fetch if not loaded and requested
-                    justifications_for_ann = self.session.exec(select(Justification).where(Justification.annotation_id == ann.id)).all()
-
-                if include_justifications and justifications_for_ann:
-                    ann_data["justifications"] = [j.model_dump(exclude_none=True) for j in justifications_for_ann]
-                
+                # Justifications live inline in ann.value (siblings for scalars,
+                # ``justification`` per item inside list-of-object fields). Dumping
+                # value carries them along — no separate justifications block needed.
+                ann_data = ann.model_dump(exclude_none=True, exclude={'justifications'})
                 asset_content["annotations"].append(ann_data)
         
         package_metadata = PackageMetadata(
@@ -614,11 +626,9 @@ class PackageBuilder:
             
             # Fourth pass: build annotations with proper references
             for ann in annotations:
+                # Justifications travel inline inside ``value``.
                 ann_data = ann.model_dump(exclude_none=True, exclude={'justifications'})
-                justifications_for_ann = ann.justifications if hasattr(ann, 'justifications') else []
-                if include_justifications and justifications_for_ann:
-                    ann_data["justifications"] = [j.model_dump(exclude_none=True) for j in justifications_for_ann]
-                
+
                 # Include asset reference
                 asset = self.session.get(Asset, ann.asset_id)
                 if asset:
@@ -669,10 +679,8 @@ class PackageBuilder:
                     asset_ref["full_content"]["annotations"] = []
                     annotations_for_asset = asset_item_in_bundle.annotations if hasattr(asset_item_in_bundle, 'annotations') else self.session.exec(select(Annotation).where(Annotation.asset_id == asset_item_in_bundle.id)).all()
                     for ann in annotations_for_asset:
+                        # Justifications travel inline inside ``value``.
                         ann_data = ann.model_dump(exclude_none=True, exclude={'justifications'})
-                        justifications_for_ann = ann.justifications if hasattr(ann, 'justifications') else []
-                        if justifications_for_ann:
-                             ann_data["justifications"] = [j.model_dump(exclude_none=True) for j in justifications_for_ann]
                         asset_ref["full_content"]["annotations"].append(ann_data)
             
             bundle_content["asset_references"].append(asset_ref)
@@ -726,10 +734,8 @@ class PackageBuilder:
                     asset_data["annotations"] = []
                     annotations_for_asset = asset_item_in_ds.annotations if hasattr(asset_item_in_ds, 'annotations') else self.session.exec(select(Annotation).where(Annotation.asset_id == asset_item_in_ds.id)).all()
                     for ann in annotations_for_asset:
+                        # Justifications travel inline inside ``value``.
                         ann_dump = ann.model_dump(exclude_none=True, exclude={'justifications'})
-                        justifications_for_ann = ann.justifications if hasattr(ann, 'justifications') else []
-                        if justifications_for_ann:
-                            ann_dump["justifications"] = [j.model_dump(exclude_none=True) for j in justifications_for_ann]
                         schema_ref = self.session.get(AnnotationSchema, ann.schema_id)
                         if schema_ref: ann_dump["schema_reference"] = {"uuid": str(schema_ref.uuid), "id": schema_ref.id, "name": schema_ref.name, "version": schema_ref.version}
                         asset_data["annotations"].append(ann_dump)
@@ -1051,21 +1057,11 @@ class PackageBuilder:
                 asset = self.session.get(Asset, ann.asset_id)
                 s_uuid = str(schema.uuid) if schema else "unknown"
 
-                # Fetch justifications if needed
-                justifications = None
-                if include_justifications:
-                    justifications = (
-                        ann.justifications
-                        if hasattr(ann, "justifications") and ann.justifications
-                        else list(self.session.execute(
-                            select(Justification).where(Justification.annotation_id == ann.id)
-                        ).scalars().all())
-                    )
-
+                # Justifications travel inline inside ``value`` — serialize_annotation
+                # dumps the value JSONB and carries them along.
                 ann_dict = serialize_annotation(
                     ann,
                     include_justifications=include_justifications,
-                    justifications=justifications,
                     asset_ref=_make_asset_ref(asset) if asset else None,
                     schema_ref=_make_schema_ref(schema) if schema else None,
                 )
@@ -1191,14 +1187,12 @@ class PackageImporter:
         target_infospace_id: int,
         target_user_id: int,
         settings: AppSettings,
-        asset_service: AssetService
     ):
         self.session = session
         self.storage_provider = storage_provider
         self.target_infospace_id = target_infospace_id
         self.target_user_id = target_user_id
         self.settings = settings
-        self.asset_service = asset_service
         self.uuid_map: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(lambda: defaultdict(dict)) # Ensure defaultdict for inner dicts too
         self.source_instance_id_from_package: Optional[str] = None
 
@@ -1537,31 +1531,47 @@ class PackageImporter:
         self.session.flush()
         logger.info(f"Imported {len(annotations_to_create)} new annotations for asset {local_asset_id}.")
         
-        # 5. Handle justifications for the newly created annotations.
-        ann_uuid_to_id_map = {str(ann.imported_from_uuid): ann.id for ann in annotations_to_create}
-        justifications_to_create = []
-        
+        # 5. Legacy justifications: packages built before the inline migration
+        #    carry a ``justifications`` array per annotation with rows from the
+        #    historical Justification table. Lift those into the inline shape on
+        #    the freshly-created annotation's ``value`` JSONB so that downstream
+        #    readers see one consistent format. Doesn't clobber inline data
+        #    that's already there.
+        ann_uuid_to_obj = {str(ann.imported_from_uuid): ann for ann in annotations_to_create}
+        legacy_lifted = 0
         for ann_data in annotations_data:
-            ann_uuid = str(ann_data.get("uuid"))
-            new_ann_id = ann_uuid_to_id_map.get(ann_uuid)
-            if not new_ann_id:
+            legacy = ann_data.get("justifications")
+            if not (legacy and isinstance(legacy, list)):
                 continue
-            
-            if ann_data.get("justifications") and isinstance(ann_data["justifications"], list):
-                from app.models import Justification
-                for just_data in ann_data["justifications"]:
-                    justifications_to_create.append(Justification(
-                        annotation_id=new_ann_id,
-                        field_name=just_data.get("field_name"),
-                        reasoning=just_data.get("reasoning"),
-                        evidence_payload=just_data.get("evidence_payload", {}),
-                        model_name=just_data.get("model_name"),
-                        score=just_data.get("score")
-                    ))
-        
-        if justifications_to_create:
-            self.session.add_all(justifications_to_create)
-            logger.info(f"Added {len(justifications_to_create)} justifications for newly imported annotations.")
+            ann_uuid = str(ann_data.get("uuid"))
+            new_ann = ann_uuid_to_obj.get(ann_uuid)
+            if new_ann is None:
+                continue
+            value = dict(new_ann.value or {})
+            for just_data in legacy:
+                field_name = just_data.get("field_name")
+                reasoning = just_data.get("reasoning")
+                if not (field_name and reasoning):
+                    continue
+                target_key = (
+                    "_thinking_trace"
+                    if field_name == "_thinking_trace"
+                    else f"{field_name}_justification"
+                )
+                if target_key in value:
+                    continue  # already inline — don't clobber
+                payload = {"reasoning": reasoning}
+                evidence = just_data.get("evidence_payload") or {}
+                if evidence:
+                    payload.update(evidence)
+                model_name = just_data.get("model_name")
+                if model_name:
+                    payload["model_name"] = model_name
+                value[target_key] = payload
+                legacy_lifted += 1
+            new_ann.value = value
+        if legacy_lifted:
+            logger.info(f"Lifted {legacy_lifted} legacy justification entries into inline annotation values.")
 
     async def import_annotation_schema_package(self, package: DataPackage, conflict_strategy: str = 'skip') -> AnnotationSchema:
         if package.metadata.package_type != ResourceType.SCHEMA:
@@ -1731,7 +1741,7 @@ class PackageImporter:
             include_parent_context=run_data.get("include_parent_context", False),
             context_window=run_data.get("context_window", 0),
             error_message=run_data.get("error_message"),
-            views_config=run_data.get("views_config", []),  # Import the views configuration
+            views_config=_migrate_imported_views_config(run_data.get("views_config", [])),
             target_schemas=local_target_schemas,
             created_at=created_at,
             started_at=started_at,
@@ -2060,7 +2070,6 @@ class PackageService:
         self,
         session: Session,
         storage_provider: StorageProvider,
-        asset_service: AssetService,
         annotation_service: AnnotationService,
         bundle_service: BundleService,
         dataset_service: DatasetService,
@@ -2068,7 +2077,6 @@ class PackageService:
     ):
         self.session = session
         self.storage_provider = storage_provider
-        self.asset_service = asset_service
         self.annotation_service = annotation_service
         self.bundle_service = bundle_service
         self.dataset_service = dataset_service
@@ -2091,8 +2099,9 @@ class PackageService:
         )
 
         if resource_type == ResourceType.ASSET:
-            asset = self.asset_service.get_asset_by_id(asset_id=resource_id, infospace_id=infospace_id, user_id=user_id)
-            if not asset: raise ValueError(f"Asset {resource_id} not found or not accessible.")
+            asset = self.session.get(Asset, resource_id)
+            if not asset or asset.infospace_id != infospace_id:
+                raise ValueError(f"Asset {resource_id} not found or not accessible.")
             return await builder.build_asset_package(asset, include_annotations=True, include_justifications=True)
         elif resource_type == ResourceType.SOURCE:
             # Direct database access for Sources with validation
@@ -2135,7 +2144,6 @@ class PackageService:
             target_infospace_id=target_infospace_id,
             target_user_id=target_user_id,
             settings=self.settings,
-            asset_service=self.asset_service
         )
         
         pt = package.metadata.package_type
@@ -2180,9 +2188,17 @@ class PackageService:
                  if hasattr(imported_entity, 'assets'):
                     assets_to_process.extend(imported_entity.assets)
             
+            from app.api.modules.content.types import needs_processing
+            from app.core.events import emit
             for asset in assets_to_process:
-                if self.asset_service._needs_processing(asset.kind):
-                    self.asset_service._trigger_content_processing(asset)
+                if needs_processing(asset.kind):
+                    asset.processing_status = ProcessingStatus.PENDING
+                    self.session.add(asset)
+                    emit("asset.ingested", {
+                        "asset_id": asset.id,
+                        "infospace_id": asset.infospace_id,
+                    })
+            self.session.flush()
             # --- END NEW ---
 
             if hasattr(imported_entity, 'id') and imported_entity.id is not None:
@@ -2345,14 +2361,12 @@ class PackageService:
             created_infospace = infospace_service.create_infospace(user_id=user_id, infospace_in=infospace_create_data)
             logger.info(f"Created new infospace '{created_infospace.name}' (ID: {created_infospace.id}) for import.")
 
-            asset_service = AssetService(session=self.session, storage_provider=self.storage_provider)
             importer = PackageImporter(
                 session=self.session,
                 storage_provider=self.storage_provider,
                 target_infospace_id=created_infospace.id,
                 target_user_id=user_id,
                 settings=self.settings,
-                asset_service=asset_service,
             )
 
             bundle_contents_for_linking = []

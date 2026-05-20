@@ -77,7 +77,6 @@ class User(SQLModel, table=True):
     annotations: List["Annotation"] = Relationship(back_populates="user")
     sources: List["Source"] = Relationship(back_populates="user")
     tasks: List["Task"] = Relationship(back_populates="user")
-    analysis_adapters_created: List["AnalysisAdapter"] = Relationship(back_populates="creator")
     created_backups: List["InfospaceBackup"] = Relationship(back_populates="user")
     infospace_collaborations: List["InfospaceCollaborator"] = Relationship(back_populates="user")
     user_backups: List["UserBackup"] = Relationship(
@@ -169,12 +168,25 @@ class Infospace(SQLModel, table=True):
 
     @property
     def embedding_configured(self) -> bool:
-        """True when a provider + model are selected for embedding."""
+        """True when this infospace has its own embedding selection.
+
+        Narrow accessor — only reads ``enrichment_config``. For the effective
+        selection (which cascades to the owner's ``provider_defaults``), use
+        ``foundation_service_providers.get_selection(session, infospace_id,
+        "embedding")``. Don't use this property as a gate in routes/tasks:
+        it will reject setups where the user configured embedding via the
+        ProviderHub (user defaults) rather than per-infospace.
+        """
         sel = self.get_embedding_selection()
         return sel is not None and bool(sel.model_name)
 
     def get_embedding_selection(self) -> Optional[ProviderSelection]:
-        """Extract the embedding ProviderSelection from enrichment_config."""
+        """Extract the embedding ProviderSelection from enrichment_config.
+
+        Narrow accessor — only reads this infospace's own enrichment_config.
+        For the effective cascaded selection, call
+        ``foundation_service_providers.get_selection(...)`` instead.
+        """
         config = self.enrichment_config
         if not config:
             return None
@@ -195,6 +207,17 @@ class Infospace(SQLModel, table=True):
         return config.embedding_dimension_override
 
     owner_id: int = Field(foreign_key="user.id")
+
+    # Default canon for this infospace. Auto-created at infospace creation
+    # (see ``infospace_service.create_infospace``). Application-enforced
+    # invariant rather than DB-level NOT NULL — the alternative is a
+    # deferrable-FK dance for marginal benefit. Migration backfills every
+    # existing row; the service wires it on every new infospace.
+    default_canon_id: Optional[int] = Field(default=None, foreign_key="canon.id", index=True)
+    # Optional canon used by the geocoding enricher to short-circuit known
+    # locations. Structure-ready; behavior wired in a follow-up.
+    default_geo_canon_id: Optional[int] = Field(default=None, foreign_key="canon.id", index=True)
+
     owner: Optional[User] = Relationship(back_populates="infospaces")
     collaborators: List["InfospaceCollaborator"] = Relationship(back_populates="infospace")
 

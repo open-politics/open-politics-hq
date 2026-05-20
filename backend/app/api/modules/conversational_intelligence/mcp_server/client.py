@@ -15,10 +15,9 @@ from datetime import datetime, timezone, timedelta
 from fastmcp import Client, FastMCP
 from fastmcp.client.auth import BearerAuth
 
-from app.api.modules.content.services import AssetService, BundleService
+from app.api.modules.content.services import BundleService
 from app.api.modules.annotation.services import AnnotationService
 from app.core.config import settings
-from app.api.modules.foundation_service_providers.registry import get_storage_provider
 from app.core import security
 from jose import jwt
 import os
@@ -286,7 +285,6 @@ class IntelligenceMCPClient:
 @asynccontextmanager
 async def get_mcp_client(
     session: Session,
-    asset_service: AssetService,
     annotation_service: AnnotationService,
     user_id: int,
     infospace_id: int,

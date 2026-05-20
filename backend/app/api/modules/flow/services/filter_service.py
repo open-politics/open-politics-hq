@@ -347,7 +347,10 @@ class FilterService:
         if not asset_ids:
             return []
 
-        q = AssetQuery(session, infospace_id).exclude_superseded()
+        # Flows are admin-level (infospace owner or collaborator). They operate
+        # across the full infospace with no package scope. scope(None) documents
+        # that intent; routes that run flows resolve Access.scope as None anyway.
+        q = AssetQuery(session, infospace_id).scope(None).exclude_superseded()
         q._conditions.append(Asset.id.in_(asset_ids))
 
         if not _expression_to_asset_query(filter_expression, q, annotation_run_ids):

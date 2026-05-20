@@ -53,7 +53,17 @@ def execute_pending_flows(ctx: TaskContext, execution_ids: list[int]):
 
         with flow_execution_lock(flow_id) as acquired:
             if not acquired:
-                logger.info("Flow %d already executing, will retry later", flow_id)
+                logger.info("Flow %d already executing, will retry later (setting chain_backoff)", flow_id)
+                # Throttle self_chain so a live sibling-worker (or stale
+                # lock whose TTL hasn't expired) doesn't trigger a tight
+                # loop. Mirrors the annotate.py pattern.
+                try:
+                    from app.core.redis import get_redis
+                    r = get_redis()
+                    if r:
+                        r.set(f"task:execute_pending_flows:{ctx.infospace_id}:chain_backoff", "60", ex=120)
+                except Exception:
+                    logger.debug("chain_backoff set failed", exc_info=True)
                 continue
 
             try:

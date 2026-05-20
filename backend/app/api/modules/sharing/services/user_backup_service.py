@@ -188,17 +188,15 @@ class UserBackupService:
                 infospaces_dir = os.path.join(user_backup_dir, "infospaces")
                 os.makedirs(infospaces_dir, exist_ok=True)
                 
-                from app.api.modules.content.services import AssetService, BundleService, DatasetService
+                from app.api.modules.content.services import BundleService, DatasetService
                 from app.api.modules.annotation.services import AnnotationService
 
-                asset_service = AssetService(session=self.session, storage_provider=self.storage_provider)
                 bundle_service = BundleService(db=self.session)
                 dataset_service = DatasetService(session=self.session, storage_provider=self.storage_provider, source_instance_id=self.source_instance_id)
-                annotation_service = AnnotationService(session=self.session, asset_service=asset_service)
+                annotation_service = AnnotationService(session=self.session)
                 package_service = PackageService(
                     session=self.session,
                     storage_provider=self.storage_provider,
-                    asset_service=asset_service,
                     annotation_service=annotation_service,
                     bundle_service=bundle_service,
                     dataset_service=dataset_service,
@@ -429,17 +427,15 @@ class UserBackupService:
                 infospaces_dir = os.path.join(extract_dir, "infospaces")
                 if os.path.exists(infospaces_dir):
                     infospace_service = InfospaceService(self.session, self.settings, self.storage_provider)
-                    from app.api.modules.content.services import AssetService, BundleService, DatasetService
+                    from app.api.modules.content.services import BundleService, DatasetService
                     from app.api.modules.annotation.services import AnnotationService
 
-                    asset_service = AssetService(session=self.session, storage_provider=self.storage_provider)
                     bundle_service = BundleService(db=self.session)
                     dataset_service = DatasetService(session=self.session, storage_provider=self.storage_provider, source_instance_id=self.source_instance_id)
-                    annotation_service = AnnotationService(session=self.session, asset_service=asset_service)
+                    annotation_service = AnnotationService(session=self.session)
                     package_service = PackageService(
                         session=self.session,
                         storage_provider=self.storage_provider,
-                        asset_service=asset_service,
                         annotation_service=annotation_service,
                         bundle_service=bundle_service,
                         dataset_service=dataset_service,

@@ -117,21 +117,19 @@ class BackupService:
             logger.info(f"Executing backup {backup_id} for infospace {backup.infospace_id}")
             
             from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
-            from app.api.modules.content.services import AssetService, BundleService, DatasetService
+            from app.api.modules.content.services import BundleService, DatasetService
             from app.api.modules.annotation.services import AnnotationService
 
             infospace = self.session.get(Infospace, backup.infospace_id)
             if not infospace:
                 raise ValueError(f"Infospace {backup.infospace_id} not found")
 
-            asset_service = AssetService(session=self.session, storage_provider=self.storage_provider)
             bundle_service = BundleService(db=self.session)
             dataset_service = DatasetService(session=self.session, storage_provider=self.storage_provider, source_instance_id=self.settings.INSTANCE_ID if hasattr(self.settings, 'INSTANCE_ID') else None)
-            annotation_service = AnnotationService(session=self.session, asset_service=asset_service)
+            annotation_service = AnnotationService(session=self.session)
             package_service = PackageService(
                 session=self.session,
                 storage_provider=self.storage_provider,
-                asset_service=asset_service,
                 annotation_service=annotation_service,
                 bundle_service=bundle_service,
                 dataset_service=dataset_service,
@@ -374,7 +372,7 @@ class BackupService:
             new_name = restore_request.target_infospace_name or f"{original_name} (Restored {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')})"
             
             from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
-            from app.api.modules.content.services import AssetService, BundleService, DatasetService
+            from app.api.modules.content.services import BundleService, DatasetService
             from app.api.modules.annotation.services import AnnotationService
 
             infospace_service = InfospaceService(
@@ -382,14 +380,12 @@ class BackupService:
                 settings=self.settings,
                 storage_provider=self.storage_provider,
             )
-            asset_service = AssetService(session=self.session, storage_provider=self.storage_provider)
             bundle_service = BundleService(db=self.session)
             dataset_service = DatasetService(session=self.session, storage_provider=self.storage_provider, source_instance_id=self.source_instance_id)
-            annotation_service = AnnotationService(session=self.session, asset_service=asset_service)
+            annotation_service = AnnotationService(session=self.session)
             package_service = PackageService(
                 session=self.session,
                 storage_provider=self.storage_provider,
-                asset_service=asset_service,
                 annotation_service=annotation_service,
                 bundle_service=bundle_service,
                 dataset_service=dataset_service,

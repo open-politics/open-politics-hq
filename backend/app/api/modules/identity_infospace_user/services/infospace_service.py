@@ -75,16 +75,39 @@ class InfospaceService:
         user_id: int,
         infospace_in: InfospaceCreate, # Use InfospaceCreate from models.py
     ) -> Infospace:
-        """Create a new infospace."""
-        logger.info(f"Service: Creating infospace '{infospace_in.name}' for user {user_id}")
-        db_infospace = Infospace.model_validate(infospace_in) # Use model_validate
-        db_infospace.owner_id = user_id # Correct field name for owner
-        # Timestamps and UUID should be handled by model defaults
+        """Create a new infospace.
 
+        Atomically creates a "General" canon and wires it as
+        ``infospace.default_canon_id``. Every infospace gets exactly one
+        General canon at creation; users can create role-specific canons
+        (geo, project-specific, archival) on demand thereafter.
+        """
+        from app.api.modules.graph.models import Canon, CanonRole
+
+        logger.info(f"Service: Creating infospace '{infospace_in.name}' for user {user_id}")
+        db_infospace = Infospace.model_validate(infospace_in)
+        db_infospace.owner_id = user_id
+
+        self.session.add(db_infospace)
+        self.session.flush()  # need infospace.id for Canon FK
+
+        general_canon = Canon(
+            infospace_id=db_infospace.id,
+            name="General",
+            description="Default vocabulary for this infospace.",
+            role=CanonRole.GENERAL,
+        )
+        self.session.add(general_canon)
+        self.session.flush()  # need canon.id
+
+        db_infospace.default_canon_id = general_canon.id
         self.session.add(db_infospace)
         self.session.commit()
         self.session.refresh(db_infospace)
-        logger.info(f"Service: Infospace '{db_infospace.name}' (ID: {db_infospace.id}) created for user {user_id}.")
+        logger.info(
+            f"Service: Infospace '{db_infospace.name}' (ID: {db_infospace.id}) "
+            f"created for user {user_id} with General canon {general_canon.id}."
+        )
         return db_infospace
 
     def get_infospace(

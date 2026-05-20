@@ -203,11 +203,9 @@ def _dispatch_embed_task(session: Session, t: Task):
 def _dispatch_annotate_task(session: Session, t: Task):
     """Dispatch an ANNOTATE task by creating an AnnotationRun."""
     from app.api.modules.annotation.services.annotation_service import AnnotationService
-    from app.api.modules.content.services.asset_service import AssetService
     from app.schemas import AnnotationRunCreate
 
-    asset_service = AssetService(session)
-    annotation_service = AnnotationService(session=session, asset_service=asset_service)
+    annotation_service = AnnotationService(session=session)
 
     run_config = t.configuration or {}
 

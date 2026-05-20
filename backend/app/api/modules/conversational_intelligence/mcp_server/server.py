@@ -41,6 +41,7 @@ ADDING NEW TOOLS
 """
 
 
+import json
 import logging
 from typing import List, Optional, Any, Dict, Union, Tuple
 from datetime import datetime, timezone
@@ -50,15 +51,12 @@ from mcp.types import TextContent
 
 from app.api.modules.identity_infospace_user.access import resolve_access
 from app.core.config import settings
-from app.api.modules.foundation_service_providers.registry import (
-    get_storage_provider, get_scraping_provider, get_web_search_provider,
-)
-from app.api.modules.content.services import AssetService
+from app.api.modules.foundation_service_providers import resolve
 from app.api.modules.content.services.bundle_service import BundleService
 from app.api.modules.content.handlers import IngestionContext
 from app.api.modules.content.ingest import ingest
 from app.api.modules.annotation.services import AnnotationService
-from app.models import Asset, AssetKind, Infospace
+from app.models import Asset, AssetKind, Infospace, AnnotationSchema, Annotation
 from app.schemas import (
     AnnotationRunCreate, AssetRead, AnnotationRead, 
     AnnotationSchemaRead, BundleRead, SearchResult
@@ -122,16 +120,14 @@ def get_services():
     
     try:
         # Initialize core services
-        asset_service = AssetService(session)
         bundle_service = BundleService(session)
-        annotation_service = AnnotationService(session=session, asset_service=asset_service)
+        annotation_service = AnnotationService(session=session)
 
         ingestion_context = IngestionContext(
             session=session,
-            storage_provider=get_storage_provider(settings),
-            scraping_provider=get_scraping_provider(settings),
-            search_provider=get_web_search_provider(settings),
-            asset_service=asset_service,
+            storage_provider=resolve("storage"),
+            scraping_provider=resolve("scraping"),
+            search_provider=resolve("web_search", infospace_id=infospace_id),
             bundle_service=bundle_service,
             user_id=user_id,
             infospace_id=infospace_id,
@@ -139,7 +135,11 @@ def get_services():
             options={},
         )
 
-        # Retrieve user's stored API keys (no runtime keys in JWT anymore)
+        # Retrieve user's stored API keys (no runtime keys in JWT anymore).
+        # If the stored blob is present but undecryptable, decrypt_credentials
+        # raises CredentialDecryptionError — we deliberately let it propagate
+        # and fail context setup rather than silently handing tools api_keys={}
+        # (an agent quietly losing every provider key is the worse failure).
         user = session.get(User, user_id)
         api_keys = {}
         if user and user.encrypted_credentials:
@@ -153,7 +153,6 @@ def get_services():
             "conversation_id": conversation_id,  # Pass conversation ID to tools
             "model_name": model_name,  # Chat's model for annotation runs
             "runtime_api_keys": api_keys,  # Use stored API keys from database
-            "asset_service": asset_service,
             "annotation_service": annotation_service,
             "ingestion_context": ingestion_context,
         }
@@ -239,64 +238,142 @@ def format_bundle_summary(bundles: List[Any]) -> str:
 
 
 def _extract_fields_from_output_contract(output_contract: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Extract field information from output_contract JSON schema dict."""
-    fields = []
-    
+    """Legacy flat extractor — kept for backwards compatibility with old callers.
+
+    For the introspection surface used by FormulaAgent / DossierAgent, prefer
+    ``_walk_schema_surface()`` below, which emits row-shape roots, full
+    array-indexed paths, enum values, and axis references.
+    """
+    return _walk_schema_surface(output_contract).get("field_paths", [])
+
+
+def _walk_schema_surface(output_contract: Dict[str, Any]) -> Dict[str, Any]:
+    """Walk a schema's output_contract and emit everything an LLM needs to author a Formula.
+
+    Returns
+    -------
+    dict with three keys:
+      - ``row_shape_roots``: list of ``{path, description}`` for top-level
+        array-of-object containers (e.g. ``regulatorische_handlungen[*]``).
+        These are the row shapes formulas iterate over.
+      - ``field_paths``: list of ``{path, type, description, enum_values?,
+        axis?}`` with full array-indexed paths
+        (``regulatorische_handlungen[*].target_firm``).
+      - ``simple_fields``: list of top-level scalar/object fields that aren't
+        array containers — useful for whole-document scoped formulas.
+
+    Handles JSON Schema patterns: object → properties; array → items.object
+    (emits ``[*]`` in the path); enum → enum_values; oneOf/anyOf → first
+    branch. ``x-axis`` references on a field are surfaced as ``axis``.
+    """
+    row_shape_roots: List[Dict[str, str]] = []
+    field_paths: List[Dict[str, Any]] = []
+    simple_fields: List[Dict[str, Any]] = []
+
     if not output_contract or not isinstance(output_contract, dict):
-        return fields
-    
-    # Handle JSON schema format: {"type": "object", "properties": {...}}
-    properties = output_contract.get("properties", {})
-    if not properties:
-        return fields
-    
-    def extract_from_properties(props: Dict[str, Any], prefix: str = "") -> None:
-        """Recursively extract fields from properties dict."""
-        for key, value in props.items():
-            if not isinstance(value, dict):
+        return {"row_shape_roots": row_shape_roots, "field_paths": field_paths, "simple_fields": simple_fields}
+
+    def walk_object(props: Dict[str, Any], prefix: str) -> None:
+        """Recurse into a JSON-schema object's properties, emitting field_paths."""
+        if not isinstance(props, dict):
+            return
+        for key, sub in props.items():
+            if not isinstance(sub, dict):
                 continue
-            
-            field_name = f"{prefix}.{key}" if prefix else key
-            field_type = value.get("type", "unknown")
-            field_description = value.get("description", "")
-            
-            # Add this field
-            if field_type in ["string", "integer", "number", "boolean", "array"]:
-                fields.append({
-                    "name": field_name,
-                    "type": field_type,
-                    "description": field_description
+            field_path = f"{prefix}.{key}" if prefix else key
+            sub_type = sub.get("type") or _peek_type(sub)
+            entry: Dict[str, Any] = {
+                "path": field_path,
+                "type": sub_type or "unknown",
+                "description": sub.get("description", "") or "",
+            }
+            # Enum values: surface as a vocabulary the LLM can choose from.
+            if "enum" in sub and isinstance(sub["enum"], list):
+                entry["enum_values"] = sub["enum"]
+            # Axis reference: surface so the LLM can validate aggregation rules.
+            x_axis = sub.get("x-axis") or sub.get("xAxis")
+            if isinstance(x_axis, str):
+                entry["axis"] = x_axis
+
+            if sub_type == "object" and isinstance(sub.get("properties"), dict):
+                # Don't emit object containers as field_paths — their leaves carry the data.
+                walk_object(sub["properties"], field_path)
+            elif sub_type == "array":
+                items = sub.get("items") or {}
+                items_type = items.get("type") or _peek_type(items)
+                if items_type == "object" and isinstance(items.get("properties"), dict):
+                    # Array-of-objects — descend with [*] notation.
+                    walk_object(items["properties"], f"{field_path}[*]")
+                else:
+                    # Array of scalars — surface as a single path; the LLM can
+                    # bind it for set-style operations.
+                    entry["type"] = f"array<{items_type or 'unknown'}>"
+                    field_paths.append(entry)
+            else:
+                # Scalar leaf.
+                field_paths.append(entry)
+
+    properties = output_contract.get("properties") or {}
+    if not properties:
+        return {"row_shape_roots": row_shape_roots, "field_paths": field_paths, "simple_fields": simple_fields}
+
+    # Top pass — distinguish array-of-object row-shape roots from scalars/objects.
+    for key, sub in properties.items():
+        if not isinstance(sub, dict):
+            continue
+        sub_type = sub.get("type") or _peek_type(sub)
+        if sub_type == "array":
+            items = sub.get("items") or {}
+            items_type = items.get("type") or _peek_type(items)
+            if items_type == "object" and isinstance(items.get("properties"), dict):
+                row_shape_roots.append({
+                    "path": f"{key}[*]",
+                    "description": sub.get("description", "") or "",
                 })
-            
-            # Recurse into nested object properties
-            if value.get("type") == "object" and value.get("properties"):
-                extract_from_properties(value["properties"], field_name)
-            
-            # Handle array of objects (per-modality patterns)
-            if value.get("type") == "array" and value.get("items", {}).get("type") == "object":
-                items_props = value.get("items", {}).get("properties", {})
-                if items_props:
-                    extract_from_properties(items_props, field_name)
-    
-    # Extract from hierarchical structure (document, per_*)
-    if "document" in properties and isinstance(properties["document"], dict):
-        doc_props = properties["document"].get("properties", {})
-        if doc_props:
-            extract_from_properties(doc_props, "document")
-    
-    # Extract from per-modality fields (per_image, per_audio, etc.)
-    for key, value in properties.items():
-        if key.startswith("per_") and isinstance(value, dict):
-            if value.get("type") == "array" and value.get("items", {}).get("type") == "object":
-                items_props = value.get("items", {}).get("properties", {})
-                if items_props:
-                    extract_from_properties(items_props, key)
-    
-    # If no hierarchical structure found, extract from flat properties
-    if not fields:
-        extract_from_properties(properties)
-    
-    return fields
+                walk_object(items["properties"], f"{key}[*]")
+                continue
+        if sub_type == "object" and isinstance(sub.get("properties"), dict):
+            # Nested object container — descend, but also note it as a path root.
+            walk_object(sub["properties"], key)
+            simple_fields.append({"path": key, "type": "object", "description": sub.get("description", "") or ""})
+            continue
+        # Scalar at top level.
+        leaf: Dict[str, Any] = {
+            "path": key,
+            "type": sub_type or "unknown",
+            "description": sub.get("description", "") or "",
+        }
+        if "enum" in sub and isinstance(sub["enum"], list):
+            leaf["enum_values"] = sub["enum"]
+        x_axis = sub.get("x-axis") or sub.get("xAxis")
+        if isinstance(x_axis, str):
+            leaf["axis"] = x_axis
+        field_paths.append(leaf)
+        simple_fields.append(leaf)
+
+    return {
+        "row_shape_roots": row_shape_roots,
+        "field_paths": field_paths,
+        "simple_fields": simple_fields,
+    }
+
+
+def _peek_type(node: Dict[str, Any]) -> Optional[str]:
+    """Resolve a JSON-Schema type when it's hidden behind oneOf/anyOf/$ref.
+
+    Falls back to ``None``; the caller treats that as 'unknown'.
+    """
+    if not isinstance(node, dict):
+        return None
+    if "type" in node:
+        return node["type"]
+    for combinator in ("oneOf", "anyOf", "allOf"):
+        branches = node.get(combinator)
+        if isinstance(branches, list) and branches:
+            first = branches[0]
+            if isinstance(first, dict):
+                return first.get("type") or _peek_type(first)
+    return None
 
 
 def format_schema_summary(schemas: List[Any]) -> str:
@@ -1043,18 +1120,67 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
         parent_asset_id = filters.get("parent_asset_id") if filters else None
         bundle_id = filters.get("bundle_id") if filters else None
 
-        assets = await services["asset_service"].search_assets(
-            user_id=services["user_id"],
-            infospace_id=services["infospace_id"],
-            query=query,
-            search_method=search_method,
-            asset_kinds=asset_kinds_enum,
-            limit=limit,
-            distance_threshold=distance_threshold,
-            runtime_api_keys=services["runtime_api_keys"],
-            parent_asset_id=parent_asset_id,
-            bundle_id=bundle_id
-        )
+        from app.api.modules.content.query import AssetQuery
+        import asyncio as _mcp_asyncio
+
+        def _text_aq(q: str, n: int) -> AssetQuery:
+            aq = (
+                AssetQuery(services["session"], services["infospace_id"])
+                .exclude_superseded()
+                .text(q, mode="fts")
+                .sort("relevance" if q else "created_at_desc")
+                .paginate(limit=n)
+            )
+            if asset_kinds_enum:
+                aq.kinds(asset_kinds_enum)
+            if bundle_id is not None:
+                aq.bundle(bundle_id)
+            if parent_asset_id is not None:
+                aq.parent_asset(parent_asset_id)
+            return aq
+
+        def _sem_aq(q: str, n: int) -> AssetQuery:
+            aq = (
+                AssetQuery(services["session"], services["infospace_id"])
+                .exclude_superseded()
+                .semantic(q, top_k=n)
+                .paginate(limit=n)
+            )
+            if asset_kinds_enum:
+                aq.kinds(asset_kinds_enum)
+            if bundle_id is not None:
+                aq.bundle(bundle_id)
+            return aq
+
+        if search_method == "text":
+            assets = _text_aq(query, limit).execute()
+        elif search_method == "semantic":
+            try:
+                assets = await _sem_aq(query, limit).execute_async()
+            except Exception as e:
+                # A failed pgvector query leaves the session's transaction in an
+                # aborted state — every subsequent query in this MCP call would
+                # fail with InFailedSqlTransaction unless we roll back first.
+                services["session"].rollback()
+                await ctx.info(f"Semantic search failed, falling back to text: {e}")
+                assets = _text_aq(query, limit).execute()
+        elif search_method == "hybrid":
+            # Run text first, then semantic. Sequencing avoids cross-task session
+            # corruption (SQLAlchemy sessions aren't safe under concurrent use)
+            # and lets us roll back the semantic failure before the text path runs.
+            text_list = _text_aq(query, max(1, limit // 2)).execute()
+            try:
+                sem_list = await _sem_aq(query, max(1, limit // 2)).execute_async()
+            except Exception as e:
+                services["session"].rollback()
+                await ctx.info(f"Semantic leg of hybrid search failed: {e}")
+                sem_list = []
+            merged = {a.id: a for a in text_list}
+            for a in sem_list:
+                merged.setdefault(a.id, a)
+            assets = list(merged.values())[:limit]
+        else:
+            raise ValueError(f"Unknown search_method: {search_method}")
         
         await ctx.info(f"Found {len(assets)} assets matching '{query}'")
         
@@ -1221,7 +1347,7 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
 async def web_research(
     ctx: Context,
     query: Annotated[Optional[str], "What to search for (e.g., 'recent climate legislation in Europe')"] = None,
-    provider: Annotated[str, "Search service: 'tavily' (default, recommended)"] = "tavily",
+    provider: Annotated[Optional[str], "Search service: 'searxng' (self-hosted, no API key), 'tavily' (API key), or 'opol' (API key). Omit to use the deployment's configured default (WEB_SEARCH_PROVIDER_TYPE — typically 'searxng')."] = None,
     max_results: Annotated[int, "Number of results to return (1-10 for basic, up to 50 for advanced)"] = 10,
     include_domains: Annotated[Optional[List[str]], "Only search these domains (e.g., ['gov.uk', 'parliament.uk'])"] = None,
     exclude_domains: Annotated[Optional[List[str]], "Skip these domains (e.g., ['twitter.com', 'facebook.com'])"] = None,
@@ -1236,7 +1362,7 @@ async def web_research(
     
     <use_cases>
     • Search only:
-        web_research(query="2025 prorogation debates", max_results=8)
+        web_research(quey="2025r prorogation debates", max_results=8)
     • Search + auto-ingest top 3 hits into a collection:
         web_research(
             query="just transition policy brief",
@@ -1275,33 +1401,38 @@ async def web_research(
         raw_results: List[dict] = []
         
         if query:
-            await ctx.info(f"Searching web: query='{query}', provider={provider}")
-            provider_normalized = provider.lower()
-            
+            # When provider is omitted, fall through to the deployment-configured
+            # default (settings.WEB_SEARCH_PROVIDER_TYPE — 'searxng' by default).
+            # This makes self-hosted SearXNG the no-credentials path and lets
+            # users explicitly request 'tavily' / 'opol' when they have keys.
+            provider_normalized = (provider or "").strip().lower() or None
+            effective_provider = provider_normalized or settings.WEB_SEARCH_PROVIDER_TYPE
+            await ctx.info(f"Searching web: query='{query}', provider={effective_provider}")
+
             api_key = None
             if services["runtime_api_keys"]:
-                if provider_normalized == 'tavily':
+                if effective_provider == 'tavily':
                     api_key = services["runtime_api_keys"].get('tavily') or services["runtime_api_keys"].get('TAVILY_API_KEY')
-                elif provider_normalized == 'opol':
+                elif effective_provider == 'opol':
                     api_key = services["runtime_api_keys"].get('opol') or services["runtime_api_keys"].get('OPOL_API_KEY')
-            
-            from app.api.modules.foundation_service_providers.base import WebSearchProvider
-            from app.api.modules.foundation_service_providers.registry import get_provider
-            from app.core.config import settings as app_settings
+
+            from app.api.modules.foundation_service_providers import resolve, ProviderError
 
             try:
-                web_search_provider = get_provider(
-                    WebSearchProvider, provider_normalized, app_settings,
-                    api_key_override=api_key,
+                web_search_provider = resolve(
+                    "web_search", provider_normalized,
+                    infospace_id=services["infospace_id"],
+                    runtime_key=api_key,
+                    session=services["session"],
                 )
-            except Exception as e:
+            except ProviderError as e:
                 return ToolResult(
-                    content=[TextContent(type="text", text=f"Error: Could not initialize {provider} web search provider: {str(e)}")],
+                    content=[TextContent(type="text", text=f"Error: Could not initialize {effective_provider} web search provider: {str(e)}")],
                     structured_content={
                         "error": str(e),
                         "status": "failed",
                         "query": query,
-                        "provider": provider,
+                        "provider": effective_provider,
                     }
                 )
             
@@ -1351,10 +1482,10 @@ async def web_research(
                     "content": result.get("content", ""),
                     "text_content": result.get("raw_content"),
                     "score": result.get("score"),
-                    "provider": provider,
+                    "provider": effective_provider,
                     "file_info": {
                         "search_query": query,
-                        "search_provider": provider,
+                        "search_provider": effective_provider,
                         "search_score": result.get("score"),
                         "published_date": result.get("published_date"),
                         "favicon": result.get("favicon"),
@@ -1362,12 +1493,12 @@ async def web_research(
                 }
                 for result in raw_results
             ]
-            
+
             await ctx.info(f"Found {len(raw_results)} results")
             summary_sections.append(f"🔎 Web Search\n{summary_text}")
             structured_payload["search"] = {
                 "query": query,
-                "provider": provider,
+                "provider": effective_provider,
                 "results": search_results_data,
                 "total_found": len(raw_results),
                 "images": top_level_images,  # Top-level images from Tavily
@@ -1843,110 +1974,309 @@ async def _organize_delete(services: Dict, ctx: Context, bundle_id: Optional[int
 # ============================================================================
 # CATEGORY: ANALYSIS & SCHEMA CREATION
 # ============================================================================
+
+def _schema_field_count(output_contract: Dict[str, Any]) -> int:
+    """Count user-visible fields in a hierarchical output_contract."""
+    if not isinstance(output_contract, dict):
+        return 0
+    properties = output_contract.get("properties") or {}
+    document = properties.get("document") if isinstance(properties, dict) else None
+    if isinstance(document, dict) and isinstance(document.get("properties"), dict):
+        return len(document["properties"])
+    return len(properties) if isinstance(properties, dict) else 0
+
+
+def _schema_to_structured(schema: AnnotationSchema) -> Dict[str, Any]:
+    """Canonical MCP representation of a schema — matches export/import shape.
+
+    Per-field justification opt-in lives inline on each output_contract
+    property as ``include_justification``. The legacy
+    ``field_specific_justification_configs`` block is reconstructed from the
+    inline flags for FE/LLM compat with older clients.
+    """
+    from app.api.routes.annotation_schemas import _derive_configs_from_contract
+    return {
+        "id": schema.id,
+        "uuid": str(schema.uuid),
+        "name": schema.name,
+        "description": schema.description,
+        "version": schema.version,
+        "instructions": schema.instructions,
+        "output_contract": schema.output_contract if isinstance(schema.output_contract, dict) else None,
+        "field_specific_justification_configs": _derive_configs_from_contract(schema.output_contract),
+        "field_count": _schema_field_count(schema.output_contract or {}),
+        "is_active": schema.is_active,
+    }
+
+
+def _render_schema_text(schema: AnnotationSchema, *, include_contract: bool = True) -> str:
+    """Full schema as text for the LLM — untruncated JSON round-trippable with schema.update."""
+    header = [
+        f"Schema #{schema.id}: {schema.name} (v{schema.version}){'  [inactive]' if not schema.is_active else ''}",
+    ]
+    if schema.description:
+        header.append(f"Description: {schema.description}")
+    if schema.instructions:
+        header.append(f"Instructions: {schema.instructions}")
+    if include_contract and isinstance(schema.output_contract, dict):
+        header.append("")
+        header.append("output_contract:")
+        header.append("```json")
+        header.append(json.dumps(schema.output_contract, indent=2, ensure_ascii=False))
+        header.append("```")
+    from app.api.routes.annotation_schemas import _derive_configs_from_contract
+    jconfigs = _derive_configs_from_contract(schema.output_contract)
+    if include_contract and jconfigs:
+        header.append("")
+        header.append("field_specific_justification_configs (derived from inline include_justification flags):")
+        header.append("```json")
+        header.append(json.dumps(jconfigs, indent=2, ensure_ascii=False))
+        header.append("```")
+    return "\n".join(header)
+
+
+async def _analysis_get_schema(
+    services: Dict,
+    ctx: Context,
+    schema_id: int,
+) -> ToolResult:
+    """Fetch one schema with full, untruncated output_contract — for edit round-trips."""
+    await ctx.info(f"Getting schema #{schema_id}")
+    schema = services["annotation_service"].get_schema(
+        schema_id=schema_id,
+        infospace_id=services["infospace_id"],
+        user_id=services["user_id"],
+    )
+    if not schema:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Schema #{schema_id} not found in this infospace")],
+            structured_content={"error": "schema_not_found", "schema_id": schema_id},
+        )
+    return ToolResult(
+        content=[TextContent(type="text", text=_render_schema_text(schema))],
+        structured_content=_schema_to_structured(schema),
+    )
+
+
 async def _analysis_create_schema(
     services: Dict,
     ctx: Context,
     name: str,
-    fields: List[Dict[str, Any]],
+    output_contract: Dict[str, Any],
     description: Optional[str],
     instructions: Optional[str],
+    version: str,
+    field_specific_justification_configs: Optional[Dict[str, Any]],
 ) -> ToolResult:
-    await ctx.info(f"Creating schema '{name}' with {len(fields)} fields")
-    
+    """Create a schema from a full JSON Schema output_contract.
+
+    Legacy ``field_specific_justification_configs`` argument is lifted into
+    inline ``include_justification`` keys on the output_contract before storage.
+    """
+    from app.api.routes.annotation_schemas import _lift_configs_into_contract
+    await ctx.info(f"Creating schema '{name}' (v{version})")
     try:
-        # Build JSON Schema format for output_contract
-        # Follows the hierarchical convention with a top-level "document" object
-        document_properties = {}
-        required_fields = []
-        
-        for field in fields:
-            field_name = field.get("name", "unnamed_field")
-            field_type = field.get("field_type") or field.get("type", "text")
-            field_description = field.get("description", "")
-            is_required = field.get("required", True)
-            
-            # Map field_type to JSON Schema type
-            if field_type in ("list", "array"):
-                json_type = {"type": "array", "items": {"type": "string"}}
-            elif field_type in ("number", "integer", "int"):
-                json_type = {"type": "integer"}
-            elif field_type in ("float", "decimal"):
-                json_type = {"type": "number"}
-            elif field_type in ("boolean", "bool"):
-                json_type = {"type": "boolean"}
-            else:
-                # Default to string for text, str, and unknown types
-                json_type = {"type": "string"}
-            
-            # Add description if present
-            if field_description:
-                json_type["description"] = field_description
-            
-            document_properties[field_name] = json_type
-            
-            if is_required:
-                required_fields.append(field_name)
-        
-        # Build the full output_contract in hierarchical schema format
-        output_contract = {
-            "type": "object",
-            "properties": {
-                "document": {
-                    "type": "object",
-                    "properties": document_properties,
-                    "required": required_fields
-                }
-            },
-            "required": ["document"]
-        }
-        
-        # Use the annotation_service.create_annotation_schema method directly
+        contract = _lift_configs_into_contract(output_contract, field_specific_justification_configs)
         schema = services["annotation_service"].create_annotation_schema(
             name=name,
-            output_contract=output_contract,
+            output_contract=contract,
             user_id=services["user_id"],
             infospace_id=services["infospace_id"],
-            description=description or f"Schema: {name}",
+            description=description,
             instructions=instructions,
-            version="1.0.0"
+            version=version,
         )
-        # Note: create_annotation_schema already commits
-        
-        await ctx.info(f"Created schema #{schema.id}")
-        
-        field_summary = "\n".join([
-            f"  • {f.get('name', 'unnamed')} ({f.get('field_type') or f.get('type', 'text')}): {f.get('description', 'No description')}" 
-            for f in fields
-        ])
-        
+        structured = _schema_to_structured(schema)
+        structured["status"] = "created"
+        text = (
+            f"✅ Created schema '{schema.name}' v{schema.version} (ID: {schema.id}, {structured['field_count']} fields)\n\n"
+            f"{_render_schema_text(schema)}\n\n"
+            f"→ analysis_hub(operation='run.start', schema_id={schema.id}, asset_ids=[...]) to run analysis"
+        )
         return ToolResult(
-            content=[TextContent(type="text", text=f"✅ Created schema '{name}' (ID: {schema.id})\n\nFields:\n{field_summary}\n\n→ Use analysis_hub(operation='run.start', schema_id={schema.id}, asset_ids=[...]) to run analysis")],
-            structured_content={
-                "schema_id": schema.id,
-                "schema_name": schema.name,
-                "schema_uuid": str(schema.uuid),
-                "field_count": len(fields),
-                "fields": fields,
-                "status": "created"
-            }
+            content=[TextContent(type="text", text=text)],
+            structured_content=structured,
         )
-        
+    except ValueError as ve:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ {ve}")],
+            structured_content={"error": str(ve), "status": "failed"},
+        )
     except Exception as e:
         logger.error(f"Failed to create schema: {e}", exc_info=True)
         return ToolResult(
-            content=[TextContent(type="text", text=f"❌ Failed to create schema: {str(e)}")],
-            structured_content={"error": str(e), "status": "failed"}
+            content=[TextContent(type="text", text=f"❌ Failed to create schema: {e}")],
+            structured_content={"error": str(e), "status": "failed"},
         )
+
+
+async def _analysis_update_schema(
+    services: Dict,
+    ctx: Context,
+    schema_id: int,
+    updates: Dict[str, Any],
+    allow_breaking: bool,
+) -> ToolResult:
+    """Patch a schema in place. Mirrors PATCH /annotation_schemas/{id}.
+
+    `updates` uses AnnotationSchemaUpdate field names; only provided keys are applied.
+    Changing `output_contract` on a schema with existing annotations requires
+    `allow_breaking=True` — stored annotation values are contract-shaped.
+    """
+    await ctx.info(f"Updating schema #{schema_id}: fields={list(updates.keys())}")
+
+    session = services["session"]
+    infospace_id = services["infospace_id"]
+
+    schema = session.get(AnnotationSchema, schema_id)
+    if not schema or schema.infospace_id != infospace_id:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Schema #{schema_id} not found in this infospace")],
+            structured_content={"error": "schema_not_found", "schema_id": schema_id},
+        )
+
+    if "output_contract" in updates and updates["output_contract"] != schema.output_contract:
+        annotation_count = len(schema.annotations or [])
+        if annotation_count > 0 and not allow_breaking:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"⚠️ Schema #{schema_id} has {annotation_count} existing annotations. Changing output_contract will leave them shaped by the old contract. Re-run with allow_breaking=true to proceed.")],
+                structured_content={
+                    "error": "breaking_change_blocked",
+                    "schema_id": schema_id,
+                    "annotation_count": annotation_count,
+                },
+            )
+
+    try:
+        # Translate legacy justification configs (if present) into inline keys
+        # on the output_contract — same shape as the route's PATCH translator.
+        from app.api.routes.annotation_schemas import _lift_configs_into_contract
+        legacy_configs = updates.pop("field_specific_justification_configs", None)
+        if legacy_configs is not None or "output_contract" in updates:
+            base_contract = updates.get("output_contract", schema.output_contract)
+            if legacy_configs is not None:
+                updates["output_contract"] = _lift_configs_into_contract(base_contract, legacy_configs)
+
+        for field, value in updates.items():
+            setattr(schema, field, value)
+        schema.updated_at = datetime.now(timezone.utc)
+        session.add(schema)
+        session.commit()
+        session.refresh(schema)
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Failed to update schema #{schema_id}: {e}", exc_info=True)
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Failed to update schema: {e}")],
+            structured_content={"error": str(e), "status": "failed", "schema_id": schema_id},
+        )
+
+    structured = _schema_to_structured(schema)
+    structured["status"] = "updated"
+    structured["updated_fields"] = list(updates.keys())
+    # Echo the full schema back when output_contract or justifications changed —
+    # that's what the model needs to verify its write. Metadata-only edits get a terse line.
+    heavy_fields = {"output_contract", "field_specific_justification_configs"}
+    include_contract = bool(heavy_fields & updates.keys())
+    text = (
+        f"✅ Updated schema '{schema.name}' v{schema.version} (ID: {schema.id}) — changed: {', '.join(updates.keys())}\n\n"
+        f"{_render_schema_text(schema, include_contract=include_contract)}"
+    )
+    return ToolResult(
+        content=[TextContent(type="text", text=text)],
+        structured_content=structured,
+    )
+
+
+async def _analysis_delete_schema(
+    services: Dict,
+    ctx: Context,
+    schema_id: int,
+    hard: bool,
+) -> ToolResult:
+    """Delete a schema. Soft by default (is_active=False) when annotations exist.
+
+    Hard deletes are cascaded by the DB; use `hard=True` only when you want the
+    schema and its annotations gone. Hard delete on a schema with annotations
+    requires explicit intent.
+    """
+    session = services["session"]
+    infospace_id = services["infospace_id"]
+
+    schema = session.get(AnnotationSchema, schema_id)
+    if not schema or schema.infospace_id != infospace_id:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Schema #{schema_id} not found in this infospace")],
+            structured_content={"error": "schema_not_found", "schema_id": schema_id},
+        )
+
+    annotation_count = len(schema.annotations or [])
+    schema_name = schema.name
+    schema_version = schema.version
+
+    if not hard and annotation_count > 0:
+        await ctx.info(f"Soft-deleting schema #{schema_id} (preserving {annotation_count} annotations)")
+        schema.is_active = False
+        schema.updated_at = datetime.now(timezone.utc)
+        session.add(schema)
+        try:
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to soft-delete schema #{schema_id}: {e}", exc_info=True)
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Failed to deactivate schema: {e}")],
+                structured_content={"error": str(e), "status": "failed", "schema_id": schema_id},
+            )
+        return ToolResult(
+            content=[TextContent(type="text", text=f"✅ Deactivated schema '{schema_name}' v{schema_version} (ID: {schema_id}) — {annotation_count} annotations preserved. Re-activate with schema.update(is_active=true).")],
+            structured_content={
+                "status": "deactivated",
+                "schema_id": schema_id,
+                "name": schema_name,
+                "version": schema_version,
+                "annotation_count": annotation_count,
+            },
+        )
+
+    await ctx.info(f"Hard-deleting schema #{schema_id} ({annotation_count} annotations)")
+    try:
+        session.delete(schema)
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Failed to delete schema #{schema_id}: {e}", exc_info=True)
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Failed to delete schema: {e}")],
+            structured_content={"error": str(e), "status": "failed", "schema_id": schema_id},
+        )
+
+    return ToolResult(
+        content=[TextContent(type="text", text=f"🗑️ Deleted schema '{schema_name}' v{schema_version} (ID: {schema_id})" + (f" and {annotation_count} annotations" if annotation_count else ""))],
+        structured_content={
+            "status": "deleted",
+            "schema_id": schema_id,
+            "name": schema_name,
+            "version": schema_version,
+            "annotations_deleted": annotation_count,
+        },
+    )
+
 
 @mcp.tool(tags=["analysis", "schema", "runs"])
 async def analysis_hub(
     ctx: Context,
-    operation: Annotated[str, "schema.list, schema.create, run.start, run.list, run.dashboard, run.share"] = "schema.list",
-    schema_name: Annotated[Optional[str], "Required for schema.create"] = None,
-    schema_fields: Annotated[Optional[List[Dict[str, Any]]], "Field definitions for schema.create"] = None,
-    schema_description: Annotated[Optional[str], "Optional description for schema.create"] = None,
-    schema_instructions: Annotated[Optional[str], "Optional instructions for schema.create"] = None,
-    schema_id: Annotated[Optional[int], "Use with run.start/run.list filters/run.dashboard/run.share"] = None,
+    operation: Annotated[str, "schema.list, schema.get, schema.create, schema.update, schema.delete, run.start, run.list, run.dashboard, run.share"] = "schema.list",
+    schema_name: Annotated[Optional[str], "Schema name — required for schema.create, optional rename for schema.update"] = None,
+    output_contract: Annotated[Optional[Dict[str, Any]], "Full JSON Schema output_contract — same shape as schema.list returns. Required for schema.create, optional for schema.update. Use the hierarchical {type, properties: {document: {type, properties: {...}, required: [...]}}, required: ['document']} convention."] = None,
+    schema_description: Annotated[Optional[str], "Schema description"] = None,
+    schema_instructions: Annotated[Optional[str], "LLM instructions for the schema"] = None,
+    schema_version: Annotated[Optional[str], "Schema version (defaults to 1.0 on create)"] = None,
+    field_specific_justification_configs: Annotated[Optional[Dict[str, Any]], "Per-field justification config map"] = None,
+    is_active: Annotated[Optional[bool], "Toggle schema activity — used by schema.update"] = None,
+    allow_breaking: Annotated[bool, "schema.update: permit output_contract change on a schema that already has annotations"] = False,
+    hard_delete: Annotated[bool, "schema.delete: drop the schema and its annotations instead of soft-deactivating"] = False,
+    schema_id: Annotated[Optional[int], "Required for schema.get/schema.update/schema.delete; filter for run.list; target for run.start/run.dashboard/run.share"] = None,
     asset_ids: Annotated[Optional[List[int]], "Required for run.start"] = None,
     run_name: Annotated[Optional[str], "Optional friendly name for run.start"] = None,
     custom_instructions: Annotated[Optional[str], "Optional extra guidance for run.start"] = None,
@@ -1958,39 +2288,95 @@ async def analysis_hub(
     expiration_days: Annotated[Optional[int], "Optional expiry for run.share"] = None,
 ) -> ToolResult:
     """
-    Unified analysis control panel: create/list schemas, launch runs, list dashboards, and share results.
-    
+    Unified analysis control panel: schemas CRUD, runs, dashboards, sharing.
+
+    PREFER THIS over navigate() for anything schema- or run-related. Schemas
+    are not assets — navigate() will not find them, and trying to locate a
+    schema by walking the workspace tree is the #1 cause of iteration-limit
+    exhaustion. Go straight here.
+
     <operations>
-    • schema.list .................. Show all available schemas.
-    • schema.create ................ Provide schema_name + schema_fields to add a template.
+    • schema.list .................. Browse schemas (summary — use schema.get before editing).
+    • schema.get ................... schema_id. Returns one schema with the full, untruncated output_contract.
+    • schema.create ................ schema_name + output_contract (full JSON Schema).
+    • schema.update ................ schema_id + any of: schema_name/output_contract/schema_description/schema_instructions/schema_version/field_specific_justification_configs/is_active. Only provided fields change. output_contract change on a schema with annotations needs allow_breaking=true.
+    • schema.delete ................ schema_id. Soft-deactivates when annotations exist; use hard_delete=true to drop the schema and annotations.
     • run.start .................... Provide schema_id + asset_ids (optionally run_name/custom_instructions).
     • run.list ..................... Optional filters schema_id/status plus pagination.
     • run.dashboard ................ Provide run_id to fetch structured results.
     • run.share .................... Provide run_id (plus optional share_name/expiration_days) for a public link.
+
+    Round-trip edit pattern (3 calls, under any iteration cap):
+      schema.list → schema.get(schema_id=...) → schema.update(schema_id=..., output_contract=...)
     """
     with get_services() as services:
         resolve_access(services["session"], services["infospace_id"], services["user"])
-        
+
         await ctx.info(f"analysis_hub: operation={operation}")
-        
+
         if operation == "schema.list":
             return await _analysis_list_schemas(services, ctx)
-        
-        if operation == "schema.create":
-            if not schema_name or not schema_fields:
+
+        if operation == "schema.get":
+            if not schema_id:
                 return ToolResult(
-                    content=[TextContent(type="text", text="❌ schema.create requires schema_name and schema_fields")],
-                    structured_content={"error": "missing_schema_definition"}
+                    content=[TextContent(type="text", text="❌ schema.get requires schema_id")],
+                    structured_content={"error": "missing_schema_id"},
+                )
+            return await _analysis_get_schema(services, ctx, schema_id)
+
+        if operation == "schema.create":
+            if not schema_name or not output_contract:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ schema.create requires schema_name and output_contract (full JSON Schema)")],
+                    structured_content={"error": "missing_schema_definition"},
                 )
             return await _analysis_create_schema(
                 services=services,
                 ctx=ctx,
                 name=schema_name,
-                fields=schema_fields,
+                output_contract=output_contract,
                 description=schema_description,
-                instructions=schema_instructions
+                instructions=schema_instructions,
+                version=schema_version or "1.0",
+                field_specific_justification_configs=field_specific_justification_configs,
             )
-        
+
+        if operation == "schema.update":
+            if not schema_id:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ schema.update requires schema_id")],
+                    structured_content={"error": "missing_schema_id"},
+                )
+            updates: Dict[str, Any] = {}
+            if schema_name is not None: updates["name"] = schema_name
+            if output_contract is not None: updates["output_contract"] = output_contract
+            if schema_description is not None: updates["description"] = schema_description
+            if schema_instructions is not None: updates["instructions"] = schema_instructions
+            if schema_version is not None: updates["version"] = schema_version
+            if field_specific_justification_configs is not None: updates["field_specific_justification_configs"] = field_specific_justification_configs
+            if is_active is not None: updates["is_active"] = is_active
+            if not updates:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ schema.update needs at least one field to change")],
+                    structured_content={"error": "no_updates_provided", "schema_id": schema_id},
+                )
+            return await _analysis_update_schema(
+                services=services, ctx=ctx,
+                schema_id=schema_id, updates=updates, allow_breaking=allow_breaking,
+            )
+
+        if operation == "schema.delete":
+            if not schema_id:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ schema.delete requires schema_id")],
+                    structured_content={"error": "missing_schema_id"},
+                )
+            return await _analysis_delete_schema(
+                services=services, ctx=ctx,
+                schema_id=schema_id, hard=hard_delete,
+            )
+
         if operation == "run.start":
             if not schema_id or not asset_ids:
                 return ToolResult(
@@ -2005,7 +2391,7 @@ async def analysis_hub(
                 name=run_name,
                 custom_instructions=custom_instructions
             )
-        
+
         if operation == "run.list":
             return await _analysis_list_runs(
                 services=services,
@@ -2015,7 +2401,7 @@ async def analysis_hub(
                 limit=limit,
                 offset=offset
             )
-        
+
         if operation == "run.dashboard":
             if not run_id:
                 return ToolResult(
@@ -2023,7 +2409,7 @@ async def analysis_hub(
                     structured_content={"error": "missing_run_id"}
                 )
             return await _analysis_get_dashboard(services, ctx, run_id)
-        
+
         if operation == "run.share":
             if not run_id:
                 return ToolResult(
@@ -2037,7 +2423,7 @@ async def analysis_hub(
                 name=share_name,
                 expiration_days=expiration_days
             )
-        
+
         return ToolResult(
             content=[TextContent(type="text", text=f"Unknown analysis operation: {operation}")],
             structured_content={"error": f"unknown_operation:{operation}"}
@@ -2057,10 +2443,11 @@ async def _analysis_start_run(
     try:
         # Validate that the assets exist in this infospace BEFORE creating the run
         # This gives immediate feedback rather than failing in background celery task
-        valid_assets = services["asset_service"].get_assets_by_ids(
-            asset_ids, 
-            services["infospace_id"]
-        )
+        valid_assets = services["session"].exec(
+            select(Asset)
+            .where(Asset.id.in_(asset_ids))
+            .where(Asset.infospace_id == services["infospace_id"])
+        ).all()
         valid_asset_ids = {a.id for a in valid_assets}
         invalid_ids = [aid for aid in asset_ids if aid not in valid_asset_ids]
         
@@ -2975,13 +3362,29 @@ async def _asset_create_csv_container(services: Dict, ctx: Context, builder, dat
         )
     
     description = data.get("description")
-    
-    asset = await builder.for_csv_container(
-        title=title,
-        columns=columns,
-        description=description
-    ).build()
-    
+
+    from app.models import AssetKind, ProcessingStatus
+    metadata = {
+        "columns": columns,
+        "column_count": len(columns),
+        "row_count": 0,
+        "created_via": "mcp_chat",
+    }
+    if description:
+        metadata["description"] = description
+    asset = await (
+        builder
+        .as_kind(AssetKind.CSV)
+        .with_title(title)
+        .with_text(",".join(columns))  # header as text content
+        .with_metadata(**metadata)
+        .with_processing_status(ProcessingStatus.READY)
+        .no_dedup()
+        .build()
+    )
+    services["session"].commit()  # v2: builder flushes only; caller owns tx
+    services["session"].refresh(asset)
+
     return ToolResult(
         content=[TextContent(type="text", text=f"✅ CSV Dataset #{asset.id}: {asset.title}\nColumns: {', '.join(columns)}\n\nAdd rows with:\n  library_hub(operation='asset.create', kind='csv_row', row_data={{'Column1': 'value1', ...}}, parent_asset_id={asset.id})")],
         structured_content={
@@ -3048,24 +3451,28 @@ async def _asset_create_csv_row(services: Dict, ctx: Context, builder, data: Dic
         column_headers = parent_asset.file_info["columns"]
 
     # Build and create the CSV row with proper part_index
+    from app.models import AssetKind, ProcessingStatus
+    from app.api.modules.content.csv_helpers import (
+        csv_row_title, csv_row_text, csv_row_metadata,
+    )
+    row_title = csv_row_title(row_data, next_part_index if parent_asset_id else 0)
+    row_text = csv_row_text(row_data, column_headers)
+    row_meta = csv_row_metadata(row_data, column_headers)
+
+    builder = (
+        builder
+        .as_kind(AssetKind.CSV_ROW)
+        .with_title(row_title)
+        .with_text(row_text)
+        .with_metadata(**row_meta)
+        .with_processing_status(ProcessingStatus.READY)
+        .no_dedup()  # each row is a fresh child; caller controls identity
+    )
     if parent_asset_id:
-        asset = await (builder
-            .for_csv_row(
-                row_data=row_data,
-                column_headers=column_headers
-            )
-            .as_child_of(parent_asset_id)
-            .with_part_index(next_part_index)
-            .build()
-        )
-    else:
-        asset = await (builder
-            .for_csv_row(
-                row_data=row_data,
-                column_headers=column_headers
-            )
-            .build()
-        )
+        builder = builder.as_child_of(parent_asset_id).with_part_index(next_part_index)
+    asset = await builder.build()
+    services["session"].commit()  # v2: builder flushes only; caller owns tx
+    services["session"].refresh(asset)
 
     return ToolResult(
         content=[TextContent(type="text", text=f"✅ CSV Row #{asset.id}\n{asset.title}")],
@@ -3102,7 +3509,24 @@ async def _asset_create_article(services: Dict, ctx: Context, builder, data: Dic
             }
         )
 
-    asset = await builder.from_article(title=title, content=content).build()
+    from app.models import AssetKind, ProcessingStatus
+    asset = await (
+        builder
+        .as_kind(AssetKind.ARTICLE)
+        .with_title(title)
+        .with_text(content)
+        .with_metadata(
+            content_format="markdown",
+            content_source="user",
+            composition_type="free_form_article",
+            ingestion_method="article_composition",
+        )
+        .with_processing_status(ProcessingStatus.READY)
+        .no_dedup()
+        .build()
+    )
+    services["session"].commit()  # v2: builder flushes only; caller owns tx
+    services["session"].refresh(asset)
 
     return ToolResult(
         content=[TextContent(type="text", text=f"✅ Article #{asset.id}\n{asset.title}")],
@@ -3116,7 +3540,7 @@ async def _asset_create_article(services: Dict, ctx: Context, builder, data: Dic
 
 
 async def _asset_create_web(services: Dict, ctx: Context, builder, data: Dict[str, Any]) -> ToolResult:
-    """Create web asset."""
+    """Create web asset — delegates to WebHandler's composition helpers."""
     url = data.get("url")
     if not url:
         return ToolResult(
@@ -3127,10 +3551,16 @@ async def _asset_create_web(services: Dict, ctx: Context, builder, data: Dict[st
     title = data.get("title")
     stub = data.get("stub", False)
 
+    from app.api.modules.content.handlers.web_handler import (
+        _compose_url_stub, _compose_scraped_url,
+    )
     if stub:
-        asset = await builder.from_url_stub(url, title).build()
+        builder = await _compose_url_stub(builder, url, title)
     else:
-        asset = await builder.from_url(url, title).build()
+        builder = await _compose_scraped_url(builder, url, title, builder.blueprint.infospace_id)
+    asset = await builder.build()
+    services["session"].commit()  # v2: builder flushes only; caller owns tx
+    services["session"].refresh(asset)
 
     return ToolResult(
         content=[TextContent(type="text", text=f"✅ Web #{asset.id}\n{asset.title}")],
@@ -3156,7 +3586,19 @@ async def _asset_create_text(services: Dict, ctx: Context, builder, data: Dict[s
 
     title = data.get("title")
 
-    asset = await builder.from_text(content, title).build()
+    from app.models import AssetKind, ProcessingStatus
+    asset = await (
+        builder
+        .as_kind(AssetKind.TEXT)
+        .with_title(title or f"Text: {content[:30]}...")
+        .with_text(content)
+        .with_metadata(ingestion_method="direct_text")
+        .with_processing_status(ProcessingStatus.READY)
+        .no_dedup()
+        .build()
+    )
+    services["session"].commit()  # v2: builder flushes only; caller owns tx
+    services["session"].refresh(asset)
 
     return ToolResult(
         content=[TextContent(type="text", text=f"✅ Text #{asset.id}\n{asset.title}")],
@@ -3234,15 +3676,14 @@ async def _asset_update_content(services: Dict, ctx: Context, asset, data: Dict[
             structured_content={"error": "no valid updates"}
         )
     
-    # Use AssetService to update
-    asset_update = AssetUpdate(**update_dict)
-    updated_asset = services["asset_service"].update_asset(asset.id, asset_update)
-    
-    if not updated_asset:
-        return ToolResult(
-            content=[TextContent(type="text", text=f"❌ Failed to update asset {asset.id}")],
-            structured_content={"error": "update failed"}
-        )
+    # Apply updates directly — this endpoint is fields-only (no dedup, no versioning).
+    session = services["session"]
+    for field, value in update_dict.items():
+        setattr(asset, field, value)
+    session.add(asset)
+    session.commit()
+    session.refresh(asset)
+    updated_asset = asset
     
     # Return updated asset info
     updated_fields = list(update_dict.keys())
@@ -3260,7 +3701,8 @@ async def _asset_update_content(services: Dict, ctx: Context, asset, data: Dict[
 
 
 async def _asset_update_csv_row(services: Dict, ctx: Context, asset, data: Dict[str, Any]) -> ToolResult:
-    """Update CSV row asset."""
+    """Update CSV row asset — merges updates into existing row_data, rewrites
+    title + text_content, updates file_info. In-place mutation (no versioning)."""
     updates = data.get("updates")
     if not updates:
         return ToolResult(
@@ -3268,13 +3710,40 @@ async def _asset_update_csv_row(services: Dict, ctx: Context, asset, data: Dict[
             structured_content={"error": "updates is required"}
         )
 
-    # Create builder for update
-    from app.api.modules.content.services import AssetBuilder
-    builder = AssetBuilder(services["session"], services["user_id"], services["infospace_id"])
-
-    # Use update method
     merge_strategy = data.get("merge_strategy", "overwrite")
-    updated_asset = await builder.update_csv_row(asset.id, updates, merge_strategy).build()
+
+    from app.api.modules.content.csv_helpers import (
+        merged_csv_row, csv_row_title, csv_row_text, csv_row_update_metadata,
+    )
+    session = services["session"]
+    infospace_id = services["infospace_id"]
+
+    if asset.infospace_id != infospace_id:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ CSV row {asset.id} not accessible")],
+            structured_content={"error": "not_accessible", "asset_id": asset.id},
+        )
+
+    existing_row_data = (asset.file_info or {}).get("original_row_data", {})
+    merged = merged_csv_row(existing_row_data, updates, merge_strategy)
+    column_headers = (asset.file_info or {}).get("column_headers", list(merged.keys()))
+
+    # Apply changes in-place
+    asset.title = csv_row_title(merged, asset.part_index or 0)
+    asset.text_content = csv_row_text(merged, column_headers)
+    file_info = dict(asset.file_info or {})
+    file_info.update(csv_row_update_metadata(
+        merged, column_headers, list(updates.keys()), merge_strategy,
+    ))
+    asset.file_info = file_info
+    from datetime import datetime, timezone
+    from app.models import ProcessingStatus
+    asset.updated_at = datetime.now(timezone.utc)
+    asset.processing_status = ProcessingStatus.READY
+    session.add(asset)
+    session.commit()
+    session.refresh(asset)
+    updated_asset = asset
 
     return ToolResult(
         content=[TextContent(type="text", text=f"✅ Updated CSV Row #{asset.id}\n{updated_asset.title}")],
@@ -3297,14 +3766,19 @@ async def _asset_delete(services: Dict, ctx: Context, data: Dict[str, Any]) -> T
             structured_content={"error": "id is required"}
         )
 
-    # Delete using asset service (handles cascade)
-    deleted = services["asset_service"].delete_asset(asset_id)
-
-    if not deleted:
+    # Cascade delete via asset_ops (handles children, annotations, graph edges, chunks)
+    from app.api.modules.content.asset_ops import cascade_delete as _cascade_delete
+    session = services["session"]
+    infospace_id = services["infospace_id"]
+    asset = session.get(Asset, asset_id)
+    if not asset or asset.infospace_id != infospace_id:
         return ToolResult(
             content=[TextContent(type="text", text=f"❌ Asset {asset_id} not found or could not be deleted")],
             structured_content={"error": "asset not found or deletion failed"}
         )
+    _cascade_delete(session, {asset_id})
+    session.commit()
+    deleted = True
 
     return ToolResult(
         content=[TextContent(type="text", text=f"✅ Deleted asset #{asset_id}")],
@@ -3445,50 +3919,24 @@ async def _analysis_share_run(
 
 async def _analysis_list_schemas(services: Dict, ctx: Context) -> ToolResult:
     await ctx.info("Listing annotation schemas")
-    
-    schemas = services["annotation_service"].list_schemas(
-        services["infospace_id"]
-    )
-    
+
+    schemas = services["annotation_service"].list_schemas(services["infospace_id"])
     summary = format_schema_summary(schemas)
-    
+    if schemas:
+        summary += "\n→ Before editing, fetch the full contract: analysis_hub(operation='schema.get', schema_id=<id>)"
+
     schema_data = []
     for schema in schemas:
-        # Extract field count from output_contract
-        field_count = 0
-        if isinstance(schema.output_contract, dict):
-            properties = schema.output_contract.get("properties", {})
-            if properties:
-                # Count fields in hierarchical structure
-                if "document" in properties and isinstance(properties["document"], dict):
-                    doc_props = properties["document"].get("properties", {})
-                    field_count += len(doc_props) if doc_props else 0
-                # Count per-modality fields
-                for key, value in properties.items():
-                    if key.startswith("per_") and isinstance(value, dict):
-                        if value.get("type") == "array" and value.get("items", {}).get("type") == "object":
-                            items_props = value.get("items", {}).get("properties", {})
-                            field_count += len(items_props) if items_props else 0
-                # If no hierarchical structure, count flat properties
-                if field_count == 0:
-                    field_count = len(properties)
-        
-        schema_data.append({
-            "id": schema.id,
-            "name": schema.name,
-            "description": schema.description,
-            "version": schema.version,
-            "field_count": field_count,
-            "output_contract": schema.output_contract if isinstance(schema.output_contract, dict) else None,
-            "created_at": schema.created_at.isoformat() if schema.created_at else None,
-        })
-    
+        entry = _schema_to_structured(schema)
+        entry["created_at"] = schema.created_at.isoformat() if schema.created_at else None
+        schema_data.append(entry)
+
     return ToolResult(
         content=[TextContent(type="text", text=summary)],
         structured_content={
             "schemas": schema_data,
-            "total": len(schemas)
-        }
+            "total": len(schemas),
+        },
     )
 
 
@@ -3508,15 +3956,16 @@ async def _workspace_semantic_search(
     session = services["session"]
     infospace_id = services["infospace_id"]
     
-    infospace = session.get(Infospace, infospace_id)
-    if not infospace or not infospace.embedding_configured:
+    from app.api.modules.foundation_service_providers import get_selection
+    sel = get_selection(session, infospace_id, "embedding")
+    if not sel or not sel.model_name:
         return ToolResult(
             content=[
                 TextContent(
                     type="text",
-                    text="❌ Semantic search not available: Infospace does not have embeddings configured.\n\n"
+                    text="❌ Semantic search not available: no embedding model selected.\n\n"
                          "To enable semantic search:\n"
-                         "1. Configure an embedding model for this infospace\n"
+                         "1. Configure an embedding model for this infospace (or in your user provider defaults)\n"
                          "2. Generate embeddings for your assets\n"
                          "3. Retry workspace_hub(mode='semantic')"
                 )
@@ -3553,23 +4002,27 @@ async def _workspace_semantic_search(
                 content=[TextContent(type="text", text=f"❌ Invalid asset kind: {e}")]
             )
     
-    from app.api.modules.embedding.services import VectorSearchService
-    search_service = VectorSearchService(session, runtime_api_keys=services["runtime_api_keys"], user_id=services["user_id"])
-    
+    from app.api.modules.embedding.similarity import search_by_text
+    # BYOK from the MCP session's api_keys (stored user credentials resolved at session setup).
+    # The provider that runs is determined by the infospace's embedding config. We pass
+    # the first key as a best-effort fallback — the registry resolves the actual provider.
+    runtime_keys = services.get("runtime_api_keys") or {}
+    runtime_key = next(iter(runtime_keys.values()), None) if runtime_keys else None
+
     try:
         all_results = []
         query_results_map = {}
-        
+
         for q in queries:
-            results = await search_service.semantic_search(
-                query_text=q,
-                infospace_id=infospace_id,
+            results = await search_by_text(
+                session, infospace_id, q,
+                runtime_key=runtime_key,
                 limit=limit,
                 asset_kinds=kinds,
                 date_from=date_from_dt,
                 date_to=date_to_dt,
                 bundle_id=bundle_id,
-                parent_asset_id=parent_asset_id
+                parent_asset_id=parent_asset_id,
             )
             query_results_map[q] = results
             all_results.extend(results)
@@ -3808,3 +4261,630 @@ if __name__ == "__main__":
     mcp.run(stateless_http=True)
 
 
+
+
+# ============================================================================
+# CATEGORY: DOSSIER AGENT — formula authoring + observation snapshots
+# ============================================================================
+#
+# The DossierAgent's specialised toolset (M7 of the intelligence-primitive
+# plan). These tools let an LLM chat author Formulas, render panels, snapshot
+# Observations, and write dossier notes — the full intelligence workflow.
+#
+# See docs/intelligence/HOW_TO.md § DossierAgent for the conceptual picture
+# and docs/plans/intelligence-primitive/05_dossier_agent.md for the plan.
+#
+# Tag family: ["dossier", "formula"]. The chat backend filters MCP tools by
+# tag when the request carries agent="dossier".
+
+
+def _dashboard_dict(run: Any) -> dict:
+    """Return the run's dashboard config as a dict.
+
+    The canonical storage shape is ``views_config: List[Dict]`` with the
+    dashboard at index 0 (the frontend ``saveDashboardToBackend`` always
+    sends ``[dashboardConfig]``). Older code wrote a bare dict directly;
+    we tolerate both. List shape → ``cfg[0]``; bare dict → ``cfg``.
+    """
+    cfg = getattr(run, "views_config", None)
+    if isinstance(cfg, list):
+        if cfg and isinstance(cfg[0], dict):
+            return cfg[0]
+        return {}
+    if isinstance(cfg, dict):
+        return cfg
+    return {}
+
+
+def _save_dashboard(run: Any, dashboard: dict) -> None:
+    """Persist a dashboard dict back to ``run.views_config``.
+
+    Always writes as a single-element list ``[dashboard]`` to match the
+    column's declared ``List[Dict[str, Any]]`` type. Previously every
+    ``run.views_config = dashboard`` site wrote a bare dict and corrupted
+    the storage shape — frontend reads then mis-indexed and panels appeared
+    to vanish on reload.
+    """
+    run.views_config = [dashboard]
+
+
+@mcp.tool(tags=["dossier", "formula", "introspection"])
+async def formula_introspect_schema(
+    ctx: Context,
+    run_id: Annotated[int, "Annotation run to introspect"],
+) -> ToolResult:
+    """Discover what's available for formula authoring on this run.
+
+    Returns the row-shape roots (mails, events, regulatorische_handlungen,
+    …) and field paths the LLM can bind as Formula dims/measures, plus
+    sample annotation contents so the model sees concrete value shapes.
+
+    Use this FIRST when a user asks a question — the answer depends on
+    what the schema exposes.
+    """
+    from app.api.modules.annotation.models import AnnotationRun, AnnotationSchema
+    from sqlmodel import select
+
+    with get_services() as services:
+        resolve_access(services["session"], services["infospace_id"], services["user"])
+        session = services["session"]
+
+        run = session.get(AnnotationRun, run_id)
+        if not run or run.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
+                structured_content={"error": "run_not_found"},
+            )
+
+        # Collect schemas attached to this run — either via RunSchemaLink
+        # (canonical) or via Annotation.schema_id (any schema that produced
+        # annotations on this run). Union both for completeness.
+        from app.api.modules.annotation.models import Annotation, RunSchemaLink
+        link_ids = {
+            link.schema_id for link in session.exec(
+                select(RunSchemaLink).where(RunSchemaLink.run_id == run_id)
+            ).all()
+        }
+        ann_ids = set(session.exec(
+            select(Annotation.schema_id).where(Annotation.run_id == run_id).distinct()
+        ).all())
+        schema_ids = sorted(link_ids | ann_ids)
+        schemas = []
+        if schema_ids:
+            schemas = session.exec(
+                select(AnnotationSchema).where(AnnotationSchema.id.in_(schema_ids))
+            ).all()
+
+        out_schemas: list[dict] = []
+        for s in schemas:
+            surface = _walk_schema_surface(s.output_contract or {})
+
+            # Sample annotations — pull up to 3 recent annotation contents for
+            # this schema. The LLM uses these as concrete examples to ground
+            # field-path bindings ("ah, predicate values look like this").
+            sample_annotations: list[Any] = []
+            try:
+                sample_rows = session.exec(
+                    select(Annotation)
+                    .where(Annotation.run_id == run_id, Annotation.schema_id == s.id)
+                    .order_by(Annotation.id.desc())
+                    .limit(3)
+                ).all()
+                for ann in sample_rows:
+                    sample_annotations.append(_truncate_sample(ann.value))
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"introspect: sample fetch failed for schema {s.id}: {e}")
+
+            out_schemas.append({
+                "schema_id": s.id,
+                "name": s.name,
+                "description": getattr(s, "description", None) or "",
+                "row_shape_roots": surface["row_shape_roots"],
+                "field_paths": surface["field_paths"],
+                "simple_fields": surface["simple_fields"],
+                "sample_annotations": sample_annotations,
+            })
+
+        dashboard = _dashboard_dict(run)
+        formulas = dashboard.get("formulas") or []
+        formula_names = [f.get("name") for f in formulas if isinstance(f, dict)]
+
+        # Human-readable summary — first thing the model sees. Keep tight; the
+        # structured_content carries the full surface.
+        summary_lines = [f"📊 Run {run_id} ({run.name}) — {len(out_schemas)} schema(s)"]
+        for s in out_schemas:
+            summary_lines.append(f"\n## {s['name']} (schema_id={s['schema_id']})")
+            if s["description"]:
+                summary_lines.append(f"_{s['description']}_")
+            if s["row_shape_roots"]:
+                roots = ", ".join(r["path"] for r in s["row_shape_roots"])
+                summary_lines.append(f"**row-shape roots:** {roots}")
+            else:
+                summary_lines.append("**row-shape roots:** (none — schema is document-shaped, not row-shaped)")
+            summary_lines.append(f"**field paths:** {len(s['field_paths'])} total")
+            # Surface the first 8 paths inline so the model has immediate signal
+            # even if it doesn't dig into structured_content.
+            for fp in s["field_paths"][:8]:
+                bits = [f"`{fp['path']}` ({fp['type']})"]
+                if fp.get("axis"):
+                    bits.append(f"axis={fp['axis']}")
+                if fp.get("enum_values"):
+                    enum_preview = ", ".join(str(v) for v in fp["enum_values"][:5])
+                    suffix = "…" if len(fp["enum_values"]) > 5 else ""
+                    bits.append(f"enum=[{enum_preview}{suffix}]")
+                summary_lines.append(f"  - " + " ".join(bits))
+            if len(s["field_paths"]) > 8:
+                summary_lines.append(f"  - … {len(s['field_paths']) - 8} more in structured_content")
+            if s["sample_annotations"]:
+                summary_lines.append(f"**sample annotations:** {len(s['sample_annotations'])} examples in structured_content")
+
+        if formula_names:
+            summary_lines.append(f"\nSaved formulas: {', '.join(formula_names)}")
+        else:
+            summary_lines.append("\nSaved formulas: (none — author one with formula_create)")
+
+        return ToolResult(
+            content=[TextContent(type="text", text="\n".join(summary_lines))],
+            structured_content={
+                "run_id": run_id,
+                "run_name": run.name,
+                "schemas": out_schemas,
+                "saved_formulas": formula_names,
+            },
+        )
+
+
+def _truncate_sample(value: Any, max_chars: int = 800) -> Any:
+    """Truncate a sample annotation value for the LLM's introspection view.
+
+    Long extraction payloads burn context budget without adding signal past
+    the first few hundred characters. Stringify, slice, mark truncation.
+    """
+    import json as _json
+    try:
+        s = _json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        s = str(value)
+    if len(s) > max_chars:
+        return s[:max_chars] + "…[truncated]"
+    # Return the parsed value if it fits, so structured tools can navigate it.
+    return value if isinstance(value, (dict, list)) else s
+
+
+@mcp.tool(tags=["dossier", "formula", "create"])
+async def formula_create(
+    ctx: Context,
+    run_id: Annotated[int, "Annotation run that owns the dashboard"],
+    name: Annotated[str, "Unique name for the formula in this dossier"],
+    body: Annotated[Dict[str, Any], "Formula JSON — id/name/schema_id/filter/merge_maps/group/measures/derives/weight/snippet/output_keys/order_by"],
+    description: Annotated[Optional[str], "Optional human-readable description"] = None,
+) -> ToolResult:
+    """Save a new Formula on the run's DashboardConfig.formulas[].
+
+    The body is the six-verb shape (from·filter·group·measure·derive,
+    plus optional weight/snippet/order_by). Errors return a clear message
+    so the LLM can edit and retry.
+    """
+    from app.api.modules.annotation.models import AnnotationRun
+    from app.api.modules.annotation.formula import Formula
+    from pydantic import ValidationError as _ValidationError
+    import uuid
+
+    with get_services() as services:
+        resolve_access(services["session"], services["infospace_id"], services["user"])
+        session = services["session"]
+        run = session.get(AnnotationRun, run_id)
+        if not run or run.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
+                structured_content={"error": "run_not_found"},
+            )
+
+        # Stamp id/name/description from the tool args (body may omit them).
+        fid = str(body.get("id") or str(uuid.uuid4())[:16])
+        merged_body = {
+            **body,
+            "id": fid,
+            "name": name,
+            "description": description if description is not None else body.get("description"),
+        }
+        try:
+            formula = Formula.model_validate(merged_body)
+        except _ValidationError as e:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Invalid formula body:\n{e}")],
+                structured_content={"error": "invalid_formula", "detail": str(e)},
+            )
+
+        dashboard = dict(_dashboard_dict(run))
+        formulas = list(dashboard.get("formulas") or [])
+        if any(f.get("name") == name for f in formulas if isinstance(f, dict)):
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Formula {name!r} already exists. Use formula_edit to modify.")],
+                structured_content={"error": "duplicate_name"},
+            )
+
+        now = datetime.now(timezone.utc).isoformat()
+        formula_entry = {
+            **formula.model_dump(mode="json"),
+            "created_at": now,
+            "updated_at": now,
+        }
+        formulas.append(formula_entry)
+        dashboard["formulas"] = formulas
+        _save_dashboard(run, dashboard)
+        session.add(run)
+        session.commit()
+
+        return ToolResult(
+            content=[TextContent(type="text", text=f"✓ Formula {name!r} saved.")],
+            structured_content={"formula": formula_entry},
+        )
+
+
+@mcp.tool(tags=["dossier", "formula", "edit"])
+async def formula_edit(
+    ctx: Context,
+    run_id: int,
+    name: Annotated[str, "Name of the formula to modify"],
+    patch: Annotated[Dict[str, Any], "Partial Formula — verbs to merge onto the existing body (group/measures/filter/derives/...)"],
+) -> ToolResult:
+    """Modify a saved Formula by name. The patch is merged onto the current
+    body; pass only the verbs you want to change."""
+    from app.api.modules.annotation.models import AnnotationRun
+    from app.api.modules.annotation.formula import Formula
+    from pydantic import ValidationError as _ValidationError
+
+    with get_services() as services:
+        resolve_access(services["session"], services["infospace_id"], services["user"])
+        session = services["session"]
+        run = session.get(AnnotationRun, run_id)
+        if not run or run.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
+                structured_content={"error": "run_not_found"},
+            )
+
+        dashboard = dict(_dashboard_dict(run))
+        formulas = list(dashboard.get("formulas") or [])
+        idx = next(
+            (i for i, f in enumerate(formulas) if isinstance(f, dict) and f.get("name") == name),
+            None,
+        )
+        if idx is None:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Formula {name!r} not found")],
+                structured_content={"error": "formula_not_found"},
+            )
+
+        # Strip metadata fields from the existing entry before validating;
+        # they'll be re-stamped on save.
+        existing_meta = {
+            "created_at": formulas[idx].get("created_at"),
+            "updated_at": formulas[idx].get("updated_at"),
+        }
+        existing_body = {
+            k: v for k, v in formulas[idx].items()
+            if k not in {"created_at", "updated_at"}
+        }
+        merged = {**existing_body, **patch, "name": name}
+        try:
+            formula = Formula.model_validate(merged)
+        except _ValidationError as e:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Patch produced invalid formula:\n{e}")],
+                structured_content={"error": "invalid_formula", "detail": str(e)},
+            )
+
+        formulas[idx] = {
+            **formula.model_dump(mode="json"),
+            "created_at": existing_meta["created_at"],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        dashboard["formulas"] = formulas
+        _save_dashboard(run, dashboard)
+        session.add(run)
+        session.commit()
+
+        return ToolResult(
+            content=[TextContent(type="text", text=f"✓ Formula {name!r} updated.")],
+            structured_content={"formula": formulas[idx]},
+        )
+
+
+@mcp.tool(tags=["dossier", "formula", "preview"])
+async def formula_preview(
+    ctx: Context,
+    run_id: int,
+    name: Annotated[str, "Saved formula name"],
+    limit: Annotated[int, "Max rows to return"] = 20,
+) -> ToolResult:
+    """Run a saved Formula and return a sample of the output relation
+    (rows + row count). Use this before snapshotting to verify the formula
+    does what the user asked."""
+    from app.api.modules.annotation.formulas import resolve_formula, attach_formula_lookup
+    from app.api.modules.annotation.models import AnnotationRun
+    from app.api.modules.annotation.query import AnnotationQuery
+
+    with get_services() as services:
+        resolve_access(services["session"], services["infospace_id"], services["user"])
+        session = services["session"]
+        run = session.get(AnnotationRun, run_id)
+        if not run or run.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
+                structured_content={"error": "run_not_found"},
+            )
+
+        dashboard = _dashboard_dict(run)
+        try:
+            formula = resolve_formula(name, dashboard)
+        except ValueError:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Formula {name!r} not found")],
+                structured_content={"error": "formula_not_found"},
+            )
+
+        aq = (
+            AnnotationQuery(session, services["infospace_id"])
+            .runs([run_id])
+            .paginate(limit=max(1, min(int(limit), 5000)))
+        )
+        attach_formula_lookup(aq, dashboard)
+        rel = aq.relation(formula)
+        sample = [r.model_dump(mode="json") for r in rel.rows]
+
+        summary = (
+            f"📐 Formula {name!r}: {rel.total} rows"
+            + (" (more)" if rel.has_more else "")
+        )
+        return ToolResult(
+            content=[TextContent(type="text", text=summary)],
+            structured_content={
+                "formula_name": name,
+                "total": rel.total,
+                "evidence_mode": rel.evidence_mode,
+                "measure_names": rel.measure_names,
+                "has_more": rel.has_more,
+                "sample": sample,
+            },
+        )
+
+
+@mcp.tool(tags=["dossier", "formula", "list"])
+async def formula_list(
+    ctx: Context,
+    run_id: int,
+) -> ToolResult:
+    """List all saved Formulas in this dossier with their key fields."""
+    from app.api.modules.annotation.models import AnnotationRun
+
+    with get_services() as services:
+        resolve_access(services["session"], services["infospace_id"], services["user"])
+        session = services["session"]
+        run = session.get(AnnotationRun, run_id)
+        if not run or run.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
+                structured_content={"error": "run_not_found"},
+            )
+
+        dashboard = _dashboard_dict(run)
+        formulas = dashboard.get("formulas") or []
+        summary_lines = [f"📐 Saved formulas on run {run_id}:"]
+        for f in formulas:
+            if not isinstance(f, dict):
+                continue
+            dims = [d.get("name") for d in (f.get("group") or []) if isinstance(d, dict)]
+            meas = [m.get("name") for m in (f.get("measures") or []) if isinstance(m, dict)]
+            derives = [s.get("name") for s in (f.get("derives") or []) if isinstance(s, dict)]
+            parts = [f"group=[{', '.join(dims)}]", f"measures=[{', '.join(meas)}]"]
+            if derives:
+                parts.append(f"derives=[{', '.join(derives)}]")
+            summary_lines.append(f"  • {f.get('name')} — {' '.join(parts)}")
+        if not formulas:
+            summary_lines.append("  (none yet — formula_create to add one)")
+
+        return ToolResult(
+            content=[TextContent(type="text", text="\n".join(summary_lines))],
+            structured_content={"formulas": formulas},
+        )
+
+
+@mcp.tool(tags=["dossier", "panel", "create"])
+async def panel_create(
+    ctx: Context,
+    run_id: int,
+    formula_name: Annotated[str, "Saved formula to bind to the new panel"],
+    panel_type: Annotated[str, "pie | chart | graph | table | map"] = "table",
+    panel_name: Annotated[Optional[str], "Display name for the panel (defaults to formula name)"] = None,
+    grid_position: Annotated[Optional[Dict[str, int]], "Optional {x, y, w, h}; auto-places if omitted"] = None,
+) -> ToolResult:
+    """Drop a panel onto the dashboard, bound to the named formula."""
+    from app.api.modules.annotation.models import AnnotationRun
+    import uuid
+
+    if panel_type not in {"pie", "chart", "graph", "table", "map"}:
+        return ToolResult(
+            content=[TextContent(type="text", text=f"❌ Invalid panel_type {panel_type!r}")],
+            structured_content={"error": "invalid_panel_type"},
+        )
+
+    with get_services() as services:
+        resolve_access(services["session"], services["infospace_id"], services["user"])
+        session = services["session"]
+        run = session.get(AnnotationRun, run_id)
+        if not run or run.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
+                structured_content={"error": "run_not_found"},
+            )
+
+        dashboard = dict(_dashboard_dict(run))
+        formulas = dashboard.get("formulas") or []
+        formula_entry = next(
+            (f for f in formulas if isinstance(f, dict) and f.get("name") == formula_name),
+            None,
+        )
+        if not formula_entry:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Formula {formula_name!r} not found")],
+                structured_content={"error": "formula_not_found"},
+            )
+
+        panels = list(dashboard.get("panels") or [])
+        # Auto-place: next free row at the bottom of the grid.
+        if grid_position is None:
+            max_y = max((int(p.get("grid_position", {}).get("y", 0)) + int(p.get("grid_position", {}).get("h", 4)) for p in panels), default=0)
+            grid_position = {"x": 0, "y": max_y, "w": 6, "h": 4}
+
+        # Thin Panel — render binding only. Engine + filter live on the Formula.
+        new_panel = {
+            "id": str(uuid.uuid4())[:16],
+            "type": panel_type,
+            "name": panel_name or formula_name,
+            "formula_id": formula_entry.get("id"),
+            "grid_position": grid_position,
+            "collapsed": False,
+            "settings": {},
+        }
+        panels.append(new_panel)
+        dashboard["panels"] = panels
+        _save_dashboard(run, dashboard)
+        session.add(run)
+        session.commit()
+
+        return ToolResult(
+            content=[TextContent(type="text", text=f"✓ {panel_type} panel created for formula {formula_name!r} at ({grid_position['x']},{grid_position['y']})")],
+            structured_content={"panel": new_panel},
+        )
+
+
+@mcp.tool(tags=["dossier", "panel", "layout"])
+async def panel_layout(
+    ctx: Context,
+    run_id: int,
+) -> ToolResult:
+    """Return the current grid: panel ids, types, formula bindings, positions."""
+    from app.api.modules.annotation.models import AnnotationRun
+
+    with get_services() as services:
+        resolve_access(services["session"], services["infospace_id"], services["user"])
+        session = services["session"]
+        run = session.get(AnnotationRun, run_id)
+        if not run or run.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
+                structured_content={"error": "run_not_found"},
+            )
+
+        dashboard = _dashboard_dict(run)
+        panels = dashboard.get("panels") or []
+        summary_lines = [f"🪟 Dashboard on run {run_id}: {len(panels)} panels"]
+        for p in panels:
+            if not isinstance(p, dict):
+                continue
+            pos = p.get("grid_position") or {}
+            fid = p.get("formula_id") or p.get("observation_id") or "(unbound)"
+            summary_lines.append(
+                f"  • {p.get('type')} {p.get('name')!r} @ ({pos.get('x')},{pos.get('y')}) {pos.get('w')}x{pos.get('h')} formula={fid}"
+            )
+
+        return ToolResult(
+            content=[TextContent(type="text", text="\n".join(summary_lines))],
+            structured_content={"panels": panels},
+        )
+
+
+@mcp.tool(tags=["dossier", "snapshot"])
+async def observation_snapshot(
+    ctx: Context,
+    run_id: int,
+    formula_name: Annotated[str, "Saved formula to snapshot"],
+    note: Annotated[Optional[str], "Optional journalist note attached to this snapshot"] = None,
+) -> ToolResult:
+    """Snapshot a formula's current output as an immutable Observation.
+
+    The formula body is inlined; editing the formula afterwards does NOT
+    mutate this Observation. Re-snapshot to capture new corpus state.
+    """
+    from app.api.modules.annotation.formulas import resolve_formula, attach_formula_lookup
+    from app.api.modules.annotation.models import AnnotationRun
+    from app.api.modules.annotation.query import AnnotationQuery
+    from app.api.modules.annotation import snapshots as _snapshots
+
+    with get_services() as services:
+        resolve_access(services["session"], services["infospace_id"], services["user"])
+        session = services["session"]
+        run = session.get(AnnotationRun, run_id)
+        if not run or run.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
+                structured_content={"error": "run_not_found"},
+            )
+
+        dashboard = _dashboard_dict(run)
+        try:
+            formula = resolve_formula(formula_name, dashboard)
+        except ValueError:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Formula {formula_name!r} not found")],
+                structured_content={"error": "formula_not_found"},
+            )
+
+        aq = AnnotationQuery(session, services["infospace_id"]).runs([run_id])
+        attach_formula_lookup(aq, dashboard)
+        rel = aq.relation(formula)
+        obs = _snapshots.snapshot_from_formula(
+            run=run,
+            formula_name=formula_name,
+            relation=rel,
+            note=note,
+            schema_id=formula.schema_id,
+        )
+        _snapshots.append_observation(run, obs)
+        session.add(run)
+        session.commit()
+
+        return ToolResult(
+            content=[TextContent(type="text", text=f"📸 Snapshotted {formula_name!r} ({len(obs.output_blob)} rows) as obs {obs.id}")],
+            structured_content={"observation": obs.model_dump(mode="json")},
+        )
+
+
+@mcp.tool(tags=["dossier", "notes"])
+async def dossier_note_append(
+    ctx: Context,
+    run_id: int,
+    md: Annotated[str, "Markdown to append to the dossier notes. Supports @cite[obs_id, key:(...)] markers."],
+) -> ToolResult:
+    """Append to the dossier's notes_md.
+
+    Notes are markdown; the agent should cite observations by their id
+    using ``@cite[<obs_id>, key:(<tuple>)]`` so the frontend can rewind
+    panels to the snapshot when the citation is clicked.
+    """
+    from app.api.modules.annotation.models import AnnotationRun
+
+    with get_services() as services:
+        resolve_access(services["session"], services["infospace_id"], services["user"])
+        session = services["session"]
+        run = session.get(AnnotationRun, run_id)
+        if not run or run.infospace_id != services["infospace_id"]:
+            return ToolResult(
+                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
+                structured_content={"error": "run_not_found"},
+            )
+
+        dashboard = dict(_dashboard_dict(run))
+        existing = dashboard.get("notes_md") or ""
+        new_notes = existing.rstrip() + ("\n\n" if existing else "") + md.strip() + "\n"
+        dashboard["notes_md"] = new_notes
+        _save_dashboard(run, dashboard)
+        session.add(run)
+        session.commit()
+
+        return ToolResult(
+            content=[TextContent(type="text", text=f"✓ Appended {len(md)} chars to dossier notes")],
+            structured_content={"notes_md": new_notes},
+        )

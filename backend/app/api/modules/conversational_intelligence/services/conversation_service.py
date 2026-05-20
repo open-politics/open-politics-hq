@@ -9,13 +9,12 @@ from sqlmodel import Session, select, and_, or_
 import asyncio
 from jose import jwt
 
-from app.api.modules.foundation_service_providers.registry import resolve, load_credentials, is_accessible, list_providers, get_provider, get_descriptor
-from app.api.modules.foundation_service_providers.base import GenerationResponse, LanguageModelProvider
+from app.api.modules.foundation_service_providers import resolve, ProviderError, get_model_spec
+from app.api.modules.foundation_service_providers.base import GenerationResponse
 from app.models import Asset, User, Infospace, Bundle, AnnotationSchema, Annotation, AssetKind
-from app.api.modules.content.services import AssetService
 from app.api.modules.annotation.services import AnnotationService
-from app.api.modules.search.services import SearchService
-from app.schemas import AnnotationRunCreate, AssetCreate
+from app.api.modules.content.query import AssetQuery
+from app.schemas import AnnotationRunCreate
 from app.api.modules.conversational_intelligence.mcp_server.client import (
     IntelligenceMCPClient,
     get_mcp_client,
@@ -60,12 +59,10 @@ class IntelligenceConversationService:
     def __init__(
         self,
         session: Session,
-        asset_service: AssetService,
         annotation_service: AnnotationService,
         settings: Any = None,
     ):
         self.session = session
-        self.asset_service = asset_service
         self.annotation_service = annotation_service
         self._settings = settings
         logger.info("IntelligenceConversationService initialized")
@@ -85,7 +82,6 @@ class IntelligenceConversationService:
         try:
             async with get_mcp_client(
                 session=self.session,
-                asset_service=self.asset_service,
                 annotation_service=self.annotation_service,
                 user_id=user_id,
                 infospace_id=infospace_id,
@@ -181,31 +177,50 @@ class IntelligenceConversationService:
         tools_enabled: bool = True,
         tools: Optional[List[Dict[str, Any]]] = None,
         provider_name: Optional[str] = None,
+        agent: Optional[str] = None,
+        run_id: Optional[int] = None,
+        formula_id: Optional[str] = None,
         **kwargs,
     ) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
         Intelligence analysis chat with full tool orchestration.
 
         The model can search, analyze, and interact with intelligence data through tool calls.
+
+        Parameters
+        ----------
+        agent:
+            Optional agent persona. ``None`` / ``'intelligence'`` (default) loads
+            the workspace-wide research toolset. ``'dossier'`` activates the
+            DossierAgent — narrower toolset (formula authoring, observation
+            snapshots) plus the formula-manual system prompt. See
+            ``docs/intelligence/HOW_TO.md`` § DossierAgent.
+        run_id:
+            When ``agent='dossier'``, the run the agent operates against. The
+            system prompt surfaces this as a default for tool calls; the tools
+            themselves still take ``run_id`` explicitly so the model can
+            cross-run if a user asks.
         """
         context_token = create_mcp_context_token_with_api_keys(
             user_id, infospace_id, api_keys or {}, conversation_id, model_name
         )
 
-        credentials = load_credentials(self.session, user_id, api_keys) if user_id else (api_keys or {})
-        provider_instance = resolve(
-            LanguageModelProvider,
-            provider_name,
-            self._settings,
-            credentials,
-        )
-        if not provider_instance:
+        runtime_key = (api_keys or {}).get(provider_name) if provider_name else None
+        try:
+            provider_instance = resolve(
+                "language", provider_name, model_name,
+                infospace_id=infospace_id,
+                context="chat",
+                runtime_key=runtime_key,
+                session=self.session,
+            )
+        except ProviderError as e:
             raise ValueError(
-                f"No LLM provider available for model '{model_name}'. Please check available models at /api/v1/chat/models"
+                f"No LLM provider available for model '{model_name}': {e}"
             )
 
-        model_info = provider_instance.get_model_info(model_name)
-        supports_tools = bool(getattr(model_info, "supports_tools", False)) if model_info else False
+        model_spec = get_model_spec("language", provider_instance.provider_key, model_name)
+        supports_tools = bool(getattr(model_spec, "supports_tools", False)) if model_spec else False
 
         if supports_tools and tools_enabled:
             if tools is not None and len(tools) > 0:
@@ -213,11 +228,41 @@ class IntelligenceConversationService:
             else:
                 tools = await self.get_universal_tools(user_id, infospace_id, api_keys)
                 logger.info(f"Fetched {len(tools)} tools from MCP server")
+
+            # Agent personas — narrow the tool surface so the model stays on
+            # task. Each persona gets its own subset; the default workspace
+            # chat sees all universal tools.
+            #
+            # - dossier  : run-level orchestration (formula + panel + snapshot + note)
+            # - formula  : formula authoring only (introspect / create / edit / preview / list)
+            if agent == "dossier" and tools:
+                dossier_tool_names = {
+                    "formula_introspect_schema", "formula_create", "formula_edit",
+                    "formula_preview", "formula_list",
+                    "panel_create", "panel_layout",
+                    "observation_snapshot", "dossier_note_append",
+                }
+                before = len(tools)
+                tools = [t for t in tools if (t.get("function") or t).get("name") in dossier_tool_names]
+                logger.info(f"DossierAgent: filtered {before} → {len(tools)} tools")
+            elif agent == "formula" and tools:
+                formula_tool_names = {
+                    "formula_introspect_schema", "formula_create", "formula_edit",
+                    "formula_preview", "formula_list",
+                }
+                before = len(tools)
+                tools = [t for t in tools if (t.get("function") or t).get("name") in formula_tool_names]
+                logger.info(f"FormulaAgent: filtered {before} → {len(tools)} tools")
         else:
             tools = None
 
         infospace = self.session.get(Infospace, infospace_id)
-        system_context = self._build_infospace_context(infospace)
+        if agent == "dossier":
+            system_context = self._build_dossier_agent_context(infospace, run_id)
+        elif agent == "formula":
+            system_context = self._build_formula_agent_context(infospace, run_id, formula_id)
+        else:
+            system_context = self._build_infospace_context(infospace)
 
         context_messages = [{"role": "system", "content": system_context}] + messages
 
@@ -326,7 +371,6 @@ class IntelligenceConversationService:
         try:
             async with get_mcp_client(
                 session=self.session,
-                asset_service=self.asset_service,
                 annotation_service=self.annotation_service,
                 user_id=user_id,
                 infospace_id=infospace_id,
@@ -383,12 +427,33 @@ class IntelligenceConversationService:
             except Exception:
                 return {"id": getattr(a, "id", None), "title": getattr(a, "title", None)}
 
-        search_service = SearchService(self.session)
+        kinds = [AssetKind(k) for k in (asset_kinds or []) if k in AssetKind.__members__]
+
+        def _text_query(q: str, n: int) -> AssetQuery:
+            aq = (
+                AssetQuery(self.session, infospace_id)
+                .exclude_superseded()
+                .text(q, mode="fts")
+                .sort("relevance" if q else "created_at_desc")
+                .paginate(limit=n)
+            )
+            if kinds:
+                aq.kinds(kinds)
+            return aq
+
+        def _semantic_query(q: str, n: int) -> AssetQuery:
+            aq = (
+                AssetQuery(self.session, infospace_id)
+                .exclude_superseded()
+                .semantic(q, top_k=n)
+                .paginate(limit=n)
+            )
+            if kinds:
+                aq.kinds(kinds)
+            return aq
 
         if search_method == "text":
-            assets = await search_service.search_assets_text(
-                query, infospace_id, limit, options
-            )
+            assets = _text_query(query, limit).execute()
             return {
                 "assets": [_serialize_asset(a) for a in assets],
                 "total_found": len(assets),
@@ -396,9 +461,11 @@ class IntelligenceConversationService:
             }
 
         elif search_method == "semantic":
-            assets = await search_service.search_assets_semantic(
-                query, infospace_id, limit, options
-            )
+            try:
+                assets = await _semantic_query(query, limit).execute_async()
+            except Exception as e:
+                logger.warning(f"Semantic search failed, falling back to text: {e}")
+                assets = _text_query(query, limit).execute()
             return {
                 "assets": [_serialize_asset(a) for a in assets],
                 "total_found": len(assets),
@@ -406,13 +473,19 @@ class IntelligenceConversationService:
             }
 
         elif search_method == "hybrid":
-            text_task = search_service.search_assets_text(
-                query, infospace_id, max(1, limit // 2), options
-            )
-            sem_task = search_service.search_assets_semantic(
-                query, infospace_id, max(1, limit // 2), options
-            )
-            text_list, sem_list = await asyncio.gather(text_task, sem_task)
+            half = max(1, limit // 2)
+
+            async def _run_text():
+                return _text_query(query, half).execute()
+
+            async def _run_sem():
+                try:
+                    return await _semantic_query(query, half).execute_async()
+                except Exception as e:
+                    logger.warning(f"Semantic search failed in hybrid: {e}")
+                    return []
+
+            text_list, sem_list = await asyncio.gather(_run_text(), _run_sem())
 
             merged: Dict[int, Dict[str, Any]] = {}
             for a in text_list:
@@ -610,6 +683,7 @@ class IntelligenceConversationService:
             return {"error": "Title and content are required for a report"}
 
         try:
+            from app.api.modules.content.services.asset_builder import AssetBuilder
             file_info = {
                 "composition_type": "report",
                 "created_by": "user_action",
@@ -617,15 +691,17 @@ class IntelligenceConversationService:
                 "source_bundle_ids": source_bundle_ids or [],
                 "source_run_ids": source_run_ids or [],
             }
-            report_create = AssetCreate(
-                title=title,
-                kind=AssetKind.ARTICLE,
-                text_content=content,
-                user_id=user_id,
-                infospace_id=infospace_id,
-                file_info=file_info,
+            report_asset = await (
+                AssetBuilder(self.session, user_id, infospace_id)
+                .as_kind(AssetKind.ARTICLE)
+                .with_title(title)
+                .with_text(content)
+                .with_metadata(**file_info)
+                .no_dedup()
+                .build()
             )
-            report_asset = self.asset_service.create_asset(report_create)
+            self.session.commit()
+            self.session.refresh(report_asset)
 
             return {
                 "report_id": report_asset.id,
@@ -673,6 +749,115 @@ class IntelligenceConversationService:
             logger.error(f"Failed to curate asset fragment: {e}")
             return {"error": f"Failed to curate asset fragment: {str(e)}"}
 
+    def _build_dossier_agent_context(self, infospace: Infospace, run_id: Optional[int]) -> str:
+        """Build the DossierAgent's system prompt.
+
+        Concatenates the static formula-manual (the canonical reference at
+        ``prompts/dossier_agent_prompt.md``) with a small dynamic preamble
+        carrying the active infospace + run scope. Surfaces the run_id so
+        the model defaults tool calls to it.
+        """
+        from pathlib import Path
+        now = datetime.now(timezone.utc).strftime("%A, %B %d, %Y at %H:%M UTC")
+        safe_name = (infospace.name or "").replace("{", "{{").replace("}", "}}")
+        run_hint = f"You are operating on run_id={run_id}. Default every tool call to this id unless the user explicitly scopes elsewhere." if run_id else "No run scope was provided; ask the user which run to operate on before authoring formulas."
+
+        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "dossier_agent_prompt.md"
+        try:
+            manual = prompt_path.read_text(encoding="utf-8")
+        except OSError as e:
+            logger.warning(f"DossierAgent prompt missing: {e}; falling back to inline summary")
+            manual = (
+                "You are the DossierAgent. Author Formulas (six verbs: from, "
+                "filter, group, weight, aggregate, derive), drop Panels bound "
+                "to them, snapshot Observations, and write dossier notes. "
+                "Always call formula_introspect_schema first."
+            )
+
+        return (
+            f"<workspace>\"{safe_name}\" — current: {now}\n{run_hint}</workspace>\n\n"
+            + manual
+        )
+
+    def _build_formula_agent_context(
+        self,
+        infospace: Infospace,
+        run_id: Optional[int],
+        formula_id: Optional[str] = None,
+    ) -> str:
+        """Build the FormulaAgent's system prompt.
+
+        Narrower than DossierAgent — focuses on single-formula authoring inside
+        the workspace editor. No panel ops, no snapshots, no notes. The model
+        only sees the formula-* tools and is told to lead with introspection.
+
+        When ``formula_id`` is set, surfaces the active formula's name + body
+        so the model defaults edits to it instead of asking which formula.
+        """
+        from pathlib import Path
+        from app.api.modules.annotation.models import AnnotationRun
+        now = datetime.now(timezone.utc).strftime("%A, %B %d, %Y at %H:%M UTC")
+        safe_name = (infospace.name or "").replace("{", "{{").replace("}", "}}")
+
+        run_hint = (
+            f"You are inside the formula workspace for run_id={run_id}. Always pass "
+            f"this run_id to your tools. The user is authoring or refining one formula at a time."
+            if run_id else
+            "No run scope provided. Ask the user which run before authoring."
+        )
+
+        # Active-formula hint: look up the formula by id on the run's dashboard
+        # config and surface its current body to the model so edits are
+        # informed, not speculative.
+        active_hint = ""
+        if run_id and formula_id:
+            try:
+                run = self.session.get(AnnotationRun, run_id)
+                if run:
+                    vc = getattr(run, "views_config", None)
+                    dashboard = (
+                        vc[0] if isinstance(vc, list) and vc and isinstance(vc[0], dict)
+                        else vc if isinstance(vc, dict)
+                        else None
+                    )
+                    formulas = (dashboard or {}).get("formulas") or []
+                    active = next(
+                        (f for f in formulas if isinstance(f, dict) and f.get("id") == formula_id),
+                        None,
+                    )
+                    if active:
+                        import json as _json
+                        body = _json.dumps(active.get("projection") or {}, ensure_ascii=False)[:1200]
+                        active_hint = (
+                            f"\n\n<active_formula>The user has formula "
+                            f"\"{active.get('name')}\" (id={formula_id}) open in the editor. "
+                            f"Default edits to it via formula_edit unless they ask for something new. "
+                            f"Current body (truncated):\n{body}</active_formula>"
+                        )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"formula agent: active hint lookup failed: {e}")
+
+        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "formula_agent_prompt.md"
+        try:
+            manual = prompt_path.read_text(encoding="utf-8")
+        except OSError as e:
+            logger.warning(f"FormulaAgent prompt missing: {e}; falling back to inline summary")
+            manual = (
+                "You are the FormulaAgent. Help the user author a single Formula. "
+                "First call formula_introspect_schema(run_id) to discover the schema "
+                "surface (row-shape roots, field paths, axes). Then either propose a "
+                "PanelProjection body and call formula_create, or call formula_edit on "
+                "an existing one. Never invent fields — only use paths that introspect "
+                "actually returned."
+            )
+
+        return (
+            f"<workspace>\"{safe_name}\" — current: {now}\n{run_hint}</workspace>"
+            + active_hint
+            + "\n\n"
+            + manual
+        )
+
     def _build_infospace_context(self, infospace: Infospace) -> str:
         """Build system context about the infospace for the AI model"""
         now = datetime.now(timezone.utc)
@@ -692,28 +877,41 @@ Current: {current_datetime}
 Tool results display: After executing a tool, reference with <tool_results tool="name" />
 The UI will render rich interactive results at that marker.
 
-Common operations
-1. Start: navigate() shows workspace tree (bundles + assets)
-2. Explore: navigate(mode="view", node_id="X") peeks inside
-3. Search: navigate(mode="search", query="...") or semantic_search()
-4. Organize: organize(operation="create", name="...", asset_ids=[...])
-5. Web: search_web() → ingest_urls() (two-step: search, then save selections)
+Pick the entry point by task type — do NOT default to navigate() for everything:
+• Browse/explore the workspace tree   → navigate()
+• Edit, create, inspect a SCHEMA      → analysis_hub(operation="schema.list" | "schema.get" | "schema.update" | "schema.create")
+• Start or inspect an annotation RUN  → analysis_hub(operation="run.start" | "run.list" | "run.dashboard")
+• Organize assets into bundles        → organize()
+• Research the web                    → search_web() → ingest_urls()
+• Remember user context               → working_memory()
+
+Schemas are NOT assets — navigate() will not find them. Use analysis_hub for anything schema-related.
+
+Minimum call plans (plan the path mentally BEFORE the first tool call):
+• Schema edit: schema.list → schema.get(id) → schema.update(id, output_contract=...)   (3 calls)
+• Schema create: analysis_hub(op="schema.create", schema_name, output_contract)          (1 call)
+• Run start: analysis_hub(op="run.start", schema_id, asset_ids)                          (1 call)
+• Asset browse: navigate(mode="search", query=..., depth="previews")                     (1 call)
+• Asset load for editing: navigate(mode="view", node_id=..., depth="full")               (1 call)
+
+If the minimum path isn't obvious from the request, ask ONE clarifying question instead
+of exploring. This is not the same as asking permission for a clear task — it's avoiding
+wrong actions on ambiguous intent. Example: user says "schreib sie rein" (write them in) —
+if it's unclear whether they mean "list them for review" vs "commit to the schema", ask.
 
 Efficient navigation patterns (CRITICAL - prevents iteration limits):
 • SEARCH FIRST, don't walk the tree: navigate(resource="assets", mode="search", query="topic", depth="previews")
 • Direct bundle access: navigate(mode="view", node_id="bundle-123", depth="previews") to see contents
 • Batch operations: tasks(operation="batch", actions=[...]) instead of individual calls
-• Plan minimal sequence: Search → Batch → Update (3-4 calls total)
 
 ⚠️ NEVER use depth="full" for search/list - use "previews" for browsing, "full" only when editing specific documents
 
 Common anti-patterns that cause iteration limits:
+❌ Using navigate() to find schemas or runs (use analysis_hub)
 ❌ Multiple separate calls to explore structure (tree → view → list → load)
 ❌ Individual task additions instead of batching (3 tasks = 3 calls, should be 1)
 ❌ Fetching content multiple times or at wrong depth (search previews → then load full)
 ❌ Not planning workflow upfront (exploring → then deciding what to do)
-
-✅ Optimal: Single search (limit=1, depth="full" when editing) → Batch tasks → Update (3 calls)
 
 Depth usage (BUDGET-AWARE):
 • depth="previews" (DEFAULT): ~125 tokens/asset - use for browsing, searching, exploring
@@ -727,7 +925,6 @@ Key principles:
 • Track work: working_memory() avoids redundant fetches
 • Batch operations: MANDATORY - Use tasks(operation="batch") for 2+ task operations (prevents iteration limits)
 • Chain operations: Multiple tools in one response when logical
-• Direct search over tree walking: navigate(mode="search") finds bundles/assets in one call
 
 Task operations (CRITICAL):
 • Always funnel mutations through tasks(operation="batch", actions=[...]) — even single additions/updates.
@@ -751,29 +948,43 @@ General principles:
         return context
 
     async def get_available_models(
-        self, user_id: int, capability: Optional[str] = None,
-        api_keys: Optional[Dict[str, str]] = None,
+        self,
+        capability: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Get available models for intelligence analysis.
+        Enumerate statically-declared language models across the deployment.
 
-        Uses discover_models() from registry which handles access checks
-        and credential resolution uniformly.
+        Reads from the descriptor registry — no credentials, no infospace context.
+        Callers that need credential-validated discovery should go through the
+        ``/providers/models`` route (infospace-gated) instead.
         """
-        logger.info(f"Model discovery request: user={user_id}, capability={capability}")
+        from app.api.modules.foundation_service_providers import list_providers
+        from app.api.modules.foundation_service_providers.base import LLMModelSpec
 
-        try:
-            from app.api.modules.foundation_service_providers.registry import discover_models as _discover
+        results: List[Dict[str, Any]] = []
+        for provider_key, desc in list_providers("language"):
+            for spec in desc.models:
+                if not isinstance(spec, LLMModelSpec):
+                    continue
+                entry = {
+                    "name": spec.name,
+                    "provider": provider_key,
+                    "supports_tools": spec.supports_tools,
+                    "supports_streaming": spec.supports_streaming,
+                    "supports_thinking": spec.supports_thinking,
+                    "supports_multimodal": spec.supports_multimodal,
+                    "supports_structured_output": spec.supports_structured_output,
+                }
+                if spec.max_tokens:
+                    entry["max_tokens"] = spec.max_tokens
+                if spec.context_length:
+                    entry["context_length"] = spec.context_length
+                if spec.description:
+                    entry["description"] = spec.description
+                results.append(entry)
 
-            credentials = load_credentials(self.session, user_id, api_keys) if user_id else (api_keys or {})
-            models = _discover(LanguageModelProvider, self._settings, credentials)
+        if capability:
+            results = [m for m in results if m.get(f"supports_{capability}", False)]
 
-            if capability:
-                models = [m for m in models if m.get(f"supports_{capability}", False)]
-
-            logger.info(f"Discovered {len(models)} models for user {user_id}")
-            return models
-
-        except Exception as e:
-            logger.error(f"Model discovery failed: {e}")
-            raise RuntimeError(f"Model discovery failed: {str(e)}")
+        logger.info("Language model catalog: %d entries", len(results))
+        return results

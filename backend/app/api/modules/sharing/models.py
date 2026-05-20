@@ -202,8 +202,11 @@ class PackageItem(SQLModel, table=True):
     asset_id: Optional[int] = Field(
         default=None, sa_column=Column(Integer, ForeignKey("asset.id", ondelete="CASCADE"))
     )
-    entity_canonical_id: Optional[int] = Field(
-        default=None, sa_column=Column(Integer, ForeignKey("entitycanonical.id", ondelete="CASCADE"))
+    entity_id: Optional[int] = Field(
+        default=None, sa_column=Column(Integer, ForeignKey("entity.id", ondelete="CASCADE"))
+    )
+    canon_id: Optional[int] = Field(
+        default=None, sa_column=Column(Integer, ForeignKey("canon.id", ondelete="CASCADE"))
     )
     # Per-item permission overrides (NULL = use package default)
     allow_download: Optional[bool] = None
@@ -229,7 +232,8 @@ class PackageItem(SQLModel, table=True):
         CheckConstraint(
             "(bundle_id IS NOT NULL)::int + (run_id IS NOT NULL)::int + "
             "(graph_id IS NOT NULL)::int + (schema_id IS NOT NULL)::int + "
-            "(asset_id IS NOT NULL)::int + (entity_canonical_id IS NOT NULL)::int = 1",
+            "(asset_id IS NOT NULL)::int + (entity_id IS NOT NULL)::int + "
+            "(canon_id IS NOT NULL)::int = 1",
             name="ck_packageitem_exactly_one_fk",
         ),
         CheckConstraint(
@@ -251,7 +255,8 @@ class PackageItem(SQLModel, table=True):
         if self.graph_id is not None: return "graph"
         if self.schema_id is not None: return "schema"
         if self.asset_id is not None: return "asset"
-        if self.entity_canonical_id is not None: return "entity"
+        if self.entity_id is not None: return "entity"
+        if self.canon_id is not None: return "canon"
         return "unknown"
 
     @property
@@ -259,7 +264,7 @@ class PackageItem(SQLModel, table=True):
         """Compat accessor — returns the non-null FK value."""
         return (
             self.bundle_id or self.run_id or self.graph_id or self.schema_id
-            or self.asset_id or self.entity_canonical_id or 0
+            or self.asset_id or self.entity_id or self.canon_id or 0
         )
 
     def effective_allow_download(self) -> bool:

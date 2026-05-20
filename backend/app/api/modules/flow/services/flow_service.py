@@ -562,14 +562,7 @@ class FlowService:
         )
         
         if not self.annotation_service:
-            from app.api.modules.content.services.asset_service import AssetService
-            from app.api.modules.foundation_service_providers.registry import get_storage_provider
-            from app.core.config import settings as app_settings
-            storage_provider = get_storage_provider(app_settings)
-            asset_service = AssetService(self.session, storage_provider)
-            self.annotation_service = AnnotationService(
-                session=self.session, asset_service=asset_service
-            )
+            self.annotation_service = AnnotationService(session=self.session)
         
         # Create run without queueing (we'll set flow_execution_id before queueing)
         annotation_run = self.annotation_service.create_run(
@@ -948,13 +941,19 @@ class FlowService:
 
         from app.core.task_utils import run_async_in_celery
         from app.api.modules.graph.resolution import resolve_entities_batch
+        from app.api.modules.graph.tasks.curation import _resolve_target_canon
+
+        # Derive canon: use the graph's canon if a graph_id was specified,
+        # otherwise the infospace's default canon. Mirrors the curation
+        # entrypoint.
+        canon_id, _ = _resolve_target_canon(self.session, infospace_id, graph_id)
 
         resolved = run_async_in_celery(
             resolve_entities_batch,
             self.session,
-            infospace_id,
-            list(dict.fromkeys(entities_to_resolve)),
-            graph_id=graph_id,
+            infospace_id=infospace_id,
+            canon_id=canon_id,
+            entities=list(dict.fromkeys(entities_to_resolve)),
         )
 
         from app.api.modules.graph.models import FragmentCuration
@@ -977,7 +976,7 @@ class FlowService:
                     annotation_id=ann_id,
                     fragment_path=path,
                     status="curated",
-                    entity_canonical_id=canonical.id,
+                    entity_id=canonical.id,
                     source_run_id=execution.id,
                 )
                 self.session.add(fc)
@@ -1076,58 +1075,25 @@ class FlowService:
         Uses the infospace's configured embedding model to generate embeddings
         for each asset, enabling semantic search capabilities.
         """
-        from app.api.modules.embedding.services import EmbeddingService
-        from app.core.task_utils import run_async_in_celery
-        
         overwrite = step_config.get("overwrite", False)
-        
-        logger.info(f"FlowExecution {execution.id}: Embedding {len(asset_ids)} assets")
-        
-        # Create embedding service with flow user context
-        embedding_service = EmbeddingService(
-            self.session,
-            user_id=flow.user_id
-        )
-        
-        total_chunks = 0
-        total_embeddings = 0
-        failed_assets = []
-        
-        async def embed_all():
-            nonlocal total_chunks, total_embeddings, failed_assets
-            
-            for asset_id in asset_ids:
-                try:
-                    result = await embedding_service.generate_embeddings_for_asset(
-                        asset_id=asset_id,
-                        infospace_id=flow.infospace_id,
-                        overwrite=overwrite
-                    )
-                    total_chunks += result.get("chunks_created", 0)
-                    total_embeddings += result.get("embeddings_generated", 0)
-                except Exception as e:
-                    logger.warning(f"Failed to embed asset {asset_id}: {e}")
-                    failed_assets.append(asset_id)
-        
-        try:
-            run_async_in_celery(embed_all)
-        except Exception as e:
-            logger.error(f"FlowExecution {execution.id}: EMBED step failed: {e}", exc_info=True)
-            return {
-                "type": "EMBED",
-                "asset_count": len(asset_ids),
-                "status": "failed",
-                "error": str(e),
-                "passed_asset_ids": asset_ids,
-            }
-        
+
+        logger.info(f"FlowExecution {execution.id}: dispatching embedding enricher for {len(asset_ids)} assets")
+
+        # EMBED step delegates to the embedding enricher. The enricher runs async on
+        # the embedding queue, handles chunking + provider resolution + Matryoshka
+        # truncation, and emits asset.enriched events that downstream steps can react to.
+        # No waiting here — the flow step is a dispatcher, not an embedder.
+        if overwrite:
+            from app.api.modules.embedding.embed import reset_for_assets
+            reset_for_assets(self.session, asset_ids)
+
+        from app.api.modules.content.enrichers import enrich_embedding
+        enrich_embedding.delay(asset_ids, flow.infospace_id)
+
         return {
             "type": "EMBED",
             "asset_count": len(asset_ids),
-            "chunks_created": total_chunks,
-            "embeddings_generated": total_embeddings,
-            "failed_assets": failed_assets,
-            "status": "completed" if not failed_assets else "completed_with_errors",
+            "status": "dispatched",
             "passed_asset_ids": asset_ids,
         }
     
@@ -1137,106 +1103,25 @@ class FlowService:
         asset_ids: List[int],
         execution: FlowExecution,
     ) -> Dict[str, Any]:
-        """
-        Execute an ANALYZE step - run analysis adapters on annotated assets.
-        
-        This step can invoke registered analysis adapters for aggregation,
-        time series analysis, or other post-processing on annotation results.
-        
-        Step config:
-            adapter_name: Name of the adapter to use (e.g., "time_series", "label_distribution")
-            adapter_config: Configuration dict for the adapter
-        """
-        from app.core.task_utils import run_async_in_celery
-        
-        adapter_name = step_config.get("adapter_name")
-        adapter_config = step_config.get("adapter_config", {})
-        
-        if not adapter_name:
-            return {
-                "type": "ANALYZE",
-                "asset_count": len(asset_ids),
-                "status": "skipped",
-                "message": "No adapter_name specified",
-                "passed_asset_ids": asset_ids,
-            }
+        """ANALYZE step — currently disabled.
 
-        # Look up adapter from DB (AnalysisAdapter registry)
-        from app.models import AnalysisAdapter
-
-        adapter_record = self.session.exec(
-            select(AnalysisAdapter).where(
-                AnalysisAdapter.name == adapter_name,
-                AnalysisAdapter.is_active == True,
-            )
-        ).first()
-        if not adapter_record or not adapter_record.module_path:
-            available = [
-                r.name for r in self.session.exec(
-                    select(AnalysisAdapter.name).where(AnalysisAdapter.is_active == True)
-                ).all()
-            ]
-            return {
-                "type": "ANALYZE",
-                "asset_count": len(asset_ids),
-                "status": "error",
-                "message": f"Unknown or inactive adapter: {adapter_name}. Available: {available}",
-                "passed_asset_ids": asset_ids,
-            }
-        adapter_path = adapter_record.module_path
-        
-        # Get flow context for adapter
-        flow = self.session.get(Flow, execution.flow_id)
-        user = self.session.get(User, flow.user_id) if flow else None
-        
-        # Get previous step's annotation run for context
-        prev_step_key = str(len(execution.step_outputs) - 1)
-        prev_output = execution.step_outputs.get(prev_step_key, {})
-        
-        # Build adapter config with context
-        full_config = {
-            **adapter_config,
-            "target_run_id": prev_output.get("run_id"),
-            "target_asset_ids": asset_ids,
+        The AnalysisAdapter system has been replaced by the composable
+        /view endpoint and AnnotationQuery builder.  Flows will be
+        rebuilt in a later sprint to use AnnotationQuery directly.
+        """
+        adapter_name = step_config.get("adapter_name", "unknown")
+        logger.warning(
+            f"FlowExecution {execution.id}: ANALYZE step skipped — "
+            f"adapter system removed (adapter={adapter_name})"
+        )
+        return {
+            "type": "ANALYZE",
+            "adapter": adapter_name,
+            "asset_count": len(asset_ids),
+            "status": "skipped",
+            "message": "ANALYZE step disabled — adapter system replaced by /view endpoint",
+            "passed_asset_ids": asset_ids,
         }
-        
-        logger.info(f"FlowExecution {execution.id}: Running {adapter_name} adapter")
-        
-        async def run_adapter():
-            import importlib
-            module_path, class_name = adapter_path.rsplit(".", 1)
-            module = importlib.import_module(module_path)
-            adapter_class = getattr(module, class_name)
-            
-            adapter = adapter_class(
-                session=self.session,
-                config=full_config,
-                current_user=user,
-                infospace_id=flow.infospace_id if flow else None
-            )
-            
-            return await adapter.execute()
-        
-        try:
-            result = run_async_in_celery(run_adapter)
-            return {
-                "type": "ANALYZE",
-                "adapter": adapter_name,
-                "asset_count": len(asset_ids),
-                "result": result,
-                "status": "completed",
-                "passed_asset_ids": asset_ids,
-            }
-        except Exception as e:
-            logger.error(f"FlowExecution {execution.id}: ANALYZE step failed: {e}", exc_info=True)
-            return {
-                "type": "ANALYZE",
-                "adapter": adapter_name,
-                "asset_count": len(asset_ids),
-                "status": "failed",
-                "error": str(e),
-                "passed_asset_ids": asset_ids,
-            }
     
     # ═══════════════════════════════════════════════════════════════════════════
     # DELTA TRACKING
