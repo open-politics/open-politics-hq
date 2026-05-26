@@ -212,14 +212,34 @@ ensure_postgres_password() {
   local c; read -rp "  Your choice [1/2]: " c
   case "$c" in
     1)
-      local v
+      # The volume is attached to the db container — must remove the container
+      # before we can remove the volume. `compose down` (without -v) stops +
+      # removes all containers but preserves named volumes; we then surgically
+      # remove just app-db-data, leaving redis_data / ollama_data / caddy_data
+      # / nominatim-data intact (those can be huge and shouldn't be collateral).
+      say "${DIM}stopping stack to release the postgres volume…${NC}"
+      local cmd; cmd="$(compose_cmd)"
+      COMPOSE_PROFILES="$(active_profiles)" $cmd down >/dev/null 2>&1 || true
+
+      local v removed=0 failed=0
       while IFS= read -r v; do
         [[ -z "$v" ]] && continue
-        docker volume rm "$v" 2>/dev/null \
-          || warn "Could not remove $v — is a container still using it? Stop the stack first."
+        if docker volume rm "$v" >/dev/null 2>&1; then
+          removed=$((removed + 1))
+          say "  removed volume $v"
+        else
+          failed=$((failed + 1))
+          warn "  could not remove $v"
+        fi
       done < <(docker volume ls --format '{{.Name}}' | grep -E '(^|_)app-db-data$')
+
+      if [[ "$failed" -gt 0 || "$removed" -eq 0 ]]; then
+        warn "Volume removal incomplete. Try manually:"
+        warn "    $cmd down  &&  docker volume rm <volume-name>"
+        die "Aborting — re-run setup after the volume is gone."
+      fi
       set_env POSTGRES_PASSWORD "$(gen_secret)"
-      ok "wiped old postgres volume + generated fresh POSTGRES_PASSWORD" ;;
+      ok "removed postgres volume + generated fresh POSTGRES_PASSWORD" ;;
     *)
       die "Aborted. Edit .env (set POSTGRES_PASSWORD to the existing value) and re-run." ;;
   esac
