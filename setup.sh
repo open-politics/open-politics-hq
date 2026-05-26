@@ -2099,8 +2099,13 @@ network_mode_menu() {
       conf_set network_mode bridge
       backup_env
       set_env BACKEND_BIND_HOST "0.0.0.0"
-      ok "Switched to bridge. Restart the stack to apply."
-      confirm "Restart now?" && { ( stack_restart ) || warn "Restart failed."; } ;;
+      ok "Switched to bridge."
+      # Network topology change — needs down + up, not restart. Down releases
+      # the old ports so the up's port precheck sees the real free/busy state.
+      if confirm "Apply now? (stops + restarts the stack)"; then
+        ( stack_down ) || warn "Stop failed."
+        ( stack_up )   || warn "Start failed."
+      fi ;;
     host)
       [[ "$cur" == host ]] && { say "Already host."; pause; return; }
       NETWORK_MODE=host
@@ -2108,9 +2113,12 @@ network_mode_menu() {
       conf_set network_mode host
       backup_env
       set_env BACKEND_BIND_HOST "127.0.0.1"
-      ok "Switched to host (hardened). Restart the stack to apply."
+      ok "Switched to host (hardened)."
       warn "Mac/Windows: enable Docker Desktop's host networking feature first."
-      confirm "Restart now?" && { ( stack_restart ) || warn "Restart failed."; } ;;
+      if confirm "Apply now? (stops + restarts the stack)"; then
+        ( stack_down ) || warn "Stop failed."
+        ( stack_up )   || warn "Start failed."
+      fi ;;
     "") return 0 ;;
     *) warn "Invalid choice."; pause ;;
   esac
