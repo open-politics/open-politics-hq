@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -124,8 +124,15 @@ class OutputRow(BaseModel):
 
 
 class OutputRelation(BaseModel):
-    """A Formula's frozen-able answer. No per-row provenance in aggregate
-    mode by design — see ``docs/intelligence/HOW_TO.md``."""
+    """A Formula's aggregate-mode answer (grouped buckets keyed by group
+    dims, with measures and optional derives). No per-row provenance in
+    pure aggregate mode by design — see ``docs/intelligence/HOW_TO.md``.
+
+    Rows-shape and graph-shape responses are packed by their own view
+    phases (rows view → :class:`AnnotationRow`/asset-hierarchy; graph
+    view → :class:`GraphResult`). This class is exclusively the
+    aggregate phase's response.
+    """
 
     rows: list[OutputRow] = Field(default_factory=list)
     output_keys: list[str] = Field(default_factory=list)
@@ -887,6 +894,11 @@ class AnnotationQuery:
         resolution — merge maps normalise values in-flight; canonical
         identity is a curation concern, persisted out-of-band.
 
+        This is the **aggregate phase** entry-point. Rows-shape and
+        graph-shape responses are packed by their own materialization
+        methods (``results()`` and ``graph_stream()`` respectively),
+        routed through :class:`FormulaQuery` at the /view boundary.
+
         Mixed ``distribution + sum/mean/etc`` is decomposed into two
         queries that share the WHERE and merge by group key, so the
         author writes one formula and the engine does the right thing.
@@ -906,8 +918,11 @@ class AnnotationQuery:
                 self._schema_ids = [formula.schema_id]
             if formula.filter and formula.filter.conditions:
                 self._conditions.extend(formula.filter.conditions)
-            for mm in formula.merge_maps:
-                self._merge_maps.append(mm)
+            # NOTE: merge_maps were removed from Formula. Callers (e.g.
+            # FormulaQuery) compose run/panel/scope merge maps onto the
+            # AnnotationQuery via ``aq.merge(mm)`` before invoking
+            # ``relation(formula)``. The engine itself no longer reads
+            # ``formula.merge_maps``.
             return self._compute_relation(formula)
         finally:
             self._schema_ids, self._conditions, self._merge_maps = saved
@@ -1112,9 +1127,8 @@ class AnnotationQuery:
             params.update(dp)
             select_parts.append(f"{dacc} AS distval")
             agg_parts.append("count(*) AS m_cnt")
-            group_cols = ", ".join(
-                [e for _, e in dim_sql] + [dacc]
-            ) or "1"
+            # distval always belongs in GROUP BY, so this list is never empty.
+            group_cols = ", ".join([e for _, e in dim_sql] + [dacc])
         else:
             # Per-row weight (the GGL case): a numeric/enum-lifted expr that
             # multiplies value in sum, and forms a weighted mean. min/max/
@@ -1164,7 +1178,8 @@ class AnnotationQuery:
                     )
             if not agg_parts:
                 agg_parts.append("count(*) AS m_cnt")
-            group_cols = ", ".join(e for _, e in dim_sql) or "1"
+            # Empty = no GROUP BY (the whole relation is one row).
+            group_cols = ", ".join(e for _, e in dim_sql)
 
         # ORDER BY — explicit override (Formula.order_by) or smart default.
         # Default: time ASC if a time dim is present (chronological);
@@ -1186,9 +1201,7 @@ class AnnotationQuery:
                     sql_order = f"m_{mi} {ob.direction.upper()} NULLS LAST"
                 elif any(s.name == ob.column for s in formula.derives):
                     # post-eval sort; SQL falls back to group cols for determinism
-                    sql_order = (
-                        group_cols if group_cols and group_cols != "1" else "1"
-                    )
+                    sql_order = group_cols or "1"
                 else:
                     raise ValueError(
                         f"order_by column {ob.column!r} matches no dim, "
@@ -1204,7 +1217,7 @@ class AnnotationQuery:
             elif not dist and any(m.agg != "top" for m in measures):
                 sql_order = "m_0 DESC NULLS LAST"
             else:
-                sql_order = group_cols if group_cols and group_cols != "1" else "1"
+                sql_order = group_cols or "1"
 
         # Pagination — no more silent truncation. ``distribution`` folds in
         # Python so its groups must all be present: bound high + flag, no
@@ -1213,13 +1226,15 @@ class AnnotationQuery:
         off = self._cursor if isinstance(self._cursor, int) and self._cursor > 0 else 0
         page_has_more = False
         page_cursor_next: str | None = None
+        # Zero dimensions (and no distval) → no GROUP BY clause: the whole
+        # filtered relation collapses to a single aggregate row.
+        group_clause = f"GROUP BY {group_cols}\n                " if group_cols else ""
         if dist:
             sql = f"""
                 SELECT {', '.join(select_parts + agg_parts)}
                 FROM {from_clause}
                 WHERE {where}
-                GROUP BY {group_cols}
-                ORDER BY {sql_order}
+                {group_clause}ORDER BY {sql_order}
                 LIMIT 20001
             """
             rows = self._session.exec(text(sql).bindparams(**params)).all()
@@ -1231,8 +1246,7 @@ class AnnotationQuery:
                 SELECT {', '.join(select_parts + agg_parts)}
                 FROM {from_clause}
                 WHERE {where}
-                GROUP BY {group_cols}
-                ORDER BY {sql_order}
+                {group_clause}ORDER BY {sql_order}
                 LIMIT {lim + 1} OFFSET {off}
             """
             rows = self._session.exec(text(sql).bindparams(**params)).all()

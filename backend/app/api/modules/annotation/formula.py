@@ -23,11 +23,16 @@ Key facts (see ``docs/intelligence/HOW_TO.md``):
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.api.modules.annotation.panel_config import GridPosition, PanelType
+from app.api.modules.annotation.panel_config import (
+    GridPosition,
+    PanelConfig,
+    PanelType,
+    Scope,
+)
 from app.core.filters import FilterSet, MergeMap
 
 # ─── The Formula body ───────────────────────────────────────────────────────
@@ -117,7 +122,26 @@ class Formula(BaseModel):
     Authored identically by the prompt bar (one LLM call), the Dashboard
     Operator, or hand-edit; all emit *this* shape. Lives on
     ``AnnotationRun.views_config.formulas[]``.
+
+    Formula is the pure **data spec**: filter, group, measures, derive,
+    weight, explode. It carries no view metadata — the output packing is
+    decided by the request's phase (rows / aggregate / graph / future
+    statistics / co-occurrence). ``eligible_panels(formula)`` infers
+    which view types are valid for a given Formula.
+
+    The pipeline:
+
+    .. code-block::
+
+        [Frontend] → Formula → FormulaQuery (builds AnnotationQuery,
+                                exposes phase packers) → Views → [Frontend]
     """
+
+    model_config = ConfigDict(extra="ignore")
+    """Silently drop unknown fields so historical formulas with the
+    now-removed ``merge_maps`` field still load cleanly (the canonical
+    place for merge maps is Run.aliases + Panel.merge_maps + Scope.merge_maps,
+    composed at the FormulaQuery boundary)."""
 
     id: str
     name: str
@@ -125,7 +149,6 @@ class Formula(BaseModel):
     schema_id: int | None = None
     explosion: str | None = None
     filter: FilterSet = Field(default_factory=FilterSet)
-    merge_maps: list[MergeMap] = Field(default_factory=list)
     group: list[Dimension] = Field(default_factory=list)
     weight: Measure | None = None
     measures: list[Measure] = Field(default_factory=list)
@@ -157,25 +180,54 @@ Formula.model_rebuild()
 
 
 class Panel(BaseModel):
-    """A thin render binding. Points at a live Formula XOR a frozen
-    Observation; carries no query. The simplest direct-read panel is just
-    the simplest Formula (``from schema · group X · count``)."""
+    """A dashboard panel — display artifact with a data spec, projection,
+    and visual mapping.
+
+    Anatomy:
+
+    - ``formula`` — the inline :class:`Formula` (pure data spec). Edited
+      via the RolePicker's data sections (filter, group, measures,
+      explode, derive, weight).
+    - ``formula_ref`` — optional pointer into ``DashboardConfig.formulas[]``;
+      when set, the runtime resolves the saved formula from the run's
+      ``views_config.formulas[]`` and uses it instead of ``formula``.
+      Edits to that saved formula propagate to every panel binding it.
+      The local ``formula`` is preserved (so detaching reverts cleanly).
+    - ``fields`` — projection list for the rows view: which value-blob
+      paths to ship per row. Empty list = ship the full value blob.
+    - ``panel_config`` — per-type viz map + display knobs (discriminated
+      on ``kind``). Refers to Formula output names + ``fields`` by
+      string (e.g. ``PieConfig.slice_by = "topic"``).
+    - ``time_source`` — panel-level designated timestamp field. Used by
+      time-aware views (chart, brush gestures); time-centric panels
+      may override via a role pick.
+    - ``scopes_in`` — incoming :class:`Scope` contributions from other
+      panels. Composed into the panel's effective filter at /view time.
+    - ``merge_maps`` — panel-local value aliases (applied as SQL
+      ``CASE WHEN`` in-flight).
+
+    ``panel.type`` and ``panel.panel_config.kind`` MUST match.
+    """
 
     id: str
     type: PanelType
     name: str
     description: str | None = None
-    formula_id: str | None = None
-    observation_id: str | None = None
+    formula: Formula
+    formula_ref: str | None = None
+    fields: list[str] = Field(default_factory=list)
+    panel_config: PanelConfig
+    time_source: str | None = None
+    scopes_in: list[Scope] = Field(default_factory=list)
+    merge_maps: list[MergeMap] = Field(default_factory=list)
     grid_position: GridPosition
     collapsed: bool = False
-    settings: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _one_binding(self) -> "Panel":
-        if self.formula_id and self.observation_id:
+    def _type_matches_config(self) -> "Panel":
+        if self.type != self.panel_config.kind:
             raise ValueError(
-                "Panel binds a formula XOR an observation, not both"
+                f"Panel.type={self.type!r} != panel_config.kind={self.panel_config.kind!r}"
             )
         return self
 
@@ -184,14 +236,25 @@ class Panel(BaseModel):
 
 
 def eligible_panels(formula: Formula) -> set[PanelType]:
-    """Deterministic relation-shape → drawable panel types. ``table`` is the
-    universal fallback; ``distribution``/``top`` are table/observation only.
+    """Deterministic Formula → drawable panel types. ``table`` is the
+    universal fallback; specific panel types are added based on the
+    Formula's group/measure composition.
 
-    For ``n_entity >= 2``, graph renders the first two entity dims as the
-    edge and any extra entity dims become edge attributes (label/colour/
-    hover) — see HOW_TO §Panels for the convention."""
+    A Formula with no group + no measures (pure filter) is naturally
+    rows-ready and renders in table/map (markers). A Formula with
+    group+measures is aggregate-ready and renders in pie/chart/map/
+    observation depending on dim kinds. Two entity dims → graph.
+
+    For ``n_entity >= 2``, graph renders the first two entity dims as
+    the edge and any extra entity dims become edge attrs — see HOW_TO
+    §Panels for the convention."""
     panels: set[PanelType] = {"table"}
     kinds = [d.kind for d in formula.group]
+
+    # Pure filter (no group, no measures) → list-mode renders.
+    if not formula.group and not formula.measures:
+        panels.add("map")  # markers when fields include a geo path
+        return panels
 
     if "geo" in kinds:
         panels.add("map")
@@ -211,5 +274,16 @@ def eligible_panels(formula: Formula) -> set[PanelType]:
     if len(kinds) == 1 and (n_cat == 1 or n_entity == 1):
         panels.add("pie")
         panels.add("chart")
+
+    # Aggregate formulas with at least one measure render as measurements
+    # (single scalar / mini table / stats — the catch-all stats panel).
+    if formula.measures:
+        panels.add("measurements")
+
+    # Scatter eligibility: aggregate with two dims (any kind) + one
+    # measure, OR with two numeric measures. Both cover label × label
+    # heatmaps and true numeric scatter.
+    if len(formula.group) == 2 and len(formula.measures) >= 1:
+        panels.add("scatter")
 
     return panels

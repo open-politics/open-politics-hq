@@ -293,6 +293,41 @@ def test_relation_can_be_called_twice_on_same_aq(db, fx):
     assert [r.measures["n"] for r in rel1.rows] == [r.measures["n"] for r in rel2.rows]
 
 
+def test_zero_dim_count_collapses_to_single_scalar(db, fx):
+    """No group dims → one row with the aggregate over the whole filtered
+    relation. Postgres rejects ``GROUP BY 1`` on an aggregate, so the engine
+    must omit the GROUP BY clause entirely."""
+    f = Formula(
+        id="fzd",
+        name="total",
+        measures=[Measure(name="n", agg="count")],
+    )
+    aq = AnnotationQuery(db, fx["iid"]).runs([fx["rid"]])
+    rel = aq.relation(f)
+    assert len(rel.rows) == 1
+    assert rel.rows[0].keys == {}
+    # Fixture inserts six annotations.
+    assert rel.rows[0].measures["n"] == 6.0
+
+
+def test_zero_dim_sum_and_mean(db, fx):
+    """Zero-dim with sum + mean produces one row with both measures and no
+    spurious group expression."""
+    f = Formula(
+        id="fzdm",
+        name="totals",
+        measures=[
+            Measure(name="total_score", path="score", agg="sum"),
+            Measure(name="avg_score", path="score", agg="mean"),
+        ],
+    )
+    rel = AnnotationQuery(db, fx["iid"]).runs([fx["rid"]]).relation(f)
+    assert len(rel.rows) == 1
+    assert rel.rows[0].keys == {}
+    assert rel.rows[0].measures["total_score"] == pytest.approx(4 + 6 + 8 + 2 + 5 + 9)
+    assert rel.rows[0].measures["avg_score"] == pytest.approx((4 + 6 + 8 + 2 + 5 + 9) / 6)
+
+
 # ─── Multi-level explosion ──────────────────────────────────────────────────
 
 

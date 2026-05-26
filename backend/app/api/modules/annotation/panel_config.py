@@ -1,24 +1,30 @@
-"""Panel render settings — the per-type configuration a dashboard panel carries.
+"""Panel config — per-type viz map + display knobs.
 
-A :class:`Panel` (from :mod:`.formula`) is the thin render binding —
-``formula_id`` XOR ``observation_id`` + ``grid_position`` + a ``settings``
-dict. The typed shapes for that dict, plus shared rendering vocab
-(``PanelType``, ``GridPosition``, ``Scope``, ``ForwardPropertySpec``), live
-here. The query body — dims, measures, derives — is on the **Formula**,
-not the Panel.
+A :class:`Panel` (from :mod:`.formula`) carries:
 
-The legacy module also contained ``PanelProjection`` (the false primitive
-that conflated three jobs) and ``migrate_panel_config`` (a 200-line legacy
-hoist). Both were deleted with the Formula/Axis unroll. ``migrate_views_
-config`` survives as a no-op shim so the historical ``a2v3w4x5y6z7``
-Alembic revision still imports it cleanly on fresh DBs (where the
-annotationrun table is empty and the migration is a no-op anyway).
+- a :class:`Formula` (the data spec)
+- a ``fields[]`` projection list (what to ship in rows view)
+- a typed ``panel_config`` (the per-type viz map + display knobs)
+- shared concerns: ``time_source``, ``scopes_in``, ``merge_maps``
+
+Per-type configs (Pie/Chart/Map/Table/Graph/Observation) are discriminated
+on a ``kind`` literal. Each carries:
+
+- **Viz map**: role assignments referring to fields *by name* (e.g.
+  ``PieConfig.slice_by = "topic"`` where ``"topic"`` resolves to a
+  Formula group dim name, a measure name, or a `Panel.fields[]` path).
+- **Display knobs**: per-type render config (mark style, scales,
+  layout, density) that doesn't affect what's queried.
+
+The viz map references Formula output names by string, never duplicating
+the data spec. The Formula owns the query; ``panel_config`` owns how its
+output binds to visual channels.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -27,7 +33,9 @@ from app.core.filters import FilterSet, MergeMap
 logger = logging.getLogger(__name__)
 
 
-PanelType = Literal["table", "chart", "pie", "graph", "map"]
+PanelType = Literal[
+    "table", "chart", "pie", "graph", "map", "measurements", "scatter"
+]
 
 
 class GridPosition(BaseModel):
@@ -40,16 +48,28 @@ class GridPosition(BaseModel):
 
 
 class Scope(BaseModel):
-    """A cross-panel filter constraint. Source panel produces, receiver applies.
+    """A cross-panel data-side constraint. Source panel emits at gesture
+    time; receiving panel composes into its own Formula at /view time.
 
-    ``mode='push'`` is a snapshot: the filter is captured at creation time.
-    ``mode='link'`` keeps the receiver coupled to the source's current filter
-    (live propagation in the frontend store).
+    Carries the **data-side state from the source RolePicker** at gesture
+    time:
 
-    ``group_context`` carries the source panel's active group value when the
-    selection was made inside one group's render unit. ``merge_maps`` carries
-    the source panel's active normalization so the receiver can resolve
-    canonicalized values back to raw strings.
+    - ``filter`` — the source's filter conditions plus the gesture's
+      selection (e.g. clicked slice → ``topic=Climate``), AND-ed
+    - ``element_context`` — source's explosion path (so the receiver
+      inherits the exploded view)
+    - ``group_context`` — when selection happened inside one grouping
+      unit, carries the parent group field+value
+    - ``merge_maps`` — source's active value aliases so receiver
+      resolves the same way
+
+    Scope does **not** carry the source's group/measures themselves —
+    the receiving panel keeps full control of what to *do* with the
+    constrained set (its own role picks).
+
+    ``mode='push'`` is a snapshot: the filter is captured at creation
+    time. ``mode='link'`` keeps the receiver coupled to the source's
+    current filter (live propagation in the frontend store).
     """
 
     id: str
@@ -63,15 +83,15 @@ class Scope(BaseModel):
     created_at: str
 
 
-# ─── Per-panel-type settings ────────────────────────────────────────────────
+# ─── Shared graph helpers (used by GraphConfig) ─────────────────────────────
 
 
 class ForwardPropertySpec(BaseModel):
     """One triplet property to forward onto emitted graph edges.
 
-    ``agg`` picks how repeated triplets combine their property value. Never
-    uses ``array_agg(DISTINCT ...)``: unbounded-cardinality text fields can
-    pack tens of MB into a single aggregated row at scale.
+    ``agg`` picks how repeated triplets combine their property value.
+    Never uses ``array_agg(DISTINCT ...)``: unbounded-cardinality text
+    fields can pack tens of MB into a single aggregated row at scale.
     """
 
     field: str
@@ -88,13 +108,86 @@ class GraphLayout(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
-class GraphPanelSettings(BaseModel):
-    """Graph-specific configuration that doesn't fit projection/aggregation.
+class AnalyticsOverlays(BaseModel):
+    """Client-side derived computations rendered over a timeline chart."""
 
-    Most of these drive the ``/view`` request's ``GraphConfig`` body; a few
-    (``layout``, ``edits``, ``dim_unmatched``) are client-side only.
+    rolling_average: dict[str, Any] | None = None  # {window: int}
+    bands: bool = False
+    trend_line: bool = False
+    peak_markers: bool = False
+    std_dev_bands: bool = False
+
+
+# ─── Per-type panel configs (viz map + display knobs) ──────────────────────
+
+
+class PieConfig(BaseModel):
+    """Pie panel viz map. Slices = distinct values of ``slice_by``,
+    slice size = ``value`` (a measure name from the Formula or the
+    sentinel ``"count"``)."""
+
+    kind: Literal["pie"] = "pie"
+    slice_by: str | None = None
+    value: str | None = None
+    facet: str | None = None
+    max_slices: int | None = None
+    legend: bool = True
+
+
+class ChartConfig(BaseModel):
+    """Chart panel viz map. ``x`` is typically a time dim; ``y[]`` are
+    one or more measure names; ``color`` faceting comes from a non-time
+    group dim."""
+
+    kind: Literal["chart"] = "chart"
+    x: str | None = None
+    y: list[str] = Field(default_factory=list)
+    color: str | None = None
+    mark: Literal["bar", "line", "area", "timeline"] = "timeline"
+    stacked: bool = False
+    analytics_overlays: AnalyticsOverlays = Field(default_factory=AnalyticsOverlays)
+    show_statistics: bool = False
+
+
+class MapConfig(BaseModel):
+    """Map panel viz map. ``position`` is the geo field; ``mode`` picks
+    markers vs areaGeometryMeasures. ``label[]`` is shown on hover/click."""
+
+    kind: Literal["map"] = "map"
+    position: str | None = None
+    mode: Literal["markers", "areaGeometryMeasures"] = "markers"
+    color: str | None = None
+    label: list[str] = Field(default_factory=list)
+    geocode_source: dict[str, Any] | None = None
+    show_labels: bool = True
+    show_areas: bool = False
+
+
+class TableConfig(BaseModel):
+    """Table panel viz map. ``columns`` lists which fields to show as
+    columns; ``explode`` activates lateral unnest for array fields."""
+
+    kind: Literal["table"] = "table"
+    columns: list[str] = Field(default_factory=list)
+    explode: str | None = None
+    sort: dict[str, Any] | None = None
+    density: Literal["compact", "comfortable"] = "comfortable"
+
+
+class GraphConfig(BaseModel):
+    """Graph panel viz map. ``source``/``target`` are entity dim names;
+    edge weight, label, and layout knobs drive the renderer.
+
+    The triplet field that the engine extracts from lives on Formula's
+    first group dim (``Formula.group[0].path``); ``source`` and
+    ``target`` here are the visual channels that point at the resulting
+    entity columns.
     """
 
+    kind: Literal["graph"] = "graph"
+    source: str | None = None
+    target: str | None = None
+    edge_label: str | None = None
     edge_weight_field: str | None = None
     edge_weight_mode: Literal[
         "count",
@@ -112,21 +205,20 @@ class GraphPanelSettings(BaseModel):
     # Relationship-as-a-lens render toggle. When a ``relational.cooccurs``
     # scope is active on the panel's filter, the renderer dims every node
     # that doesn't match a focused entity (and every edge that doesn't
-    # touch one), preserving context while sharpening focus on the lens.
-    # Default-on is safe: with no cooccurs scope, the renderer no-ops and
-    # the graph looks identical to before. Set to false to opt out.
-    # Client-side render toggle — does not change what the backend returns.
+    # touch one). Default-on is safe: no cooccurs → renderer no-ops.
     dim_unmatched: bool = True
-    # Client-side-only edits (node merges, hides, label overrides). Opaque to
-    # the backend — shape is frontend-owned.
+    # Client-side-only edits (node merges, hides, label overrides).
+    # Opaque to the backend — shape is frontend-owned.
     edits: dict[str, Any] | None = None
 
     @field_validator("forward_properties")
     @classmethod
-    def _cap_forward_properties(cls, v: list[ForwardPropertySpec]) -> list[ForwardPropertySpec]:
-        # Hard cap: each forwarded property becomes an additional aggregated
-        # column in the graph SELECT. At 5M-row scale this is where the
-        # per-request memory footprint starts to matter.
+    def _cap_forward_properties(
+        cls, v: list[ForwardPropertySpec]
+    ) -> list[ForwardPropertySpec]:
+        # Hard cap: each forwarded property becomes an additional
+        # aggregated column in the graph SELECT. At 5M-row scale this is
+        # where the per-request memory footprint starts to matter.
         if len(v) > 5:
             raise ValueError(
                 f"forward_properties capped at 5; got {len(v)}. "
@@ -135,55 +227,64 @@ class GraphPanelSettings(BaseModel):
         return v
 
 
-class AnalyticsOverlays(BaseModel):
-    """Client-side derived computations rendered over a timeline chart."""
+class MeasurementsConfig(BaseModel):
+    """Measurements panel — stats/KPI render. Pure formula-bound; no
+    role picks needed. ``display_mode`` toggles between a single
+    scalar, a short list, or a small stats table.
 
-    rolling_average: dict[str, Any] | None = None  # {window: int}
-    bands: bool = False
-    trend_line: bool = False
-    peak_markers: bool = False
-    std_dev_bands: bool = False
+    Renamed from ``ObservationConfig`` (2026-05-21) to free the
+    "Observation" name for the deferred snapshot primitive."""
 
-
-class ChartPanelSettings(BaseModel):
-    """Chart/timeline/bar panel settings. ``chart_kind`` picks the render mode."""
-
-    chart_kind: Literal["bar", "line", "timeline"] = "timeline"
-    time_axis: dict[str, Any] | None = None
-    analytics_overlays: AnalyticsOverlays = Field(default_factory=AnalyticsOverlays)
-    show_statistics: bool = False
+    kind: Literal["measurements"] = "measurements"
+    display_mode: Literal["scalar", "small_list", "stats_table"] = "scalar"
+    label: str | None = None
 
 
-class MapPanelSettings(BaseModel):
-    """Map panel settings. Geocoding is stubbed today; shape is forward-compat."""
+class ScatterConfig(BaseModel):
+    """Scatter panel — 2-dim plot (categorical × categorical for
+    label-distribution heatmaps, numeric × numeric for true scatter, or
+    mixed). The renderer auto-detects category vs numeric per axis.
 
-    geocode_source: dict[str, Any] | None = None  # {schema_id, field_key}
-    label_source: dict[str, Any] | None = None
-    show_labels: bool = True
-    show_areas: bool = False
+    ``size`` defaults to ``count`` when omitted — for categorical
+    crosses, the dot grows with the number of annotations at each
+    (x, y) intersection.
+    """
 
-
-class TablePanelSettings(BaseModel):
-    """Table panel — column selection per schema."""
-
-    selected_fields_per_scheme: dict[str, list[str]] = Field(default_factory=dict)
-
-
-class PiePanelSettings(BaseModel):
-    """Pie chart panel — only a soft cap on slice count."""
-
-    max_slices: int | None = None
+    kind: Literal["scatter"] = "scatter"
+    x: str | None = None
+    y: str | None = None
+    color: str | None = None
+    size: str | None = None  # measure name; defaults to 'count' at render time
+    mark: Literal["dot", "cell"] = "dot"
+    legend: bool = True
 
 
-# ─── Historical migrator — no-op shim for fresh-DB Alembic runs ─────────────
+PanelConfig = Annotated[
+    Union[
+        PieConfig,
+        ChartConfig,
+        MapConfig,
+        TableConfig,
+        GraphConfig,
+        MeasurementsConfig,
+        ScatterConfig,
+    ],
+    Field(discriminator="kind"),
+]
+"""The discriminated union of per-type panel configs. ``panel.type``
+and ``panel.panel_config.kind`` MUST match (enforced by Panel's
+validator)."""
+
+
+# ─── Historical migrator — no-op shim for fresh-DB Alembic runs ────────────
 
 
 def migrate_views_config(raw_list: Any) -> list[Any]:
     """No-op pass-through retained so the historical ``a2v3w4x5y6z7``
-    Alembic revision (which lazy-imports this) doesn't break on fresh DBs.
-    Under the Formula/Axis unroll the legacy ``PanelProjection`` shape is
-    abandoned; existing-DB rows were reset by revision ``f0rmula1unr0``,
-    fresh DBs have no rows to migrate, so a real migrator would only
-    confuse the picture.
+    Alembic revision (which lazy-imports this) doesn't break on fresh
+    DBs. The new P2 hard-reset migration supersedes any meaningful
+    transformation; this exists purely so the prior revision's import
+    line doesn't 500.
     """
     return raw_list if isinstance(raw_list, list) else []
+

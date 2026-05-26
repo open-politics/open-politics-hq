@@ -82,24 +82,37 @@ app/
         models.py               # AnnotationSchema, AnnotationRun, Annotation,
                                 # Justification, RunSchemaLink, RunAggregate
         services/               # AnnotationService (CRUD, run creation, curation, aggregates)
-        formula.py              # THE FORMULA PRIMITIVE — Formula/Dimension/Measure/Panel/
-                                # OrderBy + eligible_panels(formula). Dimension kinds:
-                                # field|entity|time|doc|geo. No axes, no per-row
-                                # resolution, no compile bifurcation. docs/intelligence/HOW_TO.md
+        formula.py              # THE FORMULA PRIMITIVE — pure data spec.
+                                # Formula { filter, group[], measures[], derive[],
+                                # weight?, explode?, order_by?, merge_maps[], snippet? }.
+                                # Panel { id, type, name, formula, fields[], panel_config,
+                                # time_source?, scopes_in[], merge_maps[], formula_ref?,
+                                # grid_position, collapsed }. eligible_panels(formula).
+                                # No shape field on Formula — the /view phase declares the
+                                # output type (rows / aggregate / graph). docs/INTELLIGENCE.md
+        panel_config.py         # PanelType ∈ {pie, chart, map, table, graph, measurements,
+                                # scatter}. PanelVizConfig discriminated union (one *VizConfig
+                                # per panel type) carrying viz-map roles + display knobs.
+                                # GridPosition, Scope (data-side propagation: filter +
+                                # element_context + group_context + merge_maps), shared
+                                # graph helpers (ForwardPropertySpec, GraphLayout,
+                                # AnalyticsOverlays). migrate_views_config kept as no-op
+                                # shim for the historical Alembic revision.
+        formula_query.py        # FormulaQuery — THE BOUNDARY CLASS. One instance per /view
+                                # request. Constructor folds Formula + incoming scopes into
+                                # a configured AnnotationQuery; phase methods (rows_view,
+                                # aggregate_view, graph_view, …) reuse the same engine state.
+                                # Composition attached via attach_formula_lookup.
+                                # Adding a new view phase = new method here + new field on
+                                # ViewRequest. The engine is not touched.
         formulas.py             # Composition resolver: resolve_formula() returns Formula;
                                 # attach_formula_lookup(aq, dashboard) wires @formula[k].col
                                 # via DashboardFormulaLookup (cycle-guarded; nested composition
                                 # via shared lookup; index keys on derives; rejects evidence-mode
-                                # source loudly)
+                                # source loudly).
         snapshots.py            # Observation snapshot model — immutable, formula
-                                # body inlined for cite-stability (JSON on run config)
-        panel_config.py         # Per-type render settings — PanelType / GridPosition /
-                                # Scope / ForwardPropertySpec + GraphPanelSettings /
-                                # ChartPanelSettings / MapPanelSettings / TablePanelSettings /
-                                # PiePanelSettings. Legacy PanelProjection/RoleBinding/
-                                # EdgeSpec/migrate_panel_config DELETED in T6;
-                                # migrate_views_config kept as no-op shim for alembic
-                                # back-compat on fresh DBs.
+                                # body inlined for cite-stability. Deferred to v1.5; kept
+                                # warm so the route compiles.
         query.py                # AnnotationQuery — composable SQL builder. Grouping core
                                 # = relation(formula) → OutputRelation: one SQL GROUP BY
                                 # (N dims × N measures), merge_case + date_trunc + enum_weights
@@ -116,9 +129,8 @@ app/
                                 # auto-decomposed via _merge_relation_rows. state save/restore
                                 # so multiple relation() calls on one AQ don't compound
                                 # conditions. ZERO entity resolution (merge maps only).
-                                # results()/aggregate()/graph() untouched.
-                                # Legacy projection()/ProjectionRow/_ProjectionBranch
-                                # all DELETED in T6.
+                                # results()/aggregate()/graph_stream()/graph() public surface
+                                # consumed by FormulaQuery's phase packers.
         tasks/
           annotate.py           # LLM annotation pipeline (self-chaining, parallel/sequential,
                                 # multimodal context, hierarchical schemas, demultiplexing)

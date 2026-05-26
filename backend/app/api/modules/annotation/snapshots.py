@@ -154,36 +154,52 @@ def remove_observation(run, obs_id: str) -> bool:
 def snapshot_from_formula(
     *,
     run,
-    formula_name: str,
     relation,
+    formula_name: str | None = None,
+    formula: Formula | None = None,
     note: str | None = None,
     schema_id: int | None = None,
 ) -> Observation:
     """Freeze an :class:`OutputRelation` into an immutable Observation.
 
-    The Formula body is inlined from the run's dashboard so the snapshot is
+    The Formula body is inlined into the Observation so the snapshot is
     self-describing forever. No per-row provenance is stored — the inlined
     formula + run *is* the provenance (evidence rows carry their own
     annotation id in ``output_blob``).
+
+    Provide either ``formula_name`` (looked up on the run's dashboard
+    ``formulas[]``) or ``formula`` (used inline — for snapshots of ad-hoc
+    inline-bound panels that aren't in the intelligence formula list).
+    Exactly one must be set.
 
     Parameters
     ----------
     run: the AnnotationRun the snapshot attaches to.
     formula_name: saved Formula name (inlined; stub Formula if deleted).
+    formula: explicit Formula body (used as-is, no lookup).
     relation: the ``OutputRelation`` from ``AnnotationQuery.relation``.
     note / schema_id: optional sketch / schema pin.
     """
-    from app.api.modules.annotation.formulas import resolve_formula
+    if (formula_name is None) == (formula is None):
+        raise ValueError(
+            "snapshot_from_formula requires exactly one of formula_name or formula"
+        )
 
-    cfg = _dashboard_dict(run)
-    try:
-        body = resolve_formula(formula_name, cfg)
-    except ValueError:
-        body = Formula(id="_deleted", name=formula_name)
+    if formula is not None:
+        body = formula
+        snap_name = formula.name
+    else:
+        from app.api.modules.annotation.formulas import resolve_formula
+        cfg = _dashboard_dict(run)
+        try:
+            body = resolve_formula(formula_name, cfg)  # type: ignore[arg-type]
+        except ValueError:
+            body = Formula(id="_deleted", name=formula_name or "_deleted")
+        snap_name = formula_name  # type: ignore[assignment]
 
     return Observation(
         formula_inline=body,
-        formula_name=formula_name,
+        formula_name=snap_name,
         output_blob=list(relation.rows),
         output_keys=list(relation.output_keys),
         run_id=run.id,

@@ -1,12 +1,12 @@
 """Routes for annotation runs."""
 import asyncio
 import logging
-from typing import Any, AsyncIterable, Optional, Dict, Union
+from typing import Any, AsyncIterable, Literal, Optional, Dict, Union
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import csv
 import io
 
@@ -813,89 +813,90 @@ def export_run_annotations_csv(
 from app.core.filters import FilterSet, MergeMap
 from app.api.modules.annotation.query import (
     AnnotationQuery,
-    AnnotationRow as AQRow,
-    AssetSummary as AQAssetSummary,
-    AggregateBucket as AQBucket,
     DistinctValueEntry,
-    GraphNode as AQNode,
-    GraphEdge as AQEdge,
 )
 from app.api.modules.annotation.formula import Formula
-from app.api.modules.annotation.views import (
-    AggregateViewConfig,
-    GraphViewConfig,
-    collect_graph as _collect_graph_view,
-    collect_aggregate as _collect_aggregate_view,
-    collect_rows as _collect_rows_view,
-    render_aggregate,
-    render_graph,
-    render_rows,
+from app.api.modules.annotation.formula_query import (
+    FormulaQuery,
+    RowsView,
+    _edge_to_dict,
+    _node_to_dict,
 )
+from app.api.modules.annotation.panel_config import Scope
 
 
-class RowsConfig(BaseModel):
-    # Opaque cursor string (from a prior ResultsPage.cursor_next). Legacy
-    # callers may still send an int annotation id — AnnotationQuery.paginate
-    # decodes both.
+class RowsParams(BaseModel):
+    """Per-phase params for the rows view.
+
+    The Formula carries the data scope (filter, schema, merge_maps); these
+    params only control pagination."""
+
     cursor: str | int | None = None
     limit: int = 100
 
 
-# Route-level config aliases to the single source of truth in
-# ``annotation/views.py``. Preserves the wire names ``AggregateConfig`` and
-# ``GraphConfig`` for existing clients while collapsing drift.
-AggregateConfig = AggregateViewConfig
-GraphConfig = GraphViewConfig
+class GraphParams(BaseModel):
+    """Per-phase params for the graph view.
 
+    ``triplet_field`` falls back to ``formula.group[0].path`` when omitted
+    (per the FormulaQuery.graph_view contract). The other knobs are
+    bounded-memory graph_stream params; the JSON endpoint collects all
+    chunks bounded by the ``top_n_*`` caps.
+    """
 
-class FormulaViewConfig(BaseModel):
-    """The Formula phase of ``/view`` — run a :class:`Formula`, get its
-    ``OutputRelation``. Same Formula shape the prompt bar and the Dashboard
-    Operator emit. The engine does no entity resolution, so there are no
-    canon knobs."""
-
-    formula: Formula
-    cursor: str | int | None = None
-    limit: int = 100
+    triplet_field: str | None = None
+    dedup: Literal["exact", "normalized"] = "exact"
+    top_n_nodes: int | None = None
+    top_n_edges: int | None = None
+    # streaming-only params (used by /view/stream)
+    chunk_size: int = 100
+    edge_weight_field: str | None = None
+    edge_weight_mode: str = "count"
+    forward_properties: list[dict[str, Any]] = []
+    node_group_by: str | None = None
+    edge_group_by: str | None = None
+    null_policy: Literal["skip", "zero"] = "skip"
 
 
 class ViewRequest(BaseModel):
-    """Composable view request. Send any combination of rows/aggregate/graph/dossier."""
-    # Shared
-    filters: FilterSet | None = None
-    merge_maps: list[MergeMap] = []
-    schema_ids: list[int] = []
-    asset_ids: list[int] = []
-    additional_run_ids: list[int] = []
-    # Materializations (any combo)
-    rows: RowsConfig | None = None
-    aggregate: AggregateConfig | None = None
-    graph: GraphConfig | None = None
-    formula: FormulaViewConfig | None = None
+    """The unified /view request.
+
+    One shared :class:`Formula` is the data scope across every requested
+    phase. Phase params (``rows``, ``aggregate``, ``graph``) act as
+    toggles + per-phase tuning. ``aggregate`` is present-or-absent; the
+    Formula's group/measures drive the actual computation.
+
+    ``merge_maps`` are panel-local value aliases. Run-wide aliases live
+    on ``AnnotationRun.views_config['aliases']`` and are loaded by the
+    route. The Formula itself does not carry merge maps — those belong
+    to the run/panel context, not the data spec. See
+    ``docs/INTELLIGENCE.md``.
+    """
+
+    formula: Formula
+    fields: list[str] | None = None
+    incoming_scopes: list[Scope] = Field(default_factory=list)
+    merge_maps: list[MergeMap] = Field(default_factory=list)
+    additional_run_ids: list[int] = Field(default_factory=list)
+    rows: RowsParams | None = None
+    aggregate: dict[str, Any] | None = None  # presence = request aggregate
+    graph: GraphParams | None = None
 
 
 # --- SSE response models ---
+
 
 class ViewRowsPhase(BaseModel):
     items: list[dict]
     assets: dict[int, dict]
     total: int
     cursor_next: str | None
-
-
-class ViewAggregatePhase(BaseModel):
-    buckets: list[dict]
-    field_path: str
-    interval: str | None
-    total_count: int
-    split_field_path: str | None = None
+    fields: list[str] = Field(default_factory=list)
 
 
 class ViewGraphPhase(BaseModel):
     nodes: list[dict]
     edges: list[dict]
-
-
 
 
 def _resolve_family(session, infospace_id: int, run_id: int) -> list[int]:
@@ -915,22 +916,21 @@ def _resolve_family(session, infospace_id: int, run_id: int) -> list[int]:
     return [run_id] + descendants
 
 
-def _build_query(
-    session, access: Access, run_id: int, body: ViewRequest,
-) -> AnnotationQuery:
-    """Construct an AnnotationQuery from shared ViewRequest fields.
+def _build_formula_query(
+    session, access: Access, run_id: int, body: "ViewRequest",
+) -> FormulaQuery:
+    """Translate a :class:`ViewRequest` into a configured
+    :class:`FormulaQuery`. Single boundary between the wire format and
+    the engine.
 
     The query covers the run *and* its descendants. Package scope is still
     enforced via ``AnnotationQuery.scope`` — descendants outside the grant's
     ``run_ids`` get filtered in the materialization SQL.
     """
-    # Scope-check the explicitly requested ids.
     explicit_ids = [run_id] + body.additional_run_ids
     for rid in explicit_ids:
         access.require_in_scope("run_ids", rid)
 
-    # Family rollup — always include descendants of the requested run, plus
-    # descendants of any explicit ``additional_run_ids``. Dedup before applying.
     rolled: list[int] = []
     seen: set[int] = set()
     for rid in explicit_ids:
@@ -939,91 +939,60 @@ def _build_query(
                 seen.add(fid)
                 rolled.append(fid)
 
-    aq = AnnotationQuery(session, access.infospace_id).scope(access.scope)
-    aq.runs(rolled)
-
-    if body.schema_ids:
-        aq.schemas(body.schema_ids)
-    if body.asset_ids:
-        aq.assets(body.asset_ids)
-    if body.filters:
-        aq.filter(body.filters)
-    for mm in body.merge_maps:
-        aq.merge(mm)
-
-    return aq
+    _run = session.get(AnnotationRun, run_id)
+    formula_lookup_cfg = (
+        _run.views_config
+        if _run and isinstance(_run.views_config, dict) else None
+    )
+    # Run-wide aliases library lives on AnnotationRun.views_config['aliases'].
+    # Compose: scope merge_maps → panel merge_maps → run aliases (first-match
+    # wins, so scope and panel take precedence over the global library).
+    run_aliases = (
+        (_run.views_config.get("aliases") or [])
+        if _run and isinstance(_run.views_config, dict) else []
+    )
+    return FormulaQuery(
+        session, access, rolled, body.formula,
+        incoming_scopes=body.incoming_scopes,
+        panel_merge_maps=body.merge_maps,
+        run_aliases=run_aliases,
+        formula_lookup_cfg=formula_lookup_cfg,
+    )
 
 
 def _build_view_phases(session, access, run_id: int, body: "ViewRequest") -> dict:
-    """Synchronous materialization of view phases. Runs via to_thread.
+    """Synchronous materialization of every requested view phase.
 
-    Graph path routes through ``collect_graph`` (which iterates
-    ``stream_graph``) so scale is bounded by the ``top_n_*`` caps even when
-    the caller wants a JSON envelope. The non-streaming ``AnnotationQuery.graph()``
-    is deprecated and not used here.
+    Shape: one :class:`FormulaQuery` is constructed per request; each
+    phase packer method reuses the same configured engine state. No
+    Formula handling duplicated per phase, no body-level filter
+    plumbing.
     """
-    import asyncio
-
-    aq = _build_query(session, access, run_id, body)
+    fq = _build_formula_query(session, access, run_id, body)
     result: dict[str, BaseModel] = {}
 
-    if body.rows:
-        aq.paginate(cursor=body.rows.cursor, limit=body.rows.limit)
-        page = aq.results()
-        result["rows"] = ViewRowsPhase(
-            items=[_row_to_dict(r) for r in page.items],
-            assets={aid: _asset_to_dict(a) for aid, a in page.assets.items()},
-            total=page.total,
-            cursor_next=page.cursor_next,
+    if body.rows is not None:
+        result["rows"] = fq.rows_view(
+            fields=body.fields,
+            cursor=body.rows.cursor,
+            limit=body.rows.limit,
         )
 
-    if body.aggregate:
-        ac = body.aggregate
-        agg = aq.aggregate(
-            ac.group_by,
-            interval=ac.interval,
-            function=ac.function,
-            value_field=ac.value_field,
-            top_n=ac.top_n,
-            split_by=ac.split_by,
-        )
-        result["aggregate"] = ViewAggregatePhase(
-            buckets=[
-                {
-                    "key": b.key,
-                    "count": b.count,
-                    "stats": b.stats,
-                    "split_value": b.split_value,
-                }
-                for b in agg.buckets
-            ],
-            field_path=agg.field_path,
-            interval=agg.interval,
-            total_count=agg.total_count,
-            split_field_path=agg.split_field_path,
-        )
+    if body.aggregate is not None:
+        result["aggregate"] = fq.aggregate_view()
 
-    if body.graph:
-        gc = body.graph
-        # Route through the streaming primitive so 5M-annotation runs don't
-        # materialize the whole graph in memory. ``asyncio.run`` is safe here
-        # because ``_build_view_phases`` runs inside ``asyncio.to_thread`` —
-        # no parent event loop in this thread.
-        gr = asyncio.run(_collect_graph_view(aq, gc))
+    if body.graph is not None:
+        gp = body.graph
+        gr = fq.graph_view(
+            triplet_field=gp.triplet_field,
+            dedup=gp.dedup,
+            top_n_nodes=gp.top_n_nodes,
+            top_n_edges=gp.top_n_edges,
+        )
         result["graph"] = ViewGraphPhase(
             nodes=[_node_to_dict(n) for n in gr.nodes],
             edges=[_edge_to_dict(e) for e in gr.edges],
         )
-
-    if body.formula:
-        fc = body.formula
-        aq.paginate(cursor=fc.cursor, limit=fc.limit)
-        _run = session.get(AnnotationRun, run_id)
-        _attach_formula_lookup(
-            aq, _run.views_config if _run and isinstance(_run.views_config, dict) else {}
-        )
-        rel = aq.relation(fc.formula)
-        result["formula"] = rel.model_dump()
 
     return result
 
@@ -1035,10 +1004,10 @@ def _validated_view_body(body: ViewRequest) -> ViewRequest:
     HTTPException raised inside an async-generator route is too late —
     FastAPI's SSE pipeline has already started streaming.
     """
-    if not body.rows and not body.aggregate and not body.graph and not body.formula:
+    if body.rows is None and body.aggregate is None and body.graph is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least one of rows, aggregate, graph, or formula must be specified",
+            detail="At least one of rows, aggregate, or graph must be specified",
         )
     return body
 
@@ -1087,56 +1056,50 @@ async def view_run_stream(
     backpressure work correctly.
     """
     try:
-        aq = _build_query(session, access, run_id, body)
+        fq = _build_formula_query(session, access, run_id, body)
 
         # rows — sync, one event
-        if body.rows:
-            aq.paginate(cursor=body.rows.cursor, limit=body.rows.limit)
-            page = await asyncio.to_thread(aq.results)
-            rows_payload = ViewRowsPhase(
-                items=[_row_to_dict(r) for r in page.items],
-                assets={aid: _asset_to_dict(a) for aid, a in page.assets.items()},
-                total=page.total,
-                cursor_next=page.cursor_next,
+        if body.rows is not None:
+            rows_payload = await asyncio.to_thread(
+                fq.rows_view,
+                fields=body.fields,
+                cursor=body.rows.cursor,
+                limit=body.rows.limit,
             )
             yield ServerSentEvent(data=rows_payload.model_dump(), event="rows")
 
-        # aggregate — sync, one event
-        if body.aggregate:
-            ac = body.aggregate
-            agg = await asyncio.to_thread(
-                aq.aggregate,
-                ac.group_by,
-                interval=ac.interval,
-                function=ac.function,
-                value_field=ac.value_field,
-                top_n=ac.top_n,
-            )
-            agg_payload = ViewAggregatePhase(
-                buckets=[{"key": b.key, "count": b.count, "stats": b.stats} for b in agg.buckets],
-                field_path=agg.field_path,
-                interval=agg.interval,
-                total_count=agg.total_count,
-            )
-            yield ServerSentEvent(data=agg_payload.model_dump(), event="aggregate")
+        # aggregate — sync, one event (OutputRelation wire shape)
+        if body.aggregate is not None:
+            rel = await asyncio.to_thread(fq.aggregate_view)
+            yield ServerSentEvent(data=rel.model_dump(), event="aggregate")
 
-        # graph — progressive chunks, then a final full payload
-        if body.graph:
-            gc = body.graph
+        # graph — progressive chunks via graph_stream, then a final full payload.
+        # Streaming bypasses FormulaQuery.graph_view (which collects); we read
+        # the configured AQ directly so each chunk can yield to the client.
+        if body.graph is not None:
+            gp = body.graph
+            triplet_field = gp.triplet_field
+            if triplet_field is None and body.formula.group:
+                triplet_field = body.formula.group[0].path
+            if not triplet_field:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="graph view requires triplet_field or formula.group[0].path",
+                )
             accumulated_nodes: list[dict] = []
             accumulated_edges: list[dict] = []
-            async for chunk in aq.graph_stream(
-                gc.triplet_field,
-                dedup=gc.dedup,
-                top_n_nodes=gc.top_n_nodes,
-                top_n_edges=gc.top_n_edges,
-                chunk_size=gc.chunk_size,
-                edge_weight_field=gc.edge_weight_field,
-                edge_weight_mode=gc.edge_weight_mode,
-                forward_properties=list(gc.forward_properties or []),
-                node_group_by=gc.node_group_by,
-                edge_group_by=gc.edge_group_by,
-                null_policy=gc.null_policy,
+            async for chunk in fq.aq.graph_stream(
+                triplet_field,
+                dedup=gp.dedup,
+                top_n_nodes=gp.top_n_nodes,
+                top_n_edges=gp.top_n_edges,
+                chunk_size=gp.chunk_size,
+                edge_weight_field=gp.edge_weight_field,
+                edge_weight_mode=gp.edge_weight_mode,
+                forward_properties=list(gp.forward_properties or []),
+                node_group_by=gp.node_group_by,
+                edge_group_by=gp.edge_group_by,
+                null_policy=gp.null_policy,
             ):
                 chunk_nodes = [_node_to_dict(n) for n in chunk.nodes]
                 chunk_edges = [_edge_to_dict(e) for e in chunk.edges]
@@ -1147,26 +1110,10 @@ async def view_run_stream(
                 accumulated_nodes.extend(chunk_nodes)
                 accumulated_edges.extend(chunk_edges)
 
-            # Final summary event — wire-compatible with the JSON endpoint.
             yield ServerSentEvent(
                 data={"nodes": accumulated_nodes, "edges": accumulated_edges},
                 event="graph",
             )
-
-        # formula — sync, one event (chunked streaming is a later add)
-        if body.formula:
-            fc = body.formula
-            def _run_formula():
-                aq.paginate(cursor=fc.cursor, limit=fc.limit)
-                _run = session.get(AnnotationRun, run_id)
-                _attach_formula_lookup(
-                    aq,
-                    _run.views_config
-                    if _run and isinstance(_run.views_config, dict) else {},
-                )
-                return aq.relation(fc.formula)
-            rel = await asyncio.to_thread(_run_formula)
-            yield ServerSentEvent(data=rel.model_dump(), event="formula")
 
     except HTTPException as he:
         yield ServerSentEvent(data=SSEError(detail=str(he.detail)), event="error")
@@ -1216,19 +1163,31 @@ async def distinct_values(
     scale. Applies any provided ``merge_maps`` so aliased buckets appear
     pre-normalized.
     """
-    # Reuse the shared query builder shape.
-    class _ViewLike:
-        pass
-
-    view_like = _ViewLike()
-    view_like.filters = body.filters
-    view_like.merge_maps = body.merge_maps
-    view_like.schema_ids = body.schema_ids
-    view_like.asset_ids = body.asset_ids
-    view_like.additional_run_ids = body.additional_run_ids
+    explicit_ids = [run_id] + body.additional_run_ids
+    for rid in explicit_ids:
+        access.require_in_scope("run_ids", rid)
 
     def _run() -> DistinctValuesResponse:
-        aq = _build_query(session, access, run_id, view_like)  # type: ignore[arg-type]
+        rolled: list[int] = []
+        seen: set[int] = set()
+        for rid in explicit_ids:
+            for fid in _resolve_family(session, access.infospace_id, rid):
+                if fid not in seen:
+                    seen.add(fid)
+                    rolled.append(fid)
+        aq = (
+            AnnotationQuery(session, access.infospace_id)
+            .scope(access.scope)
+            .runs(rolled)
+        )
+        if body.schema_ids:
+            aq.schemas(body.schema_ids)
+        if body.asset_ids:
+            aq.assets(body.asset_ids)
+        if body.filters:
+            aq.filter(body.filters)
+        for mm in body.merge_maps:
+            aq.merge(mm)
         limit = min(max(1, body.limit), 1000)
         items = aq.distinct_values(
             body.field_path,
@@ -1244,59 +1203,8 @@ async def distinct_values(
     return await asyncio.to_thread(_run)
 
 
-def _row_to_dict(r: AQRow) -> dict:
-    return {
-        "annotation_id": r.annotation_id,
-        "asset_id": r.asset_id,
-        "schema_id": r.schema_id,
-        "run_id": r.run_id,
-        "value": r.value,
-        "timestamp": r.timestamp.isoformat() if r.timestamp else None,
-        "status": r.status,
-        "element": r.element,
-        "element_index": r.element_index,
-    }
-
-
-def _asset_to_dict(a: AQAssetSummary) -> dict:
-    return {
-        "id": a.id,
-        "title": a.title,
-        "kind": a.kind,
-        "parent_asset_id": a.parent_asset_id,
-        "parent_title": a.parent_title,
-    }
-
-
-def _node_to_dict(n: AQNode) -> dict:
-    return {
-        "id": n.id,
-        "name": n.name,
-        "type": n.type,
-        "frequency": n.frequency,
-        "source_annotation_ids": n.source_annotation_ids,
-        # Schema field renamed in the canon-graph rework: canonical_entity_id → entity_id.
-        # Wire shape exposes both keys for one release to give the frontend
-        # time to migrate without breaking existing consumers.
-        "entity_id": n.entity_id,
-        "canonical_entity_id": n.entity_id,
-        "group_value": n.group_value,
-        "properties": n.properties,
-        "evidence": getattr(n, "evidence", []),
-    }
-
-
-def _edge_to_dict(e: AQEdge) -> dict:
-    return {
-        "source": e.source,
-        "target": e.target,
-        "predicate": e.predicate,
-        "weight": e.weight,
-        "computed_weight": e.computed_weight,
-        "group_value": e.group_value,
-        "properties": e.properties,
-        "evidence": getattr(e, "evidence", []),
-    }
+# Row/asset/node/edge dict helpers moved to formula_query.py — single
+# source of truth for the wire shapes those phase responses emit.
 
 
 # ─── User-initiated actions ──────────────────────────────────────────────
@@ -1457,7 +1365,11 @@ from app.api.modules.annotation.formulas import attach_formula_lookup as _attach
 
 
 class _ObservationSnapshotRequest(BaseModel):
-    formula_name: str
+    # Provide one of ``formula_name`` (snapshot a saved formula from the
+    # intelligence list) or ``formula`` (snapshot an inline-bound panel's
+    # private formula, which doesn't live in formulas[]).
+    formula_name: Optional[str] = None
+    formula: Optional[Formula] = None
     note: Optional[str] = None
     schema_id: Optional[int] = None
     canon_id: Optional[int] = None
@@ -1486,10 +1398,21 @@ def create_observation_snapshot(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
 
     dashboard = run.views_config if isinstance(run.views_config, dict) else {}
-    try:
-        formula = _resolve_formula(body.formula_name, dashboard)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    # Exactly one binding must be present.
+    if (body.formula_name is None) == (body.formula is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide exactly one of formula_name or formula",
+        )
+
+    if body.formula is not None:
+        formula = body.formula
+    else:
+        try:
+            formula = _resolve_formula(body.formula_name, dashboard)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
     aq = (
         AnnotationQuery(session, access.infospace_id)
@@ -1502,6 +1425,7 @@ def create_observation_snapshot(
     obs = _snapshots.snapshot_from_formula(
         run=run,
         formula_name=body.formula_name,
+        formula=body.formula,
         relation=result,
         note=body.note,
         schema_id=body.schema_id,
@@ -1510,6 +1434,190 @@ def create_observation_snapshot(
     session.add(run)
     session.commit()
     return obs
+
+
+class GenerateFormulaRequest(BaseModel):
+    """One-shot prompt → :class:`Formula` body. The prompt-bar surface
+    uses this to skip the conversational agent for the common case
+    (``write me a weighted rate by quarter``)."""
+
+    prompt: str
+    provider: str | None = None
+    model: str | None = None
+
+
+@router.post(
+    "/{run_id}/formulas/generate",
+    response_model=Formula,
+)
+async def generate_formula_from_prompt(
+    *,
+    run_id: int,
+    access: Access = Requires(scope=None),
+    session: SessionDep,
+    body: GenerateFormulaRequest,
+) -> Formula:
+    """One-shot LLM call: sentence → Formula body.
+
+    The prompt-bar surface in the FormulaWorkspace calls this. The
+    response is the typed ``Formula`` shape; the frontend persists it via
+    the dashboard's ``formulas[]`` array and the run auto-saves.
+
+    The LLM is constrained to emit JSON matching ``Formula.model_json_schema``
+    via the provider's structured-output protocol (tool call). The system
+    message surfaces the run's schemas so field paths the model proposes
+    actually exist."""
+    import json
+    import secrets
+    import string
+
+    from app.api.modules.foundation_service_providers import resolve
+
+    access.require_in_scope("run_ids", run_id)
+    run = session.get(AnnotationRun, run_id)
+    if not run or run.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+
+    # Collect schemas attached to this run for the system prompt.
+    from app.api.modules.annotation.models import AnnotationSchema, Annotation, RunSchemaLink
+    link_ids = {
+        link.schema_id for link in session.exec(
+            select(RunSchemaLink).where(RunSchemaLink.run_id == run_id)
+        ).all()
+    }
+    ann_ids = set(session.exec(
+        select(Annotation.schema_id).where(Annotation.run_id == run_id).distinct()
+    ).all())
+    schema_ids = sorted(link_ids | ann_ids)
+    schemas: list[AnnotationSchema] = []
+    if schema_ids:
+        schemas = session.exec(
+            select(AnnotationSchema).where(AnnotationSchema.id.in_(schema_ids))
+        ).all()
+
+    # Resolve the language provider for this infospace. ``provider`` /
+    # ``model`` from the body win; otherwise the infospace default is used.
+    try:
+        provider = resolve(
+            "language",
+            body.provider,
+            body.model,
+            infospace_id=access.infospace_id,
+            context="chat",
+            session=session,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Language provider not available: {e}",
+        )
+
+    formula_schema = Formula.model_json_schema()
+
+    schema_summary_lines: list[str] = []
+    for s in schemas:
+        schema_summary_lines.append(f"## schema {s.id} — {s.name}")
+        if getattr(s, "description", None):
+            schema_summary_lines.append(f"{s.description}")
+        try:
+            from app.api.modules.conversational_intelligence.mcp_server.server import (
+                _walk_schema_surface,
+            )
+            surface = _walk_schema_surface(s.output_contract or {})
+            if surface.get("row_shape_roots"):
+                schema_summary_lines.append("row roots: " + ", ".join(
+                    r["path"] for r in surface["row_shape_roots"]
+                ))
+            paths = surface.get("field_paths") or []
+            if paths:
+                schema_summary_lines.append("paths:")
+                for p in paths[:40]:
+                    line = f"  {p['path']} ({p.get('type','?')})"
+                    if p.get("enum_values"):
+                        line += f"  enum: {p['enum_values'][:6]}"
+                    schema_summary_lines.append(line)
+        except Exception:
+            pass
+        schema_summary_lines.append("")
+
+    system_prompt = (
+        "You translate the user's question into a structured Formula body.\n"
+        "Formulas have six verbs:\n"
+        "  - from (schema_id): which schema to read.\n"
+        "  - filter (FilterSet): condition rows must match.\n"
+        "  - group (Dimension[]): group keys. kind ∈ {field, entity, time, doc, geo}.\n"
+        "  - measures (Measure[]): aggregations. agg ∈ {count, sum, mean, median, mode, min, max, distribution, top}.\n"
+        "  - weight (Measure | null): multiplier for sum/mean (weighted forms).\n"
+        "  - derives (DeriveSpec[]): post-aggregate expressions, can reference @<formula_name>.col.\n"
+        "Choose minimal verbs. A simple count by category is\n"
+        "  group=[{name: cat, kind: field, path: category}], measures=[{name: n, agg: count}].\n"
+        "For time series, kind=time and set interval. For top-N evidence, agg=top, top_by=field.\n"
+        "Use the user's words for ``name``. Field paths must exist on the run's schemas.\n"
+        f"Available schemas:\n{chr(10).join(schema_summary_lines)}"
+    )
+
+    # Provider-agnostic structured output via a forced tool call. Same
+    # pattern the annotation pipeline uses for two-phase emission.
+    emitted_formula: dict | None = None
+
+    async def _tool_executor(tool_name: str, args: dict) -> dict:
+        nonlocal emitted_formula
+        if tool_name == "emit_formula":
+            emitted_formula = args
+        return {"ok": True}
+
+    # Bare-function shape — the provider abstraction normalises this to each
+    # vendor's native shape (Anthropic ``input_schema``, OpenAI ``parameters``).
+    # Don't pass vendor-specific keys here.
+    emit_tool = {
+        "name": "emit_formula",
+        "description": "Emit the structured Formula body that answers the user's question.",
+        "parameters": formula_schema,
+    }
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": body.prompt},
+    ]
+
+    try:
+        response_iter = await provider.generate(
+            messages=messages,
+            model_name=provider.model or body.model or "",
+            tools=[emit_tool],
+            tool_choice={"type": "tool", "name": "emit_formula"},
+            tool_executor=_tool_executor,
+            stream=False,
+            max_tool_iterations=2,
+        )
+        # Drain non-streaming response.
+        if hasattr(response_iter, "__aiter__"):
+            async for _ in response_iter:
+                pass
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"LLM call failed: {e}",
+        )
+
+    if emitted_formula is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="LLM didn't call emit_formula — try a more specific prompt.",
+        )
+
+    # Stamp a fresh id so the frontend's addFormula doesn't dedupe by id.
+    alphabet = string.ascii_letters + string.digits
+    emitted_formula["id"] = "".join(secrets.choice(alphabet) for _ in range(12))
+
+    try:
+        formula = Formula.model_validate(emitted_formula)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"LLM emitted invalid Formula: {e}",
+        )
+    return formula
 
 
 @router.get("/{run_id}/observations", response_model=list[_snapshots.Observation])
