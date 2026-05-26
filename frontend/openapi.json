@@ -13135,6 +13135,106 @@
         }
       }
     },
+    "/api/v1/infospaces/{infospace_id}/runs/{run_id}/formulas/generate": {
+      "post": {
+        "tags": [
+          "Runs",
+          "Runs"
+        ],
+        "summary": "Generate Formula From Prompt",
+        "description": "One-shot LLM call: sentence → Formula body.\n\nThe prompt-bar surface in the FormulaWorkspace calls this. The\nresponse is the typed ``Formula`` shape; the frontend persists it via\nthe dashboard's ``formulas[]`` array and the run auto-saves.\n\nThe LLM is constrained to emit JSON matching ``Formula.model_json_schema``\nvia the provider's structured-output protocol (tool call). The system\nmessage surfaces the run's schemas so field paths the model proposes\nactually exist.",
+        "operationId": "generate_formula_from_prompt",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "package_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Token"
+            }
+          },
+          {
+            "name": "X-Package-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Package-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateFormulaRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Formula"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/infospaces/{infospace_id}/runs/{run_id}/observations/{obs_id}": {
       "get": {
         "tags": [
@@ -30204,68 +30304,6 @@
         "title": "AddMessageToConversationRequest",
         "description": "Request to add a message to an existing conversation."
       },
-      "AggregateViewConfig": {
-        "properties": {
-          "group_by": {
-            "type": "string",
-            "title": "Group By"
-          },
-          "interval": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Interval"
-          },
-          "function": {
-            "type": "string",
-            "title": "Function",
-            "default": "count"
-          },
-          "value_field": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Value Field"
-          },
-          "top_n": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Top N"
-          },
-          "split_by": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Split By"
-          }
-        },
-        "type": "object",
-        "required": [
-          "group_by"
-        ],
-        "title": "AggregateViewConfig"
-      },
       "AnnotationCreate": {
         "properties": {
           "value": {
@@ -38296,64 +38334,7 @@
           "name"
         ],
         "title": "Formula",
-        "description": "The third primitive — arbitrary field synthesis into intelligence.\n\nAuthored identically by the prompt bar (one LLM call), the Dashboard\nOperator, or hand-edit; all emit *this* shape. Lives on\n``AnnotationRun.views_config.formulas[]``."
-      },
-      "FormulaViewConfig": {
-        "properties": {
-          "formula": {
-            "$ref": "#/components/schemas/Formula"
-          },
-          "cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cursor"
-          },
-          "limit": {
-            "type": "integer",
-            "title": "Limit",
-            "default": 100
-          }
-        },
-        "type": "object",
-        "required": [
-          "formula"
-        ],
-        "title": "FormulaViewConfig",
-        "description": "The Formula phase of ``/view`` — run a :class:`Formula`, get its\n``OutputRelation``. Same Formula shape the prompt bar and the Dashboard\nOperator emit. The engine does no entity resolution, so there are no\ncanon knobs."
-      },
-      "ForwardPropertySpec": {
-        "properties": {
-          "field": {
-            "type": "string",
-            "title": "Field"
-          },
-          "agg": {
-            "type": "string",
-            "enum": [
-              "first",
-              "sum",
-              "avg",
-              "max"
-            ],
-            "title": "Agg",
-            "default": "first"
-          }
-        },
-        "type": "object",
-        "required": [
-          "field"
-        ],
-        "title": "ForwardPropertySpec",
-        "description": "One triplet property to forward onto emitted graph edges.\n\n``agg`` picks how repeated triplets combine their property value. Never\nuses ``array_agg(DISTINCT ...)``: unbounded-cardinality text fields can\npack tens of MB into a single aggregated row at scale."
+        "description": "The third primitive — arbitrary field synthesis into intelligence.\n\nAuthored identically by the prompt bar (one LLM call), the Dashboard\nOperator, or hand-edit; all emit *this* shape. Lives on\n``AnnotationRun.views_config.formulas[]``.\n\nFormula is the pure **data spec**: filter, group, measures, derive,\nweight, explode. It carries no view metadata — the output packing is\ndecided by the request's phase (rows / aggregate / graph / future\nstatistics / co-occurrence). ``eligible_panels(formula)`` infers\nwhich view types are valid for a given Formula.\n\nThe pipeline:\n\n.. code-block::\n\n    [Frontend] → Formula → FormulaQuery (builds AnnotationQuery,\n                            exposes phase packers) → Views → [Frontend]"
       },
       "GenerateAssetEmbeddingsRequest": {
         "properties": {
@@ -38425,6 +38406,42 @@
         "type": "object",
         "title": "GenerateEmbeddingsRequest",
         "description": "Request to generate embeddings for an infospace."
+      },
+      "GenerateFormulaRequest": {
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "title": "Prompt"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "title": "GenerateFormulaRequest",
+        "description": "One-shot prompt → :class:`Formula` body. The prompt-bar surface\nuses this to skip the conversational agent for the common case\n(``write me a weighted rate by quarter``)."
       },
       "GeocodeActionRequest": {
         "properties": {
@@ -38518,10 +38535,17 @@
         "title": "GeocodedEntityOut",
         "description": "One already-resolved location, sourced from Entity.properties."
       },
-      "GraphViewConfig": {
+      "GraphParams": {
         "properties": {
           "triplet_field": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Triplet Field"
           },
           "dedup": {
@@ -38542,8 +38566,7 @@
                 "type": "null"
               }
             ],
-            "title": "Top N Nodes",
-            "default": 1000
+            "title": "Top N Nodes"
           },
           "top_n_edges": {
             "anyOf": [
@@ -38554,18 +38577,12 @@
                 "type": "null"
               }
             ],
-            "title": "Top N Edges",
-            "default": 5000
+            "title": "Top N Edges"
           },
           "chunk_size": {
             "type": "integer",
             "title": "Chunk Size",
-            "default": 500
-          },
-          "stream": {
-            "type": "boolean",
-            "title": "Stream",
-            "default": true
+            "default": 100
           },
           "edge_weight_field": {
             "anyOf": [
@@ -38580,23 +38597,17 @@
           },
           "edge_weight_mode": {
             "type": "string",
-            "enum": [
-              "count",
-              "property",
-              "sum_property",
-              "avg_property",
-              "max_property",
-              "count_times_property"
-            ],
             "title": "Edge Weight Mode",
             "default": "count"
           },
           "forward_properties": {
             "items": {
-              "$ref": "#/components/schemas/ForwardPropertySpec"
+              "additionalProperties": true,
+              "type": "object"
             },
             "type": "array",
-            "title": "Forward Properties"
+            "title": "Forward Properties",
+            "default": []
           },
           "node_group_by": {
             "anyOf": [
@@ -38631,11 +38642,8 @@
           }
         },
         "type": "object",
-        "required": [
-          "triplet_field"
-        ],
-        "title": "GraphViewConfig",
-        "description": "Configuration for a graph materialization on the ``/view`` endpoint.\n\nShape-compatible with ``panel_config.GraphPanelSettings`` so the frontend\ncan persist and request the same settings. The ``stream`` flag decides the\nrender path inside ``render_graph`` (stream chunks vs emit a single\nsection) — routes set it based on whether SSE or JSON was requested."
+        "title": "GraphParams",
+        "description": "Per-phase params for the graph view.\n\n``triplet_field`` falls back to ``formula.group[0].path`` when omitted\n(per the FormulaQuery.graph_view contract). The other knobs are\nbounded-memory graph_stream params; the JSON endpoint collects all\nchunks bounded by the ``top_n_*`` caps."
       },
       "HTTPValidationError": {
         "properties": {
@@ -41861,7 +41869,7 @@
         ],
         "title": "ResultStatus"
       },
-      "RowsConfig": {
+      "RowsParams": {
         "properties": {
           "cursor": {
             "anyOf": [
@@ -41884,7 +41892,8 @@
           }
         },
         "type": "object",
-        "title": "RowsConfig"
+        "title": "RowsParams",
+        "description": "Per-phase params for the rows view.\n\nThe Formula carries the data scope (filter, schema, merge_maps); these\nparams only control pagination."
       },
       "RssSourceCreateRequest": {
         "properties": {
@@ -41976,6 +41985,78 @@
         ],
         "title": "SaveCredentialsRequest",
         "description": "Request to save encrypted provider credentials."
+      },
+      "Scope": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "source_panel_id": {
+            "type": "string",
+            "title": "Source Panel Id"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "push",
+              "link"
+            ],
+            "title": "Mode"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/FilterSet"
+          },
+          "element_context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Element Context"
+          },
+          "group_context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Context"
+          },
+          "merge_maps": {
+            "items": {
+              "$ref": "#/components/schemas/MergeMap"
+            },
+            "type": "array",
+            "title": "Merge Maps"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "source_panel_id",
+          "mode",
+          "filter",
+          "label",
+          "created_at"
+        ],
+        "title": "Scope",
+        "description": "A cross-panel data-side constraint. Source panel emits at gesture\ntime; receiving panel composes into its own Formula at /view time.\n\nCarries the **data-side state from the source RolePicker** at gesture\ntime:\n\n- ``filter`` — the source's filter conditions plus the gesture's\n  selection (e.g. clicked slice → ``topic=Climate``), AND-ed\n- ``element_context`` — source's explosion path (so the receiver\n  inherits the exploded view)\n- ``group_context`` — when selection happened inside one grouping\n  unit, carries the parent group field+value\n- ``merge_maps`` — source's active value aliases so receiver\n  resolves the same way\n\nScope does **not** carry the source's group/measures themselves —\nthe receiving panel keeps full control of what to *do* with the\nconstrained set (its own role picks).\n\n``mode='push'`` is a snapshot: the filter is captured at creation\ntime. ``mode='link'`` keeps the receiver coupled to the source's\ncurrent filter (live propagation in the frontend store)."
       },
       "SearchAndIngestResponse": {
         "properties": {
@@ -44646,52 +44727,41 @@
       },
       "ViewRequest": {
         "properties": {
-          "filters": {
+          "formula": {
+            "$ref": "#/components/schemas/Formula"
+          },
+          "fields": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/FilterSet"
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Fields"
           },
-          "merge_maps": {
+          "incoming_scopes": {
             "items": {
-              "$ref": "#/components/schemas/MergeMap"
+              "$ref": "#/components/schemas/Scope"
             },
             "type": "array",
-            "title": "Merge Maps",
-            "default": []
-          },
-          "schema_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Schema Ids",
-            "default": []
-          },
-          "asset_ids": {
-            "items": {
-              "type": "integer"
-            },
-            "type": "array",
-            "title": "Asset Ids",
-            "default": []
+            "title": "Incoming Scopes"
           },
           "additional_run_ids": {
             "items": {
               "type": "integer"
             },
             "type": "array",
-            "title": "Additional Run Ids",
-            "default": []
+            "title": "Additional Run Ids"
           },
           "rows": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/RowsConfig"
+                "$ref": "#/components/schemas/RowsParams"
               },
               {
                 "type": "null"
@@ -44701,27 +44771,19 @@
           "aggregate": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/AggregateViewConfig"
+                "additionalProperties": true,
+                "type": "object"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Aggregate"
           },
           "graph": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/GraphViewConfig"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "formula": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/FormulaViewConfig"
+                "$ref": "#/components/schemas/GraphParams"
               },
               {
                 "type": "null"
@@ -44730,8 +44792,11 @@
           }
         },
         "type": "object",
+        "required": [
+          "formula"
+        ],
         "title": "ViewRequest",
-        "description": "Composable view request. Send any combination of rows/aggregate/graph/dossier."
+        "description": "The unified /view request.\n\nOne shared :class:`Formula` is the data scope across every requested\nphase. Phase params (``rows``, ``aggregate``, ``graph``) act as\ntoggles + per-phase tuning. ``aggregate`` is present-or-absent; the\nFormula's group/measures drive the actual computation.\n\nSee ``docs/internal/RE_EVALUATION.md`` for the pipeline rationale."
       },
       "WatchStatusResponse": {
         "properties": {
@@ -44814,8 +44879,25 @@
       "_ObservationSnapshotRequest": {
         "properties": {
           "formula_name": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Formula Name"
+          },
+          "formula": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Formula"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "note": {
             "anyOf": [
@@ -44857,9 +44939,6 @@
           }
         },
         "type": "object",
-        "required": [
-          "formula_name"
-        ],
         "title": "_ObservationSnapshotRequest"
       },
       "app__api__modules__content__schemas__AssetPreview": {
