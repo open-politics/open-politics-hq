@@ -764,6 +764,23 @@ next_free_port() {
   echo "$p"
 }
 
+# Map a port number back to the env var that controls it, IF it's one of the
+# movable user-config ports. Returns empty string for fixed ports (80, 443,
+# 11434, etc.) — those expect specific wire-protocol ports and can't be moved.
+port_to_env_var() {
+  local p="$1" bp pp rp fp
+  bp="$(get_env BACKEND_PORT)";  bp="${bp:-8022}"
+  pp="$(get_env POSTGRES_PORT)"; pp="${pp:-5432}"
+  rp="$(get_env REDIS_PORT)";    rp="${rp:-6379}"
+  fp="$(get_env FRONTEND_PORT)"; fp="${fp:-3000}"
+  case "$p" in
+    "$bp") echo BACKEND_PORT  ;;
+    "$pp") echo POSTGRES_PORT ;;
+    "$rp") echo REDIS_PORT    ;;
+    "$fp") echo FRONTEND_PORT ;;
+  esac
+}
+
 precheck_ports() {
   local ports; ports="$(needed_host_ports | sort -u | tr '\n' ' ')"
   say "${DIM}checking host ports: ${ports}${NC}"
@@ -1117,13 +1134,137 @@ stack_up() {
   # Precheck runs AFTER alt-screen leave so its output / conflict prompt
   # lands on the normal terminal, not overlaid on the dashboard.
   [[ -f "$ENV_FILE" ]] && precheck_ports
+
   local c rc=0; c="$(compose_cmd)"
+
+  # First attempt — tee output so we can both show the user AND scan for
+  # post-bind port conflicts that the precheck might have missed (orphan
+  # containers in other compose projects, race conditions, etc.).
+  local logfile; logfile="$(mktemp)"
   say "\n${DIM}$c up --build -d${NC}"
-  COMPOSE_PROFILES="$(active_profiles)" $c up --build -d || rc=$?
-  if [[ $rc -eq 0 ]]; then ok "Up. Frontend: $(frontend_url)"
-  else warn "Start failed (exit $rc). See output above for the failing service."; fi
+  set +e
+  COMPOSE_PROFILES="$(active_profiles)" $c up --build -d 2>&1 | tee "$logfile"
+  rc=${PIPESTATUS[0]}
+  set -e
+
+  # Fallback: if compose failed with "address already in use" on a movable
+  # port, bump it and retry ONCE. Don't loop — second failure usually means
+  # something fixed (caddy 80, ollama 11434) is conflicting, which the user
+  # needs to resolve themselves.
+  if [[ $rc -ne 0 ]] && grep -q "address already in use" "$logfile"; then
+    local stuck_port var
+    stuck_port="$(grep -oE "127\.0\.0\.1:[0-9]+" "$logfile" | head -1 | cut -d: -f2)"
+    [[ -z "$stuck_port" ]] && stuck_port="$(grep -oE '"[0-9]+:[0-9]+"' "$logfile" | head -1 | cut -d: -f1 | tr -d '"')"
+    var="$(port_to_env_var "$stuck_port")"
+    if [[ -n "$var" ]]; then
+      local new; new="$(next_free_port "$stuck_port")"
+      echo
+      warn "Compose failed on port $stuck_port (precheck missed it — likely an orphan container in another compose project)."
+      warn "Bumping $var: $stuck_port → $new and retrying once."
+      backup_env; set_env "$var" "$new"
+      say "\n${DIM}$c up --build -d   (retry)${NC}"
+      set +e
+      COMPOSE_PROFILES="$(active_profiles)" $c up --build -d 2>&1 | tee "$logfile"
+      rc=${PIPESTATUS[0]}
+      set -e
+    fi
+  fi
+  rm -f "$logfile"
+
+  if [[ $rc -eq 0 ]]; then
+    ok "Up. Frontend: $(frontend_url)"
+    # Compose says "up" only means containers started — backend may still
+    # restart-loop on a config error (most commonly postgres password
+    # mismatch with the data volume). Poll briefly, diagnose if bad.
+    verify_backend_started || rc=$?
+  else
+    warn "Start failed (exit $rc). See output above for the failing service."
+  fi
   if [[ "$was_alt" == "true" ]]; then pause; enter_alt_screen; fi
   return $rc
+}
+
+# Poll backend status post-up. Returns 0 on healthy, non-zero if backend is
+# clearly broken (restart-looping / exited) and we couldn't auto-recover.
+# Times out at ~24s — fast path bails as soon as backend is "Up".
+verify_backend_started() {
+  local c; c="$(compose_cmd)"
+  local profs; profs="$(active_profiles)"
+  say "${DIM}verifying backend started cleanly…${NC}"
+  local i status
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    sleep 2
+    status="$(COMPOSE_PROFILES="$profs" $c ps backend --format '{{.Status}}' 2>/dev/null)"
+    case "$status" in
+      Up*)            ok "  backend healthy"; return 0 ;;
+      Restarting*|Exited*)
+        # Bad state — look at logs for known signatures we can auto-fix.
+        local logs
+        logs="$(COMPOSE_PROFILES="$profs" $c logs --tail 100 backend 2>/dev/null)"
+        if echo "$logs" | grep -q "password authentication failed for user"; then
+          handle_postgres_password_mismatch
+          return $?
+        fi
+        echo
+        warn "Backend is in a bad state ($status) but the failure isn't a"
+        warn "recognized pattern. Recent logs:"
+        echo "$logs" | tail -20 | sed 's/^/  /'
+        return 1
+        ;;
+    esac
+  done
+  warn "Backend didn't reach 'Up' within 24s. Check: $c logs backend"
+  return 1
+}
+
+# Postgres password in .env doesn't match what's in the data volume — most
+# often because .env was hand-edited or restored from a backup. Offer the
+# in-place fix (wipe volume + generate matching password + restart).
+handle_postgres_password_mismatch() {
+  echo
+  warn "Backend can't authenticate with postgres — password mismatch."
+  warn "POSTGRES_PASSWORD in .env doesn't match the password baked into"
+  warn "the postgres data volume on its first init."
+  echo
+  say "  ${BOLD}1${NC}  Wipe the postgres volume + generate a fresh matching password"
+  say "      ${DIM}(deletes all postgres data — annotations, schemas, etc.)${NC}"
+  say "  ${BOLD}2${NC}  Cancel — I'll edit .env myself to restore the right password"
+  echo
+  if [[ "${ASSUME_YES:-false}" == true ]]; then
+    warn "Auto-yes mode refuses to silently destroy data. Re-run interactively."
+    return 1
+  fi
+  local choice; read -rp "  Your choice [1/2]: " choice
+  case "$choice" in
+    1)
+      local c; c="$(compose_cmd)"
+      local profs; profs="$(active_profiles)"
+      say "${DIM}stopping stack…${NC}"
+      COMPOSE_PROFILES="$profs" $c down >/dev/null 2>&1 || true
+      local v removed=0
+      while IFS= read -r v; do
+        [[ -z "$v" ]] && continue
+        docker volume rm "$v" >/dev/null 2>&1 && removed=$((removed + 1))
+      done < <(docker volume ls --format '{{.Name}}' | grep -E '(^|_)app-db-data$')
+      if [[ "$removed" -eq 0 ]]; then
+        warn "Could not remove the postgres volume. Run manually:"
+        warn "    $c down  &&  docker volume rm <volume-name>"
+        return 1
+      fi
+      backup_env
+      set_env POSTGRES_PASSWORD "$(gen_secret)"
+      ok "wiped postgres volume + generated fresh POSTGRES_PASSWORD"
+      say "${DIM}restarting…${NC}"
+      COMPOSE_PROFILES="$profs" $c up -d
+      local rc=$?
+      [[ $rc -eq 0 ]] && ok "Backend should now connect cleanly." \
+                     || warn "Restart failed — see output above."
+      return $rc ;;
+    *)
+      warn "OK — restore the right POSTGRES_PASSWORD in .env, then restart with:"
+      warn "    $(compose_cmd) restart backend celery_worker celery_beat"
+      return 1 ;;
+  esac
 }
 
 stack_down() {
