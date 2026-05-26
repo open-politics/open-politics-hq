@@ -124,8 +124,15 @@ set_env() {
   local key="$1" val="$2" tmp
   tmp="$(mktemp)"
   if [[ -f "$ENV_FILE" ]] && grep -qE "^${key}=" "$ENV_FILE"; then
-    awk -v k="$key" -v v="$val" 'BEGIN{FS=OFS="="}
-      $1==k {print k"="v; next} {print}' "$ENV_FILE" > "$tmp"
+    # Pass val via ENVIRON[] (process env), NOT awk -v. Awk's -v interprets
+    # backslash escapes (\n → newline, \\ → \, etc.) which silently corrupts
+    # passwords / secrets containing backslashes. ENVIRON[] reads the raw byte
+    # string from the process environment with no escape processing.
+    SETENV_KEY="$key" SETENV_VAL="$val" awk '
+      BEGIN { k = ENVIRON["SETENV_KEY"]; v = ENVIRON["SETENV_VAL"] }
+      $0 ~ "^" k "=" { print k "=" v; next }
+      { print }
+    ' "$ENV_FILE" > "$tmp"
   else
     [[ -f "$ENV_FILE" ]] && cat "$ENV_FILE" > "$tmp" || true
     printf '%s=%s\n' "$key" "$val" >> "$tmp"
