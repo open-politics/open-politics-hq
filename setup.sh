@@ -41,6 +41,210 @@ ENV_BACKUP_DIR=".config/hq/backups/env_files"
 PLACEHOLDERS="|changeThis|changethis|app_user|app_user_password|"
 OPTIONAL_SERVICES=(minio ollama searxng nominatim caddy)
 
+# ── Foundation service provider matrix ────────────────────────────────────────
+# Single source of truth for the capability-first foundation menu. Mirrors the
+# backend declarations in
+# backend/app/api/modules/foundation_service_providers/providers.py — keep them
+# in sync when adding a provider on either side.
+#
+# CAPABILITY_LIST   ordered list of capabilities shown in the foundation menu.
+#                   pipe-delimited: cap_key|label|description|provider_type_env
+#                   provider_type_env is the *_PROVIDER_TYPE env var that picks
+#                   the system default (empty for caps with no system default —
+#                   language/embedding let the user pick at runtime).
+#
+# PROVIDER_MATRIX   one row per (capability, provider) pair. Pipe-delimited:
+#                   cap|key|label|kind|compose_profile|key_env|grant_env|notes
+#                   - kind:    container | cloud | builtin
+#                   - compose_profile: empty for cloud/builtin
+#                   - key_env:         empty if provider needs no API key
+#                   - grant_env:       PROVIDER_ACCESS_* env (empty if N/A)
+CAPABILITY_LIST=(
+  "language|AI chat models|chat, annotation, agents|"
+  "embedding|Embeddings|semantic search, retrieval|"
+  "storage|File storage|uploads, dataset blobs, exports|STORAGE_PROVIDER_TYPE"
+  "web_search|Web search|live news, agent browsing|WEB_SEARCH_PROVIDER_TYPE"
+  "geocoding|Geocoding|place names ↔ coordinates|GEOCODING_PROVIDER_TYPE"
+  "ocr|OCR|text from images and scans|OCR_PROVIDER_TYPE"
+  "scraping|Web scraping|article text from URLs|SCRAPING_PROVIDER_TYPE"
+)
+
+PROVIDER_MATRIX=(
+  # language
+  "language|ollama|Ollama|container|ollama||PROVIDER_ACCESS_LANGUAGE_ollama|open models on your hardware; 8GB+ VRAM recommended"
+  "language|openai|OpenAI|cloud||OPENAI_API_KEY|PROVIDER_ACCESS_LANGUAGE_openai|GPT-5, GPT-4.1, o-series"
+  "language|anthropic|Anthropic|cloud||ANTHROPIC_API_KEY|PROVIDER_ACCESS_LANGUAGE_anthropic|Claude Sonnet, Opus, Haiku"
+  "language|gemini|Google Gemini|cloud||GOOGLE_API_KEY|PROVIDER_ACCESS_LANGUAGE_gemini|Gemini Pro / Flash"
+  "language|mistral|Mistral|cloud||MISTRAL_API_KEY|PROVIDER_ACCESS_LANGUAGE_mistral|Mistral Large / Small, Codestral"
+  # embedding
+  "embedding|ollama|Ollama|container|ollama||PROVIDER_ACCESS_EMBEDDING_ollama|local embedding models via Ollama"
+  "embedding|openai|OpenAI|cloud||OPENAI_API_KEY|PROVIDER_ACCESS_EMBEDDING_openai|text-embedding-3-small / large"
+  "embedding|jina|Jina|cloud||JINA_API_KEY|PROVIDER_ACCESS_EMBEDDING_jina|jina-embeddings-v5"
+  "embedding|voyage|Voyage|cloud||VOYAGE_API_KEY|PROVIDER_ACCESS_EMBEDDING_voyage|voyage-4 family"
+  # storage  (exclusive — only one runs at a time)
+  "storage|local_fs|Local files|builtin|||PROVIDER_ACCESS_STORAGE_local_fs|files live under ./.store/local_fs on this machine"
+  "storage|minio|MinIO (S3-compatible)|container|minio||PROVIDER_ACCESS_STORAGE_minio|S3-compatible bucket running in Docker"
+  "storage|s3|External S3|cloud||||AWS S3, Hetzner, etc. — bring your own bucket"
+  # web_search
+  "web_search|searxng|SearXNG|container|searxng||PROVIDER_ACCESS_WEB_SEARCH_searxng|meta-searches DuckDuckGo, Brave, Bing"
+  "web_search|tavily|Tavily|cloud||TAVILY_API_KEY|PROVIDER_ACCESS_WEB_SEARCH_tavily|search API tuned for agent use"
+  # geocoding
+  "geocoding|local|Nominatim (local)|container|nominatim||PROVIDER_ACCESS_GEOCODING_local|OSM data on your hardware; ~5GB + ~2h initial import"
+  "geocoding|nominatim_api|Nominatim (public)|cloud|||PROVIDER_ACCESS_GEOCODING_nominatim_api|free public API — no key, rate-limited"
+  "geocoding|mapbox|Mapbox|cloud||MAPBOX_ACCESS_TOKEN|PROVIDER_ACCESS_GEOCODING_mapbox|paid, fast, high quality"
+  # ocr
+  "ocr|tesseract|Tesseract|builtin|||PROVIDER_ACCESS_OCR_tesseract|built-in; always available, no setup"
+  "ocr|ollama|Ollama vision|container|ollama||PROVIDER_ACCESS_OCR_ollama|via LLaVA — pulls a vision model"
+  # scraping  (only one provider today — exclusive)
+  "scraping|newspaper4k|Newspaper4k|builtin|||PROVIDER_ACCESS_SCRAPING_newspaper4k|built into the backend; always available"
+)
+
+# Field accessors. Each takes a row (or capability key) and emits one field.
+# Bash 3.2 doesn't have associative arrays we can rely on — pipe parsing is
+# the lowest-common-denominator approach.
+cap_field() {  # cap_field CAP_KEY {label|desc|type_env}
+  local want="$2" row ck cl cd ce
+  for row in "${CAPABILITY_LIST[@]}"; do
+    IFS='|' read -r ck cl cd ce <<< "$row"
+    [[ "$ck" == "$1" ]] || continue
+    case "$want" in
+      label)    echo "$cl" ;;
+      desc)     echo "$cd" ;;
+      type_env) echo "$ce" ;;
+    esac
+    return 0
+  done
+}
+
+prov_field() {  # prov_field CAP PROVIDER {label|kind|profile|key_env|grant_env|notes}
+  local want="$3" row cap pk lbl kind prof kenv genv notes
+  for row in "${PROVIDER_MATRIX[@]}"; do
+    IFS='|' read -r cap pk lbl kind prof kenv genv notes <<< "$row"
+    [[ "$cap" == "$1" && "$pk" == "$2" ]] || continue
+    case "$want" in
+      label)     echo "$lbl" ;;
+      kind)      echo "$kind" ;;
+      profile)   echo "$prof" ;;
+      key_env)   echo "$kenv" ;;
+      grant_env) echo "$genv" ;;
+      notes)     echo "$notes" ;;
+    esac
+    return 0
+  done
+}
+
+providers_for_cap() {  # echo each provider_key for a capability, in matrix order
+  local row cap pk
+  for row in "${PROVIDER_MATRIX[@]}"; do
+    IFS='|' read -r cap pk _ _ _ _ _ _ <<< "$row"
+    [[ "$cap" == "$1" ]] && echo "$pk"
+  done
+}
+
+# True for capabilities that resolve to exactly one provider deployment-wide
+# (no user-pickable runtime override). Status display treats these as a radio
+# button — only the current system default is "active."
+cap_is_exclusive() {
+  case "$1" in storage|scraping) return 0 ;; *) return 1 ;; esac
+}
+
+# True if a provider is usable for a capability.
+# - Exclusive caps (storage/scraping): the active *_PROVIDER_TYPE is the one.
+# - Multi-provider caps: anything keyed-and-not-blocked, or keyless-and-not-
+#   blocked, or a running local container.
+provider_active() {  # provider_active CAP PROVIDER
+  local cap="$1" prov="$2" kind prof type_env type_val
+  if cap_is_exclusive "$cap"; then
+    type_env="$(cap_field "$cap" type_env)"
+    type_val="$(get_env "$type_env")"
+    if [[ -n "$type_val" ]]; then
+      [[ "$type_val" == "$prov" ]]
+    else
+      # No explicit default — the canonical built-in is the implicit answer.
+      case "$cap" in
+        storage)  [[ "$prov" == "local_fs"    ]] ;;
+        scraping) [[ "$prov" == "newspaper4k" ]] ;;
+      esac
+    fi
+    return
+  fi
+  kind="$(prov_field "$cap" "$prov" kind)"
+  case "$kind" in
+    builtin)
+      type_env="$(cap_field "$cap" type_env)"
+      [[ -z "$type_env" ]] && return 0   # no system default → always implicitly available
+      type_val="$(get_env "$type_env")"
+      # Built-in is active either as the system default or (when no default is
+      # set) as the implicit fallback. Tesseract = OCR default.
+      [[ "$type_val" == "$prov" || -z "$type_val" ]]
+      ;;
+    container)
+      prof="$(prov_field "$cap" "$prov" profile)"
+      profile_active "$prof"
+      ;;
+    cloud)
+      # Usable when the key is set (if needed) AND sharing isn't explicitly
+      # blocked. Keyless cloud (nominatim public API) is usable unless blocked.
+      local kenv genv; kenv="$(prov_field "$cap" "$prov" key_env)"
+      genv="$(prov_field "$cap" "$prov" grant_env)"
+      if [[ -n "$kenv" ]]; then
+        [[ -n "$(get_env "$kenv")" && "$(get_env "$genv")" != "none" ]]
+      else
+        [[ "$(get_env "$genv")" != "none" ]]
+      fi
+      ;;
+  esac
+}
+
+# Friendly status snippet for a single provider — used in the per-capability menu.
+# Returns a colored token. Caller is responsible for layout.
+provider_status_token() {  # provider_status_token CAP PROVIDER
+  local cap="$1" prov="$2" kind kenv genv g
+  kind="$(prov_field "$cap" "$prov" kind)"
+  kenv="$(prov_field "$cap" "$prov" key_env)"
+  genv="$(prov_field "$cap" "$prov" grant_env)"
+  g="$(get_env "$genv")"
+  case "$kind" in
+    container)
+      if provider_active "$cap" "$prov"; then echo "${GREEN}on${NC}"
+      else echo "${DIM}off${NC}"; fi ;;
+    builtin)
+      echo "${GREEN}built-in${NC}" ;;
+    cloud)
+      if [[ -n "$kenv" && -z "$(get_env "$kenv")" ]]; then
+        echo "${DIM}no key${NC}"
+      elif [[ "$g" == "none" ]]; then
+        echo "${RED}blocked${NC}"
+      else
+        case "$g" in
+          all)       echo "${GREEN}shared: everyone${NC}" ;;
+          superuser) echo "${YELLOW}shared: admins only${NC}" ;;
+          *)         [[ -n "$kenv" ]] && echo "${DIM}key set, not shared${NC}" || echo "${DIM}available${NC}" ;;
+        esac
+      fi ;;
+  esac
+}
+
+# Compact single-line capability status for the foundation menu. Skips the
+# kind marker when the provider's display label already includes one in
+# parentheses (e.g. "Nominatim (local)", "MinIO (S3-compatible)") so we don't
+# emit "Nominatim (local) (local)".
+capability_status_line() {  # capability_status_line CAP
+  local cap="$1" prov parts="" tok kind label
+  for prov in $(providers_for_cap "$cap"); do
+    kind="$(prov_field "$cap" "$prov" kind)"
+    provider_active "$cap" "$prov" || continue
+    label="$(prov_field "$cap" "$prov" label)"
+    case "$kind" in
+      container) [[ "$label" == *"("*")" ]] && tok="$label" || tok="$label ${DIM}(local)${NC}" ;;
+      builtin)   [[ "$label" == *"("*")" ]] && tok="$label" || tok="$label ${DIM}(built-in)${NC}" ;;
+      cloud)     tok="$label ${DIM}(${NC}$(provider_status_token "$cap" "$prov")${DIM})${NC}" ;;
+    esac
+    parts="${parts:+$parts · }$tok"
+  done
+  [[ -z "$parts" ]] && echo "${DIM}not configured${NC}" || echo "$parts"
+}
+
 # Pure-bash TUI niceties — opt in to alt-screen + live refresh + single-key
 # dispatch only when stdin AND stdout are real TTYs. CI / piped input falls
 # back to plain line-based prompts so non-interactive use stays clean.
@@ -305,7 +509,12 @@ MODE_SET=false; REACH_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET
 LANG_LOCAL=false; EMB_LOCAL=false  # for summary display
 
 add_profile() { [[ ",$PROFILES," == *",$1,"* ]] || PROFILES="${PROFILES:+$PROFILES,}$1"; }
+# Deferred env-write queue. Both grants (PROVIDER_ACCESS_*) and capability
+# defaults (*_PROVIDER_TYPE) ride the same KEY=VALUE list — ensure_env flushes
+# them at config-write time. Kept under the PA_GRANTS name for backwards
+# compatibility with the rest of the wizard plumbing.
 add_grant()   { PA_GRANTS="${PA_GRANTS}${1}\n"; }
+add_setting() { PA_GRANTS="${PA_GRANTS}${1}\n"; }  # alias for readability
 
 apply_mode() {
   case "$1" in
@@ -344,10 +553,13 @@ apply_with() {
       add_grant "PROVIDER_ACCESS_EMBEDDING_ollama=all"
       EMB_LOCAL=true ;;
     searxng|search|web-search)
-      add_profile searxng ;;
+      add_profile searxng
+      add_grant   "PROVIDER_ACCESS_WEB_SEARCH_searxng=all"
+      add_setting "WEB_SEARCH_PROVIDER_TYPE=searxng" ;;
     nominatim|geocoding|geocoder)
       add_profile nominatim
-      add_grant "PROVIDER_ACCESS_GEOCODING_local=all" ;;
+      add_grant   "PROVIDER_ACCESS_GEOCODING_local=all"
+      add_setting "GEOCODING_PROVIDER_TYPE=local" ;;
     minio)
       add_profile minio; STORAGE=minio; STORAGE_SET=true ;;
     caddy)
@@ -560,6 +772,8 @@ choose_optionals_interactive() {
   say "  ${DIM}Hosted (API key):${NC} Tavily, Serper, Exa (future)"
   if ask_yn "Run SearXNG locally?" n; then
     add_profile searxng
+    add_grant   "PROVIDER_ACCESS_WEB_SEARCH_searxng=all"
+    add_setting "WEB_SEARCH_PROVIDER_TYPE=searxng"
   fi
 
   echo
@@ -569,7 +783,8 @@ choose_optionals_interactive() {
   say "  ${DIM}Hosted (API key):${NC} external geocoders"
   if ask_yn "Run Nominatim locally?" n; then
     add_profile nominatim
-    add_grant "PROVIDER_ACCESS_GEOCODING_local=all"
+    add_grant   "PROVIDER_ACCESS_GEOCODING_local=all"
+    add_setting "GEOCODING_PROVIDER_TYPE=local"
   fi
 
   echo
@@ -631,6 +846,8 @@ choose_local_services_interactive() {
   say "  ${DIM}Hosted:${NC} Tavily, Serper, Exa via API keys (future)"
   if ask_yn "Run SearXNG locally?" n; then
     add_profile searxng
+    add_grant   "PROVIDER_ACCESS_WEB_SEARCH_searxng=all"
+    add_setting "WEB_SEARCH_PROVIDER_TYPE=searxng"
   fi
 
   echo
@@ -640,7 +857,8 @@ choose_local_services_interactive() {
   say "  ${DIM}Hosted:${NC} external geocoders via API keys"
   if ask_yn "Run Nominatim locally?" n; then
     add_profile nominatim
-    add_grant "PROVIDER_ACCESS_GEOCODING_local=all"
+    add_grant   "PROVIDER_ACCESS_GEOCODING_local=all"
+    add_setting "GEOCODING_PROVIDER_TYPE=local"
   fi
 
   echo
@@ -1063,7 +1281,8 @@ ensure_env() {
   ensure_secret REDIS_PASSWORD        gen_secret
   # MinIO secrets are gated on whether the profile is active. If user picks
   # local_fs (or external S3) we don't generate them — saves noise, and any
-  # later toggle (storage_menu / services_menu) materializes them on demand.
+  # later toggle in the foundation menu (cap_menu_storage / provider_enable)
+  # materializes them on demand.
   if [[ ",$PROFILES," == *",minio,"* ]]; then
     ensure_minio_secrets
   fi
@@ -1621,7 +1840,7 @@ placeholder_secrets() {
   echo "$out"
 }
 
-service_label() {  # legacy combined (used by Services toggle menu)
+service_label() {  # combined display — used by the dashboard's optional-features table + drift checks
   printf "%s (%s)" "$(service_name "$1")" "$(service_desc "$1")"
 }
 
@@ -1692,6 +1911,120 @@ remove_profile_persist() {
     new="${new:+$new,}$p"
   done
   set_env COMPOSE_PROFILES "$new"
+}
+
+# ── Capability / provider toggle (the single source of truth) ─────────────────
+# Every menu path that enables or disables a provider goes through these — so
+# the grant + compose profile + system default + container state stay aligned.
+# Caller is responsible for backup_env before invoking + restart prompt after.
+
+# True when PROVIDER is the active default for some *other* capability — i.e.
+# turning it off here must not yank the compose profile from another menu.
+provider_other_grants_present() {  # CAP PROVIDER
+  local cap="$1" prov="$2" row this_cap this_prov this_genv v
+  for row in "${PROVIDER_MATRIX[@]}"; do
+    IFS='|' read -r this_cap this_prov _ _ _ _ this_genv _ <<< "$row"
+    [[ "$this_cap" == "$cap" ]]   && continue   # only count OTHER capabilities
+    [[ "$this_prov" != "$prov" ]] && continue
+    [[ -n "$this_genv" ]] || continue
+    v="$(get_env "$this_genv")"
+    [[ -n "$v" && "$v" != "none" ]] && return 0
+  done
+  return 1
+}
+
+# Conservative replacement when the active *_PROVIDER_TYPE is being disabled.
+# Prefers a still-active provider for the same capability; falls back to the
+# canonical "always works" choice if nothing else is on.
+cap_fallback_provider() {  # CAP [EXCLUDE_PROVIDER]
+  local cap="$1" exclude="${2:-}" prov
+  for prov in $(providers_for_cap "$cap"); do
+    [[ "$prov" == "$exclude" ]] && continue
+    provider_active "$cap" "$prov" || continue
+    echo "$prov"; return 0
+  done
+  # Static fallbacks for capabilities that need a default to function.
+  case "$cap" in
+    ocr)       echo "tesseract"   ;;     # built-in, no setup
+    storage)   echo "local_fs"    ;;     # built-in, always available
+    geocoding) echo "nominatim_api" ;;   # free public API, keyless
+    scraping)  echo "newspaper4k" ;;     # built-in
+    *)         echo "" ;;                # language/embedding/web_search: empty is OK
+  esac
+}
+
+# Enable a provider for a capability. Persists to .env. Does NOT restart the
+# stack — caller decides when (so toggling several providers in one screen
+# only triggers one restart).
+provider_enable() {  # CAP PROVIDER
+  local cap="$1" prov="$2"
+  local kind prof grant_env type_env
+  kind="$(prov_field "$cap" "$prov" kind)"
+  prof="$(prov_field "$cap" "$prov" profile)"
+  grant_env="$(prov_field "$cap" "$prov" grant_env)"
+  type_env="$(cap_field "$cap" type_env)"
+
+  # Compose profile for container-kind providers.
+  if [[ "$kind" == "container" && -n "$prof" ]]; then
+    add_profile_persist "$prof"
+    # On-disk pre-reqs that the wizard's ensure_store_dirs handles for new
+    # installs but that a dashboard-driven enable also needs.
+    case "$prof" in
+      minio)
+        [[ -d ./.store/minio ]] || { mkdir -p ./.store/minio; chmod 700 ./.store/minio; }
+        ensure_minio_secrets ;;
+      nominatim)
+        [[ -d ./.store/nominatim ]] || { mkdir -p ./.store/nominatim; chmod 755 ./.store/nominatim; } ;;
+    esac
+  fi
+
+  # Access grant: share the deployment-level provider with everyone by default.
+  # Sharing menus can narrow this to admins-only or back to blocked.
+  [[ -n "$grant_env" ]] && set_env "$grant_env" "all"
+
+  # System default for capabilities that pick one provider at resolve time.
+  # Only set if currently unset — never overwrite an operator's explicit choice.
+  if [[ -n "$type_env" ]]; then
+    local cur; cur="$(get_env "$type_env")"
+    [[ -z "$cur" ]] && set_env "$type_env" "$prov"
+  fi
+}
+
+# Disable a provider for a capability. Removes the grant; removes the profile
+# (and stops the running container) only when no other capability references
+# the same container.
+provider_disable() {  # CAP PROVIDER
+  local cap="$1" prov="$2"
+  local kind prof grant_env type_env
+  kind="$(prov_field "$cap" "$prov" kind)"
+  prof="$(prov_field "$cap" "$prov" profile)"
+  grant_env="$(prov_field "$cap" "$prov" grant_env)"
+  type_env="$(cap_field "$cap" type_env)"
+
+  [[ -n "$grant_env" ]] && set_env "$grant_env" ""
+
+  # If this provider was the system default, hand it off to a safe fallback
+  # before anything else picks it up. Pass `$prov` as the exclude so the
+  # fallback search doesn't recommend the very provider we're disabling
+  # (its compose profile is still active for one more step).
+  if [[ -n "$type_env" && "$(get_env "$type_env")" == "$prov" ]]; then
+    set_env "$type_env" "$(cap_fallback_provider "$cap" "$prov")"
+  fi
+
+  # Compose profile — keep it on if another capability still wants this
+  # container. Stop + remove the container otherwise so docker actually
+  # releases ports / RAM / disk.
+  if [[ "$kind" == "container" && -n "$prof" ]]; then
+    if provider_other_grants_present "$cap" "$prov"; then
+      return 0
+    fi
+    remove_profile_persist "$prof"
+    if docker_ok; then
+      local c; c="$(compose_cmd)"
+      $c stop "$prof"  >/dev/null 2>&1 || true
+      $c rm -f "$prof" >/dev/null 2>&1 || true
+    fi
+  fi
 }
 
 # Drift: what's running vs what's configured.
@@ -1991,69 +2324,17 @@ sync_features() {
   esac
 }
 
-# ── Features (toggle optional services) ───────────────────────────────────────
-
-services_menu() {
-  [[ -f "$ENV_FILE" ]] || { warn "Run setup first."; pause; return; }
-  local new; new="$(get_env COMPOSE_PROFILES)"
-  while true; do
-    clear 2>/dev/null || true
-    say "${GREEN}Local services${NC}  ${DIM}toggle, then 'Save & apply'${NC}"
-    say "  current: ${new:-<lean core only>}"
-    echo
-    local i=0 p mark
-    for p in "${OPTIONAL_SERVICES[@]}"; do
-      i=$((i+1))
-      if [[ ",$new," == *",$p,"* ]]; then mark="${GREEN}[on]${NC} "
-      else mark="${DIM}[off]${NC}"; fi
-      printf "  ${GREEN}%d${NC}  %b %-10s %s\n" "$i" "$mark" "$p" "$(service_label "$p")"
-    done
-    echo
-    say "  ${GREEN}s${NC}  Save & apply"
-    say "  ${GREEN}0${NC}  Cancel (discard changes)"
-    pick_menu r
-    case "$r" in
-      1|2|3|4|5)
-        local svc="${OPTIONAL_SERVICES[$((r-1))]}"
-        if [[ ",$new," == *",$svc,"* ]]; then
-          local out=""
-          IFS=, read -ra a <<< "$new"
-          for x in "${a[@]}"; do
-            [[ -z "$x" || "$x" == "$svc" ]] && continue
-            out="${out:+$out,}$x"
-          done
-          new="$out"
-        else
-          if [[ "$svc" == "caddy" ]] && is_placeholder "$(get_env DOMAIN)"; then
-            warn "DOMAIN is not set. Caddy needs a real domain — use 'Publish to a public domain' instead."
-            pause; continue
-          fi
-          new="${new:+$new,}$svc"
-        fi
-        ;;
-      s|S)
-        backup_env; set_env COMPOSE_PROFILES "$new"
-        [[ ",$new," == *",minio,"* && ! -d ./.store/minio ]]         && { mkdir -p ./.store/minio; chmod 700 ./.store/minio; }
-        [[ ",$new," == *",nominatim,"* && ! -d ./.store/nominatim ]] && { mkdir -p ./.store/nominatim; chmod 755 ./.store/nominatim; }
-        # If minio just got enabled, materialize MINIO_* secrets if they're
-        # still placeholders (ensure_env skips them when the profile is off).
-        [[ ",$new," == *",minio,"* ]] && ensure_minio_secrets
-        ok "Saved: ${new:-<lean core>}"
-        if docker_ok && confirm_y "Restart stack now with the new feature set?"; then
-          ( stack_up ) || warn "Restart failed."
-        fi
-        pause; return 0
-        ;;
-      0|"") return 0 ;;
-      *) warn "Invalid."; sleep 1 ;;
-    esac
-  done
-}
-
-# ── Foundation service providers (umbrella menu) ──────────────────────────────
-# Architecturally everything HQ talks to is a "foundation service provider":
-# local container services (Ollama, MinIO, SearXNG, Nominatim, Caddy) AND cloud
-# APIs (OpenAI, Anthropic, …). This is the single entry point for both.
+# ── Capability-first foundation menus ─────────────────────────────────────────
+# The foundation menu is the umbrella for everything HQ talks to: local
+# containers (Ollama, MinIO, SearXNG, Nominatim) and cloud APIs (OpenAI,
+# Anthropic, …). It's structured by *capability* rather than by implementation
+# (container-vs-cloud) so the user thinks in terms of "I want chat models",
+# not "I want to flip a docker profile and also paste an API key over there".
+#
+# Per-capability menus integrate both axes — local container toggle, cloud
+# keys, sharing — in one screen, and route every state change through
+# provider_enable / provider_disable so grants, profiles, and system defaults
+# stay aligned.
 
 foundation_menu() {
   [[ -f "$ENV_FILE" ]] || { warn "Run setup first."; pause; return; }
@@ -2061,21 +2342,474 @@ foundation_menu() {
     clear 2>/dev/null || true
     say "${GREEN}Foundation service providers${NC}"
     echo
-    say "${DIM}  HQ talks to pluggable providers for each capability — language,${NC}"
-    say "${DIM}  embedding, storage, OCR, geocoding, web search, scraping. Some run${NC}"
-    say "${DIM}  as local containers; others are cloud APIs that need a key.${NC}"
+    say "${DIM}  HQ uses pluggable providers for each capability — chat models,${NC}"
+    say "${DIM}  embeddings, storage, OCR, geocoding, web search, scraping.${NC}"
+    say "${DIM}  For each, you can run a local container, paste a cloud API key,${NC}"
+    say "${DIM}  or both. Users pick which to use at runtime.${NC}"
     echo
-    say "  ${GREEN}1${NC}  Local services       ${DIM}MinIO · Ollama · SearXNG · Nominatim · Caddy${NC}"
-    say "  ${GREEN}2${NC}  API providers        ${DIM}OpenAI · Anthropic · Google · Jina · Tavily · Mapbox${NC}"
+    local i=0 row cap_key cap_label_v cap_desc_v
+    for row in "${CAPABILITY_LIST[@]}"; do
+      i=$((i+1))
+      IFS='|' read -r cap_key cap_label_v cap_desc_v _ <<< "$row"
+      printf "  ${GREEN}%d${NC}  %-18s %b\n" "$i" "$cap_label_v" "$(capability_status_line "$cap_key")"
+      printf "     ${DIM}%s${NC}\n" "$cap_desc_v"
+    done
+    echo
     say "  ${GREEN}0${NC}  Back"
     pick_menu r
+    if [[ "$r" =~ ^[1-9][0-9]*$ && "$r" -le "${#CAPABILITY_LIST[@]}" ]]; then
+      IFS='|' read -r cap_key _ _ _ <<< "${CAPABILITY_LIST[$((r-1))]}"
+      capability_menu "$cap_key"
+    else
+      case "$r" in 0|"") return 0 ;; *) warn "Invalid."; pause ;; esac
+    fi
+  done
+}
+
+# Dispatch: storage is exclusive (one provider serves all assets), scraping
+# has only one provider today, everything else lets multiple providers be
+# active concurrently.
+capability_menu() {  # CAP
+  case "$1" in
+    storage)  cap_menu_storage ;;
+    scraping) cap_menu_single "$1" ;;
+    *)        cap_menu_multi "$1" ;;
+  esac
+}
+
+# Generic per-capability screen for multi-provider capabilities (language,
+# embedding, ocr, geocoding, web_search).
+cap_menu_multi() {  # CAP
+  local cap="$1" cap_label_v cap_desc_v type_env
+  cap_label_v="$(cap_field "$cap" label)"
+  cap_desc_v="$(cap_field "$cap" desc)"
+  type_env="$(cap_field "$cap" type_env)"
+  local need_restart=false
+
+  while true; do
+    clear 2>/dev/null || true
+    say "${GREEN}${cap_label_v}${NC}  ${DIM}${cap_desc_v}${NC}"
+    if [[ -n "$type_env" ]]; then
+      local cur_type; cur_type="$(get_env "$type_env")"
+      printf "  ${DIM}default provider when none specified: %s${NC}\n" "${cur_type:-<unset>}"
+    fi
+    echo
+    printf "  ${BOLD}%-22s %-12s %s${NC}\n" "provider" "kind" "status"
+    say "  ${DIM}─────────────────────────────────────────────────────────────────${NC}"
+
+    # Build menu rows. Each row maps a number to a (kind, provider) tuple so
+    # the action dispatcher can do the right thing without re-parsing labels.
+    local -a row_kind=() row_prov=()
+    local i=0 prov kind kenv
+    for prov in $(providers_for_cap "$cap"); do
+      i=$((i+1))
+      kind="$(prov_field "$cap" "$prov" kind)"
+      row_kind+=("$kind"); row_prov+=("$prov")
+      local kind_label
+      case "$kind" in
+        container) kind_label="local container" ;;
+        cloud)     kind_label="cloud API" ;;
+        builtin)   kind_label="built-in" ;;
+      esac
+      printf "  ${GREEN}%d${NC} %-20s %-12s %b\n" "$i" "$(prov_field "$cap" "$prov" label)" "$kind_label" "$(provider_status_token "$cap" "$prov")"
+      local notes; notes="$(prov_field "$cap" "$prov" notes)"
+      [[ -n "$notes" ]] && printf "    ${DIM}%s${NC}\n" "$notes"
+    done
+
+    echo
+    say "  Pick a number to ${BOLD}configure${NC} that provider."
+    # Surface Ollama model management once at the bottom when Ollama is on
+    # for this capability — it's a common follow-up after enabling.
+    local ollama_on=false
+    if profile_active ollama && [[ "$cap" == "language" || "$cap" == "embedding" || "$cap" == "ocr" ]]; then
+      ollama_on=true
+      say "  ${GREEN}m${NC}  Pull / manage Ollama models"
+    fi
+    $need_restart && say "  ${GREEN}a${NC}  Apply changes (restart stack)"
+    say "  ${GREEN}0${NC}  Back"
+    pick_menu r
+
     case "$r" in
-      1) services_menu ;;
-      2) api_providers_menu ;;
-      0|"") return 0 ;;
-      *) warn "Invalid."; pause ;;
+      0|"") $need_restart && _maybe_restart_for_changes; return 0 ;;
+      m|M)  $ollama_on && { cap_ollama_pull_prompt "$cap"; pause; } || { warn "Ollama isn't enabled for this capability yet."; pause; } ;;
+      a|A)  $need_restart && { _maybe_restart_for_changes; need_restart=false; } ;;
+      *)
+        if [[ "$r" =~ ^[1-9][0-9]*$ && "$r" -le "${#row_prov[@]}" ]]; then
+          local k="${row_kind[$((r-1))]}" p="${row_prov[$((r-1))]}"
+          case "$k" in
+            container) cap_action_container "$cap" "$p" && need_restart=true ;;
+            cloud)     cap_action_cloud     "$cap" "$p" ;;
+            builtin)   cap_action_builtin   "$cap" "$p" ;;
+          esac
+        else
+          warn "Invalid."; pause
+        fi
+        ;;
     esac
   done
+}
+
+# Storage: exclusive (one provider per deployment). Switching guards against
+# silent data loss — uploaded files don't migrate automatically.
+cap_menu_storage() {
+  local cap=storage
+  while true; do
+    clear 2>/dev/null || true
+    say "${GREEN}File storage${NC}  ${DIM}uploads, dataset blobs, exports${NC}"
+    local cur; cur="$(get_env STORAGE_PROVIDER_TYPE)"
+    printf "  current provider: ${BOLD}%s${NC}\n" "${cur:-<unset>}"
+    say "  ${DIM}Storage is one-at-a-time — all assets live in the active provider.${NC}"
+    say "  ${DIM}Switching does not move existing files.${NC}"
+    echo
+
+    local -a opts_prov=()
+    local i=0 prov mark
+    for prov in $(providers_for_cap "$cap"); do
+      i=$((i+1))
+      opts_prov+=("$prov")
+      if [[ "$cur" == "$prov" ]]; then mark="${GREEN}● active${NC}"
+      else mark="${DIM}○${NC}"; fi
+      printf "  ${GREEN}%d${NC} %b  %-22s ${DIM}%s${NC}\n" "$i" "$mark" "$(prov_field "$cap" "$prov" label)" "$(prov_field "$cap" "$prov" notes)"
+    done
+
+    echo
+    say "  ${GREEN}p${NC}  Change local_fs host path  ${DIM}(where files live on disk)${NC}"
+    say "  ${GREEN}0${NC}  Back"
+    pick_menu r
+
+    case "$r" in
+      0|"") return 0 ;;
+      p|P)  prompt_set LOCAL_STORAGE_HOST_PATH "Local storage host path (default ./.store/local_fs)"; pause ;;
+      *)
+        if [[ "$r" =~ ^[1-9][0-9]*$ && "$r" -le "${#opts_prov[@]}" ]]; then
+          local new="${opts_prov[$((r-1))]}"
+          if [[ "$new" == "$cur" ]]; then
+            warn "Already on $new."; pause
+          else
+            storage_switch_safe "$cur" "$new" || true
+          fi
+        else
+          warn "Invalid."; pause
+        fi
+        ;;
+    esac
+  done
+}
+
+# Single-provider capability (scraping today) — informational, no choices.
+cap_menu_single() {  # CAP
+  local cap="$1" cap_label_v cap_desc_v prov
+  cap_label_v="$(cap_field "$cap" label)"
+  cap_desc_v="$(cap_field "$cap" desc)"
+  prov="$(providers_for_cap "$cap" | head -1)"
+
+  clear 2>/dev/null || true
+  say "${GREEN}${cap_label_v}${NC}  ${DIM}${cap_desc_v}${NC}"
+  echo
+  say "  Provider: ${BOLD}$(prov_field "$cap" "$prov" label)${NC}  ${DIM}($(prov_field "$cap" "$prov" notes))${NC}"
+  echo
+  say "  ${DIM}No setup required — built into the backend.${NC}"
+  echo
+  pause
+}
+
+# ── Per-capability actions ────────────────────────────────────────────────────
+
+# Toggle a local-container provider on or off for a capability. Returns true
+# on a state change (caller should arm the restart prompt).
+cap_action_container() {  # CAP PROVIDER  → 0 if changed, 1 otherwise
+  local cap="$1" prov="$2" label
+  label="$(prov_field "$cap" "$prov" label)"
+  if provider_active "$cap" "$prov"; then
+    confirm "Turn $label off for $(cap_field "$cap" label)?" || return 1
+    backup_env
+    provider_disable "$cap" "$prov"
+    ok "$label disabled for $(cap_field "$cap" label)."
+    pause; return 0
+  else
+    if [[ "$prov" == "local" && "$cap" == "geocoding" ]]; then
+      warn "Heads up: local Nominatim downloads ~5GB OSM data and takes ~2h on first start."
+    fi
+    confirm "Enable $label for $(cap_field "$cap" label)?" || return 1
+    backup_env
+    provider_enable "$cap" "$prov"
+    ok "$label enabled for $(cap_field "$cap" label)."
+    if [[ "$prov" == "ollama" ]]; then
+      say "${DIM}  After restart, pull a model from this menu's 'm' option.${NC}"
+    fi
+    pause; return 0
+  fi
+}
+
+# Cloud provider actions: set/change key, sharing, clear.
+cap_action_cloud() {  # CAP PROVIDER
+  local cap="$1" prov="$2" label kenv genv
+  label="$(prov_field "$cap" "$prov" label)"
+  kenv="$(prov_field "$cap" "$prov" key_env)"
+  genv="$(prov_field "$cap" "$prov" grant_env)"
+
+  clear 2>/dev/null || true
+  say "${GREEN}${label}${NC}  ${DIM}cloud provider for $(cap_field "$cap" label)${NC}"
+  if [[ -n "$kenv" ]]; then
+    printf "  current key: %s\n" "$(mask "$(get_env "$kenv")")"
+  else
+    say "  ${DIM}no API key needed — keyless public endpoint${NC}"
+  fi
+  printf "  shared with: %b\n" "$(grant_pretty "$(get_env "$genv")")"
+  echo
+
+  local actions_label="" set_clear_visible=false
+  if [[ -n "$kenv" ]]; then
+    set_clear_visible=true
+    say "  ${GREEN}1${NC}  Set / change API key"
+    say "  ${GREEN}2${NC}  Change sharing  ${DIM}(who on this HQ can use the deployment key)${NC}"
+    say "  ${GREEN}3${NC}  Clear API key"
+  else
+    say "  ${GREEN}2${NC}  Change sharing  ${DIM}(or block this provider entirely)${NC}"
+  fi
+  say "  ${GREEN}0${NC}  Back"
+  pick_menu r
+
+  case "$r" in
+    1) $set_clear_visible && { backup_env; prompt_set_password "$kenv" "${label} API key"; pause; } ;;
+    2) cap_set_sharing "$cap" "$prov"; pause ;;
+    3) $set_clear_visible && { if confirm "Clear $label key?"; then backup_env; set_env "$kenv" ""; ok "Cleared."; fi; pause; } ;;
+    0|"") return 0 ;;
+    *) warn "Invalid."; pause ;;
+  esac
+}
+
+# Built-in actions: usually nothing to configure. For OCR (where multiple
+# built-ins compete with containerized alternatives) offer to make this the
+# default explicitly.
+cap_action_builtin() {  # CAP PROVIDER
+  local cap="$1" prov="$2" label type_env
+  label="$(prov_field "$cap" "$prov" label)"
+  type_env="$(cap_field "$cap" type_env)"
+
+  clear 2>/dev/null || true
+  say "${GREEN}${label}${NC}  ${DIM}built-in for $(cap_field "$cap" label)${NC}"
+  say "  ${DIM}$(prov_field "$cap" "$prov" notes)${NC}"
+  echo
+
+  if [[ -n "$type_env" ]]; then
+    local cur; cur="$(get_env "$type_env")"
+    if [[ "$cur" == "$prov" ]]; then
+      ok "Already the default for this capability."
+    elif confirm "Make $label the default for $(cap_field "$cap" label)?"; then
+      backup_env; set_env "$type_env" "$prov"
+      ok "Default set to $label."
+    fi
+  else
+    say "  ${DIM}Always available — no toggle needed.${NC}"
+  fi
+  pause
+}
+
+# Sharing — wraps the existing explainer + level picker for one specific
+# (capability, provider) pair so the user doesn't have to fuzzy-pick a row.
+cap_set_sharing() {  # CAP PROVIDER
+  local cap="$1" prov="$2" label genv
+  label="$(prov_field "$cap" "$prov" label)"
+  genv="$(prov_field "$cap" "$prov" grant_env)"
+  [[ -n "$genv" ]] || { warn "No sharing setting for this provider."; return 0; }
+
+  clear 2>/dev/null || true
+  sharing_explainer
+  say "  ${BOLD}Sharing level for ${label} (${cap}):${NC}"
+  local level
+  level="$(printf '%s\n' \
+    "Everyone     — any signed-in user" \
+    "Admins only  — superusers" \
+    "Blocked      — no one on this HQ can use this provider" \
+    "Not shared   — default; users bring their own key" \
+    | fzf_pick "Level:" "What level should the deployment-level key be shared at?")" || return 0
+  [[ -z "$level" ]] && return 0
+  local val
+  case "$level" in
+    Everyone*)    val=all ;;
+    Admins*)      val=superuser ;;
+    Blocked*)     val=none ;;
+    Not\ shared*) val="" ;;
+    *)            return 0 ;;
+  esac
+  backup_env; set_env "$genv" "$val"
+  ok "  ${label} → $(grant_pretty "$val")"
+}
+
+# ── Safe storage switch ───────────────────────────────────────────────────────
+# Storage providers don't migrate data automatically. Switching while there
+# are uploaded files means HQ loses access to them (they still live on disk
+# but the backend points elsewhere). Warn explicitly + opt-in.
+
+storage_data_summary() {  # PROVIDER  → echoes a one-line description of existing data, or empty
+  case "$1" in
+    local_fs)
+      local path; path="$(get_env LOCAL_STORAGE_HOST_PATH)"
+      path="${path:-./.store/local_fs}"
+      [[ -d "$path" ]] || { echo ""; return; }
+      local n; n="$(find "$path" -type f 2>/dev/null | wc -l | tr -d ' ')"
+      [[ "$n" -gt 0 ]] && echo "$n file(s) under $path"
+      ;;
+    minio)
+      [[ -d ./.store/minio ]] || { echo ""; return; }
+      local n; n="$(find ./.store/minio -type f 2>/dev/null | wc -l | tr -d ' ')"
+      [[ "$n" -gt 0 ]] && echo "$n file(s) under ./.store/minio (MinIO data)"
+      ;;
+    s3) echo "" ;;
+  esac
+}
+
+storage_switch_safe() {  # OLD_PROVIDER NEW_PROVIDER
+  local old="$1" new="$2"
+  clear 2>/dev/null || true
+  say "${BOLD}Switch file storage:${NC}  ${old:-<none>}  →  ${new}"
+  echo
+
+  local old_data; old_data="$(storage_data_summary "$old")"
+  if [[ -n "$old_data" ]]; then
+    say "${YELLOW}┌─ Heads up ──────────────────────────────────────────────────────────${NC}"
+    say "${YELLOW}│${NC}  ${old_data} are currently stored under ${BOLD}${old}${NC}."
+    say "${YELLOW}│${NC}  Switching to ${BOLD}${new}${NC} won't move them — they stay on disk but"
+    say "${YELLOW}│${NC}  the backend will look at the new provider, so existing asset URLs"
+    say "${YELLOW}│${NC}  will not resolve. You can switch back any time to access them again."
+    say "${YELLOW}└─────────────────────────────────────────────────────────────────────${NC}"
+    echo
+  fi
+
+  case "$new" in
+    local_fs)
+      say "  Files will live under ${BOLD}$(get_env LOCAL_STORAGE_HOST_PATH || echo './.store/local_fs')${NC}." ;;
+    minio)
+      say "  MinIO will run as a Docker container, data under ${BOLD}./.store/minio${NC}." ;;
+    s3)
+      say "  You'll need an AWS-style bucket + access keys (configured next)." ;;
+  esac
+  echo
+  confirm "Switch storage to ${new}?" || { warn "Cancelled."; pause; return 1; }
+
+  backup_env
+  # First: stop and remove the OLD provider's container if it had one. Doing
+  # this BEFORE switching the env vars means the running container still sees
+  # consistent credentials during shutdown.
+  if [[ "$old" == "minio" ]] && profile_active minio; then
+    say "${DIM}stopping minio container…${NC}"
+    if docker_ok; then
+      local c; c="$(compose_cmd)"
+      $c stop minio  >/dev/null 2>&1 || true
+      $c rm -f minio >/dev/null 2>&1 || true
+    fi
+    remove_profile_persist minio
+    set_env PROVIDER_ACCESS_STORAGE_minio ""
+  fi
+
+  # Now flip to the new provider via the canonical helper.
+  provider_enable storage "$new"
+  set_env STORAGE_PROVIDER_TYPE "$new"   # provider_enable only sets when unset
+
+  # New provider-specific follow-ups.
+  case "$new" in
+    s3)
+      prompt_set S3_BUCKET_NAME "S3 bucket"
+      prompt_set S3_REGION "Region"
+      prompt_set S3_ACCESS_KEY_ID "Access key id"
+      prompt_set_password S3_SECRET_ACCESS_KEY "Secret access key" ;;
+  esac
+
+  ok "Storage = $new"
+  if docker_ok && stack_is_running; then
+    confirm_y "Restart stack to apply?" && { ( stack_restart ) || warn "Restart failed."; }
+  fi
+  pause
+}
+
+# ── Ollama model pull ─────────────────────────────────────────────────────────
+# Common follow-up after enabling Ollama. Offers a curated list per capability
+# plus a free-form prompt for advanced users.
+
+cap_ollama_pull_prompt() {  # CAP
+  local cap="$1"
+  clear 2>/dev/null || true
+  say "${GREEN}Ollama models${NC}  ${DIM}pulled into the local container${NC}"
+  echo
+
+  if ! profile_active ollama; then
+    warn "Ollama isn't enabled. Turn it on first."; return
+  fi
+  if ! docker_ok; then
+    warn "Docker isn't reachable. Start the stack first."; return
+  fi
+
+  local c; c="$(compose_cmd)"
+  if $c ps ollama 2>/dev/null | grep -q "Up"; then
+    say "  Already pulled:"
+    $c exec -T ollama ollama list 2>/dev/null | sed 's/^/    /' || say "    ${DIM}(could not list — Ollama may still be starting)${NC}"
+    echo
+  else
+    warn "Ollama container isn't running yet. Start / restart the stack and try again."
+    return
+  fi
+
+  # Per-capability curated picks. Names are valid Ollama tags as of 2026.
+  local -a picks=()
+  case "$cap" in
+    language)
+      picks=(
+        "llama3.1:8b           general LLM, ~5GB"
+        "qwen2.5:7b            strong tool use, ~5GB"
+        "gemma2:2b             small/fast, ~2GB"
+        "phi3.5:3.8b           small, agentic, ~2.5GB"
+      ) ;;
+    embedding)
+      picks=(
+        "nomic-embed-text      general purpose, 274MB"
+        "mxbai-embed-large     high quality, 670MB"
+        "snowflake-arctic-embed  strong retrieval, 670MB"
+      ) ;;
+    ocr)
+      picks=(
+        "llava:7b              vision LLM for OCR, ~5GB"
+        "llava:13b             higher quality OCR, ~8GB"
+        "bakllava:7b           alternative vision LLM, ~5GB"
+      ) ;;
+  esac
+
+  if (( ${#picks[@]} > 0 )); then
+    say "  Suggested models:"
+    local i=0 line
+    for line in "${picks[@]}"; do
+      i=$((i+1))
+      printf "    ${GREEN}%d${NC}  %s\n" "$i" "$line"
+    done
+    echo
+  fi
+  say "  ${GREEN}c${NC}  Custom — type any Ollama tag"
+  say "  ${GREEN}0${NC}  Back"
+  pick_menu r
+
+  local target=""
+  if [[ "$r" =~ ^[1-9][0-9]*$ && "$r" -le "${#picks[@]}" ]]; then
+    target="${picks[$((r-1))]%% *}"
+  elif [[ "$r" == "c" || "$r" == "C" ]]; then
+    read -rp "  Model tag (e.g. llama3.1:8b): " target
+  else
+    return 0
+  fi
+  [[ -z "$target" ]] && return 0
+
+  say "${DIM}pulling $target — this can take a while…${NC}"
+  if $c exec -T ollama ollama pull "$target"; then
+    ok "$target ready."
+  else
+    warn "Pull failed. Check the model name and your internet connection."
+  fi
+}
+
+# Helper used by cap_menu_multi when an action set need_restart=true.
+_maybe_restart_for_changes() {
+  if docker_ok && stack_is_running; then
+    confirm_y "Apply changes — restart stack now?" && { ( stack_restart ) || warn "Restart failed."; }
+  fi
 }
 
 # ── Identity ──────────────────────────────────────────────────────────────────
@@ -2188,61 +2922,7 @@ configure_smtp() {
   pause
 }
 
-# ── Storage ───────────────────────────────────────────────────────────────────
-
-storage_menu() {
-  while true; do
-    clear 2>/dev/null || true
-    say "${GREEN}Storage${NC}"
-    printf "  current:  %s\n\n" "$(storage_status)"
-    say "  ${GREEN}1${NC}  Local filesystem"
-    say "  ${GREEN}2${NC}  MinIO (S3-compatible container)"
-    say "  ${GREEN}3${NC}  External S3"
-    say "  ${GREEN}4${NC}  Change local_fs host path (where files live on disk)"
-    say "  ${GREEN}0${NC}  Back"
-    pick_menu r
-    case "$r" in
-      1) backup_env; set_env STORAGE_PROVIDER_TYPE local_fs; remove_profile_persist minio
-         set_env PROVIDER_ACCESS_STORAGE_local_fs all
-         ok "Storage = local_fs"; pause ;;
-      2) backup_env; set_env STORAGE_PROVIDER_TYPE minio; add_profile_persist minio
-         [[ -d ./.store/minio ]] || { mkdir -p ./.store/minio; chmod 700 ./.store/minio; }
-         ensure_minio_secrets   # materialize MINIO_* if still placeholders
-         ok "Storage = minio"; pause ;;
-      3) backup_env; set_env STORAGE_PROVIDER_TYPE s3
-         prompt_set S3_BUCKET_NAME "S3 bucket"
-         prompt_set S3_REGION "Region"
-         prompt_set S3_ACCESS_KEY_ID "Access key id"
-         prompt_set_password S3_SECRET_ACCESS_KEY "Secret access key"
-         ok "Storage = s3"; pause ;;
-      4) prompt_set LOCAL_STORAGE_HOST_PATH "Local storage host path (default ./.store/local_fs)"; pause ;;
-      0|"") return 0 ;;
-      *) warn "Invalid."; pause ;;
-    esac
-  done
-}
-
-# ── Providers ─────────────────────────────────────────────────────────────────
-
-# API providers (cloud) — keys + sharing.
-#
-# Each row pairs an env var holding the key with the grant env var that
-# controls who can use the deployment-level key. Format:
-#   "ProviderLabel|KEY_ENV|GRANT_ENV|covers"
-#
-# A single provider may show up multiple times (OpenAI does both language and
-# embedding) — each row is one capability/provider pair the user can grant.
-declare -a API_PROVIDERS=(
-  "OpenAI    (language)|OPENAI_API_KEY|PROVIDER_ACCESS_LANGUAGE_openai|language"
-  "OpenAI    (embedding)|OPENAI_API_KEY|PROVIDER_ACCESS_EMBEDDING_openai|embedding"
-  "Anthropic (language)|ANTHROPIC_API_KEY|PROVIDER_ACCESS_LANGUAGE_anthropic|language"
-  "Google    (language)|GOOGLE_API_KEY|PROVIDER_ACCESS_LANGUAGE_google|language"
-  "Mistral   (language)|MISTRAL_API_KEY|PROVIDER_ACCESS_LANGUAGE_mistral|language"
-  "Jina      (embedding)|JINA_API_KEY|PROVIDER_ACCESS_EMBEDDING_jina|embedding"
-  "Voyage    (embedding)|VOYAGE_API_KEY|PROVIDER_ACCESS_EMBEDDING_voyage|embedding"
-  "Tavily    (web search)|TAVILY_API_KEY|PROVIDER_ACCESS_WEB_SEARCH_tavily|web search"
-  "Mapbox    (geocoding)|MAPBOX_ACCESS_TOKEN||geocoding"
-)
+# ── Sharing primitives (used by the capability sub-menus) ─────────────────────
 
 grant_pretty() {  # grant_pretty VALUE  -> human-readable label
   case "${1:-}" in
@@ -2252,94 +2932,6 @@ grant_pretty() {  # grant_pretty VALUE  -> human-readable label
     "")        echo "${DIM}not shared (users bring own)${NC}" ;;
     *)         echo "$1" ;;
   esac
-}
-
-api_providers_menu() {
-  while true; do
-    clear 2>/dev/null || true
-    say "${GREEN}API providers${NC}  ${DIM}cloud foundation services (OpenAI, Anthropic, …)${NC}"
-    echo
-    printf "  ${BOLD}%-22s %-13s %s${NC}\n" "provider" "key" "shared with"
-    say "  ${DIM}───────────────────────────────────────────────────────────────${NC}"
-    local row label key_env grant_env covers
-    for row in "${API_PROVIDERS[@]}"; do
-      IFS='|' read -r label key_env grant_env covers <<< "$row"
-      printf "  %-22s %-13s %b\n" \
-        "$label" \
-        "$(mask "$(get_env "$key_env")")" \
-        "$(grant_pretty "$(get_env "$grant_env")")"
-    done
-    echo
-    say "  ${GREEN}1${NC}  Set or change an API key"
-    say "  ${GREEN}2${NC}  Change sharing — who on this HQ can use a deployment-level key"
-    say "  ${GREEN}3${NC}  Clear a key"
-    say "  ${GREEN}0${NC}  Back"
-    pick_menu r
-    case "$r" in
-      1) set_api_key_prompt; pause ;;
-      2) set_sharing_prompt; pause ;;
-      3) clear_api_key_prompt; pause ;;
-      0|"") return 0 ;;
-      *) warn "Invalid."; pause ;;
-    esac
-  done
-}
-
-# Unique providers (dedup by KEY_ENV) for the "set a key" picker.
-unique_api_key_envs() {
-  local row key_env seen=""
-  for row in "${API_PROVIDERS[@]}"; do
-    IFS='|' read -r _ key_env _ _ <<< "$row"
-    [[ ",$seen," == *",$key_env,"* ]] && continue
-    seen="${seen:+$seen,}$key_env"
-    echo "$key_env"
-  done
-}
-
-api_key_label() {
-  case "$1" in
-    OPENAI_API_KEY)      echo "OpenAI" ;;
-    ANTHROPIC_API_KEY)   echo "Anthropic" ;;
-    GOOGLE_API_KEY)      echo "Google" ;;
-    MISTRAL_API_KEY)     echo "Mistral" ;;
-    JINA_API_KEY)        echo "Jina" ;;
-    VOYAGE_API_KEY)      echo "Voyage" ;;
-    TAVILY_API_KEY)      echo "Tavily" ;;
-    MAPBOX_ACCESS_TOKEN) echo "Mapbox" ;;
-    *)                   echo "$1" ;;
-  esac
-}
-
-set_api_key_prompt() {
-  # Build "Label — KEY_ENV — current" lines; fzf shows them, we strip back to env name.
-  local picked label key_env
-  picked="$(
-    while IFS= read -r key_env; do
-      printf '%-12s  %s\n' "$(api_key_label "$key_env")" "$key_env"
-    done < <(unique_api_key_envs) | fzf_pick "API key:" "Which provider's key to set or change?"
-  )" || return 0
-  [[ -z "$picked" ]] && return 0
-  # picked looks like "OpenAI       OPENAI_API_KEY"
-  key_env="${picked##* }"
-  label="$(api_key_label "$key_env")"
-  prompt_set_password "$key_env" "$label API key"
-}
-
-clear_api_key_prompt() {
-  say "  Which provider's key to clear?"
-  local keys=() label
-  local i=0 key_env
-  while IFS= read -r key_env; do
-    keys+=("$key_env"); i=$((i+1))
-    printf "    ${GREEN}%d${NC} %s  ${DIM}%s${NC}\n" "$i" "$key_env" "$(mask "$(get_env "$key_env")")"
-  done < <(unique_api_key_envs)
-  say "    ${GREEN}0${NC} Cancel"
-  pick_menu r
-  [[ "$r" =~ ^[1-9][0-9]*$ && "$r" -le "${#keys[@]}" ]] || return 0
-  if confirm "Clear ${keys[$((r-1))]}?"; then
-    backup_env; set_env "${keys[$((r-1))]}" ""
-    ok "  cleared"
-  fi
 }
 
 # Boxed explainer printed once when opening the sharing prompt — telling the
@@ -2365,50 +2957,6 @@ sharing_explainer() {
   say "${BLUE}│${NC}  only governs the deployment-level key."
   say "${BLUE}└─────────────────────────────────────────────────────────────────────${NC}"
   echo
-}
-
-set_sharing_prompt() {
-  clear 2>/dev/null || true
-  sharing_explainer
-
-  # Each line = "Label   current  →  GRANT_ENV" so fzf shows it nicely and we
-  # strip the env var name back out by splitting on the last whitespace.
-  local picked grant_env label row key_env covers
-  picked="$(
-    for row in "${API_PROVIDERS[@]}"; do
-      IFS='|' read -r label key_env grant_env covers <<< "$row"
-      [[ -z "$grant_env" ]] && continue
-      printf '%-22s  current: %-32s  %s\n' \
-        "$label" \
-        "$(grant_pretty "$(get_env "$grant_env")")" \
-        "$grant_env"
-    done | fzf_pick "Provider:" "Pick a provider/capability to set sharing for"
-  )" || return 0
-  [[ -z "$picked" ]] && return 0
-  grant_env="${picked##* }"
-  # Re-derive the label from the leading 22-char column.
-  label="$(awk '{print $1 " " $2}' <<< "$picked" | sed 's/[[:space:]]*$//')"
-
-  echo
-  say "  ${BOLD}Sharing level for ${label}:${NC}"
-  local level
-  level="$(printf '%s\n' \
-    "Everyone     — any signed-in user" \
-    "Admins only  — superusers" \
-    "Blocked      — no one on this HQ can use this provider" \
-    "Not shared   — default; users bring their own key" \
-    | fzf_pick "Level:" "What level should the deployment-level key be shared at?")" || return 0
-  [[ -z "$level" ]] && return 0
-  local val
-  case "$level" in
-    Everyone*)    val=all ;;
-    Admins*)      val=superuser ;;
-    Blocked*)     val=none ;;
-    Not\ shared*) val="" ;;
-    *)            return 0 ;;
-  esac
-  backup_env; set_env "$grant_env" "$val"
-  ok "  ${label} → $(grant_pretty "$val")"
 }
 
 # ── Workers / Domain / Reconfigure ────────────────────────────────────────────
@@ -2468,7 +3016,7 @@ settings_menu() {
     case "$r" in
       1) identity_menu ;;
       2) email_menu ;;
-      3) storage_menu ;;
+      3) cap_menu_storage ;;
       4) workers_prompt ;;
       5) domain_prompt ;;
       6) network_mode_menu ;;
@@ -2669,7 +3217,7 @@ draw_menu() {
     say "    ${DIM}4  Live logs                      (HQ is stopped)${NC}"
   fi
   dashed
-  say "    ${GREEN}5${NC}  Foundation service providers   ${DIM}local services · cloud API providers${NC}"
+  say "    ${GREEN}5${NC}  Foundation service providers   ${DIM}chat · embeddings · storage · search · geocoding · OCR${NC}"
   say "    ${GREEN}6${NC}  Settings                       ${DIM}superuser · email · storage · workers · domain${NC}$(sug_marker 6 "$sug")"
   if has_drift; then
     say "    ${GREEN}7${NC}  Sync services                  ${DIM}reconcile saved config with what's running${NC}$(sug_marker 7 "$sug")"
