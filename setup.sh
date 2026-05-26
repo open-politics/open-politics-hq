@@ -18,6 +18,7 @@ DIM=$'\033[2m';   BOLD=$'\033[1m';     NC=$'\033[0m'
 ENV_FILE=".env"
 EXAMPLE_FILE=".env.example"
 SETUP_CONF=".config/hq/setup.conf"
+HOST_NET_FRAGMENT=".config/hq/compose.host-net.yml"
 ENV_BACKUP_DIR=".config/hq/backups/env_files"
 PLACEHOLDERS="|changeThis|changethis|app_user|app_user_password|"
 OPTIONAL_SERVICES=(minio ollama searxng nominatim caddy)
@@ -174,15 +175,23 @@ conf_set() {
   mv "$tmp" "$SETUP_CONF"
 }
 
-# ── Config builder: mode + foundation services ───────────────────────────────
-# Two clear questions instead of opaque preset names:
-#   1) dev or production?  (images, restart policy, ports, TLS via Caddy)
-#   2) which foundation services run locally vs. via hosted/cloud providers?
-# Hosted providers are configured later (API keys in the dashboard).
+# ── Config builder: four-step wizard ─────────────────────────────────────────
+# Step 1  Developing vs Running
+# Step 2  (Running only) How will HQ be reachable?
+#           local       just this computer (default, safe by design)
+#           public      published at a domain (Caddy + auto-TLS)
+#           hardened    same exposure as local + structurally-impossible
+#                       public exposure (host network + 127.0.0.1 binds)
+# Step 3  Superuser account
+# Step 4  Optionals — domain/ACME if public, plus per-capability foundation
+#                     services (local container vs hosted via API key)
 
 PROFILES=""; PA_GRANTS=""; ENVIRONMENT="local"; STORAGE="local_fs"; FMODE="dev"
 DOMAIN_OPT=""; ACME_EMAIL_OPT=""
-MODE_SET=false; SERVICES_SET=false; STORAGE_SET=false
+SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""
+REACH="local"        # local | public | hardened — meaningful only when FMODE=prod
+NETWORK_MODE="bridge" # bridge | host — flipped to host by REACH=hardened
+MODE_SET=false; REACH_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false
 LANG_LOCAL=false; EMB_LOCAL=false  # for summary display
 
 add_profile() { [[ ",$PROFILES," == *",$1,"* ]] || PROFILES="${PROFILES:+$PROFILES,}$1"; }
@@ -191,9 +200,26 @@ add_grant()   { PA_GRANTS="${PA_GRANTS}${1}\n"; }
 apply_mode() {
   case "$1" in
     dev|development|local) FMODE=dev;  ENVIRONMENT=local ;;
-    prod|production)       FMODE=prod; ENVIRONMENT=production ;;
+    prod|production|run|running) FMODE=prod; ENVIRONMENT=production ;;
     *) die "Unknown --mode: '$1' (dev|production)" ;;
   esac
+}
+
+# Apply the reach choice (CLI: --reach NAME, or chosen interactively in step 2).
+# Only meaningful when FMODE=prod. Sets REACH, NETWORK_MODE, and side-effects
+# like adding the caddy profile.
+apply_reach() {
+  case "$1" in
+    local|just|computer)
+      REACH=local; NETWORK_MODE=bridge ;;
+    public|published|domain)
+      REACH=public; NETWORK_MODE=bridge
+      add_profile caddy ;;
+    hardened|host|secure)
+      REACH=hardened; NETWORK_MODE=host ;;
+    *) die "Unknown --reach: '$1' (local|public|hardened)" ;;
+  esac
+  REACH_SET=true
 }
 
 # Apply a non-interactive --with NAME flag (mirrors the interactive y/n choices).
@@ -255,71 +281,206 @@ ask_yn() {
   [[ "$reply" =~ ^[Yy]$ ]]
 }
 
-# Step 1 — how you'll use HQ (developing vs hosting), then where it'll run.
-# "Production" means hardened images + restart=always; it does NOT imply
-# public exposure. That's a separate question: a published domain (Caddy +
-# auto-TLS) vs local-only (or raw IP behind your own firewall/proxy).
-choose_mode_interactive() {
-  local default_mode; default_mode="$(conf_get last_mode dev)"
-  wizard_step 1 2 "How are you going to use HQ?"
-  say "${BLUE}│${NC}  Two ways most people start:"
+# Compute total wizard steps based on path. Running = 4 (usage, reach, user,
+# optionals), Developing = 3 (usage, user, optionals — no reach choice).
+wizard_total_steps() { [[ "$FMODE" == prod ]] && echo 4 || echo 3; }
+
+# Step 1 — usage: developing vs running.
+choose_usage_interactive() {
+  local default_mode; default_mode="$(conf_get last_mode running)"
+  wizard_step 1 "$(wizard_total_steps)" "How will you use HQ?"
   say "${BLUE}│${NC}"
-  say "${BLUE}│${NC}    1) ${BOLD}Developing live${NC}"
-  say "${BLUE}│${NC}       You're working on HQ's code (or want to). Source is bound"
-  say "${BLUE}│${NC}       into the containers, the backend hot-reloads on edits, and"
-  say "${BLUE}│${NC}       crashed containers stay down so you can see what broke."
-  say "${BLUE}│${NC}       Frontend on localhost:3000, backend on localhost:${BACKEND_PORT:-8022}."
+  say "${BLUE}│${NC}    1) ${BOLD}Developing${NC} — you're working on HQ's code"
   say "${BLUE}│${NC}"
-  say "${BLUE}│${NC}    2) ${BOLD}Hosting / running it${NC}"
-  say "${BLUE}│${NC}       HQ is ready for actual use — by you, your team, or the public."
-  say "${BLUE}│${NC}       Baked production images, restart=always, no source binds."
-  say "${BLUE}│${NC}       (We'll ask next where it should be reachable from.)"
+  say "${BLUE}│${NC}    2) ${BOLD}Running it${NC} — you want to use HQ for actual work"
   wizard_end
-  local d; [[ "$default_mode" == production ]] && d=2 || d=1
+  local d
+  case "$default_mode" in dev|development) d=1 ;; *) d=2 ;; esac
+
   if [[ "${ASSUME_YES:-false}" == true ]]; then
-    apply_mode "$default_mode"
-  else
-    local sel; read -rp "  Your choice [press Enter for: ${BOLD}${default_mode}${NC}]: " sel
-    sel="${sel:-$d}"
-    case "$sel" in
-      1|dev|development) apply_mode dev ;;
-      2|prod|production|host|hosting) apply_mode production ;;
-      *) die "Invalid choice: '$sel' (1, 2, dev, or production)" ;;
+    [[ "$d" == 1 ]] && apply_mode dev || apply_mode running
+    return 0
+  fi
+  local sel; read -rp "  Your choice [press Enter for: ${d}]: " sel
+  sel="${sel:-$d}"
+  case "$sel" in
+    1|dev|development)        apply_mode dev ;;
+    2|run|running|prod|production) apply_mode production ;;
+    *) die "Invalid choice: '$sel' (1 or 2)" ;;
+  esac
+}
+
+# Step 2 — reach: only shown when FMODE=prod.
+# Plain language for the basic options; technical depth only for the advanced one.
+choose_reach_interactive() {
+  [[ "$FMODE" == prod ]] || return 0
+  local default_reach; default_reach="$(conf_get last_reach local)"
+  wizard_step 2 "$(wizard_total_steps)" "How will HQ be reachable?"
+  say "${BLUE}│${NC}"
+  say "${BLUE}│${NC}    1) ${BOLD}Just from this computer${NC}"
+  say "${BLUE}│${NC}       Only browsers on this machine can reach HQ. Nothing is exposed"
+  say "${BLUE}│${NC}       to your local network or the internet. Safe on any machine."
+  say "${BLUE}│${NC}"
+  say "${BLUE}│${NC}    2) ${BOLD}From the internet, at a domain you own${NC}"
+  say "${BLUE}│${NC}       HQ runs at https://your-domain.com with automatic TLS"
+  say "${BLUE}│${NC}       certificates (free, via Let's Encrypt). Your domain must"
+  say "${BLUE}│${NC}       already point at this server's IP address."
+  say "${BLUE}│${NC}"
+  say "${BLUE}│${NC}    3) ${BOLD}Just from this computer — hardened${NC} ${DIM}(advanced)${NC}"
+  say "${BLUE}│${NC}       Same exposure as option 1, plus stricter network isolation:"
+  say "${BLUE}│${NC}       all services share the host's network namespace and bind to"
+  say "${BLUE}│${NC}       127.0.0.1, making accidental network exposure structurally"
+  say "${BLUE}│${NC}       impossible. Recommended for security-focused deployments."
+  say "${BLUE}│${NC}       On Mac/Windows requires enabling Docker Desktop's host"
+  say "${BLUE}│${NC}       networking feature (Settings → Resources → Network)."
+  wizard_end
+  local d
+  case "$default_reach" in
+    local|just) d=1 ;;
+    public|published|domain|hosted) d=2 ;;
+    hardened|host|secure) d=3 ;;
+    *) d=1 ;;
+  esac
+
+  if [[ "${ASSUME_YES:-false}" == true ]]; then
+    case "$default_reach" in
+      public|published|hosted) apply_reach public ;;
+      hardened|host)           apply_reach hardened ;;
+      *)                       apply_reach local ;;
     esac
+    return 0
+  fi
+  local sel; read -rp "  Your choice [press Enter for: ${d}]: " sel
+  sel="${sel:-$d}"
+  case "$sel" in
+    1|local|just)                apply_reach local ;;
+    2|public|published|domain)   apply_reach public ;;
+    3|hardened|host|secure)      apply_reach hardened ;;
+    *) die "Invalid choice: '$sel' (1, 2, or 3)" ;;
+  esac
+}
+
+# Step 3 — superuser identity. Plain prompts, no jargon.
+choose_user_interactive() {
+  local step; step=$([[ "$FMODE" == prod ]] && echo 3 || echo 2)
+  wizard_step "$step" "$(wizard_total_steps)" "Create your first user"
+  say "${BLUE}│${NC}  This is the admin account. You can add more users later from"
+  say "${BLUE}│${NC}  inside HQ."
+  wizard_end
+
+  local cur_email; cur_email="$(get_env FIRST_SUPERUSER)"
+  is_placeholder "$cur_email" && cur_email=""
+
+  if [[ "${ASSUME_YES:-false}" == true ]]; then
+    [[ -n "$cur_email" ]] || SU_EMAIL_OPT="admin@localhost"
+    # Generate a password if there isn't a real one already.
+    local cur_pw; cur_pw="$(get_env FIRST_SUPERUSER_PASSWORD)"
+    if is_placeholder "$cur_pw"; then SU_PASSWORD_OPT="$(gen_secret)"; fi
+    return 0
   fi
 
-  # When hosting, ask the orthogonal question: where will it actually be reachable?
-  # Production images don't imply public exposure — internal installs are valid.
-  if [[ "$FMODE" == prod && "${ASSUME_YES:-false}" != true ]]; then
+  local email; read -rp "  Email${cur_email:+ [$cur_email]}: " email
+  email="${email:-$cur_email}"
+  [[ -n "$email" ]] || die "Email is required."
+  SU_EMAIL_OPT="$email"
+
+  local pw1 pw2
+  while true; do
+    read -rsp "  Password (min 8 chars): " pw1; echo
+    [[ ${#pw1} -ge 8 ]] || { warn "Too short."; continue; }
+    read -rsp "  Confirm password:        " pw2; echo
+    [[ "$pw1" == "$pw2" ]] && break
+    warn "Passwords don't match — try again."
+  done
+  SU_PASSWORD_OPT="$pw1"
+}
+
+# Step 4 — optionals.
+# (a) Domain + ACME email, but only if reach=public.
+# (b) Foundation services: per-capability local-vs-hosted toggles + storage.
+choose_optionals_interactive() {
+  local step; step=$([[ "$FMODE" == prod ]] && echo 4 || echo 3)
+  wizard_step "$step" "$(wizard_total_steps)" "Optional choices"
+  say "${BLUE}│${NC}  Foundation services have safe defaults. Pick local containers"
+  say "${BLUE}│${NC}  only when you actually need them — you can always enable hosted"
+  say "${BLUE}│${NC}  providers later in the dashboard by pasting an API key."
+  wizard_end
+
+  # (a) Domain + ACME if reach=public.
+  if [[ "$REACH" == public && "${ASSUME_YES:-false}" != true ]]; then
     echo
-    say "  ${BOLD}Where will HQ be reachable from?${NC}"
-    say "  Production images on this machine; this question is just about exposure."
-    say
-    say "  ${DIM}1)${NC} ${BOLD}Local only${NC} (or a raw IP you'll firewall/proxy yourself)"
-    say "       Ports stay on the host — frontend on :3000, backend on :${BACKEND_PORT:-8022}."
-    say "       Pick this for an internal install, an air-gapped box, or when you"
-    say "       already have nginx/Cloudflare/etc. in front."
-    say
-    say "  ${DIM}2)${NC} ${BOLD}Published at a domain${NC} (Caddy reverse proxy + auto-TLS)"
-    say "       Caddy obtains and renews a Let's Encrypt certificate automatically."
-    say "       The domain must already resolve to this machine's public IP."
+    say "${BOLD}Domain & TLS${NC}  ${DIM}(needed because you picked option 2)${NC}"
     local cur_d cur_a; cur_d="$(get_env DOMAIN)"; cur_a="$(get_env ACME_EMAIL)"
     is_placeholder "$cur_d" && cur_d=""
-    local d2=1; [[ -n "$cur_d" ]] && d2=2
-    local pub; read -rp "  Your choice [press Enter for: ${d2}]: " pub
-    pub="${pub:-$d2}"
-    case "$pub" in
-      1|local|"") : ;;  # nothing to do, no caddy
-      2|domain|public)
-        local dom; read -rp "  Domain (e.g. hq.example.org)${cur_d:+ [$cur_d]}: " dom
-        dom="${dom:-$cur_d}"
-        [[ -n "$dom" ]] || die "Domain is required for the published option."
-        DOMAIN_OPT="$dom"; add_profile caddy
-        local acme; read -rp "  ACME contact email (for Let's Encrypt notices)${cur_a:+ [$cur_a]}: " acme
-        ACME_EMAIL_OPT="${acme:-$cur_a}"
-        [[ -n "$ACME_EMAIL_OPT" ]] || warn "ACME_EMAIL empty — Let's Encrypt still works but you won't get expiry warnings." ;;
-      *) die "Invalid choice: '$pub' (1 or 2)" ;;
-    esac
+    local dom; read -rp "  Domain (e.g. hq.example.org)${cur_d:+ [$cur_d]}: " dom
+    dom="${dom:-$cur_d}"
+    [[ -n "$dom" ]] || die "Domain is required when publishing on the internet."
+    DOMAIN_OPT="$dom"
+    local acme; read -rp "  Contact email (for Let's Encrypt notices)${cur_a:+ [$cur_a]}: " acme
+    ACME_EMAIL_OPT="${acme:-$cur_a}"
+    [[ -n "$ACME_EMAIL_OPT" ]] || warn "Contact email empty — Let's Encrypt still works but you won't get expiry warnings."
+  fi
+
+  # (b) Foundation services.
+  echo
+  say "${BOLD}AI chat models${NC}  ${DIM}(annotation, agents, chat)${NC}"
+  say "  ${DIM}Local container:${NC}  Ollama — runs open models on your hardware"
+  say "  ${DIM}Hosted (API key):${NC} OpenAI, Anthropic, Google Gemini, …"
+  if ask_yn "Run Ollama locally?" n; then
+    add_profile ollama
+    add_grant "PROVIDER_ACCESS_LANGUAGE_ollama=all"
+    LANG_LOCAL=true
+  fi
+
+  echo
+  say "${BOLD}Embeddings${NC}  ${DIM}(semantic search, retrieval)${NC}"
+  say "  ${DIM}Local container:${NC}  Ollama (same container as above if enabled)"
+  say "  ${DIM}Hosted (API key):${NC} OpenAI, Voyage, Jina, …"
+  local emb_default=n
+  $LANG_LOCAL && emb_default=y
+  if ask_yn "Use Ollama for embeddings?" "$emb_default"; then
+    add_profile ollama
+    add_grant "PROVIDER_ACCESS_EMBEDDING_ollama=all"
+    EMB_LOCAL=true
+  fi
+
+  echo
+  say "${BOLD}Web search${NC}  ${DIM}(live news, agent browsing)${NC}"
+  say "  ${DIM}Local container:${NC}  SearXNG — meta-searches DuckDuckGo, Brave, Bing…"
+  say "  ${DIM}Hosted (API key):${NC} Tavily, Serper, Exa (future)"
+  if ask_yn "Run SearXNG locally?" n; then
+    add_profile searxng
+  fi
+
+  echo
+  say "${BOLD}Geocoding${NC}  ${DIM}(place names ↔ coordinates)${NC}"
+  say "  ${DIM}Local container:${NC}  Nominatim — OpenStreetMap on your hardware"
+  say "                    ${DIM}(needs ~5GB disk + ~2h initial import)${NC}"
+  say "  ${DIM}Hosted (API key):${NC} external geocoders"
+  if ask_yn "Run Nominatim locally?" n; then
+    add_profile nominatim
+    add_grant "PROVIDER_ACCESS_GEOCODING_local=all"
+  fi
+
+  echo
+  if ! $STORAGE_SET; then
+    say "${BOLD}File storage${NC}  ${DIM}(uploads, dataset blobs, exports)${NC}"
+    say "  ${DIM}1) Local files${NC}    Just a directory on this machine (./.store/local_fs)"
+    say "  ${DIM}2) MinIO${NC}          S3-compatible container running in Docker"
+    say "  ${DIM}3) External S3${NC}    AWS S3 or compatible — credentials added later"
+    local d=1; [[ "$FMODE" == prod ]] && d=2
+    if [[ "${ASSUME_YES:-false}" == true ]]; then
+      [[ "$d" == 2 ]] && apply_storage minio || apply_storage local_fs
+    else
+      local s; read -rp "  Storage [press Enter for: ${d}]: " s
+      s="${s:-$d}"
+      case "$s" in
+        1|local_fs|local|files) apply_storage local_fs ;;
+        2|minio)                apply_storage minio ;;
+        3|s3|external)          apply_storage s3 ;;
+        *) die "Invalid storage choice: '$s'" ;;
+      esac
+    fi
   fi
 }
 
@@ -433,6 +594,172 @@ ensure_local_fs_path() {
   fi
 }
 
+# Static guard against accidental public binds in compose.yml. We promise users
+# that "Just from this computer" really means just from this computer — the
+# only listener on 0.0.0.0 should be caddy (profile-gated, intentionally public).
+# Anything else with 0.0.0.0:port:port slipped past review.
+assert_no_stray_public_binds() {
+  [[ -f compose.yml ]] || return 0
+  # Pull every "<n>:<n>" port mapping that isn't preceded by 127.0.0.1: or
+  # localhost:, then check whether we're inside the caddy service block.
+  local offenders
+  offenders="$(awk '
+    /^  [a-z_]+:$/ { svc = $1; sub(":", "", svc) }
+    /- *"[0-9]+:[0-9]+/ {
+      # match port-mapping lines that lack a loopback bind prefix
+      if ($0 !~ /127\.0\.0\.1:/ && $0 !~ /localhost:/ && svc != "caddy") {
+        printf "  %s:  %s\n", svc, $0
+      }
+    }
+  ' compose.yml)"
+  if [[ -n "$offenders" ]]; then
+    warn "compose.yml has stray public port bindings (0.0.0.0) outside caddy:"
+    printf '%s\n' "$offenders"
+    die "Refusing to proceed — fix compose.yml so only caddy binds 0.0.0.0."
+  fi
+}
+
+# Generate the host-network override fragment under .config/hq/.
+# This file is NOT checked into the repo; it lives next to setup.conf as
+# UX/state artifact. compose_cmd appends `-f $HOST_NET_FRAGMENT` when active.
+#
+# What this does:
+#   • network_mode: host on every service, so containers share the host's
+#     network namespace. No docker bridge, no NAT, no port mappings.
+#   • extra_hosts maps every service name (db, redis, backend, ...) to
+#     127.0.0.1, so existing in-app URLs like redis://redis:6379 still resolve.
+#   • Every listener is overridden to bind 127.0.0.1 explicitly. Postgres,
+#     redis, ollama, minio, searxng, backend — all loopback. Caddy (when
+#     active) intentionally keeps 0.0.0.0:80,443 — the only public surface.
+write_host_net_fragment() {
+  mkdir -p "$(dirname "$HOST_NET_FRAGMENT")"
+  cat > "$HOST_NET_FRAGMENT" <<'YAML'
+# Generated by ./setup.sh — DO NOT edit by hand.
+# Regenerate by re-running the wizard or toggling network mode in Settings.
+#
+# Hardened network override: every service shares the host's network
+# namespace (network_mode: host) and binds to 127.0.0.1. Service names
+# resolve to loopback via the extra_hosts anchor — existing in-app URLs
+# like redis://redis:6379 still work. Every `ports:` and `networks:`
+# declaration from the base is `!reset`-ed (they're mutually exclusive
+# with network_mode: host). The result: accidental network exposure is
+# structurally impossible. Caddy (profile-gated) intentionally binds
+# 0.0.0.0:80,443 — the only public surface.
+
+x-extra-hosts: &extra_hosts
+  - "host.docker.internal:127.0.0.1"
+  - "db:127.0.0.1"
+  - "redis:127.0.0.1"
+  - "backend:127.0.0.1"
+  - "frontend:127.0.0.1"
+  - "minio:127.0.0.1"
+  - "ollama:127.0.0.1"
+  - "searxng:127.0.0.1"
+  - "nominatim:127.0.0.1"
+  - "caddy:127.0.0.1"
+
+services:
+  db:
+    network_mode: "host"
+    networks: !reset null
+    extra_hosts: *extra_hosts
+    # Override the base command so postgres listens on loopback only.
+    command:
+      - postgres
+      - -c
+      - listen_addresses=127.0.0.1
+      - -c
+      - port=${POSTGRES_PORT}
+
+  backend:
+    network_mode: "host"
+    networks: !reset null
+    extra_hosts: *extra_hosts
+    environment:
+      - BACKEND_BIND_HOST=127.0.0.1
+
+  redis:
+    network_mode: "host"
+    networks: !reset null
+    extra_hosts: *extra_hosts
+    # --bind on the CLI takes precedence over redis.conf's bind directive.
+    command: >
+      redis-server /usr/local/etc/redis/redis.conf
+      --bind 127.0.0.1
+      --port ${REDIS_PORT:-6379}
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD}
+      --rename-command REPLICAOF ""
+      --rename-command SLAVEOF ""
+
+  frontend:
+    network_mode: "host"
+    networks: !reset null
+    ports: !reset null
+    extra_hosts: *extra_hosts
+    environment:
+      - HOSTNAME=127.0.0.1
+      - PORT=3000
+
+  celery_worker:
+    network_mode: "host"
+    networks: !reset null
+    extra_hosts: *extra_hosts
+
+  celery_beat:
+    network_mode: "host"
+    networks: !reset null
+    extra_hosts: *extra_hosts
+
+  # Optional services — only materialize when their profile is active.
+  minio:
+    network_mode: "host"
+    networks: !reset null
+    extra_hosts: *extra_hosts
+    command:
+      - minio
+      - server
+      - /data
+      - --address
+      - 127.0.0.1:9000
+      - --console-address
+      - 127.0.0.1:9001
+
+  ollama:
+    network_mode: "host"
+    networks: !reset null
+    ports: !reset null
+    extra_hosts: *extra_hosts
+    environment:
+      - OLLAMA_HOST=127.0.0.1:11434
+      - OLLAMA_NUM_PARALLEL=2
+      - OLLAMA_MAX_LOADED_MODELS=2
+
+  searxng:
+    network_mode: "host"
+    networks: !reset null
+    extra_hosts: *extra_hosts
+    # SearXNG default port is 8080; hardened mode moves it to 8888 to avoid
+    # potential conflicts on the host (and pins the bind to loopback).
+    environment:
+      - BIND_ADDRESS=127.0.0.1:8888
+      - SEARXNG_BASE_URL=http://127.0.0.1:8888/
+
+  nominatim:
+    network_mode: "host"
+    networks: !reset null
+    extra_hosts: *extra_hosts
+
+  caddy:
+    network_mode: "host"
+    networks: !reset null
+    ports: !reset null
+    extra_hosts: *extra_hosts
+    # Caddy intentionally binds 0.0.0.0:80,443 — the only public surface.
+YAML
+  ok "wrote $HOST_NET_FRAGMENT"
+}
+
 ensure_env() {
   if [[ ! -f "$ENV_FILE" ]]; then
     cp "$EXAMPLE_FILE" "$ENV_FILE"; ok "created $ENV_FILE from $EXAMPLE_FILE"
@@ -460,10 +787,21 @@ ensure_env() {
   set_env COMPOSE_PROFILES "$PROFILES"
   set_env BACKEND_WORKERS "${BACKEND_WORKERS:-4}"
   set_env CELERY_CONCURRENCY "${CELERY_CONCURRENCY:-4}"
-  # DOMAIN / ACME_EMAIL come from step 1 when hosting at a domain. Empty means
-  # local-only or raw-IP — leave any prior value untouched.
+  # Hardened reach mode binds uvicorn directly to 127.0.0.1 on the host (since
+  # the container shares the host network namespace). All other modes stay on
+  # 0.0.0.0 inside the container — the docker bridge is what isolates them.
+  if [[ "$NETWORK_MODE" == host ]]; then
+    set_env BACKEND_BIND_HOST "127.0.0.1"
+  else
+    set_env BACKEND_BIND_HOST "0.0.0.0"
+  fi
+  # DOMAIN / ACME_EMAIL come from step 4 when reach=public.
   [[ -n "$DOMAIN_OPT"     ]] && set_env DOMAIN     "$DOMAIN_OPT"
   [[ -n "$ACME_EMAIL_OPT" ]] && set_env ACME_EMAIL "$ACME_EMAIL_OPT"
+  # Superuser identity collected in step 3.
+  [[ -n "$SU_EMAIL_OPT"    ]] && set_env FIRST_SUPERUSER          "$SU_EMAIL_OPT"
+  [[ -n "$SU_PASSWORD_OPT" ]] && set_env FIRST_SUPERUSER_PASSWORD "$SU_PASSWORD_OPT"
+  # Non-interactive fallback for callers that skip the wizard (e.g. -y without --su-email).
   for k in FIRST_SUPERUSER FIRST_SUPERUSER_PASSWORD; do
     local cur; cur="$(get_env "$k")"
     if is_placeholder "$cur" && [[ "${ASSUME_YES:-false}" != true ]]; then
@@ -480,17 +818,27 @@ ensure_env() {
 
 summary() {
   say "\n${GREEN}Resolved configuration${NC}"
-  local usage; [[ "$FMODE" == prod ]] && usage="hosting (production images)" || usage="developing live"
+  local usage
+  if   [[ "$FMODE" == dev ]]; then usage="developing (source-bound, hot reload)"
+  else
+    case "$REACH" in
+      public)   usage="running it — published on the internet" ;;
+      hardened) usage="running it — just from this computer (hardened)" ;;
+      *)        usage="running it — just from this computer" ;;
+    esac
+  fi
   say "  using:     ${usage}"
-  if [[ -n "$DOMAIN_OPT" ]]; then
+  if [[ "$REACH" == public && -n "$DOMAIN_OPT" ]]; then
     local acme_note=""
     [[ -n "$ACME_EMAIL_OPT" ]] && acme_note="  ${DIM}(LE contact: ${ACME_EMAIL_OPT})${NC}"
-    say "  reach:     published at https://${DOMAIN_OPT}${acme_note}"
-  else
-    say "  reach:     local only (frontend :3000, backend :${BACKEND_PORT:-8022})"
+    say "  reach:     https://${DOMAIN_OPT}${acme_note}"
+  elif [[ "$FMODE" == prod ]]; then
+    say "  reach:     localhost only (frontend on 127.0.0.1:3000)"
   fi
+  say "  network:   ${NETWORK_MODE}$([[ "$NETWORK_MODE" == host ]] && echo '  (loopback-only, no port mappings)' || echo '')"
   say "  storage:   ${STORAGE}"
   say "  profiles:  ${PROFILES:-<none, lean core>}"
+  [[ -n "$SU_EMAIL_OPT" ]] && say "  admin:     ${SU_EMAIL_OPT}"
   say "  workers:   backend=${BACKEND_WORKERS:-4} celery=${CELERY_CONCURRENCY:-4}"
   [[ "${ASSUME_YES:-false}" == true ]] && return 0
   read -rp $'\nProceed? [Y/n] ' a; [[ "${a:-Y}" =~ ^[Yy]?$ ]] || die "Aborted."
@@ -503,8 +851,19 @@ compose_cmd() {
   if [[ -z "$mode" ]]; then
     [[ "$(get_env ENVIRONMENT)" == "production" ]] && mode=prod || mode=dev
   fi
-  if [[ "$mode" == "prod" ]]; then echo "docker compose -f compose.yml"; else echo "docker compose"; fi
+  local base
+  if [[ "$mode" == "prod" ]]; then base="docker compose -f compose.yml"; else base="docker compose"; fi
+  # Hardened network mode adds the generated host-net override fragment.
+  # NETWORK_MODE state-var wins (during wizard); falls back to setup.conf
+  # so the dashboard reflects persisted state on re-entry.
+  local net="${NETWORK_MODE:-$(conf_get network_mode bridge)}"
+  if [[ "$net" == host && -f "$HOST_NET_FRAGMENT" ]]; then
+    base="$base -f $HOST_NET_FRAGMENT"
+  fi
+  echo "$base"
 }
+
+active_network_mode() { echo "${NETWORK_MODE:-$(conf_get network_mode bridge)}"; }
 
 active_profiles() { echo "${PROFILES:-$(get_env COMPOSE_PROFILES)}"; }
 
@@ -550,8 +909,18 @@ stack_logs() {
 }
 
 do_init() {
-  $MODE_SET     || choose_mode_interactive
-  $SERVICES_SET || choose_local_services_interactive
+  # Regression guard: compose.yml must never bind 0.0.0.0 except inside the
+  # caddy service block. If this ever fires, somebody added a public port
+  # without going through caddy — and we tell users "internally" mode keeps
+  # them safe. Fail loud, fail early.
+  assert_no_stray_public_binds
+
+  $MODE_SET     || choose_usage_interactive
+  if [[ "$FMODE" == prod ]] && ! $REACH_SET; then
+    choose_reach_interactive
+  fi
+  $USER_SET     || choose_user_interactive
+  $SERVICES_SET || choose_optionals_interactive
   # Sensible default when storage wasn't set (interactively or via CLI):
   # production → minio, dev → local files. Keeps `--mode production --with X -y`
   # from silently leaving prod on local_fs.
@@ -561,10 +930,19 @@ do_init() {
   ensure_store_dirs
   ensure_local_fs_path
   ensure_env
+  # Hardened mode: generate the host-network override fragment under .config/hq/
+  # so compose_cmd can pick it up. Removed for non-hardened modes (idempotent).
+  if [[ "$NETWORK_MODE" == host ]]; then
+    write_host_net_fragment
+  else
+    rm -f "$HOST_NET_FRAGMENT"
+  fi
   summary
   stack_up
   # Remember for next run — UX state lives in setup.conf, not .env.
-  conf_set last_mode "$ENVIRONMENT"
+  conf_set last_mode "$([[ "$FMODE" == dev ]] && echo dev || echo running)"
+  conf_set last_reach "$REACH"
+  conf_set network_mode "$NETWORK_MODE"
   conf_set setup_completed_at "$(date +%Y-%m-%dT%H:%M:%S)"
 }
 
@@ -973,6 +1351,12 @@ print_state() {
   fi
 
   printf "  %-12s %s\n" "Mode"      "$(mode_display)"
+  local net; net="$(active_network_mode)"
+  if [[ "$net" == host ]]; then
+    printf "  %-12s ${YELLOW}%s${NC}  ${DIM}%s${NC}\n" "Network" "$net" "(loopback-only, no port mappings)"
+  else
+    printf "  %-12s %s\n" "Network" "$net"
+  fi
   printf "  %-12s %s\n" "Storage"   "$(storage_status)"
   printf "  %-12s %s\n" "Superuser" "$(get_env FIRST_SUPERUSER)"
   printf "  %-12s %b\n" "Email"     "$(email_line)"
@@ -1528,14 +1912,16 @@ settings_menu() {
     printf "  storage:    %s\n" "$(storage_status)"
     printf "  workers:    backend=%s  celery=%s\n" "$(get_env BACKEND_WORKERS)" "$(get_env CELERY_CONCURRENCY)"
     printf "  domain:     %s\n" "$(get_env DOMAIN)"
+    printf "  network:    %s\n" "$(active_network_mode)"
     echo
     say "  ${GREEN}1${NC}  Superuser            ${DIM}email and password${NC}"
     say "  ${GREEN}2${NC}  Email                ${DIM}SMTP, from address, verification, open registration${NC}"
     say "  ${GREEN}3${NC}  Storage              ${DIM}provider and local_fs path${NC}"
     say "  ${GREEN}4${NC}  Workers              ${DIM}backend and celery counts${NC}"
     say "  ${GREEN}5${NC}  Domain"
-    say "  ${GREEN}6${NC}  Re-run setup wizard"
-    say "  ${GREEN}7${NC}  Edit any single .env value"
+    say "  ${GREEN}6${NC}  Network mode         ${DIM}bridge (default) ↔ host (hardened, advanced)${NC}"
+    say "  ${GREEN}7${NC}  Re-run setup wizard"
+    say "  ${GREEN}8${NC}  Edit any single .env value"
     say "  ${GREEN}0${NC}  Back"
     pick_menu r
     case "$r" in
@@ -1544,14 +1930,60 @@ settings_menu() {
       3) storage_menu ;;
       4) workers_prompt ;;
       5) domain_prompt ;;
-      6) ( PROFILES=""; PA_GRANTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
-           MODE_SET=false; SERVICES_SET=false; STORAGE_SET=false; \
+      6) network_mode_menu ;;
+      7) ( PROFILES=""; PA_GRANTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
+           SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""; REACH=local; NETWORK_MODE=bridge; \
+           MODE_SET=false; REACH_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false; \
            LANG_LOCAL=false; EMB_LOCAL=false; do_init ) || warn "Wizard did not complete."; pause ;;
-      7) edit_value ;;
+      8) edit_value ;;
       0|"") return 0 ;;
       *) warn "Invalid."; pause ;;
     esac
   done
+}
+
+network_mode_menu() {
+  local cur; cur="$(active_network_mode)"
+  clear 2>/dev/null || true
+  say "${GREEN}Network mode${NC}"
+  printf "  current:  ${BOLD}%s${NC}\n\n" "$cur"
+  say "  ${BOLD}bridge${NC}   ${DIM}(default — cross-platform, safe)${NC}"
+  say "           Standard docker network. Frontend on 127.0.0.1:3000, every"
+  say "           other service docker-internal. Nothing exposed to the network."
+  say
+  say "  ${BOLD}host${NC}     ${DIM}(advanced — security-focused)${NC}"
+  say "           Containers share the host network namespace; every service"
+  say "           binds 127.0.0.1 on the host directly. No \`ports:\` mappings"
+  say "           anywhere, so accidental exposure is structurally impossible."
+  say "           Mac/Windows require Docker Desktop's host networking feature"
+  say "           (Settings → Resources → Network)."
+  say
+  local target; read -rp "  Switch to [bridge/host], or empty to cancel: " target
+  target="$(echo "$target" | tr '[:upper:]' '[:lower:]')"
+  case "$target" in
+    bridge)
+      [[ "$cur" == bridge ]] && { say "Already bridge."; pause; return; }
+      NETWORK_MODE=bridge
+      rm -f "$HOST_NET_FRAGMENT"
+      conf_set network_mode bridge
+      backup_env
+      set_env BACKEND_BIND_HOST "0.0.0.0"
+      ok "Switched to bridge. Restart the stack to apply."
+      confirm "Restart now?" && { ( stack_restart ) || warn "Restart failed."; } ;;
+    host)
+      [[ "$cur" == host ]] && { say "Already host."; pause; return; }
+      NETWORK_MODE=host
+      write_host_net_fragment
+      conf_set network_mode host
+      backup_env
+      set_env BACKEND_BIND_HOST "127.0.0.1"
+      ok "Switched to host (hardened). Restart the stack to apply."
+      warn "Mac/Windows: enable Docker Desktop's host networking feature first."
+      confirm "Restart now?" && { ( stack_restart ) || warn "Restart failed."; } ;;
+    "") return 0 ;;
+    *) warn "Invalid choice."; pause ;;
+  esac
+  pause
 }
 
 # ── Rotate submenu ────────────────────────────────────────────────────────────
@@ -1761,7 +2193,8 @@ dashboard() {
       1) if [[ ! -f "$ENV_FILE" ]]; then
            leave_alt_screen
            ( PROFILES=""; PA_GRANTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
-             MODE_SET=false; SERVICES_SET=false; STORAGE_SET=false; \
+             SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""; REACH=local; NETWORK_MODE=bridge; \
+             MODE_SET=false; REACH_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false; \
              LANG_LOCAL=false; EMB_LOCAL=false; do_init ) || warn "Setup did not complete."
            pause
            enter_alt_screen
@@ -1806,13 +2239,19 @@ UX state lives in .config/hq/setup.conf; deployment config lives in .env.
 
 init options:
   --mode MODE            dev | production
-                         dev = source-bound + hot reload (you're working on HQ)
-                         production = baked images + restart=always
+                         dev = developing live (source-bound + hot reload)
+                         production = running it (baked images + restart=always)
+  --reach KIND           local | public | hardened     (production only)
+                         local    = just this computer (frontend on 127.0.0.1)
+                         public   = published at a domain (caddy + auto-TLS)
+                         hardened = local + host-network override (advanced)
+  --domain FQDN          publish at this domain (implies --reach public)
+  --acme-email EMAIL     contact email for Let's Encrypt (with --domain)
+  --su-email EMAIL       superuser email (skips the interactive prompt)
+  --su-password PASS     superuser password (skips the interactive prompt)
   --with SERVICE         enable a foundation service locally (repeatable):
                          ollama | embeddings | searxng | nominatim | minio | caddy
   --storage TYPE         object storage: local_fs | minio | s3
-  --domain FQDN          publish at this domain (enables caddy + auto-TLS)
-  --acme-email EMAIL     contact email for Let's Encrypt (with --domain)
   --profiles LIST        explicit comma-separated profile list (advanced)
   --backend-workers N    uvicorn workers in prod (default 4)
   --celery-concurrency N celery prefork concurrency (default 4)
@@ -1836,7 +2275,8 @@ if [[ $# -eq 0 ]]; then
     say "${DIM}superuser email + password, then start HQ. Everything else is${NC}"
     say "${DIM}auto-generated — no API keys required for the local-only flavors.${NC}\n"
     ( PROFILES=""; PA_GRANTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
-      MODE_SET=false; SERVICES_SET=false; STORAGE_SET=false; \
+      SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""; REACH=local; NETWORK_MODE=bridge; \
+      MODE_SET=false; REACH_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false; \
       LANG_LOCAL=false; EMB_LOCAL=false; do_init ) \
       || { warn "Setup did not complete."; exit 1; }
     pause
@@ -1853,10 +2293,13 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --mode)               apply_mode "$2"; MODE_SET=true; shift 2 ;;
+    --reach)              apply_reach "$2"; shift 2 ;;
     --with)               apply_with "$2"; SERVICES_SET=true; shift 2 ;;
     --storage)            apply_storage "$2"; SERVICES_SET=true; shift 2 ;;
-    --domain)             DOMAIN_OPT="$2"; add_profile caddy; shift 2 ;;
+    --domain)             DOMAIN_OPT="$2"; REACH=public; REACH_SET=true; add_profile caddy; shift 2 ;;
     --acme-email)         ACME_EMAIL_OPT="$2"; shift 2 ;;
+    --su-email)           SU_EMAIL_OPT="$2"; USER_SET=true; shift 2 ;;
+    --su-password)        SU_PASSWORD_OPT="$2"; USER_SET=true; shift 2 ;;
     --profiles)           PROFILES="$2"; SERVICES_SET=true; shift 2 ;;
     --backend-workers)    BACKEND_WORKERS="$2"; shift 2 ;;
     --celery-concurrency) CELERY_CONCURRENCY="$2"; shift 2 ;;

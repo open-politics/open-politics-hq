@@ -25,7 +25,11 @@ services:
       - .env
     environment:
       - PYTHONPATH=/app
-    command: ["sh", "-c", "bash /app/prestart.sh && exec uvicorn app.main:app --workers ${BACKEND_WORKERS:-4} --host 0.0.0.0 --port ${BACKEND_PORT}"]
+    # `$$` defers expansion to the container shell (reads .env-loaded values),
+    # so BACKEND_BIND_HOST can be flipped to 127.0.0.1 by the hardened-network
+    # override fragment without changing this file. Default 0.0.0.0 is correct
+    # for bridge mode (docker's network isolation does the work).
+    command: ["sh", "-c", "bash /app/prestart.sh && exec uvicorn app.main:app --workers $${BACKEND_WORKERS:-4} --host $${BACKEND_BIND_HOST:-0.0.0.0} --port $${BACKEND_PORT}"]
     build:
       context: ./backend
       args:
