@@ -15,7 +15,7 @@ services:
       - PGPORT=${POSTGRES_PORT}
 
   backend:
-    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+    image: '${DOCKER_IMAGE_BACKEND:-backend}:${TAG-latest}'
     restart: always
     networks:
       - default
@@ -64,7 +64,7 @@ services:
       - default
 
   celery_worker:
-    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+    image: '${DOCKER_IMAGE_BACKEND:-backend}:${TAG-latest}'
     build:
       context: ./backend
       args:
@@ -84,7 +84,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   celery_beat:
-    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+    image: '${DOCKER_IMAGE_BACKEND:-backend}:${TAG-latest}'
     build:
       context: ./backend
       args:

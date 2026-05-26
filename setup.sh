@@ -153,6 +153,71 @@ ensure_secret() {
   fi
 }
 
+# Compose-managed named volumes are <project>_<vol-name>; project defaults to
+# the lowercased directory name. Pattern-match the suffix so we don't have to
+# hardcode the project name.
+docker_volume_exists() {
+  local pattern="$1"
+  docker_ok || return 1
+  docker volume ls --format '{{.Name}}' 2>/dev/null \
+    | grep -qE "(^|_)${pattern}\$"
+}
+
+# Postgres bakes POSTGRES_PASSWORD into the data dir on first init — env vars
+# are NEVER consulted again for the data already there. Generating a fresh
+# password when an old data volume exists therefore locks the backend out:
+# .env has new pw, postgres has old pw, every connect fails with
+# "password authentication failed". Detect this and force an explicit choice.
+ensure_postgres_password() {
+  local cur; cur="$(get_env POSTGRES_PASSWORD)"
+  local will_regen=false
+  [[ "${REGEN:-false}" == true ]] && will_regen=true
+  is_placeholder "$cur" && will_regen=true
+
+  if ! $will_regen; then
+    say "${DIM}  kept existing POSTGRES_PASSWORD${NC}"
+    return 0
+  fi
+
+  if ! docker_volume_exists "app-db-data"; then
+    set_env POSTGRES_PASSWORD "$(gen_secret)"
+    say "  generated POSTGRES_PASSWORD"
+    return 0
+  fi
+
+  echo
+  warn "Existing postgres data volume found:"
+  docker volume ls --format '{{.Name}}' | grep -E '(^|_)app-db-data$' | sed 's/^/    /'
+  warn "Postgres bakes the password into its data dir on first init. Generating"
+  warn "a fresh POSTGRES_PASSWORD now would NOT match what's stored there, and"
+  warn "the backend would fail authentication on every restart."
+  echo
+  say "  ${BOLD}1${NC}  Wipe the volume and start fresh  ${DIM}(deletes all postgres data)${NC}"
+  say "  ${BOLD}2${NC}  Cancel — I'll edit .env and set POSTGRES_PASSWORD to the"
+  say "      value that matches the existing volume, then re-run setup."
+  echo
+  say "  ${DIM}Manual wipe command (equivalent to choice 1):${NC}"
+  say "    ${DIM}$(compose_cmd) down -v${NC}"
+  echo
+  if [[ "${ASSUME_YES:-false}" == true ]]; then
+    die "Auto-yes mode refuses to destroy postgres data silently. Re-run interactively."
+  fi
+  local c; read -rp "  Your choice [1/2]: " c
+  case "$c" in
+    1)
+      local v
+      while IFS= read -r v; do
+        [[ -z "$v" ]] && continue
+        docker volume rm "$v" 2>/dev/null \
+          || warn "Could not remove $v — is a container still using it? Stop the stack first."
+      done < <(docker volume ls --format '{{.Name}}' | grep -E '(^|_)app-db-data$')
+      set_env POSTGRES_PASSWORD "$(gen_secret)"
+      ok "wiped old postgres volume + generated fresh POSTGRES_PASSWORD" ;;
+    *)
+      die "Aborted. Edit .env (set POSTGRES_PASSWORD to the existing value) and re-run." ;;
+  esac
+}
+
 # ── .config/hq/setup.conf (UX state, not deployment config) ───────────────────
 
 conf_get() {
@@ -917,7 +982,7 @@ ensure_env() {
   say "Secrets:"
   ensure_secret SECRET_KEY            gen_secret
   ensure_secret ENCRYPTION_MASTER_KEY gen_fernet
-  ensure_secret POSTGRES_PASSWORD     gen_secret
+  ensure_postgres_password   # special-cased — see comment in fn for why
   ensure_secret REDIS_PASSWORD        gen_secret
   local mu mp
   mu="$(get_env MINIO_ROOT_USER)"; mp="$(get_env MINIO_ROOT_PASSWORD)"
@@ -1012,52 +1077,50 @@ active_network_mode() { echo "${NETWORK_MODE:-$(conf_get network_mode bridge)}";
 
 active_profiles() { echo "${PROFILES:-$(get_env COMPOSE_PROFILES)}"; }
 
-# Run a docker compose command in a terminal-friendly way: if the dashboard's
-# alt-screen is active, drop out of it first so progress bars don't overdraw
-# the menu, then re-enter after the user acknowledges. Outside the dashboard
-# (e.g. fresh-clone wizard) this is just a normal run.
-#
-# Args:  1) banner line to print before the command
-#        2) the command string to eval
-#        3) success message to print after
-with_terminal_output() {
-  local banner="$1" cmd="$2" success="$3"
-  local was_alt="${ALT_SCREEN_ON:-false}"
-  [[ "$was_alt" == "true" ]] && leave_alt_screen
-  say "\n${DIM}${banner}${NC}"
-  local rc=0
-  eval "$cmd" || rc=$?
-  if [[ $rc -eq 0 ]]; then ok "$success"; else warn "Command failed (exit $rc)."; fi
-  if [[ "$was_alt" == "true" ]]; then
-    pause
-    enter_alt_screen
-  fi
-  return $rc
-}
+# All stack ops follow the same pattern: leave the dashboard's alt-screen
+# buffer (if active) so docker compose's progress writer doesn't overdraw
+# the menu, run the command, show the result, pause for keypress, restore
+# alt-screen. Outside the dashboard (e.g. fresh-clone wizard, CLI init)
+# alt-screen is off and the pause/restore steps are no-ops.
 
 stack_up() {
   [[ "${NO_UP:-false}" == true ]] && { warn "--no-up: configuration written, stack not started."; return 0; }
-  # Run the port precheck on every start path (wizard, dashboard option 1,
-  # settings → restart). Auto-bumps movable ports if conflicts exist.
+  local was_alt="${ALT_SCREEN_ON:-false}"
+  [[ "$was_alt" == "true" ]] && leave_alt_screen
+  # Precheck runs AFTER alt-screen leave so its output / conflict prompt
+  # lands on the normal terminal, not overlaid on the dashboard.
   [[ -f "$ENV_FILE" ]] && precheck_ports
-  local c; c="$(compose_cmd)"
-  with_terminal_output "$c up --build -d" \
-    "COMPOSE_PROFILES=$(active_profiles) $c up --build -d" \
-    "Up. Frontend: $(frontend_url)"
+  local c rc=0; c="$(compose_cmd)"
+  say "\n${DIM}$c up --build -d${NC}"
+  COMPOSE_PROFILES="$(active_profiles)" $c up --build -d || rc=$?
+  if [[ $rc -eq 0 ]]; then ok "Up. Frontend: $(frontend_url)"
+  else warn "Start failed (exit $rc). See output above for the failing service."; fi
+  if [[ "$was_alt" == "true" ]]; then pause; enter_alt_screen; fi
+  return $rc
 }
 
 stack_down() {
-  local c; c="$(compose_cmd)"
-  with_terminal_output "$c down" \
-    "COMPOSE_PROFILES=$(active_profiles) $c down" \
-    "Stopped (data volumes preserved)."
+  local was_alt="${ALT_SCREEN_ON:-false}"
+  [[ "$was_alt" == "true" ]] && leave_alt_screen
+  local c rc=0; c="$(compose_cmd)"
+  say "\n${DIM}$c down${NC}  ${DIM}(data volumes preserved — never 'down -v')${NC}"
+  COMPOSE_PROFILES="$(active_profiles)" $c down || rc=$?
+  if [[ $rc -eq 0 ]]; then ok "Stopped."
+  else warn "Stop failed (exit $rc)."; fi
+  if [[ "$was_alt" == "true" ]]; then pause; enter_alt_screen; fi
+  return $rc
 }
 
 stack_restart() {
-  local c; c="$(compose_cmd)"
-  with_terminal_output "$c restart" \
-    "COMPOSE_PROFILES=$(active_profiles) $c restart" \
-    "Restarted."
+  local was_alt="${ALT_SCREEN_ON:-false}"
+  [[ "$was_alt" == "true" ]] && leave_alt_screen
+  local c rc=0; c="$(compose_cmd)"
+  say "\n${DIM}$c restart${NC}"
+  COMPOSE_PROFILES="$(active_profiles)" $c restart || rc=$?
+  if [[ $rc -eq 0 ]]; then ok "Restarted."
+  else warn "Restart failed (exit $rc)."; fi
+  if [[ "$was_alt" == "true" ]]; then pause; enter_alt_screen; fi
+  return $rc
 }
 
 stack_logs() {
@@ -2162,9 +2225,12 @@ network_mode_menu() {
       ok "Switched to bridge."
       # Network topology change — needs down + up, not restart. Down releases
       # the old ports so the up's port precheck sees the real free/busy state.
+      # stack_down/stack_up each pause internally when alt-screen is active.
       if confirm "Apply now? (stops + restarts the stack)"; then
         ( stack_down ) || warn "Stop failed."
         ( stack_up )   || warn "Start failed."
+      else
+        pause   # let user see the "Switched to bridge" line
       fi ;;
     host)
       [[ "$cur" == host ]] && { say "Already host."; pause; return; }
@@ -2178,11 +2244,12 @@ network_mode_menu() {
       if confirm "Apply now? (stops + restarts the stack)"; then
         ( stack_down ) || warn "Stop failed."
         ( stack_up )   || warn "Start failed."
+      else
+        pause
       fi ;;
     "") return 0 ;;
     *) warn "Invalid choice."; pause ;;
   esac
-  pause
 }
 
 # ── Rotate submenu ────────────────────────────────────────────────────────────
