@@ -339,28 +339,46 @@ const LiveGraphPreview: React.FC<LiveGraphPreviewProps> = ({
   predicateColors,
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
-  const WIDTH = 320;
-  const HEIGHT = 260;
+  const WIDTH = 720;
+  const HEIGHT = 300;
   const CENTER_X = WIDTH / 2;
   const CENTER_Y = HEIGHT / 2;
-  const RADIUS = Math.min(WIDTH, HEIGHT) * 0.32;
-  const NODE_RADIUS = 24;
+  // Ellipse fills the rectangle: wider radius on x, shorter on y.
+  // RADIUS_Y is tucked in so node labels below the bottom nodes
+  // don't clip the canvas edge.
+  const RADIUS_X = WIDTH * 0.40;
+  const RADIUS_Y = HEIGHT * 0.30;
+  const NODE_RADIUS = 18;
 
-  // Position nodes in a circle
+  // Position nodes on an ellipse — uses the full rectangle, not a square inset.
   const nodes = useMemo(() => {
     if (entityTypes.length === 0) return [];
+    // Single node sits center; otherwise distribute around the ellipse,
+    // starting from the left so the first type anchors on the wide axis.
+    const truncate = (s: string, max = 18) => s.length > max ? s.slice(0, max - 1) + "…" : s;
+    if (entityTypes.length === 1) {
+      const type = entityTypes[0];
+      return [{
+        id: type,
+        x: CENTER_X,
+        y: CENTER_Y,
+        color: entityTypeColors?.[type] || getDotColor(type, 0),
+        label: truncate(type),
+        fullLabel: type,
+      }];
+    }
     return entityTypes.map((type, i) => {
-      const angle = (2 * Math.PI * i) / entityTypes.length - Math.PI / 2;
+      const angle = (2 * Math.PI * i) / entityTypes.length - Math.PI;
       return {
         id: type,
-        x: CENTER_X + RADIUS * Math.cos(angle),
-        y: CENTER_Y + RADIUS * Math.sin(angle),
+        x: CENTER_X + RADIUS_X * Math.cos(angle),
+        y: CENTER_Y + RADIUS_Y * Math.sin(angle),
         color: entityTypeColors?.[type] || getDotColor(type, i),
-        label: type.length > 8 ? type.slice(0, 7) + "..." : type,
+        label: truncate(type),
         fullLabel: type,
       };
     });
-  }, [entityTypes, CENTER_X, CENTER_Y, RADIUS]);
+  }, [entityTypes, CENTER_X, CENTER_Y, RADIUS_X, RADIUS_Y, entityTypeColors]);
 
   // Generate sample edges between nodes
   const edges = useMemo(() => {
@@ -407,10 +425,10 @@ const LiveGraphPreview: React.FC<LiveGraphPreviewProps> = ({
     return (
       <div
         className={cn(
-          "flex flex-col items-center justify-center rounded-xl border-2 border-dashed bg-muted/10",
+          "flex flex-col items-center justify-center rounded-xl border-2 border-dashed bg-muted/10 w-full",
           className
         )}
-        style={{ width: WIDTH, height: HEIGHT }}
+        style={{ aspectRatio: `${WIDTH} / ${HEIGHT}` }}
       >
         <Network className="h-8 w-8 text-muted-foreground/30 mb-2" />
         <p className="text-xs text-muted-foreground/50 text-center px-4">
@@ -422,7 +440,7 @@ const LiveGraphPreview: React.FC<LiveGraphPreviewProps> = ({
 
   return (
     <div
-      className={cn("rounded-xl border bg-gradient-to-br from-background to-muted/30 overflow-hidden relative", className)}
+      className={cn("rounded-xl border bg-gradient-to-br from-background to-muted/30 overflow-hidden", className)}
     >
       {/* Subtle grid background */}
       <svg
@@ -456,7 +474,10 @@ const LiveGraphPreview: React.FC<LiveGraphPreviewProps> = ({
         <AnimatePresence>
           {edges.map((edge, i) => {
             const { path, cx, cy } = edgePath(edge.source.x, edge.source.y, edge.target.x, edge.target.y, i * 0.3);
-            const truncLabel = edge.label.length > 12 ? edge.label.slice(0, 11) + ".." : edge.label;
+            // No truncation — keep predicate readable; rect sizes to text.
+            const label = edge.label;
+            // Approx monospace glyph width at fontSize=9 ≈ 5.4 units.
+            const labelWidth = label.length * 5.4 + 10;
             return (
               <g key={`edge-${edge.source.id}-${edge.target.id}-${i}`}>
                 <motion.path
@@ -477,20 +498,20 @@ const LiveGraphPreview: React.FC<LiveGraphPreviewProps> = ({
                   transition={{ duration: 0.3, delay: 0.3 + i * 0.1 }}
                 >
                   <rect
-                    x={cx - truncLabel.length * 3 - 4}
-                    y={cy - 8}
-                    width={truncLabel.length * 6 + 8}
-                    height={16}
-                    rx={4}
+                    x={cx - labelWidth / 2}
+                    y={cy - 7.5}
+                    width={labelWidth}
+                    height={15}
+                    rx={3.5}
                     fill="currentColor"
                     className="text-background"
                   />
                   <rect
-                    x={cx - truncLabel.length * 3 - 4}
-                    y={cy - 8}
-                    width={truncLabel.length * 6 + 8}
-                    height={16}
-                    rx={4}
+                    x={cx - labelWidth / 2}
+                    y={cy - 7.5}
+                    width={labelWidth}
+                    height={15}
+                    rx={3.5}
                     fill="none"
                     stroke="currentColor"
                     strokeWidth="0.5"
@@ -498,13 +519,13 @@ const LiveGraphPreview: React.FC<LiveGraphPreviewProps> = ({
                   />
                   <text
                     x={cx}
-                    y={cy + 3.5}
+                    y={cy + 3}
                     textAnchor="middle"
                     fontSize="9"
                     fill="currentColor"
                     className="text-muted-foreground font-mono"
                   >
-                    {truncLabel}
+                    {label}
                   </text>
                 </motion.g>
               </g>
@@ -512,11 +533,12 @@ const LiveGraphPreview: React.FC<LiveGraphPreviewProps> = ({
           })}
         </AnimatePresence>
 
-        {/* Nodes */}
+        {/* Node circles — painted first so labels (next pass) always sit on top
+            of every node, not just their own. */}
         <AnimatePresence>
           {nodes.map((node, i) => (
             <motion.g
-              key={node.id}
+              key={`circle-${node.id}`}
               initial={{ opacity: 0, scale: 0 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0 }}
@@ -524,7 +546,7 @@ const LiveGraphPreview: React.FC<LiveGraphPreviewProps> = ({
               style={{ originX: `${node.x}px`, originY: `${node.y}px` }}
             >
               {/* Outer glow */}
-              <circle cx={node.x} cy={node.y} r={NODE_RADIUS + 4} fill={node.color} opacity={0.15} />
+              <circle cx={node.x} cy={node.y} r={NODE_RADIUS + 3} fill={node.color} opacity={0.15} />
               {/* Main circle */}
               <circle
                 cx={node.x}
@@ -533,32 +555,40 @@ const LiveGraphPreview: React.FC<LiveGraphPreviewProps> = ({
                 fill={node.color}
                 opacity={0.85}
                 stroke="white"
-                strokeWidth="2"
+                strokeWidth="1.5"
                 filter="url(#glow)"
               />
-              {/* Label */}
-              <text
-                x={node.x}
-                y={node.y + 1}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fontSize="8"
-                fontWeight="600"
-                fill="white"
-                className="pointer-events-none select-none"
-                style={{ textShadow: "0 1px 2px rgba(0,0,0,0.3)" }}
-              >
-                {node.label}
-              </text>
             </motion.g>
+          ))}
+        </AnimatePresence>
+
+        {/* Node labels — second pass so they paint above every circle. */}
+        <AnimatePresence>
+          {nodes.map((node, i) => (
+            <motion.text
+              key={`label-${node.id}`}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.25, delay: 0.1 + i * 0.05 }}
+              x={node.x}
+              y={node.y + NODE_RADIUS + 11}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fontSize="9.5"
+              fontWeight="600"
+              fill="currentColor"
+              stroke="hsl(var(--background))"
+              strokeWidth="2.5"
+              paintOrder="stroke"
+              className="text-foreground pointer-events-none select-none"
+            >
+              {node.label}
+            </motion.text>
           ))}
         </AnimatePresence>
       </svg>
 
-      {/* Overlay label */}
-      <div className="absolute bottom-2 right-2 text-[10px] text-muted-foreground/40 font-mono">
-        schema preview
-      </div>
     </div>
   );
 };
@@ -773,16 +803,48 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
           <code className="bg-background px-1 py-0.5 rounded text-[10px] font-mono">
             subject &rarr; predicate &rarr; object
           </code>{" "}
-          with typed entities
+          with typed entities. For example: "Merkel met_with Obama"
         </div>
       </div>
 
-      {/* Main content: side-by-side on larger screens */}
-      <div className={cn("grid gap-4", showPreview ? "grid-cols-1 xl:grid-cols-[1fr_320px]" : "grid-cols-1")}>
-        {/* Left: Configuration */}
-        <div className="space-y-5">
-          {/* Entity Types */}
-          <div className="p-4 rounded-xl border-2 border-blue-200/50 dark:border-blue-800/30 bg-gradient-to-br from-blue-50/30 to-transparent dark:from-blue-950/10">
+      {/* Main content: preview on top, configs stacked full-width below */}
+      <div className="space-y-5">
+        {/* Top: Live Preview */}
+        {showPreview && (
+          <motion.div
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.25 }}
+            className="flex flex-col gap-3"
+          >
+            <LiveGraphPreview
+              entityTypes={entityTypes}
+              predicates={predicates}
+              entityTypeColors={graphConfig.entityTypes.typeColors}
+              predicateColors={graphConfig.relationshipSchema.predicateColors}
+              className="w-full"
+            />
+
+            {/* Legend */}
+            {entityTypes.length > 0 && (
+              <div className="flex flex-wrap gap-x-3 gap-y-1.5 px-1">
+                {entityTypes.map((type, i) => (
+                  <div key={type} className="flex items-center gap-1">
+                    <div
+                      className="h-2.5 w-2.5 rounded-full"
+                      style={{ backgroundColor: getDotColor(type, i) }}
+                    />
+                    <span className="text-[10px] text-muted-foreground font-medium">{type}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {/* Entity Types */}
+        <div className="p-4 rounded-xl border-2 border-blue-200/50 dark:border-blue-800/30 bg-gradient-to-br from-blue-50/30 to-transparent dark:from-blue-950/10">
             <TagInput
               tags={entityTypes}
               onChange={setEntityTypes}
@@ -982,40 +1044,6 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
               </div>
             )}
           </div>
-        </div>
-
-        {/* Right: Live Preview */}
-        {showPreview && (
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 20 }}
-            transition={{ duration: 0.3 }}
-            className="flex flex-col gap-3"
-          >
-            <LiveGraphPreview 
-              entityTypes={entityTypes} 
-              predicates={predicates}
-              entityTypeColors={graphConfig.entityTypes.typeColors}
-              predicateColors={graphConfig.relationshipSchema.predicateColors}
-            />
-
-            {/* Legend */}
-            {entityTypes.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 px-1">
-                {entityTypes.map((type, i) => (
-                  <div key={type} className="flex items-center gap-1">
-                    <div
-                      className="h-2.5 w-2.5 rounded-full"
-                      style={{ backgroundColor: getDotColor(type, i) }}
-                    />
-                    <span className="text-[10px] text-muted-foreground font-medium">{type}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </motion.div>
-        )}
       </div>
 
       {/* Additional Settings - Compact Accordion */}

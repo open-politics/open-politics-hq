@@ -19,13 +19,12 @@ import {
   Dot,
 } from 'recharts';
 import { format, startOfDay, startOfWeek, startOfMonth, startOfQuarter, startOfYear } from 'date-fns';
-import { AnnotationRead, AnnotationSchemaRead, AssetRead } from '@/client';
-import type { AggregateViewConfig as AggregateConfig } from '@/client';
-import { TimeAxisConfig, FormattedAnnotation, TimeFrameFilter, PanelConfig, ViewAggregatePhase, AggregateBucket } from '@/lib/annotations/types';
+import { AnnotationSchemaRead, AssetRead } from '@/client';
+import type { ChartVizConfig, Panel, FormattedAnnotation, PanelConfig, ViewFormulaPhase } from '@/lib/annotations/types';
+import { TimeAxisConfig, TimeFrameFilter } from '@/lib/annotations/types';
 import { getTargetKeysForScheme, formatDisplayValue, getAnnotationFieldValue, getAnnotationFieldValuesExploded, getDateFieldsForScheme } from '@/lib/annotations/utils';
 import { VariableSplittingConfig, applySplittingToResults, applyAmbiguityResolution } from './VariableSplittingControls';
 import { useAnnotationView } from '@/hooks/useAnnotationView';
-import { mergeFiltersAndScopes } from '@/lib/annotations/scopes';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from '@/components/ui/switch';
@@ -43,11 +42,7 @@ import { Settings2, ArrowDownUp, SortAsc, SortDesc, Info, Layers, Maximize2, Sli
 import { cn } from "@/lib/utils";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
-import { type RolePickerValue } from './panels/RolePicker';
-import { RolePickerPopover } from './panels/RolePickerPopover';
 import { PanelHeaderSlot } from './panels/PanelHeaderSlot';
-import { PanelFormulaBinder } from './formulas/PanelFormulaBinder';
-import { useResolvedProjection } from '@/hooks/useResolvedProjection';
 import { EmptyStateCard } from './panels/EmptyStateCard';
 import { ValueAliasManager } from './panels/ValueAliasManager';
 import { EvidenceDrawer } from './panels/EvidenceDrawer';
@@ -62,11 +57,9 @@ import {
   findPeaks,
   descriptiveStats,
 } from './panels/analytics';
-import { PANEL_ROLE_SCHEMAS } from '@/lib/annotations/panelRoleSchema';
 import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
 import { effectiveMergeMaps } from '@/lib/annotations/valueAliases';
 import { createScopeFromSelection } from '@/lib/annotations/scopes';
-import { inferFieldShape } from '@/lib/annotations/fieldPaths';
 import type { Scope } from '@/lib/annotations/types';
 
 
@@ -1403,66 +1396,18 @@ const AnnotationResultsChart: React.FC<Props> = ({
   highlightedTimestamp = null,
   onScopeGesture,
 }) => {
-  // Derive aggregation config from panel
-  const aggregation = panelConfig.aggregation;
+  // --- Read visual config from panel_config (new shape) ---
+  const cfg = panelConfig.panel_config as ChartVizConfig | undefined;
+  const xField   = cfg?.x   ?? null;
+  const ySeries  = cfg?.y   ?? [];
+  const colorBy  = cfg?.color ?? null;
+  const activeMark = cfg?.mark ?? 'timeline';
 
-  // Server-side data fetching
-  const mergedFilters = useMemo(
-    () => mergeFiltersAndScopes(panelConfig.local_filters, panelConfig.incoming_scopes),
-    [panelConfig.local_filters, panelConfig.incoming_scopes],
-  );
-
-  // The schema we infer field shapes against. Matches the resolution used by
-  // the RolePicker (settings.selectedSchemaId, falling back to the sole schema).
-  const selectedSchemaForRoles = useMemo(() => {
-    const id = panelConfig.settings?.selectedSchemaId as number | undefined;
-    if (id != null) return schemas.find((s) => s.id === id) ?? null;
-    return schemas.length === 1 ? schemas[0] : null;
-  }, [panelConfig.settings?.selectedSchemaId, schemas]);
-
-  // All Y paths. Each numeric entry becomes its own measure → one parallel
-  // /view fetch → one Line on the chart. Non-numeric entries route to
-  // ``split_by`` (single value only; the backend split_by is 1-D today).
-  const yPaths = useMemo<string[]>(() => {
-    const ym = panelConfig.projection?.field_mappings?.['y'];
-    if (Array.isArray(ym)) return ym.map(String).filter(Boolean);
-    if (typeof ym === 'string' && ym.length > 0) return [ym];
-    return [];
-  }, [panelConfig.projection]);
-
-  const yFirstPath = yPaths[0];
-
-  const yShape = useMemo(
-    () => (yFirstPath ? inferFieldShape(selectedSchemaForRoles, yFirstPath) : null),
-    [yFirstPath, selectedSchemaForRoles],
-  );
-  const yIsNumeric = yShape === 'number';
-
-  // Numeric Y paths become measures (one fetch per path). Non-numeric Y
-  // falls through to split_by below. Mixed types get the numeric entries as
-  // measures and the first non-numeric as split_by.
-  const yNumericPaths = useMemo<string[]>(() => {
-    return yPaths.filter((p) => inferFieldShape(selectedSchemaForRoles, p) === 'number');
-  }, [yPaths, selectedSchemaForRoles]);
-
-  // split_by: explicit `group_by` role wins (Split by); else the first
-  // non-numeric Y auto-routes here so picking Y=stance produces multi-series
-  // instead of a single useless count. Numeric Ys become value_fields below.
-  const splitByField = useMemo<string | undefined>(() => {
-    const groupByRole = panelConfig.projection?.field_mappings?.['group_by'] as string | undefined;
-    if (groupByRole) return groupByRole;
-    const firstNonNumeric = yPaths.find(
-      (p) => inferFieldShape(selectedSchemaForRoles, p) !== 'number',
-    );
-    if (firstNonNumeric) return firstNonNumeric;
-    return undefined;
-  }, [panelConfig.projection, yPaths, selectedSchemaForRoles]);
-
-  // --- UI state (must be declared before useAnnotationView which reads them) ---
-  const initialSettings = panelConfig.settings;
+  // --- UI state ---
+  const initialSettings = (panelConfig as any).settings;
   const [isGrouped, setIsGrouped] = useState(initialSettings?.isGrouped ?? false);
   const [selectedTimeInterval, setSelectedTimeInterval] = useState<'day' | 'week' | 'month' | 'quarter' | 'year'>(
-    (aggregation.interval as any) || initialSettings?.selectedTimeInterval || 'month'
+    initialSettings?.selectedTimeInterval || 'month'
   );
   const [groupingSchemeId, setGroupingSchemeId] = useState<number | null>(
     initialSettings?.groupingSchemeId ?? (schemas.length > 0 ? schemas[0].id : null)
@@ -1479,123 +1424,17 @@ const AnnotationResultsChart: React.FC<Props> = ({
     initialSettings?.groupedSortOrder || 'count-desc'
   );
 
-  // Single source of truth for what we ask the backend to compute. We derive
-  // this from current state — picker selections, isGrouped toggle, grouping
-  // controls, selectedTimeInterval — instead of reading a saved aggregation
-  // blob, so toggling Grouped or changing X never collides with stale state
-  // written by a different code path. `aggregation` from panelConfig is read
-  // only for hints (function preference, value_field carryover).
-  const aggregateConfig = useMemo((): AggregateConfig | undefined => {
-    // Grouped (categorical) mode: count rows per category. Picker x is
-    // ignored — the categorical field is chosen via the Grouped controls.
-    if (isGrouped) {
-      if (!groupingFieldKey) return undefined;
-      // If the chosen field is array-typed, append ``[*]`` so the backend
-      // explodes array elements into individual rows. Without this, each
-      // distinct stringified array becomes its own bucket (count=1 each).
-      // The shape lookup matches whichever schema actually owns the path —
-      // grouped mode doesn't constrain to `selectedSchemaForRoles`.
-      let groupByPath = groupingFieldKey;
-      if (!groupByPath.includes('[*]')) {
-        const owningSchema = schemas.find((s) =>
-          s.id === groupingSchemeId,
-        ) ?? selectedSchemaForRoles ?? null;
-        const shape = inferFieldShape(owningSchema, groupingFieldKey);
-        if (shape === 'array_string' || shape === 'array_string_enum' ||
-            shape === 'array_number' || shape === 'array_object') {
-          groupByPath = `${groupingFieldKey}[*]`;
-        }
-      }
-      return {
-        group_by: groupByPath,
-        interval: null,
-        function: 'count',
-        value_field: null,
-        top_n: aggregation.top_n || null,
-        split_by: null,
-      };
+  // Sync groupingFieldKey to cfg.x when grouped. The chart's grouping
+  // field used to be edited via inline selectors; now it comes from
+  // the panel header config popover (cfg.x). Drilled-down click handlers
+  // and bucketAssetsByKey still read groupingFieldKey internally, so we
+  // mirror the change down via setState.
+  useEffect(() => {
+    if (isGrouped && xField && groupingFieldKey !== xField) {
+      setGroupingFieldKey(xField);
     }
-
-    // Timeline mode: picker x drives bucketing. Date X auto-applies the
-    // selected interval; non-date X buckets by raw value. One numeric Y
-    // becomes the sole measure (single fetch); multi-numeric Y routes
-    // through ``aggregateConfigs`` below (one fetch per measure, merged).
-    const xPath = panelConfig.projection?.field_mappings?.['x'] as string | undefined;
-    if (!xPath) return undefined;
-    if (yNumericPaths.length > 1) return undefined;  // multi-measure path
-    const xShape = inferFieldShape(selectedSchemaForRoles, xPath);
-    const xIsDate = xShape === 'date';
-    const fn = yIsNumeric
-      ? (aggregation.function && aggregation.function !== 'count' ? aggregation.function : 'sum')
-      : 'count';
-    const valueField = yIsNumeric ? (yFirstPath ?? null) : (aggregation.value_field || null);
-    // Only apply a bucketing interval when X is a declared date OR the user
-    // explicitly picked one (covers the case where schema forgot
-    // ``format: date-time`` on a string that actually holds ISO timestamps).
-    // Never default to ``day`` on a string/number X — would crash
-    // ``date_trunc`` on non-parseable values (e.g. ``subject_name = "Bundesländer"``).
-    const explicitInterval = (aggregation.interval as any) || undefined;
-    const interval = explicitInterval ?? (xIsDate ? 'day' : null);
-    return {
-      group_by: xPath,
-      interval,
-      function: fn,
-      value_field: valueField,
-      top_n: aggregation.top_n || null,
-      split_by: splitByField || null,
-    };
-  }, [
-    isGrouped,
-    groupingFieldKey,
-    groupingSchemeId,
-    schemas,
-    panelConfig.projection,
-    selectedSchemaForRoles,
-    selectedTimeInterval,
-    yIsNumeric,
-    yFirstPath,
-    yNumericPaths,
-    splitByField,
-    aggregation.interval,
-    aggregation.function,
-    aggregation.value_field,
-    aggregation.top_n,
-  ]);
-
-  // Multi-measure mode: one AggregateConfig per numeric Y path. Fires
-  // parallel ``/view`` fetches in ``useAnnotationView``; returned buckets are
-  // merged by key so every bucket carries all measures' stats.
-  const aggregateConfigs = useMemo<AggregateConfig[] | undefined>(() => {
-    if (isGrouped) return undefined;
-    if (yNumericPaths.length <= 1) return undefined;
-    const xPath = panelConfig.projection?.field_mappings?.['x'] as string | undefined;
-    if (!xPath) return undefined;
-    const xShape = inferFieldShape(selectedSchemaForRoles, xPath);
-    const xIsDate = xShape === 'date';
-    const fn = aggregation.function && aggregation.function !== 'count'
-      ? aggregation.function : 'sum';
-    // Same guard as the singular path — never apply an interval to a
-    // non-date X unless the user explicitly picked one.
-    const explicitInterval = (aggregation.interval as any) || undefined;
-    const interval = explicitInterval ?? (xIsDate ? 'day' : null);
-    return yNumericPaths.map((path) => ({
-      group_by: xPath,
-      interval,
-      function: fn,
-      value_field: path,
-      top_n: aggregation.top_n || null,
-      split_by: null,
-    }));
-  }, [
-    isGrouped,
-    yNumericPaths,
-    panelConfig.projection,
-    selectedSchemaForRoles,
-    selectedTimeInterval,
-    aggregation.interval,
-    aggregation.function,
-    aggregation.top_n,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGrouped, xField]);
 
   // Value-alias store readers — must come before any memo that reads
   // `runWideAliasesByField` (TDZ otherwise on first render).
@@ -1604,10 +1443,8 @@ const AnnotationResultsChart: React.FC<Props> = ({
   const setGlobalVariableSplitting = useAnnotationRunStore(s => s.setGlobalVariableSplitting);
   const gvs = getGlobalVariableSplitting();
   const runWideAliasesByField = gvs?.valueAliasesByField ?? {};
-  const aliasTargetField = (
-    (panelConfig.projection?.field_mappings?.['group_by'] as string | undefined) ??
-    (panelConfig.projection?.field_mappings?.['x'] as string | undefined)
-  ) ?? null;
+  // Alias target: color-by field (categorical axis) or x field when it's categorical
+  const aliasTargetField = colorBy ?? xField ?? null;
   const aliasesForField = aliasTargetField ? runWideAliasesByField[aliasTargetField] ?? {} : {};
 
   const effectiveMergeMapsForView = useMemo(
@@ -1615,59 +1452,55 @@ const AnnotationResultsChart: React.FC<Props> = ({
     [panelConfig.merge_maps, runWideAliasesByField],
   );
 
+  // --- Aggregate fetch (panel → compile → /view → OutputRelation) ---
   const { data: viewData, isLoading: isViewLoading } = useAnnotationView({
     infospaceId,
     runId,
-    aggregate: aggregateConfigs ? undefined : aggregateConfig,
-    aggregates: aggregateConfigs,
-    filters: mergedFilters,
-    merge_maps: effectiveMergeMapsForView,
-    schema_ids: isGrouped && groupingSchemeId ? [groupingSchemeId] : undefined,
-    enabled:
-      !!runId && !!infospaceId && (!!aggregateConfig || (aggregateConfigs?.length ?? 0) > 0),
-  });
-
-  // Parallel rows fetch — lets us show the legacy ``ChartDialogDetails``
-  // panel on bucket click with real annotations + assets (the dialog reads
-  // ``results``/``assets`` which were permanent empty stubs in the
-  // server-aggregate rewrite). Compact limit: one dialog renders ≤ a few
-  // dozen docs; 500 rows is a generous cap for a typical run.
-  const { data: rowsViewData } = useAnnotationView({
-    infospaceId,
-    runId,
-    rows: { limit: 500 },
-    filters: mergedFilters,
-    merge_maps: effectiveMergeMapsForView,
-    schema_ids: isGrouped && groupingSchemeId ? [groupingSchemeId] : undefined,
+    panel: panelConfig as Panel,
+    schemas,
+    incoming_scopes: (panelConfig as Panel).scopes_in,
+    merge_maps: (panelConfig as Panel).merge_maps,
+    aggregate: {},
     enabled: !!runId && !!infospaceId,
   });
 
-  // Map server buckets to chart data format.
-  //
-  // When the backend carries a `split_field_path`, rows arrive as pairs of
-  // (date, split_value) → count. We pivot so each date has one ChartDataPoint
-  // with keys `grp:<value>` per distinct split value, plus `count` = total.
+  // Parallel rows fetch for the ChartDialogDetails drill-down panel.
+  const { data: rowsViewData } = useAnnotationView({
+    infospaceId,
+    runId,
+    panel: panelConfig as Panel,
+    schemas,
+    incoming_scopes: (panelConfig as Panel).scopes_in,
+    merge_maps: (panelConfig as Panel).merge_maps,
+    rows: { limit: 500 },
+    enabled: !!runId && !!infospaceId,
+  });
 
-  // For each fetched result, figure out which bucket key it belongs to so
-  // clicking a bucket in the chart can surface the real annotations
-  // (``selectedPoint.documents``). We recompute the interval-normalized
-  // bucket start in JS to mirror PostgreSQL's ``date_trunc`` — that's what
-  // the backend key is. (Built from ``rowsViewData`` directly rather than
-  // closing over ``results`` to avoid TDZ — ``results`` is declared below.)
+  // --- Map OutputRelation rows → chart data (new shape) ---
+  //
+  // OutputRelation rows: [{ keys: { dim: value }, measures: { measure: value } }]
+  //
+  // When cfg.color is set, rows are split by keys[cfg.color] into separate series.
+  // X-axis driven by keys[cfg.x]; Y series driven by measures[cfg.y[i]] for each i.
+  //
+  // For backwards-compat the result is projected into ChartDataPoint (timestamp +
+  // dateString for timeline mode, plus measure keys).
+
+  // Build a lookup from row-level asset presence for the drill-down dialog.
+  // rowsViewData carries the full annotation rows; we bucket them by the x-key
+  // so clicking a bar shows the underlying annotations.
   const bucketAssetsByKey = useMemo(() => {
     const map = new Map<string, Set<number>>();
     const rawItems = rowsViewData?.rows?.items;
     if (!rawItems || rawItems.length === 0) return map;
-    const xPath = panelConfig.projection?.field_mappings?.['x'] as string | undefined;
-    const interval = (panelConfig.aggregation?.interval as string | undefined)
-      ?? (selectedTimeInterval as string | undefined);
+    const xPath = xField;
+    if (!xPath && !isGrouped) return map;
 
     const normalizeDate = (raw: any): string | null => {
       const d = new Date(raw as any);
       if (isNaN(d.getTime())) return null;
-      if (!interval) return String(raw);
       let start: Date;
-      switch (interval) {
+      switch (selectedTimeInterval) {
         case 'year':    start = startOfYear(d); break;
         case 'quarter': start = startOfQuarter(d); break;
         case 'month':   start = startOfMonth(d); break;
@@ -1678,25 +1511,22 @@ const AnnotationResultsChart: React.FC<Props> = ({
       return String(start.getTime());
     };
 
-    const xKeysForRow = (value: any, timestamp: string | undefined): string[] => {
-      if (isGrouped) {
-        if (!groupingFieldKey) return [];
-        const vs = getAnnotationFieldValuesExploded(value, groupingFieldKey);
-        return vs.map((v) => String(v));
-      }
-      if (!xPath) return [];
-      const rawValues = getAnnotationFieldValuesExploded(value, xPath);
-      const source = rawValues.length > 0 ? rawValues : (timestamp != null ? [timestamp] : []);
-      const out: string[] = [];
-      for (const raw of source) {
-        const k = normalizeDate(raw);
-        if (k != null) out.push(k);
-      }
-      return out;
-    };
-
     for (const r of rawItems) {
-      const keys = xKeysForRow(r.value, r.timestamp);
+      let keys: string[] = [];
+      if (isGrouped && groupingFieldKey) {
+        const vs = getAnnotationFieldValuesExploded(r.value, groupingFieldKey);
+        keys = vs.map((v) => String(v));
+      } else if (xPath) {
+        const rawValues = getAnnotationFieldValuesExploded(r.value, xPath);
+        for (const raw of rawValues) {
+          const k = normalizeDate(raw);
+          if (k != null) keys.push(k);
+        }
+        if (keys.length === 0 && r.timestamp) {
+          const k = normalizeDate(r.timestamp);
+          if (k != null) keys.push(k);
+        }
+      }
       for (const k of keys) {
         let bucket = map.get(k);
         if (!bucket) { bucket = new Set<number>(); map.set(k, bucket); }
@@ -1704,110 +1534,115 @@ const AnnotationResultsChart: React.FC<Props> = ({
       }
     }
     return map;
-  }, [
-    rowsViewData?.rows?.items, isGrouped, groupingFieldKey,
-    panelConfig.projection, panelConfig.aggregation?.interval, selectedTimeInterval,
-  ]);
-
-  const bucketLookupKey = useCallback((bucket: { key: string }): string => {
-    if (isGrouped) return bucket.key;
-    const d = new Date(bucket.key);
-    if (isNaN(d.getTime())) return bucket.key;
-    return String(d.getTime());
-  }, [isGrouped]);
+  }, [rowsViewData?.rows?.items, isGrouped, groupingFieldKey, xField, selectedTimeInterval]);
 
   const { serverChartData, groupValues } = useMemo((): {
     serverChartData: ChartDataPoint[];
     groupValues: string[];
   } => {
-    // While a fetch is in flight, viewData still holds the previous query's
-    // buckets — rendering them against the new mode (e.g. toggled Grouped)
-    // produces a transient wrong view. Treat loading as no-data here; the
-    // empty-state / fallback paths take over until the new fetch lands.
     if (isViewLoading) return { serverChartData: [], groupValues: [] };
-    const buckets = viewData?.aggregate?.buckets;
-    if (!buckets || buckets.length === 0) return { serverChartData: [], groupValues: [] };
 
-    // Drop buckets whose key isn't a parseable date — backend bucket keys for a
-    // date axis are ISO strings; anything else (empty key from NULL field, a
-    // categorical string keyed onto a date axis by mistake) would silently
-    // collapse to epoch 0 and stack as a phantom 1970 bar.
-    const isSplit = !!viewData?.aggregate?.split_field_path;
+    // New shape: data.aggregate is ViewFormulaPhase (OutputRelation)
+    const rel = viewData?.aggregate as ViewFormulaPhase | undefined;
+    if (!rel || rel.rows.length === 0) return { serverChartData: [], groupValues: [] };
+
+    const relRows = rel.rows;
+
+    // Determine if we're splitting by a color dimension
+    const isSplit = !!colorBy;
+
     if (!isSplit) {
+      // Simple timeline / categorical: each row is one x-value with measures.
+      // Null / unparseable buckets render as ``<UNKNOWN>`` with timestamp=0,
+      // so they sort to the left of all real timestamps (chronological reads
+      // left-to-right; null is "before everything else").
       const points: ChartDataPoint[] = [];
-      for (const bucket of buckets) {
-        const ts = new Date(bucket.key).getTime();
-        if (Number.isNaN(ts)) continue;
-        // Flatten stats: backend returns {fieldPath: {fnName: value}} for the
-        // value_field. Hoist the metric to a top-level key so chart Lines /
-        // Bars can render it via dataKey. Recharts resolves dataKey via
-        // lodash `get`, which treats dots as nested-path lookup — so a
-        // dotted fieldPath like ``document.price`` written as a literal key
-        // is invisible to it. Encode dots as ``__`` before use.
+      for (const row of relRows) {
+        const xVal = xField ? (row.keys[xField] ?? null) : null;
+        const xRaw = xVal != null ? String(xVal) : '';
+        const ts = xRaw ? new Date(xRaw).getTime() : NaN;
+        const isUnknown = !xRaw || Number.isNaN(ts);
+        const xStr = isUnknown ? '<UNKNOWN>' : xRaw;
+
         const flatMetrics: Record<string, number> = {};
-        if (bucket.stats) {
-          for (const [k, v] of Object.entries(bucket.stats)) {
-            const safeKey = encodeMetricKey(k);
-            for (const fnVal of Object.values(v as any)) {
-              if (typeof fnVal === 'number') { flatMetrics[safeKey] = fnVal; break; }
-            }
-          }
+        for (const yKey of ySeries) {
+          const safeKey = encodeMetricKey(yKey);
+          const v = row.measures[yKey];
+          if (v != null && !Number.isNaN(Number(v))) flatMetrics[safeKey] = Number(v);
         }
-        const docs = Array.from(bucketAssetsByKey.get(bucketLookupKey(bucket)) ?? []);
+        // Also include a generic 'count' from first numeric measure or a count measure
+        const countVal = row.measures['count'] ?? row.measures[ySeries[0]] ?? null;
+
+        const bucketKey = !Number.isNaN(ts) ? String(ts) : xStr;
+        const docs = Array.from(bucketAssetsByKey.get(bucketKey) ?? []);
+
         points.push({
-          timestamp: ts,
-          dateString: bucket.key,
-          count: bucket.count,
+          timestamp: !Number.isNaN(ts) ? ts : 0,
+          dateString: xStr,
+          count: countVal != null ? Number(countVal) : 0,
           documents: docs,
           ...flatMetrics,
-          stats: bucket.stats ? Object.fromEntries(
-            Object.entries(bucket.stats).map(([k, v]) => [k, { min: 0, max: 0, avg: 0, count: bucket.count, ...(v as any) }])
-          ) : undefined,
         });
       }
+      // Sort by timestamp when x is a date
+      const anyDate = points.some(p => p.timestamp > 0);
+      if (anyDate) points.sort((a, b) => a.timestamp - b.timestamp);
       return { serverChartData: points, groupValues: [] };
     }
 
-    // Pivot: { dateString: { 'grp:<value>': count, count: total } }
-    const byDate = new Map<string, ChartDataPoint>();
+    // Multi-series (color dimension): pivot rows by keys[colorBy].
+    // Null buckets bucket together under ``<UNKNOWN>``.
+    const byXKey = new Map<string, ChartDataPoint>();
     const groups = new Set<string>();
-    for (const bucket of buckets) {
-      const ts = new Date(bucket.key).getTime();
-      if (Number.isNaN(ts)) continue;
-      const splitVal = bucket.split_value ?? '(none)';
+
+    for (const row of relRows) {
+      const xVal = xField ? (row.keys[xField] ?? '') : '';
+      const xRaw = String(xVal);
+      const ts = new Date(xRaw).getTime();
+      const isUnknown = !xRaw || Number.isNaN(ts);
+      const xStr = isUnknown ? '<UNKNOWN>' : xRaw;
+      const splitVal = colorBy ? String(row.keys[colorBy] ?? '(none)') : '(none)';
       groups.add(splitVal);
-      let point = byDate.get(bucket.key);
+
+      let point = byXKey.get(xStr);
       if (!point) {
+        const bucketKey = !Number.isNaN(ts) ? String(ts) : xStr;
+        const docs = Array.from(bucketAssetsByKey.get(bucketKey) ?? []);
         point = {
-          timestamp: ts,
-          dateString: bucket.key,
+          timestamp: !Number.isNaN(ts) ? ts : 0,
+          dateString: xStr,
           count: 0,
-          documents: [],
+          documents: docs,
         };
-        byDate.set(bucket.key, point);
+        byXKey.set(xStr, point);
       }
-      point[`grp:${splitVal}`] = bucket.count;
-      point.count += bucket.count;
+      // Use first Y series measure for each group
+      const measureVal = ySeries.length > 0 ? row.measures[ySeries[0]] : row.measures['count'];
+      point[`grp:${splitVal}`] = measureVal != null ? Number(measureVal) : 0;
+      point.count += measureVal != null ? Number(measureVal) : 0;
     }
-    const sorted = Array.from(byDate.values()).sort((a, b) => a.timestamp - b.timestamp);
-    // Sort group values by total count desc for stable legend order.
+
+    const sorted = Array.from(byXKey.values()).sort((a, b) => a.timestamp - b.timestamp);
+
+    // Sort group values by total desc
     const groupTotals = new Map<string, number>();
-    for (const bucket of buckets) {
-      const sv = bucket.split_value ?? '(none)';
-      groupTotals.set(sv, (groupTotals.get(sv) ?? 0) + bucket.count);
+    for (const [, point] of byXKey) {
+      for (const g of groups) {
+        groupTotals.set(g, (groupTotals.get(g) ?? 0) + (Number(point[`grp:${g}`]) || 0));
+      }
     }
     const rankedGroups = Array.from(groups).sort(
       (a, b) => (groupTotals.get(b) ?? 0) - (groupTotals.get(a) ?? 0),
     );
     return { serverChartData: sorted, groupValues: rankedGroups };
-  }, [viewData?.aggregate?.buckets, viewData?.aggregate?.split_field_path, isViewLoading]);
+  }, [viewData?.aggregate, isViewLoading, xField, ySeries, colorBy, isGrouped, bucketAssetsByKey]);
 
   // High-cardinality guard: many groups produce unreadable charts. Past 20,
   // show a warning and truncate to the top-N (backend already returns all;
   // we slice in the renderer so the user can lift the cap if needed).
   const HIGH_CARDINALITY_THRESHOLD = 20;
   const hasHighCardinality = groupValues.length > HIGH_CARDINALITY_THRESHOLD;
-  const maxGroupsToRender = (panelConfig.settings?.maxGroupsToRender as number | undefined) ?? HIGH_CARDINALITY_THRESHOLD;
+  const maxGroupsToRender = ((panelConfig as any).settings?.maxGroupsToRender as number | undefined) ?? HIGH_CARDINALITY_THRESHOLD;
   const renderedGroupValues = hasHighCardinality
     ? groupValues.slice(0, maxGroupsToRender)
     : groupValues;
@@ -1848,15 +1683,16 @@ const AnnotationResultsChart: React.FC<Props> = ({
     groupedSortOrder?: 'count-desc' | 'value-asc' | 'value-desc';
   }) => {
     const pc = chartPanelConfigRef.current;
+    const prevSettings = (pc as any).settings || {};
     const newSettings = {
-      ...(pc.settings || {}),
+      ...prevSettings,
       ...(localUpdates.isGrouped !== undefined ? { isGrouped: localUpdates.isGrouped } : {}),
       ...(localUpdates.selectedTimeInterval !== undefined ? { selectedTimeInterval: localUpdates.selectedTimeInterval } : {}),
       ...(localUpdates.groupingSchemeId !== undefined ? { groupingSchemeId: localUpdates.groupingSchemeId ?? undefined } : {}),
       ...(localUpdates.groupingFieldKey !== undefined ? { groupingFieldKey: localUpdates.groupingFieldKey ?? undefined } : {}),
       ...(localUpdates.groupedSortOrder !== undefined ? { groupedSortOrder: localUpdates.groupedSortOrder } : {}),
     };
-    onUpdatePanel({ settings: newSettings });
+    onUpdatePanel({ settings: newSettings } as any);
   }, [onUpdatePanel]);
 
   // Compatibility shims for rendering code that still references these
@@ -1888,10 +1724,10 @@ const AnnotationResultsChart: React.FC<Props> = ({
   const selectedDataSourceIds: number[] = [];
   const [variableSplittingConfig] = useState<VariableSplittingConfig | null>(null);
   const onVariableSplittingChange: ((config: VariableSplittingConfig | null) => void) | undefined = undefined;
-  const chartSettingsRef = useRef(panelConfig.settings);
-  chartSettingsRef.current = panelConfig.settings;
+  const chartSettingsRef = useRef((panelConfig as any).settings);
+  chartSettingsRef.current = (panelConfig as any).settings;
   const onSettingsChange = useCallback((settings: any) => {
-    onUpdatePanel({ settings: { ...chartSettingsRef.current, ...settings } });
+    onUpdatePanel({ settings: { ...chartSettingsRef.current, ...settings } } as any);
   }, [onUpdatePanel]);
   const monitoringMode = false;
   const allAssets = useMemo<AssetRead[]>(() => [], []);
@@ -1915,97 +1751,8 @@ const AnnotationResultsChart: React.FC<Props> = ({
   // --- SIMPLIFIED STATE: Only individual field visibility ---
   const [visibleFields, setVisibleFields] = useState<Set<string>>(new Set());
 
-  // --- RolePicker wiring -------------------------------------------------
-  // The RolePicker is the canonical surface for configuring the chart.
-  // Its value is derived from `projection.field_mappings` + `aggregation` +
-  // `settings.selectedSchemaId`; onChange writes back through `onUpdatePanel`
-  // so every control in the panel agrees on one source of truth.
-  const rolePickerValue = useMemo<RolePickerValue>(() => {
-    const fieldsByRole: Record<string, string[]> = {};
-    const mapping = panelConfig.projection?.field_mappings ?? {};
-    for (const [key, val] of Object.entries(mapping)) {
-      if (Array.isArray(val)) fieldsByRole[key] = val.map(String);
-      else if (typeof val === 'string' && val.length > 0) fieldsByRole[key] = [val];
-    }
-    const explosionPath = panelConfig.projection?.explosion ?? null;
-    const explosionByRole: Record<string, string | null> = {};
-    if (explosionPath) {
-      // The explosion belongs to whichever role references a path containing it.
-      for (const [key, paths] of Object.entries(fieldsByRole)) {
-        if (paths.some((p) => p.startsWith(explosionPath.replace(/\[\*\]$/, '')))) {
-          explosionByRole[key] = explosionPath;
-          break;
-        }
-      }
-    }
-    return {
-      schemaId:
-        (panelConfig.settings?.selectedSchemaId as number | undefined) ??
-        (schemas.length === 1 ? schemas[0].id : null),
-      fieldsByRole,
-      explosionByRole,
-      aggregation: panelConfig.aggregation ?? {},
-    };
-  }, [panelConfig.projection, panelConfig.aggregation, panelConfig.settings?.selectedSchemaId, schemas]);
-
-  // Value-alias wiring: declared above (TDZ guard). The manager targets
-  // whichever field is the primary categorical axis (x for bar, group_by
-  // when grouping; the x date field is not a useful alias target → guarded).
-
-  const handleRolePickerChange = useCallback((next: RolePickerValue) => {
-    // Fold role → field_mappings, pick the first non-empty explosion as the
-    // projection.explosion, then derive the aggregation contract from role
-    // semantics. Y stays in projection — splitByField / aggregateConfig below
-    // resolve it based on shape (numeric → value_field, enum → split_by).
-    const field_mappings: Record<string, string | string[]> = {};
-    for (const [role, paths] of Object.entries(next.fieldsByRole)) {
-      if (paths.length === 0) continue;
-      field_mappings[role] = paths.length > 1 ? paths : paths[0];
-    }
-    const firstExplosion = Object.values(next.explosionByRole).find((e) => !!e) ?? null;
-    const projection = { field_mappings, explosion: firstExplosion };
-
-    const xPath = next.fieldsByRole['x']?.[0] ?? null;
-    const groupByPath = next.fieldsByRole['group_by']?.[0] ?? null;
-
-    // Resolve X shape — used only to seed a sensible default interval for
-    // date-typed X. Schema author may forget `format: date-time` on a string
-    // field that actually holds dates (e.g. our `document.timestamp` is just
-    // `type: string`); shape detection is heuristic, so we always honor an
-    // explicit picker `interval` even when xIsDate is false. Backend will
-    // surface a cast error if the values aren't parseable.
-    const selectedSchema = next.schemaId
-      ? schemas.find((s) => s.id === next.schemaId) ?? null
-      : (schemas.length === 1 ? schemas[0] : null);
-    const xIsDate = xPath ? inferFieldShape(selectedSchema, xPath) === 'date' : false;
-
-    const explicitInterval = next.aggregation?.interval ?? panelConfig.aggregation?.interval;
-    // Default interval only when X IS a date; never invent one for a string
-    // / number / enum X — the aggregate SQL would date_trunc on the raw
-    // value and crash. If the user explicitly picked an interval we honor
-    // it regardless (schema may have missed ``format: date-time``).
-    const aggregation = {
-      ...(panelConfig.aggregation ?? {}),
-      ...(next.aggregation ?? {}),
-      group_by: xPath ?? groupByPath ?? next.aggregation?.group_by ?? undefined,
-      interval: explicitInterval
-        ?? (panelConfig.settings?.selectedTimeInterval as any)
-        ?? (xIsDate ? 'day' : undefined),
-      function: next.aggregation?.function ?? panelConfig.aggregation?.function ?? 'count',
-    };
-
-    onUpdatePanel({
-      projection,
-      aggregation,
-      settings: {
-        ...(panelConfig.settings ?? {}),
-        selectedSchemaId: next.schemaId ?? undefined,
-        selectedTimeInterval:
-          (aggregation.interval as 'day' | 'week' | 'month' | 'quarter' | 'year' | undefined) ??
-          (panelConfig.settings?.selectedTimeInterval as any),
-      },
-    });
-  }, [onUpdatePanel, panelConfig.aggregation, panelConfig.settings, schemas]);
+  // RolePicker and PanelConfigPopover are mounted by PanelRenderer in the panel header.
+  // No per-renderer RolePicker wiring needed here.
 
   // --- Monitoring mode state ---
   const [showPendingAssets, setShowPendingAssets] = useState(showPendingAssetsProp ?? true);
@@ -2150,21 +1897,22 @@ const AnnotationResultsChart: React.FC<Props> = ({
         debugInfo: { processedGroups: [], totalDataPoints: 0, fieldsPerGroup: {} },
       };
     }
-    // Server data path — use aggregate response when available
-    const serverBuckets = viewData?.aggregate?.buckets;
+    // Server data path — use aggregate response when available (new OutputRelation shape)
+    const serverBuckets = (viewData?.aggregate as ViewFormulaPhase | undefined)?.rows;
     if (serverBuckets && serverBuckets.length > 0) {
       if (isGrouped) {
-        // Map server buckets to GroupedDataPoint format (categorical bar chart)
-        const groupedData: GroupedDataPoint[] = serverBuckets.map(b => {
-          const key = b.key || 'N/A';
+        // Map OutputRelation rows to GroupedDataPoint format (categorical bar chart).
+        // xField drives the grouping bucket; first y-series measure is the count.
+        const groupedData: GroupedDataPoint[] = serverBuckets.map(row => {
+          const key = xField ? String(row.keys[xField] ?? 'N/A') : 'N/A';
+          const countMeasure = ySeries.length > 0 ? row.measures[ySeries[0]] : row.measures['count'];
+          const totalCount = countMeasure != null ? Number(countMeasure) : 0;
           const assetIds = Array.from(bucketAssetsByKey.get(key) ?? []);
-          // sourceDocuments is a Map<sourceKey, assetId[]>; with no per-source
-          // breakdown in the server path we use "all" as a single bucket.
           const sourceDocuments = new Map<number | string, number[]>();
           if (assetIds.length > 0) sourceDocuments.set('all', assetIds);
           return {
             valueString: key,
-            totalCount: b.count,
+            totalCount,
             sourceDocuments,
             schemeName: schemas.find(s => s.id === groupingSchemeId)?.name || '',
             valueKey: key,
@@ -2538,10 +2286,11 @@ const AnnotationResultsChart: React.FC<Props> = ({
     variableSplittingConfig?.fieldKey,
     variableSplittingConfig?.visibleSplits ? Array.from(variableSplittingConfig.visibleSplits).sort().join(',') : '',
     variableSplittingConfig?.valueAliases ? JSON.stringify(variableSplittingConfig.valueAliases) : '',
-    // Server data (primary)
-    viewData?.aggregate?.buckets,
+    // Server data (primary — new OutputRelation shape)
+    (viewData?.aggregate as ViewFormulaPhase | undefined)?.rows,
     isViewLoading,
     serverChartData,
+    xField, ySeries.join(','), colorBy,
     // Client-side fallback deps
     resultsForChart,
     schemas.map(s => s.id).sort().join(','),
@@ -2577,14 +2326,32 @@ const AnnotationResultsChart: React.FC<Props> = ({
   const chartLastClickRef = useRef<{ key: string; at: number } | null>(null);
 
   // Analytics overlays — client-side derived series over the rendered data.
+  // Analytics overlay config lives in panel_config.analytics_overlays (new shape)
+  // or falls back to the legacy settings bag for backwards compat during transition.
   const analyticsConfig: AnalyticsOverlayConfig = {
     ...DEFAULT_ANALYTICS_OVERLAYS,
-    ...(panelConfig.settings?.analyticsOverlays as Partial<AnalyticsOverlayConfig> | undefined),
+    ...(cfg?.analytics_overlays
+      ? {
+          rollingAvg: !!(cfg.analytics_overlays.rolling_average),
+          rollingAvgWindow: cfg.analytics_overlays.rolling_average?.window ?? 3,
+          trendLine: !!(cfg.analytics_overlays.trend_line),
+          peakMarkers: !!(cfg.analytics_overlays.peak_markers),
+          statsBands: !!(cfg.analytics_overlays.std_dev_bands),
+        }
+      : ((panelConfig as any).settings?.analyticsOverlays as Partial<AnalyticsOverlayConfig> | undefined)),
   };
   const setAnalyticsConfig = (next: AnalyticsOverlayConfig) => {
-    onUpdatePanel({
-      settings: { ...(panelConfig.settings ?? {}), analyticsOverlays: next },
-    });
+    // Write back through panel_config so it persists in the new shape
+    const newCfg: ChartVizConfig = {
+      ...(cfg ?? { kind: 'chart', y: [], mark: 'timeline' }),
+      analytics_overlays: {
+        rolling_average: next.rollingAvg ? { window: next.rollingAvgWindow ?? 3 } : null,
+        trend_line: next.trendLine,
+        peak_markers: next.peakMarkers,
+        std_dev_bands: next.statsBands,
+      },
+    };
+    onUpdatePanel({ panel_config: newCfg } as any);
   };
 
   // Rolling avg + trend + peak computations. Only runs on the ungrouped
@@ -2630,23 +2397,13 @@ const AnnotationResultsChart: React.FC<Props> = ({
   ]);
 
   const openEvidenceForPoint = useCallback((pointData: any) => {
-    // eslint-disable-next-line no-console
-    console.log('[chart] openEvidenceForPoint', {
-      isGrouped, groupingFieldKey,
-      groupBy: panelConfig.aggregation?.group_by,
-      interval: panelConfig.aggregation?.interval,
-      pointData,
-    });
     // Grouped (categorical) → equality on the grouping field.
     // Timeline (date bucket) → range on [bucket_start, bucket_end] because
-    // the bucket key is the start of an interval (e.g. "2008-06-01" for a
-    // monthly bucket) but each annotation's timestamp is an exact datetime
-    // inside that interval. Equality would match nothing — we need
-    // ``>= start AND < next_start``.
+    // the bucket key is the start of an interval so we need >= start AND < next_start.
     const fieldPath =
       isGrouped && groupingFieldKey
         ? groupingFieldKey
-        : panelConfig.aggregation?.group_by ?? null;
+        : xField ?? null;
     if (!fieldPath) return;
 
     let scope;
@@ -2664,9 +2421,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
       if (bucketKey == null) return;
       const start = new Date(bucketKey);
       if (isNaN(start.getTime())) return;
-      const interval = (panelConfig.aggregation?.interval as string | undefined)
-        || selectedTimeInterval
-        || 'day';
+      const interval = selectedTimeInterval || 'day';
       const end = new Date(start);
       switch (interval) {
         case 'year':    end.setUTCFullYear(end.getUTCFullYear() + 1); break;
@@ -2689,7 +2444,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
     }
     setEvidenceScope(scope);
     setEvidenceOpen(true);
-  }, [isGrouped, groupingFieldKey, panelConfig, selectedTimeInterval]);
+  }, [isGrouped, groupingFieldKey, xField, panelConfig, selectedTimeInterval]);
 
   const handlePointClick = (data: any) => {
       if (data && data.activePayload && data.activePayload.length > 0) {
@@ -2705,9 +2460,8 @@ const AnnotationResultsChart: React.FC<Props> = ({
           // Emit scope gesture for cross-panel filtering
           if (onScopeGesture && isGrouped && groupingFieldKey && pointData.valueString) {
             onScopeGesture(groupingFieldKey, pointData.valueString, 'click');
-          } else if (onScopeGesture && !isGrouped && pointData.dateString) {
-            const dateField = panelConfig.aggregation.group_by;
-            if (dateField) onScopeGesture(dateField, pointData.dateString, 'click');
+          } else if (onScopeGesture && !isGrouped && pointData.dateString && xField) {
+            onScopeGesture(xField, pointData.dateString, 'click');
           }
       }
   };
@@ -2841,34 +2595,23 @@ const AnnotationResultsChart: React.FC<Props> = ({
      return true;
    })();
 
-  // Empty-state detection for the RolePicker-driven timeline.
-  const needsSchemaPick = !rolePickerValue.schemaId && schemas.length > 1;
-  const needsXPick = !isGrouped && (rolePickerValue.fieldsByRole['x']?.length ?? 0) === 0;
-  const showPickerEmptyState = !isGrouped && (needsSchemaPick || needsXPick);
+  // Empty-state detection: show when x role is not configured and we're in timeline mode.
+  const needsXPick = !isGrouped && !xField;
+  const showPickerEmptyState = needsXPick;
 
   return (
     <div className="h-full flex flex-col space-y-3">
-      {/* Picker button lives in the PanelRenderer header via a portal so
-          every panel type surfaces it in the same place. */}
-      <PanelHeaderSlot>
-          <PanelFormulaBinder
-            formulaId={(panelConfig as any).formula_id ?? (panelConfig as any).observation_id ?? null}
-            onBind={(id) => onUpdatePanel({ formula_id: id, observation_id: undefined } as any)}
-          />
-          <RolePickerPopover
-          schema={PANEL_ROLE_SCHEMAS.chart}
-          availableSchemas={schemas}
-          value={rolePickerValue}
-          onChange={handleRolePickerChange}
-          onOpenValueAliases={
-            aliasTargetField ? () => setAliasManagerOpen(true) : undefined
-          }
-        />
-      </PanelHeaderSlot>
+      {/* Mark toggle moved inline (display knob — stays on the canvas, not
+          in the panel header). The config popover handles data-side concerns
+          only: roles, filter, time interval, advanced. */}
+      <PanelHeaderSlot>{null}</PanelHeaderSlot>
       {showControls && (
         <div className="flex flex-col gap-1.5 px-2 py-1.5 border-b bg-muted/20 flex-shrink-0">
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Chart Type Toggle */}
+            {/* Timeline ↔ Grouped — the only meaningful chart-side toggle.
+                Timeline plots cfg.x as a continuous time axis; Grouped
+                treats it as a categorical bar chart. The bar/line/area
+                "mark" was visual-only and has been removed. */}
             <ToggleGroup
               type="single"
               value={isGrouped ? 'grouped' : 'timeline'}
@@ -2888,62 +2631,26 @@ const AnnotationResultsChart: React.FC<Props> = ({
               </ToggleGroupItem>
             </ToggleGroup>
 
-          {/* Grouped controls */}
+          {/* Grouped controls — only sort order remains. The grouping
+              schema + field come from the panel config (cfg.x). */}
           {isGrouped && (
-            <>
-              <Select
-                value={groupingSchemeId?.toString() ?? ""}
-                onValueChange={(v) => {
-                  const next = v ? parseInt(v) : null;
-                  setGroupingSchemeId(next);
-                  persistChartState({ groupingSchemeId: next });
-                }}
-              >
-                <SelectTrigger className="w-28 h-6 text-[11px]">
-                  <SelectValue placeholder="Schema..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {schemas.map(s => (
-                    <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={groupingFieldKey ?? ""}
-                onValueChange={(v) => {
-                  const next = v || null;
-                  setGroupingFieldKey(next);
-                  persistChartState({ groupingFieldKey: next });
-                }}
-                disabled={!groupingSchemeId}
-              >
-                <SelectTrigger className="w-28 h-6 text-[11px]">
-                  <SelectValue placeholder="Field..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {groupingSchemeId && getTargetKeysForScheme(groupingSchemeId, schemas).map(tk => (
-                    <SelectItem key={tk.key} value={tk.key}>{tk.name} ({tk.type})</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={groupedSortOrder}
-                onValueChange={(v) => {
-                  const next = v as 'count-desc' | 'value-asc' | 'value-desc';
-                  setGroupedSortOrder(next);
-                  persistChartState({ groupedSortOrder: next });
-                }}
-              >
-                <SelectTrigger className="w-24 h-6 text-[11px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="count-desc">Count desc</SelectItem>
-                  <SelectItem value="value-asc">A → Z</SelectItem>
-                  <SelectItem value="value-desc">Z → A</SelectItem>
-                </SelectContent>
-              </Select>
-            </>
+            <Select
+              value={groupedSortOrder}
+              onValueChange={(v) => {
+                const next = v as 'count-desc' | 'value-asc' | 'value-desc';
+                setGroupedSortOrder(next);
+                persistChartState({ groupedSortOrder: next });
+              }}
+            >
+              <SelectTrigger className="w-24 h-6 text-[11px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="count-desc">Count desc</SelectItem>
+                <SelectItem value="value-asc">A → Z</SelectItem>
+                <SelectItem value="value-desc">Z → A</SelectItem>
+              </SelectContent>
+            </Select>
           )}
 
           {/* Spacer */}
@@ -3067,7 +2774,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
           {renderedGroupValues.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5 pt-1">
               <span className="text-[10px] font-medium text-muted-foreground">
-                Split by {viewData?.aggregate?.split_field_path}:
+                Split by {colorBy ?? 'group'}:
               </span>
               {renderedGroupValues.map((value, idx) => {
                 const hidden = hiddenGroupValues.has(value);
@@ -3105,11 +2812,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
       <div className="flex-1 min-h-0 overflow-hidden">
         {showPickerEmptyState ? (
           <EmptyStateCard
-            reason={
-              needsSchemaPick
-                ? { kind: 'no_schema' }
-                : { kind: 'role_unfilled', roleLabel: 'X axis' }
-            }
+            reason={{ kind: 'role_unfilled', roleLabel: 'X axis' }}
             className="h-full"
           />
         ) : hasNoData ? (
@@ -3117,8 +2820,8 @@ const AnnotationResultsChart: React.FC<Props> = ({
             reason={{
               kind: 'no_data',
               filtersActive:
-                (panelConfig.local_filters?.conditions?.length ?? 0) > 0 ||
-                (panelConfig.incoming_scopes?.length ?? 0) > 0,
+                ((panelConfig as Panel).formula?.filter != null) ||
+                ((panelConfig as Panel).scopes_in?.length ?? 0) > 0,
             }}
             className="h-full"
           />
@@ -3227,12 +2930,9 @@ const AnnotationResultsChart: React.FC<Props> = ({
                   textAnchor="end"
                   height={60}
                   tickFormatter={(value: string) => {
-                    // Backend returns postgres-rendered timestamps like
-                    // ``2005-06-01 00:00:00+00:00``. Strip the time part and
-                    // format by the active interval so axes stay legible.
                     const d = new Date(value);
                     if (isNaN(d.getTime())) return String(value);
-                    const iv = (panelConfig.aggregation?.interval as any) || selectedTimeInterval;
+                    const iv = selectedTimeInterval;
                     switch (iv) {
                       case 'year':    return format(d, 'yyyy');
                       case 'quarter': return format(d, "'Q'Q yyyy");
@@ -3544,7 +3244,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
         infospaceId={infospaceId}
         runId={runId}
         scope={evidenceScope}
-        baseFilters={panelConfig.local_filters}
+        baseFilters={(panelConfig as Panel).formula?.filter ?? undefined}
         mergeMaps={effectiveMergeMapsForView}
         schemas={schemas}
       />
@@ -3559,8 +3259,8 @@ const AnnotationResultsChart: React.FC<Props> = ({
           runId={runId}
           fieldPath={aliasTargetField}
           aliases={aliasesForField}
-          schemaIds={rolePickerValue.schemaId ? [rolePickerValue.schemaId] : undefined}
-          filters={mergedFilters}
+          schemaIds={undefined}
+          filters={undefined}
           onSave={(nextAliases) => {
             const current = getGlobalVariableSplitting() ?? { enabled: true };
             setGlobalVariableSplitting({

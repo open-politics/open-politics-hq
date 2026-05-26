@@ -17,9 +17,6 @@ import {
   JsonSchemaType,
   TypeOption,
   EntityFieldConfig,
-  AxisKind,
-  AxisDecl,
-  AxesBlock,
 } from "@/lib/annotations/types";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -31,7 +28,7 @@ import {
   ChevronRight, ChevronDown, Type, Hash, ToggleLeft, List, Tags, ListOrdered,
   Braces, LayoutList, GitFork, ChevronsUpDown, Check, BarChart3, Table2, PieChart,
   Map, Clock, Network, CalendarClock, MapPin, CalendarRange, Users, Globe, AtSign,
-  Link2, Unlink, Sparkles, Ruler, X,
+  Link2, Unlink, Sparkles, X,
 } from "lucide-react";
 import GraphSchemaVisualEditor, { TagInput } from "./GraphSchemaVisualEditor";
 import { HexColorPicker } from "react-colorful";
@@ -557,234 +554,6 @@ const SECTION_META: Record<string, { icon: React.ElementType; color: string; tit
 // Top bar — schema name, description, instructions popover, save/cancel
 // =============================================================================
 
-// ─── Axes editor (intelligence-layer M3) ────────────────────────────────────
-// Schemas declare typed measurement dimensions (axes) at the top level so
-// formulas can compose by axis name across heterogeneous fields. Fields then
-// reference an axis via ``xAxis`` on the field config (emitted as ``x-axis``
-// in the JSON Schema). Until now axes were JSON-only; this panel surfaces
-// them in the editor.
-
-const AXIS_KIND_LABELS: Record<AxisKind, string> = {
-  ordinal_llm: "Ordinal (LLM)",
-  categorical_llm: "Categorical (LLM)",
-  scalar_1_10_llm: "Scalar 1–10 (LLM)",
-  factual_enum: "Factual enum",
-  ordinal_doc: "Ordinal (doc-level)",
-  categorical_doc: "Categorical (doc-level)",
-  exposure: "Exposure (numeric)",
-};
-
-const AXIS_KINDS: AxisKind[] = [
-  "ordinal_llm",
-  "categorical_llm",
-  "scalar_1_10_llm",
-  "factual_enum",
-  "ordinal_doc",
-  "categorical_doc",
-  "exposure",
-];
-
-const ENUM_AXIS_KINDS = new Set<AxisKind>([
-  "ordinal_llm",
-  "categorical_llm",
-  "factual_enum",
-  "ordinal_doc",
-  "categorical_doc",
-]);
-
-interface AxisRowProps {
-  name: string;
-  axis: AxisDecl;
-  allNames: string[];
-  onRename: (next: string) => void;
-  onChange: (patch: Partial<AxisDecl>) => void;
-  onRemove: () => void;
-  disabled?: boolean;
-}
-
-const AxisRow: React.FC<AxisRowProps> = ({ name, axis, allNames, onRename, onChange, onRemove, disabled }) => {
-  const [nameDraft, setNameDraft] = useState(name);
-  useEffect(() => { setNameDraft(name); }, [name]);
-  const [valuesDraft, setValuesDraft] = useState((axis.values ?? []).join(", "));
-  useEffect(() => { setValuesDraft((axis.values ?? []).join(", ")); }, [axis.values]);
-  const isEnumKind = ENUM_AXIS_KINDS.has(axis.kind);
-
-  const commitName = () => {
-    const trimmed = nameDraft.trim();
-    if (!trimmed || trimmed === name) { setNameDraft(name); return; }
-    if (allNames.includes(trimmed)) {
-      // collision — bounce back
-      setNameDraft(name);
-      return;
-    }
-    onRename(trimmed);
-  };
-
-  const commitValues = () => {
-    const parsed = valuesDraft
-      .split(/[,\n]/)
-      .map(s => s.trim())
-      .filter(Boolean);
-    onChange({ values: parsed.length > 0 ? parsed : undefined });
-  };
-
-  return (
-    <div className="border rounded-md p-2 space-y-1.5 bg-background">
-      <div className="flex items-center gap-2">
-        <Input
-          value={nameDraft}
-          onChange={(e) => setNameDraft(e.target.value)}
-          onBlur={commitName}
-          disabled={disabled}
-          placeholder="axis name (e.g. source_weight)"
-          className="h-7 text-[12px] font-mono flex-1 min-w-0"
-        />
-        <Select
-          value={axis.kind}
-          onValueChange={(v: AxisKind) => onChange({ kind: v })}
-          disabled={disabled}
-        >
-          <SelectTrigger className="h-7 text-[11px] w-[170px] shrink-0">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {AXIS_KINDS.map(k => (
-              <SelectItem key={k} value={k} className="text-[11px]">
-                {AXIS_KIND_LABELS[k]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={onRemove}
-          disabled={disabled}
-          className="h-6 w-6 shrink-0 text-muted-foreground hover:text-destructive"
-          title="Delete axis"
-        >
-          <Trash2 className="h-3 w-3" />
-        </Button>
-      </div>
-      {isEnumKind && (
-        <div>
-          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            Allowed values (comma-separated)
-          </Label>
-          <Input
-            value={valuesDraft}
-            onChange={(e) => setValuesDraft(e.target.value)}
-            onBlur={commitValues}
-            disabled={disabled}
-            placeholder="favors, neutral, disfavors"
-            className="h-7 text-[11px] mt-0.5 font-mono"
-          />
-        </div>
-      )}
-      <div>
-        <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">
-          Description (surfaced to LLM)
-        </Label>
-        <Input
-          value={axis.description ?? ""}
-          onChange={(e) => onChange({ description: e.target.value || undefined })}
-          disabled={disabled}
-          placeholder="What this axis measures"
-          className="h-7 text-[11px] mt-0.5"
-        />
-      </div>
-    </div>
-  );
-};
-
-const AxesPanel: React.FC<{
-  axes: AxesBlock;
-  onChange: (next: AxesBlock) => void;
-  disabled?: boolean;
-}> = ({ axes, onChange, disabled }) => {
-  const entries = Object.entries(axes);
-  const allNames = entries.map(([n]) => n);
-
-  const addAxis = () => {
-    let i = 1;
-    let key = "new_axis";
-    while (axes[key]) {
-      i += 1;
-      key = `new_axis_${i}`;
-    }
-    onChange({ ...axes, [key]: { kind: "categorical_llm", values: [] } });
-  };
-
-  const updateAxis = (name: string, patch: Partial<AxisDecl>) => {
-    const cur = axes[name];
-    if (!cur) return;
-    onChange({ ...axes, [name]: { ...cur, ...patch } });
-  };
-
-  const renameAxis = (oldName: string, newName: string) => {
-    if (oldName === newName || !axes[oldName]) return;
-    const next: AxesBlock = {};
-    for (const [k, v] of Object.entries(axes)) {
-      next[k === oldName ? newName : k] = v;
-    }
-    onChange(next);
-  };
-
-  const removeAxis = (name: string) => {
-    const next = { ...axes };
-    delete next[name];
-    onChange(next);
-  };
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-start gap-3">
-        <div className="flex-1">
-          <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-            Axes — measurement vocabulary
-          </Label>
-          <p className="text-[11px] text-muted-foreground mt-0.5">
-            Typed dimensions formulas aggregate over. Reference an axis from a
-            field with the per-field "x-axis" property. See{" "}
-            <code className="text-[10px]">docs/intelligence/HOW_TO.md</code> § Axes.
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={addAxis}
-          disabled={disabled}
-          className="h-7 text-[11px] shrink-0"
-        >
-          <PlusCircle className="h-3 w-3 mr-1" /> Add axis
-        </Button>
-      </div>
-      {entries.length === 0 ? (
-        <div className="text-[11px] italic text-muted-foreground border-dashed border rounded-md p-3 text-center">
-          No axes declared. Add one to enable axis-aware formula aggregation.
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {entries.map(([name, axis]) => (
-            <AxisRow
-              key={name}
-              name={name}
-              axis={axis}
-              allNames={allNames.filter(n => n !== name)}
-              onRename={(next) => renameAxis(name, next)}
-              onChange={(patch) => updateAxis(name, patch)}
-              onRemove={() => removeAxis(name)}
-              disabled={disabled}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
-
 
 const TopBar: React.FC<{
   formData: AnnotationSchemaFormData;
@@ -798,8 +567,6 @@ const TopBar: React.FC<{
 }> = ({ formData, onFormChange, formErrors, isReady, isLoading, mode, disabled, onCancel }) => {
   const titleByMode = { create: "New schema", edit: "Edit schema", watch: "View schema" }[mode];
   const [showInstructions, setShowInstructions] = useState(false);
-  const [showAxes, setShowAxes] = useState(false);
-  const axesCount = Object.keys(formData.axes ?? {}).length;
 
   return (
     <div className="border-b flex flex-col">
@@ -835,22 +602,6 @@ const TopBar: React.FC<{
           type="button"
           variant="ghost"
           size="sm"
-          onClick={() => setShowAxes(s => !s)}
-          className="h-8 text-xs gap-1.5 shrink-0"
-        >
-          <Ruler className="h-3.5 w-3.5" />
-          Axes
-          {axesCount > 0 && (
-            <span className="ml-0.5 text-[10px] tabular-nums text-muted-foreground">
-              {axesCount}
-            </span>
-          )}
-          <ChevronDown className={cn("h-3 w-3 transition-transform", showAxes && "rotate-180")} />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
           onClick={() => setShowInstructions(s => !s)}
           className="h-8 text-xs gap-1.5 shrink-0"
         >
@@ -878,15 +629,6 @@ const TopBar: React.FC<{
           </Button>
         )}
       </div>
-      {showAxes && (
-        <div className="px-5 py-3 border-t bg-muted/20">
-          <AxesPanel
-            axes={formData.axes ?? {}}
-            onChange={(next) => onFormChange({ ...formData, axes: next })}
-            disabled={disabled}
-          />
-        </div>
-      )}
       {showInstructions && (
         <div className="px-5 py-3 border-t bg-muted/20">
           <Label className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
@@ -1211,13 +953,12 @@ const SectionLabel: React.FC<{ children: React.ReactNode; className?: string; ri
 const FieldCanvas: React.FC<{
   resolution: Resolution;
   structure: SchemaSection[];
-  axes: AxesBlock;
   onUpdateField: (update: Partial<AdvancedSchemeField>) => void;
   onSelectNode: (id: string | null) => void;
   onAddNested: (field?: AdvancedSchemeField) => void;
   onRemoveField: () => void;
   disabled: boolean;
-}> = ({ resolution, structure, axes, onUpdateField, onSelectNode, onAddNested, onRemoveField, disabled }) => {
+}> = ({ resolution, structure, onUpdateField, onSelectNode, onAddNested, onRemoveField, disabled }) => {
   if (resolution.kind === "none") return <EmptyCanvas />;
   if (resolution.kind === "section") return <SectionCanvas section={resolution.section} />;
 
@@ -1227,7 +968,7 @@ const FieldCanvas: React.FC<{
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto">
-      <div className="max-w-[860px] mx-auto px-8 py-6">
+      <div className="mx-auto px-8 py-6">
         {/* Breadcrumb */}
         <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-4">
           <button
@@ -1298,45 +1039,6 @@ const FieldCanvas: React.FC<{
             className="text-sm resize-y min-h-[88px] leading-relaxed"
           />
         </div>
-
-        {/* Axis reference — bind this field to one of the schema's axes so
-            formulas can aggregate / validate axis-kind rules against it. */}
-        {(field.type === "string" || field.type === "number" || field.type === "integer") && (
-          <div className="space-y-1.5 mb-6">
-            <SectionLabel>Axis reference (optional)</SectionLabel>
-            <div className="flex items-center gap-2">
-              <Select
-                value={(field as any).xAxis ?? "__none__"}
-                onValueChange={(v) =>
-                  onUpdateField({ xAxis: v === "__none__" ? undefined : v } as any)
-                }
-                disabled={disabled}
-              >
-                <SelectTrigger className="h-8 text-xs flex-1">
-                  <SelectValue placeholder="No axis bound" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__" className="text-xs italic text-muted-foreground">
-                    No axis
-                  </SelectItem>
-                  {Object.entries(axes).map(([name, axis]) => (
-                    <SelectItem key={name} value={name} className="text-xs">
-                      <span className="font-mono">{name}</span>
-                      <span className="text-muted-foreground ml-2">
-                        · {AXIS_KIND_LABELS[axis.kind]}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {Object.keys(axes).length === 0 && (
-                <span className="text-[10px] text-muted-foreground italic">
-                  Declare axes in the top bar first.
-                </span>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Type-specific surface */}
         <FieldTypeSurface
@@ -2032,8 +1734,16 @@ const RefRow: React.FC<{
               Use vocabulary from another field
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-[280px] p-1" align="start">
-            <div className="space-y-0.5 max-h-[260px] overflow-y-auto">
+          <PopoverContent className="w-72 p-1" align="start" onWheel={(e) => e.stopPropagation()}>
+            <div
+              className="space-y-0.5 max-h-80 overflow-y-auto"
+              onWheel={(e) => {
+                const el = e.currentTarget;
+                if ((e.deltaY > 0 && el.scrollTop < el.scrollHeight - el.clientHeight) || (e.deltaY < 0 && el.scrollTop > 0)) {
+                  e.stopPropagation();
+                }
+              }}
+            >
               {candidates.map(cand => (
                 <button
                   key={cand.id}
@@ -2409,7 +2119,6 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
               <FieldCanvas
                 resolution={resolution}
                 structure={formData.structure}
-                axes={formData.axes ?? {}}
                 onUpdateField={updateSelectedField}
                 onSelectNode={setSelectedNodeId}
                 onAddNested={handleAddNestedField}

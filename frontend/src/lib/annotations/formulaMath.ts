@@ -235,9 +235,21 @@ export type MathTokenKind =
 export interface MathToken {
   kind: MathTokenKind;
   text: string;
-  /** Path back into the formula's structured body for popover edits.
-   *  For ``field`` tokens this is the JSONB path. For ``agg`` it's the
-   *  measure name. For ``subscript-content`` it's the dim name. */
+  /** Slot identifier — encodes which part of the structured body this
+   *  token points at, so popovers can mutate the right field. Encoding:
+   *
+   *    name                  → ``formula/name``
+   *    agg (a measure)       → ``measure:<name>/agg``
+   *    field (measure path)  → ``measure:<name>/path``
+   *    field (top_by)        → ``measure:<name>/top_by``
+   *    field (weight path)   → ``weight/path``
+   *    subscript-content     → ``dim:<name>``
+   *    composition           → ``composition:<formula>.<col>``
+   *    literal (filter cond) → ``filter:<index>``
+   *
+   *  Tokens that aren't directly editable (op, paren, eq, where-kw,
+   *  subscript-open/close) omit ``ref``.
+   */
   ref?: string;
 }
 
@@ -249,7 +261,7 @@ export interface MathToken {
  */
 export function tokenizeFormula(f: Formula): MathToken[] {
   const tokens: MathToken[] = [];
-  tokens.push({ kind: 'name', text: f.name, ref: f.name });
+  tokens.push({ kind: 'name', text: f.name, ref: 'formula/name' });
   tokens.push({ kind: 'eq', text: ' = ' });
   pushRhs(tokens, f);
   pushSubscript(tokens, f.group ?? []);
@@ -288,29 +300,33 @@ function pushRhs(tokens: MathToken[], f: Formula): void {
 
 function pushMeasure(tokens: MathToken[], m: Measure, weight: Measure | null): void {
   const agg = m.agg ?? 'count';
+  const aggSlot = `measure:${m.name}/agg`;
+  const pathSlot = `measure:${m.name}/path`;
+  const topBySlot = `measure:${m.name}/top_by`;
+
   if (agg === 'count') {
-    tokens.push({ kind: 'agg', text: 'count', ref: m.name });
+    tokens.push({ kind: 'agg', text: 'count', ref: aggSlot });
     if (m.path) {
       tokens.push({ kind: 'paren', text: '(' });
-      tokens.push({ kind: 'field', text: pathLeaf(m.path), ref: m.path });
+      tokens.push({ kind: 'field', text: pathLeaf(m.path), ref: pathSlot });
       tokens.push({ kind: 'paren', text: ')' });
     }
     return;
   }
   if (agg === 'top') {
     const n = m.top_n ?? 5;
-    tokens.push({ kind: 'agg', text: `top ${n}`, ref: m.name });
+    tokens.push({ kind: 'agg', text: `top ${n}`, ref: aggSlot });
     if (m.top_by) {
       tokens.push({ kind: 'op', text: ' by ' });
-      tokens.push({ kind: 'field', text: pathLeaf(m.top_by), ref: m.top_by });
+      tokens.push({ kind: 'field', text: pathLeaf(m.top_by), ref: topBySlot });
       tokens.push({ kind: 'op', text: ' ↓' });
     }
     return;
   }
   if (agg === 'distribution') {
-    tokens.push({ kind: 'agg', text: 'distribution', ref: m.name });
+    tokens.push({ kind: 'agg', text: 'distribution', ref: aggSlot });
     tokens.push({ kind: 'paren', text: '(' });
-    tokens.push({ kind: 'field', text: pathLeaf(m.path), ref: m.path ?? undefined });
+    tokens.push({ kind: 'field', text: pathLeaf(m.path), ref: pathSlot });
     tokens.push({ kind: 'paren', text: ')' });
     return;
   }
@@ -318,25 +334,25 @@ function pushMeasure(tokens: MathToken[], m: Measure, weight: Measure | null): v
   const symbol: string = (agg === 'sum') ? '∑' : agg;
   // Weighted forms.
   if (weight && weight.path && (agg === 'sum' || agg === 'mean')) {
-    tokens.push({ kind: 'agg', text: '∑', ref: m.name });
+    tokens.push({ kind: 'agg', text: '∑', ref: aggSlot });
     tokens.push({ kind: 'paren', text: '(' });
-    tokens.push({ kind: 'field', text: pathLeaf(m.path), ref: m.path ?? undefined });
+    tokens.push({ kind: 'field', text: pathLeaf(m.path), ref: pathSlot });
     tokens.push({ kind: 'op', text: ' · ' });
-    tokens.push({ kind: 'field', text: pathLeaf(weight.path), ref: weight.path });
+    tokens.push({ kind: 'field', text: pathLeaf(weight.path), ref: 'weight/path' });
     tokens.push({ kind: 'paren', text: ')' });
     if (agg === 'mean') {
       tokens.push({ kind: 'op', text: ' / ' });
-      tokens.push({ kind: 'agg', text: '∑', ref: '__weight_denom' });
+      tokens.push({ kind: 'agg', text: '∑', ref: 'weight/agg' });
       tokens.push({ kind: 'paren', text: '(' });
-      tokens.push({ kind: 'field', text: pathLeaf(weight.path), ref: weight.path });
+      tokens.push({ kind: 'field', text: pathLeaf(weight.path), ref: 'weight/path' });
       tokens.push({ kind: 'paren', text: ')' });
     }
     return;
   }
 
-  tokens.push({ kind: 'agg', text: symbol, ref: m.name });
+  tokens.push({ kind: 'agg', text: symbol, ref: aggSlot });
   tokens.push({ kind: 'paren', text: '(' });
-  tokens.push({ kind: 'field', text: pathLeaf(m.path), ref: m.path ?? undefined });
+  tokens.push({ kind: 'field', text: pathLeaf(m.path), ref: pathSlot });
   tokens.push({ kind: 'paren', text: ')' });
 }
 
@@ -356,7 +372,7 @@ function pushSubscript(tokens: MathToken[], group: Dimension[]): void {
     } else {
       label = d.name;
     }
-    tokens.push({ kind: 'subscript-content', text: label, ref: d.name });
+    tokens.push({ kind: 'subscript-content', text: label, ref: `dim:${d.name}` });
   });
   tokens.push({ kind: 'subscript-close', text: '}' });
 }

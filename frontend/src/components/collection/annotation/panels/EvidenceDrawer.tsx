@@ -46,6 +46,7 @@ import type {
 } from '@/lib/annotations/types';
 import { useAnnotationView } from '@/hooks/useAnnotationView';
 import { mergeFiltersAndScopes } from '@/lib/annotations/scopes';
+import { emptyFormula } from '@/lib/annotations/panelFactory';
 import { useAssetDetail } from '@/components/collection/assets/Views/AssetDetailProvider';
 import AnnotationResultDisplay from '../AnnotationResultDisplay';
 import { getTargetKeysForScheme } from '@/lib/annotations/utils';
@@ -119,12 +120,20 @@ export function EvidenceDrawer({
     }
   }, [scopeKey]);
 
+  // Build a transient Formula that carries the merged filter + merge_maps;
+  // EvidenceDrawer fetches via the new unified /view endpoint, so the
+  // scope's filter rides into the engine via Formula.filter.
+  const evidenceFormula = useMemo(() => ({
+    ...emptyFormula({ name: 'evidence' }),
+    filter: mergedFilters ?? { logic: 'and', conditions: [] },
+    merge_maps: mergeMaps ?? [],
+  }), [mergedFilters, mergeMaps]);
+
   const { data, isLoading, error } = useAnnotationView({
     infospaceId,
     runId,
-    rows: { limit: PAGE_SIZE, cursor },
-    filters: mergedFilters,
-    merge_maps: mergeMaps,
+    formula: evidenceFormula as any,
+    rows: { limit: PAGE_SIZE, cursor: cursor as any },
     enabled: open && !!scope,
   });
 

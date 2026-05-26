@@ -6,6 +6,7 @@ import type {
 } from '@/client';
 import { RunsService as AnnotationRunsServiceApi } from '@/client';
 import { FormattedAnnotation, PanelConfig, Scope } from '@/lib/annotations/types';
+import { newInlineStubFormula } from '@/lib/annotations/panelEligibility';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { produce } from 'immer';
@@ -329,13 +330,22 @@ function migratePanelIfNeeded(panel: any): PanelConfig {
     } as PanelConfig;
   }
 
-  // Old PanelViewConfig — has filters with rules and settings bag
+  // Old PanelViewConfig — has filters with rules and settings bag.
+  // After P2/P3, the new Panel shape requires formula/fields/panel_config/
+  // scopes_in. We cast to any to bypass strict typing here since this
+  // migration path returns intentionally incomplete records on legacy
+  // data; the loaded panel goes through the migration sweep right after
+  // and addPanel handles the population.
   const old = panel as PanelViewConfig;
   return {
     id: old.id,
     type: old.type,
     name: old.name,
     description: old.description,
+    formula: null as any,
+    fields: [],
+    panel_config: { kind: old.type } as any,
+    scopes_in: [],
     projection: { field_mappings: {}, explosion: null },
     aggregation: {},
     local_filters: { logic: 'and', conditions: [] },
@@ -344,7 +354,7 @@ function migratePanelIfNeeded(panel: any): PanelConfig {
     grid_position: old.gridPos || { x: 0, y: 0, w: 6, h: 4 },
     collapsed: old.collapsed,
     settings: old.settings,
-  };
+  } as any;
 }
 
 /** Migrate an entire dashboard config, converting any old panels and
@@ -446,7 +456,7 @@ interface AnnotationRunState {
   setIsProcessing: (processing: boolean) => void;
   setDashboardConfig: (config: DashboardConfig | null) => void;
   updateDashboardConfig: (config: Partial<DashboardConfig>) => void;
-  addPanel: (panel: Omit<PanelConfig, 'id' | 'grid_position' | 'local_filters' | 'incoming_scopes' | 'merge_maps' | 'projection' | 'aggregation'>) => void;
+  addPanel: (panel: { type: PanelConfig['type']; name: string; description?: string; settings?: any; formula_ref?: string | null }) => void;
   updatePanel: (panelId: string, updates: Partial<PanelConfig>) => void;
   removePanel: (panelId: string) => void;
   compactLayout: () => void;
@@ -464,6 +474,17 @@ interface AnnotationRunState {
   updateFormula: (id: string, updates: Partial<Omit<Formula, 'id' | 'created_at'>>) => void;
   removeFormula: (id: string) => void;
   getFormula: (id: string) => Formula | null;
+
+  /** Promote a panel's inline Formula to a named entry in the intelligence
+   *  formula list. After this, ``panel.formula_id`` refers to the saved
+   *  Formula and ``panel.formula_inline`` is cleared. Used when the user
+   *  wants to cite, compose, or reuse the panel's formula elsewhere. */
+  promotePanelFormula: (panelId: string, name?: string) => void;
+  /** Inverse of promote: copy the saved Formula referenced by
+   *  ``panel.formula_id`` back into ``panel.formula_inline`` and clear the
+   *  saved-id binding. Used to detach a panel from the shared formula so
+   *  edits don't propagate to other panels. */
+  detachPanelFormula: (panelId: string) => void;
   /** @deprecated use addFormula */
   addObservation?: (data: Omit<Formula, 'id' | 'created_at' | 'updated_at'>) => Formula | null;
   /** @deprecated use updateFormula */
@@ -733,18 +754,65 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                     const size = defaultSizes[panelData.type] || { w: 6, h: 4 };
                     const position = findPos(size.w, size.h);
 
+                    const panelId = nanoid();
+
+                    // Empty Formula — RolePicker fills in filter/group/measures
+                    // as the user picks roles. Carries no schema yet (user
+                    // picks one via PanelConfigPopover).
+                    const emptyFormula = {
+                        id: `${panelId}_f`,
+                        name: panelData.name,
+                        description: undefined,
+                        schema_id: null,
+                        explosion: null,
+                        filter: { logic: 'and' as const, conditions: [] },
+                        merge_maps: [],
+                        group: [],
+                        weight: null,
+                        measures: [],
+                        derives: [],
+                        snippet: null,
+                        output_keys: [],
+                        order_by: null,
+                        version: 1 as const,
+                    };
+
+                    // Per-type default panel_config — every role slot empty,
+                    // display knobs at sensible defaults. The RolePicker /
+                    // PanelConfigPopover writes these as the user configures.
+                    const defaultCfg = (() => {
+                        const t = panelData.type;
+                        if (t === 'pie') return { kind: 'pie', slice_by: null, value: null, facet: null, max_slices: null, legend: true };
+                        if (t === 'chart') return { kind: 'chart', x: null, y: [], color: null, mark: 'timeline', stacked: false, analytics_overlays: {}, show_statistics: false };
+                        if (t === 'map') return { kind: 'map', position: null, mode: 'markers', color: null, label: [], geocode_source: null, show_labels: true, show_areas: false };
+                        if (t === 'table') return { kind: 'table', columns: [], explode: null, sort: null, density: 'comfortable' };
+                        if (t === 'graph') return { kind: 'graph', source: null, target: null, edge_label: null, edge_weight_field: null, edge_weight_mode: 'count', forward_properties: [], node_group_by: null, edge_group_by: null, null_policy: 'skip', layout: { kind: 'force_directed', params: {} }, dim_unmatched: true, edits: null };
+                        if (t === 'measurements') return { kind: 'measurements', display_mode: 'scalar', label: null };
+                        if (t === 'scatter') return { kind: 'scatter', x: null, y: null, color: null, size: null, mark: 'dot', legend: true };
+                        return { kind: t };
+                    })();
+
                     const newPanel: PanelConfig = {
-                        id: nanoid(),
+                        id: panelId,
+                        type: panelData.type,
                         name: panelData.name,
                         description: panelData.description,
-                        type: panelData.type,
+                        formula: emptyFormula as any,
+                        formula_ref: panelData.formula_ref ?? null,
+                        fields: [],
+                        panel_config: defaultCfg as any,
+                        time_source: null,
+                        scopes_in: [],
+                        merge_maps: [],
                         collapsed: false,
+                        // Legacy compat — empty defaults, removed in P6.
                         projection: { field_mappings: {}, explosion: null },
                         aggregation: {},
                         local_filters: { logic: 'and', conditions: [] },
-                        incoming_scopes: [],
-                        merge_maps: [],
                         settings: panelData.settings || {},
+                        formula_id: (panelData as any).formula_id ?? null,
+                        observation_id: (panelData as any).observation_id ?? null,
+                        formula_inline: (panelData as any).formula_inline ?? null,
                         grid_position: {
                             x: Math.max(0, Math.min(11, position.x)),
                             y: Math.max(0, position.y),
@@ -1000,6 +1068,70 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
         getFormula: (id) => {
             const { dashboardConfig } = get();
             return dashboardConfig?.formulas?.find(f => f.id === id) ?? null;
+        },
+
+        promotePanelFormula: (panelId, name) => {
+            set(produce((state: AnnotationRunState) => {
+                const cfg = state.dashboardConfig;
+                if (!cfg) return;
+                const panel = cfg.panels.find(p => p.id === panelId);
+                if (!panel) return;
+                const inline = (panel as any).formula_inline;
+                if (!inline) {
+                    toast.error('Panel has no inline formula to promote.');
+                    return;
+                }
+                // Avoid name collisions with existing formulas. Suffix until unique.
+                const existingNames = new Set((cfg.formulas ?? []).map((f: any) => f.name));
+                let proposed = name?.trim() || inline.name || panel.name || 'formula';
+                let n = 1;
+                while (existingNames.has(proposed)) {
+                    n += 1;
+                    proposed = `${name?.trim() || inline.name || panel.name || 'formula'}_${n}`;
+                }
+                const newId = `f_${nanoid()}`;
+                const promoted: Formula = {
+                    ...inline,
+                    id: newId,
+                    name: proposed,
+                    updated_at: new Date().toISOString(),
+                    created_at: new Date().toISOString(),
+                } as Formula;
+                if (!cfg.formulas) cfg.formulas = [];
+                cfg.formulas.push(promoted);
+                (panel as any).formula_id = newId;
+                (panel as any).formula_inline = null;
+                state.isDashboardDirty = true;
+            }));
+            _autoSaveDashboard(get);
+        },
+
+        detachPanelFormula: (panelId) => {
+            set(produce((state: AnnotationRunState) => {
+                const cfg = state.dashboardConfig;
+                if (!cfg) return;
+                const panel = cfg.panels.find(p => p.id === panelId);
+                if (!panel) return;
+                const fid = (panel as any).formula_id;
+                if (!fid) {
+                    toast.error('Panel is not bound to a saved formula.');
+                    return;
+                }
+                const source = (cfg.formulas ?? []).find((f: any) => f.id === fid);
+                if (!source) {
+                    toast.error('Bound formula no longer exists; cannot detach.');
+                    return;
+                }
+                // Clone with a fresh id so the inline copy is independent.
+                const cloned: Formula = {
+                    ...(source as any),
+                    id: `inl_${nanoid()}`,
+                } as Formula;
+                (panel as any).formula_id = null;
+                (panel as any).formula_inline = cloned;
+                state.isDashboardDirty = true;
+            }));
+            _autoSaveDashboard(get);
         },
 
         // Legacy aliases — same implementations, renamed parameters. Remove

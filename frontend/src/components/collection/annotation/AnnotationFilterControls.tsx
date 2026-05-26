@@ -86,6 +86,10 @@ interface UnifiedFilterControlsProps {
     timeAxisConfig: TimeAxisConfig | null;
     onTimeAxisConfigChange: (newConfig: TimeAxisConfig | null) => void;
     showTimeControls: boolean;
+    /** When true, renders the filter editor directly (no Popover wrapper
+     *  and no trigger button). Used when this component is embedded
+     *  inside another popover surface (PanelConfigPopover). */
+    inline?: boolean;
 }
 
 export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
@@ -94,7 +98,8 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
     onFilterSetChange,
     timeAxisConfig,
     onTimeAxisConfigChange,
-    showTimeControls
+    showTimeControls,
+    inline = false,
 }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [startDatePickerOpen, setStartDatePickerOpen] = useState(false);
@@ -410,38 +415,29 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
         }
     };
 
-    return (
-        <Popover open={isOpen} onOpenChange={setIsOpen}>
-            <PopoverTrigger asChild>
-                <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-2 text-xs gap-1"
-                >
-                    <SlidersHorizontal className="h-3 w-3" />
-                    <span>&</span>
-                    <Clock />
-                    {activeFilterCount > 0 && (<span className="text-[10px] bg-primary text-primary-foreground rounded-full h-4 w-4 flex items-center justify-center">{activeFilterCount}</span>)}
-                    {timeAxisConfig?.timeFrame?.enabled && (<span className="text-[10px] bg-secondary text-secondary-foreground rounded-md px-1 py-0.5 leading-none">T</span>)}
-                </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-[420px] max-h-[40vh] overflow-y-auto p-3" align="end" side="bottom">
-                <div className="space-y-3">
-                <div className="flex items-center justify-between mb-1">
+    // Body of the filter editor — same JSX whether we render it standalone
+    // (inline mode, used by PanelConfigPopover) or wrapped in a Popover.
+    const body = (
+        <div className="space-y-3">
+            <div className="flex items-center justify-between mb-1">
+                {!inline && (
                     <h4 className="font-semibold text-xs">Filters, Time Source, and Range</h4>
-               
-                    {hasActiveFilters && (
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 px-2 text-[10px] hover:bg-destructive/10 hover:text-destructive"
-                            onClick={handleClearAll}
-                        >
-                            <X className="h-3 w-3 mr-1" />
-                            Clear all
-                        </Button>
-                    )}
-                </div>
+                )}
+                {hasActiveFilters && (
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className={cn(
+                          "h-6 px-2 text-[10px] hover:bg-destructive/10 hover:text-destructive",
+                          inline && "ml-auto",
+                        )}
+                        onClick={handleClearAll}
+                    >
+                        <X className="h-3 w-3 mr-1" />
+                        Clear all
+                    </Button>
+                )}
+            </div>
                 {/* --- Start of JSX from AnnotationResultFilters --- */}
                 <div className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -577,7 +573,28 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
                     </>
                 )}
                 </div>
+    );
+
+    if (inline) return body;
+
+    return (
+        <Popover open={isOpen} onOpenChange={setIsOpen}>
+            <PopoverTrigger asChild>
+                <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs gap-1"
+                >
+                    <SlidersHorizontal className="h-3 w-3" />
+                    <span>&</span>
+                    <Clock />
+                    {activeFilterCount > 0 && (<span className="text-[10px] bg-primary text-primary-foreground rounded-full h-4 w-4 flex items-center justify-center">{activeFilterCount}</span>)}
+                    {timeAxisConfig?.timeFrame?.enabled && (<span className="text-[10px] bg-secondary text-secondary-foreground rounded-md px-1 py-0.5 leading-none">T</span>)}
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-[420px] max-h-[40vh] overflow-y-auto p-3" align="end" side="bottom">
+                {body}
             </PopoverContent>
         </Popover>
     );
-}; 
+};

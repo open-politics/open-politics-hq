@@ -18,16 +18,24 @@
 
 import type { Formula } from '@/client/types.gen';
 
-/** The five panel render types HQ supports. Mirrors the backend's
+/** The seven panel render types HQ supports. Mirrors the backend's
  *  ``PanelType`` literal in ``panel_config.py``; not exported on any
  *  OpenAPI response so we keep it local. */
-export type PanelType = 'table' | 'chart' | 'pie' | 'graph' | 'map';
+export type PanelType =
+  | 'table' | 'chart' | 'pie' | 'graph' | 'map'
+  | 'measurements' | 'scatter';
 
 export function eligiblePanels(formula: Formula): Set<PanelType> {
   const panels = new Set<PanelType>(['table']);
   const dims = formula.group ?? [];
   const measures = formula.measures ?? [];
   const kinds = dims.map(d => d.kind);
+
+  // Pure filter (no group, no measures) → list-mode renders.
+  if (dims.length === 0 && measures.length === 0) {
+    panels.add('map');
+    return panels;
+  }
 
   if (kinds.includes('geo')) {
     panels.add('map');
@@ -53,6 +61,18 @@ export function eligiblePanels(formula: Formula): Set<PanelType> {
     panels.add('chart');
   }
 
+  // Aggregate formulas with at least one measure render as measurements
+  // (single scalar / mini table / stats — the catch-all stats panel).
+  if (measures.length > 0) {
+    panels.add('measurements');
+  }
+
+  // Scatter eligibility: 2 dims + ≥1 measure (label × label heatmap),
+  // OR two numeric measures (true scatter).
+  if (dims.length === 2 && measures.length >= 1) {
+    panels.add('scatter');
+  }
+
   return panels;
 }
 
@@ -69,4 +89,34 @@ export function suggestPanelType(formula: Formula): PanelType {
     if (opts.has(t)) return t;
   }
   return 'table';
+}
+
+/**
+ * Minimal stub Formula for an ad-hoc panel — `count` over an unconfigured
+ * relation. The panel renders empty until the user picks fields inline; the
+ * stub keeps the dispatch happy and the engine happy (no-dim count returns
+ * a single scalar row).
+ *
+ * Used by ``addPanel`` when no binding is supplied by the caller: the panel
+ * owns this Formula privately (``Panel.formula_inline``) and never appears
+ * in the intelligence formula list until promoted.
+ */
+export function newInlineStubFormula(name: string, id: string): Formula {
+  return {
+    id,
+    name,
+    description: undefined,
+    schema_id: null,
+    explosion: null,
+    filter: { logic: 'and', conditions: [] },
+    merge_maps: [],
+    group: [],
+    weight: null,
+    measures: [{ name: 'count', agg: 'count' }],
+    derives: [],
+    snippet: null,
+    output_keys: [],
+    order_by: null,
+    version: 1,
+  } as unknown as Formula;
 }

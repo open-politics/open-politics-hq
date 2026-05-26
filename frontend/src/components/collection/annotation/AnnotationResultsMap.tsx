@@ -6,11 +6,12 @@ import mapboxgl, { Map as MapboxMap, LngLatLike, Popup, Marker, LngLatBounds } f
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useTheme } from 'next-themes';
 import { AnnotationSchemaRead, AssetRead } from '@/client';
-import { FormattedAnnotation, TimeAxisConfig, PanelConfig, AnnotationResultRow } from '@/lib/annotations/types';
+import { PanelConfig, AnnotationResultRow } from '@/lib/annotations/types';
+import type { MapVizConfig } from '@/lib/annotations/types';
 import { getAnnotationFieldValue, getAnnotationFieldValuesExploded, getTargetKeysForScheme, formatFieldNameForDisplay } from '@/lib/annotations/utils';
 import { inferRangeFromValues, readDeclaredRange } from './cellRenderers/NumberCell';
 import { useAnnotationView } from '@/hooks/useAnnotationView';
-import { mergeFiltersAndScopes, createScopeFromSelection } from '@/lib/annotations/scopes';
+import { createScopeFromSelection } from '@/lib/annotations/scopes';
 import type { Scope } from '@/lib/annotations/types';
 import { EvidenceDrawer } from './panels/EvidenceDrawer';
 import { debounce } from 'lodash';
@@ -19,14 +20,8 @@ import { ButtonGroup } from '@/components/ui/button-group';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Globe, Map as MapIcon, MapPin, X, Eye, EyeOff, Sun, Moon, Hexagon, Pin, CircleDotDashed, GitBranchPlus, Spline, List, Search, Palette, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { VariableSplittingConfig, applySplittingToResults } from './VariableSplittingControls';
-import { type RolePickerValue } from './panels/RolePicker';
-import { RolePickerPopover } from './panels/RolePickerPopover';
 import { PanelHeaderSlot } from './panels/PanelHeaderSlot';
-import { PanelFormulaBinder } from './formulas/PanelFormulaBinder';
-import { useResolvedProjection } from '@/hooks/useResolvedProjection';
 import { EmptyStateCard } from './panels/EmptyStateCard';
-import { PANEL_ROLE_SCHEMAS } from '@/lib/annotations/panelRoleSchema';
 import { useGeocodeAction } from '@/hooks/useGeocodeAction';
 import { useActionWatch } from '@/hooks/useActionWatch';
 import { useGeocodedEntities } from '@/hooks/useGeocodedEntities';
@@ -79,58 +74,7 @@ export interface MapPoint {
    */
   geometry?: MapGeometry | null;
   type?: string;
-  splitValue?: string; // NEW: Split value for variable splitting
-}
-
-// Time filtering utility function (copied from AnnotationResultsChart.tsx)
-const getTimestamp = (result: FormattedAnnotation, assetsMap: Map<number, AssetRead>, timeAxisConfig: TimeAxisConfig | null): Date | null => {
-  if (!timeAxisConfig) return null;
-
-  switch (timeAxisConfig.type) {
-    case 'default':
-      return new Date(result.timestamp);
-    case 'schema':
-      if (result.schema_id === timeAxisConfig.schemaId && timeAxisConfig.fieldKey) {
-        const fieldValue = getAnnotationFieldValue(result.value, timeAxisConfig.fieldKey);
-        if (fieldValue && (typeof fieldValue === 'string' || fieldValue instanceof Date)) {
-          try {
-            return new Date(fieldValue);
-          } catch {
-            return null;
-          }
-        }
-      }
-      return null;
-    case 'event':
-      const asset = assetsMap.get(result.asset_id);
-      if (asset?.event_timestamp) {
-        try {
-          return new Date(asset.event_timestamp);
-        } catch {
-          return null;
-        }
-      }
-      return null;
-    default:
-      return new Date(result.timestamp);
-  }
-};
-
-interface AnnotationResultsMapProps {
-  infospaceId: number;
-  runId: number;
-  schemas: AnnotationSchemaRead[];
-  panelConfig: PanelConfig;
-  onUpdatePanel: (updates: Partial<PanelConfig>) => void;
-  /**
-   * Legacy prop — PanelRenderer used to pipe pre-geocoded points in. The map
-   * panel now owns its marker lifecycle (kick geocode action + watch SSE), so
-   * this is optional and only honored as a fallback seed.
-   */
-  points?: MapPoint[];
-  onPointClick?: (point: MapPoint) => void;
-  onResultSelect?: (result: FormattedAnnotation) => void;
-  highlightLocation?: { location: string; fieldKey: string } | null;
+  splitValue?: string;
 }
 
 // Define a specific type for our label features
@@ -275,9 +219,7 @@ function categoricalColor(key: string): string {
 
 /**
  * Walk the schema's output_contract to find the declared definition for a
- * field path so we can pull declared minimum/maximum bounds. Mirrors the
- * traversal in ``getTargetKeysForScheme`` so paths like
- * ``document.score`` and ``document.orte[*].rating`` both resolve.
+ * field path so we can pull declared minimum/maximum bounds.
  */
 function findFieldDefinition(schema: AnnotationSchemaRead | undefined, fieldKey: string): any | null {
   if (!schema || !schema.output_contract || !fieldKey) return null;
@@ -323,15 +265,7 @@ function _ringBbox(ring: number[][]): [number, number, number, number] | null {
 }
 
 /**
- * Pick the bbox of the largest part of a Polygon/MultiPolygon. Used to
- * anchor labels and frame the camera over the *main* territory of a
- * country, ignoring overseas territories. Falls back to ``null`` when
- * the geometry is missing or unusable.
- *
- * Why "largest by bbox area" and not by polygon area: bbox area is good
- * enough — for almost every country, the mainland is the largest part by
- * any reasonable measure, and bbox area is computable in one ring-walk
- * without a triangulation library.
+ * Pick the bbox of the largest part of a Polygon/MultiPolygon.
  */
 function _largestPartBbox(geom: MapGeometry | null | undefined): [number, number, number, number] | null {
   if (!geom) return null;
@@ -357,6 +291,23 @@ function _largestPartBbox(geom: MapGeometry | null | undefined): [number, number
   return null;
 }
 
+interface AnnotationResultsMapProps {
+  infospaceId: number;
+  runId: number;
+  schemas: AnnotationSchemaRead[];
+  panelConfig: PanelConfig;
+  onUpdatePanel: (updates: Partial<PanelConfig>) => void;
+  /**
+   * Legacy prop — PanelRenderer used to pipe pre-geocoded points in. The map
+   * panel now owns its marker lifecycle (kick geocode action + watch SSE), so
+   * this is optional and only honored as a fallback seed.
+   */
+  points?: MapPoint[];
+  onPointClick?: (point: MapPoint) => void;
+  onResultSelect?: (result: any) => void;
+  highlightLocation?: { location: string; fieldKey: string } | null;
+}
+
 const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   infospaceId,
   runId,
@@ -368,103 +319,137 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   onResultSelect,
   highlightLocation,
 }) => {
-  // Server-side data fetching for map row data
-  const mergedFilters = useMemo(
-    () => mergeFiltersAndScopes(panelConfig.local_filters, panelConfig.incoming_scopes),
-    [panelConfig.local_filters, panelConfig.incoming_scopes],
-  );
+  // ── Visual config from panel_config ─────────────────────────────────────
+  const cfg = panelConfig.panel_config as MapVizConfig;
+  const mapMode: 'markers' | 'areaGeometryMeasures' = (cfg?.mode as 'markers' | 'areaGeometryMeasures' | undefined) ?? 'markers';
 
-  // --- RolePicker wiring ----------------------------------------------------
-  // `location` → field that geocodes; persisted both in
-  // projection.field_mappings.location (new) and settings.geocodeSource.fieldKey
-  // (back-compat so older dashboards keep working). `label` → optional marker
-  // label field. Schema id stays on settings.selectedSchemaId.
-  const selectedSchemaId = (panelConfig.settings?.selectedSchemaId ?? null) as number | null;
-  const locationFieldFromMappings = (
-    panelConfig.projection?.field_mappings?.['location'] as string | string[] | undefined
-  );
-  const locationField: string | undefined =
-    (Array.isArray(locationFieldFromMappings) ? locationFieldFromMappings[0] : locationFieldFromMappings)
-    ?? panelConfig.settings?.geocodeSource?.fieldKey;
+  // Location field: cfg.position drives geocoding in both modes.
+  const locationField: string | undefined = cfg?.position ?? undefined;
+
+  // Label fields: cfg.label is string[]; derive the same labelConfigs shape
+  // as before so all label rendering code below remains unchanged.
+  const selectedSchemaId: number | null = cfg?.geocode_source?.schemaId ?? null;
+  const labelConfigs = useMemo<{ schemaId: number; fieldKey: string }[]>(() => {
+    const sid = selectedSchemaId;
+    const paths: string[] = Array.isArray(cfg?.label)
+      ? cfg.label.filter((p): p is string => typeof p === 'string' && p.length > 0)
+      : [];
+    if (paths.length > 0 && sid != null) {
+      return paths.map((fieldKey) => ({ schemaId: sid, fieldKey }));
+    }
+    return [];
+  }, [cfg?.label, selectedSchemaId]);
+  const labelConfig = labelConfigs[0];
+
+  // Color role: cfg.color drives the group_by coloring.
+  const colorField: string | undefined = cfg?.color ?? undefined;
+  const colorSchemaId = selectedSchemaId;
+
+  // viewMode / showAreas: driven by cfg.show_areas (new) with settings
+  // fallback for dashboards saved before the cfg migration.
+  const viewMode: 'pointer' | 'polygon' =
+    cfg?.show_areas
+      ? 'polygon'
+      : ((panelConfig.settings?.viewMode as 'pointer' | 'polygon' | undefined)
+          ?? (panelConfig.settings?.showAreas ? 'polygon' : 'pointer'));
+  const showAreas = viewMode === 'polygon';
+
+  const setViewMode = useCallback((next: 'pointer' | 'polygon') => {
+    onUpdatePanel({
+      panel_config: {
+        ...cfg,
+        show_areas: next === 'polygon',
+      } as any,
+      settings: {
+        ...(panelConfig.settings ?? {}),
+        viewMode: next,
+        showAreas: next === 'polygon',
+      },
+    });
+  }, [onUpdatePanel, cfg, panelConfig.settings]);
+
+  // Mode toggle: markers ↔ areaGeometryMeasures — stays on the renderer toolbar.
+  const setMapMode = useCallback((next: 'markers' | 'areaGeometryMeasures') => {
+    onUpdatePanel({
+      panel_config: { ...cfg, mode: next } as any,
+    });
+  }, [onUpdatePanel, cfg]);
 
   const panelConfigRef = useRef(panelConfig);
   panelConfigRef.current = panelConfig;
 
-  const rolePickerValue = useMemo<RolePickerValue>(() => {
-    const mappings = panelConfig.projection?.field_mappings ?? {};
-    const fieldsByRole: Record<string, string[]> = {};
-    for (const [key, val] of Object.entries(mappings)) {
-      if (Array.isArray(val)) fieldsByRole[key] = val.map(String);
-      else if (typeof val === 'string' && val.length > 0) fieldsByRole[key] = [val];
-    }
-    // Back-compat: hydrate `location` role from legacy settings if projection
-    // hasn't been populated yet.
-    if (!fieldsByRole['location'] && panelConfig.settings?.geocodeSource?.fieldKey) {
-      fieldsByRole['location'] = [panelConfig.settings.geocodeSource.fieldKey];
-    }
-    if (!fieldsByRole['label'] && panelConfig.settings?.labelSource?.fieldKey) {
-      fieldsByRole['label'] = [panelConfig.settings.labelSource.fieldKey];
-    }
-    return {
-      schemaId: selectedSchemaId ?? null,
-      fieldsByRole,
-      explosionByRole: {},
-      aggregation: panelConfig.aggregation ?? {},
-    };
-  }, [panelConfig.projection, panelConfig.aggregation, panelConfig.settings, selectedSchemaId]);
+  const mapSettingsRef = useRef(panelConfig.settings);
+  mapSettingsRef.current = panelConfig.settings;
 
-  const handleRolePickerChange = useCallback((next: RolePickerValue) => {
-    const field_mappings: Record<string, string | string[]> = {};
-    for (const [role, paths] of Object.entries(next.fieldsByRole)) {
-      if (paths.length === 0) continue;
-      field_mappings[role] = paths.length > 1 ? paths : paths[0];
-    }
-    const newLocation = next.fieldsByRole['location']?.[0];
-    // Legacy ``labelSource`` mirrors only the first picked field — the
-    // canonical source of truth is ``field_mappings.label`` (string or
-    // string[]). When the user picks multiple, ``labelSource`` carries the
-    // first one so older code paths still see *something*.
-    const newLabel = next.fieldsByRole['label']?.[0];
-    const pc = panelConfigRef.current;
-    onUpdatePanel({
-      projection: {
-        field_mappings,
-        explosion: Object.values(next.explosionByRole).find((e) => !!e) ?? null,
-      },
-      aggregation: {
-        ...(pc.aggregation ?? {}),
-        ...(next.aggregation ?? {}),
-      },
-      settings: {
-        ...(pc.settings ?? {}),
-        selectedSchemaId: next.schemaId ?? undefined,
-        // Back-compat mirror so older panel configs keep working during the
-        // migration window. undefined (not null) matches the PanelSettings type.
-        geocodeSource: newLocation
-          ? { schemaId: next.schemaId ?? 0, fieldKey: newLocation }
-          : undefined,
-        labelSource: newLabel && next.schemaId
-          ? { schemaId: next.schemaId, fieldKey: newLabel }
-          : (pc.settings?.labelSource ?? undefined),
-      },
-    });
+  const onSettingsChange = useCallback((settings: any) => {
+    onUpdatePanel({ settings: { ...mapSettingsRef.current, ...settings } });
   }, [onUpdatePanel]);
 
-  // --- Geocode action + marker accumulator ---------------------------------
-  // The map panel owns its marker lifecycle now. Pressing "Geocode" kicks
-  // the backend @task; the watch_url SSE feeds `resolved` events which we
-  // accumulate into local state. Each entity_id is deduped so re-running
-  // is safe (backend cache-hits return instantly too).
+  // ── Data fetching ─────────────────────────────────────────────────────────
+  // markers mode: rows phase — each row becomes a marker.
+  // areaGeometryMeasures mode: aggregate phase — each row.keys[position] → region,
+  //                  row.measures[color or 'count'] → color intensity.
+  const { data: viewData } = useAnnotationView({
+    infospaceId,
+    runId,
+    panel: panelConfig,
+    schemas,
+    fields: mapMode === 'markers' ? panelConfig.fields : undefined,
+    incoming_scopes: panelConfig.scopes_in,
+    merge_maps: panelConfig.merge_maps,
+    ...(mapMode === 'markers'
+      ? { rows: { cursor: null as any, limit: 500 }, enabled: !!runId && !!infospaceId && !!locationField }
+      : { aggregate: {}, enabled: !!runId && !!infospaceId }),
+  });
+
+  // Map rows-phase response to the FormattedAnnotation shape the rest of the
+  // component uses so none of the marker-building / label / color code below
+  // needs to change.
+  const results = useMemo<any[]>(() => {
+    if (!viewData?.rows?.items) return [];
+    return viewData.rows.items.map(row => ({
+      id: row.annotation_id,
+      asset_id: row.asset_id,
+      schema_id: row.schema_id,
+      run_id: row.run_id,
+      value: row.value,
+      timestamp: row.timestamp,
+      status: row.status as any,
+    }));
+  }, [viewData?.rows?.items]);
+
+  const assets = useMemo<AssetRead[]>(() => {
+    if (!viewData?.rows?.assets) return [];
+    return Object.values(viewData.rows.assets).map(s => ({
+      id: s.id, title: s.title, kind: s.kind as any,
+      parent_asset_id: s.parent_asset_id,
+      uuid: '', infospace_id: 0, source_id: null,
+      created_at: '', updated_at: '', is_container: false,
+      stub: false, part_index: null,
+    } as AssetRead));
+  }, [viewData?.rows?.assets]);
+
+  // areaGeometryMeasures aggregate: build a locationValue → numeric-measure map so
+  // the polygon color layer can drive fill intensity from it.
+  const areaGeometryMeasures = useMemo<Map<string, number>>(() => {
+    if (mapMode !== 'areaGeometryMeasures' || !viewData?.aggregate) return new Map();
+    const measureKey = colorField ?? 'count';
+    const out = new Map<string, number>();
+    for (const row of viewData.aggregate.rows) {
+      const region = locationField ? row.keys[locationField] : undefined;
+      if (!region) continue;
+      const val = row.measures[measureKey];
+      const n = typeof val === 'number' ? val : Number(val);
+      if (Number.isFinite(n)) out.set(region.toLowerCase(), n);
+    }
+    return out;
+  }, [mapMode, viewData?.aggregate, colorField, locationField]);
+
+  // ── Geocode action + marker accumulator ──────────────────────────────────
   const { watchUrl, isPending: isGeocoding, error: geocodeError, kick: kickGeocode, reset: resetGeocode } = useGeocodeAction();
   const [accumulatedPoints, setAccumulatedPoints] = useState<MapPoint[]>([]);
   const [isGeocodingActive, setIsGeocodingActive] = useState(false);
 
-  // Forward-declared ref so the SSE callbacks below can call the seed
-  // refetch defined further down. The seed query reads coords + bbox
-  // straight from the DB, which is the durable backstop when the SSE
-  // stream subscribes AFTER fast cache-hit ``geocode`` runs already
-  // emitted all their ``resolved`` events. Without this, a re-run on
-  // a fully-cached set of locations produces no client-visible change.
   const refetchSeedRef = useRef<(() => Promise<void>) | null>(null);
 
   useActionWatch<GeocodeResolvedPayload | GeocodeStartedPayload | GeocodeDonePayload>(watchUrl, {
@@ -483,12 +468,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           const incomingGeometry = r.geometry ?? undefined;
           const idx = prev.findIndex((p) => p.id === entityKey);
           if (idx >= 0) {
-            // Already seeded (most often by /geocoded_entities on mount).
-            // Don't drop the event: a second-pass resolve typically carries
-            // a bbox/geometry that the seed didn't have (legacy entities
-            // geocoded before that field landed). Merge in the new fields,
-            // letting the seed's documentIds win unless the event brings
-            // something the existing entry lacks.
             const existing = prev[idx];
             const next: MapPoint = {
               ...existing,
@@ -497,8 +476,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
               bbox: existing.bbox ?? incomingBbox,
               geometry: existing.geometry ?? incomingGeometry,
             };
-            // Skip the React update if nothing actually changed — avoids a
-            // no-op rerender on every cached replay.
             if (
               next.bbox === existing.bbox
               && next.geometry === existing.geometry
@@ -523,9 +500,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         });
       } else if (event.type === 'done' || event.type === 'completed') {
         setIsGeocodingActive(false);
-        // Backstop the SSE-race: after the task finishes, pull the
-        // freshly-persisted entities from the DB so we don't depend on
-        // the live event delivery to populate ``accumulatedPoints``.
         void refetchSeedRef.current?.();
       } else if (event.type === 'error' || event.type === 'failed') {
         setIsGeocodingActive(false);
@@ -533,28 +507,15 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     },
     onDone: () => {
       setIsGeocodingActive(false);
-      // ``onDone`` fires when the SSE stream itself closes (whether or
-      // not we saw a ``done`` event). This second refetch covers the
-      // case where the task finished BEFORE the SSE subscription even
-      // opened — the most common cause of "I clicked geocode and
-      // nothing changed" with cache-hit-heavy runs.
       void refetchSeedRef.current?.();
     },
   });
 
-  // Reset accumulator when the location field *value* changes — stale
-  // coords from a previous field would otherwise persist. Use a ref to
-  // track the previous value so the first mount doesn't wipe an
-  // already-populated accumulator (caused the "boxes never appear"
-  // regression: every time the parent passed a new ``panelConfig``
-  // reference React saw the reset deps as fresh and cleared the seed).
+  // Reset accumulator when the location field changes.
   const prevLocationFieldRef = useRef<string | undefined>(locationField);
   useEffect(() => {
     const prev = prevLocationFieldRef.current;
     prevLocationFieldRef.current = locationField;
-    // First commit: if there's already a value, keep it as the baseline
-    // and do nothing (seed will populate). If it's still undefined, also
-    // do nothing — there's no stale state to clear.
     if (prev === locationField) return;
     if (prev === undefined) return;
     if (process.env.NODE_ENV !== 'production') {
@@ -565,17 +526,15 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     resetGeocode();
   }, [locationField, resetGeocode]);
 
-  // Seed already-resolved coords on mount / when the field changes so
-  // re-opening a previously geocoded dashboard doesn't show an empty map.
+  // Seed already-resolved coords on mount / when the field changes.
   const { entities: seededEntities, refetch: refetchSeed } = useGeocodedEntities({
     infospaceId,
     runId,
     fieldPath: locationField ?? null,
     enabled: !!infospaceId && !!runId && !!locationField,
   });
-  // Wire the seed refetch into the forward-declared ref so SSE
-  // callbacks (declared earlier) can reach it.
   refetchSeedRef.current = refetchSeed;
+
   useEffect(() => {
     if (!seededEntities || seededEntities.length === 0) return;
     if (process.env.NODE_ENV !== 'production') {
@@ -595,10 +554,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         const incomingGeometry = (e.geometry as MapGeometry | undefined) ?? undefined;
         const existing = byId.get(key);
         if (existing) {
-          // Merge: refetch can carry a freshly-persisted bbox/geometry for
-          // an entity that was already in ``accumulatedPoints`` (seeded
-          // earlier without those fields, or pushed via SSE without them).
-          // Prefer existing fields, only fill in what's missing.
           byId.set(key, {
             ...existing,
             bbox: existing.bbox ?? incomingBbox,
@@ -625,113 +580,13 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   const handleKickGeocode = useCallback(async () => {
     if (!locationField) return;
     await kickGeocode({ infospaceId, runId, fieldPath: locationField });
-    // Backstop the SSE-race window: cache-hit-heavy runs finish in ~100ms,
-    // long before the SSE subscription opens, so all ``resolved`` events
-    // are gone by the time we'd hear them. The @task persists everything
-    // to the DB regardless, so we poll the seed endpoint a few times
-    // post-dispatch and merge whatever's there. Spaced timings cover
-    // both fast (cache-hit) and slow (live-geocoding) runs.
     const refetch = () => refetchSeedRef.current?.();
-    setTimeout(() => { void refetch(); }, 800);   // cache-hit completion
-    setTimeout(() => { void refetch(); }, 3000);  // small-batch live geocode
-    setTimeout(() => { void refetch(); }, 8000);  // larger live geocode
+    setTimeout(() => { void refetch(); }, 800);
+    setTimeout(() => { void refetch(); }, 3000);
+    setTimeout(() => { void refetch(); }, 8000);
   }, [locationField, infospaceId, runId, kickGeocode]);
 
-  const { data: viewData } = useAnnotationView({
-    infospaceId,
-    runId,
-    rows: { limit: 500 },
-    filters: {
-      logic: 'and',
-      conditions: [
-        ...(mergedFilters.conditions || []),
-        ...(locationField ? [{ path: locationField, operator: 'exists' as const }] : []),
-      ],
-    },
-    merge_maps: panelConfig.merge_maps,
-    enabled: !!runId && !!infospaceId && !!locationField,
-  });
-
-  // Map server response to the component's expected formats
-  const results = useMemo<FormattedAnnotation[]>(() => {
-    if (!viewData?.rows?.items) return [];
-    return viewData.rows.items.map(row => ({
-      id: row.annotation_id,
-      asset_id: row.asset_id,
-      schema_id: row.schema_id,
-      run_id: row.run_id,
-      value: row.value,
-      timestamp: row.timestamp,
-      status: row.status as any,
-    }));
-  }, [viewData?.rows?.items]);
-
-  const assets = useMemo<AssetRead[]>(() => {
-    if (!viewData?.rows?.assets) return [];
-    return Object.values(viewData.rows.assets).map(s => ({
-      id: s.id, title: s.title, kind: s.kind as any,
-      parent_asset_id: s.parent_asset_id,
-      uuid: '', infospace_id: 0, source_id: null,
-      created_at: '', updated_at: '', is_container: false,
-      stub: false, part_index: null,
-    } as AssetRead));
-  }, [viewData?.rows?.assets]);
-
-  // Compatibility shims
-  // ``labelConfig`` (singular) — legacy single-label entry point. The map
-  // role picker now persists ``projection.field_mappings.label`` as a
-  // string OR string[] (multi-pick). ``labelConfigs`` is the multi-aware
-  // derivation; ``labelConfig`` is kept around as the first item only
-  // (back-compat for any code path still reading it directly).
-  const labelConfigs = useMemo<{ schemaId: number; fieldKey: string }[]>(() => {
-    const sid = (panelConfig.settings?.selectedSchemaId ?? null) as number | null;
-    const raw = panelConfig.projection?.field_mappings?.['label'] as string | string[] | undefined;
-    const paths: string[] = Array.isArray(raw)
-      ? raw.filter((p): p is string => typeof p === 'string' && p.length > 0)
-      : (typeof raw === 'string' && raw.length > 0 ? [raw] : []);
-    if (paths.length > 0 && sid != null) {
-      return paths.map((fieldKey) => ({ schemaId: sid, fieldKey }));
-    }
-    // Legacy fallback: settings.labelSource (single).
-    const legacy = panelConfig.settings?.labelSource;
-    return legacy ? [{ schemaId: legacy.schemaId, fieldKey: legacy.fieldKey }] : [];
-  }, [panelConfig.projection?.field_mappings, panelConfig.settings?.labelSource, panelConfig.settings?.selectedSchemaId]);
-  const labelConfig = labelConfigs[0];
-  const [timeAxisConfig] = useState<TimeAxisConfig | null>(null);
-  const [variableSplittingConfig] = useState<VariableSplittingConfig | null>(null);
-  const onVariableSplittingChange: ((config: VariableSplittingConfig | null) => void) | undefined = undefined;
-  const mapSettingsRef = useRef(panelConfig.settings);
-  mapSettingsRef.current = panelConfig.settings;
-  const onSettingsChange = useCallback((settings: any) => {
-    onUpdatePanel({ settings: { ...mapSettingsRef.current, ...settings } });
-  }, [onUpdatePanel]);
-  const initialSettings = panelConfig.settings;
-  const selectedFieldsPerScheme = panelConfig.settings?.selectedFieldsPerScheme;
-  const onSelectedFieldsChange = useCallback((fields: Record<number, string[]>) => {
-    onUpdatePanel({ settings: { ...mapSettingsRef.current, selectedFieldsPerScheme: fields } });
-  }, [onUpdatePanel]);
-  // ``viewMode`` controls how marker geometry is rendered:
-  //   - ``'pointer'`` (default): pin markers, no polygons.
-  //   - ``'polygon'``: render bbox polygons for points that have meaningful
-  //     bounding boxes; pin markers are hidden for those points (markers
-  //     for points without bbox stay so users don't lose data points).
-  // Older panel configs persisted ``showAreas`` instead — we read it as a
-  // back-compat fallback so existing dashboards keep their visual.
-  const viewMode: 'pointer' | 'polygon' =
-    (panelConfig.settings?.viewMode as 'pointer' | 'polygon' | undefined)
-    ?? (panelConfig.settings?.showAreas ? 'polygon' : 'pointer');
-  const showAreas = viewMode === 'polygon';
-  const setViewMode = useCallback((next: 'pointer' | 'polygon') => {
-    onUpdatePanel({
-      settings: {
-        ...mapSettingsRef.current,
-        viewMode: next,
-        // Keep showAreas in sync so any older code paths still see the
-        // right value during the migration window.
-        showAreas: next === 'polygon',
-      },
-    });
-  }, [onUpdatePanel]);
+  // ── Misc state ───────────────────────────────────────────────────────────
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const markersRef = useRef<mapboxgl.Marker[]>([]);
@@ -741,63 +596,25 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   const [evidenceScope, setEvidenceScope] = useState<Scope | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [mapLoaded, setMapLoaded] = useState(false);
-  // Bumped on every ``style.load`` (initial load + each subsequent
-  // ``setStyle``). Mapbox-native sources/layers (labels, areas) are wiped
-  // on style change, so the effects that own them depend on this counter
-  // to know when to re-add their layers. HTML ``mapboxgl.Marker`` instances
-  // survive ``setStyle`` and don't need it.
   const [styleVersion, setStyleVersion] = useState(0);
   const [isGlobeView, setIsGlobeView] = useState(false);
-  // Left-side locations panel — toggleable via the locations chip in the
-  // toolbar. Search query lives here too so opening/closing the panel
-  // doesn't lose what the user typed.
   const [locationsPanelOpen, setLocationsPanelOpen] = useState(false);
   const [locationsSearch, setLocationsSearch] = useState('');
   const { theme: pageTheme } = useTheme();
-  // Map theme is independent from the page theme. Persisted on the panel
-  // so it survives reloads, defaults to whatever the page theme was the
-  // first time the panel rendered. Toggling the in-map theme button only
-  // flips this — it does NOT call ``setTheme`` from next-themes anymore,
-  // so the rest of the page stays put.
+
   const mapTheme: 'light' | 'dark' = (() => {
     const stored = panelConfig.settings?.mapTheme as 'light' | 'dark' | undefined;
     if (stored === 'light' || stored === 'dark') return stored;
     return pageTheme === 'dark' ? 'dark' : 'light';
   })();
-  // Captures the map theme at mount so the create-effect can pick the
-  // initial Mapbox style without rebuilding the whole map on every toggle.
   const themeRef = useRef(mapTheme);
   themeRef.current = mapTheme;
 
   const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN || 'pk.eyJ1IjoiamltdnciLCJhIjoiY20xd2U3Z2pqMGprdDJqczV2OXJtMTBoayJ9.hlSx0Nc19j_Z1NRgyX7HHg';
 
-  // NEW: Apply time frame filtering and variable splitting
   const assetsMap = useMemo(() => new Map((assets || []).map(asset => [asset.id, asset])), [assets]);
-  
-  const timeFilteredResults = useMemo(() => {
-    if (!timeAxisConfig?.timeFrame?.enabled || !timeAxisConfig.timeFrame.startDate || !timeAxisConfig.timeFrame.endDate) {
-      return results;
-    }
 
-    const { startDate, endDate } = timeAxisConfig.timeFrame;
-    
-    return results.filter(result => {
-      const timestamp = getTimestamp(result, assetsMap, timeAxisConfig);
-      if (!timestamp) return false;
-      
-      return timestamp >= startDate && timestamp <= endDate;
-    });
-  }, [results, timeAxisConfig, assetsMap]);
-
-  const processedResults = useMemo(() => {
-    if (variableSplittingConfig?.enabled) {
-      return applySplittingToResults(timeFilteredResults, variableSplittingConfig);
-    }
-    return { all: timeFilteredResults };
-  }, [timeFilteredResults, variableSplittingConfig]);
-
-  // Merge legacy seed points (from PanelRenderer) with the SSE accumulator.
-  // The accumulator wins on dedup by id so re-runs stay stable.
+  // Merge legacy seed points with the SSE accumulator.
   const mergedPoints = useMemo<MapPoint[]>(() => {
     const seed = points ?? [];
     if (accumulatedPoints.length === 0) return seed;
@@ -808,14 +625,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   }, [points, accumulatedPoints]);
 
   // Enrich markers with the annotations whose location value matches the
-  // marker's canonical name. Without this step every marker shows "0 docs"
-  // because the seed/resolve events carry an empty ``documentIds``. Matching
-  // walks:
-  //   - flat / nested / unwrapped ``document.*`` conventions
-  //   - ``[*]`` segments (the path may go through an array-of-objects like
-  //     ``document.triplets[*].location``; we iterate all elements)
-  //   - leaves that are arrays of strings (``locations`` as ``string[]``)
-  // Case-insensitive so Nominatim's capitalization doesn't break equality.
+  // marker's canonical name.
   const markersWithDocuments = useMemo<MapPoint[]>(() => {
     if (!locationField || results.length === 0) return mergedPoints;
 
@@ -823,11 +633,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     const parts = parsePath(locationField);
     const unwrapped = parts[0] === 'document' ? parts.slice(1) : null;
 
-    // Walk the leaf and emit zero-or-more lowercase location strings.
-    // Mirrors the backend's ``_extract_location_strings`` so frontend
-    // marker→annotation matching covers the same shapes the geocoder
-    // resolves: plain strings, arrays of strings, entity dicts (``{name,
-    // ...}``), and arrays of entity dicts.
     const emitLeaf = (node: any, out: string[]) => {
       if (typeof node === 'string') {
         const s = node.trim().toLowerCase();
@@ -889,8 +694,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     }
 
     return mergedPoints.map((p) => {
-      // Match by canonical name (raw value in annotations); display name is
-      // the verbose geocoder form that wouldn't match.
       const key = (p.canonicalName ?? p.locationString ?? '').trim().toLowerCase();
       const ids = byLocation.get(key);
       if (!ids || ids.size === 0) return p;
@@ -898,103 +701,29 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     });
   }, [mergedPoints, results, locationField]);
 
-  // NEW: Process points to handle variable splitting
-  const processedPoints = useMemo(() => {
-    if (variableSplittingConfig?.enabled && Object.keys(processedResults).length > 1) {
-      // Create split-specific points
-      const splitPoints: MapPoint[] = [];
+  const processedPoints = markersWithDocuments;
+  const resultsForMap = results;
 
-      Object.entries(processedResults).forEach(([splitValue, splitResults]) => {
-        if (splitResults.length > 0) {
-          // Group results by location for this split
-          const locationGroups = new Map<string, number[]>();
-
-          splitResults.forEach(result => {
-            const point = mergedPoints.find(p => p.documentIds.includes(result.asset_id));
-            if (point) {
-              const locationKey = `${point.coordinates.latitude},${point.coordinates.longitude}`;
-              if (!locationGroups.has(locationKey)) {
-                locationGroups.set(locationKey, []);
-              }
-              if (!locationGroups.get(locationKey)!.includes(result.asset_id)) {
-                locationGroups.get(locationKey)!.push(result.asset_id);
-              }
-            }
-          });
-
-          // Create points for each location with split identifiers
-          locationGroups.forEach((documentIds, locationKey) => {
-            const originalPoint = mergedPoints.find(p =>
-              documentIds.some(docId => p.documentIds.includes(docId))
-            );
-
-            if (originalPoint) {
-              splitPoints.push({
-                ...originalPoint,
-                id: `${originalPoint.id}_split_${splitValue}`,
-                locationString: `${originalPoint.locationString} (${splitValue})`,
-                documentIds: documentIds,
-                splitValue: splitValue !== 'all' ? splitValue : undefined
-              });
-            }
-          });
-        }
-      });
-
-      return splitPoints;
-    }
-
-    // Return enriched points if no splitting
-    return markersWithDocuments;
-  }, [markersWithDocuments, mergedPoints, processedResults, variableSplittingConfig]);
-
-  // Use processed results and points for display
-  const resultsForMap = useMemo(() => {
-    return processedResults.all || timeFilteredResults;
-  }, [processedResults, timeFilteredResults]);
-
-  // ``group_by`` role from the role picker. Numeric fields use a sequential
-  // gradient (range from declared minimum/maximum, otherwise the same
-  // ``inferRangeFromValues`` rules the table's NumberCell uses); strings/enums
-  // use a deterministic categorical palette so the same value always picks
-  // the same hex across panel renders.
-  const colorField: string | undefined = (() => {
-    const m = panelConfig.projection?.field_mappings?.['group_by'];
-    return Array.isArray(m) ? m[0] : (typeof m === 'string' ? m : undefined);
-  })();
-  const colorSchemaId = selectedSchemaId;
-
-  // Optional per-value color override map, persisted on the panel so
-  // user picks survive reload. Keyed off the field path so different
-  // ``group_by`` selections don't trample each other.
+  // ── Per-value color override map ─────────────────────────────────────────
   const colorOverridesForField = useMemo<Record<string, string>>(() => {
     const all = (panelConfig.settings?.colorOverrides ?? {}) as Record<string, Record<string, string>>;
     if (!colorField) return {};
     return all[colorField] ?? {};
   }, [panelConfig.settings?.colorOverrides, colorField]);
 
-  // Hidden color-values: when set, points whose group_by value falls in
-  // this set are dropped from the rendered map (kept in the locations
-  // list so the user can still see them). Keyed per field for the same
-  // reason as the override map.
   const hiddenColorValues = useMemo<Set<string>>(() => {
     const all = (panelConfig.settings?.hiddenColorValues ?? {}) as Record<string, string[]>;
     if (!colorField) return new Set();
     return new Set(all[colorField] ?? []);
   }, [panelConfig.settings?.hiddenColorValues, colorField]);
 
-  // ``pointToColorValue`` — for each point, the first non-empty
-  // categorical value at ``colorField``. Used both by the visiblePoints
-  // filter (drop points whose value is in ``hiddenColorValues``) and by
-  // ``colorBundle`` below (assign hex + build legend rows). Numeric
-  // group_by leaves this map empty since the legend doesn't apply.
   const pointToColorValue = useMemo<Map<string, string>>(() => {
     const out = new Map<string, string>();
     if (!colorField || !colorSchemaId || processedPoints.length === 0) return out;
     const targetKeys = getTargetKeysForScheme(colorSchemaId, schemas, { includeArrayItemFields: true });
     const fieldInfo = targetKeys.find((tk) => tk.key === colorField);
     const isNumeric = !!fieldInfo && (fieldInfo.type === 'integer' || fieldInfo.type === 'number');
-    if (isNumeric) return out; // gradient mode — categorical values don't apply
+    if (isNumeric) return out;
     for (const p of processedPoints) {
       const markerKey = _normalizeMatch(p.canonicalName ?? p.locationString);
       let firstVal: string | undefined;
@@ -1025,9 +754,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     return out;
   }, [colorField, colorSchemaId, processedPoints, resultsForMap, schemas, locationField]);
 
-  // Per-point visibility (persisted on panel settings as ``hiddenPointIds``).
-  // Used to hide world-spanning bboxes (e.g. "Russia") that would otherwise
-  // dominate the canvas, without yanking the row out of the locations list.
+  // Per-point visibility.
   const hiddenPointIds = useMemo<Set<string>>(() => {
     const arr = panelConfig.settings?.hiddenPointIds;
     return new Set(Array.isArray(arr) ? (arr as string[]) : []);
@@ -1049,13 +776,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     });
   }, [onUpdatePanel]);
 
-  // ``visiblePoints`` is what the map actually renders (markers, polygons,
-  // labels). The locations list still iterates the full ``processedPoints``
-  // so users can see — and unhide — points they've toggled off. Two
-  // independent filters live here:
-  //   - ``hiddenPointIds`` — per-point eye toggle in the locations list
-  //   - ``hiddenColorValues`` — legend toggle: drop every point whose
-  //     ``group_by`` value is ticked off
   const visiblePoints = useMemo<MapPoint[]>(() => {
     const hidByPid = hiddenPointIds.size > 0;
     const hidByColor = hiddenColorValues.size > 0;
@@ -1070,23 +790,9 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     });
   }, [processedPoints, hiddenPointIds, hiddenColorValues, pointToColorValue]);
 
-  // Points eligible for polygon rendering. A point qualifies if it has
-  // either:
-  //   1. A real GeoJSON ``geometry`` (Polygon/MultiPolygon) from Nominatim —
-  //      preferred; gives mainland + overseas territories as separate parts
-  //      so France doesn't span the Atlantic.
-  //   2. A bbox with non-trivial area as fallback for entries geocoded
-  //      before geometry persistence landed.
-  // Driven off ``visiblePoints`` so a hidden point's polygon disappears
-  // alongside its marker. Coerces stringified bbox values — legacy entries
-  // written before the provider was hardened can carry ``["35.6", ...]``
-  // which would otherwise NaN out and silently reject every polygon.
   const pointsWithMeaningfulAreas = useMemo(() => {
-    const AREA_THRESHOLD = 0.001; // Minimum bbox area in square degrees (~100km²)
-
+    const AREA_THRESHOLD = 0.001;
     return visiblePoints.filter((point) => {
-      // Real geometry wins regardless of bbox. POIs without geometry but
-      // with a bbox still get rect rendering.
       if (point.geometry && (point.geometry.type === 'Polygon' || point.geometry.type === 'MultiPolygon')) {
         return true;
       }
@@ -1101,30 +807,17 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     });
   }, [visiblePoints]);
 
-  // In polygon mode, suppress the centroid pin for any point that already
-  // renders as a polygon — the polygon IS the visual, a pin on top is just
-  // noise. Points without a meaningful bbox keep their pin so they stay
-  // findable. Pointer mode always shows pins.
   const markerPoints = useMemo<MapPoint[]>(() => {
     if (viewMode === 'pointer') return visiblePoints;
     const polygonIds = new Set(pointsWithMeaningfulAreas.map((p) => p.id));
     return visiblePoints.filter((p) => !polygonIds.has(p.id));
   }, [visiblePoints, viewMode, pointsWithMeaningfulAreas]);
 
-  // Quick lookup: is this point being rendered as a polygon right now?
-  // Used by the label layout so polygon-covered labels sit on the lower
-  // edge of the bbox, while plain-marker labels stay at the centroid.
   const polygonRenderedIds = useMemo<Set<string>>(() => {
     if (!showAreas) return new Set();
     return new Set(pointsWithMeaningfulAreas.map((p) => p.id));
   }, [showAreas, pointsWithMeaningfulAreas]);
 
-  // Bundle: ``colorMap`` (pointId → hex), ``entries`` (legend rows), and
-  // a flag telling the legend whether to render swatches (categorical)
-  // or skip itself (numeric — a gradient bar is a different UI). Reads
-  // the per-point value from ``pointToColorValue`` so the work upstream
-  // isn't duplicated; numeric mode walks results directly since it
-  // needs every numeric value (not just the first) for averaging.
   const colorBundle = useMemo<{
     colorMap: Map<string, string>;
     entries: { value: string; color: string; count: number }[];
@@ -1132,6 +825,24 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   }>(() => {
     const colorMap = new Map<string, string>();
     const entries: { value: string; color: string; count: number }[] = [];
+
+    // areaGeometryMeasures mode: color intensity from aggregate measures
+    if (mapMode === 'areaGeometryMeasures' && areaGeometryMeasures.size > 0) {
+      const vals = Array.from(areaGeometryMeasures.values());
+      const min = Math.min(...vals);
+      const max = Math.max(...vals);
+      if (max > min) {
+        for (const p of processedPoints) {
+          const key = _normalizeMatch(p.canonicalName ?? p.locationString);
+          const v = areaGeometryMeasures.get(key);
+          if (v == null) continue;
+          const f = (v - min) / (max - min);
+          colorMap.set(p.id, numericGradientColor(f));
+        }
+      }
+      return { colorMap, entries, isNumeric: true };
+    }
+
     if (!colorField || !colorSchemaId || processedPoints.length === 0) {
       return { colorMap, entries, isNumeric: false };
     }
@@ -1188,11 +899,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
       return { colorMap, entries, isNumeric: true };
     }
 
-    // Categorical: assign each point its first non-empty value (already
-    // computed in ``pointToColorValue``), run that value through the
-    // deterministic palette, then allow per-value overrides to win.
-    // Build the legend from per-value document counts so the legend
-    // reflects the same information the marker count badges do.
+    // Categorical
     const valueCount = new Map<string, number>();
     for (const p of processedPoints) {
       const valueKey = pointToColorValue.get(p.id);
@@ -1210,16 +917,16 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     }
 
     return { colorMap, entries, isNumeric: false };
-  }, [colorField, colorSchemaId, processedPoints, resultsForMap, schemas, locationField, colorOverridesForField, pointToColorValue]);
+  }, [
+    mapMode, areaGeometryMeasures,
+    colorField, colorSchemaId, processedPoints, resultsForMap, schemas, locationField,
+    colorOverridesForField, pointToColorValue,
+  ]);
 
   const colorMap = colorBundle.colorMap;
   const colorEntries = colorBundle.entries;
   const colorIsNumeric = colorBundle.isNumeric;
 
-  // Persist a per-value color override (or clear it). Drives the
-  // <input type="color"> in the legend. Stored under
-  // ``settings.colorOverrides[colorField][value]`` so multiple group_by
-  // selections each keep their own palette state.
   const setColorOverride = useCallback((value: string, hex: string | null) => {
     if (!colorField) return;
     const all = { ...((mapSettingsRef.current?.colorOverrides ?? {}) as Record<string, Record<string, string>>) };
@@ -1233,8 +940,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     });
   }, [colorField, onUpdatePanel]);
 
-  // Toggle one value in the hidden-set, or set the hidden-set wholesale
-  // (used for the toggle-all button).
   const toggleColorValueHidden = useCallback((value: string) => {
     if (!colorField) return;
     const all = { ...((mapSettingsRef.current?.hiddenColorValues ?? {}) as Record<string, string[]>) };
@@ -1258,9 +963,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     });
   }, [colorField, onUpdatePanel]);
 
-  // Legend visibility + collapsed state. Collapsed = single tiny chip
-  // that expands on click; hidden = nothing on screen at all (toolbar
-  // button can bring it back).
+  // Legend visibility + collapsed state.
   const legendVisible: boolean = panelConfig.settings?.legendVisible !== false;
   const legendCollapsed: boolean = !!panelConfig.settings?.legendCollapsed;
   const setLegendVisible = useCallback((v: boolean) => {
@@ -1287,15 +990,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     });
   }, [mapTheme, onUpdatePanel]);
 
-  // Two-tier click flow:
-  //   - First click on a marker/polygon → opens the lightweight preview
-  //     card via ``setSelectedPoint``. The card surfaces the location
-  //     name, doc/result counts, coordinates, and a CTA.
-  //   - "Open details" CTA on the preview → fires ``openEvidenceForPoint``
-  //     which builds the scope and opens the EvidenceDrawer.
-  // The previous behavior (always opening the drawer on click) was too
-  // noisy for casual scanning; the preview gives a fast sniff before the
-  // user commits to the heavyweight drill.
   const handlePointClick = useCallback((point: MapPoint) => {
     setSelectedPoint(point);
   }, []);
@@ -1318,8 +1012,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     setSelectedPoint(null);
   }, []);
 
-  // Map resize effect removed since overlay is now opaque and doesn't require map resizing
-
+  // ── Map lifecycle ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
@@ -1327,29 +1020,24 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
       style: themeRef.current === 'dark' ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/light-v11',
-      center: [13.4050, 52.5200], // Center of Berlin
+      center: [13.4050, 52.5200],
       zoom: 3,
-      projection: 'mercator' as any // Start with flat view
+      projection: 'mercator' as any
     });
 
     map.on('load', () => {
       setMapLoaded(true);
     });
-    // Fires on initial load AND after every ``setStyle`` (e.g. theme toggle).
-    // Bumping ``styleVersion`` re-triggers label/area effects so they re-add
-    // their sources/layers — those are wiped when Mapbox swaps the style.
     map.on('style.load', () => {
       setStyleVersion((v) => v + 1);
     });
 
     mapRef.current = map;
 
-    // Set up ResizeObserver to handle container resize
     if (mapContainerRef.current && 'ResizeObserver' in window) {
       resizeObserverRef.current = new ResizeObserver(
         debounce(() => {
           if (mapRef.current) {
-            // Trigger map resize after a short delay to ensure container has finished resizing
             setTimeout(() => {
               if (mapRef.current) {
                 mapRef.current.resize();
@@ -1358,63 +1046,40 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           }
         }, 250)
       );
-      
       resizeObserverRef.current.observe(mapContainerRef.current);
     }
 
     return () => {
-      // Clean up resize observer
       if (resizeObserverRef.current) {
         resizeObserverRef.current.disconnect();
         resizeObserverRef.current = null;
       }
-      
-      // Clean up markers when map is removed
       markersRef.current.forEach(marker => marker.remove());
       markersRef.current = [];
       map.remove();
     };
-    // Only recreate the map if the token changes. Theme is handled by the
-    // dedicated ``setStyle`` effect below — recreating the whole map on
-    // every toggle would wipe markers and force a re-fitBounds.
   }, [MAPBOX_TOKEN]);
 
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return;
 
     const map = mapRef.current;
-    
-    // Function to add markers when style is ready
+
     const addMarkers = () => {
-      // Safety check - make sure map is still valid
       if (!mapRef.current || !mapRef.current.isStyleLoaded()) {
         return;
       }
 
       try {
-        // Clean up existing markers
         markersRef.current.forEach(marker => marker.remove());
         markersRef.current = [];
 
         const bounds = new mapboxgl.LngLatBounds();
 
-        // Frame the camera around the visible points only — hiding a
-        // world-spanning bbox should actually relax the framing, not still
-        // force "fit the entire globe".
         visiblePoints.forEach((p) => {
           bounds.extend([p.coordinates.longitude, p.coordinates.latitude]);
         });
 
-        // Minimal triangle markers — downward-pointing apex sits exactly
-        // at the location coord (``anchor: 'bottom'``). Quieter than
-        // Mapbox's teardrop and reads as "marker pointing here" without
-        // the visual weight. Color comes from ``colorMap`` (group_by
-        // role) when set, otherwise theme-default blue.
-        //
-        // Hover scale lives on an INNER element so it doesn't fight
-        // Mapbox's positioning transform on the wrapper — applying
-        // ``transform: scale()`` to the wrapper overwrites Mapbox's
-        // ``transform: translate(...)`` and snaps the marker to (0,0).
         const ringColor = mapTheme === 'dark' ? '#0f172a' : '#ffffff';
         const defaultMarkerColor = mapTheme === 'dark' ? '#60a5fa' : '#2563eb';
 
@@ -1424,15 +1089,13 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
 
           const wrapper = document.createElement('div');
           wrapper.style.cssText = 'cursor: pointer; line-height: 0; transition: opacity 200ms ease;';
-          // Tag the wrapper with the point id so the focus-dim effect
-          // can find this marker without rebuilding the marker map.
           wrapper.dataset.pointId = point.id;
 
           const inner = document.createElement('div');
           inner.style.cssText = [
             'transition: transform 120ms ease, filter 120ms ease',
             'filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3))',
-            'transform-origin: 50% 100%', // scale around the apex (bottom)
+            'transform-origin: 50% 100%',
           ].join(';');
           inner.innerHTML = `
             <svg width="12" height="14" viewBox="0 0 12 14" xmlns="http://www.w3.org/2000/svg">
@@ -1464,11 +1127,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           markersRef.current.push(marker);
         });
 
-        // Fit map to bounds. Symmetric padding → content at canvas
-        // center. The overlays (locations panel, preview card) are
-        // floating absolute elements, not canvas-resizing chrome, so
-        // they cover whatever they cover; we don't try to shift the
-        // camera to compensate.
         if (!bounds.isEmpty()) {
           map.fitBounds(bounds, { padding: 50, maxZoom: 15 });
         }
@@ -1477,37 +1135,21 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
       }
     };
 
-    // Check if style is loaded before adding markers
     if (map.isStyleLoaded()) {
       addMarkers();
     } else {
-      // Wait for style to load, then add markers
       map.once('style.load', addMarkers);
     }
 
-    // Cleanup function to remove existing markers
     return () => {
       markersRef.current.forEach(marker => marker.remove());
       markersRef.current = [];
     };
   }, [visiblePoints, markerPoints, mapLoaded, handlePointClick, colorMap, mapTheme]);
 
-  // Label generation. Two distinct streams so the map can render them with
-  // different anchors:
-  //   - ``nameFeatures``: the main location string. For polygons, anchored
-  //     above the NW corner of the *largest* polygon part so the label
-  //     hovers over mainland France instead of mid-Atlantic when France
-  //     pulls in overseas territories. For pins, this carries the combined
-  //     name + data labels at centroid (the existing single-label feel).
-  //   - ``dataFeatures``: only the stacked annotation-derived labels, only
-  //     for polygon-rendered points, anchored at the south edge midpoint
-  //     of the largest polygon part. Empty for pins (those carry their data
-  //     in the combined ``nameFeatures`` label).
-  //
-  // Field-value gathering itself is unchanged: ``extractLabelValuesForMarker``
-  // walks shared array prefixes so a Canada marker doesn't show "Koblenz".
+  // Label generation.
   const labelData = useMemo(() => {
-    if (visiblePoints.length === 0) {
+    if (visiblePoints.length === 0 || cfg?.show_labels === false) {
       return null;
     }
 
@@ -1515,29 +1157,12 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     const STACK_CAP = 4;
     const PER_VALUE_CAP = 30;
 
-    // Single feature stream. Each feature carries both ``nameText`` and
-    // (optional) ``dataText`` so the layer paint can render them as one
-    // unit via a ``format`` expression with per-segment colors. This
-    // keeps the name + data labels visibility-consistent — Mapbox's
-    // collision detector evaluates them as a single bounding box, so
-    // they show or hide together. (Two separate layers were getting
-    // independently culled, dropping the name while keeping the smaller
-    // data label.)
     const labelFeatures: LabelGeoJsonFeature[] = [];
 
     for (const point of visiblePoints) {
       const isPolygon = polygonRenderedIds.has(point.id);
-      // Pin markers without docs are noise — drop their labels. Polygons
-      // always get a label so the box is identifiable on its own (the
-      // box is visible regardless of whether annotations matched it).
       if (!isPolygon && !point.documentIds.length) continue;
 
-      // Gather field-driven label text — multi-field aware. Each picked
-      // label field contributes one (or a few) lines. When more than one
-      // field is in play, each line gets a ``Field: `` prefix so the
-      // marker reads as ``Population: 5.4M / GDP: 0.3T`` instead of two
-      // bare numbers; with a single field, the prefix is omitted to keep
-      // the marker compact.
       let dataText = '';
       if (locationField && labelConfigs.length > 0 && resultsForMap.length > 0) {
         const showFieldNames = labelConfigs.length > 1;
@@ -1552,8 +1177,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           );
           if (locationResults.length === 0) continue;
 
-          // ``includeArrayItemFields`` so paths like ``document.orte[*].type``
-          // resolve to a real field instead of falling through as ``unknown``.
           const targetKeys = getTargetKeysForScheme(cfg.schemaId, schemas, { includeArrayItemFields: true });
           const fieldInfo = targetKeys.find((tk) => tk.key === cfg.fieldKey);
           const isNumericField = !!fieldInfo && (fieldInfo.type === 'integer' || fieldInfo.type === 'number');
@@ -1594,10 +1217,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
               unique.push(s);
             }
             if (unique.length === 0) continue;
-            // Per-field cap: with multiple fields, keep each entry to a
-            // single line (first 2 values + "…") so the stacked label
-            // doesn't grow unboundedly tall. With one field, preserve
-            // the existing multi-line stacking up to STACK_CAP.
             if (showFieldNames) {
               const shown = unique.slice(0, 2).map((s) =>
                 s.length > PER_VALUE_CAP ? `${s.slice(0, PER_VALUE_CAP)}…` : s,
@@ -1619,10 +1238,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
 
       let coords: [number, number];
       if (isPolygon) {
-        // Anchor at the centroid of the largest polygon part — for a
-        // MultiPolygon this is mainland (e.g. France's mainland centroid,
-        // not somewhere mid-Atlantic). Bbox center is a good-enough proxy
-        // for most admin shapes.
         const partBbox = _largestPartBbox(point.geometry ?? null);
         const fallbackBbox = (point.bbox && point.bbox.length === 4)
           ? point.bbox.map((v) => Number(v)) as [number, number, number, number]
@@ -1643,10 +1258,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         properties: {
           pointId: point.id,
           nameText: point.locationString,
-          // Empty string (not undefined) so the ``format`` expression
-          // can safely reach ``has 'dataText'`` without throwing on
-          // missing props. Mapbox treats empty-string segments as
-          // zero-width — no extra blank line.
           dataText: dataText || '',
           isPolygon,
         },
@@ -1654,9 +1265,8 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     }
 
     return labelFeatures;
-  }, [labelConfigs, locationField, visiblePoints, polygonRenderedIds, resultsForMap, schemas, mapTheme]);
+  }, [cfg?.show_labels, labelConfigs, locationField, visiblePoints, polygonRenderedIds, resultsForMap, schemas, mapTheme]);
 
-  // Calculate and display labels if configured - STABLE with memoized data
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return;
 
@@ -1664,7 +1274,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     const sourceId = 'label-source';
     const layerId = 'label-layer';
 
-    // Two-tier color (primary name / muted data) and theme-aware halo.
     const nameColor = mapTheme === 'dark' ? '#FFFFFF' : '#0F172A';
     const dataColor = mapTheme === 'dark' ? '#A3B0BF' : '#64748B';
     const haloColor = mapTheme === 'dark' ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.8)';
@@ -1683,10 +1292,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           data: { type: 'FeatureCollection', features: labelData },
         });
 
-        // Single layer renders both text segments via ``format`` so the
-        // collision detector treats them as one bbox — they show or hide
-        // together. Per-segment ``text-color`` keeps the visual two-tier
-        // hierarchy (semibold name on top, muted data below).
         map.addLayer({
           id: layerId,
           type: 'symbol',
@@ -1704,8 +1309,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
               ['format', ['get', 'nameText'], { 'text-color': nameColor }],
             ],
             'text-size': 12,
-            // Polygons → centered (centroid). Pins → anchored 'top' with
-            // icon clearance so the label sits below the triangle marker.
             'text-anchor': [
               'case',
               ['get', 'isPolygon'], 'center',
@@ -1754,22 +1357,15 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         console.warn('Error cleaning up map labels:', error);
       }
     };
-    // ``styleVersion`` bumps on every ``style.load`` (theme toggle wipes the
-    // style's sources/layers, so we need to re-add them).
   }, [mapLoaded, labelData, styleVersion]);
 
-  // Focus dim — when a point is selected (preview card open), fade
-  // everything else so the selected location reads as the focal point.
-  // We mutate paint properties on the already-rendered layers (no
-  // teardown / re-render) and walk the marker DOM by ``data-point-id``
-  // for HTML markers. ``selectedId === null`` restores full opacity.
+  // Focus dim effect.
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return;
     const map = mapRef.current;
     const selectedId = selectedPoint?.id ?? null;
-    const FOCUS_DIM = 0.25; // unselected things drop to 25% opacity
+    const FOCUS_DIM = 0.25;
 
-    // Markers — walk the DOM. Each wrapper carries ``data-point-id``.
     for (const m of markersRef.current) {
       const el = m.getElement() as HTMLElement | null;
       if (!el) continue;
@@ -1777,17 +1373,14 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
       el.style.opacity = !selectedId || pid === selectedId ? '1' : String(FOCUS_DIM);
     }
 
-    // Layer paint — wrap the existing opacity expressions in a ``case``
-    // that checks pointId. When no selection, restore the originals.
     const trySet = (layerId: string, prop: string, value: any) => {
       try {
         if (map.getLayer(layerId)) map.setPaintProperty(layerId, prop as any, value);
       } catch {
-        // setPaintProperty can throw on style transitions; safe to ignore.
+        // safe to ignore
       }
     };
 
-    // Polygon fill — base opacity is the nestLevel interpolation.
     const baseFill: any = [
       'interpolate', ['linear'], ['coalesce', ['get', 'nestLevel'], 0],
       0, 0.18, 1, 0.30, 2, 0.42, 3, 0.52,
@@ -1800,7 +1393,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         : baseFill,
     );
 
-    // Polygon border — base opacity is constant 0.9.
     trySet(
       'location-areas-border-layer',
       'line-opacity',
@@ -1809,7 +1401,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         : 0.9,
     );
 
-    // Labels — match by pointId (carried as a feature property).
     trySet(
       'label-layer',
       'text-opacity',
@@ -1819,12 +1410,9 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     );
   }, [mapLoaded, selectedPoint, styleVersion]);
 
-  // Add location area polygons when showAreas is enabled
+  // Area polygon layer effect.
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production') {
-      // Top-of-effect ping — proves whether the effect is even running.
-      // If we never see this, deps aren't changing (likely a memoization
-      // break in the visible-points pipeline).
       // eslint-disable-next-line no-console
       console.debug('[map.areas] effect tick', {
         mapLoaded,
@@ -1853,7 +1441,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
       }
 
       try {
-        // Remove existing layers and source
         if (map.getLayer(areaBorderLayerId)) {
           map.removeLayer(areaBorderLayerId);
         }
@@ -1864,15 +1451,8 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           map.removeSource(areaSourceId);
         }
 
-        // Only add areas if enabled and we have points with meaningful bboxes
         if (!showAreas || pointsWithMeaningfulAreas.length === 0) {
           if (process.env.NODE_ENV !== 'production') {
-            // Walk the whole pipeline so we can see exactly where the
-            // pipeline drops to zero. ``processed > visible`` means
-            // ``hiddenPointIds`` is masking points; ``visible > 0 but
-            // withBbox === 0`` means no point carries a usable bbox.
-            // ``points/accumulated/merged === 0`` means no data has
-            // landed yet (re-run geocoding or check the SSE stream).
             const sampleBbox = visiblePoints.find((p) => p.bbox)?.bbox
               ?? processedPoints.find((p) => p.bbox)?.bbox
               ?? mergedPoints.find((p) => p.bbox)?.bbox
@@ -1895,29 +1475,16 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           return;
         }
 
-        // Default polygon color when no color role is set (theme-aware blue).
         const defaultFill = mapTheme === 'dark' ? '#3b82f6' : '#2563eb';
         const defaultBorder = mapTheme === 'dark' ? '#60a5fa' : '#3b82f6';
 
-        // Convert points to GeoJSON polygons. Real ``geometry`` from
-        // Nominatim is preferred — gives the actual shape (mainland +
-        // overseas territories as separate parts of a MultiPolygon) so a
-        // bbox-derived rectangle never spans the Atlantic. Fall back to
-        // bbox-derived rect for points without geometry (POIs, cities,
-        // entries geocoded before geometry persistence). Each feature
-        // carries its own ``color`` so the layer paint can do a single
-        // ``['get', 'color']`` lookup.
         type FeatureEntry = {
           feature: {
             type: 'Feature';
             geometry: any;
             properties: Record<string, any>;
           };
-          /** Largest-part bbox for nesting comparisons. ``null`` means we
-           *  couldn't compute one; nesting falls back to an area of 0. */
           anchorBbox: [number, number, number, number] | null;
-          /** Bbox area in square degrees — proxy for "how big is this
-           *  polygon" used to sort paint order (largest first). */
           area: number;
         };
 
@@ -1932,10 +1499,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
               borderColor: colorMap.has(point.id) ? polyColor : defaultBorder,
             };
 
-            // Anchor bbox: prefer largest-part bbox of real geometry
-            // (mainland) so the visual area used for nesting matches the
-            // user's perception (France's mainland nests Paris, even if
-            // France's full bbox spans to French Guiana).
             const partBbox = _largestPartBbox(point.geometry ?? null);
             const fallbackBbox = (point.bbox && point.bbox.length === 4)
               ? point.bbox.map((v) => Number(v)) as [number, number, number, number]
@@ -1948,8 +1511,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
               ? Math.abs((anchorBbox[1] - anchorBbox[0]) * (anchorBbox[3] - anchorBbox[2]))
               : 0;
 
-            // Path 1: real OSM geometry. Polygon/MultiPolygon accepted
-            // as Mapbox source geometry verbatim.
             const g = point.geometry;
             if (g && (g.type === 'Polygon' || g.type === 'MultiPolygon')) {
               return {
@@ -1959,9 +1520,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
               };
             }
 
-            // Path 2: bbox-derived rect fallback. Coerce stringified bbox
-            // values — legacy entries written before the provider was
-            // hardened can carry ``["35.6", "82.0", ...]``.
             const raw = point.bbox;
             if (!raw || raw.length !== 4) return null;
             const nums = raw.map((v) => (typeof v === 'number' ? v : Number(v))) as [number, number, number, number];
@@ -1988,17 +1546,10 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           })
           .filter((entry): entry is FeatureEntry => entry !== null);
 
-        // Compute nest level: how many other polygons fully contain this
-        // one (by anchor-bbox containment). Level 0 = outermost; deeper
-        // levels paint with higher opacity and a slightly thicker border
-        // so an inner country reads as more prominent than its parent
-        // continent. This is the visual rule for distinguishing nested
-        // polygons — bigger outline + bolder fill as you go deeper.
         const bboxContains = (
           outer: [number, number, number, number],
           inner: [number, number, number, number],
         ): boolean => {
-          // [south, north, west, east]
           return (
             outer[0] <= inner[0]
             && outer[1] >= inner[1]
@@ -2012,25 +1563,17 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           if (entry.anchorBbox) {
             for (const other of entries) {
               if (other === entry || !other.anchorBbox) continue;
-              if (other.area <= entry.area) continue; // strictly bigger
+              if (other.area <= entry.area) continue;
               if (bboxContains(other.anchorBbox, entry.anchorBbox)) level++;
             }
           }
           entry.feature.properties.nestLevel = level;
         }
 
-        // Sort largest-area first so smaller (innermost) polygons paint
-        // last and end up visually on top — Mapbox renders fill features
-        // in source order. Without this, outer continents would cover
-        // their nested countries.
         entries.sort((a, b) => b.area - a.area);
 
         const features = entries.map((e) => e.feature);
 
-        // Dev-only trace so a quick devtools peek tells us exactly why
-        // polygons aren't showing (typical culprits: empty features,
-        // bbox NaN, source/layer add throwing). Strip the guard if the
-        // bug ever recurs in prod and you need server-side telemetry.
         if (process.env.NODE_ENV !== 'production') {
           // eslint-disable-next-line no-console
           console.debug('[map.areas] addAreas', {
@@ -2043,7 +1586,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           });
         }
 
-        // Add source
         map.addSource(areaSourceId, {
           type: 'geojson',
           data: {
@@ -2052,17 +1594,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           }
         });
 
-        // Add layers at the top of the stack so polygons are guaranteed
-        // visible (no ``beforeId`` race during fast theme/viewMode
-        // toggles). Mapbox renders ``symbol`` layers above ``fill``/
-        // ``line`` siblings by default, so labels still float above
-        // even without explicit insertion-before.
-        // Opacity scales with nest level so deeper (smaller) polygons
-        // read as more prominent than their parents. Steps capped at 4 —
-        // beyond that the deepest level just stays bold. Combined with
-        // the source-order sort above (largest paints first), nested
-        // polygons read crisply: outer continent faint, inner country
-        // medium, inner-inner city bold.
         map.addLayer({
           id: areaLayerId,
           type: 'fill',
@@ -2096,14 +1627,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           },
         });
 
-        // Polygons are the only thing on screen for these points in polygon
-        // mode (markers are suppressed). Wire fill clicks to the same drill
-        // handler markers use so the user can still open the side panel.
-        // When polygons overlap (e.g. a country inside a continent), prefer
-        // the *smallest* one — that's almost always the user's intent.
-        // Area comparison uses the largest-part bbox of real geometry when
-        // present (so France's mainland bbox, not a world-spanning one),
-        // falling back to the OSM bbox for bbox-only renders.
         const handleAreaClick = (ev: mapboxgl.MapMouseEvent & { features?: any[] }) => {
           const feats = ev.features ?? [];
           if (feats.length === 0) return;
@@ -2136,23 +1659,12 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         map.on('click', areaLayerId, handleAreaClick);
         map.on('mouseenter', areaLayerId, handleAreaEnter);
         map.on('mouseleave', areaLayerId, handleAreaLeave);
-        // Stash so the cleanup branch can detach without rebinding context.
         (map as any).__areaListeners = { handleAreaClick, handleAreaEnter, handleAreaLeave };
       } catch (error) {
-        // Bright red in devtools so a regression here is impossible to
-        // miss. Past failures here have been silent because the catch
-        // swallowed via warn.
         console.error('[map.areas] addAreas threw — polygons will not render:', error);
       }
     };
 
-    // Dispatch via the ``idle`` event, which Mapbox emits whenever the
-    // map has finished all current operations and is ready for layer
-    // manipulation. This is more reliable than gating on
-    // ``isStyleLoaded()`` — that flag has been observed to flip false
-    // mid-flow even after a successful load, leaving polygons stuck
-    // never rendering. ``idle`` fires almost immediately if the map is
-    // already settled, so there's no perceptible delay either way.
     let pendingDispatch: (() => void) | null = addAreas;
     const handleDispatch = () => {
       pendingDispatch = null;
@@ -2183,8 +1695,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           map.off('mouseleave', areaLayerId, listeners.handleAreaLeave);
           (map as any).__areaListeners = undefined;
         }
-        // Layer/source removal is style-dependent — guard so we don't
-        // throw during a setStyle transition.
         if (map.isStyleLoaded()) {
           if (map.getLayer(areaBorderLayerId)) {
             map.removeLayer(areaBorderLayerId);
@@ -2202,10 +1712,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     };
   }, [mapLoaded, pointsWithMeaningfulAreas, showAreas, mapTheme, styleVersion, handlePointClick, colorMap]);
 
-  // Apply the *map* theme (independent of the page theme). Tracks the
-  // last applied URL on a ref so we don't kick a redundant reload when
-  // the effect re-fires for some other reason (e.g. mapLoaded flipping
-  // true after the map already has the right style).
+  // Map theme effect.
   const lastAppliedMapStyleRef = useRef<string | null>(null);
   useEffect(() => {
     if (!mapRef.current || !mapLoaded) return;
@@ -2214,8 +1721,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
       ? 'mapbox://styles/mapbox/dark-v11'
       : 'mapbox://styles/mapbox/light-v11';
 
-    // First run after mount: the create-effect already set the right
-    // style URL, so just record it and skip the redundant reload.
     if (lastAppliedMapStyleRef.current === null) {
       lastAppliedMapStyleRef.current = targetStyleUrl;
       return;
@@ -2224,66 +1729,40 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
 
     try {
       lastAppliedMapStyleRef.current = targetStyleUrl;
-      // setStyle is safe to call whether or not the current style has
-      // finished loading — Mapbox queues the swap. ``style.load`` fires
-      // when the new style is ready, which bumps ``styleVersion`` via
-      // the persistent listener attached in the create-effect, and
-      // every layer-owning effect re-runs to re-add its sources.
       map.setStyle(targetStyleUrl);
     } catch (error) {
       console.warn('Error updating map style:', error);
     }
   }, [mapTheme, mapLoaded]);
 
-  // Get label configuration info for display — multi-aware so the
-  // bottom-left chip can list every label field the user picked, not
-  // just the first.
-  // ``includeArrayItemFields`` so paths through array-of-objects (e.g.
-  // ``document.orte[*].type``) resolve to a real field instead of falling
-  // back to the raw path with ``(unknown)``.
+  // Label config info for display chips.
   const labelConfigInfos = useMemo(() => {
     if (labelConfigs.length === 0) return [];
-    return labelConfigs.flatMap((cfg) => {
-      const schema = schemas.find((s) => s.id === cfg.schemaId);
+    return labelConfigs.flatMap((cfgItem) => {
+      const schema = schemas.find((s) => s.id === cfgItem.schemaId);
       if (!schema) return [];
-      const targetKeys = getTargetKeysForScheme(cfg.schemaId, schemas, { includeArrayItemFields: true });
-      const fieldInfo = targetKeys.find((tk) => tk.key === cfg.fieldKey);
-      const prettyName = fieldInfo?.name ?? formatFieldNameForDisplay(cfg.fieldKey).displayName ?? cfg.fieldKey;
+      const targetKeys = getTargetKeysForScheme(cfgItem.schemaId, schemas, { includeArrayItemFields: true });
+      const fieldInfo = targetKeys.find((tk) => tk.key === cfgItem.fieldKey);
+      const prettyName = fieldInfo?.name ?? formatFieldNameForDisplay(cfgItem.fieldKey).displayName ?? cfgItem.fieldKey;
       return [{
         schemaName: schema.name,
         fieldName: prettyName,
         fieldType: fieldInfo?.type ?? 'unknown',
-        fieldKey: cfg.fieldKey,
-        schemaId: cfg.schemaId,
+        fieldKey: cfgItem.fieldKey,
+        schemaId: cfgItem.schemaId,
       }];
     });
   }, [labelConfigs, schemas]);
 
-  // Handle location click from list. Opens the preview card and flies
-  // to the point. When the locations panel is open it covers the left
-  // edge of the canvas, so we offset the camera so the point lands in
-  // the visible area (right of the panel) rather than centered behind
-  // it. ``flyTo({ offset })`` places the geographic target at
-  // ``canvas_center + offset`` — positive X = visually right of center.
   const handleLocationClick = useCallback((point: MapPoint) => {
     if (!mapRef.current) return;
     const map = mapRef.current;
     handlePointClick(point);
 
-    // Two side panels frame the canvas: locations list on the left
-    // (when ``locationsPanelOpen``) and the asset HUD on the right
-    // (always opens after this click via ``handlePointClick``).
-    // ``flyTo({ offset })`` shifts the geographic target from canvas
-    // center; positive X = visually right of canvas center.
-    //
-    // We want the point in the centre of the *visible* area:
-    //   - Both panels open ⇒ canvas centre IS the visible centre, offset 0
-    //   - Only left open   ⇒ visible centre is right of canvas centre, +half
-    //   - Only right open  ⇒ visible centre is left of canvas centre, -half
-    const LEFT_HALF = 224 / 2;   // left panel = w-56 ≈ 224
-    const RIGHT_HALF = 256 / 2;  // right panel = w-64 ≈ 256
+    const LEFT_HALF = 224 / 2;
+    const RIGHT_HALF = 256 / 2;
     const leftShift = locationsPanelOpen ? LEFT_HALF : 0;
-    const rightShift = RIGHT_HALF; // right panel about to open
+    const rightShift = RIGHT_HALF;
     const offsetX = leftShift - rightShift;
 
     map.flyTo({
@@ -2294,53 +1773,37 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     });
   }, [handlePointClick, locationsPanelOpen]);
 
-  // Handle external location highlighting (from cross-panel navigation)
+  // Handle external location highlighting.
   useEffect(() => {
     if (!highlightLocation || !mapLoaded) return;
-    
     const { location, fieldKey } = highlightLocation;
-    
-    // Find matching point by location string (case-insensitive)
-    const matchingPoint = processedPoints.find(point => 
+    const matchingPoint = processedPoints.find(point =>
       point.locationString.toLowerCase().includes(location.toLowerCase()) ||
       location.toLowerCase().includes(point.locationString.toLowerCase())
     );
-    
     if (matchingPoint) {
       handleLocationClick(matchingPoint);
     }
   }, [highlightLocation, processedPoints, mapLoaded, handleLocationClick]);
 
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="w-full h-full flex flex-col overflow-hidden">
-      <PanelHeaderSlot>
-          <PanelFormulaBinder
-            formulaId={(panelConfig as any).formula_id ?? (panelConfig as any).observation_id ?? null}
-            onBind={(id) => onUpdatePanel({ formula_id: id, observation_id: undefined } as any)}
-          />
-          <RolePickerPopover
-          schema={PANEL_ROLE_SCHEMAS.map}
-          availableSchemas={schemas}
-          value={rolePickerValue}
-          onChange={handleRolePickerChange}
-        />
-      </PanelHeaderSlot>
-      {!selectedSchemaId || !locationField ? (
+      {/* Header slot empty — Markers/areaGeometryMeasures toggle moved to the
+          map's own canvas overlay (top-right), alongside the pointer/
+          polygon button. The panel header carries only the universal
+          config popover. */}
+      <PanelHeaderSlot>{null}</PanelHeaderSlot>
+
+      {!locationField ? (
         <div className="p-2 flex-shrink-0">
           <EmptyStateCard
-            reason={
-              !selectedSchemaId
-                ? { kind: 'no_schema' }
-                : { kind: 'role_unfilled', roleLabel: 'Location' }
-            }
+            reason={{ kind: 'role_unfilled', roleLabel: 'Position (location field)' }}
           />
         </div>
       ) : null}
 
       <div className="flex-1 min-h-0 relative annotation-map-host">
-      {/* Hide the default Mapbox bottom-right control box (attribution +
-          logo) within this panel, scoped via an ancestor class so we
-          don't impact other Mapbox instances elsewhere on the page. */}
       <style>
         {`.annotation-map-host .mapboxgl-ctrl-bottom-right { display: none; }`}
       </style>
@@ -2348,22 +1811,14 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         ref={mapContainerRef}
         className="h-full w-full"
         style={{
-          minHeight: '200px', // Reduced minimum height to respect panel constraints
-          maxHeight: '100%' // Ensure it doesn't exceed container height
+          minHeight: '200px',
+          maxHeight: '100%'
         }}
       />
 
-      {/* Locations panel — toggled by the locations chip in the toolbar.
-          Floats on the left, intentionally lighter than the shadcn popover
-          style: no shadow, soft border, translucent backdrop. Reads as a
-          quiet sidebar, not a popup. Search filters the list, eye toggles
-          per-point visibility on the map. */}
+      {/* Locations panel */}
       {locationsPanelOpen && processedPoints.length > 0 && (() => {
         const search = locationsSearch.trim().toLowerCase();
-        // Sort locations by document count descending — the busiest
-        // places lead the list; ties break alphabetically so the order
-        // is stable across renders. ``[].sort`` mutates, so we copy
-        // first to keep ``processedPoints`` reference identity intact.
         const sorted = [...processedPoints].sort((a, b) => {
           const da = a.documentIds.length;
           const db = b.documentIds.length;
@@ -2387,9 +1842,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
                 Locations
               </span>
               <div className="flex items-center gap-0.5">
-                {/* Toggle-all: hides every point if any are visible,
-                    otherwise shows everything. Keeps the persisted
-                    ``hiddenPointIds`` source of truth in sync. */}
                 <button
                   type="button"
                   onClick={() => {
@@ -2499,17 +1951,9 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         );
       })()}
 
-      {/* Map control overlay — geocode + locations + view-mode + projection
-          + theme, consolidated into a single ButtonGroup so the panel
-          stays free of toolbars. CircleDotDashed + GitBranchPlus =
-          geocode action ("resolve names → branch out coords"); MapPin =
-          locations list (carries the count badge). */}
+      {/* Map control overlay */}
       <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-10 flex flex-col items-end gap-1">
         <ButtonGroup className="bg-background/80 backdrop-blur-sm border shadow-lg rounded-md">
-          {/* Geocode action — dual-icon static layout (no swap, no
-              greying since neither icon is "inactive"): dashed circle
-              top-left = "input name", GitBranchPlus bottom-right =
-              "resolved + branched into coords". */}
           <Button
             onClick={handleKickGeocode}
             variant="secondary"
@@ -2534,10 +1978,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
             )}
           </Button>
           {processedPoints.length > 0 && (
-            // Locations chip — toggles the left-side locations panel.
-            // Dual-icon static layout (MapPin + List). Count footnote
-            // bottom-left, no badge background. ``aria-pressed`` makes
-            // the toggle state announceable.
             <Button
               variant="secondary"
               size="icon"
@@ -2561,12 +2001,22 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
               </span>
             </Button>
           )}
-          {/* View-mode toggle. Both icons live in the same button; the
-              ACTIVE one sits big in the bottom-right, the INACTIVE one
-              sits small + greyed in the top-left, and a curved Spline
-              in the top-right hints at the swap direction. CSS
-              transitions on top/left/bottom/right + h/w give the
-              physical swap animation when the user clicks. */}
+          {/* Markers ↔ areaGeometryMeasures — display knob. Lives on the canvas
+              (not in the panel header) alongside the pointer/polygon
+              button. The config popover handles roles + filter only. */}
+          {/* <Button
+            onClick={() => setMapMode(mapMode === 'markers' ? 'areaGeometryMeasures' : 'markers')}
+            variant="secondary"
+            size="sm"
+            className="h-8 sm:h-9 px-2 bg-transparent hover:bg-background/90 text-[11px]"
+            title={mapMode === 'markers' ? 'Active: per-row markers — click for Area' : 'Active: Area Geometry aggregate — click for markers'}
+          >
+            {mapMode === 'markers' ? (
+              <><MapPin className="h-3.5 w-3.5 mr-1" />Markers</>
+            ) : (
+              <><Hexagon className="h-3.5 w-3.5 mr-1" />Area</>
+            )}
+          </Button> */}
           <Button
             onClick={() => setViewMode(viewMode === 'pointer' ? 'polygon' : 'pointer')}
             variant="secondary"
@@ -2593,9 +2043,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
                   : 'top-1 left-1 h-2.5 w-2.5 text-muted-foreground/60',
               )}
             />
-            {/* Curved arrow pointing from the inactive (top-left) glyph
-                toward the active (bottom-right) one. Mirrored on the
-                X axis so the curve sweeps top-left → bottom-right. */}
             <Spline
               className="absolute top-1 right-1 h-2.5 w-2.5 text-muted-foreground/40 pointer-events-none -scale-x-100"
               aria-hidden
@@ -2615,10 +2062,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
               <Globe className="h-4 w-4" />
             )}
           </Button>
-          {/* Color legend toggle — only meaningful when ``group_by`` is
-              set and produced at least one categorical bucket. The
-              button bring back a fully hidden legend; collapsed state
-              is owned by the legend itself (chevron). */}
           {colorEntries.length > 0 && !legendVisible && (
             <Button
               variant="secondary"
@@ -2644,10 +2087,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
             )}
           </Button>
         </ButtonGroup>
-        {/* Polygon mode is on but nothing has a meaningful bbox yet —
-            usually means the cached coords were saved before bbox
-            persistence landed. Re-running the geocode action backfills
-            bboxes via the partial-cache-miss path in the @task. */}
         {viewMode === 'polygon'
           && processedPoints.length > 0
           && pointsWithMeaningfulAreas.length === 0
@@ -2663,9 +2102,8 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           </div>
         )}
       </div>
-      
-      {/* Label-source indicator. One pill per picked label field — same
-          visual weight as the toolbar chips, no card chrome. */}
+
+      {/* Label-source indicator chips */}
       {labelConfigInfos.length > 0 && (
         <div className="absolute bottom-2 left-2 z-10 inline-flex items-center gap-1 flex-wrap">
           {labelConfigInfos.map((info) => (
@@ -2682,20 +2120,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         </div>
       )}
 
-      {/* Color legend — only meaningful for categorical ``group_by``.
-          Three states:
-            - hidden   : nothing here; toolbar Palette button brings it back
-            - collapsed: tiny pill ("Colors · N") that expands on click
-            - expanded : horizontal pill with one swatch+label per value,
-                         a toggle-all eye, a collapse chevron, and an X
-                         to fully hide. Each swatch is a native color
-                         input — pick any hex; cleared overrides revert
-                         to the deterministic palette colour. Clicking
-                         the value text toggles its visibility on the
-                         map (line-through + dimmed when hidden).
-          Inspired by the graph's ``EntityTypeLegend`` — same chip
-          aesthetic, more controls. Numeric mode skips the legend
-          entirely (gradient bar UI is a separate question). */}
+      {/* Color legend */}
       {colorEntries.length > 0 && !colorIsNumeric && legendVisible && (() => {
         const allHidden = hiddenColorValues.size >= colorEntries.length;
         if (legendCollapsed) {
@@ -2731,10 +2156,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
                       isHidden && 'opacity-40',
                     )}
                   >
-                    {/* Native color input wrapping the swatch — click
-                        opens the platform's color picker. ``input`` is
-                        invisible but layered over the swatch so the
-                        whole circle is the click target. */}
                     <label
                       className="relative w-3 h-3 rounded-full flex-shrink-0 cursor-pointer ring-1 ring-border/40"
                       style={{ backgroundColor: isHidden ? 'var(--muted)' : color }}
@@ -2772,7 +2193,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
                   </div>
                 );
               })}
-              {/* Trailing controls — separator + toggle-all + collapse + close. */}
               <span className="mx-0.5 h-3 w-px bg-border" aria-hidden />
               <button
                 type="button"
@@ -2802,33 +2222,19 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           </div>
         );
       })()}
-      
+
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center bg-background/50">
           <Loader2 className="h-8 w-8 animate-spin" />
         </div>
       )}
 
-      {/* Selected-location HUD — anchored on the right BELOW the toolbar
-          so it never hides the chip buttons. Shows the docs whose
-          annotations geocoded to this point: asset title + kind badge,
-          and beneath each doc the location field rendered via the same
-          ``TypedCell`` pipeline the table uses (so a ``places`` field
-          renders as the same tag pills here as it does there). One CTA
-          at the bottom opens the EvidenceDrawer for the whole group.
-          Aesthetic borrows from the graph NodeDetailHUD: bare list,
-          thin border-bottom separators, no card chrome. */}
+      {/* Selected-location HUD */}
       {selectedPoint && (() => {
         const point = selectedPoint;
         const docIds = point.documentIds;
         const docCount = docIds.length;
 
-        // Build a single ``FieldDef`` for the location field so each
-        // asset row can render its value via TypedCell. We anchor on
-        // the *parent* of any ``[*]`` step so the cell receives the
-        // whole array (e.g. ``orte: [Berlin, Munich]``) rather than a
-        // single fanned-out leaf — matches how the table presents
-        // array fields.
         const schema = locationField
           ? schemas.find((s) => s.id === selectedSchemaId)
           : null;
@@ -2838,9 +2244,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         const fieldDef: FieldDef | null = (() => {
           if (!schema || !fieldParentPath) return null;
           const def = findFieldDefinition(schema, fieldParentPath);
-          // ``getTargetKeysForScheme`` knows how to pretty-print the
-          // path → label including parent fallback if the leaf itself
-          // is unnamed.
           const targets = getTargetKeysForScheme(schema.id, schemas, { includeArrayItemFields: true });
           const target = targets.find((tk) => tk.key === fieldParentPath)
             ?? targets.find((tk) => tk.key === locationField);
@@ -2855,10 +2258,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           };
         })();
 
-        // Per-asset: pick the first matching annotation row for the
-        // selected schema. The map only renders one schema at a time
-        // (selectedSchemaId), so taking the first row is correct.
-        const resultByAsset = new Map<number, FormattedAnnotation>();
+        const resultByAsset = new Map<number, any>();
         if (selectedSchemaId != null) {
           for (const r of resultsForMap) {
             if (r.schema_id !== selectedSchemaId) continue;
@@ -2870,9 +2270,6 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           <div
             className={cn(
               'absolute right-0 z-30 w-64 max-w-[calc(100%-1rem)] rounded-l-md border-y border-l border-border/50 bg-background/55 backdrop-blur-sm flex flex-col',
-              // ``top-44`` (mobile) / ``top-52`` (sm) clears the toolbar
-              // column above (5 buttons × 2-2.25rem). ``bottom-2`` lets
-              // the HUD grow vertically and scroll internally.
               'top-44 sm:top-52 bottom-2',
             )}
           >
@@ -2977,7 +2374,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         infospaceId={infospaceId}
         runId={runId}
         scope={evidenceScope}
-        baseFilters={panelConfig.local_filters}
+        baseFilters={panelConfig.formula?.filter as any}
         mergeMaps={panelConfig.merge_maps}
         schemas={schemas}
       />

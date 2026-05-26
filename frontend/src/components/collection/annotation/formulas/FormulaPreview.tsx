@@ -37,19 +37,19 @@ export function FormulaPreview({
   limit = 50,
   className,
 }: FormulaPreviewProps) {
-  const formulaCfg = useMemo(
-    () => ({ formula, limit }),
-    [formula, limit],
-  );
   const { data, isLoading, error } = useAnnotationView({
     infospaceId,
     runId,
-    formula: formulaCfg,
+    formula: formula as any,
+    aggregate: {},
     enabled: !!formula?.id && !!runId,
     debounceMs: 250,
   });
 
-  const rel = data?.formula;
+  // The legacy "formula" phase is gone; aggregate-shape results now flow
+  // through `data.aggregate`. The renderer reads the same OutputRelation
+  // shape (rows + measure_names + output_keys).
+  const rel = data?.aggregate;
 
   if (error) {
     return (

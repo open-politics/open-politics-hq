@@ -31,17 +31,10 @@ import { ResultFilter } from './AnnotationFilterControls';
 import { getTargetKeysForScheme, getAnnotationFieldValue, getTargetFieldDefinition, getFieldDefinitionFromSchema, formatFieldNameForDisplay as formatFieldNameUtil, getModalityIcon } from '@/lib/annotations/utils';
 import { searchInAnnotationValue } from '@/lib/annotations/search';
 import { useAnnotationView } from '@/hooks/useAnnotationView';
-import type { AnnotationResultRow, AssetSummary, PanelConfig } from '@/lib/annotations/types';
-import { type RolePickerValue } from './panels/RolePicker';
-import { RolePickerPopover } from './panels/RolePickerPopover';
+import type { AnnotationResultRow, AssetSummary, PanelConfig, TableVizConfig } from '@/lib/annotations/types';
 import { PanelHeaderSlot } from './panels/PanelHeaderSlot';
-import { PanelFormulaBinder } from './formulas/PanelFormulaBinder';
-import { useResolvedProjection } from '@/hooks/useResolvedProjection';
 import { ValueAliasManager } from './panels/ValueAliasManager';
-import { PANEL_ROLE_SCHEMAS } from '@/lib/annotations/panelRoleSchema';
 import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
-import { effectiveMergeMaps } from '@/lib/annotations/valueAliases';
-import { mergeFiltersAndScopes } from '@/lib/annotations/scopes';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Button } from '@/components/ui/button';
@@ -241,14 +234,14 @@ export function AnnotationResultsTable({
   onTimestampClick,
   onLocationClick,
 }: AnnotationResultsTableProps) {
-  // --- Server-side data fetching via /view endpoint --- //
-  const [cursor, setCursor] = useState<number | null>(null);
-  const pageSize = panelConfig.settings?.tableConfig?.pagination?.pageSize || 100;
+  // --- Panel config (new shape) --- //
+  const cfg = panelConfig.panel_config as TableVizConfig;
+  // Aggregate mode when the formula carries at least one measure.
+  const isAggregateMode = (panelConfig.formula?.measures?.length ?? 0) > 0;
 
-  const mergedFilters = useMemo(
-    () => mergeFiltersAndScopes(panelConfig.local_filters, panelConfig.incoming_scopes),
-    [panelConfig.local_filters, panelConfig.incoming_scopes],
-  );
+  // --- Server-side data fetching via /view endpoint --- //
+  const [cursor, setCursor] = useState<number | string | null>(null);
+  const pageSize = panelConfig.settings?.tableConfig?.pagination?.pageSize || 100;
 
   // Value-alias wiring — the table targets the first selected column.
   const [aliasManagerOpen, setAliasManagerOpen] = useState(false);
@@ -260,17 +253,17 @@ export function AnnotationResultsTable({
   const gvs = getGlobalVariableSplitting();
   const runWideAliasesByField = gvs?.valueAliasesByField ?? {};
 
-  const effectiveMergeMapsForView = useMemo(
-    () => effectiveMergeMaps(panelConfig.merge_maps, runWideAliasesByField),
-    [panelConfig.merge_maps, runWideAliasesByField],
-  );
-
   const { data: viewData, isLoading, error: viewError, refetch } = useAnnotationView({
     infospaceId,
     runId,
-    rows: { limit: pageSize, cursor },
-    filters: mergedFilters,
-    merge_maps: effectiveMergeMapsForView,
+    panel: panelConfig,
+    schemas,
+    fields: isAggregateMode ? undefined : panelConfig.fields,
+    incoming_scopes: panelConfig.scopes_in,
+    merge_maps: panelConfig.merge_maps,
+    ...(isAggregateMode
+      ? { aggregate: {} }
+      : { rows: { limit: pageSize, cursor: typeof cursor === 'number' ? cursor : undefined } }),
     enabled: !!runId && !!infospaceId,
   });
 
@@ -285,8 +278,19 @@ export function AnnotationResultsTable({
     return Object.values(viewData.rows.assets).map(adaptAssetSummaryToAssetRead);
   }, [viewData?.rows?.assets]);
 
-  const totalRows = viewData?.rows?.total ?? 0;
-  const cursorNext = viewData?.rows?.cursor_next ?? null;
+  const totalRows = viewData?.rows?.total ?? viewData?.aggregate?.total ?? 0;
+  const cursorNext = viewData?.rows?.cursor_next ?? viewData?.aggregate?.cursor_next ?? null;
+
+  // Aggregate mode: rows from OutputRelation
+  const aggregateRows = useMemo(() => {
+    if (!isAggregateMode || !viewData?.aggregate?.rows) return [];
+    return viewData.aggregate.rows;
+  }, [isAggregateMode, viewData?.aggregate?.rows]);
+
+  const aggregateMeta = useMemo(() => ({
+    outputKeys: viewData?.aggregate?.output_keys ?? [],
+    measureNames: viewData?.aggregate?.measure_names ?? [],
+  }), [viewData?.aggregate?.output_keys, viewData?.aggregate?.measure_names]);
 
   // Table config from panel settings
   const initialTableConfig = panelConfig.settings?.tableConfig;
@@ -302,8 +306,12 @@ export function AnnotationResultsTable({
   const [variableSplittingConfig] = useState<VariableSplittingConfig | null>(null);
   const onVariableSplittingChange: ((config: VariableSplittingConfig | null) => void) | undefined = undefined;
   const [sorting, setSorting] = useState<SortingState>(() => {
+    // cfg.sort is the new canonical source; legacy tableConfig.sorting is fallback.
+    if (cfg?.sort) {
+      return [{ id: cfg.sort.column, desc: cfg.sort.direction === 'desc' }];
+    }
     if (initialTableConfig?.sorting) {
-      return initialTableConfig.sorting.map(s => ({ id: s.id, desc: s.desc }));
+      return initialTableConfig.sorting.map((s: any) => ({ id: s.id, desc: s.desc }));
     }
     return [];
   });
@@ -332,7 +340,7 @@ export function AnnotationResultsTable({
   const [globalFilter, setGlobalFilter] = useState(initialTableConfig?.globalFilter || '');
   const [expanded, setExpanded] = useState<Record<string, boolean>>(initialTableConfig?.expanded || {});
   const [density, setDensity] = useState<Density>(
-    (initialTableConfig?.density as Density) || 'comfortable',
+    (cfg?.density as Density) ?? (initialTableConfig?.density as Density) ?? 'comfortable',
   );
   const [fieldRangeCache, setFieldRangeCache] = useState<FieldRangeCache>(
     initialTableConfig?.fieldRangeCache || {},
@@ -342,7 +350,10 @@ export function AnnotationResultsTable({
   const [showFailed, setShowFailed] = useState<boolean>(
     initialTableConfig?.showFailed ?? false,
   );
-  const [unfoldFields, setUnfoldFields] = useState(false); // NEW: Toggle for unfolding schema fields into separate columns
+  // Unfolded by default — the user shouldn't have to click into a row or
+  // toggle anything to see annotation fields. Folded mode is still
+  // reachable via the toolbar button for dense / multi-schema views.
+  const [unfoldFields, setUnfoldFields] = useState(true);
   const [filterArrayItems, setFilterArrayItems] = useState(false); // NEW: Toggle to filter array items to matching ones only
   const { activeInfospace } = useInfospaceStore();
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem(); // Renaming for clarity
@@ -358,34 +369,67 @@ export function AnnotationResultsTable({
     schema: null,
   });
 
-  const [selectedFieldsPerScheme, setSelectedFieldsPerScheme] = useState<Record<number, string[]>>(() => {
-    if (initialTableConfig?.selectedFieldsPerScheme) {
-      return initialTableConfig.selectedFieldsPerScheme;
-    }
-    const initialState: Record<number, string[]> = {};
+  // ── Visible-fields derivation — pure, deterministic, no useState ──
+  //
+  // Rules (one place, no race conditions):
+  //   1. ``cfg.columns`` is the user's explicit subset. Empty = "show all".
+  //   2. For each schema, intersect ``cfg.columns`` with the schema's
+  //      target keys. If the intersection is empty, fall back to that
+  //      schema's full key list (no schema renders as blank).
+  //   3. When ``cfg.columns`` is empty entirely, every schema shows all
+  //      its keys.
+  //
+  // This replaces the previous useState + two useEffects, all of which
+  // could race on schema/cfg changes and leave the table empty. The
+  // toggle handler (header popover) writes to ``cfg.columns`` via
+  // ``onUpdatePanel`` so this memo stays the single source of truth.
+  const selectedFieldsPerScheme = useMemo<Record<number, string[]>>(() => {
+    const next: Record<number, string[]> = {};
+    const columns: string[] = (cfg?.columns ?? []) as string[];
     schemas.forEach(schema => {
-        const targetKeys = getTargetKeysForScheme(schema.id, schemas);
-        initialState[schema.id] = targetKeys.map(tk => tk.key);
+      const allKeys = getTargetKeysForScheme(schema.id, schemas).map(tk => tk.key);
+      if (columns.length === 0) {
+        next[schema.id] = allKeys;
+        return;
+      }
+      const owned = columns.filter(c => allKeys.includes(c));
+      next[schema.id] = owned.length > 0 ? owned : allKeys;
     });
-    return initialState;
-  });
+    return next;
+  }, [schemas, cfg?.columns]);
 
-  // Defer state updates to avoid setState during render
-  useEffect(() => {
-    // Use startTransition to defer this update
-    startTransition(() => {
-      setSelectedFieldsPerScheme(prev => {
-        const newState: Record<number, string[]> = {};
-        schemas.forEach(schema => {
-          const targetKeys = getTargetKeysForScheme(schema.id, schemas);
-          const keys = targetKeys.map(tk => tk.key);
-          newState[schema.id] = prev[schema.id] ?? keys;
-        });
-        console.log('[AnnotationResultsTable] Updated selectedFieldsPerScheme:', newState);
-        return newState;
-      });
-    });
-  }, [schemas]);
+  // Toggle handler for the header popover — flips a field on/off in
+  // ``cfg.columns``. When all fields are present and the user turns one
+  // off, we materialize the explicit list (otherwise we wouldn't know
+  // it's a subset). When the toggled list ends up equal to "all", we
+  // collapse back to ``[]`` so the panel persists the lean default.
+  const handleFieldToggle = useCallback(
+    (schemaId: number, fieldKey: string) => {
+      const allKeys = getTargetKeysForScheme(schemaId, schemas).map(tk => tk.key);
+      const currentColumns: string[] = (cfg?.columns ?? []) as string[];
+      // If cfg.columns is empty (= "show all"), materialize all keys
+      // first so we can subtract from a known set.
+      const base = currentColumns.length > 0
+        ? currentColumns.slice()
+        : schemas.flatMap(s => getTargetKeysForScheme(s.id, schemas).map(tk => tk.key));
+      let next: string[];
+      if (base.includes(fieldKey)) {
+        next = base.filter(k => k !== fieldKey);
+      } else {
+        next = [...base, fieldKey];
+      }
+      // Collapse to [] when next == all-fields-across-all-schemas.
+      const allEverywhere = schemas.flatMap(s =>
+        getTargetKeysForScheme(s.id, schemas).map(tk => tk.key),
+      );
+      const isEqualToAll =
+        next.length === allEverywhere.length && next.every(k => allEverywhere.includes(k));
+      onUpdatePanel({
+        panel_config: { ...(cfg as any), columns: isEqualToAll ? [] : next },
+      } as any);
+    },
+    [cfg, schemas, onUpdatePanel],
+  );
 
   // Track if this is the initial render to avoid calling onTableConfigChange on mount
   const isInitialRender = useRef(true);
@@ -1256,6 +1300,34 @@ export function AnnotationResultsTable({
     );
   };
 
+  // --- Display knob write-back helpers ------------------------------------
+  // Defined early so useReactTable (below) can reference them without hoisting.
+
+  // Density: persisted to panel_config.density so it survives panel reload.
+  const handleSetDensity = useCallback((d: Density) => {
+    setDensity(d);
+    onUpdatePanel({ panel_config: { ...cfg, density: d } } as any);
+  }, [onUpdatePanel, cfg]);
+
+  // Sort: persisted to panel_config.sort; column is either a dim (keys) or
+  // measure name depending on aggregate mode.
+  const handleSortingChange = useCallback((updater: any) => {
+    setSorting((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (next.length > 0) {
+        onUpdatePanel({
+          panel_config: {
+            ...cfg,
+            sort: { column: next[0].id, direction: next[0].desc ? 'desc' : 'asc' },
+          },
+        } as any);
+      } else {
+        onUpdatePanel({ panel_config: { ...cfg, sort: null } } as any);
+      }
+      return next;
+    });
+  }, [onUpdatePanel, cfg]);
+
   // Invisible spacer that lifts a non-asset cell's first field to the same y
   // as column 1's first strings field. Total height equals exactly the asset
   // cell's [outer py-1 top + inner py-1 top + header row + (optional gap-1 +
@@ -1638,19 +1710,10 @@ export function AnnotationResultsTable({
         displayName: schema.name,
       },
       header: ({ column }) => {
-        const handleFieldToggle = (fieldKey: string) => {
-          // Use startTransition for this state update
-          startTransition(() => {
-            setSelectedFieldsPerScheme(prev => {
-              const currentSelected = prev[schema.id] || [];
-              const isSelected = currentSelected.includes(fieldKey);
-              const newSelected = isSelected ? currentSelected.filter(key => key !== fieldKey) : [...currentSelected, fieldKey];
-              
-              // FIXED: Allow zero fields (this hides the schema column)
-              return { ...prev, [schema.id]: newSelected };
-            });
-          });
-        };
+        // Toggle writes straight to cfg.columns via onUpdatePanel — see
+        // the outer handleFieldToggle. One source of truth means the
+        // visible set always reflects the persisted config.
+        const onToggle = (fieldKey: string) => handleFieldToggle(schema.id, fieldKey);
         const currentSelectedFields = selectedFieldsPerScheme[schema.id] || [];
         const availableFields = getTargetKeysForScheme(schema.id, schemas);
 
@@ -1673,7 +1736,7 @@ export function AnnotationResultsTable({
                            <Checkbox
                               id={`field-header-toggle-${schema.id}-${field.key}`}
                               checked={currentSelectedFields.includes(field.key)}
-                              onCheckedChange={() => handleFieldToggle(field.key)}
+                              onCheckedChange={() => onToggle(field.key)}
                               disabled={currentSelectedFields.length === 1 && currentSelectedFields.includes(field.key)}
                            />
                            <Label
@@ -2006,6 +2069,92 @@ export function AnnotationResultsTable({
       stringSplit, // single-schema redistribution to asset cell
   ]);
   
+  // --- Aggregate mode columns & table data --------------------------------
+  // When the formula has measures, each OutputRelation row is one group.
+  // Columns come from output_keys (dims → row.keys[name]) and measure_names
+  // (measures → row.measures[name]). We build a plain object per row and
+  // drive a separate table instance.
+
+  type AggregateRow = Record<string, any>;
+
+  const aggregateTableData = useMemo((): AggregateRow[] => {
+    if (!isAggregateMode) return [];
+    return aggregateRows.map(row => {
+      const flat: AggregateRow = {};
+      aggregateMeta.outputKeys.forEach(k => { flat[k] = row.keys?.[k] ?? null; });
+      aggregateMeta.measureNames.forEach(m => { flat[m] = row.measures?.[m] ?? null; });
+      return flat;
+    });
+  }, [isAggregateMode, aggregateRows, aggregateMeta]);
+
+  const aggregateColumns = useMemo((): ColumnDef<AggregateRow>[] => {
+    if (!isAggregateMode) return [];
+    const dimCols: ColumnDef<AggregateRow>[] = aggregateMeta.outputKeys.map(key => ({
+      id: `dim_${key}`,
+      accessorKey: key,
+      header: ({ column }) => (
+        <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          className="px-2 h-full w-full justify-start">
+          <span className="truncate text-xs font-medium">{key}</span>
+          <ArrowUpDown className="ml-1 h-3.5 w-3.5 flex-shrink-0" />
+        </Button>
+      ),
+      cell: ({ getValue }) => {
+        const v = getValue();
+        return (
+          <div className="text-xs px-2 py-1 truncate min-w-0">
+            {v == null ? <span className="text-muted-foreground/50 italic">—</span> : String(v)}
+          </div>
+        );
+      },
+      enableSorting: true,
+      enableHiding: true,
+      minSize: 100,
+      size: 160,
+    }));
+    const measureCols: ColumnDef<AggregateRow>[] = aggregateMeta.measureNames.map(name => ({
+      id: `measure_${name}`,
+      accessorKey: name,
+      header: ({ column }) => (
+        <Button variant="ghost" onClick={() => column.toggleSorting(column.getIsSorted() === 'asc')}
+          className="px-2 h-full w-full justify-start">
+          <span className="truncate text-xs font-medium text-primary/80">{name}</span>
+          <ArrowUpDown className="ml-1 h-3.5 w-3.5 flex-shrink-0" />
+        </Button>
+      ),
+      cell: ({ getValue }) => {
+        const v = getValue();
+        return (
+          <div className="text-xs px-2 py-1 font-mono tabular-nums truncate min-w-0 text-right">
+            {v == null ? <span className="text-muted-foreground/50 italic">—</span>
+              : typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 4 })
+              : String(v)}
+          </div>
+        );
+      },
+      enableSorting: true,
+      enableHiding: true,
+      minSize: 80,
+      size: 120,
+    }));
+    return [...dimCols, ...measureCols];
+  }, [isAggregateMode, aggregateMeta]);
+
+  const aggregateTable = useReactTable<AggregateRow>({
+    data: aggregateTableData,
+    columns: aggregateColumns,
+    state: { sorting, columnVisibility, pagination },
+    getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    onSortingChange: handleSortingChange,
+    onColumnVisibilityChange: setColumnVisibility,
+    onPaginationChange: setPagination,
+    autoResetPageIndex: false,
+    autoResetAll: false,
+  });
+
   // Custom global filter function that searches within nested arrays
   const globalFilterFn = useCallback((row: Row<EnrichedAssetRecord>, columnId: string, filterValue: string): boolean => {
     if (!filterValue) return true;
@@ -2048,7 +2197,7 @@ export function AnnotationResultsTable({
     getExpandedRowModel: getExpandedRowModel(),
     getRowId: (record) => record.id.toString(),
     globalFilterFn: globalFilterFn, // Add custom filter function
-    onSortingChange: setSorting,
+    onSortingChange: handleSortingChange,
     onColumnVisibilityChange: setColumnVisibility,
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
@@ -2073,89 +2222,13 @@ export function AnnotationResultsTable({
     autoResetAll: false,
   });
 
-  // --- RolePicker wiring --------------------------------------------------
-  // The picker drives `columns` (multi) + `row_explode` (array-of-objects row
-  // expansion). Schema is single-picked, and the selection writes into the
-  // existing `selectedFieldsPerScheme` map so the column-rendering pipeline
-  // picks it up without any refactor.
-  const rolePickerSchemaId =
-    (panelConfig.settings?.selectedSchemaId as number | undefined) ??
-    (schemas.length === 1 ? schemas[0].id : null);
-
-  const rolePickerValue: RolePickerValue = useMemo(() => {
-    const fieldsByRole: Record<string, string[]> = {};
-    if (rolePickerSchemaId != null) {
-      const columns = selectedFieldsPerScheme[rolePickerSchemaId] ?? [];
-      if (columns.length > 0) fieldsByRole['columns'] = columns;
-    }
-    const mappings = panelConfig.projection?.field_mappings ?? {};
-    const explode = mappings['row_explode'];
-    if (typeof explode === 'string') fieldsByRole['row_explode'] = [explode];
-    return {
-      schemaId: rolePickerSchemaId,
-      fieldsByRole,
-      // Always populate the key so the ternary doesn't produce a union with
-      // `{ row_explode?: undefined }`, which clashes with the picker's
-      // `Record<string, string | null>` index signature. RolePicker reads
-      // `value.explosionByRole[k] ?? null`, so missing-key and null-value are
-      // already equivalent at the consumer.
-      explosionByRole: { row_explode: panelConfig.projection?.explosion ?? null },
-      aggregation: panelConfig.aggregation ?? {},
-    };
-  }, [rolePickerSchemaId, selectedFieldsPerScheme, panelConfig.projection, panelConfig.aggregation]);
-
-  const handleRolePickerChange = useCallback((next: RolePickerValue) => {
-    const pc = panelConfig;
-    // Fold `columns` role into selectedFieldsPerScheme for the picked schema.
-    const cols = next.fieldsByRole['columns'] ?? [];
-    const explode = next.fieldsByRole['row_explode']?.[0];
-    const nextSelectedPerScheme = { ...selectedFieldsPerScheme };
-    if (next.schemaId != null) {
-      nextSelectedPerScheme[next.schemaId] = cols;
-    }
-    setSelectedFieldsPerScheme(nextSelectedPerScheme);
-    const field_mappings: Record<string, string | string[]> = {};
-    if (cols.length > 0) field_mappings['columns'] = cols.length > 1 ? cols : cols[0];
-    if (explode) field_mappings['row_explode'] = explode;
-    onUpdatePanel({
-      projection: {
-        field_mappings,
-        explosion: Object.values(next.explosionByRole).find((e) => !!e) ?? null,
-      },
-      aggregation: { ...(pc.aggregation ?? {}), ...(next.aggregation ?? {}) },
-      settings: {
-        ...(pc.settings ?? {}),
-        selectedSchemaId: next.schemaId ?? undefined,
-        tableConfig: {
-          ...(pc.settings?.tableConfig ?? {}),
-          selectedFieldsPerScheme: nextSelectedPerScheme,
-        },
-      },
-    });
-  }, [onUpdatePanel, selectedFieldsPerScheme, panelConfig]);
-
-  // Alias target field — first column or row_explode path.
-  const aliasTargetField = (
-    (rolePickerValue.fieldsByRole['columns']?.[0] as string | undefined) ??
-    (rolePickerValue.fieldsByRole['row_explode']?.[0] as string | undefined)
-  ) ?? null;
+  // Alias target field — first cfg.columns entry or formula explode path.
+  const aliasTargetField = cfg?.columns?.[0] ?? panelConfig.formula?.explosion ?? null;
   const aliasesForField = aliasTargetField ? runWideAliasesByField[aliasTargetField] ?? {} : {};
 
   return (
     <div className="w-full min-w-0 flex flex-col h-full">
-      <PanelHeaderSlot>
-          <PanelFormulaBinder
-            formulaId={(panelConfig as any).formula_id ?? (panelConfig as any).observation_id ?? null}
-            onBind={(id) => onUpdatePanel({ formula_id: id, observation_id: undefined } as any)}
-          />
-          <RolePickerPopover
-          schema={PANEL_ROLE_SCHEMAS.table}
-          availableSchemas={schemas}
-          value={rolePickerValue}
-          onChange={handleRolePickerChange}
-          onOpenValueAliases={aliasTargetField ? () => setAliasManagerOpen(true) : undefined}
-        />
-      </PanelHeaderSlot>
+      <PanelHeaderSlot><></></PanelHeaderSlot>
       {aliasTargetField && (
         <ValueAliasManager
           open={aliasManagerOpen}
@@ -2164,8 +2237,7 @@ export function AnnotationResultsTable({
           runId={runId}
           fieldPath={aliasTargetField}
           aliases={aliasesForField}
-          schemaIds={rolePickerSchemaId ? [rolePickerSchemaId] : undefined}
-          filters={mergedFilters}
+          schemaIds={schemas.length === 1 ? [schemas[0].id] : undefined}
           onSave={(next) => {
             const current = getGlobalVariableSplitting() ?? { enabled: true };
             setGlobalVariableSplitting({
@@ -2380,7 +2452,7 @@ export function AnnotationResultsTable({
                    <TooltipTrigger asChild>
                      <button
                        type="button"
-                       onClick={() => setDensity(v)}
+                       onClick={() => handleSetDensity(v)}
                        className={cn(
                          'h-6 w-7 inline-flex items-center justify-center transition-colors',
                          density === v
@@ -2501,163 +2573,244 @@ export function AnnotationResultsTable({
             on the left, lists section on the right) no longer hugs the
             panel border. */}
         <div className="flex-1 overflow-auto min-w-0 px-3">
-          <Table className="min-w-0 w-full">
-            <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <TableHead 
-                      key={header.id} 
-                      className="whitespace-nowrap p-1.5 text-xs"
-                      style={{ 
-                        // Match the data row's width strategy: asset stays
-                        // fixed, schema columns flex to fill remaining space.
-                        width: header.column.id === 'asset' && header.getSize() > 0
-                          ? `${header.getSize()}px`
-                          : undefined,
-                        minWidth: header.column.columnDef.minSize ? `${header.column.columnDef.minSize}px` : undefined,
-                        maxWidth: header.column.columnDef.maxSize ? `${header.column.columnDef.maxSize}px` : undefined,
-                      }}
-                    >
-                      {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows?.length ? (
-                table.getRowModel().rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    data-state={row.getIsSelected() && "selected"}
-                    className={cn(
-                      "group relative cursor-pointer hover:bg-muted/30 transition-opacity",
-                      row.original.isChildRow && "bg-muted/5",
-                      row.original.hasChildren && "font-medium"
-                    )}
-                    onClick={() => {
-                      const record = row.original;
-                      
-                      if (record.hasChildren && record.children && record.children.length > 0) {
-                         // This is a CSV parent - toggle expansion
-                         startTransition(() => {
-                           setExpanded(prev => {
-                             const newExpanded = Object.assign({}, prev);
-                             newExpanded[record.id.toString()] = !prev[record.id.toString()];
-                             return newExpanded;
-                           });
-                         });
-                       } else {
-                        // This is a child row or regular asset - show details if it has results
-                        // For consolidated results (document + image), pass both results as an array
-                        if (record.consolidatedResultsMap && onResultSelect) {
-                          const consolidatedResults = Object.values(record.consolidatedResultsMap)[0];
-                          const resultsToShow: ResultWithSourceInfo[] = [];
-                          if (consolidatedResults?.document) resultsToShow.push(consolidatedResults.document);
-                          if (consolidatedResults?.image) resultsToShow.push(consolidatedResults.image);
-                          if (resultsToShow.length > 0) {
-                            onResultSelect(resultsToShow.length === 1 ? resultsToShow[0] : resultsToShow as any);
-                          }
-                        } else {
-                          const firstResult = Object.values(record.resultsMap)[0];
-                          if (firstResult && onResultSelect) {
-                            onResultSelect(firstResult);
-                          }
-                        }
-                      }
-                    }}
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell
-                        key={cell.id}
-                        className={cn(
-                          "align-top min-w-0 max-w-full",
-                          cell.column.id === 'asset' ? 'p-1.5' : 'px-1.5 py-1.5'
-                        )}
+          {isAggregateMode ? (
+            /* ── Aggregate mode ─────────────────────────────────────────── */
+            <Table className="min-w-0 w-full">
+              <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+                {aggregateTable.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id}>
+                    {headerGroup.headers.map((header) => (
+                      <TableHead key={header.id} className="whitespace-nowrap p-1.5 text-xs"
                         style={{
-                          // Asset and other fixed-purpose columns get explicit
-                          // widths from their column def. Schema columns leave
-                          // `width` unset so they flex to fill the row's
-                          // remaining horizontal space — that's what lets the
-                          // 3-section folded layout (strings | numerics |
-                          // lists) actually have room to render side-by-side
-                          // on wide screens, and gracefully wrap to 2 then 1
-                          // sections as the viewport narrows. With a fixed
-                          // 250px schema width, the sections could never fit
-                          // and the layout collapsed to 1 column always.
-                          width: cell.column.id === 'asset' && cell.column.getSize() > 0
-                            ? `${cell.column.getSize()}px`
-                            : undefined,
-                          minWidth: cell.column.columnDef.minSize ? `${cell.column.columnDef.minSize}px` : undefined,
-                          maxWidth: cell.column.columnDef.maxSize ? `${cell.column.columnDef.maxSize}px` : undefined,
+                          minWidth: header.column.columnDef.minSize ? `${header.column.columnDef.minSize}px` : undefined,
                         }}
                       >
-                        <div
-                          className={cn(
-                            'min-w-0 max-w-full',
-                            // Only compact bounds the row — comfortable and expanded
-                            // let rows grow naturally so x-scroll inside (e.g. mini-tables)
-                            // doesn't sit inside a y-clipped container.
-                            density === 'compact' ? 'overflow-auto' : 'overflow-x-auto',
-                          )}
-                          style={
-                            Number.isFinite(getDensitySpec(density).rowMaxHeight)
-                              ? { maxHeight: getDensitySpec(density).rowMaxHeight }
-                              : undefined
-                          }
+                        {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {aggregateTable.getRowModel().rows.length ? (
+                  aggregateTable.getRowModel().rows.map((row) => (
+                    <TableRow key={row.id} className="hover:bg-muted/30">
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell key={cell.id} className="align-middle min-w-0 max-w-full px-0 py-0.5"
+                          style={{ minWidth: cell.column.columnDef.minSize ? `${cell.column.columnDef.minSize}px` : undefined }}
                         >
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </div>
-                      </TableCell>
-                    ))}
-                    {renderRowActionsOverlay(row.original)}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={aggregateColumns.length} className="h-24 text-center text-muted-foreground text-sm">
+                      {isLoading ? 'Loading…' : 'No matching data for current filter.'}
+                    </TableCell>
                   </TableRow>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground text-sm">
-                    No results yet.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+                )}
+              </TableBody>
+            </Table>
+          ) : (
+            /* ── List mode ──────────────────────────────────────────────── */
+            <Table className="min-w-0 w-full">
+              <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id}>
+                    {headerGroup.headers.map((header) => (
+                      <TableHead
+                        key={header.id}
+                        className="whitespace-nowrap p-1.5 text-xs"
+                        style={{
+                          // Match the data row's width strategy: asset stays
+                          // fixed, schema columns flex to fill remaining space.
+                          width: header.column.id === 'asset' && header.getSize() > 0
+                            ? `${header.getSize()}px`
+                            : undefined,
+                          minWidth: header.column.columnDef.minSize ? `${header.column.columnDef.minSize}px` : undefined,
+                          maxWidth: header.column.columnDef.maxSize ? `${header.column.columnDef.maxSize}px` : undefined,
+                        }}
+                      >
+                        {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {table.getRowModel().rows?.length ? (
+                  table.getRowModel().rows.map((row) => (
+                    <TableRow
+                      key={row.id}
+                      data-state={row.getIsSelected() && "selected"}
+                      className={cn(
+                        "group relative cursor-pointer hover:bg-muted/30 transition-opacity",
+                        row.original.isChildRow && "bg-muted/5",
+                        row.original.hasChildren && "font-medium"
+                      )}
+                      onClick={() => {
+                        const record = row.original;
+
+                        if (record.hasChildren && record.children && record.children.length > 0) {
+                           // This is a CSV parent - toggle expansion
+                           startTransition(() => {
+                             setExpanded(prev => {
+                               const newExpanded = Object.assign({}, prev);
+                               newExpanded[record.id.toString()] = !prev[record.id.toString()];
+                               return newExpanded;
+                             });
+                           });
+                         } else {
+                          // This is a child row or regular asset - show details if it has results
+                          // For consolidated results (document + image), pass both results as an array
+                          if (record.consolidatedResultsMap && onResultSelect) {
+                            const consolidatedResults = Object.values(record.consolidatedResultsMap)[0];
+                            const resultsToShow: ResultWithSourceInfo[] = [];
+                            if (consolidatedResults?.document) resultsToShow.push(consolidatedResults.document);
+                            if (consolidatedResults?.image) resultsToShow.push(consolidatedResults.image);
+                            if (resultsToShow.length > 0) {
+                              onResultSelect(resultsToShow.length === 1 ? resultsToShow[0] : resultsToShow as any);
+                            }
+                          } else {
+                            const firstResult = Object.values(record.resultsMap)[0];
+                            if (firstResult && onResultSelect) {
+                              onResultSelect(firstResult);
+                            }
+                          }
+                        }
+                      }}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell
+                          key={cell.id}
+                          className={cn(
+                            "align-top min-w-0 max-w-full",
+                            cell.column.id === 'asset' ? 'p-1.5' : 'px-1.5 py-1.5'
+                          )}
+                          style={{
+                            // Asset and other fixed-purpose columns get explicit
+                            // widths from their column def. Schema columns leave
+                            // `width` unset so they flex to fill the row's
+                            // remaining horizontal space — that's what lets the
+                            // 3-section folded layout (strings | numerics |
+                            // lists) actually have room to render side-by-side
+                            // on wide screens, and gracefully wrap to 2 then 1
+                            // sections as the viewport narrows. With a fixed
+                            // 250px schema width, the sections could never fit
+                            // and the layout collapsed to 1 column always.
+                            width: cell.column.id === 'asset' && cell.column.getSize() > 0
+                              ? `${cell.column.getSize()}px`
+                              : undefined,
+                            minWidth: cell.column.columnDef.minSize ? `${cell.column.columnDef.minSize}px` : undefined,
+                            maxWidth: cell.column.columnDef.maxSize ? `${cell.column.columnDef.maxSize}px` : undefined,
+                          }}
+                        >
+                          <div
+                            className={cn(
+                              'min-w-0 max-w-full',
+                              // Only compact bounds the row — comfortable and expanded
+                              // let rows grow naturally so x-scroll inside (e.g. mini-tables)
+                              // doesn't sit inside a y-clipped container.
+                              density === 'compact' ? 'overflow-auto' : 'overflow-x-auto',
+                            )}
+                            style={
+                              Number.isFinite(getDensitySpec(density).rowMaxHeight)
+                                ? { maxHeight: getDensitySpec(density).rowMaxHeight }
+                                : undefined
+                            }
+                          >
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </div>
+                        </TableCell>
+                      ))}
+                      {renderRowActionsOverlay(row.original)}
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground text-sm">
+                      {isLoading ? 'Loading…' : 'No results yet.'}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
         </div>
       </div>
-      
+
       <div className="flex items-center justify-between py-1.5 px-1 flex-shrink-0 border-t text-xs">
-         <div className="flex items-center gap-1.5">
-           <Select
-             value={`${table.getState().pagination.pageSize}`}
-             onValueChange={(value) => { table.setPageSize(Number(value)) }}
-           >
-             <SelectTrigger className="h-6 w-[68px] text-xs">
-               <SelectValue />
-             </SelectTrigger>
-             <SelectContent side="top">
-               {[5, 10, 25, 50, 100, 500].map((pageSize) => (
-                 <SelectItem key={pageSize} value={`${pageSize}`} className="text-xs">
-                   {pageSize}
-                 </SelectItem>
-               ))}
-             </SelectContent>
-           </Select>
-           <span className="text-xs text-muted-foreground whitespace-nowrap">
-             of {table.getFilteredRowModel().rows.length}
-           </span>
-         </div>
-        <div className="flex items-center gap-1">
-           <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
-             <ChevronDown className="h-3 w-3 rotate-90" />
-           </Button>
-           <span className="text-xs text-muted-foreground font-mono whitespace-nowrap">
-             {table.getState().pagination.pageIndex + 1}/{table.getPageCount()}
-           </span>
-           <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
-             <ChevronDown className="h-3 w-3 -rotate-90" />
-           </Button>
-         </div>
+        {isAggregateMode ? (
+          /* Aggregate mode pagination */
+          <>
+            <div className="flex items-center gap-1.5">
+              <Select
+                value={`${aggregateTable.getState().pagination.pageSize}`}
+                onValueChange={(value) => aggregateTable.setPageSize(Number(value))}
+              >
+                <SelectTrigger className="h-6 w-[68px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent side="top">
+                  {[25, 50, 100, 250].map((ps) => (
+                    <SelectItem key={ps} value={`${ps}`} className="text-xs">{ps}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                of {aggregateTable.getFilteredRowModel().rows.length}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => aggregateTable.previousPage()} disabled={!aggregateTable.getCanPreviousPage()}>
+                <ChevronDown className="h-3 w-3 rotate-90" />
+              </Button>
+              <span className="text-xs text-muted-foreground font-mono whitespace-nowrap">
+                {aggregateTable.getState().pagination.pageIndex + 1}/{aggregateTable.getPageCount()}
+              </span>
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => aggregateTable.nextPage()} disabled={!aggregateTable.getCanNextPage()}>
+                <ChevronDown className="h-3 w-3 -rotate-90" />
+              </Button>
+            </div>
+          </>
+        ) : (
+          /* List mode pagination */
+          <>
+            <div className="flex items-center gap-1.5">
+              <Select
+                value={`${table.getState().pagination.pageSize}`}
+                onValueChange={(value) => { table.setPageSize(Number(value)) }}
+              >
+                <SelectTrigger className="h-6 w-[68px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent side="top">
+                  {[5, 10, 25, 50, 100, 500].map((pageSize) => (
+                    <SelectItem key={pageSize} value={`${pageSize}`} className="text-xs">
+                      {pageSize}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                of {table.getFilteredRowModel().rows.length}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>
+                <ChevronDown className="h-3 w-3 rotate-90" />
+              </Button>
+              <span className="text-xs text-muted-foreground font-mono whitespace-nowrap">
+                {table.getState().pagination.pageIndex + 1}/{table.getPageCount()}
+              </span>
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>
+                <ChevronDown className="h-3 w-3 -rotate-90" />
+              </Button>
+            </div>
+          </>
+        )}
       </div>
       <GuidedRetryModal
         isOpen={guidedRetryModal.isOpen}

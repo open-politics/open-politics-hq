@@ -417,10 +417,6 @@ const buildJsonSchemaProperties = (
             // If the field was originally a ref, preserve the target on the
             // emitted node so the parser can reconstruct the ref on reload.
             if (refTargetPath) property['x-ref'] = refTargetPath;
-            // Round-trip the intelligence-layer `x-axis` reference (M3).
-            // The schema editor doesn't yet author this; it preserves it from
-            // JSON-imported schemas so axes survive form-mediated edit cycles.
-            if ((rawField as any).xAxis) property['x-axis'] = (rawField as any).xAxis;
             properties[rawField.name] = property;
         }
     });
@@ -491,14 +487,6 @@ export const adaptSchemaFormDataToSchemaCreate = (formData: AnnotationSchemaForm
     });
 
     const justificationConfigs = collectJustificationConfigs(formData.structure);
-
-    // Intelligence-layer axes (M3) — merge the top-level `axes` block back
-    // onto output_contract when the form data carries one. The form UI does
-    // not yet author axes; this preserves axes from JSON-imported schemas
-    // so a form-mediated edit doesn't silently drop the block.
-    if ((formData as any).axes && typeof (formData as any).axes === 'object') {
-        outputContract.axes = (formData as any).axes;
-    }
 
     return {
         name: formData.name,
@@ -636,11 +624,6 @@ const parseRegularField = (name: string, schema: any, required: string[]): Advan
         description: schema.description,
         required: required.includes(name),
     };
-    // Round-trip the intelligence-layer `x-axis` reference (M3) so a
-    // form-mediated edit doesn't drop the axis binding silently.
-    if (typeof schema['x-axis'] === 'string') {
-        (field as any).xAxis = schema['x-axis'];
-    }
     if (schema.enum) field.enum = schema.enum;
     if (schema.minimum !== undefined) field.minimum = schema.minimum;
     if (schema.maximum !== undefined) field.maximum = schema.maximum;
@@ -741,19 +724,13 @@ export const adaptSchemaReadToSchemaFormData = (apiData: ClientAnnotationSchemaR
         structure.unshift({ id: nanoid(), name: 'document', fields: [] });
     }
 
-    // Hoist the intelligence-layer `axes` block off output_contract so a
-    // form-mediated edit doesn't silently drop it on save. The form UI does
-    // not yet author axes; round-trip preservation is what matters for v1.
-    const formData: AnnotationSchemaFormData & { axes?: Record<string, any> } = {
+    const formData: AnnotationSchemaFormData = {
       name: apiData.name,
       description: apiData.description || "",
       instructions: apiData.instructions ?? undefined,
       structure: structure,
       // TODO: Map global settings from backend to form if they exist
     };
-    if (outputContract && typeof outputContract === 'object' && outputContract.axes) {
-        formData.axes = outputContract.axes;
-    }
     return formData;
 };
 

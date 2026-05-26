@@ -42,7 +42,14 @@ import {
   tokenizeFormula,
   type MathToken,
 } from '@/lib/annotations/formulaMath';
-import type { Formula } from '@/client/types.gen';
+import {
+  AggregationPopover,
+  CompositionPopover,
+  DimensionPopover,
+  FieldPathPopover,
+  NamePopover,
+} from './tokenPopovers';
+import type { AnnotationSchemaRead, Formula } from '@/client';
 
 
 // ─── Token style table ───────────────────────────────────────────────────────
@@ -66,26 +73,47 @@ const tokenClass: Record<MathToken['kind'], string> = {
 };
 
 
-// ─── Stub popover content ────────────────────────────────────────────────────
+// ─── Popover content dispatch ────────────────────────────────────────────────
 
 
-function PopoverStub({ token, formula }: { token: MathToken; formula: Formula }) {
-  // First-cut placeholder: shows what the token IS and what slot it edits.
-  // Real popovers (FieldPathPopover, AggregationPopover, etc.) plug in here
-  // by kind once we build them.
+function PopoverContentForToken({
+  token, formula, schemas, onUpdate, onClose,
+}: {
+  token: MathToken;
+  formula: Formula;
+  schemas?: AnnotationSchemaRead[];
+  onUpdate: (next: Formula) => void;
+  onClose: () => void;
+}) {
+  if (!token.ref) return <UnknownSlot token={token} />;
+  const common = { formula, ref: token.ref, schemas, onUpdate, onClose };
+  if (token.kind === 'name')              return <NamePopover {...common} />;
+  if (token.kind === 'agg')               return <AggregationPopover {...common} />;
+  if (token.kind === 'field')             return <FieldPathPopover {...common} />;
+  if (token.kind === 'subscript-content') return <DimensionPopover {...common} />;
+  if (token.kind === 'composition')       return <CompositionPopover {...common} />;
+  // ``unknown`` tokens carry the raw derive expression text. If the expr
+  // references a saved formula via @name.col, route to the composition
+  // popover so the user can swap the target without dropping to text mode.
+  if (token.kind === 'unknown' && /@[A-Za-z_][A-Za-z0-9_]*/.test(token.text)) {
+    const match = token.text.match(/@([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?/);
+    if (match) {
+      const compRef = `composition:${match[1]}.${match[2] ?? ''}`;
+      return <CompositionPopover {...common} ref={compRef} />;
+    }
+  }
+  return <UnknownSlot token={token} />;
+}
+
+function UnknownSlot({ token }: { token: MathToken }) {
+  // Fallback for token kinds we haven't wired editors for yet (composition,
+  // filter literal — these stay text-mode-only for now).
   return (
     <div className="text-xs font-mono space-y-1 max-w-xs">
-      <div>
-        <span className="text-muted-foreground">token:</span>{' '}
-        <span className="font-semibold">{token.kind}</span>
-      </div>
-      {token.ref && (
-        <div className="text-muted-foreground">
-          ref: <span className="text-foreground">{token.ref}</span>
-        </div>
-      )}
-      <div className="text-muted-foreground italic pt-2">
-        editor for this slot — wired next pass
+      <div className="text-muted-foreground">
+        editor for <span className="font-semibold text-foreground">{token.kind}</span> tokens
+        not wired yet — use the <span className="font-semibold text-foreground">edit</span> button
+        to drop into text mode.
       </div>
     </div>
   );
@@ -99,31 +127,43 @@ interface TokenProps {
   token: MathToken;
   formula: Formula;
   editable: boolean;
+  schemas?: AnnotationSchemaRead[];
   onUpdate?: (formula: Formula) => void;
 }
 
-function FormulaToken({ token, formula, editable }: TokenProps) {
+function FormulaToken({ token, formula, editable, schemas, onUpdate }: TokenProps) {
+  const [open, setOpen] = useState(false);
   const cls = tokenClass[token.kind] ?? '';
 
-  // Non-clickable tokens
+  // Non-clickable tokens. ``unknown`` is clickable when it contains an
+  // ``@formula`` composition ref — the dispatch in PopoverContentForToken
+  // gates the popover so non-composition unknowns still pass through here
+  // as static text.
   const nonClickable: MathToken['kind'][] = [
     'eq', 'op', 'paren', 'where-kw', 'subscript-open', 'subscript-close',
   ];
-  if (!editable || nonClickable.includes(token.kind)) {
+  const unknownHasComp = token.kind === 'unknown'
+    && /@[A-Za-z_][A-Za-z0-9_]*/.test(token.text);
+  if (
+    !editable
+    || nonClickable.includes(token.kind)
+    || (token.kind === 'unknown' && !unknownHasComp)
+  ) {
+    // ``field`` tokens carry the full path in their resolved formula slot;
+    // show the dotted JSONB path on hover from the live formula lookup so
+    // the tooltip stays accurate after popover edits.
+    const tooltipPath = token.kind === 'field'
+      ? resolveFieldPath(formula, token.ref) ?? undefined
+      : undefined;
     return (
-      <span
-        className={cls}
-        // The original full path on field tokens lives on `ref` — show on hover.
-        title={token.kind === 'field' && token.ref ? token.ref : undefined}
-      >
+      <span className={cls} title={tooltipPath}>
         {token.text}
       </span>
     );
   }
 
-  // Clickable: open a popover
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -137,10 +177,33 @@ function FormulaToken({ token, formula, editable }: TokenProps) {
         </button>
       </PopoverTrigger>
       <PopoverContent side="bottom" align="start" className="w-auto p-2">
-        <PopoverStub token={token} formula={formula} />
+        <PopoverContentForToken
+          token={token}
+          formula={formula}
+          schemas={schemas}
+          onUpdate={(next) => onUpdate?.(next)}
+          onClose={() => setOpen(false)}
+        />
       </PopoverContent>
     </Popover>
   );
+}
+
+
+/** Lookup the live JSONB path for a ``field`` token's slot — used for the
+ *  hover tooltip so it always reflects the current formula body. */
+function resolveFieldPath(formula: Formula, slot?: string): string | null {
+  if (!slot) return null;
+  if (slot.startsWith('measure:')) {
+    const [, rest] = slot.split(':');
+    const [name, kind] = rest.split('/');
+    const m = formula.measures?.find(x => x.name === name);
+    if (!m) return null;
+    if (kind === 'path') return m.path ?? null;
+    if (kind === 'top_by') return m.top_by ?? null;
+  }
+  if (slot === 'weight/path') return formula.weight?.path ?? null;
+  return null;
 }
 
 
@@ -156,6 +219,7 @@ function renderTokenStream(
   tokens: MathToken[],
   formula: Formula,
   editable: boolean,
+  schemas?: AnnotationSchemaRead[],
   onUpdate?: (formula: Formula) => void,
 ): React.ReactNode[] {
   const out: React.ReactNode[] = [];
@@ -192,6 +256,7 @@ function renderTokenStream(
         token={tok}
         formula={formula}
         editable={editable}
+        schemas={schemas}
         onUpdate={onUpdate}
       />
     );
@@ -212,6 +277,11 @@ export interface FormulaMathLineProps {
   editable?: boolean;
   /** Called when an edit lands (popover change, text-edit blur). */
   onUpdate?: (formula: Formula) => void;
+  /** Schemas attached to the formula's run. Field/Dimension popovers
+   *  use this to populate the path tree. Optional — popovers degrade
+   *  gracefully when omitted (the field picker shows an empty-schema
+   *  message). */
+  schemas?: AnnotationSchemaRead[];
   /** Extra class for the outer container. */
   className?: string;
 }
@@ -220,6 +290,7 @@ export function FormulaMathLine({
   formula,
   editable = false,
   onUpdate,
+  schemas,
   className,
 }: FormulaMathLineProps) {
   const [textMode, setTextMode] = useState(false);
@@ -265,7 +336,7 @@ export function FormulaMathLine({
 
   return (
     <div className={cn('font-mono text-sm leading-relaxed flex flex-wrap items-baseline', className)}>
-      {renderTokenStream(tokens, formula, editable, onUpdate)}
+      {renderTokenStream(tokens, formula, editable, schemas, onUpdate)}
       {editable && (
         <button
           type="button"

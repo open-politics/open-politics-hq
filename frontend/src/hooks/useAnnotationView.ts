@@ -1,78 +1,72 @@
 /**
  * Data fetching hook for the /view endpoint.
  *
- * Each panel calls this hook with its own config. The hook merges local
- * filters + incoming scopes, picks the right materialization (rows,
- * aggregate, graph), and returns typed data ready to render.
+ * Each panel calls this hook with its own Formula + per-phase params.
+ * The hook constructs the unified :class:`ViewRequest`, posts to
+ * ``/view``, and returns the typed multi-phase response.
  *
- * Supports both JSON mode (default) and SSE streaming (for large result
- * sets). Re-fetches automatically when any input param changes, with
+ * Pipeline (single boundary, one Formula, multiple view packings):
+ *
+ * .. code-block::
+ *
+ *     [Frontend] → Formula → /view (FormulaQuery)
+ *                              ├── rows view
+ *                              ├── aggregate view
+ *                              └── graph view
+ *
+ * Supports both JSON mode (default) and SSE streaming (for large
+ * result sets). Re-fetches automatically when any input changes, with
  * debouncing for rapid scope cascades.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RunsService } from '@/client';
 import type {
   ViewRequest,
-  RowsConfig,
-  AggregateViewConfig,
-  GraphViewConfig as ClientGraphConfig,
-  FormulaViewConfig,
-  FilterSet,
+  RowsParams,
+  GraphParams,
+  Formula,
+  Scope,
   MergeMap,
+  AnnotationSchemaRead,
 } from '@/client';
-
-/** Legacy `dossier` config — the backend retired this phase when the
- *  Formula engine settled. Kept here so legacy callers (NodeProjection-
- *  Dossier, EdgeDetailHUD, ProjectionPreview, …) still typecheck while we
- *  migrate them to the new ``formula`` phase. Passing it is a no-op
- *  against the wire; the call falls through to whichever other phase is
- *  set. Remove once those callers are gone. */
-type DossierConfigLegacy = {
-  projection?: any;
-  limit?: number;
-  allow_unresolved?: boolean;
-};
-import type { ViewResponse } from '@/lib/annotations/types';
+import type { Panel, ViewResponse } from '@/lib/annotations/types';
+import { compileForPanel } from '@/lib/annotations/panelCompile';
 import { connectSSE } from '@/lib/sse';
 import { useStream } from './useStream';
 
 export interface UseAnnotationViewParams {
   infospaceId: number;
   runId: number;
-  // Materializations — include whichever the panel needs
-  rows?: RowsConfig;
-  aggregate?: AggregateViewConfig;
-  /**
-   * Multi-measure mode. When set (non-empty), the hook fans out one
-   * ``/view`` request per entry in parallel, then merges returned buckets by
-   * ``key`` so the result ``data.aggregate.buckets[*].stats`` carries every
-   * measure's ``{path: {fn: value}}`` on the same bucket. Ignored when
-   * ``aggregate`` (singular) is set — callers pick one mode.
-   */
-  aggregates?: AggregateViewConfig[];
-  graph?: ClientGraphConfig;
-  /** @deprecated legacy projection-driven dossier — backend phase
-   *  retired with the Formula engine settlement. Callers should migrate
-   *  to the ``formula`` phase. Keeping the param accepting a loose
-   *  shape so legacy callers typecheck while they migrate. */
-  dossier?: DossierConfigLegacy;
-  /** Formula phase — runs an :class:`Formula` and returns its
-   *  ``OutputRelation`` (group keys × measures + optional derives). The
-   *  new intelligence-layer materialisation. ``data.formula`` carries the
-   *  rows; the legacy ``dossier`` is for the projection path. */
-  formula?: FormulaViewConfig;
-  // Merged filters (local + scopes — caller uses mergeFiltersAndScopes)
-  filters?: FilterSet;
+  /** Either pass a Panel (preferred; compiled internally via panelCompile)
+   *  OR a raw Formula. Workspace / EvidenceDrawer / dialogs that build
+   *  transient formulas without a Panel use the Formula form. */
+  panel?: Panel;
+  schemas?: AnnotationSchemaRead[];
+  /** Raw Formula — only used when ``panel`` is not provided. */
+  formula?: Formula;
+  /** Projection list (value-blob paths to ship per rows-view row). */
+  fields?: string[];
+  /** Cross-panel filter contributions composed into the effective filter. */
+  incoming_scopes?: Scope[];
+  /** Panel-local value aliases. Run-wide aliases live on the server's
+   *  ``views_config.aliases`` and are loaded by the route. */
   merge_maps?: MergeMap[];
-  schema_ids?: number[];
-  asset_ids?: number[];
+  /** Additional run ids to roll up alongside ``runId``. */
   additional_run_ids?: number[];
-  // Control
+
+  // ── Per-phase toggles (presence = request that packing) ─────────────
+  rows?: RowsParams;
+  /** Empty ``{}`` toggles the aggregate phase; the Formula's
+   *  group + measures drive the actual computation. */
+  aggregate?: Record<string, unknown> | null;
+  graph?: GraphParams;
+
+  // ── Control ─────────────────────────────────────────────────────────
   enabled?: boolean;
   /** Use SSE streaming instead of JSON. Good for large result sets. */
   streaming?: boolean;
-  /** Debounce delay in ms for re-fetches (default: 200) */
+  /** Debounce delay in ms for re-fetches (default: 200). */
   debounceMs?: number;
 }
 
@@ -83,16 +77,7 @@ export interface UseAnnotationViewResult {
   refetch: () => void;
 }
 
-/** Stable JSON serialization for dependency comparison.
- *
- * `JSON.stringify(obj, arrayReplacer)` filters object keys recursively — only
- * keys in the replacer array survive at any nesting level. So calling it with
- * `Object.keys(obj).sort()` serializes the top level but erases every nested
- * object to `{}`, meaning changes inside ``aggregate.interval`` (etc.) never
- * alter the returned string — and the debounced effect that depends on
- * ``paramsKey`` never refires when only nested fields change. We walk
- * manually: sort object keys deterministically and stringify the result.
- */
+/** Stable JSON serialization for dependency comparison. */
 function stableKey(obj: any): string {
   const sortDeep = (v: any): any => {
     if (v === null || typeof v !== 'object') return v;
@@ -108,21 +93,29 @@ export function useAnnotationView(params: UseAnnotationViewParams): UseAnnotatio
   const {
     infospaceId,
     runId,
+    panel,
+    schemas,
+    formula: rawFormula,
+    fields,
+    incoming_scopes,
+    merge_maps,
+    additional_run_ids,
     rows,
     aggregate,
-    aggregates,
     graph,
-    dossier,
-    formula,
-    filters,
-    merge_maps,
-    schema_ids,
-    asset_ids,
-    additional_run_ids,
     enabled = true,
     streaming = false,
     debounceMs = 200,
   } = params;
+
+  // Compile panel → Formula at the request boundary. Pure derivation;
+  // any change to panel.panel_config or panel.formula yields a fresh
+  // request body. When called with a raw ``formula`` (Workspace,
+  // EvidenceDrawer), use that directly.
+  const formula: Formula | undefined = useMemo(() => {
+    if (panel && schemas) return compileForPanel(panel, schemas);
+    return rawFormula;
+  }, [panel, schemas, rawFormula]);
 
   const [data, setData] = useState<ViewResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -132,37 +125,27 @@ export function useAnnotationView(params: UseAnnotationViewParams): UseAnnotatio
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchIdRef = useRef(0);
 
-  // Build the request body
   const buildRequest = useCallback((): ViewRequest => {
-    const req: ViewRequest = {};
-    if (rows) req.rows = rows;
-    if (aggregate) req.aggregate = aggregate;
-    if (graph) req.graph = graph;
-    // ``dossier`` is a no-op on the wire — backend phase retired. Legacy
-    // callers (graph side panel) keep working at compile time but their
-    // call returns no rows until they migrate to ``formula``.
-    if (formula) req.formula = formula;
-    if (filters && (filters.conditions?.length ?? 0) > 0) req.filters = filters;
+    if (!formula) {
+      throw new Error('useAnnotationView: neither panel+schemas nor formula provided');
+    }
+    const req: ViewRequest = { formula };
+    if (fields && fields.length > 0) req.fields = fields;
+    if (incoming_scopes && incoming_scopes.length > 0) req.incoming_scopes = incoming_scopes;
     if (merge_maps && merge_maps.length > 0) req.merge_maps = merge_maps;
-    if (schema_ids && schema_ids.length > 0) req.schema_ids = schema_ids;
-    if (asset_ids && asset_ids.length > 0) req.asset_ids = asset_ids;
     if (additional_run_ids && additional_run_ids.length > 0) req.additional_run_ids = additional_run_ids;
+    if (rows) req.rows = rows;
+    if (aggregate !== undefined && aggregate !== null) req.aggregate = aggregate;
+    if (graph) req.graph = graph;
     return req;
-  }, [rows, aggregate, graph, dossier, formula, filters, merge_maps, schema_ids, asset_ids, additional_run_ids]);
+  }, [formula, fields, incoming_scopes, merge_maps, additional_run_ids, rows, aggregate, graph]);
 
   const fetchData = useCallback(async () => {
-    const hasMulti = !!aggregates && aggregates.length > 1;
-    // eslint-disable-next-line no-console
-    console.log('[useAnnotationView] fetchData', {
-      enabled, runId, infospaceId,
-      hasRows: !!rows, hasAgg: !!aggregate, hasMulti, hasGraph: !!graph,
-    });
-    if (!enabled || !runId || !infospaceId) return;
+    if (!enabled || !runId || !infospaceId || !formula) return;
 
-    // Must request at least one materialization
-    if (!rows && !aggregate && !hasMulti && !graph && !dossier && !formula) return;
+    // Must request at least one phase.
+    if (!rows && aggregate === undefined && !graph) return;
 
-    // Cancel any in-flight request
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -174,69 +157,7 @@ export function useAnnotationView(params: UseAnnotationViewParams): UseAnnotatio
     const requestBody = buildRequest();
 
     try {
-      if (hasMulti) {
-        // Fan out one ``/view`` request per measure. Each response carries
-        // ``aggregate.buckets[].stats = {path: {fn: value}}`` for its one
-        // measure. Merge them into a single aggregate phase keyed by
-        // ``bucket.key`` so the caller sees one view with all measures
-        // attached. ``count`` is taken from the first response (backends
-        // return the same count for equal filter/group_by).
-        const multi = aggregates!;
-        const responses = await Promise.all(
-          multi.map((ac) => {
-            const body: ViewRequest = { ...requestBody, aggregate: ac };
-            // eslint-disable-next-line no-console
-            console.log('[useAnnotationView] /view multi', ac);
-            return RunsService.viewRun({
-              infospaceId,
-              runId,
-              requestBody: body,
-            }) as unknown as Promise<ViewResponse>;
-          }),
-        );
-
-        if (id !== fetchIdRef.current) return;
-
-        const bucketMap = new Map<string, any>();
-        let fieldPath = '';
-        let interval: string | null | undefined = null;
-        let totalCount = 0;
-        let splitFieldPath: string | null | undefined = null;
-        for (const resp of responses) {
-          const agg = resp?.aggregate;
-          if (!agg?.buckets) continue;
-          fieldPath = fieldPath || agg.field_path;
-          interval = interval ?? agg.interval;
-          splitFieldPath = splitFieldPath ?? agg.split_field_path;
-          for (const b of agg.buckets) {
-            const prev = bucketMap.get(b.key);
-            if (!prev) {
-              bucketMap.set(b.key, {
-                key: b.key,
-                count: b.count,
-                stats: b.stats ? { ...b.stats } : {},
-                split_value: b.split_value,
-              });
-            } else {
-              // Merge stats across measures; count stays — equal filters.
-              if (b.stats) prev.stats = { ...prev.stats, ...b.stats };
-            }
-          }
-        }
-        totalCount = Array.from(bucketMap.values()).reduce((s, b) => s + b.count, 0);
-        const merged: ViewResponse = {
-          aggregate: {
-            buckets: Array.from(bucketMap.values()),
-            field_path: fieldPath,
-            interval: interval ?? null,
-            total_count: totalCount,
-            split_field_path: splitFieldPath ?? null,
-          },
-        } as ViewResponse;
-        setData(merged);
-        setIsLoading(false);
-      } else if (streaming) {
-        // SSE mode — accumulate phases
+      if (streaming) {
         const partial: ViewResponse = {};
         await connectSSE({
           url: `/api/v1/infospaces/${infospaceId}/runs/${runId}/view`,
@@ -249,8 +170,6 @@ export function useAnnotationView(params: UseAnnotationViewParams): UseAnnotatio
               if (event.type === 'rows') partial.rows = parsed;
               else if (event.type === 'aggregate') partial.aggregate = parsed;
               else if (event.type === 'graph') partial.graph = parsed;
-              else if (event.type === 'dossier') partial.dossier = parsed;
-              else if (event.type === 'formula') partial.formula = parsed;
             } catch { /* skip malformed events */ }
           },
           onError: (err) => {
@@ -262,9 +181,6 @@ export function useAnnotationView(params: UseAnnotationViewParams): UseAnnotatio
           setIsLoading(false);
         }
       } else {
-        // JSON mode
-        // eslint-disable-next-line no-console
-        console.log('[useAnnotationView] /view', requestBody);
         const response = await RunsService.viewRun({
           infospaceId,
           runId,
@@ -283,13 +199,12 @@ export function useAnnotationView(params: UseAnnotationViewParams): UseAnnotatio
         setIsLoading(false);
       }
     }
-  }, [infospaceId, runId, enabled, streaming, buildRequest, rows, aggregate, aggregates, graph, dossier, formula]);
+  }, [infospaceId, runId, enabled, streaming, buildRequest, rows, aggregate, graph]);
 
   // Debounced effect — re-fetches when any param changes
   const paramsKey = stableKey({
-    infospaceId, runId, rows, aggregate, aggregates, graph, dossier, formula,
-    filters, merge_maps, schema_ids, asset_ids, additional_run_ids,
-    enabled, streaming,
+    infospaceId, runId, formula, fields, incoming_scopes, merge_maps,
+    additional_run_ids, rows, aggregate, graph, enabled, streaming,
   });
 
   useEffect(() => {
@@ -299,10 +214,6 @@ export function useAnnotationView(params: UseAnnotationViewParams): UseAnnotatio
       return;
     }
 
-    // Mark loading immediately when params change so consumers don't render
-    // stale `data` against a freshly-changed config (e.g. toggling Grouped
-    // would otherwise render timeline buckets as categorical bars during
-    // the 200ms debounce window).
     setIsLoading(true);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
@@ -315,7 +226,6 @@ export function useAnnotationView(params: UseAnnotationViewParams): UseAnnotatio
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paramsKey]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
@@ -327,12 +237,9 @@ export function useAnnotationView(params: UseAnnotationViewParams): UseAnnotatio
     fetchData();
   }, [fetchData]);
 
-  // ── Live family refresh ─────────────────────────────────────────────────
-  // Subscribe to the run's presence stream. When an extension run completes
-  // (or any descendant emits progress / terminal events), the backend mirrors
-  // the event onto the parent's stream via FamilyStreamWriter — so panels
-  // bound to ``runId`` automatically refetch the moment new annotations land,
-  // without a manual reload button or polling.
+  // Live family refresh — subscribe to the run's presence stream.
+  // When an extension run completes, refetch automatically so panels
+  // bound to the parent see new annotations without a manual reload.
   useStream<{
     run_id?: number;
     parent_run_id?: number | null;
@@ -345,10 +252,6 @@ export function useAnnotationView(params: UseAnnotationViewParams): UseAnnotatio
     resourceId: runId ?? 0,
     enabled: enabled && !!infospaceId && !!runId,
     onEvent: (event) => {
-      // Refetch only on terminal events. The existing polling path covers
-      // mid-flight progress (rows fill in live as the parent processes); the
-      // nudge here is the missing piece — telling panels to refetch when an
-      // extension completes after the parent has long since hit COMPLETED.
       const t = event.type;
       if (t === 'completed' || t === 'completed_with_errors' || t === 'failed') {
         fetchData();

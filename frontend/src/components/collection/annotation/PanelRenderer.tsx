@@ -15,6 +15,7 @@ import AnnotationResultsPieChart from './AnnotationResultsPieChart';
 import AnnotationResultsTable from './AnnotationResultsTable';
 import AnnotationResultsMap, { MapPoint } from './AnnotationResultsMap';
 import AnnotationResultsGraph from './AnnotationResultsGraph';
+import { FormulaPreview } from './formulas/FormulaPreview';
 import { AnnotationTimeAxisControls } from './AnnotationTimeAxisControls';
 import { UnifiedFilterControls } from './AnnotationFilterControls';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -40,6 +41,8 @@ import { ScopeBadge, ScopeTargetPicker } from './ScopeOverlay';
 import { createScopeFromSelection, GestureType } from '@/lib/annotations/scopes';
 import { useDragScope, DraggableScopeChip } from './panels/DragScopeProvider';
 import { PanelHeaderSlotProvider, PanelHeaderSlotRenderer } from './panels/PanelHeaderSlot';
+import { PanelConfigPopover } from './panels/PanelConfigPopover';
+import { isPanelConfigured } from '@/lib/annotations/panelCompile';
 
 // Grid constants
 const GRID_COLUMNS = 12;
@@ -541,6 +544,37 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   // =============================================================================
 
   const renderPanelContent = () => {
+    // New dispatch (P3): every panel carries ``panel.formula`` (the data
+    // spec, edited via RolePicker) + ``panel.panel_config`` (the typed
+    // viz map per panel type, also edited via RolePicker) + optional
+    // ``panel.formula_ref`` (pointer to a saved Workspace formula).
+    //
+    // The effective Formula = ``formula_ref`` resolution (if set) ELSE
+    // ``panel.formula``. Renderers read it via useAnnotationView; the
+    // panel object itself stays the single source of truth.
+    //
+    // Empty-state heuristic: when the panel's data spec has neither
+    // group nor measures and the panel_config has no roles set, the
+    // panel is unconfigured — prompt the user to open RolePicker.
+
+    // Single source of truth for "is this panel configured?" — same
+    // predicate the PanelConfigPopover uses for its warning badge.
+    // Tables and measurements have sensible defaults so they always
+    // pass; the other types need at least one data-side role picked.
+    const configured = isPanelConfigured(panel as any);
+
+    if (!configured) {
+      return (
+        <div className="h-full flex flex-col items-center justify-center text-center px-6 py-8 text-xs text-muted-foreground gap-2">
+          <div className="italic">Panel not configured.</div>
+          <div className="text-[11px]">
+            Open the configure popover in the header to pick fields, time
+            source, and filters.
+          </div>
+        </div>
+      );
+    }
+
     switch(panel.type) {
       case 'table':
         return (
@@ -852,9 +886,19 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         {/* Panel controls */}
         <div className="flex items-center ml-1 flex-shrink-0">
           <ButtonGroup >
-            {/* Per-panel extras (RolePickerPopover) slot in here as true
-                direct children of ButtonGroup — keeps the segmented look. */}
+            {/* Per-panel display knobs (mark, layout, density, geocoding,
+                graph edits, etc.) mount here via PanelHeaderSlot — they stay
+                on the renderer because they're per-type and don't cross-cut.
+                The PanelConfigPopover (next sibling) carries the
+                cross-cutting concerns: filter, time source, roles,
+                explosion, and the Advanced summary of Workspace-only
+                Formula features. */}
             <PanelHeaderSlotRenderer />
+            <PanelConfigPopover
+              panel={panel}
+              schemas={allSchemas}
+              onUpdate={(next) => onUpdatePanel(panel.id, next as any)}
+            />
             <Button
               variant="ghost"
               size="sm"
@@ -868,16 +912,6 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
             >
               <Edit2 className="h-3 w-3" />
             </Button>
-            <UnifiedFilterControls
-              filterSet={migratedFilterSet ?? { logic: 'and', rules: [] }}
-              onFilterSetChange={handleFilterChange}
-              timeAxisConfig={panel.settings?.timeAxisConfig || null}
-              onTimeAxisConfigChange={(config) => {
-                handlePanelSettingsUpdate({ timeAxisConfig: config });
-              }}
-              showTimeControls={true}
-              allSchemas={allSchemas}
-            />
             <Popover open={showLayoutControls} onOpenChange={setShowLayoutControls}>
               <PopoverTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">

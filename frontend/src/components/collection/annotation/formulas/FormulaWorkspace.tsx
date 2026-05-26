@@ -45,13 +45,15 @@ export interface FormulaWorkspaceProps {
 }
 
 function newStubFormula(name: string): Omit<Formula, 'id'> {
+  // Merge maps are no longer carried on Formula (run/panel/scope merge
+  // maps tunnel through FormulaQuery at execution time). The stub is a
+  // pure data spec.
   return {
     name,
     description: undefined,
     schema_id: null,
     explosion: null,
     filter: { logic: 'and', conditions: [] },
-    merge_maps: [],
     group: [],
     weight: null,
     measures: [{ name: 'count', agg: 'count' }],
@@ -60,7 +62,7 @@ function newStubFormula(name: string): Omit<Formula, 'id'> {
     output_keys: [],
     order_by: null,
     version: 1,
-  };
+  } as Omit<Formula, 'id'>;
 }
 
 export const FormulaWorkspace: React.FC<FormulaWorkspaceProps> = ({
@@ -83,7 +85,11 @@ export const FormulaWorkspace: React.FC<FormulaWorkspaceProps> = ({
   );
 
   const [newPrompt, setNewPrompt] = useState('');
+  const [generating, setGenerating] = useState(false);
   const [chatMounted, setChatMounted] = useState(true);
+  // Per-formula regeneration state — disables the row's regenerate button
+  // while the LLM call is in flight.
+  const [regenerating, setRegenerating] = useState<Record<string, boolean>>({});
 
   // Per-formula prompt history (in-memory only for v1; persisting prompts
   // alongside formulas is a follow-up).
@@ -104,33 +110,43 @@ export const FormulaWorkspace: React.FC<FormulaWorkspaceProps> = ({
     setNewPrompt('');
   }
 
-  function handleCreateFromPrompt() {
+  async function handleCreateFromPrompt() {
     if (!newPrompt.trim()) {
       handleCreateBlank();
       return;
     }
-    // Stub: the prompt → Formula LLM endpoint is owed. For now, create a
-    // blank formula with the prompt stashed as the description so the
-    // author can manually flesh it out and re-prompt later.
-    const created = addFormula({
-      ...newStubFormula(`formula_${formulas.length + 1}`),
-      description: newPrompt.trim(),
-    } as any);
-    setNewPrompt('');
-    if (!created) return;
-    toast.info('Prompt-based generation not yet wired to the backend — stashed your prompt on the formula. Edit the math line directly for now.');
+    setGenerating(true);
+    try {
+      const { RunsService } = await import('@/client');
+      const generated = await RunsService.generateFormulaFromPrompt({
+        infospaceId,
+        runId,
+        requestBody: { prompt: newPrompt.trim() },
+      });
+      addFormula({
+        ...generated,
+        description: generated.description ?? newPrompt.trim(),
+      } as any);
+      setNewPrompt('');
+      toast.success(`Generated formula ${generated.name ?? ''}`);
+    } catch (e: any) {
+      const detail = e?.body?.detail ?? e?.message ?? 'unknown';
+      toast.error(`Generation failed: ${detail}`);
+    } finally {
+      setGenerating(false);
+    }
   }
 
   function handleFormulaUpdate(id: string, next: Formula) {
-    // Preserve id; merge new fields onto the saved entry. The store stamps
-    // updated_at; the backend ignores the timestamps.
+    // Preserve id; merge new fields onto the saved entry. Merge maps
+    // are not on Formula any more — they belong to Run/Panel/Scope and
+    // are folded by FormulaQuery at execution time.
     updateFormula(id, {
       name: next.name,
       description: next.description ?? undefined,
       schema_id: next.schema_id ?? null,
       explosion: next.explosion ?? null,
       filter: next.filter,
-      merge_maps: next.merge_maps,
       group: next.group,
       weight: next.weight ?? null,
       measures: next.measures,
@@ -141,38 +157,48 @@ export const FormulaWorkspace: React.FC<FormulaWorkspaceProps> = ({
     } as any);
   }
 
-  async function handleSnapshot(id: string) {
-    const f = formulas.find(x => x.id === id);
-    if (!f) return;
-    try {
-      const { RunsService } = await import('@/client');
-      const obs = await RunsService.createObservationSnapshot({
-        infospaceId,
-        runId,
-        requestBody: { formula_name: f.name },
-      });
-      toast.success(`Snapshot saved (${(obs as any)?.output_blob?.length ?? 0} rows).`);
-      // Refetch the run so observations[] reflects the new entry. The
-      // workspace re-renders on the next store tick.
-      const fresh = await RunsService.getRun({ infospaceId, runId });
-      const raw = (fresh as any)?.views_config?.[0];
-      if (raw) useAnnotationRunStore.getState().setDashboardConfig(raw);
-    } catch (e: any) {
-      toast.error(`Snapshot failed: ${e?.body?.detail ?? e?.message ?? 'unknown'}`);
-    }
+  async function handleSnapshot(_id: string) {
+    // Observation snapshots are deferred to v1.5 — the primitive exists
+    // on the backend but the citation/dossier UX isn't built. Calling
+    // the route would create a snapshot that can't be displayed, cited,
+    // or rendered. Surface a clear message instead of silently failing.
+    toast.info('Snapshots return in v1.5 — pair with citation/dossier work.');
   }
 
   function handlePushToPanel(id: string) {
     const f = formulas.find(x => x.id === id);
     if (!f) return;
     const panelType = suggestPanelType(f);
+    // ``formula_ref`` binds the new panel to this saved formula. Future
+    // edits in the Workspace propagate to every panel binding it.
     addPanel({
       type: panelType,
       name: f.name,
-      formula_id: f.id,
+      formula_ref: f.id,
       settings: {},
-    } as any);
+    });
     toast.success(`Created a ${panelType} panel bound to ${f.name}.`);
+  }
+
+  // Pull-from-panel: copy a panel's compiled Formula into the Workspace as
+  // a new draft. One-way (no live link). The draft is then editable as any
+  // other saved formula. Picker UI surfaced in the right column.
+  const panels = useAnnotationRunStore(
+    useShallow(s => (s.dashboardConfig?.panels ?? []) as any[]),
+  );
+
+  function handlePullFromPanel(panelId: string) {
+    const panel = panels.find(p => p.id === panelId);
+    if (!panel?.formula) return;
+    // Clone the panel's Formula, give it a fresh name. Strip the id so the
+    // store stamps a new one.
+    const { id: _drop, ...body } = panel.formula as Formula;
+    addFormula({
+      ...body,
+      name: `from_${panel.name}`,
+      description: `Pulled from panel "${panel.name}"`,
+    } as any);
+    toast.success(`Pulled "${panel.name}"'s formula into the workspace.`);
   }
 
   function handleDelete(id: string) {
@@ -182,20 +208,52 @@ export const FormulaWorkspace: React.FC<FormulaWorkspaceProps> = ({
     removeFormula(id);
   }
 
-  async function handleObservationDelete(obsId: string) {
-    if (!confirm('Delete this observation?')) return;
+  async function handleRegenerate(id: string, prompt: string) {
+    if (!prompt.trim()) {
+      toast.error('Type a prompt before regenerating.');
+      return;
+    }
+    setRegenerating(s => ({ ...s, [id]: true }));
     try {
       const { RunsService } = await import('@/client');
-      await RunsService.deleteObservationSnapshot({
-        infospaceId, runId, obsId,
+      const generated = await RunsService.generateFormulaFromPrompt({
+        infospaceId,
+        runId,
+        requestBody: { prompt: prompt.trim() },
       });
-      const fresh = await RunsService.getRun({ infospaceId, runId });
-      const raw = (fresh as any)?.views_config?.[0];
-      if (raw) useAnnotationRunStore.getState().setDashboardConfig(raw);
+      // Keep the original id (and the user's name unless the LLM proposed a
+      // new one) — this is an in-place replacement, not a new formula.
+      updateFormula(id, {
+        name: generated.name,
+        description: generated.description ?? prompt.trim(),
+        schema_id: generated.schema_id ?? null,
+        explosion: generated.explosion ?? null,
+        filter: generated.filter,
+        group: generated.group,
+        weight: generated.weight ?? null,
+        measures: generated.measures,
+        derives: generated.derives,
+        snippet: generated.snippet ?? null,
+        output_keys: generated.output_keys,
+        order_by: generated.order_by ?? null,
+      } as any);
+      toast.success(`Regenerated ${generated.name}.`);
     } catch (e: any) {
-      toast.error(`Delete failed: ${e?.body?.detail ?? e?.message ?? 'unknown'}`);
+      const detail = e?.body?.detail ?? e?.message ?? 'unknown';
+      toast.error(`Regeneration failed: ${detail}`);
+    } finally {
+      setRegenerating(s => {
+        const next = { ...s };
+        delete next[id];
+        return next;
+      });
     }
   }
+
+  // Observation cite / push-to-panel / delete handlers all deferred to
+  // v1.5 alongside the snapshot/dossier primitive. The ObservationCard
+  // import + observations selector remain so the build doesn't churn
+  // when the feature returns.
 
   // ── Render ──────────────────────────────────────────────────────────────
 
@@ -250,9 +308,9 @@ export const FormulaWorkspace: React.FC<FormulaWorkspaceProps> = ({
                 variant="default"
                 className="h-8 text-xs"
                 onClick={handleCreateFromPrompt}
-                disabled={!newPrompt.trim() && false /* blank create also OK */}
+                disabled={generating}
               >
-                {newPrompt.trim() ? 'Generate' : 'Blank'}
+                {generating ? '…' : newPrompt.trim() ? 'Generate' : 'Blank'}
               </Button>
               <Button
                 size="sm"
@@ -265,6 +323,50 @@ export const FormulaWorkspace: React.FC<FormulaWorkspaceProps> = ({
               </Button>
             </div>
           </section>
+
+          {/* Pull from panel — copy a panel's compiled Formula in as a
+              draft. One-way; the new formula is editable as any other. */}
+          {panels.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
+                Pull from panel
+              </h2>
+              <div className="flex flex-wrap gap-1.5">
+                {panels.map((p: any) => {
+                  const hasFormula =
+                    !!p.formula && (
+                      (p.formula.group?.length ?? 0) > 0 ||
+                      (p.formula.measures?.length ?? 0) > 0 ||
+                      (p.formula.filter?.conditions?.length ?? 0) > 0
+                    );
+                  if (!hasFormula) return null;
+                  return (
+                    <Button
+                      key={p.id}
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-[11px] font-mono"
+                      onClick={() => handlePullFromPanel(p.id)}
+                      title={`Pull ${p.name}'s formula into the workspace`}
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      {p.name}
+                      <span className="ml-1 text-muted-foreground">[{p.type}]</span>
+                    </Button>
+                  );
+                })}
+              </div>
+              {panels.every((p: any) => {
+                const f = p.formula;
+                return !f || (!f.group?.length && !f.measures?.length && !f.filter?.conditions?.length);
+              }) && (
+                <div className="text-[11px] text-muted-foreground italic">
+                  No panels with configured formulas yet — pull is available
+                  once a panel has roles or filters set.
+                </div>
+              )}
+            </section>
+          )}
 
           <Separator />
 
@@ -289,14 +391,14 @@ export const FormulaWorkspace: React.FC<FormulaWorkspaceProps> = ({
                       formula={f}
                       infospaceId={infospaceId}
                       runId={runId}
+                      schemas={schemas}
                       prompt={promptByFormula[f.id] ?? f.description ?? null}
                       onUpdate={(next) => handleFormulaUpdate(f.id, next)}
                       onSnapshot={() => handleSnapshot(f.id)}
                       onPushToPanel={() => handlePushToPanel(f.id)}
                       onDelete={() => handleDelete(f.id)}
-                      onRegenerate={(_prompt) => {
-                        toast.info('Prompt-based regeneration not yet wired — edit the math line directly for now.');
-                      }}
+                      onRegenerate={(prompt) => handleRegenerate(f.id, prompt)}
+                      regenerating={!!regenerating[f.id]}
                     />
                   </div>
                 ))}
@@ -304,28 +406,11 @@ export const FormulaWorkspace: React.FC<FormulaWorkspaceProps> = ({
             )}
           </section>
 
-          {/* Observations list — only show the section header when there
-              are observations, so the workspace stays quiet pre-snapshot. */}
-          {observations.length > 0 && (
-            <>
-              <Separator />
-              <section className="space-y-2">
-                <h2 className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
-                  Observations <span className="text-foreground">({observations.length})</span>
-                </h2>
-                <div className="space-y-2">
-                  {observations.map(obs => (
-                    <ObservationCard
-                      key={obs.id}
-                      observation={obs}
-                      onDelete={() => handleObservationDelete(obs.id)}
-                      // view rows / cite / push to panel — TODO follow-up
-                    />
-                  ))}
-                </div>
-              </section>
-            </>
-          )}
+          {/* Observation snapshot UI deferred to v1.5. The snapshot
+              primitive (frozen Formula output, cite-stable) returns when
+              citation/dossier work is funded. For now, the Workspace
+              authors live SavedFormulas; panels bind via formula_ref;
+              edits propagate. See docs/INTELLIGENCE.md § roadmap. */}
 
           <div className="h-32" /> {/* bottom breathing room above the docked chat */}
         </div>

@@ -20,77 +20,32 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { RolePicker, type RolePickerProps } from './RolePicker';
-import { ProjectionPreview } from './ProjectionPreview';
 import type { PanelProjection } from '@/lib/annotations/types';
 
 export interface RolePickerPopoverProps extends RolePickerProps {
   /** Extra classes for the trigger button. */
   triggerClassName?: string;
-  /** When set alongside ``runId`` and ``previewProjection``, render the
-   *  live projection preview (row counts + sample rows) below the picker.
-   *  Opt-in — panels without an entity-typed projection skip this. */
+  /** @deprecated — preview embed retired with the projection phase. Kept
+   *  so legacy panel call sites typecheck while they migrate. */
   infospaceId?: number;
+  /** @deprecated — see above. */
   runId?: number;
-  /** Hosting panel's existing projection. The popover synthesises an
-   *  in-flight projection from the picker's current value plus this
-   *  baseline (so legacy ``field_mappings`` round-trip into the preview). */
+  /** @deprecated — see above. */
   previewProjection?: PanelProjection | null;
-  /** Roles on the picker schema that map to projection roles (default:
-   *  every role with ``multi: true`` is treated as a projection role). */
+  /** @deprecated — see above. */
   projectionRoles?: string[];
 }
 
 export function RolePickerPopover({
   triggerClassName,
-  infospaceId,
-  runId,
-  previewProjection,
-  projectionRoles,
+  infospaceId: _iid,
+  runId: _rid,
+  previewProjection: _prev,
+  projectionRoles: _pr,
   ...rolePickerProps
 }: RolePickerPopoverProps) {
   const [open, setOpen] = useState(false);
   const { schema, availableSchemas, value } = rolePickerProps;
-
-  // Synthesise an in-flight PanelProjection from the picker's current value
-  // plus the panel's existing projection. Picker roles that resolve to
-  // projection roles (entity-typed multi roles) flow into ``roles``;
-  // single-path roles flow into ``field_mappings`` for legacy renderers.
-  const inflightProjection: PanelProjection | null = useMemo(() => {
-    if (!previewProjection) return null;
-    const projectionRoleSet = new Set(
-      projectionRoles
-        ?? schema.roles.filter(r => r.multi).map(r => r.key),
-    );
-    const baselineRoles = previewProjection.roles ?? {};
-    const nextRoles: Record<string, { paths: string[]; entity_type?: string | null }> = {};
-    const nextFieldMappings: Record<string, string | string[]> = {
-      ...(previewProjection.field_mappings ?? {}),
-    };
-    for (const role of schema.roles) {
-      const fields = value.fieldsByRole[role.key] ?? [];
-      if (projectionRoleSet.has(role.key)) {
-        if (fields.length > 0) {
-          nextRoles[role.key] = {
-            paths: fields,
-            entity_type: baselineRoles[role.key]?.entity_type ?? null,
-          };
-        }
-      } else {
-        if (fields.length === 0) {
-          delete nextFieldMappings[role.key];
-        } else {
-          nextFieldMappings[role.key] = role.multi ? fields : fields[0];
-        }
-      }
-    }
-    return {
-      ...previewProjection,
-      field_mappings: nextFieldMappings,
-      roles: nextRoles,
-    };
-  }, [previewProjection, projectionRoles, schema.roles, value.fieldsByRole]);
-
-  const showPreview = !!(infospaceId && runId && inflightProjection);
 
   const selectedSchema = useMemo(
     () => availableSchemas.find((s) => s.id === value.schemaId) ?? null,
@@ -158,14 +113,6 @@ export function RolePickerPopover({
           {/* Inner picker skips its own collapse toggle — the popover *is*
               the collapse surface. */}
           <RolePicker {...rolePickerProps} alwaysOpen />
-          {showPreview && (
-            <ProjectionPreview
-              infospaceId={infospaceId!}
-              runId={runId!}
-              projection={inflightProjection}
-              compact
-            />
-          )}
         </div>
       </PopoverContent>
     </Popover>

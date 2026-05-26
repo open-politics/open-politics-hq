@@ -11,14 +11,12 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2, GitMerge, Database, Fingerprint, Check, Box, Square, Maximize2, Minimize2, Target } from 'lucide-react';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { AnnotationSchemaRead, AssetRead, KnowledgeGraphRead, SimilarPairRead } from '@/client';
-import type { GraphViewConfig as ClientGraphConfig } from '@/client';
-import { FormattedAnnotation, TimeAxisConfig, PanelConfig, ViewGraphPhase } from '@/lib/annotations/types';
+import { FormattedAnnotation, TimeAxisConfig, PanelConfig, GraphVizConfig } from '@/lib/annotations/types';
 import { KnowledgeGraphsService, AnnotationsService, EntitiesService } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
 import { VariableSplittingConfig, applySplittingToResults } from './VariableSplittingControls';
 import { useAnnotationView } from '@/hooks/useAnnotationView';
-import { mergeFiltersAndScopes } from '@/lib/annotations/scopes';
 import { useAssetDetail } from '@/components/collection/assets/Views/AssetDetailProvider';
 import {
   getAnnotationFieldValue,
@@ -41,20 +39,17 @@ import { CompareBySubjectButton } from '@/components/collection/graph/forcegraph
 import { PanelFormulaBinder } from './formulas/PanelFormulaBinder';
 import { PinBoard as PinBoardOverlay } from '@/components/collection/graph/forcegraph/PinBoard';
 import { useCanonEntityLookup } from '@/hooks/useCanonEntityLookup';
-import { useResolvedProjection } from '@/hooks/useResolvedProjection';
 import { resolveEntityColor } from '@/lib/annotations/colors';
-import { type RolePickerValue } from './panels/RolePicker';
-import { RolePickerPopover } from './panels/RolePickerPopover';
 import { PanelHeaderSlot } from './panels/PanelHeaderSlot';
 import { EmptyStateCard } from './panels/EmptyStateCard';
 import { ValueAliasManager } from './panels/ValueAliasManager';
 import { EvidenceDrawer } from './panels/EvidenceDrawer';
-import { PANEL_ROLE_SCHEMAS } from '@/lib/annotations/panelRoleSchema';
 import { walkOutputContract, flattenFieldPaths } from '@/lib/annotations/fieldPaths';
 import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
 import { effectiveMergeMaps } from '@/lib/annotations/valueAliases';
 import { createScopeFromSelection, createCooccursScope, entityPathsFromSchema, focusedEntityNamesFromFilter, pushCooccursToDashboard } from '@/lib/annotations/scopes';
 import type { Scope } from '@/lib/annotations/types';
+import type { FilterSet } from '@/client';
 
 /** Radix Select forbids `value=""` on items; use this for “infospace default” instead of clearing the select. */
 const CURATE_TARGET_GRAPH_INFOSPACE_DEFAULT = '__infospace_default__';
@@ -258,89 +253,56 @@ export default function AnnotationResultsGraph({
   const dashboardName = useAnnotationRunStore(s => s.dashboardConfig?.name ?? null);
   const broadcastAddScope = useAnnotationRunStore(s => s.addScope);
 
-  // Resolve the projection: if the panel has a formula_id binding, the
-  // projection comes from dashboardConfig.formulas[id]; otherwise the
-  // inline panelConfig.projection. Components below read this single source.
-  const { projection: resolvedProjection, formulaName: boundFormulaName } =
-    useResolvedProjection(panelConfig);
-
   // Canon entity lookup — graph nodes carry labels/types but not canon ids.
-  // The projection dossier and EdgeDetailHUD consume canon entity ids, so we
-  // need a (label, type) → id resolver. Empty/loading resolver short-circuits
-  // the dossier mounts (they no-op until an id resolves). The entities list
-  // is also surfaced to the compare-by-subject picker.
+  // The projection dossier and EdgeDetailHUD consume canon entity ids; kept
+  // here for forward-compat with the entity-role overlay path.
   const { findId: findEntityId, entities: canonEntities } = useCanonEntityLookup(infospaceId);
 
-  // Projection-bound graph mode: when the panel's projection declares at
-  // least one entity-typed role, we render the dossier overlays alongside
-  // the legacy HUD. Off otherwise — falls back to existing behaviour.
-  const projectionHasEntityRoles = useMemo(() => {
-    const roles = resolvedProjection?.roles;
-    if (!roles) return false;
-    return Object.values(roles).some(rb => !!rb?.entity_type);
-  }, [resolvedProjection?.roles]);
+  // In the new Panel/Formula model, projection-based entity-role overlays
+  // (NodeProjectionDossier, EdgeDetailHUD) are not active — the Panel no
+  // longer carries a PanelProjection. These stay false/null until the
+  // overlay system is re-wired to formula-native paths.
+  const projectionHasEntityRoles = false;
+  const resolvedProjection: null = null;
+  const actorRole = 'actor';
+  const subjectRole = 'subject';
 
-  // Resolve actor / subject role names from the projection's edges (default
-  // to ``actor`` / ``subject`` for the GGL projection). Used by EdgeDetailHUD.
-  const { actorRole, subjectRole } = useMemo(() => {
-    const e = resolvedProjection?.edges?.[0];
-    return {
-      actorRole: e?.from_role ?? 'actor',
-      subjectRole: e?.to_role ?? 'subject',
-    };
-  }, [resolvedProjection?.edges]);
+  // Read the per-type visual config from panel_config.
+  const cfg = panelConfig.panel_config as GraphVizConfig;
 
-  // Server-side graph data fetching
-  const mergedFilters = useMemo(
-    () => mergeFiltersAndScopes(panelConfig.local_filters, panelConfig.incoming_scopes),
-    [panelConfig.local_filters, panelConfig.incoming_scopes],
-  );
+  // Derive triplet_field: prefer formula.group[0].path if populated (Workspace-
+  // authored formulas express the triplet dimension as a group step); fall
+  // back to cfg.source; fall back to 'relationships' so legacy panels still
+  // render.
+  const tripletFieldStr = useMemo((): string => {
+    const groupPath = panelConfig.formula?.group?.[0]?.path;
+    if (groupPath) return groupPath;
+    return cfg?.source ?? 'relationships';
+  }, [panelConfig.formula?.group, cfg?.source]);
 
-  // Relationship-as-a-lens dim cascade. Harvest the entity names from every
-  // ``relational.cooccurs`` condition in the merged filter; when present,
-  // pass them to ForceGraph as the focused sub-network — matching nodes
-  // (and edges between them) stay sharp, the rest dims.
-  //
-  // Default-on: the absence of a cooccurs scope yields an empty set and the
-  // renderer no-ops. Behavior is identical to pre-v1.5 in that case. When
-  // a cooccurs scope IS active, the setting opts the user *out* of the
-  // automatic focus — ``settings.dim_unmatched === false`` keeps the
-  // graph fully bright. Memoized as a Set for the renderer's O(1) lookups.
-  const dimUnmatched = (panelConfig.settings as any)?.dim_unmatched !== false;
+  const edgeWeightFieldStr = cfg?.edge_weight_field ?? undefined;
+  const edgeWeightMode = cfg?.edge_weight_mode ?? 'count';
+  const nodeGroupByStr = cfg?.node_group_by ?? undefined;
+  const edgeGroupByStr = cfg?.edge_group_by ?? undefined;
+
+  // Relationship-as-a-lens dim cascade. Harvest entity names from every
+  // ``relational.cooccurs`` condition present in the panel's formula.filter
+  // OR in any incoming scope's filter. When a cooccurs scope is active,
+  // matching nodes (and edges between them) stay sharp; the rest dims.
+  // ``cfg.dim_unmatched === false`` lets the user opt out of the focus.
+  const dimUnmatched = cfg?.dim_unmatched !== false;
   const focusedEntityNames = useMemo(() => {
     if (!dimUnmatched) return undefined;
-    const names = focusedEntityNamesFromFilter(mergedFilters);
+    // Collect cooccurs entity names from the panel's own filter.
+    const names: string[] = [
+      ...focusedEntityNamesFromFilter(panelConfig.formula?.filter as FilterSet | undefined),
+      // Also scan each incoming scope's filter (the scope is the typical
+      // carrier of the cooccurs condition in the new propagation model).
+      ...panelConfig.scopes_in.flatMap(s => focusedEntityNamesFromFilter(s.filter as FilterSet)),
+    ];
     if (names.length === 0) return undefined;
     return new Set(names);
-  }, [dimUnmatched, mergedFilters]);
-
-  // Determine triplet field + expanded graph roles from the panel's projection.
-  // Legacy panels used `triplet_field` key; new panels use the `triplet` role.
-  const fieldMappings = panelConfig.projection?.field_mappings ?? {};
-  const tripletField =
-    (fieldMappings['triplet'] as string | string[] | undefined) ??
-    (fieldMappings['triplet_field'] as string | string[] | undefined) ??
-    'relationships';
-  const tripletFieldStr = Array.isArray(tripletField) ? tripletField[0] : tripletField;
-  const edgeWeightField = (fieldMappings['edge_weight'] as string | string[] | undefined);
-  const edgeWeightFieldStr = Array.isArray(edgeWeightField) ? edgeWeightField[0] : edgeWeightField;
-  const nodeGroupBy = (fieldMappings['node_group_by'] as string | string[] | undefined);
-  const nodeGroupByStr = Array.isArray(nodeGroupBy) ? nodeGroupBy[0] : nodeGroupBy;
-  const edgeGroupBy = (fieldMappings['edge_group_by'] as string | string[] | undefined);
-  const edgeGroupByStr = Array.isArray(edgeGroupBy) ? edgeGroupBy[0] : edgeGroupBy;
-  const edgeWeightMode =
-    (panelConfig.settings as any)?.edgeWeightMode ?? 'count';
-
-  const graphQueryConfig = useMemo((): ClientGraphConfig | undefined => {
-    return {
-      triplet_field: tripletFieldStr,
-      dedup: 'normalized',
-      edge_weight_field: edgeWeightFieldStr ?? null,
-      edge_weight_mode: edgeWeightMode,
-      node_group_by: nodeGroupByStr ?? null,
-      edge_group_by: edgeGroupByStr ?? null,
-    };
-  }, [tripletFieldStr, edgeWeightFieldStr, edgeWeightMode, nodeGroupByStr, edgeGroupByStr]);
+  }, [dimUnmatched, panelConfig.formula?.filter, panelConfig.scopes_in]);
 
   // Value-alias wiring for graph panel — target is the triplet subject/object
   // normalization field (most useful for entity canonicalization). The UI
@@ -360,26 +322,43 @@ export default function AnnotationResultsGraph({
     [panelConfig.merge_maps, runWideAliasesByField],
   );
 
+  // Graph data fetch — uses the new Formula-based useAnnotationView signature.
+  // triplet_field is omitted when the formula already encodes the group path
+  // (the backend uses formula.group[0].path as its own default).
+  const graphQueryConfig = useMemo(() => ({
+    triplet_field: tripletFieldStr,
+    dedup: 'normalized' as const,
+    edge_weight_field: edgeWeightFieldStr ?? null,
+    edge_weight_mode: edgeWeightMode,
+    node_group_by: nodeGroupByStr ?? null,
+    edge_group_by: edgeGroupByStr ?? null,
+    null_policy: cfg?.null_policy ?? 'skip',
+    forward_properties: cfg?.forward_properties ?? [],
+  }), [tripletFieldStr, edgeWeightFieldStr, edgeWeightMode, nodeGroupByStr, edgeGroupByStr, cfg?.null_policy, cfg?.forward_properties]);
+
   const { data: viewData, isLoading: isViewLoading, refetch: refetchView } = useAnnotationView({
     infospaceId,
     runId,
+    panel: panelConfig,
+    schemas,
+    incoming_scopes: panelConfig.scopes_in,
+    merge_maps: panelConfig.merge_maps,
     graph: graphQueryConfig,
-    filters: mergedFilters,
-    merge_maps: effectiveMergeMapsForView,
     enabled: !!runId && !!infospaceId,
   });
 
   // Separate rows fetch — the graph response carries only ``annotation_ids``
   // per node, not asset ids. To populate the node detail panel's "Appears
   // in documents" chips we need the annotation→asset mapping (and the
-  // asset titles for display). Minimal filter so we grab every row in the
-  // run; rows payload is compact (id + asset_id + title).
+  // asset titles for display). Rows payload is compact (id + asset_id + title).
   const { data: rowsViewData } = useAnnotationView({
     infospaceId,
     runId,
+    panel: panelConfig,
+    schemas,
+    incoming_scopes: panelConfig.scopes_in,
+    merge_maps: panelConfig.merge_maps,
     rows: { limit: 500 },
-    filters: mergedFilters,
-    merge_maps: effectiveMergeMapsForView,
     enabled: !!runId && !!infospaceId,
   });
 
@@ -416,10 +395,13 @@ export default function AnnotationResultsGraph({
     onUpdatePanel({ settings: { ...settingsRef.current, ...settings } });
   }, [onUpdatePanel]);
   const initialSettings = panelConfig.settings;
-  const graphEdits = panelConfig.settings?.graphEdits || null;
+  // graphEdits live in cfg.edits (panel_config) in the new shape.
+  // Fall back to the legacy settings path so panels that haven't been
+  // migrated in the store yet still render their persisted edits.
+  const graphEdits: GraphEdits | null = (cfg?.edits as GraphEdits | null | undefined) ?? panelConfig.settings?.graphEdits ?? null;
   const onGraphEditsChange = useCallback((edits: GraphEdits) => {
-    onUpdatePanel({ settings: { ...settingsRef.current, graphEdits: edits } });
-  }, [onUpdatePanel]);
+    onUpdatePanel({ panel_config: { ...cfg, edits } as any });
+  }, [onUpdatePanel, cfg]);
   const { activeInfospace } = useInfospaceStore();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -769,6 +751,24 @@ export default function AnnotationResultsGraph({
     }
   }, [graphSchemas, selectedSchemaId, onSettingsChange]);
 
+  // Sync the graph's locally selected schema down into the panel's
+  // formula.schema_id so the backend's FormulaQuery filters annotations
+  // to just that schema. Without this, the request goes out with
+  // schema_id=null and graph_stream finds no triplets when the run
+  // mixes schemas. (The pie / chart auto-select via PanelConfigPopover
+  // only fires for single-schema runs — graph needs its own sync since
+  // its selectedSchemaId is independent of the popover's schema slot.)
+  useEffect(() => {
+    const sid = selectedSchemaId ? parseInt(selectedSchemaId) : null;
+    if (!sid) return;
+    const current = (panelConfig.formula as any)?.schema_id ?? null;
+    if (current === sid) return;
+    onUpdatePanel({
+      formula: { ...(panelConfig.formula as any), schema_id: sid },
+    } as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSchemaId]);
+
   // Extract schema-level graph config (typeColors, typeIcons, predicateColors)
   const schemaGraphFieldConfig = useMemo(() => {
     if (!selectedSchemaId) return null;
@@ -813,10 +813,11 @@ export default function AnnotationResultsGraph({
     return schemaGraphFieldConfig?.relationshipSchema?.predicateArrows || undefined;
   }, [schemaGraphFieldConfig]);
 
-  // Handle graph config change
+  // Handle graph config change (frontend-local GraphViewConfig — unrelated to
+  // backend GraphVizConfig; persisted in settings so the force-graph renderer
+  // picks it up across remounts).
   const handleGraphConfigChange = useCallback((newConfig: GraphViewConfig) => {
     setGraphConfig(newConfig);
-    // Persist config
     onSettingsChange?.({ graphViewConfig: newConfig });
   }, [onSettingsChange]);
 
@@ -1271,81 +1272,14 @@ export default function AnnotationResultsGraph({
   // is declared. The placement ordering matters because the memo depends on
   // it; pulling the declaration up here would cause a TDZ reference error.
 
-  // --- RolePicker wiring --------------------------------------------------
-  // Derive the picker value from the panel's projection + aggregation +
-  // settings. The triplet role accepts the legacy `triplet_field` mapping
-  // for backwards compat with panels that predate the role pivot.
-  const rolePickerValue = useMemo<RolePickerValue>(() => {
-    const mappings = panelConfig.projection?.field_mappings ?? {};
-    const fieldsByRole: Record<string, string[]> = {};
-    for (const [key, val] of Object.entries(mappings)) {
-      if (Array.isArray(val)) fieldsByRole[key] = val.map(String);
-      else if (typeof val === 'string' && val.length > 0) fieldsByRole[key] = [val];
-    }
-    // Legacy panels stored `triplet_field` — project it onto the `triplet`
-    // role so the picker shows the right selection.
-    if (!fieldsByRole['triplet'] && typeof mappings['triplet_field'] === 'string') {
-      fieldsByRole['triplet'] = [mappings['triplet_field'] as string];
-    }
-    return {
-      schemaId:
-        (panelConfig.settings?.selectedGraphSchemaId as number | undefined) ??
-        (selectedSchemaId ? Number(selectedSchemaId) : null),
-      fieldsByRole,
-      explosionByRole: {},
-      aggregation: panelConfig.aggregation ?? {},
-      edgeWeightMode: ((panelConfig.settings as any)?.edgeWeightMode ?? 'count'),
-    };
-  }, [
-    panelConfig.projection,
-    panelConfig.aggregation,
-    panelConfig.settings?.selectedGraphSchemaId,
-    (panelConfig.settings as any)?.edgeWeightMode,
-    selectedSchemaId,
-  ]);
-
-  const handleRolePickerChange = useCallback((next: RolePickerValue) => {
-    const field_mappings: Record<string, string | string[]> = {};
-    for (const [role, paths] of Object.entries(next.fieldsByRole)) {
-      if (paths.length === 0) continue;
-      field_mappings[role] = paths.length > 1 ? paths : paths[0];
-    }
-    // Keep the legacy `triplet_field` key in sync for any consumer that
-    // still reads it during Phase 2 transition.
-    const tripletFromRole = next.fieldsByRole['triplet']?.[0];
-    if (tripletFromRole) field_mappings['triplet_field'] = tripletFromRole;
-
-    onUpdatePanel({
-      projection: {
-        field_mappings,
-        explosion:
-          Object.values(next.explosionByRole).find((e) => !!e) ?? null,
-      },
-      aggregation: { ...(panelConfig.aggregation ?? {}), ...(next.aggregation ?? {}) },
-      settings: {
-        ...(panelConfig.settings ?? {}),
-        selectedGraphSchemaId: next.schemaId ?? undefined,
-        edgeWeightMode: next.edgeWeightMode ?? 'count',
-      },
-    });
-    if (next.schemaId != null) {
-      setSelectedSchemaId(String(next.schemaId));
-    }
-  }, [onUpdatePanel, panelConfig.aggregation, panelConfig.settings]);
-
-  const needsTripletPick = (rolePickerValue.fieldsByRole['triplet']?.length ?? 0) === 0;
+  // needsTripletPick: true when the panel_config has no source field configured
+  // AND the formula has no group path. Drives the empty-state teacher.
+  const needsTripletPick = !cfg?.source && !(panelConfig.formula?.group?.[0]?.path);
 
   if (graphSchemas.length === 0) {
     return (
       <div className="h-full flex flex-col">
-        <PanelHeaderSlot>
-          <RolePickerPopover
-            schema={PANEL_ROLE_SCHEMAS.graph}
-            availableSchemas={schemas}
-            value={rolePickerValue}
-            onChange={handleRolePickerChange}
-          />
-        </PanelHeaderSlot>
+        <PanelHeaderSlot>{null}</PanelHeaderSlot>
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center text-muted-foreground max-w-md">
             <Info className="mx-auto h-12 w-12 mb-4 opacity-50" />
@@ -2048,11 +1982,8 @@ export default function AnnotationResultsGraph({
     return out;
   }, [pinNodeIds, activePinPage, highlightedAssetId, assetsMap, setPinBoard]);
 
-  // Alias target: group_by paths are the best default for node labelling.
-  const graphAliasTargetField = (
-    (rolePickerValue.fieldsByRole['node_group_by']?.[0] as string | undefined) ??
-    (rolePickerValue.fieldsByRole['edge_group_by']?.[0] as string | undefined)
-  ) ?? null;
+  // Alias target: node_group_by / edge_group_by from panel_config.
+  const graphAliasTargetField = nodeGroupByStr ?? edgeGroupByStr ?? null;
   const graphAliasesForField = graphAliasTargetField
     ? runWideAliasesByField[graphAliasTargetField] ?? {}
     : {};
@@ -2062,18 +1993,8 @@ export default function AnnotationResultsGraph({
       <PanelHeaderSlot>
         <>
           <PanelFormulaBinder
-            formulaId={(panelConfig as any).formula_id ?? (panelConfig as any).observation_id ?? null}
-            onBind={(id) => onUpdatePanel({ formula_id: id, observation_id: undefined } as any)}
-          />
-          <RolePickerPopover
-            schema={PANEL_ROLE_SCHEMAS.graph}
-            availableSchemas={graphSchemas}
-            value={rolePickerValue}
-            onChange={handleRolePickerChange}
-            onOpenValueAliases={graphAliasTargetField ? () => setAliasManagerOpen(true) : undefined}
-            infospaceId={infospaceId}
-            runId={runId}
-            previewProjection={resolvedProjection}
+            formulaId={panelConfig.formula_ref ?? null}
+            onBind={(id) => onUpdatePanel({ formula_ref: id } as any)}
           />
           <CompareBySubjectButton
             sourcePanel={panelConfig}
@@ -2090,7 +2011,7 @@ export default function AnnotationResultsGraph({
         infospaceId={infospaceId}
         runId={runId}
         scope={evidenceScope}
-        baseFilters={panelConfig.local_filters}
+        baseFilters={panelConfig.formula?.filter as any ?? null}
         mergeMaps={effectiveMergeMapsForView}
         schemas={schemas}
       />
@@ -2104,7 +2025,7 @@ export default function AnnotationResultsGraph({
           fieldPath={graphAliasTargetField}
           aliases={graphAliasesForField}
           schemaIds={selectedSchemaId ? [Number(selectedSchemaId)] : undefined}
-          filters={mergedFilters}
+          filters={panelConfig.formula?.filter as any ?? null}
           onSave={(next) => {
             const current = getGlobalVariableSplitting() ?? { enabled: true };
             setGlobalVariableSplitting({
@@ -2805,8 +2726,9 @@ export default function AnnotationResultsGraph({
               const objectType = nodes.find(n => n.id === selectedEdgeDetail.targetId)?.type;
               // Resolve role entity types when present so the lookup narrows
               // to the right canon stratum.
-              const actorEntityType = resolvedProjection?.roles?.[actorRole]?.entity_type ?? subjectType;
-              const subjectEntityType = resolvedProjection?.roles?.[subjectRole]?.entity_type ?? objectType;
+              const _rp = resolvedProjection as any;
+              const actorEntityType = _rp?.roles?.[actorRole]?.entity_type ?? subjectType;
+              const subjectEntityType = _rp?.roles?.[subjectRole]?.entity_type ?? objectType;
               const actorEntityId = findEntityId(subjectLabel, actorEntityType);
               const subjectEntityId = findEntityId(objectLabel, subjectEntityType);
               if (!actorEntityId || !subjectEntityId) return null;

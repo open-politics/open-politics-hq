@@ -2,6 +2,8 @@
  * Core type definitions for the annotation system
  */
 
+import type { Formula } from '@/client';
+
 // --- Data Source & Asset Types --- //
 export type SourceKind = "rss" | "api" | "scrape" | "upload" | "search" | "csv" | "pdf" | "url_list" | "text_block";
 export type SourceStatus = "pending" | "processing" | "complete" | "failed";
@@ -202,30 +204,6 @@ export interface ObservationSnapshot {
   notes?: string | null;
 }
 
-// ─── Schema axes (M3 — intelligence layer) ──────────────────────────────────
-// Mirror of backend `AxisDecl` in `app/api/modules/annotation/axes.py`.
-// Schemas declare a top-level `axes` block of typed measurement dimensions;
-// fields reference axes by name via `x-axis`. Formulas compose by axis name.
-
-export type AxisKind =
-  | 'ordinal_llm'        // ordered enum, LLM-assessed (Belegt > Erhärtet > Verdacht)
-  | 'categorical_llm'    // unordered enum, LLM-classified (favors / disfavors)
-  | 'scalar_1_10_llm'    // numeric 1–10, LLM-rated (treat as ordinal)
-  | 'factual_enum'       // verifiable enum (action_type)
-  | 'ordinal_doc'        // doc-level ordinal (source_weight)
-  | 'categorical_doc'    // doc-level category (source_genre)
-  | 'exposure';          // numeric denominator stream
-
-export interface AxisDecl {
-  kind: AxisKind;
-  values?: string[];                       // required for enum-shaped kinds
-  description?: string;                    // surfaced to LLM prompt
-  weights?: Record<string, number> | null; // optional enum→numeric lift
-}
-
-/** Top-level `axes` block on a schema's output_contract — see HOW_TO.md § Axes. */
-export type AxesBlock = Record<string, AxisDecl>;
-
 export interface AnnotationSchema {
   id: number;
   name: string;
@@ -253,10 +231,6 @@ export interface AnnotationSchemaFormData {
   default_thinking_budget?: number | null;
   request_justifications_globally?: boolean;
   enable_image_analysis_globally?: boolean;
-  // Intelligence-layer axes (M3) — typed measurement vocabulary declared
-  // at the schema level. The form UI doesn't yet author these; round-trip
-  // preservation only so axes survive form-mediated edit cycles.
-  axes?: AxesBlock;
 }
 
 // --- Annotation Run & Result Types --- //
@@ -548,7 +522,9 @@ export interface ViewRowsPhase {
   items: AnnotationResultRow[];
   assets: Record<number, AssetSummary>;
   total: number;
-  cursor_next: number | null;
+  cursor_next: string | number | null;
+  /** Echoes the request's projection list (informational). */
+  fields?: string[];
 }
 
 /** A single aggregation bucket */
@@ -671,12 +647,22 @@ export interface ViewFormulaPhase {
   cursor_next?: string | null;
 }
 
+/**
+ * Combined /view endpoint response. Each key is present only when the
+ * corresponding phase was requested. ``aggregate`` carries the
+ * :class:`OutputRelation` shape (group keys × measures); ``rows``
+ * carries paginated annotations + asset hierarchy; ``graph`` carries
+ * nodes + edges.
+ *
+ * Legacy ``dossier`` + ``formula`` phases were retired in P2 — the
+ * unified ``aggregate`` phase replaces them (an OutputRelation with
+ * no group dims and a single measure is the old dossier scalar; with
+ * dims+measures it's the old aggregate).
+ */
 export interface ViewResponse {
   rows?: ViewRowsPhase;
-  aggregate?: ViewAggregatePhase;
+  aggregate?: ViewFormulaPhase;
   graph?: ViewGraphPhase;
-  dossier?: ViewDossierPhase;
-  formula?: ViewFormulaPhase;
 }
 
 // =============================================================================
@@ -710,109 +696,164 @@ export interface Scope {
   merge_maps?: MergeMap[];
 }
 
-/** How a panel maps schema fields to visualization roles.
- *
- * Values are single field paths for single-role slots, or arrays for roles
- * marked ``multi`` in ``panelRoleSchema.ts`` (e.g. the chart's ``y`` for
- * multi-series timelines). The new projection-engine roles
- * (``actor`` / ``subject`` / ``mentioned``) are list-valued by default so
- * one role can bind paths across a graph triplet field and a sibling
- * array_object's entity-typed inner field.
- *
- * The optional ``roles`` / ``scalars`` / ``snippet`` / ``edges`` /
- * ``joint_roles`` block is the typed projection-engine shape consumed by
- * ``AnnotationQuery.project()``. When it's set, panels can run the
- * ``dossier`` materialisation against ``/view``. Legacy ``field_mappings``
- * stays for chart/pie/table/map; both shapes round-trip on the same
- * PanelProjection without conflict. */
-export interface PanelProjection {
-  field_mappings: Record<string, string | string[]>;
-  explosion: string | null;
-  // Projection-engine bindings (mirror backend RoleBinding/ScalarBinding/etc.).
-  // Importing the regenerated client types directly here would create a
-  // circular dependency with `@/client`; restate the shape locally so this
-  // file stays the canonical PanelProjection wire model used across the app.
-  roles?: Record<string, { paths: string[]; entity_type?: string | null }>;
-  scalars?: Record<
-    string,
-    { path: string; agg?: 'count' | 'mean' | 'sum' | 'max' | 'min'; enum_weights?: Record<string, number> | null }
-  >;
-  snippet?: {
-    verbatim?: string | null;
-    structured?: string | null;
-    fallback?: string | null;
-  } | null;
-  edges?: Array<{
-    from_role?: string | null;
-    to_role?: string | null;
-    within_role?: string | null;
-    predicate?: string | null;
-    predicate_path?: string | null;
-    directed?: boolean;
-  }>;
-  joint_roles?: string[];
+// =============================================================================
+// LEGACY ALIASES — keep existing components compiling during P3 sweep.
+// Each is `any` so the old code stops blocking the build; new code uses
+// the typed Panel/PanelVizConfig below. Both go away in P6 cleanup.
+// =============================================================================
+
+export type PanelProjection = any;
+export type PanelAggregation = any;
+
+// =============================================================================
+// Panel — display artifact (data spec + projection + visual mapping)
+// =============================================================================
+
+export type PanelType =
+  | 'table' | 'chart' | 'pie' | 'graph' | 'map'
+  | 'measurements' | 'scatter';
+
+// ── Per-type visual config (the "Role & Viz Map" emitted by RolePicker) ──
+// Each carries role assignments (which Formula output name drives which
+// visual channel) + display knobs (mark style, layout, density).
+// Discriminated on ``kind``.
+
+export interface PieVizConfig {
+  kind: 'pie';
+  slice_by?: string | null;
+  value?: string | null;
+  facet?: string | null;
+  max_slices?: number | null;
+  legend?: boolean;
 }
 
-/** Server-side aggregation config for a panel */
-export interface PanelAggregation {
-  group_by?: string;
-  interval?: 'day' | 'week' | 'month' | 'quarter' | 'year';
-  function?: 'count' | 'sum' | 'avg' | 'min' | 'max';
-  value_field?: string;
-  top_n?: number;
+export interface ChartVizConfig {
+  kind: 'chart';
+  x?: string | null;
+  y: string[];
+  color?: string | null;
+  mark: 'bar' | 'line' | 'area' | 'timeline';
+  /** When ``x`` is a date-shape field, the engine buckets by this
+   *  interval (date_trunc). Compile passes this to ``Dimension.interval``.
+   *  Ignored for categorical x. */
+  time_interval?: 'day' | 'week' | 'month' | 'quarter' | 'year';
+  stacked?: boolean;
+  analytics_overlays?: {
+    rolling_average?: { window: number } | null;
+    bands?: boolean;
+    trend_line?: boolean;
+    peak_markers?: boolean;
+    std_dev_bands?: boolean;
+  };
+  show_statistics?: boolean;
 }
 
-/** New panel config — replaces PanelViewConfig */
-export interface PanelConfig {
+export interface MapVizConfig {
+  kind: 'map';
+  position?: string | null;
+  mode: 'markers' | 'areaGeometryMeasures';
+  color?: string | null;
+  label: string[];
+  geocode_source?: { schemaId: number; fieldKey: string } | null;
+  show_labels?: boolean;
+  show_areas?: boolean;
+}
+
+export interface TableVizConfig {
+  kind: 'table';
+  columns: string[];
+  explode?: string | null;
+  sort?: { column: string; direction: 'asc' | 'desc' } | null;
+  density: 'compact' | 'comfortable';
+}
+
+export interface GraphVizConfig {
+  kind: 'graph';
+  source?: string | null;
+  target?: string | null;
+  edge_label?: string | null;
+  edge_weight_field?: string | null;
+  edge_weight_mode: 'count' | 'property' | 'sum_property' | 'avg_property' | 'max_property' | 'count_times_property';
+  forward_properties: Array<{ field: string; agg: 'first' | 'sum' | 'avg' | 'max' }>;
+  node_group_by?: string | null;
+  edge_group_by?: string | null;
+  null_policy: 'skip' | 'zero';
+  layout: { kind: 'force_directed' | 'spatial' | 'radial' | 'hierarchical'; params?: Record<string, any> };
+  dim_unmatched?: boolean;
+  edits?: GraphEdits | null;
+}
+
+export interface MeasurementsVizConfig {
+  kind: 'measurements';
+  display_mode: 'scalar' | 'small_list' | 'stats_table';
+  label?: string | null;
+}
+
+export interface ScatterVizConfig {
+  kind: 'scatter';
+  x?: string | null;          // categorical or numeric — auto-detected
+  y?: string | null;
+  color?: string | null;
+  size?: string | null;       // measure name; defaults to 'count'
+  mark: 'dot' | 'cell';       // dot-matrix vs heatmap cells
+  legend?: boolean;
+}
+
+export type PanelVizConfig =
+  | PieVizConfig
+  | ChartVizConfig
+  | MapVizConfig
+  | TableVizConfig
+  | GraphVizConfig
+  | MeasurementsVizConfig
+  | ScatterVizConfig;
+
+/** A dashboard panel — display artifact with a data spec, projection list,
+ *  and visual mapping.
+ *
+ *  Anatomy:
+ *  - ``formula`` — the inline Formula (pure data spec: filter, group,
+ *    measures, derive, weight, explode). Edited via RolePicker's
+ *    data-side sections (filter, time, group, explode).
+ *  - ``formula_ref`` — optional pointer into ``DashboardConfig.formulas[]``;
+ *    when set, the saved formula overrides ``formula`` at fetch time.
+ *  - ``fields`` — which value-blob paths to ship per row (rows view
+ *    projection). Empty = ship the full blob.
+ *  - ``panel_config`` — per-type visual mapping. ``panel.type`` and
+ *    ``panel_config.kind`` MUST match.
+ *  - ``time_source`` — panel-level designated timestamp field.
+ *  - ``scopes_in`` — incoming Scope contributions (cross-panel filter).
+ *  - ``merge_maps`` — panel-local value aliases.
+ */
+export interface Panel {
   id: string;
-  type: 'table' | 'chart' | 'pie' | 'graph' | 'map';
+  type: PanelType;
   name: string;
   description?: string;
-  projection: PanelProjection;
-  /** When set, the panel's projection comes from
-   *  ``DashboardConfig.formulas.find(f => f.id === formula_id)`` —
-   *  the inline ``projection`` is ignored. Resolved by panel hosts via
-   *  ``useResolvedProjection``. Untouched panels stay self-contained.
-   *  Renamed from ``observation_id`` in M2 of the intelligence-primitive
-   *  plan; the dashboard migrator rewrites the legacy key on load. */
-  formula_id?: string | null;
-  /** @deprecated legacy alias for ``formula_id``; the dashboard migrator
-   *  rewrites this on load. Kept here so persisted configs and any
-   *  in-flight call sites still typecheck during the migration window. */
-  observation_id?: string | null;
-  aggregation: PanelAggregation;
-  local_filters: ClientFilterSet;
-  incoming_scopes: Scope[];
+  formula: Formula;
+  formula_ref?: string | null;
+  fields: string[];
+  panel_config: PanelVizConfig;
+  time_source?: string | null;
+  scopes_in: Scope[];
   merge_maps: MergeMap[];
   grid_position: { x: number; y: number; w: number; h: number };
   collapsed?: boolean;
-  // Carry-over settings that panels still need during migration
-  settings?: {
-    // Graph edits (client-side node merges, deletions, labels)
-    graphEdits?: GraphEdits;
-    graphViewConfig?: any;
-    // Map-specific
-    geocodeSource?: { schemaId: number; fieldKey: string };
-    labelSource?: { schemaId: number; fieldKey: string };
-    showLabels?: boolean;
-    showAreas?: boolean;
-    geocodedPointsCache?: any;
-    // Table-specific
-    tableConfig?: any;
-    selectedFieldsPerScheme?: Record<number, string[]>;
-    // Schema/field selection (for field pickers in chart/pie/graph)
-    selectedSchemaId?: number;
-    selectedGraphSchemaId?: number;
-    selectedFieldKey?: string;
-    selectedMaxSlices?: number;
-    aggregateSources?: boolean;
-    selectedSourceIds?: number[];
-    // Chart-specific
-    timeAxisConfig?: any;
-    selectedTimeInterval?: string;
-    showStatistics?: boolean;
-    selectedSchemaIds?: number[];
-    // Passthrough for any panel-specific settings
-    [key: string]: any;
-  };
+
+  // ── Legacy fields kept as ``any`` during the P3 sweep so existing
+  // renderers compile. New code reads ``formula`` + ``panel_config`` +
+  // ``fields`` + ``scopes_in``. These all go away when each call site
+  // is migrated; the P6 cleanup removes them entirely. ────────────────
+  projection?: any;
+  aggregation?: any;
+  local_filters?: any;
+  /** @deprecated use ``scopes_in``. */
+  incoming_scopes?: any;
+  settings?: any;
+  formula_id?: any;
+  observation_id?: any;
+  formula_inline?: any;
 }
+
+/** Backwards-compatible alias — many components still import `PanelConfig`. */
+export type PanelConfig = Panel;

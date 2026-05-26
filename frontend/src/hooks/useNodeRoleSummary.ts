@@ -13,9 +13,18 @@
  * resist until measured.
  */
 import { useMemo } from 'react';
-import type { DossierConfig } from '@/client';
 import { useAnnotationView } from './useAnnotationView';
 import type { ViewDossierRow, PanelProjection } from '@/lib/annotations/types';
+
+/** Legacy shape inherited from the retired backend ``dossier`` phase. The
+ *  hook still passes it through ``useAnnotationView``, which is now a wire
+ *  no-op — graph node/edge dossiers render empty until the renderer is
+ *  migrated to the new ``formula`` phase. */
+type DossierConfig = {
+  projection?: any;
+  limit?: number;
+  allow_unresolved?: boolean;
+};
 
 export interface RoleGroup {
   /** The role on the projection these rows fall under (e.g. "actor"). */

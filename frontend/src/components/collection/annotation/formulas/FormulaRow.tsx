@@ -32,12 +32,15 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { FormulaMathLine } from './FormulaMathLine';
 import { FormulaPreview } from './FormulaPreview';
-import type { Formula } from '@/client';
+import type { AnnotationSchemaRead, Formula } from '@/client';
 
 export interface FormulaRowProps {
   formula: Formula;
   infospaceId: number;
   runId: number;
+  /** Schemas on this run — threaded into FormulaMathLine for the field /
+   *  dimension popovers. */
+  schemas?: AnnotationSchemaRead[];
   /** Called when the formula's body changes (math-line edit or popover). */
   onUpdate: (formula: Formula) => void;
   /** Called when the user clicks the snapshot button. */
@@ -50,6 +53,8 @@ export interface FormulaRowProps {
   prompt?: string | null;
   /** Called when the user clicks regenerate with a new (or edited) prompt. */
   onRegenerate?: (prompt: string) => void;
+  /** Disable the regenerate button while a call is in flight. */
+  regenerating?: boolean;
   className?: string;
 }
 
@@ -57,16 +62,23 @@ export function FormulaRow({
   formula,
   infospaceId,
   runId,
+  schemas,
   onUpdate,
   onSnapshot,
   onPushToPanel,
   onDelete,
   prompt,
   onRegenerate,
+  regenerating,
   className,
 }: FormulaRowProps) {
   const [previewOpen, setPreviewOpen] = useState(false);
+  // Auto-expand the prompt row when a regeneration is in flight so users
+  // see what's happening; otherwise stays collapsed by default.
   const [promptOpen, setPromptOpen] = useState(false);
+  React.useEffect(() => {
+    if (regenerating) setPromptOpen(true);
+  }, [regenerating]);
   const [promptDraft, setPromptDraft] = useState(prompt ?? '');
 
   return (
@@ -80,7 +92,12 @@ export function FormulaRow({
     >
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <FormulaMathLine formula={formula} editable onUpdate={onUpdate} />
+          <FormulaMathLine
+            formula={formula}
+            editable
+            schemas={schemas}
+            onUpdate={onUpdate}
+          />
         </div>
 
         {/* Row actions — only show on hover to keep the list visually quiet. */}
@@ -152,10 +169,10 @@ export function FormulaRow({
             size="sm"
             variant="outline"
             className="h-7 text-xs"
-            disabled={!promptDraft.trim()}
+            disabled={!promptDraft.trim() || !!regenerating}
             onClick={() => onRegenerate(promptDraft.trim())}
           >
-            regenerate
+            {regenerating ? '…' : 'regenerate'}
           </Button>
         </div>
       )}
