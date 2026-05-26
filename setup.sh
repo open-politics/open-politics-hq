@@ -1208,7 +1208,7 @@ stack_up() {
   rm -f "$logfile"
 
   if [[ $rc -eq 0 ]]; then
-    ok "Up. Frontend: $(frontend_url)"
+    ok "Up. Open: $(login_url)"
     # Compose says "up" only means containers started — backend may still
     # restart-loop on a config error (most commonly postgres password
     # mismatch with the data volume). Poll briefly, diagnose if bad.
@@ -1323,7 +1323,7 @@ diagnose_login_failure() {
     say   "    • db wasn't ready when seed ran (race)"
     say   "  Run seed manually:"
     say   "    ${BOLD}$c exec backend python /app/app/initial_data.py${NC}"
-    say   "  Then verify login at: $(frontend_url)"
+    say   "  Then verify login at: $(login_url)"
   fi
 }
 
@@ -1723,6 +1723,11 @@ frontend_url() {
   fi
 }
 
+# Where a freshly-booted user actually wants to land: the login page.
+# Anything behind the UI requires auth anyway, so deep-linking past the
+# marketing/landing route saves a click on every fresh boot.
+login_url() { echo "$(frontend_url)/accounts/login"; }
+
 backend_url() {
   local d port; d="$(get_env DOMAIN)"; port="$(get_env BACKEND_PORT)"; port="${port:-8022}"
   if [[ "$(get_env ENVIRONMENT)" == "production" && -n "$d" && "$d" != "localhost" ]]; then
@@ -1809,7 +1814,7 @@ edit_value() {
 }
 
 open_browser() {
-  local url; url="$(frontend_url)"
+  local url; url="$(login_url)"
   if   command -v xdg-open >/dev/null 2>&1; then ( xdg-open "$url" >/dev/null 2>&1 & )
   elif command -v open     >/dev/null 2>&1; then ( open     "$url" >/dev/null 2>&1 & )
   fi
