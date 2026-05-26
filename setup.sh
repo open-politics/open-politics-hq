@@ -1012,28 +1012,52 @@ active_network_mode() { echo "${NETWORK_MODE:-$(conf_get network_mode bridge)}";
 
 active_profiles() { echo "${PROFILES:-$(get_env COMPOSE_PROFILES)}"; }
 
+# Run a docker compose command in a terminal-friendly way: if the dashboard's
+# alt-screen is active, drop out of it first so progress bars don't overdraw
+# the menu, then re-enter after the user acknowledges. Outside the dashboard
+# (e.g. fresh-clone wizard) this is just a normal run.
+#
+# Args:  1) banner line to print before the command
+#        2) the command string to eval
+#        3) success message to print after
+with_terminal_output() {
+  local banner="$1" cmd="$2" success="$3"
+  local was_alt="${ALT_SCREEN_ON:-false}"
+  [[ "$was_alt" == "true" ]] && leave_alt_screen
+  say "\n${DIM}${banner}${NC}"
+  local rc=0
+  eval "$cmd" || rc=$?
+  if [[ $rc -eq 0 ]]; then ok "$success"; else warn "Command failed (exit $rc)."; fi
+  if [[ "$was_alt" == "true" ]]; then
+    pause
+    enter_alt_screen
+  fi
+  return $rc
+}
+
 stack_up() {
   [[ "${NO_UP:-false}" == true ]] && { warn "--no-up: configuration written, stack not started."; return 0; }
   # Run the port precheck on every start path (wizard, dashboard option 1,
   # settings → restart). Auto-bumps movable ports if conflicts exist.
   [[ -f "$ENV_FILE" ]] && precheck_ports
   local c; c="$(compose_cmd)"
-  say "\n${DIM}$c up --build -d${NC}"
-  COMPOSE_PROFILES="$(active_profiles)" $c up --build -d
-  ok "\nUp. Frontend: $(frontend_url)"
+  with_terminal_output "$c up --build -d" \
+    "COMPOSE_PROFILES=$(active_profiles) $c up --build -d" \
+    "Up. Frontend: $(frontend_url)"
 }
 
 stack_down() {
   local c; c="$(compose_cmd)"
-  warn "Stopping stack (data volumes are preserved — never 'down -v')."
-  COMPOSE_PROFILES="$(active_profiles)" $c down
-  ok "Stopped."
+  with_terminal_output "$c down" \
+    "COMPOSE_PROFILES=$(active_profiles) $c down" \
+    "Stopped (data volumes preserved)."
 }
 
 stack_restart() {
   local c; c="$(compose_cmd)"
-  COMPOSE_PROFILES="$(active_profiles)" $c restart
-  ok "Restarted."
+  with_terminal_output "$c restart" \
+    "COMPOSE_PROFILES=$(active_profiles) $c restart" \
+    "Restarted."
 }
 
 stack_logs() {
@@ -1240,6 +1264,14 @@ backend_running() {
 
 stack_is_running() { backend_running; }
 
+# True if any project container exists in any state (including restarting,
+# exited, paused). Used to distinguish "fully stopped" from "degraded".
+stack_has_any_container() {
+  docker_ok || return 1
+  COMPOSE_PROFILES="$(active_profiles)" $(compose_cmd) ps -a \
+    --format '{{.Service}}' 2>/dev/null | grep -q .
+}
+
 placeholder_secrets() {
   local k out=""
   for k in SECRET_KEY ENCRYPTION_MASTER_KEY POSTGRES_PASSWORD REDIS_PASSWORD FIRST_SUPERUSER_PASSWORD; do
@@ -1272,7 +1304,7 @@ service_desc() {
   esac
 }
 
-bool_show() { local v="${1,,}"; [[ "$v" == "true" || "$v" == "1" || "$v" == "yes" ]] && echo "yes" || echo "no"; }
+bool_show() { local v; v="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"; [[ "$v" == "true" || "$v" == "1" || "$v" == "yes" ]] && echo "yes" || echo "no"; }
 is_dev_mode() { [[ "$(get_env ENVIRONMENT)" != "production" ]]; }
 
 mode_display() {
@@ -1342,11 +1374,11 @@ has_drift() {
 }
 
 frontend_url() {
-  local d; d="$(get_env DOMAIN)"
+  local d port; d="$(get_env DOMAIN)"; port="$(get_env FRONTEND_PORT)"; port="${port:-3000}"
   if [[ "$(get_env ENVIRONMENT)" == "production" && -n "$d" && "$d" != "localhost" ]]; then
     echo "https://$d"
   else
-    echo "http://localhost:3000"
+    echo "http://localhost:${port}"
   fi
 }
 
@@ -1413,8 +1445,9 @@ prompt_set_password() {
 }
 
 toggle_bool() {
-  local key="$1" cur new; cur="$(get_env "$key")"
-  case "${cur,,}" in true|1|yes) new=false ;; *) new=true ;; esac
+  local key="$1" cur new lc; cur="$(get_env "$key")"
+  lc="$(printf '%s' "$cur" | tr '[:upper:]' '[:lower:]')"
+  case "$lc" in true|1|yes) new=false ;; *) new=true ;; esac
   backup_env; set_env "$key" "$new"
   ok "  $key = $new"
   if confirm "Restart backend to apply?"; then
@@ -1480,6 +1513,8 @@ print_state() {
     heading_color="$YELLOW"; heading_text="not configured yet"
   elif stack_is_running; then
     heading_color="$GREEN"; heading_text="running"
+  elif stack_has_any_container; then
+    heading_color="$YELLOW"; heading_text="degraded (a container is failing — see logs)"
   else
     heading_color="$DIM"; heading_text="stopped"
   fi
@@ -2243,6 +2278,7 @@ deploy_wizard() {
 
 primary_action_label() {
   if [[ ! -f "$ENV_FILE" ]]; then echo "Start fresh setup"
+  elif ! stack_is_running && stack_has_any_container; then echo "View logs (a container is failing)"
   elif ! stack_is_running; then echo "Start HQ"
   else echo "Open HQ in your browser"; fi
 }
@@ -2251,6 +2287,9 @@ suggested_action() {
   if [[ ! -f "$ENV_FILE" ]]; then echo 1; return; fi
   if has_drift; then echo 7; return; fi
   if [[ -n "$(placeholder_secrets)" ]]; then echo 6; return; fi
+  # Degraded stack → logs (option 4), not Start (running `up` won't fix
+  # a restart-looping container that's failing for a config reason).
+  if ! stack_is_running && stack_has_any_container; then echo 4; return; fi
   if ! stack_is_running; then echo 1; return; fi
   echo ""
 }
@@ -2362,14 +2401,17 @@ dashboard() {
              LANG_LOCAL=false; EMB_LOCAL=false; do_init ) || warn "Setup did not complete."
            pause
            enter_alt_screen
+         elif ! $running_now && stack_has_any_container; then
+           # Degraded: go straight to logs so user sees what's failing.
+           leave_alt_screen; stack_logs; enter_alt_screen
          elif ! $running_now; then
-           ( stack_up ) || warn "Start failed."; pause
+           ( stack_up ) || warn "Start failed."
          else
            open_browser
          fi
          ;;
-      2) if $running_now; then ( stack_restart ) || warn "Restart failed."; pause; fi ;;
-      3) if $running_now; then ( stack_down ) || warn "Stop failed."; pause; fi ;;
+      2) if $running_now; then ( stack_restart ) || warn "Restart failed."; fi ;;
+      3) if $running_now; then ( stack_down ) || warn "Stop failed."; fi ;;
       4) if $running_now; then leave_alt_screen; stack_logs; enter_alt_screen; fi ;;
       5) foundation_menu ;;
       6) settings_menu ;;
