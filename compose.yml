@@ -199,8 +199,13 @@ services:
       - ./.config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    # Defaults here are intentionally non-strict — compose validates ALL
+    # services on every command (even profile-gated ones), so a strict
+    # `${DOMAIN:?...}` would break `down`, `config`, `ps` etc. when caddy
+    # isn't even active. Real validation happens in setup.sh's "Published"
+    # path before the caddy profile is enabled.
     environment:
-      - DOMAIN=${DOMAIN:?DOMAIN must be set for Caddy}
+      - DOMAIN=${DOMAIN:-localhost}
       - BACKEND_PORT=${BACKEND_PORT:-8022}
       - ACME_EMAIL=${ACME_EMAIL:-}
     depends_on:
