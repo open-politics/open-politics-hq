@@ -989,6 +989,9 @@ active_profiles() { echo "${PROFILES:-$(get_env COMPOSE_PROFILES)}"; }
 
 stack_up() {
   [[ "${NO_UP:-false}" == true ]] && { warn "--no-up: configuration written, stack not started."; return 0; }
+  # Run the port precheck on every start path (wizard, dashboard option 1,
+  # settings → restart). Auto-bumps movable ports if conflicts exist.
+  [[ -f "$ENV_FILE" ]] && precheck_ports
   local c; c="$(compose_cmd)"
   say "\n${DIM}$c up --build -d${NC}"
   COMPOSE_PROFILES="$(active_profiles)" $c up --build -d
@@ -1058,9 +1061,7 @@ do_init() {
     rm -f "$HOST_NET_FRAGMENT"
   fi
   summary
-  # Free the host ports we're about to bind (or auto-bump movable ones).
-  precheck_ports
-  stack_up
+  stack_up   # precheck_ports runs inside stack_up — covers all start paths
   # Tell the user the direct compose command — they don't need setup.sh to
   # restart the stack day-to-day. `docker compose up -d` is sufficient.
   echo
