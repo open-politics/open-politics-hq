@@ -14,7 +14,7 @@ services:
       - ./backend/:/app
       - ./backend/openapi.json:/app/openapi.json
       # local_fs storage bind (when STORAGE_PROVIDER_TYPE=local_fs)
-      - /data/storage:/data/storage
+      - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
     environment:
       - PORT=${BACKEND_PORT}
     extra_hosts:
@@ -31,7 +31,7 @@ services:
     restart: "no"
     volumes:
       - ./backend/:/app
-      - /data/storage:/data/storage
+      - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
 
   celery_beat:
     restart: "no"

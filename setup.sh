@@ -174,34 +174,64 @@ conf_set() {
   mv "$tmp" "$SETUP_CONF"
 }
 
-# ── Preset matrix ─────────────────────────────────────────────────────────────
+# ── Config builder: mode + foundation services ───────────────────────────────
+# Two clear questions instead of opaque preset names:
+#   1) dev or production?  (images, restart policy, ports, TLS via Caddy)
+#   2) which foundation services run locally vs. via hosted/cloud providers?
+# Hosted providers are configured later (API keys in the dashboard).
 
-declare -a SEL_PRESETS=()
 PROFILES=""; PA_GRANTS=""; ENVIRONMENT="local"; STORAGE="local_fs"; FMODE="dev"
+DOMAIN_OPT=""; ACME_EMAIL_OPT=""
+MODE_SET=false; SERVICES_SET=false; STORAGE_SET=false
+LANG_LOCAL=false; EMB_LOCAL=false  # for summary display
 
 add_profile() { [[ ",$PROFILES," == *",$1,"* ]] || PROFILES="${PROFILES:+$PROFILES,}$1"; }
 add_grant()   { PA_GRANTS="${PA_GRANTS}${1}\n"; }
 
-apply_preset() {
+apply_mode() {
   case "$1" in
-    production)
-      ENVIRONMENT="production"; FMODE="prod"; STORAGE="minio"
-      add_profile minio; add_profile searxng ;;
-    dev)
-      add_grant "PROVIDER_ACCESS_STORAGE_local_fs=all" ;;
-    local-ollama)
+    dev|development|local) FMODE=dev;  ENVIRONMENT=local ;;
+    prod|production)       FMODE=prod; ENVIRONMENT=production ;;
+    *) die "Unknown --mode: '$1' (dev|production)" ;;
+  esac
+}
+
+# Apply a non-interactive --with NAME flag (mirrors the interactive y/n choices).
+apply_with() {
+  case "$1" in
+    ollama|language)
       add_profile ollama
       add_grant "PROVIDER_ACCESS_LANGUAGE_ollama=all"
+      LANG_LOCAL=true ;;
+    embeddings|embedding)
+      add_profile ollama
       add_grant "PROVIDER_ACCESS_EMBEDDING_ollama=all"
-      add_grant "PROVIDER_ACCESS_STORAGE_local_fs=all" ;;
-    local-geocoder)
-      add_profile nominatim
-      add_grant "PROVIDER_ACCESS_GEOCODING_local=all"
-      add_grant "PROVIDER_ACCESS_STORAGE_local_fs=all" ;;
-    searxng)
+      EMB_LOCAL=true ;;
+    searxng|search|web-search)
       add_profile searxng ;;
-    *) die "Unknown preset: $1 (production|dev|local-ollama|local-geocoder|searxng)" ;;
+    nominatim|geocoding|geocoder)
+      add_profile nominatim
+      add_grant "PROVIDER_ACCESS_GEOCODING_local=all" ;;
+    minio)
+      add_profile minio; STORAGE=minio; STORAGE_SET=true ;;
+    caddy)
+      add_profile caddy ;;
+    *) die "Unknown --with target: '$1' (ollama|embeddings|searxng|nominatim|minio|caddy)" ;;
   esac
+}
+
+apply_storage() {
+  case "$1" in
+    local_fs|local|files)
+      STORAGE=local_fs
+      add_grant "PROVIDER_ACCESS_STORAGE_local_fs=all" ;;
+    minio)
+      STORAGE=minio; add_profile minio ;;
+    s3|external)
+      STORAGE=s3 ;;
+    *) die "Unknown --storage: '$1' (local_fs|minio|s3)" ;;
+  esac
+  STORAGE_SET=true
 }
 
 # Boxed wizard step framing — clearly distinct from the main dashboard.
@@ -213,37 +243,155 @@ wizard_step() {
 }
 wizard_end() { say "${BLUE}└─────────────────────────────────────────────────────────────────────${NC}"; }
 
-choose_preset_interactive() {
-  local default; default="$(conf_get last_preset dev)"
-  wizard_step 1 3 "How do you want to use HQ?"
-  say "${BLUE}│${NC}  Pick a starting point. You can change everything later from the"
-  say "${BLUE}│${NC}  'Foundation service providers' menu — this isn't a one-way door."
-  say "${BLUE}│${NC}"
-  say "${BLUE}│${NC}    1) ${BOLD}dev${NC}             Just the core. Smallest footprint."
-  say "${BLUE}│${NC}    2) ${BOLD}production${NC}      MinIO + SearXNG + production images & commands."
-  say "${BLUE}│${NC}    3) ${BOLD}local-ollama${NC}    Adds Ollama for local LLM + embeddings."
-  say "${BLUE}│${NC}    4) ${BOLD}local-geocoder${NC}  Adds Nominatim for local geocoding (heavy import)."
-  say "${BLUE}│${NC}    5) ${BOLD}searxng${NC}         Adds local web search."
-  say "${BLUE}│${NC}"
-  say "${BLUE}│${NC}  Combine with commas — e.g. '2,3' = production + ollama."
-  say "${BLUE}│${NC}  Type names ('dev', 'production') or numbers."
-  wizard_end
-  read -rp "  Your choice [press Enter for: ${BOLD}${default}${NC}]: " sel; sel="${sel:-$default}"
+# y/n helper. Default: 'y' or 'n'. With ASSUME_YES, returns the default.
+ask_yn() {
+  local prompt="$1" default="${2:-n}" hint reply
+  case "$default" in y|Y) hint="[Y/n]"; default=y ;; *) hint="[y/N]"; default=n ;; esac
+  if [[ "${ASSUME_YES:-false}" == true ]]; then
+    [[ "$default" == y ]]; return $?
+  fi
+  read -rp "  ${prompt} ${hint}: " reply
+  reply="${reply:-$default}"
+  [[ "$reply" =~ ^[Yy]$ ]]
+}
 
-  local map=(_ dev production local-ollama local-geocoder searxng)
-  IFS=',' read -ra picks <<< "$sel"
-  local p
-  for p in "${picks[@]}"; do
-    p="$(echo "$p" | tr -d ' ')"
-    [[ -z "$p" ]] && continue
-    if [[ "$p" =~ ^[1-5]$ ]]; then
-      SEL_PRESETS+=("${map[$p]}")
-    elif [[ " dev production local-ollama local-geocoder searxng " == *" $p "* ]]; then
-      SEL_PRESETS+=("$p")
+# Step 1 — how you'll use HQ (developing vs hosting), then where it'll run.
+# "Production" means hardened images + restart=always; it does NOT imply
+# public exposure. That's a separate question: a published domain (Caddy +
+# auto-TLS) vs local-only (or raw IP behind your own firewall/proxy).
+choose_mode_interactive() {
+  local default_mode; default_mode="$(conf_get last_mode dev)"
+  wizard_step 1 2 "How are you going to use HQ?"
+  say "${BLUE}│${NC}  Two ways most people start:"
+  say "${BLUE}│${NC}"
+  say "${BLUE}│${NC}    1) ${BOLD}Developing live${NC}"
+  say "${BLUE}│${NC}       You're working on HQ's code (or want to). Source is bound"
+  say "${BLUE}│${NC}       into the containers, the backend hot-reloads on edits, and"
+  say "${BLUE}│${NC}       crashed containers stay down so you can see what broke."
+  say "${BLUE}│${NC}       Frontend on localhost:3000, backend on localhost:${BACKEND_PORT:-8022}."
+  say "${BLUE}│${NC}"
+  say "${BLUE}│${NC}    2) ${BOLD}Hosting / running it${NC}"
+  say "${BLUE}│${NC}       HQ is ready for actual use — by you, your team, or the public."
+  say "${BLUE}│${NC}       Baked production images, restart=always, no source binds."
+  say "${BLUE}│${NC}       (We'll ask next where it should be reachable from.)"
+  wizard_end
+  local d; [[ "$default_mode" == production ]] && d=2 || d=1
+  if [[ "${ASSUME_YES:-false}" == true ]]; then
+    apply_mode "$default_mode"
+  else
+    local sel; read -rp "  Your choice [press Enter for: ${BOLD}${default_mode}${NC}]: " sel
+    sel="${sel:-$d}"
+    case "$sel" in
+      1|dev|development) apply_mode dev ;;
+      2|prod|production|host|hosting) apply_mode production ;;
+      *) die "Invalid choice: '$sel' (1, 2, dev, or production)" ;;
+    esac
+  fi
+
+  # When hosting, ask the orthogonal question: where will it actually be reachable?
+  # Production images don't imply public exposure — internal installs are valid.
+  if [[ "$FMODE" == prod && "${ASSUME_YES:-false}" != true ]]; then
+    echo
+    say "  ${BOLD}Where will HQ be reachable from?${NC}"
+    say "  Production images on this machine; this question is just about exposure."
+    say
+    say "  ${DIM}1)${NC} ${BOLD}Local only${NC} (or a raw IP you'll firewall/proxy yourself)"
+    say "       Ports stay on the host — frontend on :3000, backend on :${BACKEND_PORT:-8022}."
+    say "       Pick this for an internal install, an air-gapped box, or when you"
+    say "       already have nginx/Cloudflare/etc. in front."
+    say
+    say "  ${DIM}2)${NC} ${BOLD}Published at a domain${NC} (Caddy reverse proxy + auto-TLS)"
+    say "       Caddy obtains and renews a Let's Encrypt certificate automatically."
+    say "       The domain must already resolve to this machine's public IP."
+    local cur_d cur_a; cur_d="$(get_env DOMAIN)"; cur_a="$(get_env ACME_EMAIL)"
+    is_placeholder "$cur_d" && cur_d=""
+    local d2=1; [[ -n "$cur_d" ]] && d2=2
+    local pub; read -rp "  Your choice [press Enter for: ${d2}]: " pub
+    pub="${pub:-$d2}"
+    case "$pub" in
+      1|local|"") : ;;  # nothing to do, no caddy
+      2|domain|public)
+        local dom; read -rp "  Domain (e.g. hq.example.org)${cur_d:+ [$cur_d]}: " dom
+        dom="${dom:-$cur_d}"
+        [[ -n "$dom" ]] || die "Domain is required for the published option."
+        DOMAIN_OPT="$dom"; add_profile caddy
+        local acme; read -rp "  ACME contact email (for Let's Encrypt notices)${cur_a:+ [$cur_a]}: " acme
+        ACME_EMAIL_OPT="${acme:-$cur_a}"
+        [[ -n "$ACME_EMAIL_OPT" ]] || warn "ACME_EMAIL empty — Let's Encrypt still works but you won't get expiry warnings." ;;
+      *) die "Invalid choice: '$pub' (1 or 2)" ;;
+    esac
+  fi
+}
+
+# Step 2 — per-capability local-vs-hosted toggles with what-each-does context
+choose_local_services_interactive() {
+  wizard_step 2 2 "Which foundation services should run locally?"
+  say "${BLUE}│${NC}  For each capability, choose between a local container or a"
+  say "${BLUE}│${NC}  hosted/cloud provider. Hosted providers are configured later"
+  say "${BLUE}│${NC}  via API keys in the dashboard. Defaults are conservative —"
+  say "${BLUE}│${NC}  add containers only when you actually need them."
+  wizard_end
+
+  echo
+  say "${BOLD}Language models${NC}  ${DIM}(chat, annotation, agents)${NC}"
+  say "  ${DIM}Local:${NC}  Ollama — open models on your hardware (8GB+ VRAM recommended)"
+  say "  ${DIM}Hosted:${NC} OpenAI, Anthropic, Google Gemini, etc. via API keys"
+  if ask_yn "Run Ollama locally?" n; then
+    add_profile ollama
+    add_grant "PROVIDER_ACCESS_LANGUAGE_ollama=all"
+    LANG_LOCAL=true
+  fi
+
+  echo
+  say "${BOLD}Embeddings${NC}  ${DIM}(semantic search, retrieval)${NC}"
+  say "  ${DIM}Local:${NC}  Ollama (reuses the language container if enabled)"
+  say "  ${DIM}Hosted:${NC} OpenAI, Voyage, Jina via API keys"
+  local emb_default=n
+  $LANG_LOCAL && emb_default=y
+  if ask_yn "Use Ollama for embeddings?" "$emb_default"; then
+    add_profile ollama
+    add_grant "PROVIDER_ACCESS_EMBEDDING_ollama=all"
+    EMB_LOCAL=true
+  fi
+
+  echo
+  say "${BOLD}Web search${NC}  ${DIM}(live news, agent browsing)${NC}"
+  say "  ${DIM}Local:${NC}  SearXNG — meta-search across DuckDuckGo, Brave, Bing, etc."
+  say "  ${DIM}Hosted:${NC} Tavily, Serper, Exa via API keys (future)"
+  if ask_yn "Run SearXNG locally?" n; then
+    add_profile searxng
+  fi
+
+  echo
+  say "${BOLD}Geocoding${NC}  ${DIM}(place name ↔ coordinates)${NC}"
+  say "  ${DIM}Local:${NC}  Nominatim — OpenStreetMap on your hardware"
+  say "          ${DIM}(~5GB disk + ~2h import for world admin boundaries)${NC}"
+  say "  ${DIM}Hosted:${NC} external geocoders via API keys"
+  if ask_yn "Run Nominatim locally?" n; then
+    add_profile nominatim
+    add_grant "PROVIDER_ACCESS_GEOCODING_local=all"
+  fi
+
+  echo
+  if ! $STORAGE_SET; then
+    say "${BOLD}Object storage${NC}  ${DIM}(uploaded files, dataset blobs, exports)${NC}"
+    say "  ${DIM}1) Local files${NC}   Just a directory on disk (./.store/local_fs)"
+    say "  ${DIM}2) MinIO${NC}         S3-compatible container, runs in Docker"
+    say "  ${DIM}3) External S3${NC}   AWS S3 or compatible — credentials in dashboard"
+    local d=1; [[ "$FMODE" == prod ]] && d=2
+    if [[ "${ASSUME_YES:-false}" == true ]]; then
+      [[ "$d" == 2 ]] && apply_storage minio || apply_storage local_fs
     else
-      die "Unknown choice: '$p' (use 1-5 or a preset name)"
+      local s; read -rp "  Storage [press Enter for: ${d}]: " s
+      s="${s:-$d}"
+      case "$s" in
+        1|local_fs|local|files) apply_storage local_fs ;;
+        2|minio)                apply_storage minio ;;
+        3|s3|external)          apply_storage s3 ;;
+        *) die "Invalid storage choice: '$s'" ;;
+      esac
     fi
-  done
+  fi
 }
 
 # ── Filesystem setup ──────────────────────────────────────────────────────────
@@ -263,19 +411,25 @@ ensure_store_dirs() {
   if [[ ",$PROFILES," == *",caddy,"* ]]; then
     [[ -f ./.config/caddy/Caddyfile ]] || die ".config/caddy/Caddyfile missing — repo state is inconsistent."
   fi
+  # ensure_local_fs_path handles the local_fs host dir (only when active).
 }
 
 ensure_local_fs_path() {
   [[ "$STORAGE" == "local_fs" ]] || return 0
-  local lfs; lfs="$(get_env LOCAL_STORAGE_BASE_PATH)"; lfs="${lfs:-/data/storage}"
-  if [[ ! -d "$lfs" ]]; then
-    mkdir -p "$lfs" 2>/dev/null \
-      || die "$lfs does not exist and is not creatable. Run: sudo mkdir -p $lfs && sudo chown $(id -u) $lfs"
-    ok "created local_fs path $lfs"
-  elif [[ ! -w "$lfs" ]]; then
-    die "$lfs exists but is not writable by $(id -un). Fix ownership and re-run."
+  # Host-side path (LOCAL_STORAGE_HOST_PATH) lives under .store/ alongside
+  # minio/nominatim — same convention, no sudo needed on fresh clones.
+  # Container-side path (LOCAL_STORAGE_BASE_PATH) stays /data/storage; the
+  # compose bind maps one to the other.
+  local host; host="$(get_env LOCAL_STORAGE_HOST_PATH)"; host="${host:-./.store/local_fs}"
+  if [[ ! -d "$host" ]]; then
+    mkdir -p "$host" 2>/dev/null \
+      || die "$host does not exist and is not creatable. Run: sudo mkdir -p $host && sudo chown $(id -u) $host"
+    chmod 755 "$host"
+    ok "created local_fs host path $host (0755)"
+  elif [[ ! -w "$host" ]]; then
+    die "$host exists but is not writable by $(id -un). Fix ownership and re-run."
   else
-    say "${DIM}local_fs path $lfs ok${NC}"
+    say "${DIM}local_fs host path $host ok${NC}"
   fi
 }
 
@@ -306,7 +460,11 @@ ensure_env() {
   set_env COMPOSE_PROFILES "$PROFILES"
   set_env BACKEND_WORKERS "${BACKEND_WORKERS:-4}"
   set_env CELERY_CONCURRENCY "${CELERY_CONCURRENCY:-4}"
-  for k in FIRST_SUPERUSER FIRST_SUPERUSER_PASSWORD DOMAIN; do
+  # DOMAIN / ACME_EMAIL come from step 1 when hosting at a domain. Empty means
+  # local-only or raw-IP — leave any prior value untouched.
+  [[ -n "$DOMAIN_OPT"     ]] && set_env DOMAIN     "$DOMAIN_OPT"
+  [[ -n "$ACME_EMAIL_OPT" ]] && set_env ACME_EMAIL "$ACME_EMAIL_OPT"
+  for k in FIRST_SUPERUSER FIRST_SUPERUSER_PASSWORD; do
     local cur; cur="$(get_env "$k")"
     if is_placeholder "$cur" && [[ "${ASSUME_YES:-false}" != true ]]; then
       read -rp "  $k: " v; [[ -n "$v" ]] && set_env "$k" "$v"
@@ -322,9 +480,17 @@ ensure_env() {
 
 summary() {
   say "\n${GREEN}Resolved configuration${NC}"
-  say "  presets:   ${SEL_PRESETS[*]:-<none>}"
+  local usage; [[ "$FMODE" == prod ]] && usage="hosting (production images)" || usage="developing live"
+  say "  using:     ${usage}"
+  if [[ -n "$DOMAIN_OPT" ]]; then
+    local acme_note=""
+    [[ -n "$ACME_EMAIL_OPT" ]] && acme_note="  ${DIM}(LE contact: ${ACME_EMAIL_OPT})${NC}"
+    say "  reach:     published at https://${DOMAIN_OPT}${acme_note}"
+  else
+    say "  reach:     local only (frontend :3000, backend :${BACKEND_PORT:-8022})"
+  fi
+  say "  storage:   ${STORAGE}"
   say "  profiles:  ${PROFILES:-<none, lean core>}"
-  say "  env:       $ENVIRONMENT   storage: $STORAGE   mode: $FMODE"
   say "  workers:   backend=${BACKEND_WORKERS:-4} celery=${CELERY_CONCURRENCY:-4}"
   [[ "${ASSUME_YES:-false}" == true ]] && return 0
   read -rp $'\nProceed? [Y/n] ' a; [[ "${a:-Y}" =~ ^[Yy]?$ ]] || die "Aborted."
@@ -384,15 +550,21 @@ stack_logs() {
 }
 
 do_init() {
-  [[ ${#SEL_PRESETS[@]} -gt 0 ]] || choose_preset_interactive
-  for p in "${SEL_PRESETS[@]}"; do apply_preset "$p"; done
+  $MODE_SET     || choose_mode_interactive
+  $SERVICES_SET || choose_local_services_interactive
+  # Sensible default when storage wasn't set (interactively or via CLI):
+  # production → minio, dev → local files. Keeps `--mode production --with X -y`
+  # from silently leaving prod on local_fs.
+  if ! $STORAGE_SET; then
+    [[ "$FMODE" == prod ]] && apply_storage minio || apply_storage local_fs
+  fi
   ensure_store_dirs
   ensure_local_fs_path
   ensure_env
   summary
   stack_up
   # Remember for next run — UX state lives in setup.conf, not .env.
-  conf_set last_preset "$(IFS=','; echo "${SEL_PRESETS[*]}")"
+  conf_set last_mode "$ENVIRONMENT"
   conf_set setup_completed_at "$(date +%Y-%m-%dT%H:%M:%S)"
 }
 
@@ -663,7 +835,7 @@ email_status() {  # one-line, used in submenus
 storage_status() {
   local t; t="$(get_env STORAGE_PROVIDER_TYPE)"
   case "$t" in
-    local_fs) echo "local files at $(get_env LOCAL_STORAGE_BASE_PATH)" ;;
+    local_fs) local h; h="$(get_env LOCAL_STORAGE_HOST_PATH)"; echo "local files at ${h:-./.store/local_fs}" ;;
     minio)    echo "MinIO at $(get_env MINIO_ENDPOINT)" ;;
     s3)       echo "external S3 ($(get_env S3_BUCKET_NAME))" ;;
     *)        echo "$t" ;;
@@ -1102,7 +1274,7 @@ storage_menu() {
     say "  ${GREEN}1${NC}  Local filesystem"
     say "  ${GREEN}2${NC}  MinIO (S3-compatible container)"
     say "  ${GREEN}3${NC}  External S3"
-    say "  ${GREEN}4${NC}  Change local_fs base path"
+    say "  ${GREEN}4${NC}  Change local_fs host path (where files live on disk)"
     say "  ${GREEN}0${NC}  Back"
     pick_menu r
     case "$r" in
@@ -1118,7 +1290,7 @@ storage_menu() {
          prompt_set S3_ACCESS_KEY_ID "Access key id"
          prompt_set_password S3_SECRET_ACCESS_KEY "Secret access key"
          ok "Storage = s3"; pause ;;
-      4) prompt_set LOCAL_STORAGE_BASE_PATH "Local storage path"; pause ;;
+      4) prompt_set LOCAL_STORAGE_HOST_PATH "Local storage host path (default ./.store/local_fs)"; pause ;;
       0|"") return 0 ;;
       *) warn "Invalid."; pause ;;
     esac
@@ -1372,7 +1544,9 @@ settings_menu() {
       3) storage_menu ;;
       4) workers_prompt ;;
       5) domain_prompt ;;
-      6) ( SEL_PRESETS=(); PROFILES=""; PA_GRANTS=""; FMODE="dev"; do_init ) || warn "Wizard did not complete."; pause ;;
+      6) ( PROFILES=""; PA_GRANTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
+           MODE_SET=false; SERVICES_SET=false; STORAGE_SET=false; \
+           LANG_LOCAL=false; EMB_LOCAL=false; do_init ) || warn "Wizard did not complete."; pause ;;
       7) edit_value ;;
       0|"") return 0 ;;
       *) warn "Invalid."; pause ;;
@@ -1586,7 +1760,9 @@ dashboard() {
       "?")        show_help_overlay ;;
       1) if [[ ! -f "$ENV_FILE" ]]; then
            leave_alt_screen
-           ( SEL_PRESETS=(); PROFILES=""; PA_GRANTS=""; FMODE="dev"; do_init ) || warn "Setup did not complete."
+           ( PROFILES=""; PA_GRANTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
+             MODE_SET=false; SERVICES_SET=false; STORAGE_SET=false; \
+             LANG_LOCAL=false; EMB_LOCAL=false; do_init ) || warn "Setup did not complete."
            pause
            enter_alt_screen
          elif ! $running_now; then
@@ -1629,14 +1805,20 @@ public domain (Caddy + auto-TLS), and rotate secrets — no flags needed.
 UX state lives in .config/hq/setup.conf; deployment config lives in .env.
 
 init options:
-  --preset NAME          production | dev | local-ollama | local-geocoder | searxng
-                         (repeatable; additive)
-  --profiles LIST        explicit comma profile list (overrides preset profiles)
+  --mode MODE            dev | production
+                         dev = source-bound + hot reload (you're working on HQ)
+                         production = baked images + restart=always
+  --with SERVICE         enable a foundation service locally (repeatable):
+                         ollama | embeddings | searxng | nominatim | minio | caddy
+  --storage TYPE         object storage: local_fs | minio | s3
+  --domain FQDN          publish at this domain (enables caddy + auto-TLS)
+  --acme-email EMAIL     contact email for Let's Encrypt (with --domain)
+  --profiles LIST        explicit comma-separated profile list (advanced)
   --backend-workers N    uvicorn workers in prod (default 4)
   --celery-concurrency N celery prefork concurrency (default 4)
   --regenerate-secrets   force-regenerate ALL secrets
   --no-up                write config only, do not start the stack
-  -y, --yes              non-interactive
+  -y, --yes              non-interactive (use defaults for any unset choice)
   -h, --help
 
 rotate targets:
@@ -1653,7 +1835,9 @@ if [[ $# -eq 0 ]]; then
     say "${DIM}First-time setup. We'll ask which foundation services you want, a${NC}"
     say "${DIM}superuser email + password, then start HQ. Everything else is${NC}"
     say "${DIM}auto-generated — no API keys required for the local-only flavors.${NC}\n"
-    ( SEL_PRESETS=(); PROFILES=""; PA_GRANTS=""; FMODE="dev"; do_init ) \
+    ( PROFILES=""; PA_GRANTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
+      MODE_SET=false; SERVICES_SET=false; STORAGE_SET=false; \
+      LANG_LOCAL=false; EMB_LOCAL=false; do_init ) \
       || { warn "Setup did not complete."; exit 1; }
     pause
   fi
@@ -1668,13 +1852,17 @@ ROTATE_TARGETS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --preset) SEL_PRESETS+=("$2"); shift 2 ;;
-    --profiles) PROFILES="$2"; shift 2 ;;
-    --backend-workers) BACKEND_WORKERS="$2"; shift 2 ;;
+    --mode)               apply_mode "$2"; MODE_SET=true; shift 2 ;;
+    --with)               apply_with "$2"; SERVICES_SET=true; shift 2 ;;
+    --storage)            apply_storage "$2"; SERVICES_SET=true; shift 2 ;;
+    --domain)             DOMAIN_OPT="$2"; add_profile caddy; shift 2 ;;
+    --acme-email)         ACME_EMAIL_OPT="$2"; shift 2 ;;
+    --profiles)           PROFILES="$2"; SERVICES_SET=true; shift 2 ;;
+    --backend-workers)    BACKEND_WORKERS="$2"; shift 2 ;;
     --celery-concurrency) CELERY_CONCURRENCY="$2"; shift 2 ;;
     --regenerate-secrets) REGEN=true; shift ;;
-    --no-up) NO_UP=true; shift ;;
-    -y|--yes) ASSUME_YES=true; shift ;;
+    --no-up)              NO_UP=true; shift ;;
+    -y|--yes)             ASSUME_YES=true; shift ;;
     --fernet|--postgres|--minio|--redis|--secret-key|--all) ROTATE_TARGETS+=("$1"); shift ;;
     *) die "Unknown option: $1 (see --help)" ;;
   esac
