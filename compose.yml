@@ -7,12 +7,16 @@ services:
       - app-db-data:/var/lib/postgresql/data/pgdata
     env_file:
       - .env
+    # CRITICAL: POSTGRES_PASSWORD/USER/DB come from env_file ONLY, never the
+    # `environment:` block. A redundant `environment: POSTGRES_PASSWORD=${...}`
+    # entry would re-interpolate at compose level — which picks shell env
+    # FIRST, then .env. If anyone has POSTGRES_PASSWORD exported in their
+    # shell (from .bashrc, a `source .env`, etc.), shell wins for db while
+    # backend reads from env_file — producing a silent mismatch that survives
+    # every `down -v`. Don't add them here.
     environment:
       - PGDATA=/var/lib/postgresql/data/pgdata
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
-      - POSTGRES_USER=${POSTGRES_USER?Variable not set}
-      - POSTGRES_DB=${POSTGRES_DB?Variable not set}
-      - PGPORT=${POSTGRES_PORT}
+      - PGPORT=${POSTGRES_PORT:-5432}
 
   backend:
     image: '${DOCKER_IMAGE_BACKEND:-backend}:${TAG-latest}'

@@ -9,6 +9,24 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Scrub HQ config vars from the shell env BEFORE anything else. Compose's
+# `${VAR}` interpolation in compose.yml resolves from SHELL FIRST, then .env.
+# If a user has any of these exported (from .bashrc, `set -a; source .env`,
+# a previous setup attempt that leaked into the shell, etc.), services that
+# use `${VAR}` interpolation would pick the shell value while services that
+# use `env_file:` would pick the .env value — silent divergence that survives
+# every `docker compose down -v` because shell env outlives container teardown.
+# The only sane source of truth is .env; defend it by clearing the rest.
+unset POSTGRES_PASSWORD POSTGRES_USER POSTGRES_DB POSTGRES_PORT POSTGRES_SERVER \
+      REDIS_PASSWORD REDIS_PORT REDIS_HOST REDIS_DB \
+      MINIO_ROOT_USER MINIO_ROOT_PASSWORD MINIO_ACCESS_KEY MINIO_SECRET_KEY \
+      MINIO_ENDPOINT MINIO_HOST MINIO_PORT MINIO_BUCKET_NAME \
+      DOMAIN ACME_EMAIL BACKEND_PORT FRONTEND_PORT BACKEND_BIND_HOST \
+      SECRET_KEY ENCRYPTION_MASTER_KEY ENCRYPTION_MASTER_KEY_FALLBACKS \
+      FIRST_SUPERUSER FIRST_SUPERUSER_PASSWORD \
+      LOCAL_STORAGE_HOST_PATH LOCAL_STORAGE_BASE_PATH \
+      BACKEND_WORKERS CELERY_CONCURRENCY 2>/dev/null || true
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 # ANSI-C quoting so the bytes are real ESC (works through `printf %s`).
@@ -560,9 +578,9 @@ choose_optionals_interactive() {
     say "  ${DIM}1) Local files${NC}    Just a directory on this machine (./.store/local_fs)"
     say "  ${DIM}2) MinIO${NC}          S3-compatible container running in Docker"
     say "  ${DIM}3) External S3${NC}    AWS S3 or compatible — credentials added later"
-    local d=1; [[ "$FMODE" == prod ]] && d=2
+    local d=1   # local_fs is the safe default for everyone — minio opt-in
     if [[ "${ASSUME_YES:-false}" == true ]]; then
-      [[ "$d" == 2 ]] && apply_storage minio || apply_storage local_fs
+      apply_storage local_fs
     else
       local s; read -rp "  Storage [press Enter for: ${d}]: " s
       s="${s:-$d}"
@@ -631,9 +649,9 @@ choose_local_services_interactive() {
     say "  ${DIM}1) Local files${NC}   Just a directory on disk (./.store/local_fs)"
     say "  ${DIM}2) MinIO${NC}         S3-compatible container, runs in Docker"
     say "  ${DIM}3) External S3${NC}   AWS S3 or compatible — credentials in dashboard"
-    local d=1; [[ "$FMODE" == prod ]] && d=2
+    local d=1   # local_fs is the safe default for everyone — minio opt-in
     if [[ "${ASSUME_YES:-false}" == true ]]; then
-      [[ "$d" == 2 ]] && apply_storage minio || apply_storage local_fs
+      apply_storage local_fs
     else
       local s; read -rp "  Storage [press Enter for: ${d}]: " s
       s="${s:-$d}"
@@ -1017,6 +1035,21 @@ YAML
   ok "wrote $HOST_NET_FRAGMENT"
 }
 
+ensure_minio_secrets() {
+  local mu mp
+  mu="$(get_env MINIO_ROOT_USER)"; mp="$(get_env MINIO_ROOT_PASSWORD)"
+  if [[ "${REGEN:-false}" == true ]] || is_placeholder "$mu" || is_placeholder "$mp"; then
+    mu="hq_minio_$(openssl rand -hex 3)"; mp="$(gen_secret)"
+    set_env MINIO_ROOT_USER "$mu"; set_env MINIO_ROOT_PASSWORD "$mp"
+    say "  generated MINIO_ROOT_USER / MINIO_ROOT_PASSWORD"
+  else
+    say "${DIM}  kept existing MINIO_ROOT_USER / MINIO_ROOT_PASSWORD${NC}"
+  fi
+  # MINIO_ACCESS_KEY / MINIO_SECRET_KEY mirror root for client compat — many
+  # SDKs read these names. Setting them in addition to ROOT_* is harmless.
+  set_env MINIO_ACCESS_KEY "$mu"; set_env MINIO_SECRET_KEY "$mp"
+}
+
 ensure_env() {
   if [[ ! -f "$ENV_FILE" ]]; then
     cp "$EXAMPLE_FILE" "$ENV_FILE"; ok "created $ENV_FILE from $EXAMPLE_FILE"
@@ -1028,16 +1061,12 @@ ensure_env() {
   ensure_secret ENCRYPTION_MASTER_KEY gen_fernet
   ensure_postgres_password   # special-cased — see comment in fn for why
   ensure_secret REDIS_PASSWORD        gen_secret
-  local mu mp
-  mu="$(get_env MINIO_ROOT_USER)"; mp="$(get_env MINIO_ROOT_PASSWORD)"
-  if [[ "${REGEN:-false}" == true ]] || is_placeholder "$mu" || is_placeholder "$mp"; then
-    mu="hq_minio_$(openssl rand -hex 3)"; mp="$(gen_secret)"
-    set_env MINIO_ROOT_USER "$mu"; set_env MINIO_ROOT_PASSWORD "$mp"
-    say "  generated MINIO_ROOT_USER / MINIO_ROOT_PASSWORD"
-  else
-    say "${DIM}  kept existing MINIO_ROOT_USER / MINIO_ROOT_PASSWORD${NC}"
+  # MinIO secrets are gated on whether the profile is active. If user picks
+  # local_fs (or external S3) we don't generate them — saves noise, and any
+  # later toggle (storage_menu / services_menu) materializes them on demand.
+  if [[ ",$PROFILES," == *",minio,"* ]]; then
+    ensure_minio_secrets
   fi
-  set_env MINIO_ACCESS_KEY "$mu"; set_env MINIO_SECRET_KEY "$mp"
 
   set_env ENVIRONMENT "$ENVIRONMENT"
   set_env STORAGE_PROVIDER_TYPE "$STORAGE"
@@ -1328,7 +1357,7 @@ do_init() {
   # production → minio, dev → local files. Keeps `--mode production --with X -y`
   # from silently leaving prod on local_fs.
   if ! $STORAGE_SET; then
-    [[ "$FMODE" == prod ]] && apply_storage minio || apply_storage local_fs
+    apply_storage local_fs
   fi
   ensure_store_dirs
   ensure_local_fs_path
@@ -1920,6 +1949,9 @@ services_menu() {
         backup_env; set_env COMPOSE_PROFILES "$new"
         [[ ",$new," == *",minio,"* && ! -d ./.store/minio ]]         && { mkdir -p ./.store/minio; chmod 700 ./.store/minio; }
         [[ ",$new," == *",nominatim,"* && ! -d ./.store/nominatim ]] && { mkdir -p ./.store/nominatim; chmod 755 ./.store/nominatim; }
+        # If minio just got enabled, materialize MINIO_* secrets if they're
+        # still placeholders (ensure_env skips them when the profile is off).
+        [[ ",$new," == *",minio,"* ]] && ensure_minio_secrets
         ok "Saved: ${new:-<lean core>}"
         if docker_ok && confirm_y "Restart stack now with the new feature set?"; then
           ( stack_up ) || warn "Restart failed."
@@ -2089,6 +2121,7 @@ storage_menu() {
          ok "Storage = local_fs"; pause ;;
       2) backup_env; set_env STORAGE_PROVIDER_TYPE minio; add_profile_persist minio
          [[ -d ./.store/minio ]] || { mkdir -p ./.store/minio; chmod 700 ./.store/minio; }
+         ensure_minio_secrets   # materialize MINIO_* if still placeholders
          ok "Storage = minio"; pause ;;
       3) backup_env; set_env STORAGE_PROVIDER_TYPE s3
          prompt_set S3_BUCKET_NAME "S3 bucket"
