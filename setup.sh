@@ -595,41 +595,67 @@ ensure_local_fs_path() {
 }
 
 # ── Port availability checks ──────────────────────────────────────────────────
-# Bash's /dev/tcp is the most portable test — works on Linux + macOS without
-# requiring ss/netstat/lsof/python. A successful "echo > /dev/tcp/127.0.0.1/N"
-# means SOMETHING is listening on N (it answered our SYN). We add a 1-second
-# timeout because firewalled ports might silently drop, but loopback never
-# does so this is just belt-and-suspenders.
+# Detect whether anything is listening on a TCP port locally. Tries `nc -z`
+# (cross-platform, fast), then bash's built-in /dev/tcp as a fallback. We
+# deliberately do NOT use `timeout` — it isn't installed by default on macOS
+# and the earlier implementation silently treated every port as free when
+# timeout was missing.
 port_in_use() {
-  timeout 1 bash -c "echo > /dev/tcp/127.0.0.1/$1" 2>/dev/null
+  local p="$1"
+  if command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "$p" >/dev/null 2>&1
+  else
+    # Loopback connections are instant; no real risk of hanging.
+    (exec 3<>/dev/tcp/127.0.0.1/"$p") 2>/dev/null && { exec 3<&- 3>&-; return 0; }
+    return 1
+  fi
 }
 
-# Ports HQ will try to bind on the host, given the current mode + active
-# profiles. Returns one port per line. Knows the difference between bridge
-# mode (only frontend + maybe backend if dev) and host mode (every service).
-needed_host_ports() {
-  local profs; profs="$(active_profiles)"
-  local net="${NETWORK_MODE:-$(conf_get network_mode bridge)}"
+# Effective mode/profiles, preferring in-process state during the wizard and
+# falling back to the persisted .env afterward. The dashboard runs with stale
+# state vars (FMODE="dev" from script init), so without this fallback we'd
+# pick the wrong compose files + skip checking the wrong ports.
+effective_fmode() {
+  # Wizard explicitly set the mode → trust state var. Otherwise read .env so
+  # the dashboard/settings menu reflect persisted choice rather than the
+  # script-init default of "dev".
+  if "${MODE_SET:-false}"; then echo "$FMODE"; return; fi
+  [[ -f "$ENV_FILE" ]] && [[ "$(get_env ENVIRONMENT)" == "production" ]] && echo prod || echo dev
+}
+effective_profiles() {
+  if [[ -n "$PROFILES" ]]; then echo "$PROFILES"; return; fi
+  [[ -f "$ENV_FILE" ]] && get_env COMPOSE_PROFILES || true
+}
 
-  # Frontend is bound in both bridge modes (via ports: in compose.yml).
-  # In host mode the frontend container binds 127.0.0.1:3000 directly.
-  echo "$(get_env FRONTEND_PORT 3000)"
+# Ports HQ will try to bind on the host, given the effective mode + active
+# profiles. Returns one port per line.
+needed_host_ports() {
+  local mode profs net
+  mode="$(effective_fmode)"
+  profs="$(effective_profiles)"
+  net="$(active_network_mode)"
+
+  # Frontend host port (always bound in bridge mode; in host mode the frontend
+  # container binds 127.0.0.1:3000 directly to the host).
+  local fp; fp="$(get_env FRONTEND_PORT)"; echo "${fp:-3000}"
 
   # Dev override binds backend on the host for direct API access.
-  [[ "$FMODE" == dev ]] && echo "$(get_env BACKEND_PORT 8022)"
+  if [[ "$mode" == dev ]]; then
+    local bp; bp="$(get_env BACKEND_PORT)"; echo "${bp:-8022}"
+  fi
 
-  # Caddy when active — same in both modes, always 0.0.0.0:80,443.
+  # Caddy when active — always 0.0.0.0:80,443.
   [[ ",$profs," == *",caddy,"* ]] && { echo 80; echo 443; }
 
-  # Ollama when active — bridge mode publishes 127.0.0.1:11434; host mode
-  # binds directly on 11434.
+  # Ollama when active — bridge: 127.0.0.1:11434; host: 11434 directly.
   [[ ",$profs," == *",ollama,"* ]] && echo 11434
 
   # Host network mode adds everything else.
   if [[ "$net" == host ]]; then
-    echo "$(get_env BACKEND_PORT 8022)"
-    echo "$(get_env POSTGRES_PORT 5432)"
-    echo "$(get_env REDIS_PORT 6379)"
+    local bp pp rp
+    bp="$(get_env BACKEND_PORT)";  echo "${bp:-8022}"
+    pp="$(get_env POSTGRES_PORT)"; echo "${pp:-5432}"
+    rp="$(get_env REDIS_PORT)";    echo "${rp:-6379}"
     [[ ",$profs," == *",searxng,"* ]] && echo 8888
     [[ ",$profs," == *",minio,"* ]] && { echo 9000; echo 9001; }
     [[ ",$profs," == *",nominatim,"* ]] && echo 8080
@@ -647,13 +673,15 @@ next_free_port() {
 }
 
 precheck_ports() {
+  local ports; ports="$(needed_host_ports | sort -u | tr '\n' ' ')"
+  say "${DIM}checking host ports: ${ports}${NC}"
   local conflicts=() p
-  while IFS= read -r p; do
+  for p in $ports; do
     [[ -z "$p" ]] && continue
     port_in_use "$p" && conflicts+=("$p")
-  done < <(needed_host_ports | sort -u)
+  done
 
-  [[ ${#conflicts[@]} -eq 0 ]] && return 0
+  [[ ${#conflicts[@]} -eq 0 ]] && { say "${DIM}all ports free.${NC}"; return 0; }
 
   echo
   warn "These host ports HQ wants are already in use:"
@@ -664,10 +692,10 @@ precheck_ports() {
 
   # Build a reverse-lookup from port number to env var name (only movables).
   local backend_p postgres_p redis_p frontend_p
-  backend_p="$(get_env BACKEND_PORT 8022)"
-  postgres_p="$(get_env POSTGRES_PORT 5432)"
-  redis_p="$(get_env REDIS_PORT 6379)"
-  frontend_p="$(get_env FRONTEND_PORT 3000)"
+  backend_p="$(get_env BACKEND_PORT)";  backend_p="${backend_p:-8022}"
+  postgres_p="$(get_env POSTGRES_PORT)"; postgres_p="${postgres_p:-5432}"
+  redis_p="$(get_env REDIS_PORT)";       redis_p="${redis_p:-6379}"
+  frontend_p="$(get_env FRONTEND_PORT)"; frontend_p="${frontend_p:-3000}"
 
   # Detect any fixed-port conflicts; those need user action.
   local fixed_blockers=()
@@ -967,10 +995,7 @@ summary() {
 # ── Compose / stack ───────────────────────────────────────────────────────────
 
 compose_cmd() {
-  local mode="${FMODE:-}"
-  if [[ -z "$mode" ]]; then
-    [[ "$(get_env ENVIRONMENT)" == "production" ]] && mode=prod || mode=dev
-  fi
+  local mode; mode="$(effective_fmode)"
   local base
   if [[ "$mode" == "prod" ]]; then base="docker compose -f compose.yml"; else base="docker compose"; fi
   # Hardened network mode adds the generated host-net override fragment.
