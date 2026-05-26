@@ -1088,10 +1088,17 @@ ensure_env() {
   [[ -n "$SU_EMAIL_OPT"    ]] && set_env FIRST_SUPERUSER          "$SU_EMAIL_OPT"
   [[ -n "$SU_PASSWORD_OPT" ]] && set_env FIRST_SUPERUSER_PASSWORD "$SU_PASSWORD_OPT"
   # Non-interactive fallback for callers that skip the wizard (e.g. -y without --su-email).
+  # Password field uses silent read so it isn't echoed to the terminal/scrollback.
   for k in FIRST_SUPERUSER FIRST_SUPERUSER_PASSWORD; do
     local cur; cur="$(get_env "$k")"
     if is_placeholder "$cur" && [[ "${ASSUME_YES:-false}" != true ]]; then
-      read -rp "  $k: " v; [[ -n "$v" ]] && set_env "$k" "$v"
+      local v
+      if [[ "$k" == "FIRST_SUPERUSER_PASSWORD" ]]; then
+        read -rsp "  $k: " v; echo
+      else
+        read -rp  "  $k: " v
+      fi
+      [[ -n "$v" ]] && set_env "$k" "$v"
     fi
   done
   if [[ -n "$PA_GRANTS" ]]; then
@@ -1205,7 +1212,14 @@ stack_up() {
     # Compose says "up" only means containers started — backend may still
     # restart-loop on a config error (most commonly postgres password
     # mismatch with the data volume). Poll briefly, diagnose if bad.
-    verify_backend_started || rc=$?
+    if verify_backend_started; then
+      # Backend is Up — actively check that the superuser login actually works.
+      # Catches: seed script didn't run, password got hashed wrong, email case
+      # mismatch, etc. Anything that lets the container be "Up" but breaks login.
+      verify_login || rc=$?
+    else
+      rc=1
+    fi
   else
     warn "Start failed (exit $rc). See output above for the failing service."
   fi
@@ -1244,6 +1258,73 @@ verify_backend_started() {
   done
   warn "Backend didn't reach 'Up' within 24s. Check: $c logs backend"
   return 1
+}
+
+# Actively verify the superuser can log in. Backend container being "Up" only
+# means uvicorn started — it doesn't mean the prestart seed actually created
+# the user. This catches: seed script silently failed, password got hashed
+# differently than what's in .env, email case mismatch on storage, etc.
+verify_login() {
+  if ! command -v curl >/dev/null 2>&1; then
+    say "${DIM}  (curl not found — skipping login verify)${NC}"
+    return 0
+  fi
+  local email pw port; email="$(get_env FIRST_SUPERUSER)"; pw="$(get_env FIRST_SUPERUSER_PASSWORD)"
+  port="$(get_env BACKEND_PORT)"; port="${port:-8022}"
+  if [[ -z "$email" ]] || is_placeholder "$email" \
+     || [[ -z "$pw" ]] || is_placeholder "$pw"; then
+    warn "  superuser credentials in .env are still placeholders — skipping login verify."
+    return 0
+  fi
+
+  # Attempt login with backoff. Connection errors mean uvicorn isn't serving
+  # yet — retry. Any HTTP response (200/4xx) means backend answered, treat
+  # that as the real verdict (no separate health endpoint needed).
+  say "${DIM}  verifying superuser login…${NC}"
+  local i code
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 1
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -X POST \
+          --data-urlencode "username=${email}" \
+          --data-urlencode "password=${pw}" \
+          "http://localhost:${port}/api/v1/login/access-token" 2>/dev/null || echo 000)"
+    case "$code" in
+      000|"") continue ;;  # connect error — backend not serving yet
+      200)    ok "  superuser login verified ($email)"; return 0 ;;
+      *)      warn "  superuser login failed (HTTP $code) for $email"
+              diagnose_login_failure
+              return 1 ;;
+    esac
+  done
+  warn "  backend HTTP not responsive on :${port} after 10s — verify login manually."
+  return 0  # don't hard-fail; user can investigate
+}
+
+# Login failed despite backend being up. Peek at logs to figure out whether
+# the seed ran at all, then offer concrete recovery actions.
+diagnose_login_failure() {
+  local c profs logs; c="$(compose_cmd)"; profs="$(active_profiles)"
+  logs="$(COMPOSE_PROFILES="$profs" $c logs --tail 200 backend 2>/dev/null)"
+  echo
+  if echo "$logs" | grep -qiE "creating.*superuser|superuser.*created|initial.*user"; then
+    warn "  Seed reports the user was created, but login fails."
+    say   "  Most likely the .env password doesn't match what was hashed during init."
+    say   "  Update the live password without re-seeding:"
+    say "    ${BOLD}$c exec backend python -m app.cli.set_superuser \\"
+    say "      --identify '$(get_env FIRST_SUPERUSER)' \\"
+    say "      --email '$(get_env FIRST_SUPERUSER)' \\"
+    say "      --password '$(get_env FIRST_SUPERUSER_PASSWORD)'${NC}"
+  elif echo "$logs" | grep -qi "initial_data\|init_db\|prestart"; then
+    warn "  Seed ran but didn't create the user — check backend logs for errors:"
+    say   "    ${BOLD}$c logs --tail 100 backend${NC}"
+  else
+    warn "  Seed script doesn't appear to have run. Possible causes:"
+    say   "    • prestart.sh skipped initial_data.py (recently fixed; pull latest)"
+    say   "    • db wasn't ready when seed ran (race)"
+    say   "  Run seed manually:"
+    say   "    ${BOLD}$c exec backend python /app/app/initial_data.py${NC}"
+    say   "  Then verify login at: $(frontend_url)"
+  fi
 }
 
 # Postgres password in .env doesn't match what's in the data volume — most

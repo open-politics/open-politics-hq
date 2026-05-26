@@ -1,20 +1,13 @@
 #! /usr/bin/env bash
 set -e
 
-# alembic stamp head
-# alembic revision --autogenerate -m "adding user preferences"
-alembic upgrade head
-
-# Alternatively if the container is running:
-# docker compose exec backend bash -c "alembeic revision --autogenerate -m 'message' && alembic upgrade head"
-
-# Let the DB start
+# Wait for the DB to accept connections before doing anything else.
 python /app/app/backend_pre_start.py
 
-# # Run migrations
-# alembic upgrade head
+# Apply schema migrations.
+alembic upgrade head
 
-# python /app/app/initial_data.py
-
-
-
+# Seed the superuser (FIRST_SUPERUSER / FIRST_SUPERUSER_PASSWORD from .env)
+# plus initial infospaces, schemas, etc. Idempotent — safe to re-run.
+# Skipping this is how every fresh setup hit "incorrect password" on login.
+python /app/app/initial_data.py
