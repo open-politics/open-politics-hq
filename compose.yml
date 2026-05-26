@@ -56,8 +56,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    # Container always binds 3000 internally; FRONTEND_PORT is the host-side
+    # mapping, configurable so setup.sh can bump it when 3000 is in use.
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
     networks:
       - default
 

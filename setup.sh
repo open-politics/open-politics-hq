@@ -594,6 +594,126 @@ ensure_local_fs_path() {
   fi
 }
 
+# ── Port availability checks ──────────────────────────────────────────────────
+# Bash's /dev/tcp is the most portable test — works on Linux + macOS without
+# requiring ss/netstat/lsof/python. A successful "echo > /dev/tcp/127.0.0.1/N"
+# means SOMETHING is listening on N (it answered our SYN). We add a 1-second
+# timeout because firewalled ports might silently drop, but loopback never
+# does so this is just belt-and-suspenders.
+port_in_use() {
+  timeout 1 bash -c "echo > /dev/tcp/127.0.0.1/$1" 2>/dev/null
+}
+
+# Ports HQ will try to bind on the host, given the current mode + active
+# profiles. Returns one port per line. Knows the difference between bridge
+# mode (only frontend + maybe backend if dev) and host mode (every service).
+needed_host_ports() {
+  local profs; profs="$(active_profiles)"
+  local net="${NETWORK_MODE:-$(conf_get network_mode bridge)}"
+
+  # Frontend is bound in both bridge modes (via ports: in compose.yml).
+  # In host mode the frontend container binds 127.0.0.1:3000 directly.
+  echo "$(get_env FRONTEND_PORT 3000)"
+
+  # Dev override binds backend on the host for direct API access.
+  [[ "$FMODE" == dev ]] && echo "$(get_env BACKEND_PORT 8022)"
+
+  # Caddy when active — same in both modes, always 0.0.0.0:80,443.
+  [[ ",$profs," == *",caddy,"* ]] && { echo 80; echo 443; }
+
+  # Ollama when active — bridge mode publishes 127.0.0.1:11434; host mode
+  # binds directly on 11434.
+  [[ ",$profs," == *",ollama,"* ]] && echo 11434
+
+  # Host network mode adds everything else.
+  if [[ "$net" == host ]]; then
+    echo "$(get_env BACKEND_PORT 8022)"
+    echo "$(get_env POSTGRES_PORT 5432)"
+    echo "$(get_env REDIS_PORT 6379)"
+    [[ ",$profs," == *",searxng,"* ]] && echo 8888
+    [[ ",$profs," == *",minio,"* ]] && { echo 9000; echo 9001; }
+    [[ ",$profs," == *",nominatim,"* ]] && echo 8080
+  fi
+}
+
+# For movable ports (BACKEND/POSTGRES/REDIS/FRONTEND), pick the next free
+# port upward from the current value. Caller updates .env. Fixed-port
+# services (caddy/ollama/minio/searxng/nominatim) can't be auto-moved —
+# their wire protocols expect specific ports.
+next_free_port() {
+  local p=$(( $1 + 1 ))
+  while port_in_use "$p"; do p=$((p + 1)); done
+  echo "$p"
+}
+
+precheck_ports() {
+  local conflicts=() p
+  while IFS= read -r p; do
+    [[ -z "$p" ]] && continue
+    port_in_use "$p" && conflicts+=("$p")
+  done < <(needed_host_ports | sort -u)
+
+  [[ ${#conflicts[@]} -eq 0 ]] && return 0
+
+  echo
+  warn "These host ports HQ wants are already in use:"
+  for p in "${conflicts[@]}"; do
+    printf "    %s   ${DIM}(in use by another process)${NC}\n" "$p"
+  done
+  echo
+
+  # Build a reverse-lookup from port number to env var name (only movables).
+  local backend_p postgres_p redis_p frontend_p
+  backend_p="$(get_env BACKEND_PORT 8022)"
+  postgres_p="$(get_env POSTGRES_PORT 5432)"
+  redis_p="$(get_env REDIS_PORT 6379)"
+  frontend_p="$(get_env FRONTEND_PORT 3000)"
+
+  # Detect any fixed-port conflicts; those need user action.
+  local fixed_blockers=()
+  for p in "${conflicts[@]}"; do
+    case "$p" in
+      "$backend_p"|"$postgres_p"|"$redis_p"|"$frontend_p") : ;;
+      80|443) fixed_blockers+=("$p  ${DIM}(caddy — likely nginx/apache running)${NC}") ;;
+      11434)  fixed_blockers+=("$p  ${DIM}(ollama — local ollama already running)${NC}") ;;
+      8888)   fixed_blockers+=("$p  ${DIM}(searxng)${NC}") ;;
+      9000|9001) fixed_blockers+=("$p  ${DIM}(minio)${NC}") ;;
+      8080)   fixed_blockers+=("$p  ${DIM}(nominatim)${NC}") ;;
+      *)      fixed_blockers+=("$p  ${DIM}(unknown — fixed)${NC}") ;;
+    esac
+  done
+
+  if [[ ${#fixed_blockers[@]} -gt 0 ]]; then
+    warn "These can't be auto-moved (the protocol expects a specific port):"
+    for p in "${fixed_blockers[@]}"; do echo "    $p"; done
+    echo
+    say "  Stop the conflicting process, then re-run setup. On Linux:"
+    say "    ${DIM}sudo ss -ltnp | grep ':<port>'${NC}        ${DIM}# find the PID${NC}"
+    die "Resolve fixed-port conflicts and re-run."
+  fi
+
+  if [[ "${ASSUME_YES:-false}" == true ]]; then
+    say "Auto-yes: bumping movable ports upward."
+  elif ! confirm "Auto-pick free alternatives for the movable ports above?"; then
+    die "Aborted — free up the ports or set alternatives in .env, then re-run."
+  fi
+
+  backup_env
+  for p in "${conflicts[@]}"; do
+    local var="" new
+    case "$p" in
+      "$backend_p")  var=BACKEND_PORT  ;;
+      "$postgres_p") var=POSTGRES_PORT ;;
+      "$redis_p")    var=REDIS_PORT    ;;
+      "$frontend_p") var=FRONTEND_PORT ;;
+    esac
+    [[ -z "$var" ]] && continue
+    new="$(next_free_port "$p")"
+    set_env "$var" "$new"
+    ok "moved $var: $p → $new"
+  done
+}
+
 # Static guard against accidental public binds in compose.yml. We promise users
 # that "Just from this computer" really means just from this computer — the
 # only listener on 0.0.0.0 should be caddy (profile-gated, intentionally public).
@@ -938,7 +1058,17 @@ do_init() {
     rm -f "$HOST_NET_FRAGMENT"
   fi
   summary
+  # Free the host ports we're about to bind (or auto-bump movable ones).
+  precheck_ports
   stack_up
+  # Tell the user the direct compose command — they don't need setup.sh to
+  # restart the stack day-to-day. `docker compose up -d` is sufficient.
+  echo
+  say "${DIM}You can manage the stack directly with:${NC}"
+  say "  ${BOLD}$(compose_cmd) up -d${NC}     ${DIM}# start / restart${NC}"
+  say "  ${BOLD}$(compose_cmd) logs -f${NC}   ${DIM}# tail logs${NC}"
+  say "  ${BOLD}$(compose_cmd) down${NC}      ${DIM}# stop (data volumes preserved)${NC}"
+  say "${DIM}(or run ./setup.sh anytime for the dashboard)${NC}"
   # Remember for next run — UX state lives in setup.conf, not .env.
   conf_set last_mode "$([[ "$FMODE" == dev ]] && echo dev || echo running)"
   conf_set last_reach "$REACH"
