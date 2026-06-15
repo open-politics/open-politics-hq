@@ -116,7 +116,7 @@ def builder_must_not_commit(monkeypatch):
             asset = await builder.build()          # ← fixture watches this
             session.commit()                        # ← OK: caller's commit
     """
-    from app.api.modules.content.services.asset_builder import AssetBuilder
+    from app.api.modules.content.asset_builder import AssetBuilder
 
     committed_inside: list[str] = []
 
@@ -140,7 +140,7 @@ def builder_must_not_commit(monkeypatch):
 
         monkeypatch.setattr(AssetBuilder, method_name, traced)
 
-    for name in ("build", "load", "build_batch", "build_children"):
+    for name in ("build", "build_outcome", "load", "build_batch", "build_children"):
         _wrap_terminal(name)
 
     yield

@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlmodel import Session
 
+from app.api.modules.annotation.formula import Dimension, Formula, Measure
 from app.api.modules.annotation.query import AnnotationQuery
 from app.core.filters import FieldCondition, FilterSet
 
@@ -218,6 +219,65 @@ async def test_stream_graph_explosion_on_jsonb_null_does_not_crash(db, fixture_m
     result = await collect_graph(db, f["iid"], source, top_n_nodes=100, top_n_edges=100)
     names = {n.name for n in result.nodes}
     assert {"P", "Q"}.issubset(names)
+
+
+@pytest.fixture
+def fixture_dirty_dates(db):
+    """A date field as LLMs actually fill it. Beyond clean ISO, it carries the
+    cases a regex-only guard can't handle: ``2026-3-22`` (valid but not zero-
+    padded — a regex would drop it) and ``2026-02-30`` (calendar-impossible but
+    correctly shaped — a regex would let it reach the cast and 500). The
+    safe_to_timestamptz() function parses the former and NULLs the latter."""
+    uid = _user(db)
+    iid = _infospace(db, uid)
+    sid = _schema(db, iid, uid)
+    rid = _run(db, iid, uid)
+    rows = [
+        ("iso-march",     {"published": "2026-03-15", "topic": "a"}),
+        ("iso-march-2",   {"published": "2026-03-20T08:30:00Z", "topic": "b"}),
+        ("short-march",   {"published": "2026-3-22", "topic": "h"}),   # non-zero-padded, still March
+        ("iso-april",     {"published": "2026-04-02", "topic": "c"}),
+        ("free-text",     {"published": "sometime last spring", "topic": "d"}),
+        ("bad-month",     {"published": "2026-13-99", "topic": "e"}),
+        ("impossible-day", {"published": "2026-02-30", "topic": "i"}),  # shaped like a date, but Feb 30
+        ("empty",         {"published": "", "topic": "f"}),
+        ("missing",       {"topic": "g"}),
+    ]
+    for title, value in rows:
+        _annotation(db, iid, uid, rid, sid, _asset(db, iid, uid, title), value)
+    return {"iid": iid, "rid": rid, "sid": sid}
+
+
+def test_aggregate_temporal_bucket_on_dirty_dates_does_not_crash(db, fixture_dirty_dates):
+    """``aggregate(interval=...)`` over a date field with non-date cells must
+    not raise. Three March (incl. the non-zero-padded ``2026-3-22``), one April;
+    free-text, bad-month, and the calendar-impossible ``2026-02-30`` all drop to
+    NULL instead of crashing."""
+    f = fixture_dirty_dates
+    result = (
+        AnnotationQuery(db, f["iid"]).runs([f["rid"]])
+        .aggregate("published", interval="month")
+    )
+    by_month = {b.key[:7]: b.count for b in result.buckets if b.key}
+    assert by_month.get("2026-03") == 3
+    assert by_month.get("2026-04") == 1
+
+
+def test_relation_time_dim_on_dirty_dates_does_not_crash(db, fixture_dirty_dates):
+    """The chart path: a Formula with a ``time`` dimension routes through
+    ``_compute_relation`` → ``date_trunc(safe_to_timestamptz(...))``. Same dirty
+    field must bucket cleanly instead of 500-ing the panel."""
+    f = fixture_dirty_dates
+    formula = Formula(
+        id="dirty-dates",
+        name="by_month",
+        group=[Dimension(name="published", kind="time", path="published", interval="month")],
+        measures=[Measure(name="n", agg="count")],
+    )
+    rel = AnnotationQuery(db, f["iid"]).runs([f["rid"]]).relation(formula)
+    months = {r.keys["published"][:7]: r.measures["n"] for r in rel.rows if r.keys.get("published")}
+    assert months.get("2026-03") == 3
+    assert months.get("2026-04") == 1
 
 
 def test_cooccurs_same_level_on_jsonb_null_does_not_crash(db, fixture_mixed_nulls):

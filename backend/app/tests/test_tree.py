@@ -1,5 +1,5 @@
 """
-Tests for core/tree.py — Layer 0 tree operations.
+Tests for content/tree.py — Layer 0 tree operations.
 
 All tests require PostgreSQL (array ops, CTEs, triggers).
 Run via: ./test.sh app/tests/test_tree.py
@@ -9,18 +9,21 @@ from sqlalchemy import Column, Integer, String, Boolean, MetaData, Table, text, 
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlmodel import Session
 
-from app.core.tree import (
+from app.api.modules.content.tree import (
     ROOT,
     TreeResult,
     copy,
     move,
     delete,
     subtree_ids,
+    asset_descendants,
+    impact,
+    purge,
+    attach,
+    detach,
     seal_subtree,
     unseal_subtree,
     _would_cycle,
-    _array_append,
-    _array_remove,
     _fork_subtree,
 )
 
@@ -82,6 +85,21 @@ def _get_bundle_ids(db, asset_id):
         text("SELECT bundle_ids FROM asset WHERE id = :aid"),
         {"aid": asset_id},
     ).scalar()
+
+
+def _source(db, output_bundle_id, name="test-source", is_active=True, infospace_id=1, user_id=1):
+    """Helper: insert a source pointing at output_bundle_id. Returns its id."""
+    result = db.execute(
+        text(
+            "INSERT INTO source (uuid, name, kind, status, is_active, poll_interval_seconds, "
+            "items_last_poll, total_items_ingested, consecutive_failures, output_bundle_id, "
+            "infospace_id, user_id, created_at, updated_at) "
+            "VALUES (gen_random_uuid()::text, :name, 'rss', 'ACTIVE', :active, 300, "
+            "0, 0, 0, :obid, :iid, :uid, now(), now()) RETURNING id"
+        ),
+        {"name": name, "active": is_active, "obid": output_bundle_id, "iid": infospace_id, "uid": user_id},
+    )
+    return result.scalar()
 
 
 # ─── ROOT semantics ───
@@ -296,6 +314,67 @@ class TestDelete:
         with pytest.raises(ValueError, match="sealed"):
             delete(db, bundle_ids=[sealed], out_of=ROOT, confirm=True)
 
+    def test_delete_preview_counts_exclusive_assets(self, db):
+        # Regression: preview must report the real destroyed-asset count, not 0.
+        bid = _bundle(db, "counted")
+        for i in range(5):
+            _asset(db, title=f"a{i}", bundle_ids=[bid])
+
+        result = delete(db, bundle_ids=[bid], out_of=ROOT, confirm=False)
+
+        assert not result.executed
+        assert result.bundles == 1
+        assert result.destroyed_assets == 5
+        assert result.unlinked == 0
+
+    def test_delete_preview_counts_shared_as_unlinked(self, db):
+        bid = _bundle(db, "shared-home")
+        other = _bundle(db, "elsewhere")
+        _asset(db, bundle_ids=[bid])             # exclusive → destroyed
+        _asset(db, bundle_ids=[bid, other])      # shared → unlinked
+
+        result = delete(db, bundle_ids=[bid], out_of=ROOT, confirm=False)
+
+        assert result.destroyed_assets == 1
+        assert result.unlinked == 1
+
+    def test_delete_active_source_does_not_block(self, db):
+        # Previously raised "Cannot delete: N active sources". Now it proceeds.
+        bid = _bundle(db, "source-output")
+        _source(db, output_bundle_id=bid, is_active=True)
+
+        result = delete(db, bundle_ids=[bid], out_of=ROOT, confirm=True)
+
+        assert result.executed
+        assert result.paused_sources == 1
+
+    def test_delete_pauses_and_flags_source(self, db):
+        bid = _bundle(db, "doomed-output")
+        sid = _source(db, output_bundle_id=bid, is_active=True)
+
+        delete(db, bundle_ids=[bid], out_of=ROOT, confirm=True)
+
+        row = db.execute(
+            text("SELECT is_active, status, error_message, output_bundle_id, next_poll_at "
+                 "FROM source WHERE id = :sid"),
+            {"sid": sid},
+        ).first()
+        is_active, status, error_message, output_bundle_id, next_poll_at = row
+        assert is_active is False
+        assert status == "WARNING"
+        assert error_message and "deleted" in error_message.lower()
+        assert output_bundle_id is None       # bundle destroyed → FK nulled
+        assert next_poll_at is None
+
+    def test_delete_preview_reports_sources_to_pause(self, db):
+        bid = _bundle(db, "previewed-output")
+        _source(db, output_bundle_id=bid, is_active=True)
+
+        result = delete(db, bundle_ids=[bid], out_of=ROOT, confirm=False)
+
+        assert not result.executed
+        assert result.paused_sources == 1
+
 
 # ─── Subtree ───
 
@@ -374,21 +453,21 @@ class TestCycleDetection:
 
 class TestArrayHelpers:
 
-    def test_array_append_adds_membership(self, db):
+    def test_attach_adds_membership(self, db):
         aid = _asset(db)
         bid = _bundle(db, "dest")
 
-        count = _array_append(db, [aid], bid)
+        count = attach(db, [aid], bid)
 
         assert count == 1
         bids = _get_bundle_ids(db, aid)
         assert bid in bids
 
-    def test_array_remove_normalizes_to_root(self, db):
+    def test_detach_normalizes_to_root(self, db):
         bid = _bundle(db, "only")
         aid = _asset(db, bundle_ids=[bid])
 
-        _array_remove(db, [aid], bid)
+        detach(db, [aid], bid)
 
         bids = _get_bundle_ids(db, aid)
         assert bids == [ROOT]

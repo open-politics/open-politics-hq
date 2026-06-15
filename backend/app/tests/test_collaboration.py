@@ -516,8 +516,8 @@ class TestCollaboratorAccess:
         client.post(f"{API}/users/me/invitations/{inv['id']}/accept", headers=analyst_h)
 
         r = client.post(
-            f"{API}/infospaces/{iid}/assets/ingest-text", headers=analyst_h,
-            params={"text_content": "Analyst ingested this.", "title": "Analyst Note"},
+            f"{API}/infospaces/{iid}/assets/intake", headers=analyst_h,
+            json={"items": [{"text": "Analyst ingested this.", "title": "Analyst Note"}]},
         )
         assert r.status_code == 200
 

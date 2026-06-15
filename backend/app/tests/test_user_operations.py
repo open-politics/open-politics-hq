@@ -153,23 +153,80 @@ class TestBundles:
 # Asset ingestion — real files from fixtures/
 # ═══════════════════════════════════════════════════
 
-class TestAssetIngestion:
-    """Ingest real files through the actual handler pipeline."""
+def _drive(workspace: int, job_ids: list[int], *, process: bool = False):
+    """Drive minted IngestionJobs exactly as the worker would: run ``ingest``
+    in-process, and optionally sweep ``item_processing`` for PENDING assets."""
+    import asyncio
+    from app.core.tasks import TaskContext
+    from app.api.modules.content.tasks.ingestion import ingest
 
-    def test_ingest_text(self, client, headers, workspace):
-        """Text content via the ingest-text endpoint."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("closed")
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    ingest(TaskContext(infospace_id=workspace, settings=settings, task_name="ingest"), job_ids)
+
+    if process:
+        from sqlmodel import Session, select
+        from app.core.db import engine
+        from app.api.modules.content.models import Asset, ProcessingStatus
+        from app.api.modules.content.tasks.processing import item_processing
+
+        with Session(engine) as s:
+            pending = list(s.exec(
+                select(Asset.id).where(
+                    Asset.infospace_id == workspace,
+                    Asset.processing_status == ProcessingStatus.PENDING,
+                )
+            ).all())
+        if pending:
+            item_processing(
+                TaskContext(infospace_id=workspace, settings=settings, task_name="item_processing"),
+                pending,
+            )
+
+
+def _find_asset(client, headers, workspace: int, *, title: str | None = None,
+                source_identifier: str | None = None) -> dict:
+    r = client.get(
+        f"{settings.API_V1_STR}/infospaces/{workspace}/assets",
+        headers=headers, params={"limit": 200},
+    )
+    assert r.status_code == 200
+    for a in r.json()["data"]:
+        if title is not None and a["title"] == title:
+            return a
+        if source_identifier is not None and a.get("source_identifier") == source_identifier:
+            return a
+    raise AssertionError(f"asset not found (title={title!r}, source_identifier={source_identifier!r})")
+
+
+class TestAssetIngestion:
+    """Ingest real files through the async intake contract: the route mints
+    IngestionJob(s) to poll; the harness drives them in-process (what the
+    worker does), then asserts the built assets."""
+
+    def test_intake_text(self, client, headers, workspace):
+        """Text content via the unified intake endpoint."""
         r = client.post(
-            f"{settings.API_V1_STR}/infospaces/{workspace}/assets/ingest-text",
+            f"{settings.API_V1_STR}/infospaces/{workspace}/assets/intake",
             headers=headers,
-            params={"text_content": "Climate change threatens global food security.", "title": "Climate Brief"},
+            json={"items": [{"text": "Climate change threatens global food security.",
+                             "title": "Climate Brief"}]},
         )
-        assert r.status_code == 200, f"Text ingest failed: {r.text[:300]}"
-        body = r.json()
-        assert body["title"] == "Climate Brief"
-        assert body["kind"] == "text"
+        assert r.status_code == 200, f"Text intake failed: {r.text[:300]}"
+        jobs = r.json()
+        assert len(jobs) == 1 and jobs[0]["kind"] == "text"
+
+        _drive(workspace, [jobs[0]["id"]])
+        asset = _find_asset(client, headers, workspace, title="Climate Brief")
+        assert asset["kind"] == "text"
 
     def test_upload_markdown(self, client, headers, workspace):
-        """Upload README.md through the file handler."""
+        """Upload README.md — route returns the upload job; driving it builds the asset."""
         with open(FIXTURES / "README.md", "rb") as f:
             r = client.post(
                 f"{settings.API_V1_STR}/infospaces/{workspace}/assets/upload",
@@ -177,11 +234,15 @@ class TestAssetIngestion:
                 files={"file": ("README.md", f, "text/markdown")},
             )
         assert r.status_code == 200, f"MD upload failed: {r.text[:300]}"
-        assert r.json()["kind"] == "text"
-        assert r.json()["title"] == "README.md"
+        job = r.json()
+        assert job["kind"] == "upload"
+
+        _drive(workspace, [job["id"]])
+        asset = _find_asset(client, headers, workspace, title="README.md")
+        assert asset["kind"] == "text"
 
     def test_upload_csv_creates_children(self, client, headers, workspace):
-        """Upload CSV — should create parent + child row assets."""
+        """Upload CSV — acquire builds the parent PENDING; processing creates row children."""
         with open(FIXTURES / "eu_parl_10.csv", "rb") as f:
             r = client.post(
                 f"{settings.API_V1_STR}/infospaces/{workspace}/assets/upload",
@@ -189,18 +250,18 @@ class TestAssetIngestion:
                 files={"file": ("eu_parl_10.csv", f, "text/csv")},
             )
         assert r.status_code == 200, f"CSV upload failed: {r.text[:300]}"
-        parent = r.json()
+
+        _drive(workspace, [r.json()["id"]], process=True)
+        parent = _find_asset(client, headers, workspace, title="eu_parl_10.csv")
         assert parent["kind"] == "csv"
 
-        # Verify children were created
         children = client.get(
             f"{settings.API_V1_STR}/infospaces/{workspace}/assets/{parent['id']}/children",
             headers=headers,
         )
         assert children.status_code == 200
-        child_data = children.json()
         # eu_parl_10.csv has 10 rows
-        assert len(child_data) == 10
+        assert len(children.json()) == 10
 
     def test_upload_image(self, client, headers, workspace):
         with open(FIXTURES / "exactly.png", "rb") as f:
@@ -210,20 +271,30 @@ class TestAssetIngestion:
                 files={"file": ("exactly.png", f, "image/png")},
             )
         assert r.status_code == 200, f"Image upload failed: {r.text[:300]}"
-        assert r.json()["kind"] == "image"
 
-    def test_ingest_url(self, client, headers, workspace):
-        """Ingest a web article via URL scraping."""
+        _drive(workspace, [r.json()["id"]])
+        asset = _find_asset(client, headers, workspace, title="exactly.png")
+        assert asset["kind"] == "image"
+
+    def test_intake_url(self, client, headers, workspace):
+        """Ingest a web article: acquire makes the stub; the WebArticle type scrapes it."""
         url = _url_from_fixture()
         r = client.post(
-            f"{settings.API_V1_STR}/infospaces/{workspace}/assets/ingest-url",
+            f"{settings.API_V1_STR}/infospaces/{workspace}/assets/intake",
             headers=headers,
-            params={"url": url, "scrape_immediately": True},
+            json={"items": [{"url": url}]},
         )
-        assert r.status_code == 200, f"URL ingest failed: {r.text[:300]}"
-        body = r.json()
-        assert body["kind"] == "web"
-        assert body["text_content"]  # scraping produced content
+        assert r.status_code == 200, f"URL intake failed: {r.text[:300]}"
+        jobs = r.json()
+        assert len(jobs) == 1 and jobs[0]["kind"] == "web"
+
+        _drive(workspace, [jobs[0]["id"]], process=True)
+        asset = _find_asset(client, headers, workspace, source_identifier=url)
+        full = client.get(
+            f"{settings.API_V1_STR}/infospaces/{workspace}/assets/{asset['id']}",
+            headers=headers,
+        ).json()
+        assert full["text_content"], "scraping produced content"
 
     def test_upload_pdf(self, client, headers, workspace):
         """Upload a real EU parliament PDF."""
@@ -234,7 +305,10 @@ class TestAssetIngestion:
                 files={"file": ("d19-2553.pdf", f, "application/pdf")},
             )
         assert r.status_code == 200, f"PDF upload failed: {r.text[:300]}"
-        assert r.json()["kind"] == "pdf"
+
+        _drive(workspace, [r.json()["id"]])
+        asset = _find_asset(client, headers, workspace, title="d19-2553.pdf")
+        assert asset["kind"] == "pdf"
 
     def test_assets_appear_in_list(self, client, headers, workspace):
         """After all ingestions, the infospace has multiple assets."""
@@ -327,8 +401,8 @@ class TestCapabilityEnforcement:
 
     def test_unauthenticated_cannot_ingest(self, client, workspace):
         r = client.post(
-            f"{settings.API_V1_STR}/infospaces/{workspace}/assets/ingest-text",
-            params={"text_content": "nope"},
+            f"{settings.API_V1_STR}/infospaces/{workspace}/assets/intake",
+            json={"items": [{"text": "nope"}]},
         )
         assert r.status_code in (401, 403, 404)
 

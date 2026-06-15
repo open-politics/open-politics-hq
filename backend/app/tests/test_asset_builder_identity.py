@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.db import engine
 from app.api.modules.content.models import Asset, AssetKind, ProcessingStatus
-from app.api.modules.content.services.asset_builder import AssetBuilder, _UNSET
+from app.api.modules.content.asset_builder import AssetBuilder, _UNSET
 
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────

@@ -114,12 +114,13 @@ class TestContainerKinds:
 class TestProcessorRouting:
 
     def test_pdf_has_processor(self, registry):
+        # Migrated types expose a process() callable on the descriptor, not a class.
         desc = registry.by_kind(AssetKind.PDF)
-        assert desc.processor_class is not None
+        assert desc.processor is not None
 
     def test_text_has_no_processor(self, registry):
         desc = registry.by_kind(AssetKind.TEXT)
-        assert desc.processor_class is None
+        assert desc.processor is None and desc.processor_class is None
 
     def test_processable_kinds(self, registry):
         processable = registry.processable_kinds()

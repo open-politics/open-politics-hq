@@ -30,69 +30,97 @@ def workspace(infospace_factory, user_id):
     return infospace_factory("Feature Workflow Tests", user_id)
 
 
+def _drive(workspace: int, job_ids: list[int], *, process: bool = False):
+    """Drive minted IngestionJobs in-process — exactly what the worker does."""
+    import asyncio
+    from app.core.config import settings as _settings
+    from app.core.tasks import TaskContext
+    from app.api.modules.content.tasks.ingestion import ingest
+
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("closed")
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+    if job_ids:
+        ingest(TaskContext(infospace_id=workspace, settings=_settings, task_name="ingest"), job_ids)
+
+    if process:
+        from sqlmodel import Session, select
+        from app.core.db import engine
+        from app.api.modules.content.models import Asset, ProcessingStatus
+        from app.api.modules.content.tasks.processing import item_processing
+
+        with Session(engine) as s:
+            pending = list(s.exec(
+                select(Asset.id).where(
+                    Asset.infospace_id == workspace,
+                    Asset.processing_status == ProcessingStatus.PENDING,
+                )
+            ).all())
+        if pending:
+            item_processing(
+                TaskContext(infospace_id=workspace, settings=_settings, task_name="item_processing"),
+                pending,
+            )
+
+
 @pytest.fixture(scope="module")
 def seeded_assets(client, headers, workspace):
-    """Ingest several assets so search/tree/detail tests have data to work with.
-
-    Returns dict of {label: asset_dict} for downstream tests.
-    """
-    assets = {}
-
-    # 1. Text note
+    """Ingest several assets through the async intake contract (routes mint
+    IngestionJobs; the harness drives them in-process), then return the built
+    AssetReads as {label: asset_dict} for downstream tests."""
+    # Text notes via the unified intake endpoint
     r = client.post(
-        f"{API}/infospaces/{workspace}/assets/ingest-text",
+        f"{API}/infospaces/{workspace}/assets/intake",
         headers=headers,
-        params={
-            "text_content": "The European Parliament debated climate adaptation funding in March 2026.",
-            "title": "Climate Brief",
-        },
+        json={"items": [
+            {"text": "The European Parliament debated climate adaptation funding in March 2026.",
+             "title": "Climate Brief"},
+            {"text": "Budget allocation for humanitarian aid increased by 15% year-over-year.",
+             "title": "Budget Report"},
+        ]},
     )
-    assert r.status_code == 200, f"Text ingest failed: {r.text[:300]}"
-    assets["text"] = r.json()
+    assert r.status_code == 200, f"Text intake failed: {r.text[:300]}"
+    _drive(workspace, [j["id"] for j in r.json()])
 
-    # 2. Markdown upload
-    with open(FIXTURES / "README.md", "rb") as f:
-        r = client.post(
-            f"{API}/infospaces/{workspace}/assets/upload",
-            headers=headers,
-            files={"file": ("README.md", f, "text/markdown")},
-        )
-    assert r.status_code == 200
-    assets["markdown"] = r.json()
+    # File uploads — each returns the upload job
+    for fname, ctype in [
+        ("README.md", "text/markdown"),
+        ("eu_parl_10.csv", "text/csv"),
+        ("exactly.png", "image/png"),
+    ]:
+        with open(FIXTURES / fname, "rb") as f:
+            r = client.post(
+                f"{API}/infospaces/{workspace}/assets/upload",
+                headers=headers,
+                files={"file": (fname, f, ctype)},
+            )
+        assert r.status_code == 200, f"{fname} upload failed: {r.text[:300]}"
+        _drive(workspace, [r.json()["id"]])
 
-    # 3. CSV (container — produces children)
-    with open(FIXTURES / "eu_parl_10.csv", "rb") as f:
-        r = client.post(
-            f"{API}/infospaces/{workspace}/assets/upload",
-            headers=headers,
-            files={"file": ("eu_parl_10.csv", f, "text/csv")},
-        )
-    assert r.status_code == 200
-    assets["csv"] = r.json()
+    # Sweep processing once (CSV expands into row children)
+    _drive(workspace, [], process=True)
 
-    # 4. Image
-    with open(FIXTURES / "exactly.png", "rb") as f:
-        r = client.post(
-            f"{API}/infospaces/{workspace}/assets/upload",
-            headers=headers,
-            files={"file": ("exactly.png", f, "image/png")},
-        )
-    assert r.status_code == 200
-    assets["image"] = r.json()
-
-    # 5. Another text for search diversity
-    r = client.post(
-        f"{API}/infospaces/{workspace}/assets/ingest-text",
-        headers=headers,
-        params={
-            "text_content": "Budget allocation for humanitarian aid increased by 15% year-over-year.",
-            "title": "Budget Report",
-        },
+    listing = client.get(
+        f"{API}/infospaces/{workspace}/assets",
+        headers=headers, params={"limit": 200},
     )
-    assert r.status_code == 200
-    assets["budget"] = r.json()
+    assert listing.status_code == 200
+    by_title = {a["title"]: a for a in listing.json()["data"]}
 
-    return assets
+    labels = {
+        "text": "Climate Brief",
+        "markdown": "README.md",
+        "csv": "eu_parl_10.csv",
+        "image": "exactly.png",
+        "budget": "Budget Report",
+    }
+    missing = [t for t in labels.values() if t not in by_title]
+    assert not missing, f"seeded assets missing after drive: {missing}"
+    return {label: by_title[title] for label, title in labels.items()}
 
 
 @pytest.fixture(scope="module")
@@ -271,18 +299,18 @@ class TestSources:
         assert r.json()["name"] == "BBC World (renamed)"
 
     def test_create_generic_source(self, client, headers, workspace):
-        """Create a non-RSS source (url_list kind)."""
+        """Create a non-RSS source (web kind — details is the source's read-config)."""
         r = client.post(
             f"{API}/infospaces/{workspace}/sources",
             headers=headers,
             json={
                 "name": "URL Collection",
-                "kind": "url_list",
+                "kind": "web",
                 "details": {"urls": ["https://example.com"]},
             },
         )
         assert r.status_code == 201
-        assert r.json()["kind"] == "url_list"
+        assert r.json()["kind"] == "web"
 
     def test_duplicate_rss_source_reuses_existing(self, client, headers, workspace):
         """Creating an RSS source with the same feed URL returns the existing source."""
@@ -299,7 +327,8 @@ class TestSources:
         assert r1.json()["id"] == r2.json()["id"], "Duplicate feed URL should reuse existing source"
 
     def test_source_creates_output_bundle(self, client, headers, workspace):
-        """RSS source creation auto-creates an output bundle."""
+        """RSS source creation auto-creates an output bundle (the destination is
+        the output_bundle_id column — never a key inside details)."""
         r = client.post(
             f"{API}/infospaces/{workspace}/sources/create-rss-source",
             headers=headers,
@@ -310,13 +339,11 @@ class TestSources:
         )
         assert r.status_code == 200
         source = r.json()
-        # The source should have a target_bundle_id in details
-        assert "target_bundle_id" in source["details"]
+        assert source["output_bundle_id"], "destination bundle resolved on creation"
+        assert "target_bundle_id" not in (source["details"] or {}), "details is pure read-config"
 
-        # Verify the bundle exists
-        bundle_id = source["details"]["target_bundle_id"]
         rb = client.get(
-            f"{API}/infospaces/{workspace}/bundles/{bundle_id}",
+            f"{API}/infospaces/{workspace}/bundles/{source['output_bundle_id']}",
             headers=headers,
         )
         assert rb.status_code == 200
@@ -327,7 +354,7 @@ class TestSources:
         src = client.post(
             f"{API}/infospaces/{workspace}/sources",
             headers=headers,
-            json={"name": "Disposable", "kind": "url_list", "details": {}},
+            json={"name": "Disposable", "kind": "web", "details": {"urls": []}},
         ).json()
 
         r = client.delete(

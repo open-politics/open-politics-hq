@@ -12,6 +12,7 @@ from app.api.modules.graph.stream import (
     collect_graph,
     stream_graph,
 )
+from app.core.filters import FieldCondition, FilterSet
 
 
 @pytest.fixture(scope="module")
@@ -357,6 +358,141 @@ def test_lateral_resolves_unwrapped_document_envelope(db):
     ))
     assert len(result.edges) == 1
     assert len(result.nodes) == 2
+
+
+# ─── regression: panel filters apply in graph mode (#3) ───────────────────
+
+
+def test_filter_on_non_triplet_array_field_narrows_graph(db):
+    """A filter on a *non-triplet* array-of-primitives field narrows the graph.
+
+    Regression: graph mode always joins the triplet lateral
+    (``element_alias="triplet"``), so a filter on a different array
+    (``keywords[*]``) used to misroute to the scalar branch. For an
+    array-of-primitives the scalar branch raised
+    ``ValueError("No field after [*]")`` → the whole graph request 500'd.
+    The EXISTS-subquery branch now handles any non-active explosion, so the
+    filter narrows annotations exactly as it does on rows/table panels.
+    """
+    uid = _user(db, "flt_prim")
+    iid = _infospace(db, uid, "graph-flt-prim")
+    sid = _schema(db, iid, uid)
+    a = _asset(db, iid, uid, "a")
+    r = _run(db, iid, uid, "r")
+
+    _annotation(db, iid, uid, r, sid, a, {
+        "keywords": ["climate", "policy"],
+        "triplets": [
+            {"subject_name": "EPA", "subject_type": "org",
+             "predicate": "regulates",
+             "object_name": "Emissions", "object_type": "topic"},
+        ],
+    })
+    _annotation(db, iid, uid, r, sid, a, {
+        "keywords": ["sports"],
+        "triplets": [
+            {"subject_name": "Team", "subject_type": "org",
+             "predicate": "plays",
+             "object_name": "Game", "object_type": "event"},
+        ],
+    })
+
+    aq = (AnnotationQuery(db, iid).scope(None).runs([r])
+          .filter(FilterSet(conditions=[
+              FieldCondition(path="keywords[*]", operator="eq", value="climate"),
+          ])))
+    source = AnnotationGraphSource(query=aq, triplet_field="triplets")
+    result = asyncio.run(collect_graph(
+        db, iid, source, top_n_nodes=None, top_n_edges=None, chunk_size=10,
+    ))
+
+    # Only the climate-tagged annotation's triplet survives.
+    assert len(result.edges) == 1
+    assert {n.name for n in result.nodes} == {"EPA", "Emissions"}
+
+
+def test_filter_on_array_of_objects_narrows_graph(db):
+    """A filter on a non-triplet array-of-objects subfield narrows the graph.
+
+    The silent-empty half of the same regression: array-of-objects on the
+    scalar branch produced SQL matching nothing, so any such filter blanked
+    the graph instead of narrowing it.
+    """
+    uid = _user(db, "flt_obj")
+    iid = _infospace(db, uid, "graph-flt-obj")
+    sid = _schema(db, iid, uid)
+    a = _asset(db, iid, uid, "a")
+    r = _run(db, iid, uid, "r")
+
+    _annotation(db, iid, uid, r, sid, a, {
+        "mentions": [{"name": "Alice"}, {"name": "Bob"}],
+        "triplets": [
+            {"subject_name": "Alice", "subject_type": "person",
+             "predicate": "met",
+             "object_name": "Bob", "object_type": "person"},
+        ],
+    })
+    _annotation(db, iid, uid, r, sid, a, {
+        "mentions": [{"name": "Carol"}],
+        "triplets": [
+            {"subject_name": "Carol", "subject_type": "person",
+             "predicate": "met",
+             "object_name": "Dave", "object_type": "person"},
+        ],
+    })
+
+    aq = (AnnotationQuery(db, iid).scope(None).runs([r])
+          .filter(FilterSet(conditions=[
+              FieldCondition(path="mentions[*].name", operator="eq", value="Alice"),
+          ])))
+    source = AnnotationGraphSource(query=aq, triplet_field="triplets")
+    result = asyncio.run(collect_graph(
+        db, iid, source, top_n_nodes=None, top_n_edges=None, chunk_size=10,
+    ))
+
+    assert len(result.edges) == 1
+    assert {n.name for n in result.nodes} == {"Alice", "Bob"}
+
+
+def test_filter_on_triplet_subfield_filters_elements(db):
+    """A filter on the triplet field's own subfield filters individual triplets.
+
+    Exercises the ``active_explosion`` normalization: graph callers pass the
+    raw triplet field with the ``[*]`` marker (``triplets[*]``), while
+    ``ExplosionPath.array_field`` is stripped. Without normalization the
+    equality never holds and the condition falls through to EXISTS
+    (annotation-level) instead of filtering the lateral element. With it,
+    the matching branch filters each triplet individually.
+    """
+    uid = _user(db, "flt_sub")
+    iid = _infospace(db, uid, "graph-flt-sub")
+    sid = _schema(db, iid, uid)
+    a = _asset(db, iid, uid, "a")
+    r = _run(db, iid, uid, "r")
+
+    _annotation(db, iid, uid, r, sid, a, {
+        "triplets": [
+            {"subject_name": "A", "subject_type": "person",
+             "predicate": "knows",
+             "object_name": "B", "object_type": "person"},
+            {"subject_name": "C", "subject_type": "person",
+             "predicate": "owns",
+             "object_name": "D", "object_type": "org"},
+        ],
+    })
+
+    aq = (AnnotationQuery(db, iid).scope(None).runs([r])
+          .filter(FilterSet(conditions=[
+              FieldCondition(path="triplets[*].predicate", operator="eq", value="knows"),
+          ])))
+    source = AnnotationGraphSource(query=aq, triplet_field="triplets[*]")
+    result = asyncio.run(collect_graph(
+        db, iid, source, top_n_nodes=None, top_n_edges=None, chunk_size=10,
+    ))
+
+    # Only the "knows" triplet element survives — element-level filtering.
+    assert len(result.edges) == 1
+    assert {n.name for n in result.nodes} == {"A", "B"}
 
 
 def test_windows_cursor_handles_overflowing_annotation(db):

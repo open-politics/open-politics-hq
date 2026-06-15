@@ -7,7 +7,7 @@ message broker dispatch. The processing is identical.
 
 Flow tested:
   1. Upload file via HTTP (asset record created, status=PENDING)
-  2. Call process_pending(ctx, [asset_id]) — the @task function
+  2. Call item_processing(ctx, [asset_id]) — the @task function
   3. Verify asset status changes to READY and children are created
 
 Requires: Postgres, local storage (via docker compose).
@@ -20,7 +20,7 @@ from sqlmodel import Session
 from app.core.config import settings
 from app.core.db import engine
 from app.api.modules.content.models import Asset, ProcessingStatus
-from app.api.modules.content.tasks.processing import process_pending
+from app.api.modules.content.tasks.processing import item_processing
 from app.core.tasks import TaskContext
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -36,20 +36,46 @@ def workspace(infospace_factory, user_id):
 
 
 def _upload(client, headers, workspace, filename, content_type):
-    """Upload a fixture file, return the asset dict."""
+    """Upload a fixture file and return the acquired asset dict.
+
+    ``/upload`` is async now — it stages the bytes and returns the minted
+    IngestionJob (the post→poll contract). The harness runs ``ingest``
+    in-process (same code path as the worker) and returns the built asset."""
+    from sqlmodel import select
+    from app.api.modules.content.tasks.ingestion import ingest
+
     with open(FIXTURES / filename, "rb") as f:
         r = client.post(
             f"{settings.API_V1_STR}/infospaces/{workspace}/assets/upload",
             headers=headers,
             files={"file": (filename, f, content_type)},
-            data={"process_immediately": "false"},  # prevent inline processing
         )
     assert r.status_code == 200, f"Upload {filename} failed: {r.text[:300]}"
-    return r.json()
+    job = r.json()
+
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError("closed")
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    ingest(TaskContext(infospace_id=workspace, settings=settings, task_name="ingest"), [job["id"]])
+
+    with Session(engine) as session:
+        asset = session.exec(
+            select(Asset).where(
+                Asset.infospace_id == workspace,
+                Asset.title == filename,
+                Asset.parent_asset_id.is_(None),
+            ).order_by(Asset.id.desc())
+        ).first()
+        assert asset is not None, f"ingest produced no asset for {filename}"
+        return {"id": asset.id, "title": asset.title, "kind": asset.kind.value}
 
 
 def _run_processing(infospace_id: int, asset_ids: list[int]):
-    """Invoke process_pending exactly as the Celery worker would.
+    """Invoke item_processing exactly as the Celery worker would.
 
     Ensures a clean event loop — prior test modules may have left
     the loop in a closed/running state from async TestClient calls.
@@ -65,9 +91,9 @@ def _run_processing(infospace_id: int, asset_ids: list[int]):
     ctx = TaskContext(
         infospace_id=infospace_id,
         settings=settings,
-        task_name="process_pending",
+        task_name="item_processing",
     )
-    process_pending(ctx, asset_ids)
+    item_processing(ctx, asset_ids)
 
 
 def _get_asset(asset_id: int) -> Asset:
@@ -96,11 +122,11 @@ def _get_children(asset_id: int) -> list[Asset]:
 class TestPDFProcessing:
 
     def test_pdf_processing_produces_pages_with_content(self, client, headers, workspace):
-        """Upload PDF, run process_pending, verify page children with extracted text."""
+        """Upload PDF, run item_processing, verify page children with extracted text."""
         asset = _upload(client, headers, workspace, "d19-2553.pdf", "application/pdf")
         asset_id = asset["id"]
 
-        # Force status to PENDING so process_pending can claim it
+        # Force status to PENDING so item_processing can claim it
         # (upload handler may flip to PROCESSING via strategy check before event dispatch)
         with Session(engine) as session:
             from sqlalchemy import update as sa_update
@@ -133,6 +159,15 @@ class TestCSVProcessing:
         """Upload CSV with deferred processing, then process."""
         asset = _upload(client, headers, workspace, "eu_parl_10.csv", "text/csv")
         asset_id = asset["id"]
+
+        # Force PENDING so item_processing can claim it (upload strategy may flip status).
+        with Session(engine) as session:
+            from sqlalchemy import update as sa_update
+            session.execute(
+                sa_update(Asset).where(Asset.id == asset_id)
+                .values(processing_status=ProcessingStatus.PENDING)
+            )
+            session.commit()
 
         _run_processing(workspace, [asset_id])
 
@@ -190,7 +225,7 @@ class TestImageProcessing:
 class TestAtomicClaim:
 
     def test_double_processing_is_idempotent(self, client, headers, workspace):
-        """Running process_pending twice on the same asset doesn't duplicate children."""
+        """Running item_processing twice on the same asset doesn't duplicate children."""
         asset = _upload(client, headers, workspace, "d19-2553.pdf", "application/pdf")
         asset_id = asset["id"]
 

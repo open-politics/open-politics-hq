@@ -266,13 +266,13 @@ class TestCrossInfospaceValidation:
         assert pkg_r.status_code == 201
         pkg_id = pkg_r.json()["id"]
 
-        # Ingest an asset into infospace B
+        # Author an asset into infospace B (sync authoring create — source-less text)
         asset_r = client.post(
-            f"{_api()}/infospaces/{iid_b}/assets/ingest-text",
+            f"{_api()}/infospaces/{iid_b}/assets",
             headers=headers,
-            params={"text_content": "hello from B", "title": "B's asset"},
+            json={"title": "B's asset", "kind": "text", "text_content": "hello from B"},
         )
-        assert asset_r.status_code == 200
+        assert asset_r.status_code in (200, 201), asset_r.text[:300]
         asset_id = asset_r.json()["id"]
 
         # Try adding B's asset to A's package → should fail
