@@ -3318,7 +3318,7 @@
           "Assets"
         ],
         "summary": "Create Asset",
-        "description": "Generic asset creation endpoint that routes to appropriate specific endpoint.\n\nThis endpoint maintains backward compatibility while using the new ContentService.\nBased on the asset data provided, it routes to the appropriate ingestion method:\n- If source_identifier (URL) is provided: ingest as web content\n- If text_content is provided: ingest as text\n- Otherwise: create a basic asset record",
+        "description": "Author an asset directly from metadata (title, text, blob_path, facets, …).\n\nAuthoring only — no external fetch. To ingest a URL, text, file, or search, POST\nto ``/intake`` (mints an IngestionJob; the ``ingest`` task does the work). A\nblob_path with a processable kind is created PENDING and the processing cascade\npicks it up via ``asset.ingested``; everything else is born READY.",
         "operationId": "create_asset",
         "security": [
           {
@@ -3524,7 +3524,7 @@
           "Assets"
         ],
         "summary": "Create Asset",
-        "description": "Generic asset creation endpoint that routes to appropriate specific endpoint.\n\nThis endpoint maintains backward compatibility while using the new ContentService.\nBased on the asset data provided, it routes to the appropriate ingestion method:\n- If source_identifier (URL) is provided: ingest as web content\n- If text_content is provided: ingest as text\n- Otherwise: create a basic asset record",
+        "description": "Author an asset directly from metadata (title, text, blob_path, facets, …).\n\nAuthoring only — no external fetch. To ingest a URL, text, file, or search, POST\nto ``/intake`` (mints an IngestionJob; the ``ingest`` task does the work). A\nblob_path with a processable kind is created PENDING and the processing cascade\npicks it up via ``asset.ingested``; everything else is born READY.",
         "operationId": "create_asset",
         "security": [
           {
@@ -3825,7 +3825,7 @@
           "Assets"
         ],
         "summary": "Upload File",
-        "description": "Upload a file and create an asset.",
+        "description": "Stage an uploaded file to storage, then mint an ``upload`` IngestionJob — the\nmultipart face of ``/intake`` (JSON intake can't carry bytes). Returns the job;\nthe ``ingest`` task detects the kind from the staged blob and the processing\ncascade expands it. Poll the job (or the ``useIngestionJobs`` hook) for progress.",
         "operationId": "upload_file",
         "security": [
           {
@@ -3891,246 +3891,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AssetRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/infospaces/{infospace_id}/assets/ingest-url": {
-      "post": {
-        "tags": [
-          "assets",
-          "Assets"
-        ],
-        "summary": "Ingest Url",
-        "description": "Ingest content from a URL.\n\nUses WebHandler directly for clean URL ingestion.",
-        "operationId": "ingest_url",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "infospace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Infospace Id"
-            }
-          },
-          {
-            "name": "url",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Url"
-            }
-          },
-          {
-            "name": "title",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Title"
-            }
-          },
-          {
-            "name": "scrape_immediately",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "default": true,
-              "title": "Scrape Immediately"
-            }
-          },
-          {
-            "name": "package_token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Package Token"
-            }
-          },
-          {
-            "name": "X-Package-Token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Package-Token"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AssetRead"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/infospaces/{infospace_id}/assets/ingest-text": {
-      "post": {
-        "tags": [
-          "assets",
-          "Assets"
-        ],
-        "summary": "Ingest Text",
-        "description": "Ingest direct text content.\n\nUses TextHandler directly for clean text ingestion.",
-        "operationId": "ingest_text",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "infospace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Infospace Id"
-            }
-          },
-          {
-            "name": "text_content",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Text Content"
-            }
-          },
-          {
-            "name": "title",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Title"
-            }
-          },
-          {
-            "name": "event_timestamp",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "format": "date-time"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Event Timestamp"
-            }
-          },
-          {
-            "name": "package_token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Package Token"
-            }
-          },
-          {
-            "name": "X-Package-Token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Package-Token"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AssetRead"
+                  "$ref": "#/components/schemas/IngestionJobRead"
                 }
               }
             }
@@ -4246,7 +4007,7 @@
           "Assets"
         ],
         "summary": "Bulk Ingest Urls",
-        "description": "Ingest multiple URLs as separate assets.",
+        "description": "Ingest multiple URLs as web assets via the unified ``run_ingestion`` path.\n\nMints a single ``web`` IngestionJob; ``run_ingestion`` enumerates the URLs\n(the ``web`` source yields one WEB RawItem per URL), builds a WEB asset per\nURL as PENDING, and ``process_pending`` → ``WebArticle.process`` scrapes each.\nReturns the job so the client can track progress (poll\n``/ingestion-jobs/{id}`` or the ``useIngestionJobs`` hook). Replaces the old\nsync/≤100 + ``bulk_urls`` split — one job, one source-driven loop, accurate\nBuildOutcome counters (no len()-inflation).",
         "operationId": "bulk_ingest_urls",
         "security": [
           {
@@ -4312,11 +4073,102 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/IngestionJobRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/infospaces/{infospace_id}/assets/intake": {
+      "post": {
+        "tags": [
+          "assets",
+          "Assets"
+        ],
+        "summary": "Create Intake",
+        "description": "Dump anything → ingestion jobs. Each item is field-dispatched to a source kind;\nsame-kind items batch into one PENDING IngestionJob (``cursor_state.config.items``);\n``run_ingestion`` does the work via the uniform ``read`` opener. One destination for\nthe whole dump. The single producer the dialogs should call (supersedes the scattered\nper-shape ingest endpoints). File bytes are staged by the caller into ``storage_path``.",
+        "operationId": "create_intake",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "infospace_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Infospace Id"
+            }
+          },
+          {
+            "name": "package_token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Package Token"
+            }
+          },
+          {
+            "name": "X-Package-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Package-Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntakeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/AssetRead"
+                    "$ref": "#/components/schemas/IngestionJobRead"
                   },
-                  "title": "Response Assets-Bulk Ingest Urls"
+                  "title": "Response Assets-Create Intake"
                 }
               }
             }
@@ -4341,7 +4193,7 @@
           "Assets"
         ],
         "summary": "Ingest Search Results",
-        "description": "Ingest search results, splitting by whether scraping is needed.\n\nPer result:\n- ``len(content) >= SCRAPE_THRESHOLD`` → Tavily-style with pre-fetched\n  full text. Built into an asset inline and returned in ``assets``.\n- Below threshold → SearXNG-style snippet. URL is queued for the\n  ``run_bulk_url_import`` @task to scrape via Newspaper4k. The client\n  gets a ``scrape_job_id`` and can subscribe to the job's stream for\n  live progress.",
+        "description": "Ingest search results through the unified web path. A result whose ``content`` is\nthe full article (≥ threshold) carries it inline → ``web.fetch`` passes it through\n(no re-scrape); a short metasearch snippet carries no ``text`` → the web source\nscrapes the URL. One ``web`` IngestionJob; poll it (or the useIngestionJobs hook).",
         "operationId": "ingest_search_results",
         "security": [
           {
@@ -4945,7 +4797,7 @@
           "Assets"
         ],
         "summary": "Ingest Selected Articles",
-        "description": "Ingest selected articles from an RSS feed preview.\n\nArgs:\n    feed_url: URL of the RSS feed\n    selected_articles: List of article objects with at least 'link' and 'title'\n    bundle_id: Optional bundle to add articles to",
+        "description": "Ingest selected articles from an RSS feed preview as a ``web`` job (the web source\nscrapes each link). Returns the job id to poll.",
         "operationId": "ingest_selected_articles",
         "security": [
           {
@@ -5629,7 +5481,7 @@
           "Assets"
         ],
         "summary": "Create Assets Background Bulk",
-        "description": "Upload N files — optionally as a nested Bundle tree.\n\nModes (by which form fields are present):\n- `relative_paths` provided → build Bundle tree from directory structure. Each\n  unique directory becomes a Bundle chained via `parent_bundle_id`. Files land\n  in their parent Bundle.\n- `parent_bundle_id` → root is an existing bundle (subbundles nest under it).\n- `bundle_name` → a new root Bundle is created by that name.\n- If neither and paths share one top-level folder → that folder is root.\n- If none of the above → files become individual top-level assets (legacy flat).\n\nZips (`.zip/.tar/.tar.gz/...`) dissolve into the tree: extracted in-place under\na bundle named after the zip's stem. The zip itself is not retained as an asset.\n\nReturns `{tasks[], asset_ids[], bundles_created[]}` for per-item UI feedback.",
+        "description": "Upload N files (optionally a folder tree) + optional text items as ONE intake.\n\nEach file stages to storage and becomes an ``upload`` spec carrying its relative\nfolder as ``path``; the upload source's ``ensure_path_bundles`` rebuilds the folder\ntree as sub-bundles, and a ``.zip`` is detected ARCHIVE (by extension) and dissolved\nin place by the ARCHIVE type — no client-side extraction. Text items become ``text``\nspecs. Async — returns the job(s) to poll.",
         "operationId": "create_assets_background_bulk",
         "security": [
           {
@@ -5865,7 +5717,7 @@
           "Assets"
         ],
         "summary": "Ingest Rss Feeds From Awesome",
-        "description": "Discover and ingest RSS feeds from the awesome-rss-feeds repository.\n\nThis endpoint will:\n1. Fetch RSS feeds from the specified country\n2. Optionally filter by category\n3. Ingest the feeds and their content\n4. Optionally add to a bundle",
+        "description": "Discover feeds from the awesome-rss-feeds repo (the ``rss`` source's module fn) and\ningest them as a single ``rss`` job whose source reads every feed spec. Returns the\njob to poll.",
         "operationId": "ingest_rss_feeds_from_awesome",
         "security": [
           {
@@ -5933,7 +5785,7 @@
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/AssetRead"
+                    "$ref": "#/components/schemas/IngestionJobRead"
                   },
                   "title": "Response Assets-Ingest Rss Feeds From Awesome"
                 }
@@ -6035,96 +5887,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Message"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/infospaces/{infospace_id}/bundles/from-vfolder": {
-      "post": {
-        "tags": [
-          "Bundles"
-        ],
-        "summary": "Materialize Virtual Folder",
-        "description": "Create a real bundle from a virtual folder (path prefix within a source bundle).",
-        "operationId": "materialize_virtual_folder",
-        "security": [
-          {
-            "OAuth2PasswordBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "infospace_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Infospace Id"
-            }
-          },
-          {
-            "name": "package_token",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Package Token"
-            }
-          },
-          {
-            "name": "X-Package-Token",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Package-Token"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MaterializeVfolderRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BundleRead"
                 }
               }
             }
@@ -7114,7 +6876,7 @@
           "Bundles"
         ],
         "summary": "Transfer Bundle",
-        "description": "Transfer a bundle to another infospace.\n\nWhen copying (copy=True), both the bundle and all its assets are copied to the target infospace.\nWhen moving (copy=False), the bundle is moved but cross-infospace asset movement has limitations.\n\nArgs:\n    bundle_id: ID of bundle to transfer\n    target_infospace_id: Target infospace ID\n    copy: If True, copy bundle and all assets. If False, move bundle.",
+        "description": "Transfer a bundle to another infospace.\n\nWhen copying (copy=True), both the bundle and all its assets are copied to the target infospace.\nWhen moving (copy=False), the bundle is moved but cross-infospace asset movement has limitations.",
         "operationId": "transfer_bundle",
         "security": [
           {
@@ -8031,7 +7793,7 @@
           "Tree Navigation"
         ],
         "summary": "Get Tree Children",
-        "description": "Lazy children for a tree node (JSON envelope).\n\nDispatches by parent type:\n  * ``bundle-N`` — assets whose ``bundle_ids @> [N]`` (and ``parent_asset_id IS NULL``)\n  * ``asset-N``  — container children (``parent_asset_id = N``)\n  * ``vfolder-N__path`` — mix of sub-folder nodes + files at that path\n\nFor a progressive SSE stream, call ``GET /tree/children/stream``.",
+        "description": "Lazy children for a tree node (JSON envelope).\n\nDispatches by parent type:\n  * ``bundle-N`` — member root-assets (``bundle_ids @> [N]`` and ``parent_asset_id IS NULL``);\n    child *bundles* (sub-folders) arrive via ``nav``.\n  * ``asset-N``  — container parts (``parent_asset_id = N``).\n\nFor a progressive SSE stream, call ``GET /tree/children/stream``.",
         "operationId": "get_tree_children",
         "security": [
           {
@@ -8054,10 +7816,10 @@
             "required": true,
             "schema": {
               "type": "string",
-              "description": "Parent node id (bundle-*, asset-*, vfolder-*)",
+              "description": "Parent node id (bundle-*, asset-*)",
               "title": "Parent Id"
             },
-            "description": "Parent node id (bundle-*, asset-*, vfolder-*)"
+            "description": "Parent node id (bundle-*, asset-*)"
           },
           {
             "name": "skip",
@@ -8168,10 +7930,10 @@
             "required": true,
             "schema": {
               "type": "string",
-              "description": "Parent node id (bundle-*, asset-*, vfolder-*)",
+              "description": "Parent node id (bundle-*, asset-*)",
               "title": "Parent Id"
             },
-            "description": "Parent node id (bundle-*, asset-*, vfolder-*)"
+            "description": "Parent node id (bundle-*, asset-*)"
           },
           {
             "name": "skip",
@@ -8365,22 +8127,6 @@
             }
           },
           {
-            "name": "path_filter",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Path Filter"
-            }
-          },
-          {
             "name": "cursor",
             "in": "query",
             "required": false,
@@ -8547,22 +8293,6 @@
                 }
               ],
               "title": "Bundle Id"
-            }
-          },
-          {
-            "name": "path_filter",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Path Filter"
             }
           },
           {
@@ -19221,7 +18951,7 @@
           "Sources"
         ],
         "summary": "Create Source",
-        "description": "Create a new source with optional streaming configuration.\n\nIf streaming is enabled (is_active=True), the source will automatically poll\nfor new content at the specified interval. Content will be routed to the\noutput_bundle_id or a newly created bundle.",
+        "description": "Create a source. ``details`` is the source kind's read-config, verbatim;\nthe destination is the ``output_bundle_id`` column (resolved or created here),\nnever a key inside ``details``. Active sources poll on their interval.",
         "operationId": "create_source",
         "security": [
           {
@@ -19423,7 +19153,7 @@
           "Sources"
         ],
         "summary": "Create Source",
-        "description": "Create a new source with optional streaming configuration.\n\nIf streaming is enabled (is_active=True), the source will automatically poll\nfor new content at the specified interval. Content will be routed to the\noutput_bundle_id or a newly created bundle.",
+        "description": "Create a source. ``details`` is the source kind's read-config, verbatim;\nthe destination is the ``output_bundle_id`` column (resolved or created here),\nnever a key inside ``details``. Active sources poll on their interval.",
         "operationId": "create_source",
         "security": [
           {
@@ -20046,7 +19776,7 @@
           "Sources"
         ],
         "summary": "Create Rss Source",
-        "description": "Create a new Source of kind 'rss' and its output bundle.\n\nNote: The auto_monitor parameter is deprecated. Use the Flows API to create\nprocessing workflows that watch this source's output bundle.",
+        "description": "Create a Source of kind ``rss`` and its output bundle. ``details`` is the\nrss source's read-config; the destination is the ``output_bundle_id`` column.",
         "operationId": "create_rss_source",
         "security": [
           {
@@ -26064,7 +25794,7 @@
           "Search"
         ],
         "summary": "Web Search And Ingest",
-        "description": "Search via an external provider; optionally ingest results as assets.",
+        "description": "Search via an external provider; optionally ingest the results as a ``web`` job.\n\nIngestion is async: full-content results ride inline through the web source,\nsnippet-only results get scraped — the caller polls the returned ``job_id``.",
         "operationId": "web_search_and_ingest",
         "requestBody": {
           "content": {
@@ -26111,7 +25841,7 @@
           "Search"
         ],
         "summary": "Web Create Assets From Urls",
-        "description": "Create assets from a specific URL list. Selective asset creation.",
+        "description": "Ingest a specific URL list as a ``web`` job (the web source scrapes each).",
         "operationId": "web_create_assets_from_urls",
         "requestBody": {
           "content": {
@@ -26158,7 +25888,7 @@
           "Search"
         ],
         "summary": "Web Create Assets From Results",
-        "description": "Create assets directly from search-result dicts (no re-scrape).",
+        "description": "Ingest already-fetched search-result dicts as a ``web`` job — full content passes\nthrough the web source, snippet-only entries get scraped. No re-query.",
         "operationId": "web_create_assets_from_results",
         "requestBody": {
           "content": {
@@ -31013,6 +30743,11 @@
             ],
             "title": "Schema Ids"
           },
+          "is_favorite": {
+            "type": "boolean",
+            "title": "Is Favorite",
+            "default": false
+          },
           "trigger_type": {
             "type": "string",
             "title": "Trigger Type",
@@ -31241,6 +30976,17 @@
               }
             ],
             "title": "Graph Config"
+          },
+          "is_favorite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Favorite"
           }
         },
         "type": "object",
@@ -31894,7 +31640,7 @@
             ],
             "title": "File Info"
           },
-          "discovered_modalities": {
+          "modalities": {
             "anyOf": [
               {
                 "items": {
@@ -31906,7 +31652,7 @@
                 "type": "null"
               }
             ],
-            "title": "Discovered Modalities"
+            "title": "Modalities"
           },
           "event_timestamp": {
             "anyOf": [
@@ -32033,7 +31779,8 @@
           "audio_segment",
           "article",
           "rss_feed",
-          "file"
+          "file",
+          "archive"
         ],
         "title": "AssetKind"
       },
@@ -32052,7 +31799,14 @@
             "title": "Field"
           },
           "score": {
-            "type": "number",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Score"
           },
           "snippet": {
@@ -32083,8 +31837,7 @@
         },
         "type": "object",
         "required": [
-          "field",
-          "score"
+          "field"
         ],
         "title": "AssetMatch",
         "description": "Structured evidence of a single match site.\n\nA search hit can carry multiple matches (title + body chunk + entity etc.);\neach carries its field, score, and optional location/snippet."
@@ -32403,17 +32156,6 @@
             ],
             "title": "Blob Path"
           },
-          "logical_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Logical Path"
-          },
           "source_identifier": {
             "anyOf": [
               {
@@ -32537,7 +32279,7 @@
             ],
             "title": "Enrichment Resolved"
           },
-          "discovered_modalities": {
+          "modalities": {
             "anyOf": [
               {
                 "items": {
@@ -32549,7 +32291,7 @@
                 "type": "null"
               }
             ],
-            "title": "Discovered Modalities"
+            "title": "Modalities"
           },
           "is_container": {
             "type": "boolean",
@@ -32823,6 +32565,20 @@
               }
             ],
             "title": "Parent Id"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
           }
         },
         "type": "object",
@@ -33428,10 +33184,16 @@
             ],
             "title": "Title"
           },
-          "process_immediately": {
-            "type": "boolean",
-            "title": "Process Immediately",
-            "default": true
+          "bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Id"
           }
         },
         "type": "object",
@@ -38256,13 +38018,6 @@
           "filter": {
             "$ref": "#/components/schemas/FilterSet"
           },
-          "merge_maps": {
-            "items": {
-              "$ref": "#/components/schemas/MergeMap"
-            },
-            "type": "array",
-            "title": "Merge Maps"
-          },
           "group": {
             "items": {
               "$ref": "#/components/schemas/Dimension"
@@ -39672,6 +39427,128 @@
         ],
         "title": "IngestionStatus"
       },
+      "IntakeItem": {
+        "properties": {
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "storage_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Path"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          }
+        },
+        "type": "object",
+        "title": "IntakeItem",
+        "description": "One thing to ingest — exactly one of url/text/query/storage_path says what it\nis (field dispatch → source kind). ``storage_path`` is a pre-staged blob."
+      },
+      "IntakeRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IntakeItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Id"
+          },
+          "bundle_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Name"
+          },
+          "parent_bundle_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Bundle Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "IntakeRequest"
+      },
       "InvitationCreate": {
         "properties": {
           "identifier": {
@@ -40041,30 +39918,6 @@
           "total"
         ],
         "title": "ListingSection[AssetNode]"
-      },
-      "MaterializeVfolderRequest": {
-        "properties": {
-          "source_bundle_id": {
-            "type": "integer",
-            "title": "Source Bundle Id"
-          },
-          "path_prefix": {
-            "type": "string",
-            "title": "Path Prefix",
-            "default": ""
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          }
-        },
-        "type": "object",
-        "required": [
-          "source_bundle_id",
-          "name"
-        ],
-        "title": "MaterializeVfolderRequest",
-        "description": "Request body for materializing a virtual folder as a real bundle."
       },
       "Measure": {
         "properties": {
@@ -41912,22 +41765,6 @@
             ],
             "title": "Source Name"
           },
-          "auto_monitor": {
-            "type": "boolean",
-            "title": "Auto Monitor",
-            "default": false
-          },
-          "monitoring_schedule": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Monitoring Schedule"
-          },
           "target_bundle_id": {
             "anyOf": [
               {
@@ -42099,6 +41936,17 @@
             "type": "array",
             "title": "Asset Ids",
             "default": []
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
           },
           "status": {
             "type": "string",
@@ -43589,6 +43437,11 @@
             },
             "type": "array",
             "title": "Node Ids"
+          },
+          "out_of": {
+            "type": "integer",
+            "title": "Out Of",
+            "default": 0
           }
         },
         "type": "object",
@@ -44751,6 +44604,13 @@
             "type": "array",
             "title": "Incoming Scopes"
           },
+          "merge_maps": {
+            "items": {
+              "$ref": "#/components/schemas/MergeMap"
+            },
+            "type": "array",
+            "title": "Merge Maps"
+          },
           "additional_run_ids": {
             "items": {
               "type": "integer"
@@ -44796,7 +44656,7 @@
           "formula"
         ],
         "title": "ViewRequest",
-        "description": "The unified /view request.\n\nOne shared :class:`Formula` is the data scope across every requested\nphase. Phase params (``rows``, ``aggregate``, ``graph``) act as\ntoggles + per-phase tuning. ``aggregate`` is present-or-absent; the\nFormula's group/measures drive the actual computation.\n\nSee ``docs/internal/RE_EVALUATION.md`` for the pipeline rationale."
+        "description": "The unified /view request.\n\nOne shared :class:`Formula` is the data scope across every requested\nphase. Phase params (``rows``, ``aggregate``, ``graph``) act as\ntoggles + per-phase tuning. ``aggregate`` is present-or-absent; the\nFormula's group/measures drive the actual computation.\n\n``merge_maps`` are panel-local value aliases. Run-wide aliases live\non ``AnnotationRun.views_config['aliases']`` and are loaded by the\nroute. The Formula itself does not carry merge maps — those belong\nto the run/panel context, not the data spec. See\n``docs/INTELLIGENCE.md``."
       },
       "WatchStatusResponse": {
         "properties": {

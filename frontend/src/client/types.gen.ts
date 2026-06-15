@@ -165,6 +165,7 @@ export type AnnotationRunRead = {
     error_message: (string | null);
     annotation_count?: (number | null);
     schema_ids?: (Array<(number)> | null);
+    is_favorite?: boolean;
     trigger_type?: string;
     trigger_context?: ({
     [key: string]: unknown;
@@ -202,6 +203,7 @@ export type AnnotationRunUpdate = {
     graph_config?: ({
     [key: string]: unknown;
 } | null);
+    is_favorite?: (boolean | null);
 };
 
 export type AnnotationSchemaCreate = {
@@ -379,7 +381,7 @@ export type AssetCreate = {
     file_info?: ({
     [key: string]: unknown;
 } | null);
-    discovered_modalities?: (Array<(string)> | null);
+    modalities?: (Array<(string)> | null);
     event_timestamp?: (string | null);
     processing_status?: (ProcessingStatus | null);
     content_hash?: (string | null);
@@ -396,7 +398,7 @@ export type AssetFeedMeta = {
     cutoff?: (string | null);
 };
 
-export type AssetKind = 'pdf' | 'web' | 'image' | 'video' | 'audio' | 'text' | 'csv' | 'csv_row' | 'mbox' | 'email' | 'pdf_page' | 'text_chunk' | 'image_region' | 'video_scene' | 'audio_segment' | 'article' | 'rss_feed' | 'file';
+export type AssetKind = 'pdf' | 'web' | 'image' | 'video' | 'audio' | 'text' | 'csv' | 'csv_row' | 'mbox' | 'email' | 'pdf_page' | 'text_chunk' | 'image_region' | 'video_scene' | 'audio_segment' | 'article' | 'rss_feed' | 'file' | 'archive';
 
 /**
  * Structured evidence of a single match site.
@@ -406,7 +408,7 @@ export type AssetKind = 'pdf' | 'web' | 'image' | 'video' | 'audio' | 'text' | '
  */
 export type AssetMatch = {
     field: 'title' | 'body' | 'chunk' | 'annotation' | 'entity' | 'facet';
-    score: number;
+    score?: (number | null);
     snippet?: (string | null);
     location?: ({
     [key: string]: (number);
@@ -460,7 +462,6 @@ export type AssetRead = {
     created_at: string;
     text_content?: (string | null);
     blob_path?: (string | null);
-    logical_path?: (string | null);
     source_identifier?: (string | null);
     facets?: ({
     [key: string]: unknown;
@@ -479,7 +480,7 @@ export type AssetRead = {
     processing_error?: (string | null);
     tags?: Array<(string)>;
     enrichment_resolved?: (Array<(string)> | null);
-    discovered_modalities?: (Array<(string)> | null);
+    modalities?: (Array<(string)> | null);
     /**
      * True if this asset can have child assets.
      */
@@ -545,6 +546,7 @@ export type AssetTreeBundleSkeleton = {
     id: number;
     name: string;
     parent_id?: (number | null);
+    tags?: (Array<(string)> | null);
 };
 
 export type AssetTreeMeta = {
@@ -687,7 +689,7 @@ export type Body_assets_update_asset_content = {
 export type Body_assets_upload_file = {
     file: string;
     title?: (string | null);
-    process_immediately?: boolean;
+    bundle_id?: (number | null);
 };
 
 export type Body_datasets_import_dataset = {
@@ -1795,7 +1797,6 @@ export type Formula = {
     schema_id?: (number | null);
     explosion?: (string | null);
     filter?: FilterSet;
-    merge_maps?: Array<MergeMap>;
     group?: Array<Dimension>;
     weight?: (Measure | null);
     measures?: Array<Measure>;
@@ -2101,6 +2102,26 @@ export type IngestSearchResultsResponse = {
 };
 
 /**
+ * One thing to ingest — exactly one of url/text/query/storage_path says what it
+ * is (field dispatch → source kind). ``storage_path`` is a pre-staged blob.
+ */
+export type IntakeItem = {
+    url?: (string | null);
+    text?: (string | null);
+    query?: (string | null);
+    storage_path?: (string | null);
+    title?: (string | null);
+    filename?: (string | null);
+};
+
+export type IntakeRequest = {
+    items: Array<IntakeItem>;
+    bundle_id?: (number | null);
+    bundle_name?: (string | null);
+    parent_bundle_id?: (number | null);
+};
+
+/**
  * Invite someone by handle or email.
  */
 export type InvitationCreate = {
@@ -2188,15 +2209,6 @@ export type ListingSection_AssetNode_ = {
     total: number;
     has_more?: boolean;
     cursor_next?: (string | null);
-};
-
-/**
- * Request body for materializing a virtual folder as a real bundle.
- */
-export type MaterializeVfolderRequest = {
-    source_bundle_id: number;
-    path_prefix?: string;
-    name: string;
 };
 
 /**
@@ -2641,8 +2653,6 @@ export type RSSDiscoveryRequest = {
 export type RssSourceCreateRequest = {
     feed_url: string;
     source_name?: (string | null);
-    auto_monitor?: boolean;
-    monitoring_schedule?: (string | null);
     target_bundle_id?: (number | null);
     target_bundle_name?: (string | null);
 };
@@ -2707,6 +2717,7 @@ export type SearchAndIngestResponse = {
 }> | null);
     assets_created?: number;
     asset_ids?: Array<(number)>;
+    job_id?: (number | null);
     status: string;
     message: string;
 };
@@ -3027,6 +3038,7 @@ export type ToolCallRequest = {
 
 export type TreeDeleteRequest = {
     node_ids: Array<(string)>;
+    out_of?: number;
 };
 
 export type UpdatePassword = {
@@ -3246,12 +3258,17 @@ export type ValidationError = {
  * toggles + per-phase tuning. ``aggregate`` is present-or-absent; the
  * Formula's group/measures drive the actual computation.
  *
- * See ``docs/internal/RE_EVALUATION.md`` for the pipeline rationale.
+ * ``merge_maps`` are panel-local value aliases. Run-wide aliases live
+ * on ``AnnotationRun.views_config['aliases']`` and are loaded by the
+ * route. The Formula itself does not carry merge maps — those belong
+ * to the run/panel context, not the data spec. See
+ * ``docs/INTELLIGENCE.md``.
  */
 export type ViewRequest = {
     formula: Formula;
     fields?: (Array<(string)> | null);
     incoming_scopes?: Array<Scope>;
+    merge_maps?: Array<MergeMap>;
     additional_run_ids?: Array<(number)>;
     rows?: (RowsParams | null);
     aggregate?: ({
@@ -3769,7 +3786,7 @@ export type UploadFileData = {
     xPackageToken?: (string | null);
 };
 
-export type UploadFileResponse = (AssetRead);
+export type UploadFileResponse = (IngestionJobRead);
 
 export type UploadFile1Data = {
     formData: Body_assets_upload_file;
@@ -3778,51 +3795,7 @@ export type UploadFile1Data = {
     xPackageToken?: (string | null);
 };
 
-export type UploadFile1Response = (AssetRead);
-
-export type IngestUrlData = {
-    infospaceId: number;
-    packageToken?: (string | null);
-    scrapeImmediately?: boolean;
-    title?: (string | null);
-    url: string;
-    xPackageToken?: (string | null);
-};
-
-export type IngestUrlResponse = (AssetRead);
-
-export type IngestUrl1Data = {
-    infospaceId: number;
-    packageToken?: (string | null);
-    scrapeImmediately?: boolean;
-    title?: (string | null);
-    url: string;
-    xPackageToken?: (string | null);
-};
-
-export type IngestUrl1Response = (AssetRead);
-
-export type IngestTextData = {
-    eventTimestamp?: (string | null);
-    infospaceId: number;
-    packageToken?: (string | null);
-    textContent: string;
-    title?: (string | null);
-    xPackageToken?: (string | null);
-};
-
-export type IngestTextResponse = (AssetRead);
-
-export type IngestText1Data = {
-    eventTimestamp?: (string | null);
-    infospaceId: number;
-    packageToken?: (string | null);
-    textContent: string;
-    title?: (string | null);
-    xPackageToken?: (string | null);
-};
-
-export type IngestText1Response = (AssetRead);
+export type UploadFile1Response = (IngestionJobRead);
 
 export type ComposeArticleData = {
     infospaceId: number;
@@ -3849,7 +3822,7 @@ export type BulkIngestUrlsData = {
     xPackageToken?: (string | null);
 };
 
-export type BulkIngestUrlsResponse = (Array<AssetRead>);
+export type BulkIngestUrlsResponse = (IngestionJobRead);
 
 export type BulkIngestUrls1Data = {
     infospaceId: number;
@@ -3858,7 +3831,25 @@ export type BulkIngestUrls1Data = {
     xPackageToken?: (string | null);
 };
 
-export type BulkIngestUrls1Response = (Array<AssetRead>);
+export type BulkIngestUrls1Response = (IngestionJobRead);
+
+export type CreateIntakeData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: IntakeRequest;
+    xPackageToken?: (string | null);
+};
+
+export type CreateIntakeResponse = (Array<IngestionJobRead>);
+
+export type CreateIntake1Data = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: IntakeRequest;
+    xPackageToken?: (string | null);
+};
+
+export type CreateIntake1Response = (Array<IngestionJobRead>);
 
 export type IngestSearchResultsData = {
     infospaceId: number;
@@ -4187,7 +4178,7 @@ export type IngestRssFeedsFromAwesomeData = {
     xPackageToken?: (string | null);
 };
 
-export type IngestRssFeedsFromAwesomeResponse = (Array<AssetRead>);
+export type IngestRssFeedsFromAwesomeResponse = (Array<IngestionJobRead>);
 
 export type IngestRssFeedsFromAwesome1Data = {
     infospaceId: number;
@@ -4196,7 +4187,7 @@ export type IngestRssFeedsFromAwesome1Data = {
     xPackageToken?: (string | null);
 };
 
-export type IngestRssFeedsFromAwesome1Response = (Array<AssetRead>);
+export type IngestRssFeedsFromAwesome1Response = (Array<IngestionJobRead>);
 
 export type RetryAssetEnrichmentData = {
     assetId: number;
@@ -4316,15 +4307,6 @@ export type TriggerBackupSpecificInfospacesData = {
 };
 
 export type TriggerBackupSpecificInfospacesResponse = (Message);
-
-export type MaterializeVirtualFolderData = {
-    infospaceId: number;
-    packageToken?: (string | null);
-    requestBody: MaterializeVfolderRequest;
-    xPackageToken?: (string | null);
-};
-
-export type MaterializeVirtualFolderResponse = (BundleRead);
 
 export type CreateBundleData = {
     infospaceId: number;
@@ -6766,7 +6748,7 @@ export type GetTreeChildrenData = {
     limit?: number;
     packageToken?: (string | null);
     /**
-     * Parent node id (bundle-*, asset-*, vfolder-*)
+     * Parent node id (bundle-*, asset-*)
      */
     parentId: string;
     skip?: number;
@@ -6780,7 +6762,7 @@ export type GetTreeChildrenStreamData = {
     limit?: number;
     packageToken?: (string | null);
     /**
-     * Parent node id (bundle-*, asset-*, vfolder-*)
+     * Parent node id (bundle-*, asset-*)
      */
     parentId: string;
     skip?: number;
@@ -6799,7 +6781,6 @@ export type GetFeedAssetsData = {
     kinds?: Array<(string)>;
     limit?: number;
     packageToken?: (string | null);
-    pathFilter?: (string | null);
     skip?: number;
     sortBy?: string;
     sortOrder?: string;
@@ -6818,7 +6799,6 @@ export type GetFeedAssetsStreamData = {
     kinds?: Array<(string)>;
     limit?: number;
     packageToken?: (string | null);
-    pathFilter?: (string | null);
     skip?: number;
     sortBy?: string;
     sortOrder?: string;
