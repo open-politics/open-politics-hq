@@ -35,6 +35,12 @@ interface CardHeroFallbackProps {
   size?: 'sm' | 'md' | 'lg';
   /** Orientation - affects layout */
   orientation?: 'vertical' | 'horizontal';
+  /**
+   * Whether to render the title text. Set false when the card's content area
+   * already shows the title (e.g. horizontal cards) so it isn't duplicated.
+   * The title is still used for the decorative first letter and theming.
+   */
+  showTitle?: boolean;
   /** Additional classes */
   className?: string;
 }
@@ -161,6 +167,7 @@ export function CardHeroFallback({
   kind,
   size = 'md',
   orientation = 'vertical',
+  showTitle = true,
   className,
 }: CardHeroFallbackProps) {
   const { gradient, textColor } = getKindStyles(kind);
@@ -245,16 +252,18 @@ export function CardHeroFallback({
         )}
         
         {/* Title */}
-        <h3
-          className={cn(
-            'font-semibold leading-tight',
-            getTitleClasses(size, title.length, orientation),
-            titleClampClass[size],
-            textColor
-          )}
-        >
-          {title}
-        </h3>
+        {showTitle && (
+          <h3
+            className={cn(
+              'font-semibold leading-tight',
+              getTitleClasses(size, title.length, orientation),
+              titleClampClass[size],
+              textColor
+            )}
+          >
+            {title}
+          </h3>
+        )}
         
         {/* Text content preview - prioritize over summary */}
         {hasTextContent && (

@@ -79,6 +79,7 @@ export function AssetFeedView({
   
   // Behavior
   onAssetClick,
+  onBundleClick,
   initialLimit = DEFAULT_LIMIT,
   enableInfiniteScroll = true,
   
@@ -264,8 +265,10 @@ export function AssetFeedView({
   const handleSelectorItemView = useCallback((item: AssetTreeItem) => {
     if (item.asset) {
       onAssetClick?.(item.asset);
+    } else if (item.bundle) {
+      onBundleClick?.(item.bundle.id);
     }
-  }, [onAssetClick]);
+  }, [onAssetClick, onBundleClick]);
   
   // List view can only use AssetSelector when we have an infospaceId
   // (AssetSelector requires infospace to load from tree store)

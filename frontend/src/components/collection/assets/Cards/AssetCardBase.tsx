@@ -55,9 +55,9 @@ export function AssetCardBase({
   // Min-height classes for horizontal orientation
   // These are minimums - cards will grow to fill parent if parent has height set
   const horizontalSizeClasses = {
-    sm: 'min-h-[80px]',   // Compact - for bento stacks
-    md: 'min-h-[150px]',  // Standard list item
-    lg: 'min-h-[160px]',  // Featured/prominent
+    sm: 'min-h-[48px]',   // Compact - tight row
+    md: 'min-h-[64px]',   // Standard list item - row-like
+    lg: 'min-h-[96px]',   // Featured/prominent
   };
 
   return (

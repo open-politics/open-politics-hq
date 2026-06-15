@@ -40,6 +40,9 @@ import useAuth from '@/hooks/useAuth';
 import { Textarea } from "@/components/ui/textarea"
 import Link from 'next/link';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
+import { useDock } from '@/zustand_stores/storeDock';
+import { useAssetDetail } from './AssetDetailContext';
+import { useBundlePath } from './DetailBreadcrumb';
 import { useTreeStore } from '@/zustand_stores/storeTree';
 import { useMediaBlobStore } from '@/zustand_stores/storeMediaBlobs';
 import { useAssetQuery, type QueryResult } from '@/hooks/useAssetQuery';
@@ -54,7 +57,6 @@ import AssetDetailViewCsv from './AssetDetailViewCsv';
 import AssetDetailViewPdf from './AssetDetailViewPdf';
 import AssetDetailViewTextBlock from './AssetDetailViewTextBlock';
 import { PdfAssetContent } from './PdfAssetContent';
-import ComposedArticleView from '../Composer/ComposedArticleView';
 import { ArticleView } from './Articles';
 import TextContentRenderer from './Articles/TextContentRenderer';
 import EditableCsvViewer from './EditableCsvViewer';
@@ -111,8 +113,13 @@ interface AssetDetailViewProps {
   schemas: any[]; // Placeholder for classification schemes
   selectedAssetId: number | null;
   highlightAssetIdOnOpen: number | null;
+  /** Bundle the asset was opened from — drives the breadcrumb path. */
+  fromBundleId?: number | null;
   onLoadIntoRunner?: (jobId: number, jobName: string) => void;
   enableHighlighting?: boolean; // Enable text span highlighting (default: false)
+  /** Dock navigation, rendered in the meta header (omitted in annotation overlays). */
+  onBack?: () => void;
+  onClose?: () => void;
 }
 
 const AssetDetailView = ({
@@ -120,12 +127,23 @@ const AssetDetailView = ({
   schemas,
   selectedAssetId,
   highlightAssetIdOnOpen,
+  fromBundleId,
   onLoadIntoRunner,
-  enableHighlighting = false
+  enableHighlighting = false,
+  onBack,
+  onClose,
 }: AssetDetailViewProps) => {
   // --- Stores ---
   const { activeInfospace } = useInfospaceStore();
   const { getAssetById, updateAsset, fetchChildAssets, reprocessAsset, requestEnrichment } = useAssetStore();
+  // Articles edit in the composer (global dock); embeds navigate via the container
+  // (dock pushes → back returns to the article; an annotation overlay opens there).
+  const openComposer = useDock((s) => s.openComposer);
+  const { openDetailOverlay: navigateToAsset, openBundleDetail: navigateToBundle } = useAssetDetail();
+  // Breadcrumb path = the bundle we opened this asset from (tree parent / feed
+  // membership / containing bundle), walked to root. Empty when opened with no
+  // context (search, chat, deep link) — then the header shows just the title.
+  const breadcrumbSegments = useBundlePath(fromBundleId ?? null);
   const { deleteFragment } = useFragmentCuration();
 
   // --- State Hooks ---
@@ -391,9 +409,14 @@ const AssetDetailView = ({
 
   const handleStartInlineEdit = useCallback(() => {
     if (!asset) return;
+    // Articles are authored in the composer, not the raw-text inline editor.
+    if (asset.kind === 'article') {
+      openComposer({ mode: 'edit', assetId: asset.id });
+      return;
+    }
     resetInlineEditDrafts(asset, childAssets);
     setInlineEditActive(true);
-  }, [asset, childAssets, resetInlineEditDrafts]);
+  }, [asset, childAssets, resetInlineEditDrafts, openComposer]);
 
   const handleCancelInlineEdit = useCallback(() => {
     setInlineEditActive(false);
@@ -1378,7 +1401,8 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
           <ArticleView
             asset={asset}
             childAssets={childAssets}
-            onAssetClick={handleChildAssetClick}
+            onAssetClick={(a) => navigateToAsset(a.id)}
+            onBundleClick={(id) => navigateToBundle(id)}
             enableHighlighting={enableHighlighting}
             hideMainBody={inlineEditActive}
           />
@@ -1989,8 +2013,10 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
         <>
           {/* Unified Meta Header */}
           <div className="shrink-0">
-          <AssetMetaHeader 
+          <AssetMetaHeader
             asset={asset}
+            breadcrumbSegments={breadcrumbSegments}
+            onBreadcrumbClick={navigateToBundle}
             inlineEdit={{
               active: inlineEditActive,
               draftTitle,
@@ -2027,6 +2053,8 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
             onToggleFavorite={toggleFavorite}
             showActions={true}
             showFragments={true}
+            onBack={onBack}
+            onClose={onClose}
           />
           </div>
 

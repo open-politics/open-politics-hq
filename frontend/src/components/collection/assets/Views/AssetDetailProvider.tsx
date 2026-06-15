@@ -1,45 +1,17 @@
 'use client';
 
-import React, { useState, createContext, useContext, useCallback, useRef, useMemo } from 'react';
-// Removed: import { useDocumentStore } from '@/zustand_stores/storeDocuments';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
 import AssetDetailOverlay from './AssetDetailOverlay';
 import AssetManagerOverlay from '../Helper/AssetManagerOverlay'; // Assuming this will be adapted or replaced
 import { TextSpanHighlightProvider } from '@/components/collection/contexts/TextSpanHighlightContext';
 import { FormattedAnnotation } from '@/lib/annotations/types';
 import { AnnotationSchemaRead } from '@/client';
-
-// --- Type for what's being viewed ---
-type DetailViewType = 'asset' | 'bundle' | null;
-
-// --- Create Context ---
-interface AssetDetailContextType {
-  openDetailOverlay: (assetId: number) => void;
-  openBundleDetail: (bundleId: number) => void;
-  closeDetailOverlay: () => void;
-  isOpen: boolean;
-  selectedAssetId: number | null;
-  selectedBundleId: number | null;
-  viewType: DetailViewType;
-  /** Register the current row order so the overlay can navigate ↑↓ between rows. */
-  setNavAssetIds: (ids: number[]) => void;
-  /** Move the open overlay to the previous/next asset in the registered list. No-op when not registered. */
-  navigateAdjacent: (direction: 'prev' | 'next') => void;
-  /** True when there is a registered list of nav IDs and adjacency is possible. */
-  hasNav: boolean;
-  navHasPrev: boolean;
-  navHasNext: boolean;
-}
-
-export const AssetDetailContext = createContext<AssetDetailContextType | undefined>(undefined);
-
-export const useAssetDetail = () => {
-  const context = useContext(AssetDetailContext);
-  if (context === undefined) {
-    throw new Error('useAssetDetail must be used within a AssetDetailProvider');
-  }
-  return context;
-};
-// --- End Create Context ---
+// Context + hook live in a leaf module (no overlay import) to keep the import
+// graph acyclic. Re-exported here so existing `from './AssetDetailProvider'`
+// consumers keep working unchanged.
+import { AssetDetailContext, type DetailViewType } from './AssetDetailContext';
+export { AssetDetailContext, useAssetDetail } from './AssetDetailContext';
+export type { AssetDetailContextType } from './AssetDetailContext';
 
 interface AssetDetailProviderProps {
   children: React.ReactNode;
@@ -83,7 +55,8 @@ export default function AssetDetailProvider({
   // --- End Manage Overlay State ---
 
   // --- Functions to control the overlay ---
-  const openDetailOverlay = useCallback((assetId: number) => {
+  // fromBundleId is unused in overlay mode (annotation surfaces show no breadcrumb).
+  const openDetailOverlay = useCallback((assetId: number, _fromBundleId?: number) => {
     console.log(`[AssetDetailProvider] Opening detail for asset ID: ${assetId} and setting highlight.`);
     setDetailAssetId(assetId);
     setDetailBundleId(null);

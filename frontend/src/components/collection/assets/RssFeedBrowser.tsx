@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Rss, ExternalLink, Calendar, User, Tag, Plus, Globe, Download, Eye, Clock } from "lucide-react";
+import { Loader2, Rss, ExternalLink, Calendar, User, Tag, Plus, Globe, Download, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { RssFeedBrowseResponse } from "@/lib/scraping/scraping_response";
 import { AssetsService, UtilsService, SourcesService } from "@/client";
@@ -112,7 +112,7 @@ export default function RssFeedBrowser({
         limit: 50
       });
       
-      const response = await UtilsService.discoverRssFeeds({
+      const response = await AssetsService.discoverRssFeeds({
         infospaceId: infospaceId!,
         country: selectedCountry,
         category: categoryFilter || null,
@@ -299,7 +299,7 @@ export default function RssFeedBrowser({
   };
 
   // Create RSS source for monitoring
-  const createRssSource = async (autoMonitor: boolean = false) => {
+  const createRssSource = async () => {
     if (!previewData?.feed_info) {
       setError("No feed data available");
       return;
@@ -314,8 +314,6 @@ export default function RssFeedBrowser({
         requestBody: {
           feed_url: previewFeedUrl,
           source_name: `RSS: ${previewData.feed_info.title}`,
-          auto_monitor: autoMonitor,
-          monitoring_schedule: autoMonitor ? "0 */6 * * *" : undefined, // Every 6 hours
           target_bundle_id:
             destination === "existing_bundle" ? Number(selectedBundleId) : undefined,
           target_bundle_name:
@@ -736,7 +734,7 @@ export default function RssFeedBrowser({
                     </Button>
                     
                     <Button
-                      onClick={() => createRssSource(false)}
+                      onClick={() => createRssSource()}
                       disabled={creatingSource}
                       variant="outline"
                     >
@@ -748,18 +746,6 @@ export default function RssFeedBrowser({
                       Create Source
                     </Button>
                     
-                    <Button
-                      onClick={() => createRssSource(true)}
-                      disabled={creatingSource}
-                      variant="outline"
-                    >
-                      {creatingSource ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      ) : (
-                        <Clock className="h-4 w-4 mr-2" />
-                      )}
-                      Create & Monitor
-                    </Button>
                   </div>
                 </div>
               )}

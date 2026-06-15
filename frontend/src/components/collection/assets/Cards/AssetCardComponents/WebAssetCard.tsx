@@ -217,6 +217,7 @@ export function WebAssetCard({
               kind={asset.kind}
               size={size}
               orientation="horizontal"
+              showTitle={false}
             />
           )}
           

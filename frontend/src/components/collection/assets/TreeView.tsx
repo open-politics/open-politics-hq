@@ -177,7 +177,7 @@ export function TreeView({
         actions={renderActions?.(item)}
         className={cn(
           isFolder
-            ? 'mb-0.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 py-1.5 px-3'
+            ? 'mb-0.5 bg-slate-50 dark:bg-slate-900/50 py-1.5 px-3'
             : 'py-1 px-3',
         )}
         onClick={(e) => {

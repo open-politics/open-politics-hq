@@ -199,9 +199,8 @@ export function AssetTransferPopover({
         }
     }}>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="h-7 px-2" disabled={isButtonDisabled}>
-          <FolderInput className="h-3.5 w-3.5 mr-1" />
-          {isButtonDisabled ? 'Transfer' : `Transfer (${totalItems})`}
+        <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={isButtonDisabled} title="Transfer to another infospace">
+          <FolderInput className="h-3.5 w-3.5" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-80">

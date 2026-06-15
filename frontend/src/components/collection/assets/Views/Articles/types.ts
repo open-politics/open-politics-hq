@@ -31,6 +31,8 @@ export interface ArticleViewProps {
   childAssets?: AssetRead[];
   onEdit?: (asset: AssetRead) => void;
   onAssetClick?: (asset: AssetRead) => void;
+  /** Navigate to a linked bundle (composed-article {{bundle:ID}} embeds). */
+  onBundleClick?: (id: number) => void;
   className?: string;
   enableHighlighting?: boolean;
   /** When true, body text is edited elsewhere (e.g. detail inline panel); hide rendered article body */
@@ -42,4 +44,5 @@ export interface ArticleRendererProps {
   content: string;
   embeddedAssets?: any[];
   onAssetClick?: (asset: AssetRead) => void;
+  onBundleClick?: (id: number) => void;
 }

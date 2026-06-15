@@ -217,6 +217,7 @@ export function ArticleAssetCard({
               kind={asset.kind}
               size={size}
               orientation="horizontal"
+              showTitle={false}
             />
           )}
           

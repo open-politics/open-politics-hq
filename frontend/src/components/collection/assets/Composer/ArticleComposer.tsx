@@ -1,43 +1,23 @@
 'use client';
 
-import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  FileText,
-  Save, 
-  X, 
-  Eye,
-  Plus, 
-  Trash2, 
-  GripVertical, 
-  Image as ImageIcon,
-  FileSpreadsheet,
-  Globe,
-  Video,
-  Music,
-  File,
-  Loader2,
-  Search,
-  ArrowRight
-} from 'lucide-react';
+import { Save, Loader2, HelpCircle } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { AssetRead, AssetKind, BundleRead } from '@/client';
+import { AssetRead, AssetKind } from '@/client';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
+import { useDock } from '@/zustand_stores/storeDock';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
-import { AssetPreview } from '../Views/AssetPreviewComponents';
-import AssetSelector from '../AssetSelector';
-import ReactMarkdown from 'react-markdown';
+import ComposedArticleRenderer from '../Views/Articles/ComposedArticleRenderer';
+import { DockBack, DockClose } from '@/components/collection/intake/DockNav';
+import type { SurfaceContentProps } from '@/components/collection/intake/types';
 
 interface EmbeddedAsset {
   id: string;
@@ -49,12 +29,7 @@ interface EmbeddedAsset {
   caption?: string;
 }
 
-interface ArticleComposerProps {
-  open: boolean;
-  onClose: () => void;
-  existingAssetId?: number;
-  mode: 'create' | 'edit';
-}
+type ComposerInit = { assetId?: number; mode?: 'create' | 'edit' };
 
 const EMBED_MODES = [
   { value: 'inline', label: 'Inline', description: 'Embedded directly in text flow' },
@@ -70,8 +45,12 @@ const EMBED_SIZES = [
   { value: 'full', label: 'Full Width' }
 ] as const;
 
-export default function ArticleComposer({ open, onClose, existingAssetId, mode }: ArticleComposerProps) {
-  const { createAsset, updateAsset, getAssetById, fetchAssets } = useAssetStore();
+export default function ArticleComposer({ init, close, back, mode: surfaceMode }: SurfaceContentProps<ComposerInit>) {
+  const mode: 'create' | 'edit' = init?.mode ?? (init?.assetId ? 'edit' : 'create');
+  const existingAssetId = init?.assetId;
+  const docked = surfaceMode === 'panel';
+  const { updateAsset, getAssetById, fetchAssets } = useAssetStore();
+  const openAsset = useDock((s) => s.openAsset);
   const { bundles, fetchBundles } = useBundleStore();
   const { activeInfospace } = useInfospaceStore();
 
@@ -90,27 +69,24 @@ export default function ArticleComposer({ open, onClose, existingAssetId, mode }
   // UI state
   const [activeTab, setActiveTab] = useState<'edit' | 'preview'>('edit');
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedAssets, setSelectedAssets] = useState<Set<string>>(new Set());
-  const [draggedAsset, setDraggedAsset] = useState<AssetRead | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   // Refs
   const contentEditorRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load existing article if editing
+  // Load existing article when editing; reset for a fresh draft.
   useEffect(() => {
-    if (mode === 'edit' && existingAssetId && open) {
+    if (mode === 'edit' && existingAssetId) {
       loadExistingArticle(existingAssetId);
-    } else if (mode === 'create' && open) {
+    } else {
       resetForm();
     }
-  }, [mode, existingAssetId, open]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, existingAssetId]);
 
-  // Fetch bundles when dialog opens
   useEffect(() => {
-    if (open && activeInfospace?.id) {
-      fetchBundles(activeInfospace.id);
-    }
-  }, [open, activeInfospace?.id, fetchBundles]);
+    if (activeInfospace?.id) fetchBundles(activeInfospace.id);
+  }, [activeInfospace?.id, fetchBundles]);
 
   const loadExistingArticle = async (assetId: number) => {
     try {
@@ -119,7 +95,7 @@ export default function ArticleComposer({ open, onClose, existingAssetId, mode }
       if (asset) {
         setTitle(asset.title);
         setContent(asset.text_content || '');
-        setSummary((asset.facets?.summary ?? asset.file_info?.summary as string) || '');
+        setSummary(((asset.facets?.summary ?? asset.file_info?.summary) as string | undefined) || '');
         
         // Parse embedded assets from file_info
         const embeddedFromMetadata = (asset.file_info?.embedded_assets as any[]) || [];
@@ -240,33 +216,24 @@ export default function ArticleComposer({ open, onClose, existingAssetId, mode }
     }
   }, [embeddedAssets, content]);
 
-  const handleRemoveEmbed = (embedId: string) => {
-    const embed = embeddedAssets.find(e => e.id === embedId);
-    if (embed) {
-      // Remove from embedded assets
-      setEmbeddedAssets(prev => prev.filter(e => e.id !== embedId));
-      
-      // Remove embed marker from content
-      const embedMarker = `{{asset:${embed.assetId}:${embed.mode}:${embed.size}}}`;
-      setContent(prev => prev.replace(new RegExp(embedMarker, 'g'), ''));
-      
-      toast.success('Removed embedded asset');
+  // Bundles embed like assets: a {{bundle:ID}} marker in the content + an entry in
+  // referenced_bundles. Remove a link by deleting its marker in the editor.
+  const handleBundleEmbed = (bundleId: number) => {
+    if (referencedBundles.includes(bundleId)) {
+      toast.info('Bundle already linked');
+      return;
     }
-  };
-
-  const handleBundleReference = (bundleId: number) => {
-    const bundle = bundles.find(b => b.id === bundleId);
-    const isAlreadyReferenced = referencedBundles.includes(bundleId);
-    
-    if (isAlreadyReferenced) {
-      // Remove reference
-      setReferencedBundles(prev => prev.filter(id => id !== bundleId));
-      toast.success(`Removed reference to: ${bundle?.name}`);
+    setReferencedBundles(prev => [...prev, bundleId]);
+    const marker = `\n\n{{bundle:${bundleId}}}\n\n`;
+    const textarea = contentEditorRef.current;
+    if (textarea) {
+      const pos = textarea.selectionStart;
+      setContent(content.slice(0, pos) + marker + content.slice(pos));
+      setTimeout(() => { textarea.selectionStart = textarea.selectionEnd = pos + marker.length; textarea.focus(); }, 0);
     } else {
-      // Add reference
-      setReferencedBundles(prev => [...prev, bundleId]);
-      toast.success(`Referenced bundle: ${bundle?.name}`);
+      setContent(prev => prev + marker);
     }
+    toast.success(`Linked bundle: ${bundles.find(b => b.id === bundleId)?.name ?? bundleId}`);
   };
 
   const handleSave = async () => {
@@ -350,7 +317,9 @@ export default function ArticleComposer({ open, onClose, existingAssetId, mode }
           const createdAsset = await response.json();
           toast.success(`Article "${title}" created successfully`);
           await fetchAssets(); // Refresh asset list
-          onClose();
+          // Land on the rendered article (read mode) — completes the read⇄edit loop.
+          close();
+          if (docked && createdAsset?.id) openAsset(createdAsset.id);
         } catch (error) {
           throw error; // Re-throw to be caught by outer try-catch
         }
@@ -366,7 +335,9 @@ export default function ArticleComposer({ open, onClose, existingAssetId, mode }
         const updatedAsset = await updateAsset(existingAssetId, updateData);
         if (updatedAsset) {
           toast.success(`Article "${title}" updated successfully`);
-          onClose();
+          // Back to the rendered article (read mode), freshly refetched.
+          close();
+          if (docked) openAsset(existingAssetId);
         }
       }
     } catch (error) {
@@ -377,537 +348,154 @@ export default function ArticleComposer({ open, onClose, existingAssetId, mode }
     }
   };
 
-  const handleAssetDoubleClick = (item: any) => {
-    if (item.asset) {
-      handleAssetEmbed(item.asset);
-    }
-  };
-
-  const renderEmbeddedAssetPreview = (embed: EmbeddedAsset) => {
-    const { asset, mode, size, caption } = embed;
-    
-    return (
-      <div className="border rounded-lg p-3 bg-muted/20">
-        <div className="flex items-center gap-2 mb-2">
-          <GripVertical className="h-4 w-4 text-muted-foreground cursor-grab" />
-          <Badge variant="outline" className="text-xs">{mode}</Badge>
-          <Badge variant="secondary" className="text-xs">{size}</Badge>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 w-6 p-0 ml-auto text-destructive"
-            onClick={() => handleRemoveEmbed(embed.id)}
-          >
-            <Trash2 className="h-3 w-3" />
-          </Button>
-        </div>
-        
-        <div className="flex items-center gap-3">
-          <AssetPreview asset={asset} className="w-12 h-12 rounded" />
-          <div className="flex-1 min-w-0">
-            <p className="font-medium text-sm truncate">{asset.title}</p>
-            <p className="text-xs text-muted-foreground capitalize">{asset.kind}</p>
-            {caption && caption !== asset.title && (
-              <p className="text-xs text-muted-foreground italic mt-1">{caption}</p>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderPreview = () => {
-    // Process content to show embedded assets as placeholders in preview
-    const contentParts = content.split(/(\{\{asset:\d+:\w+:\w+\}\})/g);
-    
-    return (
-      <div className="prose prose-sm max-w-none p-4">
-        <h1 className="text-2xl font-bold mb-2">{title || 'Untitled Article'}</h1>
-        {summary && (
-          <div className="bg-muted/30 p-3 rounded-lg border-l-4 border-primary mb-4">
-            <p className="text-sm italic">{summary}</p>
-          </div>
-        )}
-        
-        <div className="text-sm leading-relaxed">
-          {contentParts.map((part, index) => {
-            const embedMatch = part.match(/\{\{asset:(\d+):(\w+):(\w+)\}\}/);
-            if (embedMatch) {
-              const [, assetId, mode, size] = embedMatch;
-              const embed = embeddedAssets.find(e => e.assetId === parseInt(assetId));
-              if (embed) {
-                return (
-                  <div key={index} className="my-4 p-3 border rounded-lg border-blue-200">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="font-medium">📎 Embedded Asset:</span>
-                      <span className="text-blue-700">{embed.asset.title}</span>
-                      <Badge variant="outline" className="text-xs">{mode}</Badge>
-                      <Badge variant="secondary" className="text-xs">{size}</Badge>
-                    </div>
-                    {embed.caption && embed.caption !== embed.asset.title && (
-                      <p className="text-xs text-muted-foreground mt-1 italic">{embed.caption}</p>
-                    )}
-                  </div>
-                );
-              }
-              return (
-                <div key={index} className="my-4 p-3 border border-dashed border-red-200 bg-red-50 rounded-lg">
-                  <span className="text-sm text-red-600">Invalid embed: {part}</span>
-                </div>
-              );
-            }
-            
-            // Regular content - render as markdown
-            if (part.trim()) {
-              return <ReactMarkdown key={index} >{part}</ReactMarkdown>;
-            }
-            return null;
-          })}
-        </div>
-        
-        {/* Show embedded assets */}
-        {embeddedAssets.length > 0 && (
-          <div className="mt-6 pt-4 border-t">
-            <h3 className="text-lg font-semibold mb-3">Embedded Assets</h3>
-            <div className="grid gap-3">
-              {embeddedAssets.map(embed => (
-                <div key={embed.id} className="border rounded-lg p-3">
-                  <div className="flex items-center gap-3">
-                    <AssetPreview asset={embed.asset} className="w-16 h-16 rounded" />
-                    <div className="flex-1">
-                      <h4 className="font-medium">{embed.asset.title}</h4>
-                      <div className="flex gap-2 mt-1">
-                        <Badge variant="outline" className="text-xs">{embed.mode}</Badge>
-                        <Badge variant="secondary" className="text-xs">{embed.size}</Badge>
-                        <Badge variant="outline" className="text-xs capitalize">{embed.asset.kind}</Badge>
-                      </div>
-                      {embed.caption && embed.caption !== embed.asset.title && (
-                        <p className="text-xs text-muted-foreground mt-1 italic">{embed.caption}</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Show referenced bundles */}
-        {referencedBundles.length > 0 && (
-          <div className="mt-6 pt-4 border-t">
-            <h3 className="text-lg font-semibold mb-3">Referenced Bundles</h3>
-            <div className="space-y-2">
-              {referencedBundles.map(bundleId => {
-                const bundle = bundles.find(b => b.id === bundleId);
-                return bundle ? (
-                  <div key={bundleId} className="flex items-center gap-2 p-2 bg-muted/20 rounded">
-                    <FileText className="h-4 w-4 text-primary" />
-                    <span className="font-medium">{bundle.name}</span>
-                    <Badge variant="outline" className="text-xs">{bundle.asset_count} assets</Badge>
-                  </div>
-                ) : null;
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  };
+  // The preview is the real article rendering (same component the saved article
+  // uses), so embeds show actual previews, not "card/medium" placeholders.
+  const renderPreview = () => (
+    <div className="p-4">
+      <h1 className="mb-1 text-2xl font-bold">{title || 'Untitled article'}</h1>
+      {metadata.author && <p className="mb-2 text-sm text-muted-foreground">by {metadata.author}</p>}
+      {summary && (
+        <p className="mb-4 border-l-4 border-primary bg-muted/30 p-3 text-sm italic">{summary}</p>
+      )}
+      <ComposedArticleRenderer
+        asset={{ id: existingAssetId ?? 0, title, kind: 'article' } as AssetRead}
+        content={content}
+        embeddedAssets={embeddedAssets.map(e => ({ asset_id: e.assetId, caption: e.caption, mode: e.mode, size: e.size }))}
+      />
+    </div>
+  );
 
   if (!activeInfospace) {
     return null;
   }
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="max-w-7xl h-full w-full flex flex-col p-0">
-        <DialogHeader className="flex-none p-6 border-b">
-          <DialogTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5 text-primary" />
-            {mode === 'create' ? 'Create Article' : 'Edit Article'}
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="flex-1 min-h-0 overflow-hidden">
-          <div className="h-full grid grid-cols-12 gap-0">
-            {/* Main Content Area */}
-            <div className="col-span-8 border-r flex flex-col">
-              {/* Article Metadata */}
-              <div className="flex-none p-4 border-b bg-muted/10 space-y-3">
-                <div>
-                  <Label htmlFor="article-title">Title</Label>
-                  <Input
-                    id="article-title"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="Enter article title..."
-                    className="mt-1"
-                    disabled={isLoading}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="article-summary">Summary (Optional)</Label>
-                  <Textarea
-                    id="article-summary"
-                    value={summary}
-                    onChange={(e) => setSummary(e.target.value)}
-                    placeholder="Brief summary or description..."
-                    rows={2}
-                    className="mt-1"
-                    disabled={isLoading}
-                  />
-                </div>
-              </div>
-
-              {/* Content Editor */}
-              <div className="flex-1 min-h-0">
-                <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'edit' | 'preview')} className="h-full flex flex-col">
-                  <TabsList className="flex-none mx-4 mt-2 grid w-full grid-cols-2">
-                    <TabsTrigger value="edit">Edit</TabsTrigger>
-                    <TabsTrigger value="preview">Preview</TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="edit" className="flex-1 min-h-0 m-4 mt-2">
-                    <div className="h-full flex flex-col">
-                      <div className="flex items-center justify-between mb-2">
-                        <Label className="text-sm font-medium">Content</Label>
-                        {embeddedAssets.length > 0 && (
-                          <div className="flex items-center gap-2">
-                            <Badge variant="secondary" className="text-xs">
-                              {embeddedAssets.length} embedded
-                            </Badge>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setActiveTab('preview')}
-                              className="h-6 text-xs"
-                            >
-                              <Eye className="h-3 w-3 mr-1" />
-                              Preview
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                      <div 
-                        className="flex-1 border rounded-md relative"
-                        onDrop={(e) => {
-                          e.preventDefault();
-                          const container = e.currentTarget;
-                          const overlay = container.querySelector('.drag-overlay') as HTMLElement;
-                          const overlayContent = overlay?.querySelector('div') as HTMLElement;
-                          
-                          // Reset visual state
-                          container.classList.remove('border-primary');
-                          if (overlay) overlay.classList.remove('border-primary', 'border-dashed');
-                          if (overlayContent) overlayContent.classList.remove('opacity-100');
-                          
-                          const dragData = e.dataTransfer.getData('application/json');
-                          if (dragData) {
-                            try {
-                              const parsed = JSON.parse(dragData);
-                              
-                              if (parsed.type === 'assets' && Array.isArray(parsed.items)) {
-                                // Handle multiple assets from AssetSelector
-                                let embedCount = 0;
-                                parsed.items.forEach((asset: AssetRead) => {
-                                  handleAssetEmbed(asset, 'card', 'medium', false); // Don't show individual toasts
-                                  embedCount++;
-                                });
-                                toast.success(`Embedded ${embedCount} asset${embedCount !== 1 ? 's' : ''}`);
-                              } else if (parsed.id) {
-                                // Handle single asset
-                                handleAssetEmbed(parsed as AssetRead);
-                              }
-                            } catch (error) {
-                              console.error('Error parsing dropped asset:', error);
-                              toast.error('Failed to embed dropped asset');
-                            }
-                          }
-                        }}
-                        onDragOver={(e) => {
-                          e.preventDefault();
-                          const container = e.currentTarget;
-                          const overlay = container.querySelector('.drag-overlay') as HTMLElement;
-                          const overlayContent = overlay?.querySelector('div') as HTMLElement;
-                          
-                          container.classList.add('border-primary');
-                          if (overlay) overlay.classList.add('border-primary', 'border-dashed');
-                          if (overlayContent) overlayContent.classList.add('opacity-100');
-                        }}
-                        onDragLeave={(e) => {
-                          e.preventDefault();
-                          const container = e.currentTarget;
-                          const overlay = container.querySelector('.drag-overlay') as HTMLElement;
-                          const overlayContent = overlay?.querySelector('div') as HTMLElement;
-                          
-                          container.classList.remove('border-primary');
-                          if (overlay) overlay.classList.remove('border-primary', 'border-dashed');
-                          if (overlayContent) overlayContent.classList.remove('opacity-100');
-                        }}
-                      >
-                        <Textarea
-                          ref={contentEditorRef}
-                          value={content}
-                          onChange={(e) => setContent(e.target.value)}
-                          placeholder={`# Write your article content here...
-
-You can use Markdown formatting:
-- **bold text**
-- *italic text*  
-- ## Headings
-- [links](url)
-
-Embed assets by dragging from the library or using:
-{{asset:123:card:medium}}
-
-Double-click assets in the library to quickly embed them.`}
-                          className="w-full h-full font-mono text-sm leading-relaxed resize-none border-0 focus:ring-0 focus:outline-none"
-                          disabled={isLoading}
-                        />
-                        <div className="absolute top-2 right-2 text-xs text-muted-foreground bg-background/80 px-2 py-1 rounded opacity-60 hover:opacity-100 transition-opacity">
-                          Drop assets here to embed
-                        </div>
-                        
-                        {/* Drag overlay */}
-                        <div className="absolute inset-0 border-2 border-dashed border-transparent transition-all pointer-events-none drag-overlay">
-                          <div className="absolute inset-0 bg-primary/5 opacity-0 transition-opacity flex items-center justify-center">
-                            <div className="bg-primary text-primary-foreground px-4 py-2 rounded-lg font-medium">
-                              Drop assets to embed them
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="flex-none mt-3 space-y-2">
-                        <div className="text-xs text-muted-foreground space-y-1">
-                          <p>💡 <strong>Embedding Tips:</strong></p>
-                          <p>• Drag assets from library → Drop in editor</p>
-                          <p>• Double-click assets → Auto-embed as cards</p>
-                          <p>• Use + button → Embed as card, → button for inline</p>
-                          <p>• Manual syntax: {`{{asset:ID:mode:size}}`}</p>
-                        </div>
-                        
-                        <div className="text-xs">
-                          <details className="cursor-pointer">
-                            <summary className="text-muted-foreground hover:text-foreground">
-                              Embed modes & sizes
-                            </summary>
-                            <div className="mt-1 space-y-1 text-muted-foreground">
-                              <p><strong>Modes:</strong> inline, card, reference, attachment</p>
-                              <p><strong>Sizes:</strong> small, medium, large, full</p>
-                            </div>
-                          </details>
-                        </div>
-                      </div>
-                    </div>
-                  </TabsContent>
-
-                  <TabsContent value="preview" className="flex-1 min-h-0 m-4 mt-2">
-                    <ScrollArea className="h-full border rounded-lg bg-background">
-                      {renderPreview()}
-                    </ScrollArea>
-                  </TabsContent>
-                </Tabs>
-              </div>
-            </div>
-
-            {/* Asset Library Sidebar */}
-            <div className="col-span-4 flex flex-col bg-muted/5">
-              <div className="flex-none p-4 border-b">
-                <h3 className="font-semibold text-sm mb-3">Asset Library</h3>
-                <p className="text-xs text-muted-foreground mb-3">
-                  Double-click assets to embed them, or drag into the content editor
-                </p>
-              </div>
-
-              <div className="flex-1 min-h-0">
-                <Tabs defaultValue="assets" className="h-full flex flex-col">
-                  <TabsList className="grid w-full grid-cols-2 mx-4 mt-2">
-                    <TabsTrigger value="assets">Assets</TabsTrigger>
-                    <TabsTrigger value="bundles">Bundles</TabsTrigger>
-                  </TabsList>
-                  
-                  <TabsContent value="assets" className="flex-1 min-h-0 m-0">
-                    <div className="h-full flex flex-col">
-                      {embeddedAssets.length > 0 && (
-                        <div className="flex-none p-3 border-b bg-muted/10">
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span>{embeddedAssets.length} asset{embeddedAssets.length !== 1 ? 's' : ''} embedded</span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setActiveTab('preview')}
-                              className="h-6 text-xs"
-                            >
-                              <Eye className="h-3 w-3 mr-1" />
-                              Preview
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                      <div className="flex-1 min-h-0">
-                        <AssetSelector
-                          selectedItems={selectedAssets}
-                          onSelectionChange={setSelectedAssets}
-                          onItemDoubleClick={handleAssetDoubleClick}
-                          renderItemActions={(item) => {
-                            const isEmbedded = item.asset && embeddedAssets.some(embed => embed.assetId === item.asset!.id);
-                            
-                            return (
-                              <div className="flex gap-1">
-                                {isEmbedded ? (
-                                  <Badge variant="secondary" className="text-xs h-6 px-2">
-                                    Embedded
-                                  </Badge>
-                                ) : (
-                                  <>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-6 w-6 p-0"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (item.asset) {
-                                          handleAssetEmbed(item.asset, 'card', 'medium');
-                                        } else if (item.bundle) {
-                                          handleBundleReference(item.bundle.id);
-                                        }
-                                      }}
-                                      title={item.asset ? "Embed as Card" : "Reference Bundle"}
-                                    >
-                                      <Plus className="h-3 w-3" />
-                                    </Button>
-                                    {item.asset && (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="h-6 w-6 p-0"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleAssetEmbed(item.asset!, 'inline', 'small');
-                                        }}
-                                        title="Embed Inline"
-                                      >
-                                        <ArrowRight className="h-3 w-3" />
-                                      </Button>
-                                    )}
-                                  </>
-                                )}
-                              </div>
-                            );
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </TabsContent>
-                  
-                  <TabsContent value="bundles" className="flex-1 min-h-0 m-0 p-4">
-                    <div className="space-y-2">
-                      <h4 className="font-medium text-sm">Available Bundles</h4>
-                      <ScrollArea className="h-full">
-                        <div className="space-y-2">
-                          {bundles.map(bundle => (
-                            <div
-                              key={bundle.id}
-                              className={cn(
-                                "p-3 border rounded-lg cursor-pointer transition-colors",
-                                referencedBundles.includes(bundle.id) 
-                                  ? "bg-primary/10 border-primary" 
-                                  : "hover:bg-muted/50"
-                              )}
-                              onClick={() => handleBundleReference(bundle.id)}
-                            >
-                              <div className="flex items-center gap-2">
-                                <FileText className="h-4 w-4 text-primary" />
-                                <div className="flex-1 min-w-0">
-                                  <p className="font-medium text-sm truncate">{bundle.name}</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {bundle.asset_count} assets
-                                  </p>
-                                </div>
-                                {referencedBundles.includes(bundle.id) && (
-                                  <Badge variant="default" className="text-xs">Referenced</Badge>
-                                )}
-                              </div>
-                              {bundle.description && (
-                                <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                                  {bundle.description}
-                                </p>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </ScrollArea>
-                    </div>
-                  </TabsContent>
-                </Tabs>
-              </div>
-            </div>
-          </div>
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      {/* Title (with dock nav) + author + summary */}
+      <div className="flex-none space-y-2 border-b bg-muted/10 p-3 pt-0 pr-2">
+        <div className="flex items-center gap-2">
+          {docked && back && <DockBack onClick={back} />}
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Article title…"
+            className="flex-1 text-base font-medium !ring-none !ring-offset-0 !ring-0"
+            disabled={isLoading}
+          />
+          {docked && <DockClose onClick={close} />}
         </div>
+        <Input
+          value={metadata.author}
+          onChange={(e) => setMetadata((m) => ({ ...m, author: e.target.value }))}
+          placeholder="Author (optional)"
+          className="h-8 text-sm !ring-none !ring-offset-0 !ring-0"
+          disabled={isLoading}
+        />
+        <Textarea
+          value={summary}
+          onChange={(e) => setSummary(e.target.value)}
+          placeholder="Summary (optional)…"
+          rows={2}
+          className="resize-none text-sm !ring-none !ring-offset-0 !ring-0"
+          disabled={isLoading}
+        />
+      </div>
 
-        {/* Embedded Assets Management */}
-        {embeddedAssets.length > 0 && (
-          <div className="flex-none border-t bg-muted/5 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="font-semibold text-sm">Embedded Assets ({embeddedAssets.length})</h4>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setEmbeddedAssets([])}
-                className="text-xs h-7"
-              >
-                Clear All
-              </Button>
-            </div>
-            <ScrollArea className="max-h-32">
-              <div className="grid grid-cols-2 gap-2">
-                {embeddedAssets.map(embed => (
-                  <div key={embed.id}>
-                    {renderEmbeddedAssetPreview(embed)}
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
+      {/* Editor / preview */}
+      <div className="min-h-0 flex-1">
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'edit' | 'preview')} className="flex h-full flex-col">
+          <div className="mx-3 mt-2 flex shrink-0 items-center gap-2">
+            <TabsList className="grid flex-1 grid-cols-2">
+              <TabsTrigger value="edit">Edit</TabsTrigger>
+              <TabsTrigger value="preview">Preview</TabsTrigger>
+            </TabsList>
+            <TooltipProvider delayDuration={150}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" className="size-8 shrink-0 text-muted-foreground" title="Embed syntax">
+                    <HelpCircle className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="end" className="max-w-xs space-y-1 text-xs">
+                  <p className="font-medium">Embed syntax</p>
+                  <p><code>{'{{asset:ID:mode:size}}'}</code> — e.g. <code>{'{{asset:42:card:medium}}'}</code></p>
+                  <p><span className="text-muted-foreground">modes:</span> inline · card · reference · attachment</p>
+                  <p><span className="text-muted-foreground">sizes:</span> small · medium · large · full</p>
+                  <p><code>{'{{bundle:ID}}'}</code> — link a bundle</p>
+                  <p className="text-muted-foreground">Tip: drag from the tree to insert these for you.</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
-        )}
 
-        <DialogFooter className="flex-none p-6 border-t">
-          <div className="flex items-center justify-between w-full">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              {embeddedAssets.length > 0 && (
-                <Badge variant="secondary" className="text-xs">
-                  {embeddedAssets.length} embedded assets
-                </Badge>
-              )}
-              {referencedBundles.length > 0 && (
-                <Badge variant="secondary" className="text-xs">
-                  {referencedBundles.length} referenced bundles
-                </Badge>
+          <TabsContent value="edit" className="m-3 mr-2 mt-2 min-h-0 flex-1">
+            <div
+              className={cn('relative h-full rounded-md border transition-colors', dragOver && 'border-primary')}
+              onDrop={async (e) => {
+                e.preventDefault();
+                setDragOver(false);
+                const raw = e.dataTransfer.getData('application/json');
+                if (!raw) return;
+                let parsed: any;
+                try { parsed = JSON.parse(raw); } catch { return; }
+
+                // The tree emits id-only refs ({type:'assets'|'mixed'} or a bare {id}).
+                const assetIds: number[] = [];
+                const bundleIds: number[] = [];
+                if (parsed.type === 'assets' && Array.isArray(parsed.items)) {
+                  parsed.items.forEach((it: any) => { if (it?.id != null) assetIds.push(it.id); });
+                } else if (parsed.type === 'mixed' && Array.isArray(parsed.items)) {
+                  parsed.items.forEach((it: any) => {
+                    if (it.type === 'bundle' && it.item?.id != null) bundleIds.push(it.item.id);
+                    else if (it.item?.id != null) assetIds.push(it.item.id);
+                  });
+                } else if (parsed.id != null) {
+                  assetIds.push(parsed.id);
+                }
+
+                bundleIds.forEach((id) => handleBundleEmbed(id));
+                let embedded = 0;
+                for (const id of assetIds) {
+                  try {
+                    const asset = await getAssetById(id);
+                    if (asset) { handleAssetEmbed(asset, 'card', 'medium', false); embedded++; }
+                  } catch { /* skip unresolved */ }
+                }
+                if (embedded) toast.success(`Embedded ${embedded} asset${embedded !== 1 ? 's' : ''}`);
+              }}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
+            >
+              <Textarea
+                ref={contentEditorRef}
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                placeholder={'# Write your article…\n\nMarkdown supported. Drag assets from the tree to embed, or type {{asset:ID:card:medium}}.'}
+                className="h-full w-full resize-none border-0 font-mono text-sm leading-relaxed focus-visible:ring-0"
+                disabled={isLoading}
+              />
+              {dragOver && (
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md border-2 border-dashed border-primary bg-primary/5">
+                  <span className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground">Drop to embed</span>
+                </div>
               )}
             </div>
-            
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={onClose} disabled={isLoading}>
-                Cancel
-              </Button>
-              <Button onClick={handleSave} disabled={isLoading || !title.trim()}>
-                {isLoading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    {mode === 'create' ? 'Creating...' : 'Updating...'}
-                  </>
-                ) : (
-                  <>
-                    <Save className="h-4 w-4 mr-2" />
-                    {mode === 'create' ? 'Create Article' : 'Update Article'}
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </TabsContent>
+
+          <TabsContent value="preview" className="m-3 mt-2 min-h-0 flex-1">
+            <ScrollArea className="h-full rounded-md border bg-background">{renderPreview()}</ScrollArea>
+          </TabsContent>
+        </Tabs>
+      </div>
+
+      {/* Footer */}
+      <div className="flex flex-none items-center justify-end gap-2 p-1 pb-0">
+        <Button variant="ghost" size="sm" onClick={close} disabled={isLoading}>Cancel</Button>
+        <Button size="sm" onClick={handleSave} disabled={isLoading || !title.trim()}>
+          {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+          {mode === 'create' ? 'Create article' : 'Save'}
+        </Button>
+      </div>
+    </div>
   );
 }

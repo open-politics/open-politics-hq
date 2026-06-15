@@ -80,7 +80,9 @@ export interface AssetFeedViewProps {
   
   /** Called when an asset is clicked */
   onAssetClick?: (asset: AssetRead) => void;
-  
+  /** Called when a child bundle is opened (list view) — e.g. drilling into a nested bundle. */
+  onBundleClick?: (bundleId: number) => void;
+
   /** Initial number of items to show */
   initialLimit?: number;
   

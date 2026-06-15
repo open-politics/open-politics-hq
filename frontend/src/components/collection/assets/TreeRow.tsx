@@ -75,14 +75,14 @@ export function TreeRow({
   childrenClassName,
 }: TreeRowProps) {
   return (
-    <div>
+    <div className="min-w-0 max-w-full" style={depth > 0 ? { paddingLeft: `${depth * 1.5}rem` } : undefined}>
       <div
         data-item-index={dataItemIndex}
         className={cn(
-          'group flex items-center gap-2 rounded-md hover:bg-muted cursor-pointer transition-colors w-full overflow-hidden',
+          'group relative flex min-w-0 max-w-full items-center gap-2 overflow-hidden rounded-md w-full cursor-pointer transition-colors hover:bg-muted pr-8',
           className,
         )}
-        style={{ paddingLeft: `${depth * 1.5}rem`, ...style }}
+        style={style}
         onClick={onClick}
         onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
@@ -130,7 +130,7 @@ export function TreeRow({
 
         {/* Actions slot — hover-revealed */}
         {actions && (
-          <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
             {actions}
           </div>
         )}

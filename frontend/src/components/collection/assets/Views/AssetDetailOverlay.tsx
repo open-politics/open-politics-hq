@@ -19,7 +19,7 @@ import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { searchInAnnotationValue } from '@/lib/annotations/search';
-import { useAssetDetail } from './AssetDetailProvider';
+import { useAssetDetail } from './AssetDetailContext';
 
 interface AssetDetailOverlayProps {
   open: boolean;

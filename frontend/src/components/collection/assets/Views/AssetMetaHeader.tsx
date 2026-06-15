@@ -23,7 +23,6 @@ import {
   Download,
   Share2,
   Trash2,
-  Copy,
   Edit2,
   Save,
   X,
@@ -38,14 +37,16 @@ import {
 import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict, format } from 'date-fns';
 import { toast } from 'sonner';
+import { DockBack, DockClose } from '@/components/collection/intake/DockNav';
 import { FragmentAccordion } from './Fragments';
 import { FragmentData } from './Fragments/types';
-import { 
-  getAssetIcon, 
-  getAssetBadgeClass, 
+import {
+  getAssetIcon,
+  getAssetBadgeClass,
   getAssetKindConfig,
-  formatAssetKind 
+  formatAssetKind
 } from '@/components/collection/assets/assetKindConfig';
+import { DetailBreadcrumb, type BundleCrumb } from './DetailBreadcrumb';
 
 // ============================================================================
 // Types
@@ -73,7 +74,10 @@ export function formatEventTimestampForInput(iso: string | null | undefined): st
 export interface AssetMetaHeaderProps {
   asset: AssetRead;
   className?: string;
-  
+  /** Breadcrumb path (ancestor bundles, root→parent) + segment click handler. */
+  breadcrumbSegments?: BundleCrumb[];
+  onBreadcrumbClick?: (bundleId: number) => void;
+
   /** Inline edit: pencil / save in header; title + event time edited here; body text in parent */
   inlineEdit?: {
     active: boolean;
@@ -102,6 +106,10 @@ export interface AssetMetaHeaderProps {
   showActions?: boolean;
   showFragments?: boolean;
   compactMode?: boolean;
+
+  /** Dock navigation — rendered inline in this header (back ← left, close × right). */
+  onBack?: () => void;
+  onClose?: () => void;
 }
 
 // ============================================================================
@@ -190,6 +198,8 @@ function sortFragments(
 export default function AssetMetaHeader({
   asset,
   className,
+  breadcrumbSegments,
+  onBreadcrumbClick,
   inlineEdit,
   onDelete,
   onDownload,
@@ -201,6 +211,8 @@ export default function AssetMetaHeader({
   showActions = true,
   showFragments = true,
   compactMode = false,
+  onBack,
+  onClose,
 }: AssetMetaHeaderProps) {
   const [fragmentSort, setFragmentSort] = useState<FragmentSortMode>('alphabetical');
   const [fragmentsExpanded, setFragmentsExpanded] = useState(true);
@@ -223,140 +235,75 @@ export default function AssetMetaHeader({
   const externalUrl = asset.source_identifier;
   const hasExternalLink = externalUrl && (externalUrl.startsWith('http://') || externalUrl.startsWith('https://'));
   
-  // Copy ID to clipboard
-  const handleCopyId = () => {
-    navigator.clipboard.writeText(asset.uuid);
-    toast.success('Asset UUID copied to clipboard');
-  };
-  
   return (
     <div className={cn("border-b ", className)}>
       {/* Main Meta: toolbar row; title edit is full-width below so it does not shrink in flex */}
-      <div
-        className={cn(
-          compactMode ? "px-3 py-2" : "px-4 py-3",
-          inlineEdit?.active && "flex flex-col gap-2"
-        )}
-      >
-        <div className="flex w-full min-w-0 items-center gap-2 flex-wrap">
-        {/* Kind Badge - uses 'selector' context for colorful styling */}
-        <Badge 
-          variant="outline" 
-          className={cn(
-            "flex items-center h-6 gap-1.5 shrink-0",
-            getAssetBadgeClass(asset.kind, 'selector')
-          )}
-        >
-          {getAssetIcon(asset.kind, "h-3.5 w-3.5", 'selector')}
-          {formatAssetKind(asset.kind)}
-        </Badge>
-        {!inlineEdit?.active && (
-          <h1 className="min-w-0 max-w-xl flex-1 basis-0 text-md font-semibold truncate">
-            {asset.title || 'Untitled'}
-          </h1>
-        )}
-        {/* Core Metadata */}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-          {inlineEdit?.active ? (
-            <div className="flex items-center gap-1.5 shrink-0">
-              <Clock className="h-3.5 w-3.5 opacity-70" />
-              <span className="whitespace-nowrap">Event</span>
+      <div className={cn(compactMode ? "px-3 py-1.5" : "px-3 py-1.5", "flex flex-col gap-1")}>
+        {/* Row 1 — breadcrumb path + close */}
+        <div className="flex w-full min-w-0 items-center gap-2">
+          {onBack && <DockBack onClick={onBack} />}
+          <DetailBreadcrumb
+            className="min-w-0 flex-1"
+            segments={breadcrumbSegments ?? []}
+            onSegmentClick={onBreadcrumbClick}
+            leafIcon={getAssetIcon(asset.kind, "size-4 shrink-0", 'selector')}
+            leafLabel={asset.title || 'Untitled'}
+            leafInput={inlineEdit?.active ? (
               <input
-                type="datetime-local"
-                value={inlineEdit.draftEventTimestamp}
-                onChange={(e) => inlineEdit.onDraftEventTimestampChange(e.target.value)}
-                aria-label="Event time"
-                className={cn(
-                  'h-7 w-auto min-w-0 bg-transparent text-xs text-foreground',
-                  'm-0 border-0 p-0 shadow-none outline-none ring-0',
-                  'focus:border-0 focus:outline-none focus:ring-0 focus:ring-offset-0',
-                  'focus-visible:border-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0'
-                )}
+                type="text"
+                value={inlineEdit.draftTitle}
+                onChange={(e) => inlineEdit.onDraftTitleChange(e.target.value)}
+                aria-label="Title"
+                autoFocus
+                className="min-w-0 flex-1 border-0 bg-transparent p-0 text-sm font-semibold text-foreground shadow-none outline-none ring-0 focus:outline-none focus-visible:outline-none"
               />
-            </div>
-          ) : asset.event_timestamp ? (
-            <>
-              <TooltipProvider delayDuration={200}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="cursor-default flex items-center gap-1 shrink-0">
-                      <Clock className="h-3.5 w-3.5 opacity-70" />
-                      Event: {format(new Date(asset.event_timestamp), 'PPp')}
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{asset.event_timestamp}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              <span className="text-muted-foreground/50">•</span>
-            </>
-          ) : null}
-          {/* ID */}
-          <TooltipProvider delayDuration={1500}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button 
-                  onClick={handleCopyId}
-                  className="flex items-center gap-1 hover:text-foreground transition-colors"
-                >
-                  <span className="font-mono">ID: {asset.id}</span>
-                  <Copy className="h-3 w-3 opacity-50" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="font-mono text-xs">System-wide unique id: {asset.uuid}</p>
-                <p className="text-xs text-muted-foreground">Click to copy</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          
-          <span className="text-muted-foreground/50">•</span>
-          
-          {/* Created Date */}
-          <TooltipProvider delayDuration={200}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="cursor-default">
-                  Created: {formatDistanceToNowStrict(new Date(asset.created_at), { addSuffix: true })}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{format(new Date(asset.created_at), 'PPpp')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          
-          
-          {/* Kind-specific metadata */}
-          {kindMeta.map((meta, idx) => (
-            <React.Fragment key={meta.label}>
-              <span className="text-muted-foreground/50">•</span>
-              <span>{meta.label}: {meta.value}</span>
-            </React.Fragment>
-          ))}
+            ) : undefined}
+          />
+          {onClose && <DockClose onClick={onClose} />}
         </div>
 
-        {/* Event Timestamp */}
-        { asset.event_timestamp && asset.event_timestamp !== '' && (
-          <>  
-          <span className="text-muted-foreground/50">•</span>
-          <span>Event: {format(new Date(asset.event_timestamp), 'PPp')}</span>
-          </>
-        )}
-        { asset.event_timestamp && asset.event_timestamp === '' && (
-          <>
-          <span className="text-muted-foreground/50">•</span>
-          <span>Event: N/A</span>
-          </>
-        )}
-        
-        {/* Spacer */}
-        <div className="flex-1" />
-        
-        {/* Actions */}
-        {showActions && (
-          <div className="flex items-center gap-1">
+        {/* Row 2 — condensed info | actions */}
+        <div className="flex w-full min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-xs text-muted-foreground">
+            {inlineEdit?.active ? (
+              <span className="flex shrink-0 items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5 opacity-70" />
+                <span>Event</span>
+                <input
+                  type="datetime-local"
+                  value={inlineEdit.draftEventTimestamp}
+                  onChange={(e) => inlineEdit.onDraftEventTimestampChange(e.target.value)}
+                  aria-label="Event time"
+                  className="h-6 w-auto min-w-0 border-0 bg-transparent p-0 text-xs text-foreground shadow-none outline-none ring-0 focus:outline-none focus-visible:outline-none"
+                />
+              </span>
+            ) : asset.event_timestamp ? (
+              <>
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="flex shrink-0 cursor-default items-center gap-1">
+                        <Clock className="h-3 w-3 opacity-60" />
+                        {format(new Date(asset.event_timestamp), 'PP')}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent><p>Event: {format(new Date(asset.event_timestamp), 'PPp')}</p></TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <span className="text-muted-foreground/40">·</span>
+              </>
+            ) : null}
+            <span className="shrink-0">Created {formatDistanceToNowStrict(new Date(asset.created_at), { addSuffix: true })}</span>
+            {kindMeta.map((meta) => (
+              <React.Fragment key={meta.label}>
+                <span className="text-muted-foreground/40">·</span>
+                <span className="shrink-0">{meta.label}: {meta.value}</span>
+              </React.Fragment>
+            ))}
+          </div>
+
+          {showActions && (
+            <div className="flex shrink-0 items-center gap-0.5">
             {/* Favorite toggle */}
             {onToggleFavorite !== undefined && (
               <TooltipProvider delayDuration={200}>
@@ -511,26 +458,9 @@ export default function AssetMetaHeader({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
-        )}
+            </div>
+          )}
         </div>
-
-        {inlineEdit?.active && (
-          <input
-            type="text"
-            value={inlineEdit.draftTitle}
-            onChange={(e) => inlineEdit.onDraftTitleChange(e.target.value)}
-            aria-label="Title"
-            autoFocus
-            className={cn(
-              'box-border block w-full min-w-0 bg-transparent',
-              'text-md font-semibold text-foreground',
-              'm-0 border-0 p-0 shadow-none outline-none ring-0',
-              'focus:border-0 focus:outline-none focus:ring-0 focus:ring-offset-0',
-              'focus-visible:border-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0'
-            )}
-          />
-        )}
       </div>
 
       {/* Source Row (if source identifier is a path/url) */}

@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { 
   Search, 
@@ -26,7 +25,6 @@ import {
   Trash2,
   Share2,
   Download,
-  X,
   FolderPlus,
   Edit3,
   Check,
@@ -34,9 +32,9 @@ import {
   EyeOff,
   View,
   Settings,
-  ChevronLeft,
   FileIcon,
   RadioTower,
+  Rss,
   Menu,
   Newspaper,
   Folder,
@@ -46,6 +44,7 @@ import {
   Lock,
   Unlock,
   ScanEye,
+  Plus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict } from 'date-fns';
@@ -60,6 +59,7 @@ import {
 import type { AssetNode } from '@/client';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
+import { useSourceStore } from '@/zustand_stores/storeSources';
 import { useTreeStore } from '@/zustand_stores/storeTree';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -77,11 +77,9 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from '@/components/ui/resizable';
-import AssetDetailView from './Views/AssetDetailView';
 import CreateAssetDialog from './Helper/AssetCreateDataSourceDialog';
 import EditAssetOverlay from './Helper/EditAssetOverlay';
 import { AssetTransferPopover } from './Helper/AssetTransferPopover';
-import ArticleComposer from './Composer/ArticleComposer';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -101,7 +99,6 @@ import {
 } from '@/components/ui/sheet';
 import BundleEditDialog from './Helper/BundleEditDialog';
 import CreateBundleDialog from './Helper/CreateBundleDialog';
-import BundleDetailView from './Views/BundleDetailView';
 import {
   Select,
   SelectContent,
@@ -113,15 +110,13 @@ import {
   ButtonGroup,
   ButtonGroupSeparator,
 } from '@/components/ui/button-group';
-import AssetSelector, { AssetTreeItem, parseVfolderId } from './AssetSelector';
-import AnnotateFolderDialog, { type AnnotateFolderParams } from '../annotation/AnnotateFolderDialog';
+import AssetSelector, { AssetTreeItem } from './AssetSelector';
 import { useShareableStore } from '@/zustand_stores/storeShareables';
 import ShareItemDialog from './Helper/ShareItemDialog';
 import ShareSelectionDialog from './Helper/ShareSelectionDialog';
 import { ResourceType } from '@/client';
 import { TextSpanHighlightProvider } from '@/components/collection/contexts/TextSpanHighlightContext';
 import { useIsMobile } from '@/hooks/use-mobile';
-import DataSourceManager from '../sources/DataSourceManager';
 import { ChannelTabs, ChannelFeedContent } from './Feed/ChannelFeedView';
 import { useAssetQuery } from '@/hooks/useAssetQuery';
 import { useUserPreferencesStore, type Channel } from '@/zustand_stores/storeUserPreferences';
@@ -130,8 +125,12 @@ import { IconRenderer } from '@/components/collection/utilities/icons/icon-picke
 import { AssetFeedView } from './Feed';
 import { useSemanticSearch } from '@/hooks/useSemanticSearch';
 import { useProvidersStore } from '@/zustand_stores/storeProviders';
+import { useDock } from '@/zustand_stores/storeDock';
+import { useAssetDetail } from './Views/AssetDetailProvider';
+import { DockHost } from '@/components/collection/intake/DockHost';
+import { SourceList, type SourceStreamControls } from '@/components/collection/intake/sources/SourceList';
+import { SourceStreams, type SourceStream } from './SourceStreams';
 import type { AssetFeedItem } from './Feed/types';
-import { Form } from 'react-hook-form';
 
     
 
@@ -336,9 +335,6 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   const debouncedSearchTerm = useDebounce(searchTermFromSelector, 300);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  const [activeDetail, setActiveDetail] = useState<{ type: 'asset' | 'bundle'; id: number } | null>(null);
-  const [selectedAssetInBundle, setSelectedAssetInBundle] = useState<number | null>(null);
-  const [highlightAssetId, setHighlightAssetId] = useState<number | null>(null);
   const [assetTypeFilter, setAssetTypeFilter] = useState<AssetKind | 'all'>('all');
   const [sortOption, setSortOption] = useState('updated_at-desc');
   const [useSemanticMode] = useState(() => {
@@ -382,37 +378,22 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   
   // Separate dialogs for different functions
   const [isCreateBundleOpen, setIsCreateBundleOpen] = useState(false);
+  // Seed for the bundle dialog when invoked from a selection ("+Bundle"); null = empty bundle.
+  const [bundleSeed, setBundleSeed] = useState<{ assetIds: number[]; childBundleIds: number[] } | null>(null);
   const [sharingItems, setSharingItems] = useState<AssetTreeItem[]>([]);
   
-  // Article composer state
-  const [isArticleComposerOpen, setIsArticleComposerOpen] = useState(false);
-  const [articleComposerMode, setArticleComposerMode] = useState<'create' | 'edit'>('create');
-  const [editingArticleId, setEditingArticleId] = useState<number | undefined>();
 
-  // Annotate folder dialog (virtual folder -> annotation run with path_filter) — kept for future use from AnnotationRunner
-  const [annotateFolderParams, setAnnotateFolderParams] = useState<AnnotateFolderParams | null>(null);
+  // Detail (asset/bundle) summons into the global right dock — or an annotation
+  // overlay when useAssetDetail() finds one in scope. One interface either way.
+  const {
+    openDetailOverlay,
+    openBundleDetail,
+    closeDetailOverlay,
+    selectedAssetId: detailAssetId,
+    selectedBundleId: detailBundleId,
+  } = useAssetDetail();
 
-  const handleMaterializeVfolder = useCallback(async (params: { bundleId: number; pathPrefix: string; name: string }) => {
-    if (!activeInfospace?.id) return;
-    try {
-      const bundle = await BundlesService.materializeVirtualFolder({
-        infospaceId: activeInfospace.id,
-        requestBody: {
-          source_bundle_id: params.bundleId,
-          path_prefix: params.pathPrefix || undefined,
-          name: params.name,
-        },
-      });
-      clearCache();
-      await fetchRootTree();
-      toast.success(`Created bundle "${bundle.name}"`);
-      setActiveDetail({ type: 'bundle', id: bundle.id });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to materialize folder';
-      toast.error(msg);
-    }
-  }, [activeInfospace?.id, clearCache, fetchRootTree]);
-  
+
   // Data fetching state - NOW REMOVED! Using tree store instead
   // const [bundleAssets, setBundleAssets] = useState<Map<number, AssetRead[]>>(new Map());
   // const [childAssets, setChildAssets] = useState<Map<number, AssetRead[]>>(new Map());
@@ -434,14 +415,113 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     type: 'asset' | 'bundle' | 'bulk-assets' | 'bulk-bundles';
     items: (AssetRead | BundleRead)[];
     isOpen: boolean;
-    preview?: { message: string; bundles: number; destroyed_assets: number; unlinked: number } | null;
+    preview?: { message: string; bundles: number; destroyed_assets: number; unlinked: number; paused_sources?: number } | null;
     previewLoading?: boolean;
+    previewError?: boolean;
+    out_of?: number;  // collection being deleted from (ROOT = top level)
   }>({ type: 'asset', items: [], isOpen: false, preview: null, previewLoading: false });
   
   // Upload to existing bundle state
   const [uploadToBundle, setUploadToBundle] = useState<BundleRead | null>(null);
 
-  const [showDataSourceManager, setShowDataSourceManager] = useState(false);
+  // Web Search / Sources summon into the global right dock.
+  const openDiscover = useDock((s) => s.openDiscover);
+  const openComposer = useDock((s) => s.openComposer);
+  const dockEntry = useDock((s) => s.entry);
+  const acquireInlineHost = useDock((s) => s.acquireInlineHost);
+  const releaseInlineHost = useDock((s) => s.releaseInlineHost);
+  // Sources is a left rail (desktop) / sheet (mobile) — not dock content.
+  const [showSourcesRail, setShowSourcesRail] = useState(false);
+
+  // ─── Source→bundle streams (the wiring overlay) ───
+  // A source streams into exactly one `output_bundle_id`; many sources may feed
+  // the same bundle. The global toggle traces all of them at once; per-source
+  // pins trace just the ones you care about. The set drawn is the union when
+  // all-on, else the pinned set, kept in source-list order so the overlay's lane
+  // assignment lines up with the rail. Reveal ids unfold each target's ancestors.
+  const { sources } = useSourceStore();
+  const sourceStreamsWrapRef = useRef<HTMLDivElement>(null);
+  const [streamsAllOn, setStreamsAllOn] = useState(false);
+  const [pinnedSourceIds, setPinnedSourceIds] = useState<Set<number>>(new Set());
+
+  const activeSourceIds = useMemo(() => {
+    if (streamsAllOn) return new Set(sources.filter((s) => s.output_bundle_id != null).map((s) => s.id));
+    return pinnedSourceIds;
+  }, [streamsAllOn, sources, pinnedSourceIds]);
+
+  const sourceStreams = useMemo<SourceStream[]>(
+    () =>
+      sources
+        .filter((s) => activeSourceIds.has(s.id) && s.output_bundle_id != null)
+        .map((s) => ({ sourceId: s.id, bundleId: s.output_bundle_id as number })),
+    [sources, activeSourceIds],
+  );
+
+  const revealBundleIds = useMemo(
+    () => Array.from(new Set(sourceStreams.map((l) => l.bundleId))),
+    [sourceStreams],
+  );
+
+  // Single (pinned) streams also OPEN their target bundle; the global toggle only
+  // traces (no unfolding). Unpinning drops the bundle here → AssetSelector diffs
+  // this set and collapses it again.
+  const openBundleIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const s of sources) {
+      if (pinnedSourceIds.has(s.id) && s.output_bundle_id != null) ids.add(s.output_bundle_id);
+    }
+    return Array.from(ids);
+  }, [sources, pinnedSourceIds]);
+
+  const handleToggleSourceStream = useCallback((sourceId: number) => {
+    const adding = !pinnedSourceIds.has(sourceId);
+    setPinnedSourceIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sourceId)) next.delete(sourceId);
+      else next.add(sourceId);
+      return next;
+    });
+    // Pulling a single source into view: once the tree has had a beat to unfold
+    // (ancestor chain + the bundle itself), sit the bundle at the top third of
+    // the tree's scroll area so its just-opened children have room below —
+    // 'nearest' would only nudge a bottom bundle to the edge and clip them.
+    if (adding) {
+      const bundleId = sources.find((s) => s.id === sourceId)?.output_bundle_id;
+      if (bundleId != null) {
+        setTimeout(() => {
+          const el = document.querySelector(`[data-bundle-id="${bundleId}"]`);
+          if (!el) return;
+          // Closest scrollable ancestor = the tree's scroll container.
+          let scroller = el.parentElement;
+          while (scroller && scroller.scrollHeight <= scroller.clientHeight) {
+            scroller = scroller.parentElement;
+          }
+          if (!scroller) { el.scrollIntoView({ block: 'start', behavior: 'smooth' }); return; }
+          const scRect = scroller.getBoundingClientRect();
+          const elRect = el.getBoundingClientRect();
+          // Target scrollTop that lands the row a third down (browser clamps to
+          // max, so a bottom bundle rises as far as the content allows).
+          const target = scroller.scrollTop + (elRect.top - scRect.top) - scRect.height / 3;
+          scroller.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+        }, 350);
+      }
+    }
+  }, [pinnedSourceIds, sources]);
+
+  const sourceStreamControls = useMemo<SourceStreamControls>(() => ({
+    allOn: streamsAllOn,
+    onToggleAll: () => setStreamsAllOn((v) => !v),
+    activeSourceIds,
+    onTogglePinned: handleToggleSourceStream,
+  }), [streamsAllOn, activeSourceIds, handleToggleSourceStream]);
+
+  // On desktop the dock lives inline as our third column, so the app-wide layout
+  // dock stands down while we're mounted. Mobile keeps using the layout sheet.
+  useEffect(() => {
+    if (isMobile) return;
+    acquireInlineHost();
+    return releaseInlineHost;
+  }, [isMobile, acquireInlineHost, releaseInlineHost]);
 
   // ─── Channel & favorites state ───
   const {
@@ -452,18 +532,38 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     setActiveChannel,
   } = useUserPreferencesStore();
   const channels = preferences.channels ?? [];
-  const activeChannelId = preferences.active_channel_id ?? preferences.default_channel_id ?? null;
+  // Session-local channel selection. `undefined` = nothing picked yet this
+  // session → land on the persisted active/default channel. Once the user picks
+  // (including "All" = null), their choice wins. The old
+  // `active ?? default ?? null` derivation could never represent an explicit
+  // "All" when a default channel was set — selecting All wrote null, which the
+  // `?? default_channel_id` fallback silently snapped back to the default,
+  // making "All" unreachable.
+  const [selectedChannelId, setSelectedChannelId] = useState<string | null | undefined>(undefined);
+  // Landing channel = the pinned default (null = "All"). Session selection wins
+  // once the user picks a tab. We intentionally don't fall back to the
+  // persisted `active_channel_id` — that "last open" value would override the
+  // pinned default on load and make "Pin as default" do nothing.
+  const activeChannelId = selectedChannelId !== undefined
+    ? selectedChannelId
+    : (preferences.default_channel_id ?? null);
+  const handleSelectChannel = useCallback((id: string | null) => {
+    setSelectedChannelId(id);
+    setActiveChannel(id);
+  }, [setActiveChannel]);
   // Local favorite tracking — optimistic UI while tree refetches
   const [localFavorites, setLocalFavorites] = useState<Set<string>>(new Set());
   const [localUnfavorites, setLocalUnfavorites] = useState<Set<string>>(new Set());
 
   const [isChannelDialogOpen, setIsChannelDialogOpen] = useState(false);
   const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
-  const cycleFavoritesView = useCallback(async () => {
-    const cycle = { list: 'card' as const, card: 'bento' as const, bento: 'list' as const };
-    const next = cycle[preferences.favorites_view ?? 'list'] ?? 'list';
-    await useUserPreferencesStore.getState().updatePreference('favorites_view', next);
-  }, [preferences.favorites_view]);
+  const setFavoritesView = useCallback(async (view: 'list' | 'card' | 'bento') => {
+    await useUserPreferencesStore.getState().updatePreference('favorites_view', view);
+  }, []);
+
+  const setAllView = useCallback(async (view: 'list' | 'card' | 'bento') => {
+    await useUserPreferencesStore.getState().updatePreference('all_view', view);
+  }, []);
 
   const fetchingRef = useRef(false);
 
@@ -784,27 +884,44 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   // - Back button -> returns to feed (sets activeDetail to null)
   const handleItemView = useCallback((item: AssetTreeItem) => {
     if (item.type === 'folder' && item.bundle) {
-        setActiveDetail({ type: 'bundle', id: item.bundle.id });
-        setHighlightAssetId(null);
+      openBundleDetail(item.bundle.id);
     } else if (item.asset) {
-        if (item.asset.parent_asset_id) {
-            setActiveDetail({ type: 'asset', id: item.asset.parent_asset_id });
-            setHighlightAssetId(item.asset.id);
-        } else {
-            setActiveDetail({ type: 'asset', id: item.asset.id });
-            setHighlightAssetId(null);
-        }
+      // Breadcrumb context = the tree parent we opened it from (when a bundle).
+      const fromBundle = item.parentId?.startsWith('bundle-') ? parseInt(item.parentId.slice(7), 10) : undefined;
+      // Sub-assets (e.g. a PDF page) open their parent record.
+      openDetailOverlay(item.asset.parent_asset_id ?? item.asset.id, fromBundle);
     }
-    // Open mobile detail sheet when on mobile
-    if (isMobile) {
-        setShowMobileDetail(true);
-    }
-  }, [isMobile]);
+  }, [openBundleDetail, openDetailOverlay]);
 
   const handleItemDoubleClick = useCallback((item: AssetTreeItem) => {
     // In AssetManager, double-click should open the detail view.
     handleItemView(item);
   }, [handleItemView]);
+
+  // The collection an asset is deleted FROM = its parent in the tree. Deleting
+  // removes membership there: last membership → destroyed, otherwise unlinked
+  // (kept in its other collections). Built from the children cache — every cached
+  // child's location is the bundle it's nested under.
+  const ROOT = 0;
+  const nodeParent = useMemo(() => {
+    const m = new Map<string, number>();
+    childrenCache.forEach((children, parentId) => {
+      const outOf = parentId.startsWith('bundle-') ? parseInt(parentId.slice(7), 10) : ROOT;
+      children.forEach((c: AssetNode) => m.set(c.id, outOf));
+    });
+    return m;
+  }, [childrenCache]);
+
+  // One out_of for a selection: the shared parent collection, else ROOT. Bundles
+  // cascade regardless of out_of, so they don't constrain it.
+  const outOfForSelection = useCallback((nodeIds: string[]): number => {
+    const locs = new Set<number>();
+    for (const id of nodeIds) {
+      if (id.startsWith('bundle-')) continue;
+      locs.add(nodeParent.get(id) ?? ROOT);
+    }
+    return locs.size === 1 ? Array.from(locs)[0] : ROOT;
+  }, [nodeParent]);
 
   // Bulk delete functionality
   const handleBulkDelete = useCallback(() => {
@@ -829,12 +946,13 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
 
     const confirmType = bundleIds.length > 0 ? 'bulk-bundles' : 'bulk-assets';
     if (items.length > 0) {
-      setDeleteConfirmation({ type: confirmType as any, items, isOpen: true, preview: null, previewLoading: true });
-      fetchDeletePreview(items);
+      const out_of = outOfForSelection(Array.from(selectedItems));
+      setDeleteConfirmation({ type: confirmType as any, items, isOpen: true, preview: null, previewLoading: true, out_of });
+      fetchDeletePreview(items, out_of);
     }
-  }, [selectedItems]);
+  }, [selectedItems, outOfForSelection]);
 
-  const fetchDeletePreview = async (items: (AssetRead | BundleRead)[]) => {
+  const fetchDeletePreview = async (items: (AssetRead | BundleRead)[], out_of: number = ROOT) => {
     if (!activeInfospace?.id) return;
     try {
       const { TreeNavigationService } = await import('@/client');
@@ -843,24 +961,28 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
       );
       const result = await TreeNavigationService.previewTreeDeletion({
         infospaceId: activeInfospace.id,
-        requestBody: { node_ids: nodeIds },
+        requestBody: { node_ids: nodeIds, out_of },
       });
-      setDeleteConfirmation(prev => ({ ...prev, preview: result as any, previewLoading: false }));
-    } catch {
-      setDeleteConfirmation(prev => ({ ...prev, preview: null, previewLoading: false }));
+      setDeleteConfirmation(prev => ({ ...prev, preview: result as any, previewLoading: false, previewError: false }));
+    } catch (err) {
+      // Don't silently swallow — a failed preview must NOT look like a confident
+      // "delete N items". Surface it so the user knows the impact is unknown.
+      console.error('[AssetManager] Delete preview failed:', err);
+      setDeleteConfirmation(prev => ({ ...prev, preview: null, previewLoading: false, previewError: true }));
     }
   };
 
   const handleDeleteAsset = async (asset: AssetRead, skipConfirmation = false) => {
     if (!skipConfirmation) {
-      setDeleteConfirmation({ type: 'asset', items: [asset], isOpen: true, preview: null, previewLoading: true });
-      fetchDeletePreview([asset]);
+      const out_of = nodeParent.get(`asset-${asset.id}`) ?? ROOT;
+      setDeleteConfirmation({ type: 'asset', items: [asset], isOpen: true, preview: null, previewLoading: true, out_of });
+      fetchDeletePreview([asset], out_of);
       return;
     }
     try {
       await deleteAsset(asset.id);
       toast.success(`Asset "${asset.title}" deleted.`);
-      if (activeDetail?.type === 'asset' && activeDetail.id === asset.id) setActiveDetail(null);
+      if (detailAssetId === asset.id) closeDetailOverlay();
       clearCache();
       await fetchRootTree();
     } catch (error) {
@@ -870,14 +992,14 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
 
   const handleDeleteBundle = async (bundle: BundleRead, skipConfirmation = false) => {
     if (!skipConfirmation) {
-      setDeleteConfirmation({ type: 'bundle', items: [bundle], isOpen: true, preview: null, previewLoading: true });
-      fetchDeletePreview([bundle]);
+      setDeleteConfirmation({ type: 'bundle', items: [bundle], isOpen: true, preview: null, previewLoading: true, out_of: ROOT });
+      fetchDeletePreview([bundle], ROOT);
       return;
     }
     try {
       await deleteBundle(bundle.id);
       toast.success(`Bundle "${bundle.name}" deleted.`);
-      if (activeDetail?.type === 'bundle' && activeDetail.id === bundle.id) setActiveDetail(null);
+      if (detailBundleId === bundle.id) closeDetailOverlay();
       clearCache();
       await fetchRootTree();
     } catch (error) {
@@ -904,28 +1026,33 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
       
       await TreeNavigationService.deleteTreeNodes({
         infospaceId: activeInfospace.id,
-        requestBody: { node_ids: nodeIds }
+        requestBody: { node_ids: nodeIds, out_of: deleteConfirmation.out_of ?? ROOT }
       });
       
       const totalCount = assetsToDelete.length + bundlesToDelete.length;
       toast.success(`Successfully deleted ${totalCount} item(s).`);
+      // Note any sources whose output bundle we just deleted — they're paused + flagged.
+      const pausedSources = deleteConfirmation.preview?.paused_sources ?? 0;
+      if (pausedSources > 0) {
+        toast.warning(`${pausedSources} source${pausedSources !== 1 ? 's' : ''} paused — output bundle deleted. Re-point ${pausedSources !== 1 ? 'them' : 'it'} to resume.`);
+      }
       setSelectedItems(new Set());
-      setActiveDetail(null);
-      
+      closeDetailOverlay();
+
       // Refresh tree after deletion
       clearCache();
       await fetchRootTree();
     } catch (error) {
       console.error('Delete error:', error);
       const message = error instanceof Error ? error.message : 'Unknown error';
-      toast.error(`Failed to delete: ${message}`); 
+      toast.error(`Failed to delete: ${message}`);
       // Still refresh tree to show current state
       clearCache();
       await fetchRootTree();
     } finally {
       setDeleteConfirmation({ type: 'asset', items: [], isOpen: false });
     }
-  }, [deleteConfirmation, clearCache, fetchRootTree, activeInfospace]);
+  }, [deleteConfirmation, clearCache, fetchRootTree, activeInfospace, closeDetailOverlay]);
 
   const handleEditAsset = (asset: AssetRead) => setEditingAsset(asset);
   const handleSaveAsset = async (assetId: number, updateData: AssetUpdate) => {
@@ -1032,24 +1159,17 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     }
   };
 
-  const handleCreateEmptyBundle = () => setIsCreateBundleOpen(true);
+  const handleCreateEmptyBundle = () => { setBundleSeed(null); setIsCreateBundleOpen(true); };
   const handleUploadToBundle = (bundle: BundleRead) => {
     setUploadToBundle(bundle);
     setCreateDialogMode('bundle');
     setIsCreateDialogOpen(true);
   };
 
-  const handleCreateArticle = () => {
-    setArticleComposerMode('create');
-    setEditingArticleId(undefined);
-    setIsArticleComposerOpen(true);
-  };
-
-  const handleEditArticle = (asset: AssetRead) => {
-    setArticleComposerMode('edit');
-    setEditingArticleId(asset.id);
-    setIsArticleComposerOpen(true);
-  };
+  // Compose / edit articles in the dock (right column), so the middle AssetSelector
+  // is the asset picker — drag assets straight from the tree into the editor.
+  const handleCreateArticle = () => openComposer({ mode: 'create' });
+  const handleEditArticle = (asset: AssetRead) => openComposer({ mode: 'edit', assetId: asset.id });
 
   // NEW: Simplified transfer items (no need for full data!)
   const transferItems = useMemo(() => {
@@ -1070,6 +1190,17 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     });
     return items;
   }, [selectedItems, rootNodes, childrenCache]);
+
+  // "+Bundle": gather the current selection into a new bundle. Assets become
+  // members; selected bundles get nested as children. Opens the create dialog
+  // pre-seeded so the user just names it.
+  const handleCreateBundleFromSelection = useCallback(() => {
+    const assetIds = transferItems.filter(i => i.type === 'asset').map(i => i.id);
+    const childBundleIds = transferItems.filter(i => i.type === 'bundle').map(i => i.id);
+    if (assetIds.length === 0 && childBundleIds.length === 0) return;
+    setBundleSeed({ assetIds, childBundleIds });
+    setIsCreateBundleOpen(true);
+  }, [transferItems]);
 
 
   // Build AssetTreeItem[] from selection for sharing
@@ -1109,6 +1240,32 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   const handleBulkShare = useCallback(() => {
     setSharingItems(buildShareItems());
   }, [buildShareItems]);
+
+  // Bulk actions injected into the AssetSelector's own selection strip. Only the
+  // manager surfaces destructive actions — inline pickers (chat, channel form)
+  // leave the slot empty and keep just select-all / count / clear.
+  const renderSelectionActions = useCallback(() => (
+    <ButtonGroup>
+      <Button variant="outline" size="sm" onClick={handleCreateBundleFromSelection} className="h-6 px-2 text-xs gap-1" title="Create bundle from selection">
+        <FolderPlus className="h-3.5 w-3.5" />
+        Bundle
+      </Button>
+      <ButtonGroupSeparator />
+      <Button variant="outline" size="sm" onClick={handleBulkShare} className="h-6 px-2 text-xs" title="Share">
+        <Share2 className="h-3.5 w-3.5" />
+      </Button>
+      <ButtonGroupSeparator />
+      <Button variant="outline" size="sm" onClick={handleBulkExport} className="h-6 px-2 text-xs" title="Export">
+        <Download className="h-3.5 w-3.5" />
+      </Button>
+      <ButtonGroupSeparator />
+      <AssetTransferPopover selectedItems={transferItems} onComplete={() => setSelectedItems(new Set())} />
+      <ButtonGroupSeparator />
+      <Button variant="outline" size="sm" onClick={handleBulkDelete} className="h-6 px-2 text-xs text-red-600 hover:text-red-700" title="Delete">
+        <Trash2 className="h-3.5 w-3.5" />
+      </Button>
+    </ButtonGroup>
+  ), [handleCreateBundleFromSelection, handleBulkShare, handleBulkExport, handleBulkDelete, transferItems]);
 
   const isItemFavorited = useCallback((item: AssetTreeItem): boolean => {
     // Check local overrides first (optimistic), then fall back to server data
@@ -1182,14 +1339,6 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
         <DropdownMenuLabel>{item.type === 'folder' ? 'Folder' : 'Asset'} Actions</DropdownMenuLabel>
         {/* Only show view details on folders */}
         {item.type === 'folder' && <DropdownMenuItem onClick={() => handleItemView(item)}><Eye className="mr-2 h-4 w-4" /> View Details</DropdownMenuItem>}
-        {item.type === 'folder' && !item.bundle && (() => {
-          const vp = item.id.startsWith('vfolder-') ? parseVfolderId(item.id) : null;
-          return vp ? (
-            <DropdownMenuItem key="materialize" onClick={() => handleMaterializeVfolder({ bundleId: vp.bundleId, pathPrefix: vp.pathPrefix, name: item.name })}>
-              <FolderPlus className="mr-2 h-4 w-4" /> Materialize as bundle
-            </DropdownMenuItem>
-          ) : null;
-        })()}
         {item.type === 'folder' && item.bundle && (
           <>
             {!item.bundle.sealed && (
@@ -1251,16 +1400,6 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
           </button>
         </>
       );
-    }
-
-    // Virtual folder
-    if (item.type === 'folder' && !item.bundle) {
-      const vp = item.id.startsWith('vfolder-') ? parseVfolderId(item.id) : null;
-      return vp ? (
-        <button className={ctxBtn} onClick={() => handleMaterializeVfolder({ bundleId: vp.bundleId, pathPrefix: vp.pathPrefix, name: item.name })}>
-          <FolderPlus className="mr-2 h-4 w-4" /> Materialize as bundle
-        </button>
-      ) : null;
     }
 
     // Bundle
@@ -1350,280 +1489,117 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     return <div className="flex items-center justify-center h-full"><p>Please select an Infospace.</p></div>;
   }
 
-  if (showDataSourceManager) {
-    return <DataSourceManager onClose={() => {
-      setShowDataSourceManager(false);
-      // Refresh tree in case new assets were created by sources
-      clearCache();
-      fetchRootTree();
-    }} />;
-  }
-
   return (
     <TextSpanHighlightProvider>
       <div className="flex h-full min-h-0 flex-1 w-full min-w-0 flex-col overflow-hidden px-1 sm:px-2">
         <div className="flex items-center hidden sm:flex justify-between mb-3 px-2">
           
         </div>
-        <div className="flex-none mb-3 md:mb-1 px-2">
+        <div className="flex-none mb-3 md:mb-1 px-1">
           {isMobile ? (
-            /* Mobile Layout - Organized in rows with button groups */
-            <div className="space-y-2">
-              {/* Content Creation Actions */}
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Upload + URL + Sources group */}
-                <ButtonGroup className="bg-muted/60">
-                  <Button 
-                    variant="outline" 
-                    onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('file'); setIsCreateDialogOpen(true); }} 
-                    className="h-8 px-3 text-xs"
-                  >
-                    <Upload className="h-3.5 w-3.5 mr-1.5" /> 
-                    Upload
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('url'); setIsCreateDialogOpen(true); }} 
-                    className="h-8 px-3 text-xs"
-                  >
-                    <LinkIcon className="h-3.5 w-3.5 mr-1.5" /> 
-                    URL
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    onClick={() => setShowDataSourceManager(true)} 
-                    className="h-8 px-3 text-xs"
-                  >
-                    <RadioTower className="h-3.5 w-3.5 mr-1.5" /> 
-                    Sources
-                  </Button>
-                </ButtonGroup>
-                
-                {/* Article + Folder group */}
-                <ButtonGroup>
-                  <Button 
-                    variant="outline" 
-                    onClick={handleCreateArticle} 
-                    className="h-8 px-3 text-xs"
-                  >
-                    <FileText className="h-3.5 w-3.5 mr-1.5" /> 
-                    Article
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    onClick={handleCreateEmptyBundle} 
-                    className="h-8 px-3 text-xs"
-                  >
-                    <FolderPlus className="h-3.5 w-3.5 mr-1.5" /> 
-                    Folder
-                  </Button>
-                </ButtonGroup>
-                
-                {/* Import - standalone */}
-                <Button 
-                  variant="outline" 
-                  onClick={() => document.getElementById('import-file-input')?.click()} 
-                  className="h-8 px-3 text-xs"
-                >
-                  <Download className="h-3.5 w-3.5 mr-1.5" /> 
-                  Import
+            /* Mobile — C5: Add hub · Web Search · Sources · Write · Folder · Feed */
+            <div className="flex flex-wrap items-center gap-2">
+              <ButtonGroup>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" className="h-8 gap-1 px-3 text-xs rounded-xs">
+                      <Plus className="h-3.5 w-3.5" /> Add <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-52">
+                    <DropdownMenuItem onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('file'); setIsCreateDialogOpen(true); }}>
+                      <Upload className="mr-2 h-4 w-4" /> Upload files
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('url'); setIsCreateDialogOpen(true); }}>
+                      <LinkIcon className="mr-2 h-4 w-4" /> From URL(s)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('text'); setIsCreateDialogOpen(true); }}>
+                      <Type className="mr-2 h-4 w-4" /> Paste text
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => openDiscover({ method: 'feed' })}>
+                      <Rss className="mr-2 h-4 w-4" /> RSS feed
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => document.getElementById('import-file-input')?.click()}>
+                      <Download className="mr-2 h-4 w-4" /> Import package
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={() => openDiscover()}>
+                  <Search className="mr-1.5 h-3.5 w-3.5" /> Web Search
                 </Button>
-                
-                {/* Feed View button for mobile */}
-                <Button 
-                  variant="default" 
-                  onClick={() => {
-                    setActiveDetail(null);
-                    setShowMobileDetail(true);
-                  }} 
-                  className="h-8 px-3 text-xs bg-amber-600 hover:bg-amber-700"
-                >
-                  <Folder className="h-3.5 w-3.5 mr-1.5" /> 
-                  Latest/ Feed
+                <Button variant="ghost" size="sm" className={cn('h-8 px-2.5 text-xs', showSourcesRail && 'bg-muted')} onClick={() => setShowSourcesRail((s) => !s)}>
+                  <RadioTower className="mr-1.5 h-3.5 w-3.5" /> Sources
                 </Button>
-              </div>
-              
+              </ButtonGroup>
+
+              <ButtonGroup>
+                <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleCreateArticle}>
+                  <FileText className="mr-1.5 h-3.5 w-3.5" /> Write
+                </Button>
+                <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleCreateEmptyBundle}>
+                  <FolderPlus className="mr-1.5 h-3.5 w-3.5" /> Folder
+                </Button>
+              </ButtonGroup>
+
+              <Button
+                variant="default"
+                size="sm"
+                className="ml-auto h-8 bg-amber-600 px-2.5 text-xs hover:bg-amber-700"
+                onClick={() => setShowMobileDetail(true)}
+              >
+                <Folder className="mr-1.5 h-3.5 w-3.5" /> Feed
+              </Button>
+
               <input type="file" id="import-file-input" style={{ display: 'none' }} onChange={handleImportFile} accept=".zip,.json" />
-              
-              {/* Selection Actions - Always visible to prevent layout jump */}
-              <div className={cn(
-                "flex items-center justify-between gap-2 p-1.5 rounded-md transition-all",
-                selectedItems.size > 0 ? "bg-muted/30" : "bg-transparent"
-              )}>
-                <Badge 
-                  variant="secondary" 
-                  className={cn(
-                    "text-[10px] h-6 rounded-full px-2 transition-opacity",
-                    selectedItems.size === 0 && "opacity-40"
-                  )}
-                >
-                  {selectedItems.size}
-                </Badge>
-                <ButtonGroup>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleBulkShare}
-                    disabled={selectedItems.size === 0}
-                    className="h-6 px-2 text-[10px]"
-                  >
-                    <Share2 className="h-3 w-3" />
-                  </Button>
-                  <ButtonGroupSeparator />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleBulkExport}
-                    disabled={selectedItems.size === 0}
-                    className="h-6 px-2 text-[10px]"
-                  >
-                    <Download className="h-3 w-3" />
-                  </Button>
-                  <ButtonGroupSeparator />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleBulkDelete}
-                    disabled={selectedItems.size === 0}
-                    className="h-6 px-2 text-[10px] text-red-600 hover:text-red-700"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                  <ButtonGroupSeparator />
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={() => setSelectedItems(new Set())}
-                    disabled={selectedItems.size === 0}
-                    className="h-6 w-6 p-0"
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                </ButtonGroup>
-              </div>
             </div>
           ) : (
-            /* Desktop Layout - With button groups */
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="flex flex-wrap gap-2">
-                {/* Upload + URL + Sources group */}
-                <ButtonGroup>
-                  <Button 
-                    variant="outline" 
-                    onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('file'); setIsCreateDialogOpen(true); }} 
-                    className="h-8 px-3 text-xs"
-                  >
-                    <Upload className="h-3.5 w-3.5 mr-1.5" /> 
-                    Upload
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('url'); setIsCreateDialogOpen(true); }} 
-                    className="h-8 px-3 text-xs"
-                  >
-                    <LinkIcon className="h-3.5 w-3.5 mr-1.5" /> 
-                    URL
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    onClick={() => setShowDataSourceManager(true)} 
-                    className="h-8 px-3 text-xs"
-                  >
-                    <RadioTower className="h-3.5 w-3.5 mr-1.5" /> 
-                    Sources
-                  </Button>
-                </ButtonGroup>
-                
-                {/* Article + Folder group */}
-                <ButtonGroup>
-                  <Button 
-                    variant="outline" 
-                    onClick={handleCreateArticle} 
-                    className="h-8 px-3 text-xs"
-                  >
-                    <FileText className="h-3.5 w-3.5 mr-1.5" /> 
-                    Article
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    onClick={handleCreateEmptyBundle} 
-                    className="h-8 px-3 text-xs"
-                  >
-                    <FolderPlus className="h-3.5 w-3.5 mr-1.5" /> 
-                    Folder
-                  </Button>
-                </ButtonGroup>
-                
-                {/* Import - standalone */}
-                <Button 
-                  variant="outline" 
-                  onClick={() => document.getElementById('import-file-input')?.click()} 
-                  className="h-8 px-3 text-xs"
-                >
-                  <Download className="h-3.5 w-3.5 mr-1.5" /> 
-                  Import
+            /* Desktop — C5: Add hub · Web Search · Sources ┆ Write · Folder */
+            <div className="flex items-center justify-between gap-2">
+              <ButtonGroup>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" className="h-8 gap-1 px-3 text-xs">
+                      <Plus className="h-3.5 w-3.5" /> Add <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-52">
+                    <DropdownMenuItem onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('file'); setIsCreateDialogOpen(true); }}>
+                      <Upload className="mr-2 h-4 w-4" /> Upload files
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('url'); setIsCreateDialogOpen(true); }}>
+                      <LinkIcon className="mr-2 h-4 w-4" /> From URL(s)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { setCreateDialogMode('individual'); setCreateDialogInitialFocus('text'); setIsCreateDialogOpen(true); }}>
+                      <Type className="mr-2 h-4 w-4" /> Paste text
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => openDiscover({ method: 'feed' })}>
+                      <Rss className="mr-2 h-4 w-4" /> RSS feed
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => document.getElementById('import-file-input')?.click()}>
+                      <Download className="mr-2 h-4 w-4" /> Import package
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={() => openDiscover()}>
+                  <Search className="mr-1.5 h-3.5 w-3.5" /> Web Search
                 </Button>
-                
-                <input type="file" id="import-file-input" style={{ display: 'none' }} onChange={handleImportFile} accept=".zip,.json" />
-              </div>
-              {/* Selection Actions - Always visible to prevent layout jump */}
-              <div className="flex items-center gap-2">
-                <Badge 
-                  variant="secondary" 
-                  className={cn(
-                    "text-xs h-7 px-2.5 transition-opacity",
-                    selectedItems.size === 0 && "opacity-40"
-                  )}
-                >
-                  {selectedItems.size}
-                </Badge>
-                <ButtonGroup>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleBulkShare}
-                    disabled={selectedItems.size === 0}
-                    className="h-7 px-2.5 text-xs"
-                  >
-                    <Share2 className="h-3.5 w-3.5 mr-1" />
-                    Share
-                  </Button>
-                  <ButtonGroupSeparator />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleBulkExport}
-                    disabled={selectedItems.size === 0}
-                    className="h-7 px-2.5 text-xs"
-                  >
-                    <Download className="h-3.5 w-3.5 mr-1" />
-                    Export
-                  </Button>
-                  <ButtonGroupSeparator />
-                  <AssetTransferPopover selectedItems={transferItems} onComplete={() => setSelectedItems(new Set())} />
-                  <ButtonGroupSeparator />
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={handleBulkDelete}
-                    disabled={selectedItems.size === 0}
-                    className="h-7 px-2.5 text-xs text-red-600 hover:text-red-700"
-                  >
-                    <Trash2 className="h-3.5 w-3.5 mr-1" /> 
-                    Delete
-                  </Button>
-                  <ButtonGroupSeparator />
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={() => setSelectedItems(new Set())}
-                    disabled={selectedItems.size === 0}
-                    className="h-7 w-7 p-0"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </Button>
-                </ButtonGroup>
-              </div>
+                <Button variant="ghost" size="sm" className={cn('h-8 px-2.5 text-xs', showSourcesRail && 'bg-muted')} onClick={() => setShowSourcesRail((s) => !s)}>
+                  <RadioTower className="mr-1.5 h-3.5 w-3.5" /> Sources
+                </Button>
+              </ButtonGroup>
+
+              <input type="file" id="import-file-input" style={{ display: 'none' }} onChange={handleImportFile} accept=".zip,.json" />
+
+              <ButtonGroup>
+                <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleCreateArticle}>
+                  <FileText className="mr-1.5 h-3.5 w-3.5" /> Write
+                </Button>
+                <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleCreateEmptyBundle}>
+                  <FolderPlus className="mr-1.5 h-3.5 w-3.5" /> Folder
+                </Button>
+              </ButtonGroup>
             </div>
           )}
         </div>
@@ -1639,216 +1615,146 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                   onSelectionChange={setSelectedItems}
                   onItemView={handleItemView}
                   onItemDoubleClick={handleItemDoubleClick}
-                  onMaterializeVfolder={handleMaterializeVfolder}
                   renderItemActions={renderItemActions}
                   renderContextMenu={renderContextMenu}
                   renderItemBadge={renderItemBadge}
+                  renderSelectionActions={renderSelectionActions}
                   onSearchTermChange={setSearchTermFromSelector}
                 />
               </div>
-              
+
               {/* Mobile Detail Sheet - slides in from right */}
               <Sheet open={showMobileDetail} onOpenChange={setShowMobileDetail}>
                 <SheetContent side="right" className="flex w-full flex-col p-0 sm:w-full">
                   
                   <div className="mt-10 flex min-h-0 flex-1 flex-col overflow-hidden">
-                    {activeDetail?.type === 'asset' ? (
-                      <AssetDetailView
-                        selectedAssetId={activeDetail.id}
-                        highlightAssetIdOnOpen={highlightAssetId}
-                        onEdit={handleEditAsset}
-                        schemas={[]}
-                        onLoadIntoRunner={onLoadIntoRunner}
-                      />
-                    ) : activeDetail?.type === 'bundle' ? (
-                      <BundleDetailView
-                        selectedBundleId={activeDetail.id}
-                        onLoadIntoRunner={onLoadIntoRunner}
-                        selectedAssetId={selectedAssetInBundle}
-                        onAssetSelect={setSelectedAssetInBundle}
-                        highlightAssetId={highlightAssetId}
-                      />
-                    ) : (
-                      /* Feed View for mobile — channel-based */
-                      <div className="flex h-full flex-col overflow-hidden">
-                        <div className="flex-none border-b px-2 py-1.5">
-                          <ChannelTabs
-                            channels={channels}
-                            activeChannelId={activeChannelId}
-                            onSelect={setActiveChannel}
-                            onAddChannel={() => { setEditingChannel(null); setIsChannelDialogOpen(true); }}
-                            onEditChannel={(ch) => { setEditingChannel(ch); setIsChannelDialogOpen(true); }}
-                            favoritesView={preferences.favorites_view ?? 'list'}
-                            onCycleFavoritesView={cycleFavoritesView}
-                            defaultChannelId={preferences.default_channel_id}
-                            onSetDefault={async (id) => { await useUserPreferencesStore.getState().updatePreference('default_channel_id', id); }}
-                          />
-                        </div>
-                        <div className="flex-1 min-h-0 overflow-hidden">
-                          <ChannelFeedContent
-                            channelId={activeChannelId}
-                            channels={channels}
-                            onAssetClick={(asset) => {
-                              setActiveDetail({ type: 'asset', id: asset.id });
-                            }}
-                            onBundleClick={(bundleId) => {
-                              setActiveDetail({ type: 'bundle', id: bundleId });
-                            }}
-                          />
-                        </div>
+                    {/* Feed (home). Tapping an item closes this sheet and opens the dock sheet. */}
+                    <div className="flex h-full flex-col overflow-hidden">
+                      <div className="flex-none border-b px-2 py-1.5">
+                        <ChannelTabs
+                          channels={channels}
+                          activeChannelId={activeChannelId}
+                          onSelect={handleSelectChannel}
+                          onAddChannel={() => { setEditingChannel(null); setIsChannelDialogOpen(true); }}
+                          onEditChannel={(ch) => { setEditingChannel(ch); setIsChannelDialogOpen(true); }}
+                          favoritesView={preferences.favorites_view ?? 'list'}
+                          onSetFavoritesView={setFavoritesView}
+                          allView={preferences.all_view ?? 'list'}
+                          onSetAllView={setAllView}
+                          defaultChannelId={preferences.default_channel_id}
+                          onSetDefault={async (id) => { await useUserPreferencesStore.getState().updatePreference('default_channel_id', id); }}
+                        />
                       </div>
-                    )}
+                      <div className="flex-1 min-h-0 overflow-hidden">
+                        <ChannelFeedContent
+                          channelId={activeChannelId}
+                          channels={channels}
+                          onAssetClick={(asset) => { setShowMobileDetail(false); openDetailOverlay(asset.id, (asset as any).bundle_ids?.find((b: number) => b && b !== 0)); }}
+                          onBundleClick={(bundleId) => { setShowMobileDetail(false); openBundleDetail(bundleId); }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </SheetContent>
+              </Sheet>
+
+              {/* Mobile Sources rail → left sheet (desktop shows it as a column). */}
+              <Sheet open={showSourcesRail} onOpenChange={setShowSourcesRail}>
+                <SheetContent side="left" className="flex w-[88vw] flex-col p-0 sm:w-[360px]">
+                  <div className="mt-10 flex min-h-0 flex-1 flex-col overflow-hidden">
+                    <SourceList mode="panel" init={undefined} fullscreen={false} close={() => setShowSourcesRail(false)} escalate={() => {}} />
                   </div>
                 </SheetContent>
               </Sheet>
             </>
           ) : (
-            /* Desktop Layout - Resizable panels */
-            <ResizablePanelGroup direction="horizontal" className="h-full min-h-0 w-full min-w-0 mx-auto rounded-lg border-primary/60">
-              <ResizablePanel 
-                defaultSize={40} 
-                minSize={20} 
-                maxSize={80} 
-                className="min-h-0 min-w-0 overflow-hidden"
-              >
-                <div className="h-full w-full overflow-hidden min-w-0">
-                  <AssetSelector
-                    selectedItems={selectedItems}
-                    onSelectionChange={setSelectedItems}
-                    onItemView={handleItemView}
-                    onItemDoubleClick={handleItemDoubleClick}
-                    onMaterializeVfolder={handleMaterializeVfolder}
-                    renderItemActions={renderItemActions}
-                    renderContextMenu={renderContextMenu}
-                    renderItemBadge={renderItemBadge}
-                    onSearchTermChange={setSearchTermFromSelector}
-                  />
+            /* Desktop — Sources rail (toggle) · AssetSelector · Feed/Dock */
+            <div ref={sourceStreamsWrapRef} className="relative flex h-full min-h-0 w-full min-w-0">
+              {/* Sources rail — fixed width, no drag handle. When streams are
+                  being traced, open a gutter to its right so the curves have a
+                  channel to fan out into instead of piling up on the seam. */}
+              {showSourcesRail && (
+                <div className={cn('h-full w-60 shrink-0 overflow-hidden transition-[margin] duration-300', sourceStreams.length > 0 && 'mr-12')}>
+                  <SourceList mode="panel" init={undefined} fullscreen={false} close={() => setShowSourcesRail(false)} escalate={() => {}} streams={sourceStreamControls} />
                 </div>
-              </ResizablePanel>
+              )}
 
-              <ResizableHandle withHandle className="bg-border" />
+              <ResizablePanelGroup direction="horizontal" className="h-full min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg border-primary/60">
+                <ResizablePanel defaultSize={40} minSize={18} maxSize={70} className="min-h-0 min-w-0 overflow-hidden">
+                  <div className="h-full w-full overflow-hidden min-w-0 pr-1">
+                    <AssetSelector
+                      selectedItems={selectedItems}
+                      onSelectionChange={setSelectedItems}
+                      onItemView={handleItemView}
+                      onItemDoubleClick={handleItemDoubleClick}
+                      renderItemActions={renderItemActions}
+                      renderContextMenu={renderContextMenu}
+                      renderItemBadge={renderItemBadge}
+                      renderSelectionActions={renderSelectionActions}
+                      onSearchTermChange={setSearchTermFromSelector}
+                      revealBundleIds={revealBundleIds}
+                      openBundleIds={openBundleIds}
+                    />
+                  </div>
+                </ResizablePanel>
 
-              <ResizablePanel 
-                defaultSize={60} 
-                minSize={20} 
-                maxSize={80}
-                className="min-h-0 min-w-0 overflow-hidden"
-              >
-                <div className="flex h-full min-h-0 w-full flex-col border-l overflow-hidden">
-                  {activeDetail?.type === 'asset' ? (
-                    <>
-                      {/* Back to Feed button */}
-                      <div className="flex-none px-4 py-2 flex items-center gap-2 border-b">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setActiveDetail(null);
-                            setHighlightAssetId(null);
-                          }}
-                          className="h-7 px-2 text-xs gap-1"
-                          title="Back to Home Feed View"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                          <span className="hidden sm:inline">Back to Home Feed</span>
-                        </Button>
-                      </div>
-                      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                        <AssetDetailView
-                          selectedAssetId={activeDetail.id}
-                          highlightAssetIdOnOpen={highlightAssetId}
-                          onEdit={handleEditAsset}
-                          schemas={[]}
-                          onLoadIntoRunner={onLoadIntoRunner}
-                        />
-                      </div>
-                    </>
-                  ) : activeDetail?.type === 'bundle' ? (
-                    <>
-                      {/* Back to Feed button */}
-                      <div className="flex-none px-4 py-2 flex items-center gap-2 border-b">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setActiveDetail(null);
-                            setSelectedAssetInBundle(null);
-                            setHighlightAssetId(null);
-                          }}
-                          className="h-7 px-2 text-xs gap-1"
-                          title="Back to Home Feed View"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                          <span className="hidden sm:inline">Back to Home Feed</span>
-                        </Button>
-                      </div>
-                      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                        <BundleDetailView
-                          selectedBundleId={activeDetail.id}
-                          onLoadIntoRunner={onLoadIntoRunner}
-                          selectedAssetId={selectedAssetInBundle}
-                          onAssetSelect={setSelectedAssetInBundle}
-                          highlightAssetId={highlightAssetId}
-                        />
-                      </div>
-                    </>
+                <ResizableHandle withHandle className="bg-border" />
+
+                <ResizablePanel defaultSize={60} minSize={20} maxSize={82} className="min-h-0 min-w-0 overflow-hidden">
+                  {dockEntry ? (
+                    <DockHost />
                   ) : (
-                    /* Feed View - channel tabs + favorites bar + query-driven feed */
-                    <div className="flex h-full flex-col overflow-hidden">
-                      {/* Channel tabs */}
+                    <div className="flex h-full min-h-0 w-full flex-col border-l overflow-hidden">
+                      {/* Feed (home) — the dock's default view; detail/discover replace it here. */}
                       <div className="flex-none border-b px-2 py-1.5">
                         <ChannelTabs
                           channels={channels}
                           activeChannelId={activeChannelId}
-                          onSelect={setActiveChannel}
+                          onSelect={handleSelectChannel}
                           onAddChannel={() => { setEditingChannel(null); setIsChannelDialogOpen(true); }}
                           onEditChannel={(ch) => { setEditingChannel(ch); setIsChannelDialogOpen(true); }}
                           favoritesView={preferences.favorites_view ?? 'list'}
-                          onCycleFavoritesView={cycleFavoritesView}
+                          onSetFavoritesView={setFavoritesView}
+                          allView={preferences.all_view ?? 'list'}
+                          onSetAllView={setAllView}
                           defaultChannelId={preferences.default_channel_id}
                           onSetDefault={async (id) => { await useUserPreferencesStore.getState().updatePreference('default_channel_id', id); }}
                         />
                       </div>
-                      {/* Feed content */}
                       <div className="flex-1 min-h-0 overflow-hidden">
                         <ChannelFeedContent
                           channelId={activeChannelId}
                           channels={channels}
-                          onAssetClick={(asset) => {
-                            setActiveDetail({ type: 'asset', id: asset.id });
-                            setHighlightAssetId(null);
-                          }}
-                          onBundleClick={(bundleId) => {
-                            setActiveDetail({ type: 'bundle', id: bundleId });
-                          }}
+                          onAssetClick={(asset) => openDetailOverlay(asset.id, (asset as any).bundle_ids?.find((b: number) => b && b !== 0))}
+                          onBundleClick={(bundleId) => openBundleDetail(bundleId)}
                         />
                       </div>
                     </div>
                   )}
-                </div>
-              </ResizablePanel>
-            </ResizablePanelGroup>
+                </ResizablePanel>
+              </ResizablePanelGroup>
+
+              {/* Source→bundle streams — drawn over the rail + tree, anchored by
+                  data-source-id / data-bundle-id. No-ops when nothing is traced. */}
+              <SourceStreams containerRef={sourceStreamsWrapRef} streams={sourceStreams} />
+            </div>
           )}
         </div>
 
         {/* Dialogs */}
         <CreateAssetDialog open={isCreateDialogOpen} onClose={() => { setIsCreateDialogOpen(false); setUploadToBundle(null); setCreateDialogInitialFocus(undefined); }} mode={createDialogMode} initialFocus={createDialogInitialFocus} existingBundleId={uploadToBundle?.id} existingBundleName={uploadToBundle?.name} />
-        <CreateBundleDialog open={isCreateBundleOpen} onClose={() => setIsCreateBundleOpen(false)} />
-        <ArticleComposer 
-          open={isArticleComposerOpen} 
-          onClose={() => {
-            setIsArticleComposerOpen(false);
-            setEditingArticleId(undefined);
-          }} 
-          mode={articleComposerMode}
-          existingAssetId={editingArticleId}
+        <CreateBundleDialog
+          open={isCreateBundleOpen}
+          onClose={() => { setIsCreateBundleOpen(false); setBundleSeed(null); }}
+          initialAssetIds={bundleSeed?.assetIds}
+          initialChildBundleIds={bundleSeed?.childBundleIds}
+          onCreated={async () => {
+            if (bundleSeed) setSelectedItems(new Set());
+            clearCache();
+            await fetchRootTree();
+          }}
         />
         {sharingItems.length > 0 && <ShareSelectionDialog items={sharingItems} onClose={() => setSharingItems([])} />}
-        <AnnotateFolderDialog
-          open={!!annotateFolderParams}
-          onOpenChange={(open) => !open && setAnnotateFolderParams(null)}
-          params={annotateFolderParams}
-        />
         {editingAsset && <EditAssetOverlay open={true} onClose={() => setEditingAsset(null)} asset={editingAsset} onSave={handleSaveAsset} />}
         {editingBundle && <BundleEditDialog open={true} onClose={() => setEditingBundle(null)} bundle={editingBundle} onSave={handleSaveBundle} />}
 
@@ -1910,7 +1816,19 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                           <span className="text-muted-foreground">{deleteConfirmation.preview.unlinked} asset{deleteConfirmation.preview.unlinked !== 1 ? 's' : ''} unlinked (survive elsewhere)</span>
                         )}
                       </div>
+                      {(deleteConfirmation.preview.paused_sources ?? 0) > 0 && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 pt-1">
+                          ⚠ {deleteConfirmation.preview.paused_sources} source{deleteConfirmation.preview.paused_sources !== 1 ? 's' : ''} output here — polling will be paused and flagged.
+                        </p>
+                      )}
                       <p className="text-xs text-muted-foreground pt-1">This cannot be undone.</p>
+                    </>
+                  ) : deleteConfirmation.previewError ? (
+                    <>
+                      <p className="text-amber-600 dark:text-amber-400">Couldn't compute the deletion impact.</p>
+                      <p className="text-xs text-muted-foreground pt-1">
+                        You can still delete {deleteConfirmation.items.length} item{deleteConfirmation.items.length !== 1 ? 's' : ''}, but the exact number of affected assets is unknown. This cannot be undone.
+                      </p>
                     </>
                   ) : (
                     <p>Are you sure you want to delete {deleteConfirmation.items.length} item{deleteConfirmation.items.length !== 1 ? 's' : ''}? This cannot be undone.</p>

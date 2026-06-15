@@ -14,10 +14,11 @@ import { cn } from '@/lib/utils';
  *
  * Title and metadata are in the parent's AssetMetaHeader; this is body + media.
  */
-export default function ArticleView({ 
-  asset, 
-  childAssets = [], 
+export default function ArticleView({
+  asset,
+  childAssets = [],
   onAssetClick,
+  onBundleClick,
   className,
   enableHighlighting = false,
   hideMainBody = false,
@@ -57,6 +58,7 @@ export default function ArticleView({
           content={content}
           embeddedAssets={metadata?.embedded_assets}
           onAssetClick={onAssetClick}
+          onBundleClick={onBundleClick}
         />
       );
     }

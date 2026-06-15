@@ -15,12 +15,15 @@ import {
   X,
   FolderOpen,
   Pin,
+  Check,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAssetQuery, type QueryResult } from '@/hooks/useAssetQuery';
@@ -30,6 +33,7 @@ import { useUserPreferencesStore, type Channel } from '@/zustand_stores/storeUse
 import { useTreeStore } from '@/zustand_stores/storeTree';
 import { toast } from 'sonner';
 import { AssetCard, CardGrid } from '../Cards';
+import { AssetListRow } from './AssetListRow';
 import {
   DISPLAYABLE_ASSET_KINDS,
   getAssetKindConfig,
@@ -47,26 +51,86 @@ interface ChannelTabsProps {
   onAddChannel: () => void;
   onEditChannel: (channel: Channel) => void;
   favoritesView: string;
-  onCycleFavoritesView: () => void;
+  onSetFavoritesView: (view: FeedView) => void;
+  allView: string;
+  onSetAllView: (view: FeedView) => void;
   defaultChannelId?: string | null;
   onSetDefault?: (id: string | null) => void;
 }
 
-export function ChannelTabs({ channels, activeChannelId, onSelect, onAddChannel, onEditChannel, favoritesView, onCycleFavoritesView, defaultChannelId, onSetDefault }: ChannelTabsProps) {
+type FeedView = 'list' | 'card' | 'bento';
+
+const VIEW_OPTIONS: { id: FeedView; label: string }[] = [
+  { id: 'list', label: 'List' },
+  { id: 'card', label: 'Cards' },
+  { id: 'bento', label: 'Bento' },
+];
+
+/** The three view modes as directly-selectable rows (current one checked). */
+function ViewMenuItems({ value, onSet }: { value: string; onSet: (view: FeedView) => void }) {
+  return (
+    <>
+      <DropdownMenuLabel className="py-1 text-[11px] font-normal text-muted-foreground">View</DropdownMenuLabel>
+      {VIEW_OPTIONS.map((o) => (
+        <DropdownMenuItem key={o.id} onClick={() => onSet(o.id)}>
+          <Check className={cn('mr-2 h-3 w-3', value === o.id ? 'opacity-100' : 'opacity-0')} />
+          {o.label}
+        </DropdownMenuItem>
+      ))}
+    </>
+  );
+}
+
+export function ChannelTabs({ channels, activeChannelId, onSelect, onAddChannel, onEditChannel, favoritesView, onSetFavoritesView, allView, onSetAllView, defaultChannelId, onSetDefault }: ChannelTabsProps) {
   return (
     <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide px-1">
-      {/* "All" tab — always present */}
-      <button
-        onClick={() => onSelect(null)}
-        className={cn(
-          'shrink-0 rounded-md px-3 py-1 text-xs font-medium transition-colors',
-          activeChannelId === null
-            ? 'border-b-2 border-primary rounded-b-none'
-            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-        )}
-      >
-        All
-      </button>
+      {/* "All" tab — always present; pencil dropdown carries the view toggle */}
+      <div className="shrink-0 group/tab relative flex items-center">
+        <button
+          onClick={() => onSelect(null)}
+          className={cn(
+            'flex items-center gap-1 rounded-md px-3 py-1 pr-6 text-xs font-medium transition-colors',
+            activeChannelId === null
+              ? 'border-b-2 border-primary rounded-b-none'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+          )}
+        >
+          All
+          {defaultChannelId === null && (
+            <Pin className="h-2.5 w-2.5 text-primary" />
+          )}
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              onClick={(e) => e.stopPropagation()}
+              className="absolute right-1 opacity-0 group-hover/tab:opacity-100 transition-opacity p-0.5 rounded text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground"
+            >
+              <Pencil className="h-2.5 w-2.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-[150px]">
+            <ViewMenuItems value={allView} onSet={onSetAllView} />
+            {onSetDefault && (
+              <>
+                <DropdownMenuSeparator />
+                {defaultChannelId === null ? (
+                  <DropdownMenuItem disabled>
+                    <Pin className="mr-2 h-3 w-3" />
+                    Default landing
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem onClick={() => onSetDefault(null)}>
+                    <Pin className="mr-2 h-3 w-3" />
+                    Pin as default
+                  </DropdownMenuItem>
+                )}
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
       {/* "Favorites" tab — same chrome as channel tabs (border-b spans label + pencil) */}
       <div className="shrink-0 group/tab relative flex items-center">
         <button
@@ -94,22 +158,23 @@ export function ChannelTabs({ channels, activeChannelId, onSelect, onAddChannel,
               <Pencil className="h-2.5 w-2.5" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-[140px]">
-            <DropdownMenuItem onClick={onCycleFavoritesView}>
-              View: {favoritesView}
-            </DropdownMenuItem>
+          <DropdownMenuContent align="start" className="min-w-[150px]">
+            <ViewMenuItems value={favoritesView} onSet={onSetFavoritesView} />
             {onSetDefault && (
-              defaultChannelId === '__favorites__' ? (
-                <DropdownMenuItem onClick={() => onSetDefault(null)}>
-                  <Pin className="mr-2 h-3 w-3" />
-                  Unpin as default
-                </DropdownMenuItem>
-              ) : (
-                <DropdownMenuItem onClick={() => onSetDefault('__favorites__')}>
-                  <Pin className="mr-2 h-3 w-3" />
-                  Pin as default
-                </DropdownMenuItem>
-              )
+              <>
+                <DropdownMenuSeparator />
+                {defaultChannelId === '__favorites__' ? (
+                  <DropdownMenuItem onClick={() => onSetDefault(null)}>
+                    <Pin className="mr-2 h-3 w-3" />
+                    Unpin as default
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem onClick={() => onSetDefault('__favorites__')}>
+                    <Pin className="mr-2 h-3 w-3" />
+                    Pin as default
+                  </DropdownMenuItem>
+                )}
+              </>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -242,7 +307,9 @@ export function ChannelFeedContent({ channelId, channels, onAssetClick, onBundle
   const sort = channel?.sort ?? 'created_at_desc';
   const view = channelId === '__favorites__'
     ? (preferences.favorites_view ?? 'list')
-    : (channel?.view ?? 'bento');
+    : channelId === null
+      ? (preferences.all_view ?? 'list')
+      : (channel?.view ?? 'bento');
 
   // Bundles to show in the feed — filtered by channel context
   const feedBundles = useMemo(() => {
@@ -337,27 +404,41 @@ export function ChannelFeedContent({ channelId, channels, onAssetClick, onBundle
         ) : hasResults ? (
           <>
             <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">Assets</p>
-            <CardGrid layout={view === 'card' ? 'grid' : view === 'list' ? 'list' : 'bento'} columns="auto">
-              {results.map((result, i) => (
-                <motion.div
-                  key={result.asset.id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.3) }}
-                >
-                  <AssetCard
+            {view === 'list' ? (
+              <div className="overflow-hidden rounded-md border">
+                {results.map((result) => (
+                  <AssetListRow
+                    key={result.asset.id}
                     asset={result.asset}
-                    score={result.score ?? undefined}
-                    onClick={onAssetClick}
-                    size="md"
-                    isFeatured={view === 'bento' && i % 3 === 0}
-                    orientation={view === 'list' ? 'horizontal' : 'vertical'}
                     isFavorited={((result.asset.tags ?? []) as string[]).includes('favorite')}
+                    onClick={onAssetClick}
                     onToggleFavorite={handleToggleFavorite}
                   />
-                </motion.div>
-              ))}
-            </CardGrid>
+                ))}
+              </div>
+            ) : (
+              <CardGrid layout={view === 'card' ? 'grid' : 'bento'} columns="auto">
+                {results.map((result, i) => (
+                  <motion.div
+                    key={result.asset.id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.3) }}
+                  >
+                    <AssetCard
+                      asset={result.asset}
+                      score={result.score ?? undefined}
+                      onClick={onAssetClick}
+                      size="md"
+                      isFeatured={view === 'bento' && i % 3 === 0}
+                      orientation="vertical"
+                      isFavorited={((result.asset.tags ?? []) as string[]).includes('favorite')}
+                      onToggleFavorite={handleToggleFavorite}
+                    />
+                  </motion.div>
+                ))}
+              </CardGrid>
+            )}
 
             {hasMore && (
               <div className="flex justify-center py-4">

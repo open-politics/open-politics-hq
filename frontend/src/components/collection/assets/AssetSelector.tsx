@@ -13,6 +13,7 @@ import {
   Upload, 
   Eye,
   MoreHorizontal,
+  ArrowRight,
   ChevronDown,
   ChevronRight,
   Loader2,
@@ -29,8 +30,8 @@ import {
   Link as LinkIcon,
   EyeOff,
   View,
-  ArrowDown01,
   RefreshCw,
+  SlidersHorizontal,
   Layers,
   FolderInput,
   Lock,
@@ -58,8 +59,6 @@ import { useTreeStore } from '@/zustand_stores/storeTree';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useDebounce } from '@/hooks/useDebounce';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
 import { useAssetQuery } from '@/hooks/useAssetQuery';
 import type { ChildResultGroup } from '@/hooks/useAssetQuery';
 import { useIngestionJobs } from '@/hooks/useIngestionJobs';
@@ -83,6 +82,7 @@ import {
 import {
   InputGroup,
   InputGroupAddon,
+  InputGroupButton,
   InputGroupInput,
 } from '@/components/ui/input-group';
 
@@ -119,6 +119,23 @@ export function parseVfolderId(id: string): { bundleId: number; pathPrefix: stri
   return { bundleId, pathPrefix };
 }
 
+/**
+ * Walk a bundle's parent chain (cycle-guarded) → ancestor node ids ('bundle-N'),
+ * nearest parent first. `byId` maps bundle id → BundleRead. Shared by the reveal
+ * and open effects so a nested target's ancestors get unfolded the same way.
+ */
+function ancestorBundleNodeIds(targetId: number, byId: Map<number, BundleRead>): string[] {
+  const out: string[] = [];
+  const seen = new Set<number>();
+  let parentId = byId.get(targetId)?.parent_bundle_id ?? null;
+  while (parentId != null && !seen.has(parentId)) {
+    seen.add(parentId);
+    out.push(`bundle-${parentId}`);
+    parentId = byId.get(parentId)?.parent_bundle_id ?? null;
+  }
+  return out;
+}
+
 interface AssetSelectorProps {
     selectedItems: Set<string>;
     onSelectionChange: (selectedIds: Set<string>) => void;
@@ -148,6 +165,26 @@ interface AssetSelectorProps {
     renderItemBadge?: (item: AssetTreeItem) => React.ReactNode;
     /** Only show bundle nodes (hide standalone assets). Useful for bundle pickers. */
     bundlesOnly?: boolean;
+    /**
+     * Render bulk actions inside the selection strip (shown only when items are selected).
+     * The strip itself owns select-all / count / clear so the selector is self-contained
+     * for inline use; parents (e.g. AssetManager) graft destructive actions on via this slot.
+     * Leave unset for inline pickers — they get selection mechanics without share/delete.
+     */
+    renderSelectionActions?: (selectedIds: Set<string>) => React.ReactNode;
+    /**
+     * Bundle ids that must be visible in the tree. For each, the ancestor chain
+     * is expanded so the target row mounts (e.g. the source→bundle streams overlay
+     * needs a DOM anchor for the bundle it draws a line to). Pass a stable array.
+     */
+    revealBundleIds?: number[];
+    /**
+     * Bundle ids to expand (open) outright — distinct from revealBundleIds, which
+     * only opens ancestors to surface a row. Ids added since the last render are
+     * expanded; ids removed are collapsed again. Drives the single-stream toggle's
+     * open-the-bundle / close-on-unpin behaviour.
+     */
+    openBundleIds?: number[];
 }
 
 export default function AssetSelector({
@@ -168,6 +205,9 @@ export default function AssetSelector({
     sortBy = 'name',
     sortOrder = 'asc',
     bundlesOnly = false,
+    renderSelectionActions,
+    revealBundleIds,
+    openBundleIds,
 }: AssetSelectorProps) {
   const { activeInfospace } = useInfospaceStore();
   
@@ -195,6 +235,7 @@ export default function AssetSelector({
     moveBundleToParent,
     sealBundle,
     unsealBundle,
+    bundles,
   } = useBundleStore();
 
   // Poll for active ingestion jobs
@@ -587,19 +628,17 @@ export default function AssetSelector({
     return Array.from(kinds).sort();
   }, [rootNodes, childrenCache]);
 
-  // Create map of search results (asset_id -> score) from unified query
+  // Map asset_id → relevance % for the badge. Title hits carry no score (a name
+  // match isn't a fuzzy score), so they're left out and render no %.
   const searchScoreMap = useMemo(() => {
     const map = new Map<number, number>();
-    for (const r of nameMatches.assets) {
-      map.set(r.asset.id, (r.score ?? 0) * 100);
-    }
     for (const r of queryResults) {
-      if (!map.has(r.asset.id)) {
-        map.set(r.asset.id, (r.score ?? 0) * 100);
+      if (r.field !== 'title' && r.score != null && !map.has(r.asset.id)) {
+        map.set(r.asset.id, r.score * 100);
       }
     }
     return map;
-  }, [nameMatches.assets, queryResults]);
+  }, [queryResults]);
 
   // OLD N+1 FETCHING LOGIC - REMOVED! 🎉
 
@@ -835,22 +874,28 @@ export default function AssetSelector({
     }));
   }, [isSearchActive, nameMatches.bundles, selectedItems]);
 
+  // Title tier: hits where the search text is in the asset title (backend-tagged).
+  // Picker is a "find by name" surface, so these lead. Dedupe is implicit — the
+  // backend tags each hit title XOR body.
   const searchNameAssetItems = useMemo(() => {
-    if (!isSearchActive || nameMatches.assets.length === 0) return [];
-    return nameMatches.assets.map(r => {
-      const treeNode = assetReadToAssetNode(r.asset);
-      const treeItem = convertAssetNodeToTreeItem(treeNode, 0);
-      return { ...treeItem, asset: r.asset };
-    });
-  }, [isSearchActive, nameMatches.assets, assetReadToAssetNode, convertAssetNodeToTreeItem]);
+    if (!isSearchActive) return [];
+    return queryResults
+      .filter(r => r.field === 'title')
+      .map(r => {
+        const treeItem = convertAssetNodeToTreeItem(assetReadToAssetNode(r.asset), 0);
+        return { ...treeItem, asset: r.asset };
+      });
+  }, [isSearchActive, queryResults, assetReadToAssetNode, convertAssetNodeToTreeItem]);
 
+  // Content tier: everything that matched on body text (carries snippet + %).
   const searchContentItems = useMemo(() => {
-    if (!isSearchActive || queryResults.length === 0) return [];
-    return queryResults.map(r => {
-      const treeNode = assetReadToAssetNode(r.asset);
-      const treeItem = convertAssetNodeToTreeItem(treeNode, 0);
-      return { ...treeItem, asset: r.asset };
-    });
+    if (!isSearchActive) return [];
+    return queryResults
+      .filter(r => r.field !== 'title')
+      .map(r => {
+        const treeItem = convertAssetNodeToTreeItem(assetReadToAssetNode(r.asset), 0);
+        return { ...treeItem, asset: r.asset };
+      });
   }, [isSearchActive, queryResults, assetReadToAssetNode, convertAssetNodeToTreeItem]);
 
   // Filter tree based on search and type
@@ -914,6 +959,67 @@ export default function AssetSelector({
     }
   }, [expandedItems, childrenCache, isLoadingChildren, fetchChildren]);
 
+  // Non-toggling expand: ensure a node is open and its children loaded. Used by
+  // the reveal path (below) where we only ever want to open, never collapse.
+  const ensureExpanded = useCallback(async (itemId: string) => {
+    if (expandedItems.has(itemId)) return;
+    setExpandedItems(prev => new Set(prev).add(itemId));
+    if (!childrenCache.has(itemId) && !isLoadingChildren.has(itemId)) {
+      try {
+        await fetchChildren(itemId);
+      } catch (error) {
+        console.error(`[AssetSelector] Failed to reveal children for ${itemId}:`, error);
+      }
+    }
+  }, [expandedItems, childrenCache, isLoadingChildren, fetchChildren]);
+
+  // Reveal requested bundles by opening their ancestor chain so the target row
+  // mounts (the source→bundle streams overlay anchors to it). We only expand
+  // parents — the target itself need not be open, just present in the DOM.
+  const revealKey = (revealBundleIds ?? []).join(',');
+  useEffect(() => {
+    if (!revealBundleIds || revealBundleIds.length === 0) return;
+    const byId = new Map(bundles.map(b => [b.id, b]));
+    const ancestors = new Set<string>();
+    for (const targetId of revealBundleIds) {
+      ancestorBundleNodeIds(targetId, byId).forEach(id => ancestors.add(id));
+    }
+    ancestors.forEach(id => { void ensureExpanded(id); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealKey, bundles, ensureExpanded]);
+
+  // Open/close bundles on demand (the single-stream toggle). Unlike reveal —
+  // which only opens ancestors to surface a row — this unfolds the full path:
+  // ancestor chain first (so a nested target mounts), then the bundle itself.
+  // Diff against the previous set: ids newly added get opened, ids dropped get
+  // collapsed again (so un-pinning a stream closes the bundle it opened).
+  const openKey = (openBundleIds ?? []).join(',');
+  const prevOpenBundlesRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    const nextSet = new Set(openBundleIds ?? []);
+    const prevSet = prevOpenBundlesRef.current;
+    const byId = new Map(bundles.map(b => [b.id, b]));
+    for (const id of nextSet) {
+      if (prevSet.has(id)) continue;
+      // Unfold ancestors so a nested target mounts, then open the target itself.
+      ancestorBundleNodeIds(id, byId).forEach(a => { void ensureExpanded(a); });
+      void ensureExpanded(`bundle-${id}`);
+    }
+    for (const id of prevSet) {
+      if (!nextSet.has(id)) {
+        // Collapse just the bundle — leave ancestors as the user left them.
+        setExpandedItems(prev => {
+          if (!prev.has(`bundle-${id}`)) return prev;
+          const s = new Set(prev);
+          s.delete(`bundle-${id}`);
+          return s;
+        });
+      }
+    }
+    prevOpenBundlesRef.current = nextSet;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openKey, bundles, ensureExpanded]);
+
   const allVisibleItemIds = useMemo(() => {
     const ids = new Set<string>();
     const collectIds = (items: AssetTreeItem[]) => {
@@ -932,9 +1038,45 @@ export default function AssetSelector({
     return true;
   }, [selectedItems, allVisibleItemIds]);
 
-  const handleSelectAll = (checked: boolean) => {
-    onSelectionChange(checked ? new Set(allVisibleItemIds) : new Set());
-  };
+  const handleSelectAll = useCallback(async (checked: boolean) => {
+    if (!checked) {
+      onSelectionChange(new Set());
+      return;
+    }
+    // Instant: select every node currently in the tree.
+    const seed = new Set(allVisibleItemIds);
+    onSelectionChange(seed);
+
+    // A collapsed bundle contributes only its own `bundle-N` node here, so the
+    // count and any "run on selection" would miss its assets. Pull each
+    // top-level bundle's full descendant asset set (recursive covers nested
+    // bundles) and merge — the same expansion a single-bundle click performs.
+    const infospaceId = activeInfospace?.id;
+    if (!infospaceId) return;
+    const topLevelBundleIds = filteredTree
+      .filter(item => item.type === 'folder' && item.bundle)
+      .map(item => item.bundle!.id);
+    if (topLevelBundleIds.length === 0) return;
+    try {
+      const results = await Promise.all(
+        topLevelBundleIds.map(bundleId =>
+          BundlesService.getBundleDescendantAssetIds({ infospaceId, bundleId, recursive: true })
+            .catch(() => [] as number[]),
+        ),
+      );
+      const next = new Set(seed);
+      let added = 0;
+      for (const ids of results) {
+        for (const id of ids) {
+          const key = `asset-${id}`;
+          if (!next.has(key)) { next.add(key); added++; }
+        }
+      }
+      if (added > 0) onSelectionChange(next);
+    } catch (err) {
+      console.error('[AssetSelector] Failed to expand select-all:', err);
+    }
+  }, [allVisibleItemIds, filteredTree, onSelectionChange, activeInfospace?.id]);
 
   const toggleSelected = useCallback((itemId: string, multiSelect?: boolean) => {
     const newSet = new Set(selectedItems);
@@ -1315,7 +1457,8 @@ export default function AssetSelector({
     }
   }, [addAssetToBundle, createBundle, fetchRootTree]);
 
-  const getIndentationStyle = (level: number) => ({ paddingLeft: `${level * 1.5}rem` });
+  const getIndentationStyle = (level: number) =>
+    level > 0 ? { paddingLeft: `${level * 1.5}rem` } : undefined;
 
   // Helper to get dataset ingestion job info for an asset/bundle
   const getJobInfo = useCallback((item: AssetTreeItem) => {
@@ -1397,11 +1540,11 @@ export default function AssetSelector({
       const jobInfo = getJobInfo(item);
       const isJobActive = jobInfo && ['pending', 'downloading', 'extracting', 'processing'].includes(jobInfo.status);
       return (
-        <div key={item.id}>
+        <div key={item.id} className="min-w-0 max-w-full" style={getIndentationStyle(item.level)}>
           <div
             data-item-index={itemIndex}
-            className={cn("group flex items-center mb-0.5 justify-between gap-2 rounded-md hover:bg-muted cursor-pointer transition-colors border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 w-full overflow-hidden", compact ? "py-1 px-2" : "py-2 px-3", (isFullySelected || item.isSelected) && "bg-blue-100 dark:bg-blue-900/80 border-blue-500 !border-y-blue-500/50", isDragOver && !item.bundle?.sealed && "bg-blue-100 dark:bg-blue-900", isDragOver && item.bundle?.sealed && "bg-red-100 dark:bg-red-900/50 border-red-400", isSealRejected && "animate-shake bg-red-100 dark:bg-red-900/50 border-red-400", isFocused && "ring-1 ring-inset ring-primary")}
-            style={getIndentationStyle(item.level)}
+            data-bundle-id={bundleId}
+            className={cn("group relative flex min-w-0 max-w-full items-center mb-0.5 gap-2 rounded-md hover:bg-muted cursor-pointer transition-colors bg-slate-50 dark:bg-slate-900/50 w-full overflow-hidden", compact ? "py-1 pl-2 pr-8" : "py-2 pl-3 pr-9", (isFullySelected || item.isSelected) && "bg-blue-100 dark:bg-blue-900/80", isDragOver && !item.bundle?.sealed && "bg-blue-100 dark:bg-blue-900", isDragOver && item.bundle?.sealed && "bg-red-100 dark:bg-red-900/50", isSealRejected && "animate-shake bg-red-100 dark:bg-red-900/50", isFocused && "ring-1 ring-inset ring-primary")}
             onContextMenu={(e) => handleContextMenu(e, item)}
             onClick={(e) => {
               e.stopPropagation();
@@ -1480,42 +1623,33 @@ export default function AssetSelector({
             </div>
             <Checkbox checked={isFullySelected || isPartiallySelected} onCheckedChange={(checked) => toggleBundleSelection(bundleId, !!checked)} onClick={(e) => e.stopPropagation()} className={cn("h-4 w-4 rounded-sm shrink-0 border-gray-300 border-thin data-[state=checked]:bg-secondary data-[state=checked]:text-secondary-foreground", isPartiallySelected && !isFullySelected && "data-[state=checked]:bg-primary/50")} title={isFullySelected ? "Deselect all" : "Select all"} />
             {renderItemBadge?.(item)}
-            <TooltipProvider delayDuration={300}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="w-4 h-4 flex items-center justify-center shrink-0">
-                    <div className="relative">
-                      <AnimatePresence mode="wait">
-                        {item.isExpanded ? (
-                          <motion.div
-                            key="open"
-                            initial={{ opacity: 0, scale: 0.9 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            exit={{ opacity: 0, scale: 0.9 }}
-                            transition={{ duration: 0.1, ease: "easeOut" }}
-                          >
-                            <FolderOpen className="h-4 w-4 text-blue-400" />
-                          </motion.div>
-                        ) : (
-                          <motion.div
-                            key="closed"
-                            initial={{ opacity: 0, scale: 0.9 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            exit={{ opacity: 0, scale: 0.9 }}
-                            transition={{ duration: 0.1, ease: "easeOut" }}
-                          >
-                            <Folder className="h-4 w-4 text-blue-400" />
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>Bundle — data collection. Use to curation data, as recurrent ingestion target or as entrypoint for analysis and flows. Can be sealed to prevent modification.</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <div className="w-4 h-4 flex items-center justify-center shrink-0">
+              <div className="relative">
+                <AnimatePresence mode="wait">
+                  {item.isExpanded ? (
+                    <motion.div
+                      key="open"
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      transition={{ duration: 0.1, ease: "easeOut" }}
+                    >
+                      <FolderOpen className="h-4 w-4 text-blue-400" />
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="closed"
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.9 }}
+                      transition={{ duration: 0.1, ease: "easeOut" }}
+                    >
+                      <Folder className="h-4 w-4 text-blue-400" />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </div>
             {item.bundle?.sealed && 
               <TooltipProvider delayDuration={300}>
                 <Tooltip>
@@ -1536,16 +1670,16 @@ export default function AssetSelector({
                   </div>
                 ) : (
                   <>
-                    <span className="text-sm font-normal truncate flex-1 max-w-32 sm:max-w-40 md:max-w-64">{item.name}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-normal">{item.name}</span>
                     {/* Dataset ingestion progress indicator */}
                     {isJobActive && jobInfo && (
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
-                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      <div className="flex min-w-0 max-w-[40%] items-center gap-1.5 overflow-hidden">
+                        <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-500" />
+                        <span className="truncate text-xs text-muted-foreground">
                           {jobInfo.stage_message || (typeof jobInfo.cursor_state?.message === 'string' ? jobInfo.cursor_state.message : '') || `${jobInfo.status}...`}
                         </span>
                         {jobInfo.progress_pct !== undefined && jobInfo.progress_pct > 0 && (
-                          <span className="text-xs text-muted-foreground whitespace-nowrap">
+                          <span className="shrink-0 text-xs text-muted-foreground">
                             ({Math.round(jobInfo.progress_pct)}%)
                           </span>
                         )}
@@ -1555,13 +1689,13 @@ export default function AssetSelector({
                 )}
               </div>
             </div>
-            {/* Actions (hover) */}
-            <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-              {renderItemActions ? renderItemActions(item) : (
-                item.type === 'folder' && (
-                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
-                )
+            {/* Actions on hover — absolute so the row doesn't resize */}
+            <div className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+              {/* Open the bundle in the detail view — a discoverable alternative to double-click. */}
+              {onItemView && (
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="Open bundle"><ArrowRight className="h-4 w-4" /></Button>
               )}
+              {renderItemActions ? renderItemActions(item) : null}
             </div>
           </div>
           <AnimatePresence initial={false}>
@@ -1622,11 +1756,10 @@ export default function AssetSelector({
     if (item.type === 'folder' && !item.bundle) {
       const vfolderParams = item.id.startsWith('vfolder-') ? parseVfolderId(item.id) : null;
       return (
-        <div key={item.id}>
+        <div key={item.id} className="min-w-0 max-w-full" style={getIndentationStyle(item.level)}>
           <div
             data-item-index={itemIndex}
-            className={cn("group flex items-center mb-0.5 justify-between gap-2 rounded-md hover:bg-muted cursor-pointer transition-colors border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/30 w-full overflow-hidden", compact ? "py-1 px-2" : "py-2 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50", isFocused && "ring-1 ring-inset ring-primary")}
-            style={getIndentationStyle(item.level)}
+            className={cn("group relative flex min-w-0 max-w-full items-center mb-0.5 gap-2 rounded-md hover:bg-muted cursor-pointer transition-colors bg-slate-50/70 dark:bg-slate-900/30 w-full overflow-hidden", compact ? "py-1 pl-2 pr-8" : "py-2 pl-3 pr-9", item.isSelected && "bg-blue-50 dark:bg-blue-900/50", isFocused && "ring-1 ring-inset ring-primary")}
             onClick={(e) => {
               e.stopPropagation();
               if (bundleClickTimeoutRef.current) {
@@ -1660,7 +1793,7 @@ export default function AssetSelector({
             <div className="flex-1 min-w-0 overflow-hidden">
               <span className="text-sm font-normal truncate text-muted-foreground flex-1">{item.name}</span>
             </div>
-            <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
               {renderItemActions ? renderItemActions(item) : (
                 <Button
                   variant="ghost"
@@ -1733,11 +1866,10 @@ export default function AssetSelector({
     const isJobActive = jobInfo && ['pending', 'downloading', 'extracting', 'processing'].includes(jobInfo.status);
     
     return (
-      <div key={item.id}>
+      <div key={item.id} className="min-w-0 max-w-full" style={getIndentationStyle(item.level)}>
         <div
           data-item-index={itemIndex}
-          className={cn("group flex items-center justify-between gap-2 hover:bg-muted/50 cursor-pointer transition-colors rounded-md w-full overflow-hidden", compact ? "py-1 px-2" : "py-1.5 px-3", item.isSelected && "bg-blue-50 dark:bg-blue-900/50 rounded-none border-blue-500", isDragOverAsset && "bg-green-100 dark:bg-green-900", isFocused && "ring-1 ring-inset ring-primary", isJobActive && "bg-blue-50/50 dark:bg-blue-900/30")}
-          style={getIndentationStyle(item.level)}
+          className={cn("group relative flex min-w-0 max-w-full items-center gap-2 hover:bg-muted/50 cursor-pointer transition-colors rounded-md w-full overflow-hidden", compact ? "py-1 pl-2 pr-8" : "py-1.5 pl-3 pr-9", item.isSelected && "bg-blue-50 dark:bg-blue-900/50", isDragOverAsset && "bg-green-100 dark:bg-green-900", isFocused && "ring-1 ring-inset ring-primary", isJobActive && "bg-blue-50/50 dark:bg-blue-900/30")}
           onContextMenu={(e) => handleContextMenu(e, item)}
           onClick={() => handleItemClick(item)}
           onDoubleClick={() => handleItemDoubleClickInternal(item)}
@@ -1828,7 +1960,7 @@ export default function AssetSelector({
           )}
 
           {/* Middle flexible section: name + metadata */}
-          <div className="flex-1 overflow-hidden" onClick={(e) => { if (e.detail === 3) { e.stopPropagation(); handleEditItem(item); } }}>
+          <div className="min-w-0 flex-1 overflow-hidden" onClick={(e) => { if (e.detail === 3) { e.stopPropagation(); handleEditItem(item); } }}>
             {isEditing ? (
               <div className="flex items-center gap-0.5">
                 <Input value={editingItem.value} onChange={(e) => setEditingItem({ ...editingItem, value: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') handleSaveEditing(); if (e.key === 'Escape') handleCancelEdit(); }} autoFocus className="h-7 text-sm" onClick={(e) => e.stopPropagation()} />
@@ -1836,13 +1968,13 @@ export default function AssetSelector({
                 <Button size="icon" variant="ghost" className="h-7 w-7" onClick={(e) => { e.stopPropagation(); handleCancelEdit();}}><X className="h-4 w-4 text-red-600"/></Button>
               </div>
             ) : (
-              <div className="flex items-center gap-2 overflow-hidden">
-                <span className="text-sm font-normal truncate flex-1 max-w-32 sm:max-w-40 md:max-w-64 lg:max-w-96">{item.name}</span>
+              <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                <span className="min-w-0 flex-1 truncate text-sm font-normal">{item.name}</span>
                 {/* Dataset ingestion progress indicator */}
                 {isJobActive && jobInfo && (
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
-                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                  <div className="flex min-w-0 max-w-[40%] items-center gap-1.5 overflow-hidden">
+                    <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-500" />
+                    <span className="truncate text-xs text-muted-foreground">
                       {jobInfo.stage_message || (typeof jobInfo.cursor_state?.message === 'string' ? jobInfo.cursor_state.message : '') || `${jobInfo.status}...`}
                     </span>
                     {jobInfo.progress_pct !== undefined && jobInfo.progress_pct > 0 && (
@@ -1856,26 +1988,23 @@ export default function AssetSelector({
             )}
           </div>
 
-          {/* Right fixed section: date + actions - always at end */}
-          <div className="flex items-center gap-2 shrink-0">
-            {item.asset && !isEditing && (() => {
-              const raw = item.asset.updated_at;
-              if (!raw) return null;
-              const d = new Date(raw);
-              if (!Number.isFinite(d.getTime())) return null;
-              return (
-                <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:block">
-                  {formatDistanceToNowStrict(d, { addSuffix: true })}
-                </span>
-              );
-            })()}
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              {renderItemActions ? renderItemActions(item) : (
-                item.type === 'folder' && (
-                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
-                )
-              )}
-            </div>
+          {item.asset && !isEditing && (() => {
+            const raw = item.asset.updated_at;
+            if (!raw) return null;
+            const d = new Date(raw);
+            if (!Number.isFinite(d.getTime())) return null;
+            return (
+              <span className="hidden shrink-0 truncate text-xs text-muted-foreground @sm:block">
+                {formatDistanceToNowStrict(d, { addSuffix: true })}
+              </span>
+            );
+          })()}
+          <div className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+            {renderItemActions ? renderItemActions(item) : (
+              item.type === 'folder' && (
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); handleItemClick(item); }} title="View Details"><Eye className="h-4 w-4" /></Button>
+              )
+            )}
           </div>
         </div>
         <AnimatePresence initial={false}>
@@ -2053,206 +2182,214 @@ export default function AssetSelector({
   return (
     <>
     <div
-      className={cn("h-full w-full flex flex-col overflow-hidden min-w-0 bg-background", compact && "gap-0")}
+      className={cn("h-full w-full flex flex-col min-h-0 min-w-0 bg-background", compact && "gap-0")}
     >
-        {/* Compact search bar - minimal design for inline usage */}
-        {compact && (
-          <div className="flex-none p-2 border-b bg-background">
-            <div className="flex items-center gap-2">
-              <InputGroup className="flex-grow">
-                <InputGroupAddon>
-                  {isSearching ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Search className="h-3.5 w-3.5" />
-                  )}
-                </InputGroupAddon>
-                <InputGroupInput 
-                  ref={searchInputRef}
-                  placeholder={useSemanticMode && isSemanticAvailable ? "Semantic search..." : "Text search..."} 
-                  className="text-sm h-8" 
-                  value={searchTerm} 
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  onKeyDown={(e) => {
-                    // Handle navigation keys - let window handler take over once navigation starts
-                    if (e.key === 'ArrowDown' && focusedIndex === -1 && flattenedItemsRef.current.length > 0) {
-                      // First arrow down - move focus to first item
-                      e.preventDefault();
-                      setFocusedIndex(0);
-                    } else if (e.key === 'ArrowUp' && focusedIndex === -1) {
-                      // First arrow up - move focus to last item
-                      e.preventDefault();
-                      if (flattenedItemsRef.current.length > 0) {
-                        setFocusedIndex(flattenedItemsRef.current.length - 1);
-                      }
+        {/*
+          Unified header — one search field carries every control, sized by the
+          pane's own width via container queries (@container), not the viewport.
+          - leading: select-all checkbox (collapses into the filter menu below @3xs)
+          - input: search, always the dominant element so it never gets squeezed
+          - trailing: text/semantic segmented pill, filter+sort menu, refresh (hides below @2xs)
+          - selection strip: appears only when items are selected. The selector owns
+            select-all / count / clear so it is self-contained inline; parents inject
+            destructive actions through renderSelectionActions.
+        */}
+        <div className="@container flex-none min-w-0 bg-background">
+          <div className={cn("flex min-w-0 items-center", compact ? "py-1.5" : "py-2")}>
+            <InputGroup className="h-8 min-w-0 flex-grow !border-none !shadow-none">
+              <InputGroupAddon className="gap-1.5">
+                <Checkbox
+                  checked={isAllSelected ? true : (selectedItems.size > 0 ? 'indeterminate' : false)}
+                  onCheckedChange={(checked) => handleSelectAll(checked === true)}
+                  disabled={allVisibleItemIds.size === 0}
+                  aria-label="Select all visible items"
+                  className="hidden size-3.5 shrink-0 rounded-[4px] @3xs:block"
+                />
+                {isSearching ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <></>
+                )}
+              </InputGroupAddon>
+              <InputGroupInput
+                ref={searchInputRef}
+                placeholder={useSemanticMode && isSemanticAvailable ? "Semantic search…" : "Text/ Title search…"}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  // Hand off to the window-level keyboard navigation once arrows start.
+                  if (e.key === 'ArrowDown' && focusedIndex === -1 && flattenedItemsRef.current.length > 0) {
+                    e.preventDefault();
+                    setFocusedIndex(0);
+                  } else if (e.key === 'ArrowUp' && focusedIndex === -1) {
+                    e.preventDefault();
+                    if (flattenedItemsRef.current.length > 0) {
+                      setFocusedIndex(flattenedItemsRef.current.length - 1);
                     }
-                    // For all other cases (including when focusedIndex >= 0), let the window handler manage it
-                  }}
-                />
-              </InputGroup>
-              {/* Semantic search toggle - compact mode */}
-              {isSemanticAvailable && (
-                <div className="flex items-center gap-1.5">
-                  <Switch
-                    id="semantic-toggle-compact"
-                    checked={useSemanticMode}
-                    onCheckedChange={setUseSemanticMode}
-                    disabled={isSearching}
-                    className="scale-75"
-                  />
-                  <Label 
-                    htmlFor="semantic-toggle-compact" 
-                    className="text-[10px] text-muted-foreground cursor-pointer whitespace-nowrap"
-                  >
-                    {useSemanticMode ? 'S' : 'T'}
-                  </Label>
-                </div>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0 shrink-0"
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                title="Refresh"
-              >
-                <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
-              </Button>
-            </div>
-          </div>
-        )}
-      
-        {/* Search and Filter - Full version for non-compact mode */}
-        {!compact && (
-          <div className="flex-none p-2 py-0 border-b min-w-0 overflow-hidden">
-            <div className="flex items-center gap-1 sm:gap-2 min-w-0 pl-1 sm:pl-2 py-2 sm:py-3">
-              <Checkbox 
-                id="select-all" 
-                checked={isAllSelected} 
-                onCheckedChange={(checked) => handleSelectAll(Boolean(checked))} 
-                disabled={allVisibleItemIds.size === 0} 
-                aria-label="Select all visible items" 
-                className="rounded-sm shrink-0"
+                  }
+                }}
               />
-              <InputGroup className="flex-grow h-8 ml-1 sm:ml-2">
-                <InputGroupAddon>
-                  {isSearching ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <Search className="h-3 w-3" />
-                  )}
-                </InputGroupAddon>
-                <InputGroupInput
-                  ref={searchInputRef}
-                  placeholder={useSemanticMode && isSemanticAvailable ? "Semantic search..." : "Search..."}
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </InputGroup>
-              {/* Semantic search toggle - only show if available */}
-              {isSemanticAvailable && (
-                <div className="flex items-center gap-1 sm:gap-2 px-0.5 sm:px-2">
-                  <Switch
-                    id="semantic-toggle"
-                    checked={useSemanticMode}
-                    onCheckedChange={setUseSemanticMode}
-                    disabled={isSearching}
-                    className="scale-90 sm:scale-100"
-                  />
-                  <Label 
-                    htmlFor="semantic-toggle" 
-                    className="text-xs text-muted-foreground cursor-pointer whitespace-nowrap hidden sm:block"
-                  >
-                    {useSemanticMode ? 'Semantic' : 'Text'}
-                  </Label>
-                </div>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 sm:h-8 sm:w-8 p-0 shrink-0"
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                title="Refresh"
-              >
-                <RefreshCw className={cn("h-3.5 w-3.5 sm:h-4 sm:w-4", isRefreshing && "animate-spin")} />
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-7 w-7 sm:h-8 sm:w-auto p-0 sm:px-2 sm:gap-2 shrink-0">
-                    <ArrowDown01 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                    <span className="hidden sm:inline">Filters</span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-64 p-2">
-                  <div className="mb-3">
-                    <DropdownMenuLabel className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-2 pb-2">
-                      Type Filter
-                    </DropdownMenuLabel>
-                    <div className="bg-muted/30 rounded-md p-1">
-                      <DropdownMenuRadioGroup value={assetTypeFilter} onValueChange={(value) => setAssetTypeFilter(value as AssetKind | 'all')}>
-                        <DropdownMenuRadioItem value="all" className="rounded-sm">
-                          All Types
-                        </DropdownMenuRadioItem>
-                        {assetKinds.map(kind => (
-                          <DropdownMenuRadioItem key={kind} value={kind} className="rounded-sm">
-                            {kind.charAt(0).toUpperCase() + kind.slice(1).replace('_', ' ')}
+              <InputGroupAddon align="inline-end" className="shrink-0 gap-1">
+                {/* Search mode — text vs semantic, segmented so both options stay legible */}
+                {isSemanticAvailable && (
+                  <div className="flex shrink-0 items-center gap-0.5 rounded-[6px] bg-muted/60 p-[2px] text-[11px] font-medium leading-none">
+                    <button
+                      type="button"
+                      title="Text search"
+                      disabled={isSearching}
+                      onClick={() => setUseSemanticMode(false)}
+                      className={cn(
+                        "rounded-[4px] px-1.5 py-1 transition-colors",
+                        !useSemanticMode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Aa
+                    </button>
+                    <button
+                      type="button"
+                      title="Semantic search"
+                      disabled={isSearching}
+                      onClick={() => setUseSemanticMode(true)}
+                      className={cn(
+                        "rounded-[4px] px-2 py-1 transition-colors",
+                        useSemanticMode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      ≈
+                    </button>
+                  </div>
+                )}
+                {/* Filter / sort — also carries select-all so it stays reachable when the checkbox collapses */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <InputGroupButton size="icon-xs" aria-label="Filter and sort">
+                      <SlidersHorizontal className="size-3.5" />
+                    </InputGroupButton>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-60 p-2">
+                    <div className="mb-2">
+                      <div className="rounded-md bg-muted/30 p-1">
+                        <DropdownMenuItem
+                          onClick={() => handleSelectAll(true)}
+                          disabled={allVisibleItemIds.size === 0}
+                          className="rounded-sm"
+                        >
+                          <Check className="mr-2 size-4" /> Select all
+                          <span className="ml-auto text-xs tabular-nums text-muted-foreground">{allVisibleItemIds.size}</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => onSelectionChange(new Set())}
+                          disabled={selectedItems.size === 0}
+                          className="rounded-sm"
+                        >
+                          <X className="mr-2 size-4" /> Select none
+                        </DropdownMenuItem>
+                      </div>
+                    </div>
+
+                    <DropdownMenuSeparator className="my-2" />
+
+                    <div className="mb-3">
+                      <DropdownMenuLabel className="px-2 pb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Type Filter
+                      </DropdownMenuLabel>
+                      <div className="rounded-md bg-muted/30 p-1">
+                        <DropdownMenuRadioGroup value={assetTypeFilter} onValueChange={(value) => setAssetTypeFilter(value as AssetKind | 'all')}>
+                          <DropdownMenuRadioItem value="all" className="rounded-sm">
+                            All Types
                           </DropdownMenuRadioItem>
-                        ))}
-                      </DropdownMenuRadioGroup>
+                          {assetKinds.map(kind => (
+                            <DropdownMenuRadioItem key={kind} value={kind} className="rounded-sm">
+                              {kind.charAt(0).toUpperCase() + kind.slice(1).replace('_', ' ')}
+                            </DropdownMenuRadioItem>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      </div>
                     </div>
-                  </div>
-                  
-                  <DropdownMenuSeparator className="my-2" />
-                  
-                  <div>
-                    <DropdownMenuLabel className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-2 pb-2">
-                      Sort By
-                    </DropdownMenuLabel>
-                    <div className="bg-muted/30 rounded-md p-1">
-                      <DropdownMenuRadioGroup value={sortOption} onValueChange={setSortOption}>
-                        <DropdownMenuRadioItem value="kind-updated_at-desc" className="rounded-sm">
-                          <span className="flex items-center gap-2">
-                            <span className="text-muted-foreground">📁</span>
-                            Type, then Date
-                          </span>
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="updated_at-desc" className="rounded-sm">
-                          <span className="flex items-center gap-2">
-                            <span className="text-muted-foreground">↓</span>
-                            Recently Edited
-                          </span>
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="updated_at-asc" className="rounded-sm">
-                          <span className="flex items-center gap-2">
-                            <span className="text-muted-foreground">↑</span>
-                            Oldest First
-                          </span>
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="name-asc" className="rounded-sm">
-                          <span className="flex items-center gap-2">
-                            <span className="text-muted-foreground">A→Z</span>
-                            Name Ascending
-                          </span>
-                        </DropdownMenuRadioItem>
-                        <DropdownMenuRadioItem value="name-desc" className="rounded-sm">
-                          <span className="flex items-center gap-2">
-                            <span className="text-muted-foreground">Z→A</span>
-                            Name Descending
-                          </span>
-                        </DropdownMenuRadioItem>
-                      </DropdownMenuRadioGroup>
+
+                    <DropdownMenuSeparator className="my-2" />
+
+                    <div>
+                      <DropdownMenuLabel className="px-2 pb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Sort By
+                      </DropdownMenuLabel>
+                      <div className="rounded-md bg-muted/30 p-1">
+                        <DropdownMenuRadioGroup value={sortOption} onValueChange={setSortOption}>
+                          <DropdownMenuRadioItem value="kind-updated_at-desc" className="rounded-sm">
+                            <span className="flex items-center gap-2">
+                              <span className="text-muted-foreground">📁</span>
+                              Type, then Date
+                            </span>
+                          </DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="updated_at-desc" className="rounded-sm">
+                            <span className="flex items-center gap-2">
+                              <span className="text-muted-foreground">↓</span>
+                              Recently Edited
+                            </span>
+                          </DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="updated_at-asc" className="rounded-sm">
+                            <span className="flex items-center gap-2">
+                              <span className="text-muted-foreground">↑</span>
+                              Oldest First
+                            </span>
+                          </DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="name-asc" className="rounded-sm">
+                            <span className="flex items-center gap-2">
+                              <span className="text-muted-foreground">A→Z</span>
+                              Name Ascending
+                            </span>
+                          </DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="name-desc" className="rounded-sm">
+                            <span className="flex items-center gap-2">
+                              <span className="text-muted-foreground">Z→A</span>
+                              Name Descending
+                            </span>
+                          </DropdownMenuRadioItem>
+                        </DropdownMenuRadioGroup>
+                      </div>
                     </div>
-                  </div>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* Refresh — collapses at narrow widths; pull-to-refresh covers it there */}
+                <InputGroupButton
+                  size="icon-xs"
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
+                  title="Refresh"
+                  className="hidden @2xs:flex"
+                >
+                  <RefreshCw className={cn("size-3.5", isRefreshing && "animate-spin")} />
+                </InputGroupButton>
+              </InputGroupAddon>
+            </InputGroup>
           </div>
-        )}
+
+          {/* Selection strip — self-contained count + clear; parents add bulk actions via the slot */}
+          {selectedItems.size > 0 && (
+            <div className="flex items-center justify-between gap-2 px-2.5 pb-2">
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {selectedItems.size} selected
+              </span>
+              <div className="flex items-center gap-1">
+                {renderSelectionActions?.(selectedItems)}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-1.5 text-xs text-muted-foreground"
+                  onClick={() => onSelectionChange(new Set())}
+                  title="Clear selection"
+                >
+                  <X className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Asset Tree */}
         <div 
-          className={cn("flex-1 min-h-0 overflow-hidden relative min-w-0 max-w-full", isDraggedOverTopLevel && !draggedOverBundleId && !draggedOverAssetId && "bg-blue-50 dark:bg-blue-900/50")}
+          className={cn("@container relative flex-1 min-h-0 min-w-0 max-w-full overflow-x-clip overflow-y-hidden", isDraggedOverTopLevel && !draggedOverBundleId && !draggedOverAssetId && "bg-blue-50 dark:bg-blue-900/50")}
           onDragOver={(e) => { 
             e.preventDefault(); 
             // Clear any existing timeout
@@ -2300,8 +2437,8 @@ export default function AssetSelector({
             }
           }}
         >
-          <ScrollArea 
-            className="h-full w-full min-w-0 max-w-full" 
+          <ScrollArea
+            className="h-full min-h-0 w-full min-w-0 max-w-full"
             ref={scrollContainerRef}
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
@@ -2317,7 +2454,7 @@ export default function AssetSelector({
               </div>
             )}
             <div
-              className="w-full overflow-hidden min-h-full"
+              className="min-h-full min-w-0 max-w-full w-full overflow-hidden"
               onContextMenu={(e) => handleContextMenu(e, null)}
               style={{
                 transform: `translateY(${pullOffset}px)`,
@@ -2383,12 +2520,12 @@ export default function AssetSelector({
                 }
 
                 return (
-                  <div ref={containerRef} className="px-2 md:px-0 mt-2 w-full overflow-hidden">
-                    {/* Tier 1: Name matches (bundles + title hits) */}
+                  <div ref={containerRef} className="mt-2 min-w-0 max-w-full w-full overflow-hidden px-2 md:px-0">
+                    {/* Tier 1: Title matches (bundles by name + title hits) */}
                     {hasNameMatches && (
                       <div className="mb-1">
                         <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                          Name matches
+                          Title matches
                         </div>
                         <div className="space-y-0.5">
                           {searchNameBundleItems.map(item => renderTreeItem(item))}
@@ -2459,7 +2596,7 @@ export default function AssetSelector({
                 <p className="text-sm text-center">No items available.</p>
               </div>
             ) : (
-              <div ref={containerRef} className="px-2 md:px-0 mt-2 space-y-0.5 w-full overflow-hidden">
+              <div ref={containerRef} className="min-w-0 max-w-full space-y-0.5 w-full overflow-hidden px-2 md:px-0">
                 {filteredTree.map(item => {
                   const itemIndex = flattenedItemsRef.current.findIndex(fi => fi.id === item.id);
                   return renderTreeItem(item, itemIndex >= 0 ? itemIndex : undefined);

@@ -10,19 +10,36 @@ import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
 import { FolderPlus, Save, X, Loader2 } from 'lucide-react';
+import type { BundleRead } from '@/client';
 
 interface CreateBundleDialogProps {
   open: boolean;
   onClose: () => void;
+  /** Assets to drop into the new bundle on create (e.g. from a multi-select). */
+  initialAssetIds?: number[];
+  /** Existing bundles to nest as children of the new bundle. */
+  initialChildBundleIds?: number[];
+  /** Fired after the bundle is created and seeded — lets the caller refresh its own view. */
+  onCreated?: (bundle: BundleRead) => void;
 }
 
-export default function CreateBundleDialog({ open, onClose }: CreateBundleDialogProps) {
+export default function CreateBundleDialog({
+  open,
+  onClose,
+  initialAssetIds,
+  initialChildBundleIds,
+  onCreated,
+}: CreateBundleDialogProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [isCreating, setIsCreating] = useState(false);
-  
-  const { createBundle, fetchBundles } = useBundleStore();
+
+  const { createBundle, moveBundleToParent, fetchBundles } = useBundleStore();
   const { activeInfospace } = useInfospaceStore();
+
+  const seedAssetCount = initialAssetIds?.length ?? 0;
+  const seedBundleCount = initialChildBundleIds?.length ?? 0;
+  const seedCount = seedAssetCount + seedBundleCount;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,14 +60,26 @@ export default function CreateBundleDialog({ open, onClose }: CreateBundleDialog
         name: name.trim(),
         description: description.trim() || undefined,
         purpose: 'manual_collection', // Indicate this was manually created
+        asset_ids: seedAssetCount > 0 ? initialAssetIds : undefined,
       };
 
       const newBundle = await createBundle(bundleData);
-      
+
       if (newBundle) {
-        toast.success(`Bundle "${newBundle.name}" created successfully.`);
+        // Nest any selected bundles under the freshly created one.
+        if (seedBundleCount > 0) {
+          await Promise.all(
+            initialChildBundleIds!.map((id) => moveBundleToParent(id, newBundle.id)),
+          );
+        }
+        toast.success(
+          seedCount > 0
+            ? `Bundle "${newBundle.name}" created with ${seedCount} item${seedCount > 1 ? 's' : ''}.`
+            : `Bundle "${newBundle.name}" created successfully.`,
+        );
+        onCreated?.(newBundle);
         handleClose();
-        
+
         // Refresh bundles list
         await fetchBundles(activeInfospace.id);
       }
@@ -74,8 +103,16 @@ export default function CreateBundleDialog({ open, onClose }: CreateBundleDialog
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FolderPlus className="h-5 w-5 text-primary" />
-            Create New Bundle
+            {seedCount > 0 ? 'Create Bundle from Selection' : 'Create New Bundle'}
           </DialogTitle>
+          {seedCount > 0 && (
+            <p className="text-sm text-muted-foreground">
+              {seedAssetCount > 0 && `${seedAssetCount} asset${seedAssetCount > 1 ? 's' : ''}`}
+              {seedAssetCount > 0 && seedBundleCount > 0 && ' and '}
+              {seedBundleCount > 0 && `${seedBundleCount} bundle${seedBundleCount > 1 ? 's' : ''}`}
+              {' will be added to the new bundle.'}
+            </p>
+          )}
         </DialogHeader>
         
         <form onSubmit={handleSubmit} className="space-y-4">

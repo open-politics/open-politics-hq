@@ -449,11 +449,10 @@ export default function CreateAssetDialog({ open, onClose, mode, initialFocus, e
   /**
    * Single upload orchestrator.
    *
-   * - File/archive items → one POST to bulk-upload-background with
-   *   relative_paths + bundle_name OR parent_bundle_id. Backend builds the
-   *   Bundle tree and dissolves any zips into it.
-   * - URL items → bulkIngestUrls (if >1) or createAsset (single).
-   * - Text items → createAsset each.
+   * - File/archive items + text items → one POST to bulk-upload-background
+   *   with relative_paths + bundle_name OR parent_bundle_id (text rides along
+   *   as text_items). Backend builds the Bundle tree and dissolves any zips.
+   * - URL items → createBatchIngestionJob (a mixed web_url/archive_url batch).
    *
    * For "new_bundle" destination with URL/text items, we still drop them at
    * the top level — URL/text aren't tree-building, they're peers of the file

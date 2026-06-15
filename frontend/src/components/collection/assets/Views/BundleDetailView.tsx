@@ -4,20 +4,26 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { 
-  Layers, 
-  ArrowLeft,
-  Calendar,
-  Hash,
+import { DockBack, DockClose } from '@/components/collection/intake/DockNav';
+import {
+  Layers,
   Download,
   Share2,
   PlayCircle,
   MoreHorizontal,
   Upload,
   File,
+  Folder,
   FolderOutput,
   Loader2,
+  Pencil,
+  Check,
+  X,
 } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
+import { useBundleStore } from '@/zustand_stores/storeBundles';
+import { useDock } from '@/zustand_stores/storeDock';
+import { DetailBreadcrumb, useBundlePath } from './DetailBreadcrumb';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { toast } from 'sonner';
 import {
@@ -76,17 +82,22 @@ interface BundleDetailViewProps {
   onAssetDragEnd?: () => void;
   highlightAssetId: number | null;
   layout?: 'grid' | 'bento' | 'list';
+  /** Dock navigation, rendered in the bundle header (omitted in annotation overlays). */
+  onBack?: () => void;
+  onClose?: () => void;
 }
 
-export default function BundleDetailView({ 
-  selectedBundleId, 
+export default function BundleDetailView({
+  selectedBundleId,
   onLoadIntoRunner,
   selectedAssetId,
   onAssetSelect,
   onAssetDragStart,
   onAssetDragEnd,
   highlightAssetId,
-  layout = 'list'
+  layout = 'list',
+  onBack,
+  onClose,
 }: BundleDetailViewProps) {
   const { activeInfospace } = useInfospaceStore();
   const {
@@ -96,11 +107,50 @@ export default function BundleDetailView({
   } = useTreeStore();
 
   const [selectedBundle, setSelectedBundle] = useState<BundleRead | null>(null);
-  const effectiveBundleId = selectedBundleId;
   const displayName = selectedBundle?.name;
 
-  // Load bundle details
+  // Breadcrumb: this bundle's ancestor chain (from the bundle store), clickable
+  // to navigate up. Always derivable from parent_bundle_id — no context needed.
+  const openBundle = useDock((s) => s.openBundle);
+  const bundlePath = useBundlePath(selectedBundleId);
+  const breadcrumbSegments = bundlePath.filter((c) => c.id !== selectedBundleId);
+
+  // Inline editing of the bundle's name + description (direct in the header,
+  // not an overlay). updateBundle (store) toasts on its own.
+  const { updateBundle } = useBundleStore();
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState('');
+  const [draftDescription, setDraftDescription] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+
+  const startEdit = useCallback(() => {
+    if (!selectedBundle) return;
+    setDraftName(selectedBundle.name ?? '');
+    setDraftDescription(selectedBundle.description ?? '');
+    setEditing(true);
+  }, [selectedBundle]);
+
+  const cancelEdit = useCallback(() => setEditing(false), []);
+
+  const saveEdit = useCallback(async () => {
+    if (!selectedBundle) return;
+    const name = draftName.trim();
+    if (!name) { toast.error('Bundle name is required.'); return; }
+    setIsSaving(true);
+    const updated = await updateBundle(selectedBundle.id, {
+      name,
+      description: draftDescription.trim() || null,
+    });
+    setIsSaving(false);
+    if (updated) {
+      setSelectedBundle(updated);
+      setEditing(false);
+    }
+  }, [selectedBundle, draftName, draftDescription, updateBundle]);
+
+  // Load bundle details. Changing/leaving the bundle also drops out of edit mode.
   useEffect(() => {
+    setEditing(false);
     if (selectedBundleId) {
       getFullBundle(selectedBundleId).then(bundle => setSelectedBundle(bundle || null));
       const bundleNodeId = `bundle-${selectedBundleId}`;
@@ -202,108 +252,121 @@ export default function BundleDetailView({
   // Main bundle view with tree
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      {/* Bundle Header */}
-      <div className="flex-none p-2 px-4 sm:p-4 border-b">
-        <div className="flex items-start justify-between gap-2 sm:gap-4 mb-2 sm:mb-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <h2 className="text-sm sm:text-lg font-semibold truncate">
-                {displayName || (selectedBundle ? `Bundle ${selectedBundle.id}` : '')}
-              </h2>
-            </div>
-            
-            {/* Bundle Metadata */}
-            <div className="flex items-center gap-2 sm:gap-4 mt-2 sm:mt-3 text-xs text-muted-foreground flex-wrap">
-              <div className="flex items-center gap-1">
-                <Hash className="h-3 w-3" />
-                <span>ID: {selectedBundle?.id}</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <Calendar className="h-3 w-3" />
-                <span>Updated {formatDistanceToNowStrict(new Date(selectedBundle?.updated_at || 0), { addSuffix: true })}</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <File className="h-3 w-3" />
-                <span>{bundleChildren.length} items</span>
-              </div>
-              
-              {/* Compact Bundle Composition - hidden on small screens */}
-              {Array.from(compositionStats.entries()).length > 0 && (
-                <>
-                  <Separator orientation="vertical" className="h-3 hidden sm:block" />
-                  <div className="hidden sm:flex items-center gap-2">
-                    {Array.from(compositionStats.entries()).map(([kind, data]) => (
-                      <TooltipProvider key={kind} delayDuration={100}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="flex items-center gap-1">
-                              {getAssetIcon(kind, "h-3 w-3")}
-                              <span className="text-xs font-medium">{data.count}</span>
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>{data.count} {kind.replace('_', ' ')} file{data.count > 1 ? 's' : ''}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-            
-            {selectedBundle?.description && (
-              <p className="text-sm text-muted-foreground mt-1">
-                "{selectedBundle.description}"
-              </p>
+      {/* Bundle Header — 3 rows: breadcrumb path · info+actions · description */}
+      <div className="flex-none border-b px-3 py-1.5">
+        {/* Row 1 — breadcrumb path + close */}
+        <div className="flex w-full min-w-0 items-center gap-2">
+          {onBack && <DockBack onClick={onBack} className="-ml-1" />}
+          <DetailBreadcrumb
+            className="min-w-0 flex-1"
+            segments={breadcrumbSegments}
+            onSegmentClick={openBundle}
+            leafIcon={<Folder className="size-4 shrink-0 text-blue-400" />}
+            leafLabel={displayName || (selectedBundle ? `Bundle ${selectedBundle.id}` : '')}
+            leafInput={editing ? (
+              <input
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') cancelEdit(); }}
+                autoFocus
+                aria-label="Bundle name"
+                className="min-w-0 flex-1 border-0 bg-transparent p-0 text-sm font-semibold text-foreground shadow-none outline-none ring-0 focus:outline-none focus-visible:outline-none"
+              />
+            ) : undefined}
+          />
+          {onClose && <DockClose onClick={onClose} />}
+        </div>
+
+        {/* Row 2 — condensed info | actions */}
+        <div className="mt-1.5 flex w-full min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-xs text-muted-foreground">
+            <span className="flex shrink-0 items-center gap-1"><File className="h-3 w-3" />{bundleChildren.length} items</span>
+            <span className="text-muted-foreground/40">·</span>
+            <span className="shrink-0">Updated {formatDistanceToNowStrict(new Date(selectedBundle?.updated_at || 0), { addSuffix: true })}</span>
+            {Array.from(compositionStats.entries()).length > 0 && (
+              <>
+                <span className="text-muted-foreground/40">·</span>
+                <span className="hidden shrink-0 items-center gap-2 sm:flex">
+                  {Array.from(compositionStats.entries()).map(([kind, data]) => (
+                    <TooltipProvider key={kind} delayDuration={100}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="flex items-center gap-1">{getAssetIcon(kind, "h-3 w-3")}<span className="font-medium">{data.count}</span></span>
+                        </TooltipTrigger>
+                        <TooltipContent><p>{data.count} {kind.replace('_', ' ')} file{data.count > 1 ? 's' : ''}</p></TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  ))}
+                </span>
+              </>
             )}
           </div>
-          
-          {/* Actions */}
-          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8 w-8 sm:w-auto sm:px-3 p-0">
-                  <MoreHorizontal className="h-4 w-4" />
+
+          <div className="flex shrink-0 items-center gap-0.5">
+            {editing ? (
+              <>
+                <Button size="sm" onClick={saveEdit} disabled={isSaving} className="h-7 px-2">
+                  {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin sm:mr-1" /> : <Check className="h-3.5 w-3.5 sm:mr-1" />}
+                  <span className="hidden sm:inline">Save</span>
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>Bundle Actions</DropdownMenuLabel>
-                <DropdownMenuItem><Share2 className="mr-2 h-4 w-4" />Share Bundle</DropdownMenuItem>
-                <DropdownMenuItem><Download className="mr-2 h-4 w-4" />Export Bundle</DropdownMenuItem>
-                {onLoadIntoRunner && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => onLoadIntoRunner(1, 'Default Runner')}>
-                      <PlayCircle className="mr-2 h-4 w-4" />Load into Runner
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            
-            <Button 
-              variant="default" 
-              size="sm"
-              onClick={() => {
-                toast.info("Upload to bundle functionality coming soon");
-              }}
-              className="bg-primary hover:bg-primary/90 h-8 px-2 sm:px-3"
-            >
-              <Upload className="mr-0 sm:mr-2 h-4 w-4" />
-              <span className="hidden sm:inline">Add Files</span>
-            </Button>
+                <Button variant="ghost" size="sm" onClick={cancelEdit} disabled={isSaving} className="h-7 px-2">
+                  <X className="h-3.5 w-3.5 sm:mr-1" />
+                  <span className="hidden sm:inline">Cancel</span>
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" size="icon" className="size-7 text-muted-foreground" title="Edit bundle" onClick={startEdit}>
+                  <Pencil className="size-3.5" />
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="size-7"><MoreHorizontal className="h-4 w-4" /></Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuLabel>Bundle Actions</DropdownMenuLabel>
+                    <DropdownMenuItem onClick={startEdit}><Pencil className="mr-2 h-4 w-4" />Edit Details</DropdownMenuItem>
+                    <DropdownMenuItem><Share2 className="mr-2 h-4 w-4" />Share Bundle</DropdownMenuItem>
+                    <DropdownMenuItem><Download className="mr-2 h-4 w-4" />Export Bundle</DropdownMenuItem>
+                    {onLoadIntoRunner && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => onLoadIntoRunner(1, 'Default Runner')}><PlayCircle className="mr-2 h-4 w-4" />Load into Runner</DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button variant="default" size="sm" onClick={() => { toast.info("Upload to bundle functionality coming soon"); }} className="h-7 bg-primary px-2 hover:bg-primary/90">
+                  <Upload className="h-3.5 w-3.5 sm:mr-1" />
+                  <span className="hidden sm:inline">Add Files</span>
+                </Button>
+              </>
+            )}
           </div>
         </div>
+
+        {/* Row 3 — description (editable) */}
+        {editing ? (
+          <Textarea
+            value={draftDescription}
+            onChange={(e) => setDraftDescription(e.target.value)}
+            placeholder="Add a description…"
+            rows={2}
+            className="mt-2 text-sm"
+          />
+        ) : selectedBundle?.description ? (
+          <p className="mt-1.5 text-sm text-muted-foreground">{selectedBundle.description}</p>
+        ) : null}
       </div>
 
       {/* Bundle Contents - Feed View */}
       <div className="flex-1 min-h-0 overflow-hidden">
         <AssetFeedView
           infospaceId={activeInfospace?.id}
-          filterByBundleId={effectiveBundleId ?? undefined}
+          filterByBundleId={selectedBundleId ?? undefined}
           availableKinds={availableKinds}
           onAssetClick={handleAssetClick}
+          onBundleClick={openBundle}
           title={``}
           cardSize="sm"
           columns={2}

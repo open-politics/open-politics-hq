@@ -84,6 +84,7 @@ export function DefaultAssetCard({
             kind={asset.kind}
             size={size}
             orientation="horizontal"
+            showTitle={false}
           />
           
           {score !== undefined && (

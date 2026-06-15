@@ -4,22 +4,23 @@ import { getAssetMeta } from '@/lib/utils';
 
 export function detectArticleFormat(asset: AssetRead): ArticleFormat {
   const metadata = getAssetMeta(asset) as ArticleMetadata;
-  
-  // 1. Explicit format hint from backend
-  if (metadata?.content_format) {
-    return metadata.content_format;
-  }
-  
-  // 2. Check for composed article markers
+
+  // 1. Composed articles take precedence over the format hint. The backend tags
+  // them content_format:'markdown' AND composition_type:'free_form_article' — but
+  // they carry {{asset:…}}/{{bundle:…}} embeds that must render via the composed
+  // renderer (which itself markdown-renders the text parts), never as raw text.
   if (metadata?.composition_type === 'free_form_article') {
     return 'composed';
   }
-  
-  // 3. Check for embed syntax in content
-  if (asset.text_content?.includes('{{asset:')) {
+  if (asset.text_content?.includes('{{asset:') || asset.text_content?.includes('{{bundle:')) {
     return 'composed';
   }
-  
+
+  // 2. Explicit format hint from backend (html / markdown / text for non-composed)
+  if (metadata?.content_format) {
+    return metadata.content_format;
+  }
+
   // 4. Check for HTML content
   if (asset.text_content?.includes('<p>') || asset.text_content?.includes('<div>')) {
     return 'html';
