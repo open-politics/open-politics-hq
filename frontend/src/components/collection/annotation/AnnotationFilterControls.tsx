@@ -66,6 +66,14 @@ export const FILTER_UI_OP_TO_BACKEND: Record<FilterUIOperator, string> = {
   not_exists: 'not_exists',
 };
 
+/** Backend operator → UI operator. The inverse of the map above, used when
+ *  reconstructing the UI FilterSet from a stored (backend-shaped) Formula
+ *  filter — e.g. Workspace-authored formulas with no persisted UI state. */
+export const FILTER_BACKEND_OP_TO_UI: Record<string, FilterUIOperator> =
+  Object.fromEntries(
+    Object.entries(FILTER_UI_OP_TO_BACKEND).map(([ui, be]) => [be, ui as FilterUIOperator]),
+  ) as Record<string, FilterUIOperator>;
+
 export interface ResultFilter {
   id: string;
   schemaId: number;
@@ -468,7 +476,7 @@ export const UnifiedFilterControls: React.FC<UnifiedFilterControlsProps> = ({
                                     <div key={filter.id} className={cn("flex items-start gap-1.5 p-2 rounded-lg border", !filter.isActive && "bg-muted/50")}>
                                         <div className="flex-1 space-y-1.5">
                                             <div className="grid grid-cols-1 md:grid-cols-3 gap-1.5">
-                                                <Select value={filter.schemaId.toString()} onValueChange={(v) => updateFilter(index, { schemaId: parseInt(v) })}>
+                                                <Select value={filter.schemaId != null ? filter.schemaId.toString() : undefined} onValueChange={(v) => updateFilter(index, { schemaId: parseInt(v) })}>
                                                     <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Schema" /></SelectTrigger>
                                                     <SelectContent>{allSchemas.map(s => <SelectItem key={s.id} value={s.id.toString()} className="text-xs">{s.name}</SelectItem>)}</SelectContent>
                                                 </Select>

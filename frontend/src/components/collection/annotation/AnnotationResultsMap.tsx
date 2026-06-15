@@ -306,6 +306,9 @@ interface AnnotationResultsMapProps {
   onPointClick?: (point: MapPoint) => void;
   onResultSelect?: (result: any) => void;
   highlightLocation?: { location: string; fieldKey: string } | null;
+  /** Hide the on-canvas control overlay (geocode, view mode, projection,
+   *  theme, legend toggle) — collapsed or focus mode. Defaults to shown. */
+  showControls?: boolean;
 }
 
 const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
@@ -318,6 +321,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   onPointClick,
   onResultSelect,
   highlightLocation,
+  showControls = true,
 }) => {
   // ── Visual config from panel_config ─────────────────────────────────────
   const cfg = panelConfig.panel_config as MapVizConfig;
@@ -1257,7 +1261,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         geometry: { type: 'Point', coordinates: coords },
         properties: {
           pointId: point.id,
-          nameText: point.locationString,
+          nameText: point.locationString.substring(0,40)+"...",
           dataText: dataText || '',
           isPolygon,
         },
@@ -1816,8 +1820,9 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         }}
       />
 
-      {/* Locations panel */}
-      {locationsPanelOpen && processedPoints.length > 0 && (() => {
+      {/* Locations panel — inspector opened from the (gated) control overlay.
+          Also gated on showControls so it can't linger in focus mode. */}
+      {showControls && locationsPanelOpen && processedPoints.length > 0 && (() => {
         const search = locationsSearch.trim().toLowerCase();
         const sorted = [...processedPoints].sort((a, b) => {
           const da = a.documentIds.length;
@@ -1951,7 +1956,10 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         );
       })()}
 
-      {/* Map control overlay */}
+      {/* Map control overlay — interactive settings (geocode, view mode,
+          projection, theme, legend toggle). Hidden when the panel is collapsed
+          or in focus mode (showControls=false), leaving a clean canvas. */}
+      {showControls && (
       <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-10 flex flex-col items-end gap-1">
         <ButtonGroup className="bg-background/80 backdrop-blur-sm border shadow-lg rounded-md">
           <Button
@@ -2102,6 +2110,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           </div>
         )}
       </div>
+      )}
 
       {/* Label-source indicator chips */}
       {labelConfigInfos.length > 0 && (

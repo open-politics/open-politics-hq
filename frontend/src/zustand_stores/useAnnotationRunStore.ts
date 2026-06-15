@@ -7,6 +7,14 @@ import type {
 import { RunsService as AnnotationRunsServiceApi } from '@/client';
 import { FormattedAnnotation, PanelConfig, Scope } from '@/lib/annotations/types';
 import { newInlineStubFormula } from '@/lib/annotations/panelEligibility';
+import {
+  DEFAULT_GRID_COLUMNS,
+  DEFAULT_ROW_HEIGHT,
+  defaultPanelSize,
+  packByOrder,
+  resolveGridGeometry,
+  upgradeLayoutGeometry,
+} from '@/lib/annotations/grid';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { produce } from 'immer';
@@ -106,10 +114,10 @@ export interface TableConfig {
 }
 
 // Helper function to compact panels by removing gaps in the grid layout
-const compactPanels = (panels: PanelConfig[]): PanelConfig[] => {
+const compactPanels = (panels: PanelConfig[], columns: number): PanelConfig[] => {
   if (panels.length === 0) return panels;
 
-  const GRID_COLUMNS = 12;
+  const GRID_COLUMNS = columns;
 
   // Sort panels by their current position (top to bottom, left to right)
   const sortedPanels = [...panels].sort((a, b) => {
@@ -272,6 +280,9 @@ export interface DashboardConfig {
   layout: {
     type: 'grid';
     columns: number;
+    /** Px per vertical grid unit. Absent on pre-fine-grid dashboards, which
+     *  resolve to the legacy 150px (see lib/annotations/grid.ts). */
+    rowHeight?: number;
   };
   panels: PanelConfig[];
   /** Run-scoped saved Formulas (the intelligence layer's third primitive).
@@ -395,6 +406,9 @@ function migrateDashboardConfig(raw: any): DashboardConfig {
       }
     }
   }
+  // Auto-transition coarse (legacy 12×150) dashboards to the finer default grid,
+  // rescaling panels so their on-screen footprint is preserved. Idempotent.
+  upgradeLayoutGeometry(config);
   return config;
 }
 
@@ -460,6 +474,8 @@ interface AnnotationRunState {
   updatePanel: (panelId: string, updates: Partial<PanelConfig>) => void;
   removePanel: (panelId: string) => void;
   compactLayout: () => void;
+  /** Re-arrange all panels into a randomized but coherent curated layout. */
+  randomizeLayout: () => void;
   setDashboardDirty: (isDirty: boolean) => void;
 
   // Scope management
@@ -663,7 +679,7 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                     const defaultConfig: DashboardConfig = {
                         name: `Dashboard for ${run.name}`,
                         description: `Analytics dashboard for annotation run: ${run.name}`,
-                        layout: { type: 'grid', columns: 12 },
+                        layout: { type: 'grid', columns: DEFAULT_GRID_COLUMNS, rowHeight: DEFAULT_ROW_HEIGHT },
                         panels: [],
                     };
                     set({ dashboardConfig: defaultConfig, isDashboardDirty: false });
@@ -705,7 +721,8 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
         addPanel: (panelData) => {
             set(produce((state: AnnotationRunState) => {
                 if (state.dashboardConfig) {
-                    const GRID_COLUMNS = 12;
+                    const geo = resolveGridGeometry(state.dashboardConfig.layout);
+                    const GRID_COLUMNS = geo.columns;
                     const existingPanels = state.dashboardConfig.panels || [];
 
                     // Find best position in the grid
@@ -743,15 +760,7 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                         return { x: 0, y: maxY };
                     };
 
-                    const defaultSizes: Record<string, { w: number; h: number }> = {
-                        table: { w: 12, h: 6 },
-                        chart: { w: 8, h: 5 },
-                        pie: { w: 6, h: 4 },
-                        map: { w: 8, h: 6 },
-                        graph: { w: 10, h: 6 },
-                    };
-
-                    const size = defaultSizes[panelData.type] || { w: 6, h: 4 };
+                    const size = defaultPanelSize(panelData.type, geo);
                     const position = findPos(size.w, size.h);
 
                     const panelId = nanoid();
@@ -814,9 +823,9 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                         observation_id: (panelData as any).observation_id ?? null,
                         formula_inline: (panelData as any).formula_inline ?? null,
                         grid_position: {
-                            x: Math.max(0, Math.min(11, position.x)),
+                            x: Math.max(0, Math.min(GRID_COLUMNS - 1, position.x)),
                             y: Math.max(0, position.y),
-                            w: Math.max(1, Math.min(12, size.w)),
+                            w: Math.max(1, Math.min(GRID_COLUMNS, size.w)),
                             h: Math.max(1, size.h),
                         },
                     };
@@ -833,15 +842,16 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                     const panelIndex = state.dashboardConfig.panels.findIndex(p => p.id === panelId);
                     if (panelIndex !== -1) {
                         const currentPanel = state.dashboardConfig.panels[panelIndex];
+                        const cols = resolveGridGeometry(state.dashboardConfig.layout).columns;
 
                         const updatedPanel: PanelConfig = {
                             ...currentPanel,
                             ...updates,
                             grid_position: updates.grid_position
                                 ? {
-                                    x: Math.max(0, Math.min(11, updates.grid_position.x ?? currentPanel.grid_position.x)),
+                                    x: Math.max(0, Math.min(cols - 1, updates.grid_position.x ?? currentPanel.grid_position.x)),
                                     y: Math.max(0, updates.grid_position.y ?? currentPanel.grid_position.y),
-                                    w: Math.max(1, Math.min(12, updates.grid_position.w ?? currentPanel.grid_position.w)),
+                                    w: Math.max(1, Math.min(cols, updates.grid_position.w ?? currentPanel.grid_position.w)),
                                     h: Math.max(1, updates.grid_position.h ?? currentPanel.grid_position.h),
                                 }
                                 : currentPanel.grid_position,
@@ -869,8 +879,11 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                     state.dashboardConfig.panels = state.dashboardConfig.panels.filter(p => p.id !== panelId);
                     
                     // Compact the grid layout to remove gaps
-                    state.dashboardConfig.panels = compactPanels(state.dashboardConfig.panels);
-                    
+                    state.dashboardConfig.panels = compactPanels(
+                        state.dashboardConfig.panels,
+                        resolveGridGeometry(state.dashboardConfig.layout).columns,
+                    );
+
                     state.isDashboardDirty = true;
                 }
             }));
@@ -938,7 +951,7 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                     dashboardConfig: {
                         name: `Dashboard for ${run.name}`,
                         description: `Analytics dashboard for annotation run: ${run.name}`,
-                        layout: { type: 'grid', columns: 12 },
+                        layout: { type: 'grid', columns: DEFAULT_GRID_COLUMNS, rowHeight: DEFAULT_ROW_HEIGHT },
                         panels: [],
                     },
                     isDashboardDirty: false,
@@ -949,9 +962,62 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
         compactLayout: () => {
             set(produce((state: AnnotationRunState) => {
                 if (state.dashboardConfig) {
-                    state.dashboardConfig.panels = compactPanels(state.dashboardConfig.panels);
+                    state.dashboardConfig.panels = compactPanels(
+                        state.dashboardConfig.panels,
+                        resolveGridGeometry(state.dashboardConfig.layout).columns,
+                    );
                     state.isDashboardDirty = true;
                 }
+            }));
+        },
+
+        randomizeLayout: () => {
+            set(produce((state: AnnotationRunState) => {
+                const cfg = state.dashboardConfig;
+                if (!cfg || !cfg.panels.length) return;
+                const geo = resolveGridGeometry(cfg.layout);
+                const { columns, rowHeight } = geo;
+                const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
+                const wU = (frac: number) => Math.max(1, Math.min(columns, Math.round(frac * columns)));
+                const hU = (px: number) => Math.max(1, Math.round(px / rowHeight));
+
+                // Curated strategies — each yields a {w,h} (in grid units) per
+                // panel. Sizing is randomized WITHIN each strategy's bounds, so
+                // repeated clicks explore variants of a coherent arrangement
+                // rather than pure noise.
+                const strategies: Array<() => { w: number; h: number }[]> = [
+                    // Uniform: every panel half-width, medium height.
+                    () => cfg.panels.map(() => ({ w: wU(1 / 2), h: hU(pick([450, 525, 600])) })),
+                    // Featured: first panel large, the rest compact.
+                    () => cfg.panels.map((_, i) => i === 0
+                        ? { w: wU(pick([2 / 3, 1])), h: hU(pick([600, 750])) }
+                        : { w: wU(1 / 3), h: hU(pick([375, 450])) }),
+                    // Mosaic: mixed widths and heights.
+                    () => cfg.panels.map(() => ({ w: wU(pick([1 / 3, 1 / 2, 2 / 3, 1])), h: hU(pick([375, 450, 525, 600, 675])) })),
+                    // Masonry: fixed third-width columns, varied heights.
+                    () => cfg.panels.map(() => ({ w: wU(1 / 3), h: hU(pick([375, 450, 600, 750])) })),
+                ];
+                const sizes = pick(strategies)();
+
+                // Shuffle placement order (Fisher–Yates) for extra variety, then
+                // first-fit pack and map positions back to the original panels.
+                const order = cfg.panels.map((_, i) => i);
+                for (let i = order.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [order[i], order[j]] = [order[j], order[i]];
+                }
+                const positions = packByOrder(order.map((i) => sizes[i]), columns);
+                order.forEach((origIdx, placedIdx) => {
+                    const p = cfg.panels[origIdx];
+                    const s = sizes[origIdx];
+                    p.grid_position = {
+                        x: positions[placedIdx].x,
+                        y: positions[placedIdx].y,
+                        w: Math.max(1, Math.min(columns, s.w)),
+                        h: Math.max(1, s.h),
+                    };
+                });
+                state.isDashboardDirty = true;
             }));
         },
 

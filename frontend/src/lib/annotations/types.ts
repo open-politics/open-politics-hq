@@ -5,7 +5,8 @@
 import type { Formula } from '@/client';
 
 // --- Data Source & Asset Types --- //
-export type SourceKind = "rss" | "api" | "scrape" | "upload" | "search" | "csv" | "pdf" | "url_list" | "text_block";
+// Mirrors the backend's registered source kinds (content/sources/).
+export type SourceKind = "rss" | "web" | "web_search" | "upload" | "text" | "directory" | "crawl";
 export type SourceStatus = "pending" | "processing" | "complete" | "failed";
 
 export interface Source {
@@ -724,6 +725,27 @@ export interface PieVizConfig {
   value?: string | null;
   facet?: string | null;
   max_slices?: number | null;
+  /** When ``facet`` is set, restricts the rendered small-multiples to
+   *  these facet values. ``null``/``undefined``/empty → show every pie.
+   *  Stale entries (values no longer present in the data) are ignored. */
+  visible_facets?: string[] | null;
+  /** Explicit render order for the small-multiple pies. Listed facets come
+   *  first (in this order); any not listed follow in natural order. ``null``
+   *  /empty → natural order. Stale entries are ignored. */
+  facet_order?: string[] | null;
+  /** Fixed number of pies per row in the small-multiples grid. ``null``/
+   *  undefined → auto (as many as fit the width). A number forces that many
+   *  columns — e.g. 2 turns a 1×4 strip into a balanced 2×2. */
+  facet_columns?: number | null;
+  /** When ``facet`` is set, these facet values render enlarged — their grid
+   *  cell spans 2 columns so the pie grows to the row height and centers
+   *  with whitespace on the sides. ``null``/empty → all pies the same size.
+   *  Stale entries are ignored. */
+  emphasized_facets?: string[] | null;
+  /** Draw each slice's category name directly on the wedge (instead of /
+   *  alongside the bottom legend). Especially useful for small-multiples,
+   *  which carry no legend. */
+  show_slice_labels?: boolean;
   legend?: boolean;
 }
 
@@ -737,6 +759,17 @@ export interface ChartVizConfig {
    *  interval (date_trunc). Compile passes this to ``Dimension.interval``.
    *  Ignored for categorical x. */
   time_interval?: 'day' | 'week' | 'month' | 'quarter' | 'year';
+  /** How the timeline series is drawn. Independent of bucketing:
+   *  ``detail`` = sharp linear line (every bucket, no smoothing);
+   *  ``smooth`` = spline (monotone) curve; ``bars`` = vertical bars.
+   *  Defaults to ``smooth``. */
+  line_style?: 'detail' | 'smooth' | 'bars';
+  /** Fix the value (y) axis to an explicit range so the data magnitude no
+   *  longer drives the chart height. Either bound may be left null/omitted to
+   *  keep that side auto-scaled. When a bound is set the axis clips to it
+   *  (recharts ``allowDataOverflow``) instead of expanding to fit outliers. */
+  y_min?: number | null;
+  y_max?: number | null;
   stacked?: boolean;
   analytics_overlays?: {
     rolling_average?: { window: number } | null;
@@ -765,6 +798,10 @@ export interface TableVizConfig {
   explode?: string | null;
   sort?: { column: string; direction: 'asc' | 'desc' } | null;
   density: 'compact' | 'comfortable';
+  /** Field layout. ``true`` (default) spreads each schema's fields into their
+   *  own columns; ``false`` collapses them into one column per schema ("group
+   *  by schema"). Persisted so the layout choice survives panel reload. */
+  unfold_fields?: boolean;
 }
 
 export interface GraphVizConfig {

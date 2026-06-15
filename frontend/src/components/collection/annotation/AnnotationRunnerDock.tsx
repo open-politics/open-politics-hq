@@ -23,7 +23,6 @@ import AssetSelector from '../assets/AssetSelector';
 import { toast } from 'sonner';
 import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import ProviderSelector from '../management/ProviderSelector';
-import { useFavoriteRunsStore } from '@/zustand_stores/storeFavoriteRuns';
 import { AnnotationRunRead } from '@/client';
 
 // --- NEW: Scheme Selector Component ---
@@ -157,22 +156,18 @@ export default function AnnotationRunnerDock({
   const { apiKeys, selections, setApiKey } = useProvidersStore();
   const selectedProvider = selections.annotation?.providerId || null;
   const selectedModel = selections.annotation?.modelId || null;
-  const { isFavorite } = useFavoriteRunsStore();
 
   // Sort runs with favorites first, then by most recent
   const sortedRuns = useMemo(() => {
     return [...allRuns].sort((a, b) => {
-      const aIsFavorite = isFavorite(a.id);
-      const bIsFavorite = isFavorite(b.id);
-      
       // Favorites first
-      if (aIsFavorite && !bIsFavorite) return -1;
-      if (!aIsFavorite && bIsFavorite) return 1;
-      
+      if (a.is_favorite && !b.is_favorite) return -1;
+      if (!a.is_favorite && b.is_favorite) return 1;
+
       // Then by most recent (updated_at)
       return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
     });
-  }, [allRuns, isFavorite]);
+  }, [allRuns]);
 
   // Auto-detect when vision processing should be enabled
   useEffect(() => {

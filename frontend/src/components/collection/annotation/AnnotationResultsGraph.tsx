@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2, GitMerge, Database, Fingerprint, Check, Box, Square, Maximize2, Minimize2, Target } from 'lucide-react';
+import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2, GitMerge, Database, Fingerprint, Check, Box, Square, Maximize2, Minimize2 } from 'lucide-react';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { AnnotationSchemaRead, AssetRead, KnowledgeGraphRead, SimilarPairRead } from '@/client';
 import { FormattedAnnotation, TimeAxisConfig, PanelConfig, GraphVizConfig } from '@/lib/annotations/types';
@@ -30,11 +30,11 @@ import {
 import { isTimestampField, isLocationField, parseTimestampValue } from '@/lib/annotations/fieldDetection';
 import { inferFieldRange } from '@/components/collection/annotation/cellRenderers';
 import type { GraphEdits } from '@/lib/annotations/types';
-import { ForceGraph, type ForceGraphHandle, GraphNode, GraphEdge, aggregatorResponseToGraphData, GraphViewConfig, defaultGraphViewConfig, GraphSettingsPopover, GraphFilterPanel, edgeFieldRange } from '@/components/collection/graph';
+import { ForceGraph, type ForceGraphHandle, GraphNode, GraphEdge, aggregatorResponseToGraphData, GraphViewConfig, defaultGraphViewConfig, GraphSettingsPopover, GraphFilterPanel, edgeFieldRange, bundleEdges, bundleIdForEdge, bundleIdForPair, type BundledEdge } from '@/components/collection/graph';
 import { useFullscreen } from '@/components/collection/graph/forcegraph/useFullscreen';
 import { NodeDetailHUD, type EvidenceItem as HUDEvidenceItem, type DocumentBadge as HUDDocBadge, type AssetFieldRow as HUDAssetFieldRow, type EligibleField as HUDEligibleField } from '@/components/collection/graph/forcegraph/NodeDetailHUD';
 import { NodeProjectionDossier } from '@/components/collection/graph/forcegraph/NodeProjectionDossier';
-import { EdgeDetailHUD } from '@/components/collection/graph/forcegraph/EdgeDetailHUD';
+import { EdgeBundleHUD, type EdgeBundleEvidenceItem, type EdgeBundleDocChip } from '@/components/collection/graph/forcegraph/EdgeBundleHUD';
 import { CompareBySubjectButton } from '@/components/collection/graph/forcegraph/CompareBySubjectButton';
 import { PanelFormulaBinder } from './formulas/PanelFormulaBinder';
 import { PinBoard as PinBoardOverlay } from '@/components/collection/graph/forcegraph/PinBoard';
@@ -509,17 +509,40 @@ export default function AnnotationResultsGraph({
     return { nodes: graphNodes, edges: graphEdges, graphData: newGraphData };
   }, [viewData?.graph, graphEdits]);
 
-  // Shallow-clone edges before passing to the renderer. ``react-force-graph``
-  // adds ``link.source`` / ``link.target`` (object references) onto each link
-  // after first paint. Cloning keeps our authoritative ``edges`` array clean
-  // for downstream readers (curate / dedup / export / search). Cheap: one
-  // map() per data change.
-  const renderEdges = useMemo(() => edges.map(e => ({ ...e })), [edges]);
+  // Bundle every connection between a node pair into ONE rendered link. The
+  // canvas reads bundles; ``edges`` (the individual members) stays
+  // authoritative for node-focus, evidence, curate, dedup, and export. Click
+  // a bundle → ``EdgeBundleHUD`` unrolls the per-predicate breakdown.
+  const bundledEdges = useMemo(() => bundleEdges(edges), [edges]);
+  const bundlesById = useMemo(
+    () => new Map(bundledEdges.map(b => [b.id, b])),
+    [bundledEdges],
+  );
+
+  // Member-edge-id → bundle-id translation. Everything that highlights by
+  // member edge id (asset lens, keyboard nav, evidence hover, inter-pin
+  // edges) must map through this before reaching the renderer, which now
+  // keys on bundle ids. Deterministic from endpoints — no side table needed.
+  const memberEdgeById = useMemo(() => new Map(edges.map(e => [e.id, e])), [edges]);
+  const toBundleEdgeId = useCallback((memberId: string): string => {
+    const m = memberEdgeById.get(memberId);
+    return m ? bundleIdForEdge(m) : memberId;
+  }, [memberEdgeById]);
+
+  // Shallow-clone bundles before passing to the renderer. ``react-force-graph``
+  // mutates ``link.source`` / ``link.target`` (object references) onto each
+  // link after first paint; cloning keeps the authoritative ``bundledEdges``
+  // (and their ``members``) clean. Cheap: one map() per data change.
+  const renderEdges = useMemo(() => bundledEdges.map(e => ({ ...e })), [bundledEdges]);
 
   // New state for search and highlighting
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [selectedEdgeDetail, setSelectedEdgeDetail] = useState<GraphEdge | null>(null);
+  // A clicked bundled edge → the edge inspector. Mutually exclusive with a
+  // focused node: clicking either clears the other.
+  const [selectedBundle, setSelectedBundle] = useState<BundledEdge | null>(null);
+  // Per-predicate filter inside the open bundle inspector. Empty ⇒ all.
+  const [bundlePredFilter, setBundlePredFilter] = useState<Set<string>>(new Set());
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [showDetailPanel, setShowDetailPanel] = useState(false);
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
@@ -915,7 +938,7 @@ export default function AnnotationResultsGraph({
     // Engaging a node = anchor becomes most-recently-engaged → owns HUD.
     // The pin-set lens (if active) stays visible on canvas as context.
     lastEngagedRef.current = 'anchor';
-    setSelectedEdgeDetail(null);
+    setSelectedBundle(null);
     if (showDetailPanel) {
       setSelectedNodeId(node.id);
       return;
@@ -925,6 +948,19 @@ export default function AnnotationResultsGraph({
       setSelectedNodeId(node.id);
     }, 300);
   }, [showDetailPanel]);
+
+  // Open the edge-bundle inspector for a (focal, peer) pair — fired from the
+  // node HUD's peer-grouped connection rows. Closes the node HUD (clears the
+  // focal node) so the bundle inspector owns the surface, mirroring a direct
+  // edge click on the canvas.
+  const openBundleForPeer = useCallback((focalId: string, peerId: string) => {
+    const bundle = bundlesById.get(bundleIdForPair(focalId, peerId));
+    if (!bundle) return;
+    lastEngagedRef.current = 'anchor';
+    setSelectedNodeId(null);
+    setSelectedBundle(bundle);
+    setShowDetailPanel(true);
+  }, [bundlesById]);
 
   // Handle shift+click for merge selection
   const handleNodeShiftClick = useCallback((node: GraphNode) => {
@@ -1043,7 +1079,7 @@ export default function AnnotationResultsGraph({
   // the data; only the visual lens flips off.
   const clearSelection = useCallback(() => {
     setSelectedNodeId(null);
-    setSelectedEdgeDetail(null);
+    setSelectedBundle(null);
     setShowDetailPanel(false);
     setSearchTerm('');
     setShowSuggestions(false);
@@ -1055,7 +1091,7 @@ export default function AnnotationResultsGraph({
   // graph background). Only acts when something is actually selected so we
   // don't intercept Esc for unrelated UI elsewhere on the page.
   useEffect(() => {
-    if (!showDetailPanel && !selectedNodeId && !selectedEdgeDetail) return;
+    if (!showDetailPanel && !selectedNodeId && !selectedBundle) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       const target = e.target as HTMLElement | null;
@@ -1064,7 +1100,10 @@ export default function AnnotationResultsGraph({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showDetailPanel, selectedNodeId, selectedEdgeDetail, clearSelection]);
+  }, [showDetailPanel, selectedNodeId, selectedBundle, clearSelection]);
+
+  // Reset the bundle's per-predicate filter whenever a different bundle opens.
+  useEffect(() => { setBundlePredFilter(new Set()); }, [selectedBundle?.id]);
 
   // "/" jumps to the search bar (skip when another input already has focus).
   useEffect(() => {
@@ -1483,11 +1522,14 @@ export default function AnnotationResultsGraph({
   // lenses win over hover — the connected set becomes every node touched
   // by the lens so it reads as "everything this scope said".
   const effectiveConnectedNodeIds = useMemo(() => {
+    // Bundle selected → the pair's two endpoints are the focus (kept bright
+    // while the rest dims via the edge-nav sub-network).
+    if (selectedBundle) return [selectedBundle.sourceId, selectedBundle.targetId];
     if (pinNodeIds && pinNodeIds.size > 0) return Array.from(pinNodeIds);
     if (assetNodeIds && assetNodeIds.size > 0) return Array.from(assetNodeIds);
     if (activePeerId) return [activePeerId];
     return connectedNodeIds;
-  }, [pinNodeIds, assetNodeIds, activePeerId, connectedNodeIds]);
+  }, [selectedBundle, pinNodeIds, assetNodeIds, activePeerId, connectedNodeIds]);
 
   // Reset arrow-nav whenever the focused node or candidate set changes.
   useEffect(() => {
@@ -1988,6 +2030,77 @@ export default function AnnotationResultsGraph({
     ? runWideAliasesByField[graphAliasTargetField] ?? {}
     : {};
 
+  // ---- Canvas highlight ids → bundle ids -------------------------------
+  // The renderer keys on bundle ids. A selected bundle highlights itself; a
+  // hover / keyboard-nav member edge maps to its bundle. Asset-lens and
+  // inter-pin member sets map the same way so amber lenses still land.
+  const highlightedBundleEdgeId: string | null =
+    selectedBundle?.id ?? (activeEdgeId ? toBundleEdgeId(activeEdgeId) : null);
+  const assetBundleEdgeIds = useMemo(
+    () => (assetEdgeIds ? new Set(Array.from(assetEdgeIds, toBundleEdgeId)) : null),
+    [assetEdgeIds, toBundleEdgeId],
+  );
+  const pinNetworkBundleEdges = useMemo(
+    () => (pinNetworkEdges ? new Set(Array.from(pinNetworkEdges, toBundleEdgeId)) : null),
+    [pinNetworkEdges, toBundleEdgeId],
+  );
+
+  // ---- Bundle inspector data -------------------------------------------
+  // Pair labels + per-predicate evidence + source documents for the open
+  // bundle. Scans the same triplet rows the node HUD reads, matched to this
+  // pair in either direction.
+  const bundleDetail = useMemo(() => {
+    if (!selectedBundle) return null;
+    const srcNode = nodes.find(n => n.id === selectedBundle.sourceId);
+    const tgtNode = nodes.find(n => n.id === selectedBundle.targetId);
+    const srcLabel = srcNode?.label ?? selectedBundle.sourceId;
+    const tgtLabel = tgtNode?.label ?? selectedBundle.targetId;
+    const srcL = srcLabel.toLowerCase();
+    const tgtL = tgtLabel.toLowerCase();
+
+    const evidence: EdgeBundleEvidenceItem[] = [];
+    const docCount = new Map<number, number>();
+    for (const r of results) {
+      if (!r.value || typeof r.value !== 'object') continue;
+      const doc = (r.value as any).document || r.value;
+      const triplets = (doc as any)?.triplets;
+      if (!Array.isArray(triplets)) continue;
+      for (const t of triplets) {
+        if (!t || typeof t !== 'object') continue;
+        const subj = String(t.subject_name || t.subject || '').toLowerCase();
+        const obj = String(t.object_name || t.object || '').toLowerCase();
+        const fwd = subj === srcL && obj === tgtL;
+        const bwd = subj === tgtL && obj === srcL;
+        if (!fwd && !bwd) continue;
+        const predicate = String(t.predicate || '');
+        if (!predicate) continue;
+        docCount.set(r.asset_id, (docCount.get(r.asset_id) ?? 0) + 1);
+        const reasoning = t.description || t.context || '';
+        if (reasoning) {
+          evidence.push({
+            predicate,
+            reasoning,
+            confidence: typeof t.confidence === 'number' ? t.confidence : undefined,
+            assetId: r.asset_id,
+            direction: fwd ? 'forward' : 'backward',
+          });
+        }
+      }
+    }
+    const documents: EdgeBundleDocChip[] = Array.from(docCount.entries())
+      .map(([assetId, count]) => ({ assetId, title: assetsMap.get(assetId)?.title, count }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      srcLabel,
+      tgtLabel,
+      srcType: srcNode?.type,
+      tgtType: tgtNode?.type,
+      evidence,
+      documents,
+    };
+  }, [selectedBundle, nodes, results, assetsMap]);
+
   return (
     <div ref={fullscreenRootRef} className={`h-full flex flex-col ${isFullscreen ? 'bg-background' : ''}`}>
       <PanelHeaderSlot>
@@ -2231,17 +2344,24 @@ export default function AnnotationResultsGraph({
               edges={renderEdges}
               highlightedNodeId={selectedNodeId}
               connectedNodeIds={effectiveConnectedNodeIds}
-              highlightedEdgeId={activeEdgeId}
-              highlightedEdgeIds={assetEdgeIds ?? undefined}
+              highlightedEdgeId={highlightedBundleEdgeId}
+              highlightedEdgeIds={assetBundleEdgeIds ?? undefined}
               pinNodeIds={pinNodeIds ?? undefined}
-              pinNetworkEdges={pinNetworkEdges ?? undefined}
+              pinNetworkEdges={pinNetworkBundleEdges ?? undefined}
               mergeSelectedNodeIds={mergeSelectedIds}
               onNodeClick={handleNodeSelect}
               onNodeShiftClick={handleNodeShiftClick}
               onNodeAltClick={(node) => handleTogglePin(node.id)}
-              onEdgeClick={(edge) => { setSelectedEdgeDetail(edge); setSelectedNodeId(null); setShowDetailPanel(true); }}
+              onEdgeClick={(edge) => {
+                const bundle = bundlesById.get(edge.id) ?? (edge as BundledEdge);
+                lastEngagedRef.current = 'anchor';
+                setSelectedNodeId(null);
+                setSelectedBundle(bundle);
+                setShowDetailPanel(true);
+              }}
               onBackgroundClick={clearSelection}
               autoResize={true}
+              chrome={focusMode ? 'minimal' : 'full'}
               config={graphConfig}
               onConfigChange={handleGraphConfigChange}
               colorOverrides={schemaColorOverrides}
@@ -2265,19 +2385,22 @@ export default function AnnotationResultsGraph({
                 collection of pinned nodes. The active page's pinned ids
                 ARE ``mergeSelectedIds`` so the existing merge bar still
                 triggers at 2+ pins; PinBoard adds the network/evidence
-                lenses + multi-page management. */}
-            <PinBoardOverlay
-              pinBoard={pinBoard}
-              nodes={nodes}
-              onSetActivePage={handleSetActivePage}
-              onAddPage={handleAddPinPage}
-              onRenamePage={handleRenamePinPage}
-              onDeletePage={handleDeletePinPage}
-              onUnpin={handleUnpin}
-              onClearPage={handleClearPinPage}
-              onPeerClick={handleNodeSelect}
-              onToggleLens={handleTogglePinLens}
-            />
+                lenses + multi-page management. Interactive chrome — hidden in
+                focus mode, leaving a clean canvas. */}
+            {!focusMode && (
+              <PinBoardOverlay
+                pinBoard={pinBoard}
+                nodes={nodes}
+                onSetActivePage={handleSetActivePage}
+                onAddPage={handleAddPinPage}
+                onRenamePage={handleRenamePinPage}
+                onDeletePage={handleDeletePinPage}
+                onUnpin={handleUnpin}
+                onClearPage={handleClearPinPage}
+                onPeerClick={handleNodeSelect}
+                onToggleLens={handleTogglePinLens}
+              />
+            )}
 
             {/* Merge Selection Bar */}
             {mergeSelectedIds.length > 0 && (
@@ -2521,7 +2644,9 @@ export default function AnnotationResultsGraph({
                 it doesn't cover the connections row. Solid background so
                 node labels behind don't bleed through. The same searchTerm
                 is passed to the HUD below so connection chips matching the
-                query get highlighted in place. ===== */}
+                query get highlighted in place. Interactive chrome — hidden in
+                focus mode. ===== */}
+            {!focusMode && (
             <div
               className="absolute bottom-[4.5rem] left-1/2 -translate-x-1/2 z-30 !bg-background/90"
               style={{ pointerEvents: 'auto' }}
@@ -2580,6 +2705,7 @@ export default function AnnotationResultsGraph({
                 )}
               </div>
             </div>
+            )}
 
             {/* ===== Node detail HUD — overlays the canvas without resizing
                 it. Sections (top/left/right/bottom) position themselves around
@@ -2618,6 +2744,8 @@ export default function AnnotationResultsGraph({
                 onTogglePin={selectedNodeId ? () => handleTogglePin(selectedNodeId) : undefined}
                 pinEvidencePeerIds={pinEvidencePeerIds}
                 onPeerClick={handleNodeSelect}
+                onConnectionClick={(peerId) => { if (selectedNodeId) openBundleForPeer(selectedNodeId, peerId); }}
+                colorOverrides={schemaColorOverrides}
                 onAssetClick={openDetailOverlay}
                 onEdgeHover={(edgeId, peerId) =>
                   setHoveredEvidence(edgeId && peerId ? { edgeId, peerId } : null)
@@ -2715,52 +2843,13 @@ export default function AnnotationResultsGraph({
               />
             )}
 
-            {/* ===== Projection-bound edge HUD — when the panel projection
-                declares entity-typed roles, the click on an edge opens the
-                richer edge dossier (snippets, predicate mix, scalars). The
-                legacy floating card below remains the fallback. ===== */}
-            {showDetailPanel && selectedEdgeDetail && !selectedNodeDetails && projectionHasEntityRoles && (() => {
-              const subjectLabel = nodes.find(n => n.id === selectedEdgeDetail.sourceId)?.label ?? '';
-              const objectLabel = nodes.find(n => n.id === selectedEdgeDetail.targetId)?.label ?? '';
-              const subjectType = nodes.find(n => n.id === selectedEdgeDetail.sourceId)?.type;
-              const objectType = nodes.find(n => n.id === selectedEdgeDetail.targetId)?.type;
-              // Resolve role entity types when present so the lookup narrows
-              // to the right canon stratum.
-              const _rp = resolvedProjection as any;
-              const actorEntityType = _rp?.roles?.[actorRole]?.entity_type ?? subjectType;
-              const subjectEntityType = _rp?.roles?.[subjectRole]?.entity_type ?? objectType;
-              const actorEntityId = findEntityId(subjectLabel, actorEntityType);
-              const subjectEntityId = findEntityId(objectLabel, subjectEntityType);
-              if (!actorEntityId || !subjectEntityId) return null;
-              return (
-                <EdgeDetailHUD
-                  infospaceId={infospaceId}
-                  runId={runId}
-                  projection={resolvedProjection}
-                  actorRole={actorRole}
-                  subjectRole={subjectRole}
-                  actorEntityId={actorEntityId}
-                  subjectEntityId={subjectEntityId}
-                  actorLabel={subjectLabel}
-                  subjectLabel={objectLabel}
-                  onClose={() => { setSelectedEdgeDetail(null); setShowDetailPanel(false); }}
-                  onRowClick={(row) => {
-                    const assetId = (row.provenance as any)?.asset_id;
-                    if (typeof assetId === 'number') openDetailOverlay(assetId);
-                  }}
-                />
-              );
-            })()}
-
-            {/* ===== Edge detail floating card — small overlay (top-right)
-                rather than a full side panel; edges are simpler and don't
-                need the HUD treatment. Falls back when the panel has no
-                projection-bound entity roles. ===== */}
-            {showDetailPanel && selectedEdgeDetail && !selectedNodeDetails && !projectionHasEntityRoles && (() => {
-              // Resolve subject/object labels for both display + the cooccurs
-              // scope gesture. Computed inline so we have one source of truth.
-              const subjectLabel = nodes.find(n => n.id === selectedEdgeDetail.sourceId)?.label ?? '';
-              const objectLabel = nodes.find(n => n.id === selectedEdgeDetail.targetId)?.label ?? '';
+            {/* ===== Edge bundle inspector — every connection between the
+                pair, collapsed into one line on the canvas and unrolled
+                here. Per-predicate breakdown (filterable) → evidence →
+                source documents, plus the cross-panel cooccurs scope
+                gesture. Replaces the old single-edge detail card. ===== */}
+            {showDetailPanel && selectedBundle && bundleDetail && !selectedNodeDetails && (() => {
+              const { srcLabel, tgtLabel, srcType, tgtType, evidence, documents } = bundleDetail;
               // Peer panels that could receive the cooccurs scope (everyone
               // except this panel — it's already showing the relationship).
               const peerPanels = dashboardPanels.filter(p => p.id !== panelConfig.id);
@@ -2771,80 +2860,61 @@ export default function AnnotationResultsGraph({
                 const s = schemas.find(x => x.id === sid);
                 return s && entityPathsFromSchema(s as AnnotationSchemaRead).length > 0;
               });
-              const canScope = subjectLabel && objectLabel && peerPanelsWithEntityPaths.length > 0;
+              const canScope = !!srcLabel && !!tgtLabel && peerPanelsWithEntityPaths.length > 0;
               const handlePushScope = () => {
-                if (!subjectLabel || !objectLabel) return;
+                if (!srcLabel || !tgtLabel) return;
                 const { pushed } = pushCooccursToDashboard({
-                  entities: [subjectLabel, objectLabel],
+                  entities: [srcLabel, tgtLabel],
                   reach: 'annotation',
                   panels: dashboardPanels as any,
                   schemas: schemas as any,
                   addScope: broadcastAddScope,
                   sourcePanelId: panelConfig.id,
                   excludePanelId: panelConfig.id,
-                  label: `${subjectLabel} ↔ ${objectLabel}`,
+                  label: `${srcLabel} ↔ ${tgtLabel}`,
                 });
                 if (pushed === 0) {
                   toast.warning('No peer panels with Entity-typed schemas. Add an Entity field to a panel\'s schema to enable cross-panel scoping.');
                   return;
                 }
                 toast.success(
-                  `Scoped ${pushed} peer panel${pushed === 1 ? '' : 's'} to ${subjectLabel} ↔ ${objectLabel}` +
+                  `Scoped ${pushed} peer panel${pushed === 1 ? '' : 's'} to ${srcLabel} ↔ ${tgtLabel}` +
                   (dashboardName ? ` in ${dashboardName}` : ''),
                 );
               };
               return (
-              <div
-                className="absolute top-2 right-12 z-30 w-[320px] max-w-[40%] bg-background/95 backdrop-blur-sm border rounded-lg shadow-lg p-3"
-                style={{ pointerEvents: 'auto' }}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold">Edge Details</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0"
-                    onClick={() => { setSelectedEdgeDetail(null); setShowDetailPanel(false); }}
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                </div>
-                <div className="text-sm space-y-1">
-                  <p className="font-medium text-foreground">{subjectLabel}</p>
-                  <p className="text-muted-foreground italic">{selectedEdgeDetail.predicate}</p>
-                  <p className="font-medium text-foreground">{objectLabel}</p>
-                </div>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-muted-foreground mt-2 pt-2 border-t">
-                  {selectedEdgeDetail.weight != null && <div><span className="font-medium">Weight:</span> {selectedEdgeDetail.weight}</div>}
-                  {selectedEdgeDetail.confidence != null && <div><span className="font-medium">Confidence:</span> {selectedEdgeDetail.confidence}</div>}
-                  {selectedEdgeDetail.frequency != null && <div><span className="font-medium">Frequency:</span> {selectedEdgeDetail.frequency}</div>}
-                  {selectedEdgeDetail.date && <div><span className="font-medium">Date:</span> {selectedEdgeDetail.date}</div>}
-                </div>
-                {selectedEdgeDetail.context && (
-                  <p className="text-[11px] text-foreground bg-muted/50 p-2 rounded mt-2 leading-relaxed">{selectedEdgeDetail.context}</p>
-                )}
-                {/* Scope-to-relationship: only relevant when peer panels exist
-                   that could actually filter on entity co-occurrence. */}
-                <div className="mt-2 pt-2 border-t">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full h-7 text-xs gap-1.5"
-                    onClick={handlePushScope}
-                    disabled={!canScope}
-                    title={
-                      canScope
-                        ? `Push a co-occurrence filter for this pair to ${peerPanelsWithEntityPaths.length} peer panel${peerPanelsWithEntityPaths.length === 1 ? '' : 's'}.`
-                        : peerPanels.length === 0
-                          ? 'No peer panels in this dashboard.'
-                          : 'No peer panels read from a schema with Entity fields.'
-                    }
-                  >
-                    <Target className="h-3 w-3" />
-                    Scope dashboard to {subjectLabel} ↔ {objectLabel}
-                  </Button>
-                </div>
-              </div>
+                <EdgeBundleHUD
+                  sourceLabel={srcLabel}
+                  targetLabel={tgtLabel}
+                  sourceType={srcType}
+                  targetType={tgtType}
+                  directionMix={selectedBundle.directionMix}
+                  totalWeight={selectedBundle.totalWeight}
+                  memberCount={selectedBundle.memberCount}
+                  predicateRows={selectedBundle.predicateCounts}
+                  evidence={evidence}
+                  documents={documents}
+                  colorOverrides={schemaColorOverrides}
+                  activePredicates={bundlePredFilter}
+                  onTogglePredicate={(p) => setBundlePredFilter(prev => {
+                    const next = new Set(prev);
+                    if (next.has(p)) next.delete(p); else next.add(p);
+                    return next;
+                  })}
+                  onClearPredicateFilter={() => setBundlePredFilter(new Set())}
+                  onClose={clearSelection}
+                  onAssetClick={openDetailOverlay}
+                  onFocusSubgraph={() => forceGraphRef.current?.centerNode(selectedBundle.sourceId)}
+                  onScopeDashboard={handlePushScope}
+                  canScopeDashboard={canScope}
+                  scopeHint={
+                    canScope
+                      ? `Push a co-occurrence filter for this pair to ${peerPanelsWithEntityPaths.length} peer panel${peerPanelsWithEntityPaths.length === 1 ? '' : 's'}.`
+                      : peerPanels.length === 0
+                        ? 'No peer panels in this dashboard.'
+                        : 'No peer panels read from a schema with Entity fields.'
+                  }
+                />
               );
             })()}
           </div>

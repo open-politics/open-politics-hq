@@ -58,8 +58,10 @@ import AnnotationRunnerHeader from './AnnotationRunnerHeader';
 import { FormulaWorkspace } from './formulas/FormulaWorkspace';
 import { DockedChat } from '@/components/collection/chat/DockedChat';
 import { PanelRenderer } from './PanelRenderer';
+import { PanelTypePicker } from './panels/PanelTypePicker';
 import { DragScopeProvider, DroppablePanelZone } from './panels/DragScopeProvider';
 import { createScopeFromSelection, validateScopeGraph } from '@/lib/annotations/scopes';
+import { resolveGridGeometry } from '@/lib/annotations/grid';
 import { useShareableStore } from '@/zustand_stores/storeShareables';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { AnnotationMapControls } from './AnnotationMapControls';
@@ -243,6 +245,7 @@ export default function AnnotationRunner({
     updatePanel,
     removePanel,
     compactLayout,
+    randomizeLayout,
     setDashboardDirty,
     saveDashboardToBackend,
     loadDashboardFromRun,
@@ -254,36 +257,15 @@ export default function AnnotationRunner({
   
   const { activeInfospace } = useInfospaceStore();
 
+  // Grid geometry (columns + px row height) for the active dashboard. Drives the
+  // CSS grid track count, row height, and every per-panel position clamp below.
+  // Legacy dashboards resolve to 12 × 150px; new ones to the finer default.
+  const gridGeo = resolveGridGeometry(dashboardConfig?.layout);
+
   // Initialize dashboard config when activeRun changes
   useEffect(() => {
     setActiveRun(activeRun); // This handles both activeRun and null cases
   }, [activeRun, setActiveRun]);
-
-  // Ctrl/Cmd+F toggles focus mode. We override the browser's find-in-page
-  // because there's no useful page-wide text to find on this view — the
-  // panels self-fetch and virtualize. We *do* let it through when focus is
-  // inside a text input (filter pickers, search inputs in RolePicker / table)
-  // so users can still find within those.
-  useEffect(() => {
-    if (!activeRun) return;
-    const handler = (e: KeyboardEvent) => {
-      if (!(e.key === 'f' || e.key === 'F')) return;
-      if (!(e.ctrlKey || e.metaKey)) return;
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName;
-      if (
-        tag === 'INPUT' ||
-        tag === 'TEXTAREA' ||
-        target?.isContentEditable
-      ) {
-        return;
-      }
-      e.preventDefault();
-      toggleFocusMode();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [activeRun, toggleFocusMode]);
 
   // Auto-add initial table panel as soon as any rows land — no need to wait
   // for terminal status. Panels self-refresh via polling + per-row commits,
@@ -312,6 +294,8 @@ export default function AnnotationRunner({
   // id=null means "new observation", string means "edit existing".
   const [formulaEditor, setFormulaEditor] = useState<{ id: string | null } | null>(null);
   const [dossierAgentOpen, setDossierAgentOpen] = useState<boolean>(false);
+  // Ctrl+P quick panel picker (keyboard-navigable).
+  const [isPanelPickerOpen, setIsPanelPickerOpen] = useState(false);
   const [isAssetSelectorOpen, setIsAssetSelectorOpen] = useState(false);
   const [selectedAssetIds, setSelectedAssetIds] = useState<number[]>([]);
   const [viewingSchema, setViewingSchema] = useState<AnnotationSchemaRead | null>(null);
@@ -342,6 +326,143 @@ export default function AnnotationRunner({
   const closeAssetDetail = useCallback(() => {
     setIsAssetDetailOpen(false);
     setSelectedAssetIdForDetail(null);
+  }, []);
+
+  // --- Panel interaction callbacks ---
+  // Stable references (setState setters + store getState) so they can flow into
+  // the memoized panel content subtree without busting it on every render. This
+  // is what lets panels shift position / resize without re-rendering (and thus
+  // visually "reloading") their charts/maps/graphs.
+  const handleMapPointClick = useCallback((point: MapPoint) => {
+    setSelectedMapPointForDialog(point);
+    setIsResultDialogOpen(true);
+  }, []);
+
+  const handleResultSelect = useCallback((result: FormattedAnnotation) => {
+    setSelectedAssetIdForDetail(result.asset_id);
+    setIsAssetDetailOpen(true);
+  }, []);
+
+  // Cross-panel nav — read the current dashboard via getState so the callback
+  // stays referentially stable (doesn't capture dashboardConfig).
+  const handleTimestampClick = useCallback((timestamp: Date, fieldKey: string) => {
+    const cfg = useAnnotationRunStore.getState().dashboardConfig;
+    const chartPanel = cfg?.panels?.find((p) => p.type === 'chart');
+    if (!chartPanel) {
+      toast.info('No chart panel found. Add a chart panel to visualize time-based data.');
+      return;
+    }
+    // Clear any active time filter so the highlighted point shows in full context.
+    if (chartPanel.settings?.timeAxisConfig?.timeFrame?.enabled) {
+      updatePanel(chartPanel.id, {
+        settings: {
+          ...chartPanel.settings,
+          timeAxisConfig: {
+            ...chartPanel.settings.timeAxisConfig,
+            timeFrame: { enabled: false, startDate: undefined, endDate: undefined },
+          },
+        },
+      });
+    }
+    setChartHighlightTimestamp({ timestamp, fieldKey });
+    setTimeout(() => setChartHighlightTimestamp(null), 5000);
+    setTimeout(() => {
+      const el = document.querySelector(`[data-panel-id="${chartPanel.id}"]`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ring-2', 'ring-blue-500', 'ring-offset-2');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-blue-500', 'ring-offset-2'), 2000);
+    }, 100);
+  }, [updatePanel]);
+
+  const handleLocationClick = useCallback((location: string, fieldKey: string) => {
+    const cfg = useAnnotationRunStore.getState().dashboardConfig;
+    const mapPanel = cfg?.panels?.find((p) => p.type === 'map');
+    if (!mapPanel) {
+      toast.info('No map panel found. Add a map panel and geocode your location data.');
+      return;
+    }
+    setMapHighlightLocation({ location, fieldKey });
+    setTimeout(() => setMapHighlightLocation(null), 500);
+    setTimeout(() => {
+      const el = document.querySelector(`[data-panel-id="${mapPanel.id}"]`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ring-2', 'ring-emerald-500', 'ring-offset-2');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-emerald-500', 'ring-offset-2'), 2000);
+    }, 100);
+  }, [updatePanel]);
+
+  // Save the dashboard to the backend. Shared by the header Save button and the
+  // Ctrl+S shortcut.
+  const saveDashboard = useCallback(async () => {
+    if (activeRun && activeInfospace) {
+      await saveDashboardToBackend(activeInfospace.id, activeRun.id);
+    }
+  }, [activeRun, activeInfospace, saveDashboardToBackend]);
+
+  // Smooth-scroll a panel into view and pulse its border — the "jump to the
+  // panel I just created" affordance.
+  const scrollToPanel = useCallback((panelId: string) => {
+    setTimeout(() => {
+      const el = document.querySelector(`[data-panel-id="${panelId}"]`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ring-2', 'ring-blue-500', 'ring-offset-2');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-blue-500', 'ring-offset-2'), 1600);
+    }, 80);
+  }, []);
+
+  // Create a panel from the Ctrl+P picker, then auto-navigate to it. addPanel is
+  // a void store action that mints the id internally, so we diff the panel list
+  // before/after to find the newly-created panel and scroll to it.
+  const handlePickPanel = useCallback((def: { type: string; name: string; description: string }) => {
+    const store = useAnnotationRunStore.getState();
+    const before = new Set((store.dashboardConfig?.panels ?? []).map((p) => p.id));
+    addPanel({ type: def.type as any, name: def.name, description: def.description });
+    const after = useAnnotationRunStore.getState().dashboardConfig?.panels ?? [];
+    const created = after.find((p) => !before.has(p.id));
+    toast.success(`${def.name} panel added`);
+    if (created) scrollToPanel(created.id);
+  }, [addPanel, scrollToPanel]);
+
+  // Runner keyboard shortcuts. Ctrl-only — NOT ⌘ — so Mac users keep ⌘+R / ⌘+S
+  // / ⌘+P etc. for their browser defaults. Suppressed while typing in an
+  // input/textarea/contentEditable so they don't hijack normal editing. Ctrl+C
+  // additionally yields to a live text selection so copy still works.
+  useEffect(() => {
+    if (!activeRun) return;
+    const handler = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+      switch (e.key.toLowerCase()) {
+        case 'f': e.preventDefault(); toggleFocusMode(); break;
+        case 'p': e.preventDefault(); setIsPanelPickerOpen(true); break;
+        case 's': e.preventDefault(); void saveDashboard(); break;
+        case 'a': e.preventDefault(); setDossierAgentOpen((o) => !o); break;
+        case 'c':
+          // Defer to an active text selection so the user can still copy.
+          if ((window.getSelection()?.toString() ?? '').length > 0) return;
+          e.preventDefault();
+          compactLayout();
+          break;
+        case 'r': e.preventDefault(); randomizeLayout(); break;
+        default: break;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [activeRun, toggleFocusMode, saveDashboard, compactLayout, randomizeLayout]);
+
+  // Leaving the runner: drop focus mode so its chrome-hiding (layout top bar +
+  // dock read this global flag) doesn't persist onto other routes.
+  useEffect(() => {
+    return () => {
+      const s = useAnnotationRunStore.getState();
+      if (s.focusMode) s.toggleFocusMode();
+    };
   }, []);
 
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -533,14 +654,11 @@ export default function AnnotationRunner({
           isRetryingJob={isRetryingJob}
           onUpdateRun={handleUpdateRun}
           onRetryJobFailures={retryJobFailures}
-          onSaveDashboard={async () => {
-            if (activeRun && activeInfospace) {
-              await saveDashboardToBackend(activeInfospace.id, activeRun.id);
-            }
-          }}
+          onSaveDashboard={saveDashboard}
           onUpdateDashboardConfig={updateDashboardConfig}
           onAddPanel={addPanel}
           onCompactLayout={compactLayout}
+          onRandomizeLayout={randomizeLayout}
           onDeleteRun={() => setIsDeleteDialogOpen(true)}
           onClearRun={onClearRun}
           onOpenSchemasDialog={() => setIsSchemasDialogOpen(true)}
@@ -680,43 +798,51 @@ export default function AnnotationRunner({
             >
       <style jsx global>{`
         @media (min-width: 768px) {
+          .dashboard-grid { grid-auto-rows: var(--row-h); }
           .dashboard-panel {
             grid-column: calc(var(--grid-x) + 1) / span var(--grid-w);
             grid-row: calc(var(--grid-y) + 1) / span var(--grid-h);
-            height: calc(var(--grid-h) * 150px) !important;
-            max-height: calc(var(--grid-h) * 150px) !important;
+            height: calc(var(--grid-h) * var(--row-h)) !important;
+            max-height: calc(var(--grid-h) * var(--row-h)) !important;
           }
         }
         @media (max-width: 767px) {
+          .dashboard-grid { grid-template-columns: 1fr !important; grid-auto-rows: auto !important; }
           .dashboard-panel {
             grid-column: 1 !important;
             grid-row: auto !important;
             height: auto !important;
-            max-height: calc(var(--grid-h) * 150px) !important;
+            max-height: calc(var(--grid-h) * var(--row-h)) !important;
             min-height: unset !important;
           }
         }
       `}</style>
-              <div 
-                className="relative w-full overflow-y-auto grid grid-cols-1 md:grid-cols-12 gap-0.25 md:auto-rows-[150px]"
+              <div
+                className="dashboard-grid relative w-full overflow-y-auto grid grid-cols-1 gap-0.25"
                 style={{
+                // Column count + row height come from the dashboard geometry. The
+                // ``--row-h`` var drives both ``grid-auto-rows`` and the panel
+                // height rules in the media queries above (desktop = fixed rows,
+                // mobile = auto-sized + single column).
+                gridTemplateColumns: `repeat(${gridGeo.columns}, minmax(0, 1fr))`,
+                ['--row-h' as any]: `${gridGeo.rowHeight}px`,
                 minHeight: (() => {
                   try {
                     if (!dashboardConfig?.panels || dashboardConfig.panels.length === 0) {
                       return '300px';
                     }
-                    
+
                     // Calculate the exact height needed for all panels
                     const heights = dashboardConfig.panels
                       .filter(p => p && p.grid_position && typeof p.grid_position.y === 'number' && typeof p.grid_position.h === 'number')
                       .map(p => (p.grid_position.y || 0) + (p.grid_position.h || 0));
-                    
+
                     if (heights.length === 0) {
                       return '300px';
                     }
-                    
+
                     const maxHeight = Math.max(...heights);
-                    return `${Math.max(maxHeight, 2) * 150}px`;
+                    return `${Math.max(maxHeight, 2) * gridGeo.rowHeight}px`;
                   } catch (error) {
                     console.warn('Error calculating grid height:', error);
                     return '300px';
@@ -742,13 +868,14 @@ export default function AnnotationRunner({
                 })
                 .map(panel => {
                   // Defensive handling of panel properties
+                  const cols = gridGeo.columns;
                   const gridPos = panel.grid_position || { x: 0, y: 0, w: 6, h: 4 };
-                  const safeX = Math.max(0, Math.min(11, gridPos.x || 0));
+                  const safeX = Math.max(0, Math.min(cols - 1, gridPos.x || 0));
                   const safeY = Math.max(0, gridPos.y || 0);
-                  const safeW = Math.max(1, Math.min(12 - safeX, gridPos.w || 6));
-                  // Desktop: full height, Mobile: max 4 units (600px)
+                  const safeW = Math.max(1, Math.min(cols - safeX, gridPos.w || 6));
+                  // Desktop: full height. Mobile: capped to ~600px worth of units.
                   const safeH = Math.max(1, gridPos.h || 4);
-                  const mobileH = Math.min(4, safeH);
+                  const mobileH = Math.min(Math.ceil(600 / gridGeo.rowHeight), safeH);
 
                   return (
                     <div
@@ -759,11 +886,11 @@ export default function AnnotationRunner({
                         // Responsive behavior for smaller screens
                         "min-w-0 w-full h-full",
                         // Stack panels on mobile and small screens
-                        "max-md:col-span-12 max-md:row-span-1"
+                        "max-md:row-span-1"
                       )}
                       style={{
                         // Desktop uses safeH, mobile clamped via CSS max-height
-                        minHeight: `${mobileH * 150}px`,
+                        minHeight: `${mobileH * gridGeo.rowHeight}px`,
                         zIndex: 1,
                         // CSS custom properties consumed by `.dashboard-panel`
                         // in the `<style jsx global>` block above. Custom
@@ -786,114 +913,15 @@ export default function AnnotationRunner({
                         allSchemas={runSchemes}
                         onUpdatePanel={updatePanel}
                         onRemovePanel={removePanel}
-                        onMapPointClick={(point) => {
-                          setSelectedMapPointForDialog(point);
-                          setIsResultDialogOpen(true);
-                        }}
+                        onMapPointClick={handleMapPointClick}
                         mapHighlightLocation={mapHighlightLocation}
                         chartHighlightTimestamp={chartHighlightTimestamp}
-                        // Result interaction callbacks - show normal asset detail view
-                        onResultSelect={(result) => {
-                          // Open the asset detail overlay for the result's asset
-                          // NOTE: PanelRenderer has access to allResults which are filtered/processed
-                          // We need to pass ALL results from the current view, not just currentRunResults
-                          console.log('[AnnotationRunner] Opening asset detail for result', {
-                            resultId: result.id,
-                            assetId: result.asset_id,
-                            schemaId: result.schema_id,
-                            currentRunResultsCount: currentRunResults.length,
-                            runSchemesCount: runSchemes.length,
-                            runSchemes: runSchemes.map(s => ({ id: s.id, name: s.name }))
-                          });
-                          setSelectedAssetIdForDetail(result.asset_id);
-                          setIsAssetDetailOpen(true);
-                        }}
+                        onResultSelect={handleResultSelect}
                         onRetrySingleResult={retrySingleResult}
                         retryingResultId={isRetryingResultId}
                         onFieldInteraction={handleFieldInteraction}
-                        // NEW: Cross-panel navigation callbacks
-                        onTimestampClick={(timestamp, fieldKey, sourcePanelId) => {
-                          console.log('[Cross-Panel] Timestamp clicked:', { timestamp, fieldKey, sourcePanelId });
-                          // Find the first chart panel
-                          const chartPanel = dashboardConfig?.panels?.find(p => p.type === 'chart');
-                          console.log('[Cross-Panel] Chart panel lookup:', {
-                            foundChart: !!chartPanel,
-                            chartPanelId: chartPanel?.id,
-                            allPanelTypes: (dashboardConfig?.panels ?? []).map(p => ({ id: p.id, type: p.type })),
-                          });
-                          if (chartPanel) {
-                            console.log('[Cross-Panel] Setting highlight timestamp (NOT time filter)');
-                            
-                            // IMPORTANT: Clear any existing time filter to show full context
-                            if (chartPanel.settings?.timeAxisConfig?.timeFrame?.enabled) {
-                              console.log('[Cross-Panel] Clearing existing time filter for full chart context');
-                              updatePanel(chartPanel.id, {
-                                settings: {
-                                  ...chartPanel.settings,
-                                  timeAxisConfig: {
-                                    ...chartPanel.settings.timeAxisConfig,
-                                    timeFrame: {
-                                      enabled: false,
-                                      startDate: undefined,
-                                      endDate: undefined,
-                                    }
-                                  }
-                                }
-                              });
-                            }
-                            
-                            // Set the highlight timestamp - this will visually highlight the point in the chart
-                            setChartHighlightTimestamp({ timestamp, fieldKey });
-                            
-                            // Clear the highlight after a delay to allow reselection
-                            setTimeout(() => {
-                              setChartHighlightTimestamp(null);
-                            }, 5000); // Keep highlight visible longer than map (5s vs 500ms)
-                            
-                            // Scroll to the chart panel
-                            setTimeout(() => {
-                              const panelElement = document.querySelector(`[data-panel-id="${chartPanel.id}"]`);
-                              if (panelElement) {
-                                panelElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                // Add a brief highlight effect to the panel border
-                                panelElement.classList.add('ring-2', 'ring-blue-500', 'ring-offset-2');
-                                setTimeout(() => {
-                                  panelElement.classList.remove('ring-2', 'ring-blue-500', 'ring-offset-2');
-                                }, 2000);
-                              }
-                            }, 100);
-                          } else {
-                            toast.info('No chart panel found. Add a chart panel to visualize time-based data.');
-                          }
-                        }}
-                        onLocationClick={(location, fieldKey, sourcePanelId) => {
-                          // Find the first map panel
-                          const mapPanel = dashboardConfig?.panels?.find(p => p.type === 'map');
-                          if (mapPanel) {
-                            // Set the highlight location - this will trigger the map to navigate and show side panel
-                            setMapHighlightLocation({ location, fieldKey });
-                            
-                            // Clear after a short delay to allow the map to process it
-                            setTimeout(() => {
-                              setMapHighlightLocation(null);
-                            }, 500);
-                            
-                            // Scroll to the map panel
-                            setTimeout(() => {
-                              const panelElement = document.querySelector(`[data-panel-id="${mapPanel.id}"]`);
-                              if (panelElement) {
-                                panelElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                // Add a brief highlight effect
-                                panelElement.classList.add('ring-2', 'ring-emerald-500', 'ring-offset-2');
-                                setTimeout(() => {
-                                  panelElement.classList.remove('ring-2', 'ring-emerald-500', 'ring-offset-2');
-                                }, 2000);
-                              }
-                            }, 100);
-                          } else {
-                            toast.info('No map panel found. Add a map panel and geocode your location data.');
-                          }
-                        }}
+                        onTimestampClick={handleTimestampClick}
+                        onLocationClick={handleLocationClick}
                       />
                     </DroppablePanelZone>
                     </div>
@@ -903,7 +931,7 @@ export default function AnnotationRunner({
               
               {/* Empty State */}
               {(!dashboardConfig?.panels || dashboardConfig.panels.length === 0) && (
-                <div className="col-span-12 row-span-2 flex items-center justify-center border-2 border-dashed border-gray-300 rounded-lg bg-gray-50/50">
+                <div className="row-span-2 flex items-center justify-center border-2 border-dashed border-gray-300 rounded-lg bg-gray-50/50" style={{ gridColumn: '1 / -1' }}>
                   <div className="text-center text-gray-500">
                     <LayoutDashboard className="h-12 w-12 mx-auto mb-4 opacity-50" />
                     <h3 className="text-lg font-medium mb-2">No Dashboard Panels</h3>
@@ -1288,6 +1316,13 @@ export default function AnnotationRunner({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+
+    {/* Ctrl+P quick panel picker — keyboard-navigable, auto-jumps to the new panel. */}
+    <PanelTypePicker
+      open={isPanelPickerOpen}
+      onOpenChange={setIsPanelPickerOpen}
+      onPick={handlePickPanel}
+    />
     </div>
     </AssetDetailContext.Provider>
   );

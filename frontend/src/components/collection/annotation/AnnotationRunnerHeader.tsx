@@ -48,6 +48,7 @@ import {
   Network,
   TrendingUp,
   Layers,
+  Shuffle,
   Microscope,
   FileText,
   RefreshCw,
@@ -94,6 +95,8 @@ interface AnnotationRunnerHeaderProps {
   onUpdateDashboardConfig: (updates: Partial<DashboardConfig>) => void;
   onAddPanel: (panel: Omit<PanelViewConfig, 'id' | 'gridPos' | 'filters'>) => void;
   onCompactLayout: () => void;
+  /** Re-shuffle panels into a randomized curated layout. */
+  onRandomizeLayout: () => void;
   onDeleteRun: () => void;
   onClearRun: () => void;
   onOpenSchemasDialog: () => void;
@@ -129,6 +132,7 @@ export default function AnnotationRunnerHeader({
   onUpdateDashboardConfig,
   onAddPanel,
   onCompactLayout,
+  onRandomizeLayout,
   onDeleteRun,
   onClearRun,
   onOpenSchemasDialog,
@@ -415,10 +419,34 @@ export default function AnnotationRunnerHeader({
                         <span className="ml-1 hidden lg:inline">Agent</span>
                       </Button>
                     )}
-                    <Button variant="outline" size="sm" className="h-6 text-[11px] px-1.5" onClick={onCompactLayout}>
-                      <Layers className="h-3 w-3 mr-1 text-muted-foreground/70" />
-                      <span className="hidden lg:inline">Compact</span>
-                    </Button>
+                    {/* Layout — groups the canvas-arrangement actions
+                        (Compact / Shuffle / Focus) under one menu. Each item
+                        mirrors a Ctrl shortcut handled in AnnotationRunner. */}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm" className="h-6 text-[11px] px-1.5" title="Layout actions">
+                          <Grid3X3 className="h-3 w-3 mr-1 text-muted-foreground/70" />
+                          <span className="hidden lg:inline">Layout</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-44">
+                        <DropdownMenuItem onClick={onCompactLayout} className="text-xs">
+                          <Layers className="h-3.5 w-3.5 mr-2 text-muted-foreground/70" />
+                          Compact
+                          <span className="ml-auto text-[10px] text-muted-foreground">⌃C</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={onRandomizeLayout} className="text-xs">
+                          <Shuffle className="h-3.5 w-3.5 mr-2 text-muted-foreground/70" />
+                          Shuffle
+                          <span className="ml-auto text-[10px] text-muted-foreground">⌃R</span>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={toggleFocusMode} className="text-xs">
+                          <Maximize2 className="h-3.5 w-3.5 mr-2 text-muted-foreground/70" />
+                          Focus
+                          <span className="ml-auto text-[10px] text-muted-foreground">⌃F</span>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     <Button
                       onClick={handleSaveDashboard}
                       disabled={!isDashboardDirty || isSaving}
@@ -437,25 +465,6 @@ export default function AnnotationRunnerHeader({
                       <Settings2 className="h-3 w-3 mr-1 text-gray-500 dark:text-gray-400" />
                       <span className="hidden lg:inline">Settings</span>
                     </Button>
-                    <TooltipProvider delayDuration={100}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-6 text-[11px] px-1.5"
-                            onClick={toggleFocusMode}
-                            aria-label="Enter focus mode"
-                          >
-                            <Maximize2 className="h-3 w-3 mr-1 text-gray-500 dark:text-gray-400" />
-                            <span className="hidden lg:inline">Focus</span>
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          Hide all chrome for a clean viewing canvas (Ctrl+F)
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
                   </ButtonGroup>
 
                   {/* Group 3: Meta */}

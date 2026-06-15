@@ -135,6 +135,10 @@ export function compileForPanel(
 
   const schema = pickSchema(panel, schemas);
   const cfg = panel.panel_config;
+  // No panel_config → no visual roles to apply. Return the seed formula as-is
+  // rather than dereferencing cfg.kind. (panel_config is typed required but can
+  // be absent on older/partial panels loaded from a saved dashboard.)
+  if (!cfg) return base;
 
   switch (cfg.kind) {
     case 'pie': {
@@ -147,11 +151,19 @@ export function compileForPanel(
 
     case 'chart': {
       const c = cfg as ChartVizConfig;
-      // Time interval overrides the default month bucket when x is a
-      // date-shape field. The compile passes it into Dimension.interval
-      // so the backend's date_trunc uses the right granularity.
+      // Timeline vs Grouped is a render-time toggle persisted in settings.
+      // It decides whether x is temporal (bucket via date_trunc) or a plain
+      // category. Grouped → never time-bucket. Timeline → always bucket: a
+      // chart timeline's x IS time, and LLM-extracted dates are usually plain
+      // strings with no JSON-Schema ``format: date`` hint (and often in mixed
+      // representations). Without a forced date_trunc those group one-row-per-
+      // raw-string, which surfaces as several points stacked on the same day.
+      // Default ``month``; the inline interval picker (cfg.time_interval)
+      // overrides the granularity.
+      const grouped = (panel as { settings?: { isGrouped?: boolean } }).settings?.isGrouped === true;
       const ti = c.time_interval as Dimension['interval'] | undefined;
-      const group = [asDim(c.x, schema, ti), asDim(c.color, schema)].filter(
+      const xDim = grouped ? asDim(c.x, schema) : asDim(c.x, schema, ti ?? 'month');
+      const group = [xDim, asDim(c.color, schema)].filter(
         (d): d is Dimension => d !== null,
       );
       const measures = c.y && c.y.length > 0
@@ -162,7 +174,7 @@ export function compileForPanel(
 
     case 'map': {
       const c = cfg as MapVizConfig;
-      if (c.mode === 'Area Geometry') {
+      if (c.mode === 'areaGeometryMeasures') {
         const group = [asDim(c.position, schema), asDim(c.color, schema)].filter(
           (d): d is Dimension => d !== null,
         );
@@ -220,6 +232,7 @@ export function isPanelConfigured(panel: Panel): boolean {
   // Workspace-bound is always configured.
   if (panel.formula_ref) return true;
   const cfg = panel.panel_config;
+  if (!cfg) return false; // no formula_ref and no panel_config → unconfigured
   switch (cfg.kind) {
     case 'pie':         return !!(cfg as PieVizConfig).slice_by;
     case 'chart':       return !!(cfg as ChartVizConfig).x

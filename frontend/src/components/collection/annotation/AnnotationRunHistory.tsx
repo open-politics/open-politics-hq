@@ -43,7 +43,6 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format, parseISO } from 'date-fns';
-import { useFavoriteRunsStore } from '@/zustand_stores/storeFavoriteRuns';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { Badge } from '@/components/ui/badge';
 import { shallow } from 'zustand/shallow';
@@ -345,33 +344,27 @@ const RunHistoryPanel: React.FC<{
   const [isFavoritesExpanded, setIsFavoritesExpanded] = useState(true);
   const [sharingRun, setSharingRun] = useState<AnnotationRunRead | null>(null);
   
-  const { addFavoriteRun, removeFavoriteRun, isFavorite } = useFavoriteRunsStore();
-  const favoriteRuns = useFavoriteRunsStore(state => state.favoriteRuns);
-  const favoriteRunIds = useMemo(() => favoriteRuns.map(r => r.id), [favoriteRuns]);
   const { activeInfospace } = useInfospaceStore();
-  const { exportAnnotationRun, fetchRuns } = useAnnotationRunStore();
+  const { exportAnnotationRun, fetchRuns, updateRun } = useAnnotationRunStore();
   const { importResource } = useShareableStore();
 
-  const handleToggleFavoriteRun = useCallback((run: AnnotationRunRead) => {
-    const infospaceId = activeInfospace?.id || '';
-    if (isFavorite(run.id)) {
-      removeFavoriteRun(run.id);
-    } else {
-      const config = run.configuration as any;
-      const schemaIds = run.schema_ids || config?.schema_ids || [];
-      const assetIds = config?.target_asset_ids || [];
+  // Optimistic favorite overrides keyed by run id. The displayed `runs` prop
+  // comes from the runner's own `useAnnotationSystem` state, which the store's
+  // updateRun doesn't touch — so without this the favorite bar wouldn't move
+  // until a full reload. Apply the new value immediately; revert if the write
+  // fails. (One update on toggle, no reactive subscription.)
+  const [favOverrides, setFavOverrides] = useState<Record<number, boolean>>({});
 
-      addFavoriteRun({
-        id: run.id,
-        name: run.name,
-        timestamp: format(parseISO(run.created_at), 'PPp'),
-        documentCount: assetIds.length,
-        schemeCount: schemaIds.length,
-        InfospaceId: String(infospaceId),
-        description: run.description ?? undefined
-      });
+  const handleToggleFavoriteRun = useCallback(async (run: AnnotationRunRead) => {
+    if (!activeInfospace?.id) return;
+    const next = !run.is_favorite;
+    setFavOverrides((o) => ({ ...o, [run.id]: next }));
+    try {
+      await updateRun(activeInfospace.id, run.id, { is_favorite: next });
+    } catch {
+      setFavOverrides((o) => ({ ...o, [run.id]: !next }));
     }
-  }, [activeInfospace?.id, isFavorite, addFavoriteRun, removeFavoriteRun]);
+  }, [activeInfospace?.id, updateRun]);
 
   const handleShareRun = useCallback((runId: number) => {
     const run = runs.find(r => r.id === runId);
@@ -451,12 +444,13 @@ const RunHistoryPanel: React.FC<{
 
         return {
             ...run,
+            is_favorite: favOverrides[run.id] ?? run.is_favorite,
             timestamp: format(parseISO(run.created_at), 'PPp'),
             documentCount: assetIds.length,
             schemeCount: schemaIds.length,
         };
     });
-  }, [runs]);
+  }, [runs, favOverrides]);
 
   const filteredRuns = useMemo(() => {
     return displayRuns.filter(run =>
@@ -479,12 +473,12 @@ const RunHistoryPanel: React.FC<{
   }, [filteredRuns, sortBy, sortOrder]);
 
   const favoriteRunsFromList = useMemo(() => {
-    return sortedRuns.filter(run => favoriteRunIds.includes(run.id));
-  }, [sortedRuns, favoriteRunIds]);
+    return sortedRuns.filter(run => run.is_favorite);
+  }, [sortedRuns]);
 
   const nonFavoriteRuns = useMemo(() => {
-    return sortedRuns.filter(run => !favoriteRunIds.includes(run.id));
-  }, [sortedRuns, favoriteRunIds]);
+    return sortedRuns.filter(run => !run.is_favorite);
+  }, [sortedRuns]);
 
   return (
     <div className="flex flex-col h-full">
@@ -663,8 +657,8 @@ const RunHistoryPanel: React.FC<{
                         >
                           <Star className={cn(
                             "h-3 w-3",
-                            favoriteRunIds.includes(run.id) 
-                              ? "fill-amber-500 text-amber-600 dark:text-amber-400" 
+                            run.is_favorite
+                              ? "fill-amber-500 text-amber-600 dark:text-amber-400"
                               : "text-muted-foreground/50 hover:text-amber-500"
                           )} />
                         </Button>

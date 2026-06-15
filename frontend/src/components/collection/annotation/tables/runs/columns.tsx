@@ -15,7 +15,7 @@ import { AnnotationRunRead, RunStatus, ResourceType } from '@/client';
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from '@/components/ui/badge';
 import { format, formatDistanceToNowStrict } from 'date-fns';
-import { useFavoriteRunsStore } from "@/zustand_stores/storeFavoriteRuns";
+import { useAnnotationRunStore } from "@/zustand_stores/useAnnotationRunStore";
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -52,36 +52,21 @@ interface RunColumnProps {
 
 export const annotationRunColumns = ({ onViewResults, onExport, onShare, onDelete }: RunColumnProps): ColumnDef<AnnotationRunRowData>[] => {
   const { activeInfospace } = useInfospaceStore.getState();
-  const { favoriteRuns, addFavoriteRun, removeFavoriteRun } = useFavoriteRunsStore.getState();
-  
-  const isFavorite = (runId: number) => {
-    if (!activeInfospace?.id) return false;
-    return favoriteRuns.some(fav => fav.id === runId && Number(fav.InfospaceId) === activeInfospace.id);
-  };
+  const { updateRun } = useAnnotationRunStore.getState();
 
-  const toggleFavorite = (run: AnnotationRunRowData) => {
+  const toggleFavorite = async (run: AnnotationRunRowData) => {
     if (!activeInfospace) {
       toast.error("An active Infospace is required to manage favorites.");
       return;
     }
-    const { id, name, created_at } = run;
-    const config = run.configuration as any;
-    const fav = { 
-        id, 
-        name: name || `Run ${id}`, 
-        InfospaceId: activeInfospace.id.toString(), 
-        type: 'run' as const,
-        timestamp: format(new Date(created_at), "PP pp"),
-        documentCount: config?.target_asset_ids?.length || 0,
-        schemeCount: config?.schema_ids?.length || 0,
-    };
-    
-    if (isFavorite(id)) {
-      removeFavoriteRun(id);
-      toast.info(`'${fav.name}' removed from favorites.`);
+    const next = !run.is_favorite;
+    const updated = await updateRun(activeInfospace.id, run.id, { is_favorite: next });
+    if (updated) {
+      const label = run.name || `Run ${run.id}`;
+      if (next) toast.success(`'${label}' added to favorites.`);
+      else toast.info(`'${label}' removed from favorites.`);
     } else {
-      addFavoriteRun(fav);
-      toast.success(`'${fav.name}' added to favorites.`);
+      toast.error("Could not update favorite.");
     }
   };
 
@@ -172,7 +157,7 @@ export const annotationRunColumns = ({ onViewResults, onExport, onShare, onDelet
         const run = row.original;
         return (
           <Button variant="ghost" size="icon" onClick={() => toggleFavorite(run)}>
-            <Star className={cn("h-4 w-4", isFavorite(run.id) && "fill-yellow-400 text-yellow-500")} />
+            <Star className={cn("h-4 w-4", run.is_favorite && "fill-yellow-400 text-yellow-500")} />
           </Button>
         );
       },

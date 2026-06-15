@@ -8,7 +8,6 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { FormattedAnnotation, TimeAxisConfig, PanelConfig } from '@/lib/annotations/types';
 import { AnnotationSchemaRead } from '@/client';
-import { FilterSet, FILTER_UI_OP_TO_BACKEND } from './AnnotationFilterControls';
 import type { Scope } from '@/lib/annotations/types';
 import AnnotationResultsChart from './AnnotationResultsChart';
 import AnnotationResultsPieChart from './AnnotationResultsPieChart';
@@ -17,7 +16,6 @@ import AnnotationResultsMap, { MapPoint } from './AnnotationResultsMap';
 import AnnotationResultsGraph from './AnnotationResultsGraph';
 import { FormulaPreview } from './formulas/FormulaPreview';
 import { AnnotationTimeAxisControls } from './AnnotationTimeAxisControls';
-import { UnifiedFilterControls } from './AnnotationFilterControls';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
@@ -43,9 +41,10 @@ import { useDragScope, DraggableScopeChip } from './panels/DragScopeProvider';
 import { PanelHeaderSlotProvider, PanelHeaderSlotRenderer } from './panels/PanelHeaderSlot';
 import { PanelConfigPopover } from './panels/PanelConfigPopover';
 import { isPanelConfigured } from '@/lib/annotations/panelCompile';
+import { resolveGridGeometry, quickSize, quickSizeLabel, heightUnits, type QuickSize } from '@/lib/annotations/grid';
 
-// Grid constants
-const GRID_COLUMNS = 12;
+// Grid constants. The column count + row height are resolved per-dashboard from
+// ``layout`` (see lib/annotations/grid.ts); these are only floors.
 const MIN_WIDTH = 1;
 const MIN_HEIGHT = 1;
 
@@ -94,10 +93,18 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   const allResults = EMPTY_ANNOTATIONS; // Panels now self-fetch
   const allSources = EMPTY_ANY_ARRAY;
   const allAssets = EMPTY_ANY_ARRAY;
+  // grid_position is optional on the panel (older/ad-hoc panels, e.g. ones a chat
+  // tool emits, may omit it) — normalize once so every read/spread below is safe.
+  const gridPos = panel.grid_position ?? { x: 0, y: 0, w: 6, h: 4 };
   const [isEditingMetadata, setIsEditingMetadata] = useState(false);
   const [editingName, setEditingName] = useState(panel.name);
   const [editingDescription, setEditingDescription] = useState(panel.description || '');
   const [showLayoutControls, setShowLayoutControls] = useState(false);
+  // Distinct facet values the pie chart discovered in its fetched data.
+  // Lifted here (rather than refetched in the popover) so the config
+  // popover's "which pies to show" toggle reuses the data the panel already
+  // has. Empty for non-pie panels / unfaceted pies.
+  const [pieFacetValues, setPieFacetValues] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStartPosition, setDragStartPosition] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [dragOverZone, setDragOverZone] = useState<'left' | 'right' | 'top' | 'bottom' | 'center' | null>(null);
@@ -146,6 +153,25 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   const handlePanelUpdate = useCallback((updates: Partial<PanelConfig>) => {
     onUpdatePanel(panel.id, updates);
   }, [onUpdatePanel, panel.id]);
+
+  // Interaction callbacks captured in a ref and exposed as stable wrappers.
+  // The content subtree below is memoized against data (not layout); routing
+  // its callbacks through stable wrappers means a parent passing fresh callback
+  // identities can't bust that memo. This is what lets a panel change position
+  // or size without re-rendering — and thus visually "reloading" — its
+  // chart/map/graph. (Resize is still reflected: each renderer has its own
+  // ResizeObserver / ResponsiveContainer.)
+  const cbRef = useRef({ onResultSelect, onMapPointClick, onTimestampClick, onLocationClick, onFieldInteraction, onRetrySingleResult });
+  cbRef.current = { onResultSelect, onMapPointClick, onTimestampClick, onLocationClick, onFieldInteraction, onRetrySingleResult };
+  const cb = useMemo(() => ({
+    onResultSelect: (r: any) => cbRef.current.onResultSelect?.(r),
+    onMapPointClick: (p: MapPoint) => cbRef.current.onMapPointClick?.(p),
+    onTimestampClick: (t: Date, k: string, pid: string) => cbRef.current.onTimestampClick?.(t, k, pid),
+    onLocationClick: (l: string, k: string, pid: string) => cbRef.current.onLocationClick?.(l, k, pid),
+    onFieldInteraction: (r: FormattedAnnotation, k: string) => cbRef.current.onFieldInteraction?.(r, k),
+    onRetrySingleResult: (id: number, prompt?: string) =>
+      cbRef.current.onRetrySingleResult?.(id, prompt) ?? Promise.resolve(null),
+  }), []);
   
   // Geocoding is now owned by AnnotationResultsMap — it kicks the
   // `POST /runs/{rid}/action/geocode` endpoint and subscribes via
@@ -157,6 +183,10 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   
   // Get run-wide settings from Zustand store — use selectors to avoid unnecessary re-renders
   const dashboardConfig = useAnnotationRunStore(state => state.dashboardConfig);
+  // Grid geometry for this dashboard (column count + row height). Drives every
+  // size clamp, quick-size preset, and the drag-resize cell math below.
+  const gridGeo = resolveGridGeometry(dashboardConfig?.layout);
+  const GRID_COLUMNS = gridGeo.columns;
   const getGlobalVariableSplitting = useAnnotationRunStore(state => state.getGlobalVariableSplitting);
   const globalVariableSplitting = getGlobalVariableSplitting();
   // Focus mode — when on, hide the per-panel header bar so panel content
@@ -200,16 +230,16 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   const handleDragStart = (e: React.DragEvent) => {
     setIsDragging(true);
     setDragStartPosition({ 
-      x: panel.grid_position.x, 
-      y: panel.grid_position.y,
-      w: panel.grid_position.w,
-      h: panel.grid_position.h
+      x: gridPos.x, 
+      y: gridPos.y,
+      w: gridPos.w,
+      h: gridPos.h
     });
     
     // Store panel information in dataTransfer for access by drop target
     const dragData = {
       panelId: panel.id,
-      grid_position: panel.grid_position
+      grid_position: gridPos
     };
     
     e.dataTransfer.setData('text/plain', JSON.stringify(dragData));
@@ -263,7 +293,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
       const draggedPanelGridPos = dragData.grid_position;
       
       if (draggedPanelId && draggedPanelId !== panel.id && draggedPanelGridPos) {
-        const targetPos = { x: panel.grid_position.x, y: panel.grid_position.y };
+        const targetPos = { x: gridPos.x, y: gridPos.y };
         
         // Get the bounds of the drop target
         const rect = e.currentTarget.getBoundingClientRect();
@@ -323,7 +353,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
           // Move the target panel to where the dragged panel was
           onUpdatePanel(panel.id, {
             grid_position: {
-              ...panel.grid_position,
+              ...gridPos,
               x: draggedPanelGridPos.x,
               y: draggedPanelGridPos.y,
             }
@@ -347,79 +377,6 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
 
   // Panels now self-fetch with server-side filtering via useAnnotationView
   const filteredResults = allResults;
-
-  // Filter UI uses its own shape (``FilterSet { logic, rules[] }``) because
-  // it was built before the backend adopted the flat ``{path, operator, value}``
-  // FieldCondition shape. Persist the UI state opaquely in panel settings so
-  // users don't lose their rules, AND translate to the backend shape on every
-  // change so ``local_filters`` actually drives the ``/view`` query. The
-  // picker emits paths with ``[*]`` for array-item fields natively, so the
-  // translation is a 1:1 passthrough at save time.
-  //
-  // Migration shim for filters authored before the picker emitted ``[*]``
-  // natively: walk the schema, inject ``[*]`` at the first array node in the
-  // stored path so the Select renders a match and the backend query still
-  // fans over the array. Idempotent on already-normalized paths.
-  const migrateLegacyPath = useCallback((path: string, schemaId?: number): string => {
-    if (!path || path.includes('[*]') || !schemaId) return path;
-    const schema = allSchemas.find((s) => s.id === schemaId);
-    const props = (schema?.output_contract as any)?.properties;
-    if (!props || typeof props !== 'object') return path;
-    const parts = path.split('.');
-    const out: string[] = [];
-    let cursor: any = props;
-    for (let i = 0; i < parts.length; i++) {
-      const key = parts[i];
-      const node = cursor?.[key];
-      if (!node) { out.push(...parts.slice(i)); break; }
-      if (node.type === 'array') {
-        out.push(`${key}[*]`);
-        const items = node.items;
-        if (items?.type === 'object' && items.properties) {
-          cursor = items.properties;
-        } else {
-          out.push(...parts.slice(i + 1));
-          break;
-        }
-      } else {
-        out.push(key);
-        if (node.type === 'object' && node.properties) cursor = node.properties;
-        else { out.push(...parts.slice(i + 1)); break; }
-      }
-    }
-    return out.join('.');
-  }, [allSchemas]);
-
-  const migratedFilterSet = useMemo<FilterSet | undefined>(() => {
-    const raw = panel.settings?.filterUIState as FilterSet | undefined;
-    if (!raw) return undefined;
-    let changed = false;
-    const rules = (raw.rules ?? []).map((r) => {
-      if (!r.fieldKey) return r;
-      const next = migrateLegacyPath(r.fieldKey, r.schemaId);
-      if (next !== r.fieldKey) changed = true;
-      return changed && next !== r.fieldKey ? { ...r, fieldKey: next } : r;
-    });
-    return changed ? { ...raw, rules } : raw;
-  }, [panel.settings?.filterUIState, migrateLegacyPath]);
-
-  const handleFilterChange = (newFilterSet: FilterSet) => {
-    const conditions = (newFilterSet.rules ?? [])
-      .filter((rule) => rule.isActive !== false && rule.fieldKey)
-      .map((rule) => ({
-        path: migrateLegacyPath(rule.fieldKey!, rule.schemaId),
-        operator: FILTER_UI_OP_TO_BACKEND[rule.operator] ?? 'eq',
-        value: rule.value,
-      }));
-
-    onUpdatePanel(panel.id, {
-      local_filters: { logic: newFilterSet.logic ?? 'and', conditions },
-      settings: {
-        ...(panel.settings ?? {}),
-        filterUIState: newFilterSet,
-      },
-    } as any);
-  };
 
   const handleSaveName = () => {
     const trimmedName = editingName.trim();
@@ -472,13 +429,11 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   const handleWidthChange = (newWidth: number) => {
     try {
       const clampedWidth = Math.max(MIN_WIDTH, Math.min(GRID_COLUMNS, newWidth));
-      const currentGridPos = panel.grid_position || { x: 0, y: 0, w: 6, h: 4 };
-      
-      onUpdatePanel(panel.id, { 
-        grid_position: { 
-          ...currentGridPos,
-          w: clampedWidth 
-        } 
+      onUpdatePanel(panel.id, {
+        grid_position: {
+          ...gridPos,
+          w: clampedWidth
+        }
       });
     } catch (error) {
       console.warn('Error updating panel width:', error);
@@ -488,11 +443,9 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   const handleHeightChange = (newHeight: number) => {
     try {
       const clampedHeight = Math.max(MIN_HEIGHT, newHeight);
-      const currentGridPos = panel.grid_position || { x: 0, y: 0, w: 6, h: 4 };
-      
-      onUpdatePanel(panel.id, { 
-        grid_position: { 
-          ...currentGridPos,
+      onUpdatePanel(panel.id, {
+        grid_position: {
+          ...gridPos,
           h: clampedHeight 
         } 
       });
@@ -501,24 +454,17 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
     }
   };
 
-  const handleQuickSize = (size: 'small' | 'medium' | 'large' | 'full') => {
-    const sizeMap = {
-      small: { w: 4, h: 3 },
-      medium: { w: 6, h: 4 },
-      large: { w: 8, h: 5 },
-      full: { w: 12, h: 6 }
-    };
-    
-    const newSize = sizeMap[size];
-    onUpdatePanel(panel.id, { 
-      grid_position: { ...panel.grid_position, ...newSize } 
+  const handleQuickSize = (size: QuickSize) => {
+    const newSize = quickSize(size, gridGeo);
+    onUpdatePanel(panel.id, {
+      grid_position: { ...gridPos, ...newSize }
     });
     toast.success(`Panel resized to ${size}`);
   };
 
   const handleResetLayout = () => {
-    onUpdatePanel(panel.id, { 
-      grid_position: { x: 0, y: 0, w: 12, h: 4 } 
+    onUpdatePanel(panel.id, {
+      grid_position: { x: 0, y: 0, w: GRID_COLUMNS, h: heightUnits(600, gridGeo.rowHeight) }
     });
     toast.success('Panel layout reset');
   };
@@ -587,11 +533,11 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   schemas={allSchemas}
                   panelConfig={panel}
                   onUpdatePanel={handlePanelUpdate}
-                  onResultSelect={onResultSelect}
-                  onRetrySingleResult={onRetrySingleResult}
+                  onResultSelect={cb.onResultSelect}
+                  onRetrySingleResult={cb.onRetrySingleResult}
                   retryingResultId={retryingResultId}
-                  onTimestampClick={onTimestampClick ? (timestamp, fieldKey) => onTimestampClick(timestamp, fieldKey, panel.id) : undefined}
-                  onLocationClick={onLocationClick ? (location, fieldKey) => onLocationClick(location, fieldKey, panel.id) : undefined}
+                  onTimestampClick={(timestamp, fieldKey) => cb.onTimestampClick(timestamp, fieldKey, panel.id)}
+                  onLocationClick={(location, fieldKey) => cb.onLocationClick(location, fieldKey, panel.id)}
                 />
               </TextSpanHighlightProvider>
             </div>
@@ -609,9 +555,9 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   schemas={allSchemas}
                   panelConfig={panel}
                   onUpdatePanel={handlePanelUpdate}
-                  showControls={!isCollapsed}
-                  onResultSelect={onResultSelect}
-                  onFieldInteraction={onFieldInteraction}
+                  showControls={!isCollapsed && !focusMode}
+                  onResultSelect={cb.onResultSelect}
+                  onFieldInteraction={cb.onFieldInteraction}
                   highlightedTimestamp={highlightTimestamp}
                   onScopeGesture={handleScopeGesture}
                 />
@@ -631,10 +577,11 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   schemas={allSchemas}
                   panelConfig={panel}
                   onUpdatePanel={handlePanelUpdate}
-                  showControls={!isCollapsed}
-                  onResultSelect={onResultSelect}
-                  onFieldInteraction={onFieldInteraction}
+                  showControls={!isCollapsed && !focusMode}
+                  onResultSelect={cb.onResultSelect}
+                  onFieldInteraction={cb.onFieldInteraction}
                   onScopeGesture={handleScopeGesture}
+                  onFacetValuesChange={setPieFacetValues}
                 />
               </TextSpanHighlightProvider>
             </div>
@@ -652,9 +599,10 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   schemas={allSchemas}
                   panelConfig={panel}
                   onUpdatePanel={handlePanelUpdate}
-                  onPointClick={onMapPointClick}
-                  onResultSelect={onResultSelect}
+                  onPointClick={cb.onMapPointClick}
+                  onResultSelect={cb.onResultSelect}
                   highlightLocation={highlightLocation}
+                  showControls={!isCollapsed && !focusMode}
                 />
               </TextSpanHighlightProvider>
             </div>
@@ -673,7 +621,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   panelConfig={panel}
                   onUpdatePanel={handlePanelUpdate}
                   allSchemas={allSchemas}
-                  onResultSelect={onResultSelect}
+                  onResultSelect={cb.onResultSelect}
                 />
               </TextSpanHighlightProvider>
             </div>
@@ -689,6 +637,27 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         );
     }
   };
+
+  // Memoize the panel content against DATA, not layout. ``grid_position`` is
+  // deliberately excluded: updatePanel preserves the reference of every field
+  // it doesn't touch, so a move/resize/compact/shuffle leaves all of these deps
+  // unchanged → the cached element is returned → the chart/map/graph subtree is
+  // not re-rendered (and never refetches). A genuine data/config edit flips the
+  // relevant ref and recomputes. Resize is still honored by each renderer's own
+  // ResizeObserver. renderPanelContent is intentionally omitted from deps (it's
+  // re-created each render); its captured values are all listed explicitly.
+  const content = useMemo(
+    () => renderPanelContent(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      panel.id, panel.type, panel.name, panel.description, panel.collapsed,
+      panel.formula, panel.formula_ref, panel.panel_config,
+      (panel as any).scopes_in, (panel as any).incoming_scopes, panel.merge_maps,
+      panel.settings, panel.fields, (panel as any).local_filters, (panel as any).time_source,
+      infospaceId, runId, allSchemas, handlePanelUpdate, handleScopeGesture, cb,
+      isCollapsed, focusMode, retryingResultId, highlightTimestamp, highlightLocation,
+    ],
+  );
 
   return (
     <PanelHeaderSlotProvider>
@@ -760,18 +729,18 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
           e.stopPropagation(); // Prevent drag start when resizing
           const startX = e.clientX;
           const startY = e.clientY;
-          const startWidth = panel.grid_position.w;
-          const startHeight = panel.grid_position.h;
+          const startWidth = gridPos.w;
+          const startHeight = gridPos.h;
           
           // Get the grid container to calculate actual grid cell size
           const gridContainer = e.currentTarget.closest('[style*="grid"]') as HTMLElement;
           let gridCellWidth = 100; // fallback
-          let gridCellHeight = 150; // fallback
-          
+          let gridCellHeight = gridGeo.rowHeight; // fallback
+
           if (gridContainer) {
             const containerRect = gridContainer.getBoundingClientRect();
-            gridCellWidth = containerRect.width / 12; // 12 columns
-            gridCellHeight = 150; // Fixed row height from the CSS
+            gridCellWidth = containerRect.width / GRID_COLUMNS;
+            gridCellHeight = gridGeo.rowHeight; // Resolved row height from the CSS var
           }
           
           const handleMouseMove = (e: MouseEvent) => {
@@ -786,7 +755,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
             const newHeight = Math.max(MIN_HEIGHT, startHeight + heightChange);
             
             // Only update if the size actually changed to prevent unnecessary updates
-            if (newWidth !== panel.grid_position.w || newHeight !== panel.grid_position.h) {
+            if (newWidth !== gridPos.w || newHeight !== gridPos.h) {
               handleWidthChange(newWidth);
               handleHeightChange(newHeight);
             }
@@ -803,7 +772,9 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         />
       )}
 
-      {!focusMode && (
+      {/* Header — always present so the panel keeps its name/description.
+          In focus mode the interactive bits (scope affordances + the control
+          cluster) drop away; only the title bar remains. */}
       <div className="flex flex-row items-center justify-between border-b px-2 py-1 flex-shrink-0">
         {/* Panel Name */}
         <div className="flex items-center gap-1.5 min-w-0 flex-shrink-1">
@@ -816,33 +787,38 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
               {panel.description}
             </span>
           )}
-          {/* Scope badge — shows count of incoming cross-panel scopes */}
-          <ScopeBadge
-            panelConfig={panel}
-            allPanels={dashboardConfig?.panels || []}
-            onRemoveScope={(scopeId) => {
-              const { removeScope } = useAnnotationRunStore.getState();
-              removeScope(panel.id, scopeId);
-            }}
-          />
-          {/* Scope target picker — click-based fallback. Drag-based handoff
-              is live via DraggableScopeChip alongside. Both resolve the same
-              pendingScopeGesture. */}
-          {pendingScopeGesture && (
+          {/* Scope affordances — interactive, so hidden in focus mode. */}
+          {!focusMode && (
             <>
-              <ScopeTargetPicker
-                sourcePanelId={panel.id}
+              {/* Scope badge — shows count of incoming cross-panel scopes */}
+              <ScopeBadge
+                panelConfig={panel}
                 allPanels={dashboardConfig?.panels || []}
-                onPush={(targetId) => handleScopeTarget(targetId, 'push')}
-                onLink={(targetId) => handleScopeTarget(targetId, 'link')}
-                trigger={
-                  <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] animate-pulse">
-                    Push selection...
-                  </Button>
-                }
+                onRemoveScope={(scopeId) => {
+                  const { removeScope } = useAnnotationRunStore.getState();
+                  removeScope(panel.id, scopeId);
+                }}
               />
-              {dragScope.pending?.sourcePanelId === panel.id && (
-                <DraggableScopeChip />
+              {/* Scope target picker — click-based fallback. Drag-based handoff
+                  is live via DraggableScopeChip alongside. Both resolve the same
+                  pendingScopeGesture. */}
+              {pendingScopeGesture && (
+                <>
+                  <ScopeTargetPicker
+                    sourcePanelId={panel.id}
+                    allPanels={dashboardConfig?.panels || []}
+                    onPush={(targetId) => handleScopeTarget(targetId, 'push')}
+                    onLink={(targetId) => handleScopeTarget(targetId, 'link')}
+                    trigger={
+                      <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] animate-pulse">
+                        Push selection...
+                      </Button>
+                    }
+                  />
+                  {dragScope.pending?.sourcePanelId === panel.id && (
+                    <DraggableScopeChip />
+                  )}
+                </>
               )}
             </>
           )}
@@ -883,7 +859,8 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
 
         
 
-        {/* Panel controls */}
+        {/* Panel controls — hidden in focus mode, leaving just the title. */}
+        {!focusMode && (
         <div className="flex items-center ml-1 flex-shrink-0">
           <ButtonGroup >
             {/* Per-panel display knobs (mark, layout, density, geocoding,
@@ -897,6 +874,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
             <PanelConfigPopover
               panel={panel}
               schemas={allSchemas}
+              availableFacets={pieFacetValues}
               onUpdate={(next) => onUpdatePanel(panel.id, next as any)}
             />
             <Button
@@ -923,7 +901,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   <div className="flex items-center justify-between">
                     <h4 className="font-medium text-xs">Panel Layout</h4>
                     <span className="text-[10px] text-muted-foreground">
-                      {panel.grid_position.w} × {panel.grid_position.h}
+                      {gridPos.w} × {gridPos.h}
                     </span>
                   </div>
 
@@ -931,18 +909,11 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   <div>
                     <Label className="text-[10px] text-muted-foreground mb-1.5 block">Quick Sizes</Label>
                     <div className="grid grid-cols-2 gap-1.5">
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleQuickSize('small')}>
-                        Small (4×3)
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleQuickSize('medium')}>
-                        Medium (6×4)
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleQuickSize('large')}>
-                        Large (8×5)
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleQuickSize('full')}>
-                        Full (12×6)
-                      </Button>
+                      {(['small', 'medium', 'large', 'full'] as QuickSize[]).map((s) => (
+                        <Button key={s} size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleQuickSize(s)}>
+                          {quickSizeLabel(s, gridGeo)}
+                        </Button>
+                      ))}
                     </div>
                   </div>
 
@@ -950,7 +921,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <Label htmlFor="panel-width" className="text-[10px] text-muted-foreground">Width</Label>
-                      <Select value={panel.grid_position.w.toString()} onValueChange={(v) => handleWidthChange(parseInt(v))}>
+                      <Select value={gridPos.w.toString()} onValueChange={(v) => handleWidthChange(parseInt(v))}>
                         <SelectTrigger className="h-7 text-xs">
                           <SelectValue />
                         </SelectTrigger>
@@ -965,12 +936,15 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                     </div>
                     <div>
                       <Label htmlFor="panel-height" className="text-[10px] text-muted-foreground">Height</Label>
-                      <Select value={panel.grid_position.h.toString()} onValueChange={(v) => handleHeightChange(parseInt(v))}>
+                      <Select value={gridPos.h.toString()} onValueChange={(v) => handleHeightChange(parseInt(v))}>
                         <SelectTrigger className="h-7 text-xs">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {Array.from({ length: 10 }, (_, i) => i + MIN_HEIGHT).map(h => (
+                          {Array.from(
+                            { length: Math.max(8, Math.ceil(1500 / gridGeo.rowHeight)) },
+                            (_, i) => i + MIN_HEIGHT,
+                          ).map(h => (
                             <SelectItem key={h} value={h.toString()}>
                               {h} units
                             </SelectItem>
@@ -998,13 +972,13 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
             </Button>
           </ButtonGroup>
         </div>
+        )}
       </div>
-      )}
 
       <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
         {/* Main Content */}
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {renderPanelContent()}
+          {content}
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
   PieChart,
   Pie,
@@ -12,10 +12,9 @@ import {
 } from 'recharts';
 import { AnnotationSchemaRead } from '@/client';
 import type { Panel, PieVizConfig } from '@/lib/annotations/types';
+import { orderFacets, effectiveVisibleFacets } from '@/lib/annotations/pieFacets';
 import AssetLink from '../assets/Helper/AssetLink';
 import { useAnnotationView } from '@/hooks/useAnnotationView';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from '@/components/ui/button';
@@ -33,12 +32,44 @@ const PIE_COLORS = [
   '#4BC0C0', '#9966FF', '#FF9F40', '#36A2EB', '#F7786B'
 ];
 
-const SLICE_OPTIONS = [
-  { value: 5, label: 'Top 5' },
-  { value: 10, label: 'Top 10' },
-  { value: 15, label: 'Top 15' },
-  { value: Infinity, label: 'All' },
-];
+// Default slice cap on a panel's first render. The cap itself is edited
+// from the panel's config popover (PieSlicesSlot); ``max_slices === null``
+// means "All".
+const DEFAULT_MAX_SLICES = 10;
+
+// On-slice label renderer (recharts ``Pie.label``). Draws the category name
+// centered on each wedge. Colour follows the theme — ``--foreground`` for the
+// text (black in light mode, white in dark) with a ``--background`` halo so it
+// stays legible over any palette colour regardless of theme. Tiny slices are
+// skipped and labels truncated to keep them from overflowing small cells.
+const RADIAN = Math.PI / 180;
+function renderSliceLabel(props: any) {
+  const { cx, cy, midAngle, innerRadius, outerRadius, percent, name } = props;
+  if (percent == null || percent < 0.04) return null;
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.6;
+  const x = cx + radius * Math.cos(-midAngle * RADIAN);
+  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+  const text = String(name ?? '');
+  const label = text.length > 12 ? `${text.slice(0, 12)}…` : text;
+  return (
+    <text
+      x={x}
+      y={y}
+      textAnchor="middle"
+      dominantBaseline="central"
+      fontSize={10}
+      style={{
+        fill: 'var(--foreground)',
+        stroke: 'var(--background)',
+        strokeWidth: 2.5,
+        paintOrder: 'stroke',
+        pointerEvents: 'none',
+      }}
+    >
+      {label}
+    </text>
+  );
+}
 
 
 interface AnnotationResultsPieChartProps {
@@ -53,6 +84,10 @@ interface AnnotationResultsPieChartProps {
   /** Unused in new architecture — kept for PanelRenderer call-site compat. */
   onFieldInteraction?: (result: any, fieldKey: string) => void;
   onScopeGesture?: (fieldPath: string, value: any, gestureType: 'click' | 'select') => void;
+  /** Reports the distinct facet values discovered in the fetched data so
+   *  PanelRenderer can feed them to the config popover's "which pies to
+   *  show" toggle. The popover is presentational — the data lives here. */
+  onFacetValuesChange?: (facetValues: string[]) => void;
 }
 
 interface PieDataPoint {
@@ -78,6 +113,7 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
   onUpdatePanel,
   showControls = true,
   onScopeGesture,
+  onFacetValuesChange,
 }) => {
   // --- Read visual roles from panel_config ---------------------------------
   const cfg = panelConfig.panel_config as PieVizConfig;
@@ -85,12 +121,26 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
   const valueMeasure = cfg.value ?? null;
   const facetBy = cfg.facet ?? null;
 
-  // Display knob: max_slices lives on panel_config. Sentinels:
+  // Display knob: max_slices lives on panel_config (edited via the config
+  // popover). Sentinels:
   //   number   → cap to that many slices (5/10/15)
   //   null     → "All" (no cap; renders every slice)
   //   undefined → never set; default to 10 (sensible first run)
   const maxSlicesFromConfig: number | null =
-    cfg.max_slices === undefined ? SLICE_OPTIONS[1].value : cfg.max_slices;
+    cfg.max_slices === undefined ? DEFAULT_MAX_SLICES : cfg.max_slices;
+
+  // Which facet pies to render. null/undefined/empty → show all.
+  const visibleFacets = cfg.visible_facets ?? null;
+  // Explicit pie order. null/empty → natural order.
+  const facetOrder = cfg.facet_order ?? null;
+  // Which facet pies render enlarged (wider cell). null/empty → none.
+  const emphasizedFacets = cfg.emphasized_facets ?? [];
+  // Draw category names directly on the slices — on by default.
+  const showSliceLabels = cfg.show_slice_labels ?? true;
+  // Fixed number of pies per row in the small-multiples grid. null → auto
+  // (as many as fit the width). A number forces that many columns, so the
+  // user can turn a 1×4 strip into e.g. a balanced 2×2.
+  const facetColumns = cfg.facet_columns ?? null;
 
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false);
   const [selectedSliceData, setSelectedSliceData] = useState<SelectedSliceDetails | null>(null);
@@ -100,17 +150,6 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
   // contributed to it.
   const [evidenceScope, setEvidenceScope] = useState<Scope | null>(null);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
-
-  // Stable ref for panelConfig values (used by handlers)
-  const panelConfigRef = useRef(panelConfig);
-  panelConfigRef.current = panelConfig;
-
-  const handleMaxSlicesChange = useCallback((value: number) => {
-    const pc = panelConfigRef.current;
-    onUpdatePanel({
-      panel_config: { ...(pc.panel_config as PieVizConfig), max_slices: value === Infinity ? null : value },
-    } as any);
-  }, [onUpdatePanel]);
 
   // --- Data fetching -------------------------------------------------------
   // Requires slice_by to be configured; value defaults to 'count' if absent.
@@ -184,7 +223,29 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
     return { pieDataMap: resultData, groupedForOtherSliceMap: resultOther };
   }, [viewData?.aggregate?.rows, viewData?.aggregate?.measure_names, sliceBy, valueMeasure, facetBy, maxSlicesFromConfig]);
 
-  const facetKeys = useMemo(() => Object.keys(pieDataMap), [pieDataMap]);
+  // All facet keys present in the data, in natural (data) order — the
+  // universe reported to the config popover.
+  const allFacetKeys = useMemo(() => Object.keys(pieDataMap), [pieDataMap]);
+
+  // Apply the user's explicit pie ordering, then narrow to the visible set.
+  // Both steps share their logic with the config popover via pieFacets.ts.
+  const orderedFacetKeys = useMemo(
+    () => orderFacets(allFacetKeys, facetOrder),
+    [allFacetKeys, facetOrder],
+  );
+  const visibleFacetKeys = useMemo(
+    () => effectiveVisibleFacets(orderedFacetKeys, visibleFacets),
+    [orderedFacetKeys, visibleFacets],
+  );
+
+  // Report the discovered facet universe upward so the config popover can
+  // render the facet controls. Keyed on the serialized list so the effect
+  // only fires when the set of facet values actually changes.
+  const allFacetKeysKey = useMemo(() => JSON.stringify(allFacetKeys), [allFacetKeys]);
+  useEffect(() => {
+    onFacetValuesChange?.(allFacetKeys);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allFacetKeysKey]);
 
   // --- Slice click handler -------------------------------------------------
   const handlePieSliceClick = useCallback((data: any, index: number, facetKey: string) => {
@@ -309,13 +370,29 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
   }, [hoveredSliceName]); // Only re-render when hover state changes
 
   // Determine whether we have any data to render across all facets
-  const hasData = facetKeys.some((k) => (pieDataMap[k]?.length ?? 0) > 0);
+  const hasData = allFacetKeys.some((k) => (pieDataMap[k]?.length ?? 0) > 0);
+
+  // Small-multiples grid sizing. Columns: fixed (``facet_columns``) or auto
+  // (as many ≥180px columns as fit). Rows use ``minmax(220px, 1fr)`` so they
+  // GROW to fill the panel height when there's spare room (no dead bottom
+  // row) but stay ≥220px and scroll when there are too many pies.
+  const isFacetGrid = visibleFacetKeys.length > 1;
+  const facetGridStyle: React.CSSProperties | undefined = isFacetGrid
+    ? {
+        display: 'grid',
+        gridTemplateColumns: facetColumns
+          ? `repeat(${facetColumns}, minmax(0, 1fr))`
+          : 'repeat(auto-fill, minmax(180px, 1fr))',
+        gridAutoRows: 'minmax(220px, 1fr)',
+        gap: '0.5rem',
+      }
+    : undefined;
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {/* Header slot empty — display knobs render inline as a canvas
-          overlay (top-right) so the panel header stays clean. The config
-          popover handles roles + filter only. */}
+      {/* Header slot empty — the config popover owns every display knob now:
+          roles, filter, the slice cap, and the "which pies to show" facet
+          toggle (fed by the facet values reported via onFacetValuesChange). */}
       <PanelHeaderSlot>{null}</PanelHeaderSlot>
 
       {showControls && !isConfigured && (
@@ -325,22 +402,6 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
       )}
 
       <div className="relative flex-1 min-h-0 rounded-b-md bg-muted/20 backdrop-blur supports-[backdrop-filter]:bg-background/40 border border-border/50">
-        {/* Inline display knob — Top-N slices selector. Floats over the
-            canvas top-right. */}
-        {showControls && isConfigured && (
-          <div className="absolute top-2 right-2 z-10 flex items-center gap-1.5 bg-background/80 backdrop-blur-sm rounded border px-2 py-1">
-            <Label htmlFor="pie-max-slices-select" className="text-[10px] text-muted-foreground whitespace-nowrap">Slices</Label>
-            <Select
-              value={(maxSlicesFromConfig ?? Infinity).toString()}
-              onValueChange={(v) => handleMaxSlicesChange(v === 'Infinity' ? Infinity : parseInt(v))}
-            >
-              <SelectTrigger id="pie-max-slices-select" className="w-20 h-6 text-[11px]"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {SLICE_OPTIONS.map(option => <SelectItem key={option.label} value={option.value.toString()}>{option.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
         {isViewLoading ? (
           <div className="flex items-center justify-center h-full">
             <p className="text-muted-foreground animate-pulse">Loading...</p>
@@ -356,20 +417,29 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
           //    consistent across cells so the eye reads them via the
           //    cells' titles, not a duplicated per-pie legend.
           //
-          // ``items-stretch`` (instead of content-start) lets cells span
-          // the full row height so pies don't get cropped when the panel
-          // is taller than the natural row size. ``auto-rows-[220px]``
-          // fixes the row height so 4 small-multiples don't accidentally
-          // form a 1×4 column when the panel is narrow.
-          <div className={`h-full ${facetKeys.length > 1 ? 'grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] auto-rows-[220px] gap-2 overflow-auto p-2 items-stretch' : ''}`}>
-            {facetKeys.map((facetKey) => {
+          // Cells stretch to fill their row (grid default ``align-items:
+          // stretch``) so pies aren't cropped. Rows grow to fill the panel
+          // height (``minmax(220px, 1fr)`` in facetGridStyle), killing the
+          // dead bottom row when a few pies would otherwise sit in one fixed
+          // 220px row. Plain row flow (not ``dense``) so the user's explicit
+          // pie order is honored — dense packing would pull later pies
+          // forward to backfill gaps left by emphasized (2-column) cells.
+          <div className={`h-full ${isFacetGrid ? 'overflow-auto p-2' : ''}`} style={facetGridStyle}>
+            {visibleFacetKeys.map((facetKey) => {
               const pieData = pieDataMap[facetKey];
               if (!pieData || pieData.length === 0) return null;
-              const isFacetted = facetKeys.length > 1;
+              const isFacetted = visibleFacetKeys.length > 1;
+              const isEmphasized = isFacetted && emphasizedFacets.includes(facetKey);
               return (
-                <div key={facetKey} className={isFacetted ? 'flex flex-col min-h-0 h-full overflow-hidden' : 'flex flex-col min-h-0 h-full'}>
+                <div
+                  key={facetKey}
+                  className={`flex flex-col min-h-0 h-full ${isFacetted ? 'overflow-hidden' : ''} ${isEmphasized ? 'col-span-2' : ''}`}
+                >
                   {isFacetted && (
-                    <p className="text-[11px] font-medium text-muted-foreground px-1 pt-1 pb-0.5 truncate flex-shrink-0" title={facetKey}>
+                    <p
+                      className={`px-1 pt-1 pb-0.5 truncate flex-shrink-0 ${isEmphasized ? 'text-xs font-semibold text-foreground' : 'text-[11px] font-medium text-muted-foreground'}`}
+                      title={facetKey}
+                    >
                       {facetKey}
                     </p>
                   )}
@@ -381,6 +451,7 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
                         cx="50%"
                         cy="50%"
                         labelLine={false}
+                        label={showSliceLabels ? renderSliceLabel : undefined}
                         outerRadius={isFacetted ? '80%' : 120}
                         fill="#8884d8"
                         dataKey="value"
@@ -419,8 +490,10 @@ const AnnotationResultsPieChart: React.FC<AnnotationResultsPieChartProps> = ({
                       {/* Legend in single mode only — small-multiples
                           drop the legend so the pie fills the cell.
                           Colors stay consistent (palette index = slice
-                          order) so the eye reads slices across cells. */}
-                      {!isFacetted && <Legend content={renderCustomLegend} />}
+                          order) so the eye reads slices across cells.
+                          On-slice labels make the legend redundant, so
+                          suppress it when they're enabled. */}
+                      {!isFacetted && !showSliceLabels && <Legend content={renderCustomLegend} />}
                     </PieChart>
                   </ResponsiveContainer>
                   </div>

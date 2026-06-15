@@ -350,10 +350,14 @@ export function AnnotationResultsTable({
   const [showFailed, setShowFailed] = useState<boolean>(
     initialTableConfig?.showFailed ?? false,
   );
-  // Unfolded by default — the user shouldn't have to click into a row or
-  // toggle anything to see annotation fields. Folded mode is still
-  // reachable via the toolbar button for dense / multi-schema views.
-  const [unfoldFields, setUnfoldFields] = useState(true);
+  // Field layout — persisted to panel_config.unfold_fields so the choice
+  // survives panel reload (same pattern as density/sort). Unfolded by default:
+  // the user shouldn't have to click anything to see annotation fields. Folded
+  // ("group by schema") is reachable via the toolbar button for dense views.
+  const unfoldFields = cfg?.unfold_fields ?? true;
+  const setUnfoldFields = useCallback((v: boolean) => {
+    onUpdatePanel({ panel_config: { ...cfg, unfold_fields: v } } as any);
+  }, [onUpdatePanel, cfg]);
   const [filterArrayItems, setFilterArrayItems] = useState(false); // NEW: Toggle to filter array items to matching ones only
   const { activeInfospace } = useInfospaceStore();
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem(); // Renaming for clarity

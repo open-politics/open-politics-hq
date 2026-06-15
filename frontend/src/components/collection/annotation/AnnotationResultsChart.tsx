@@ -10,15 +10,84 @@ import {
   YAxis,
   Tooltip as RechartsTooltip,
   ResponsiveContainer,
-  Legend,
   TooltipProps,
   Cell,
-  LegendProps,
   ReferenceLine,
   ReferenceArea,
   Dot,
 } from 'recharts';
 import { format, startOfDay, startOfWeek, startOfMonth, startOfQuarter, startOfYear } from 'date-fns';
+
+type TimeInterval = 'day' | 'week' | 'month' | 'quarter' | 'year';
+
+// Map a UTC timestamp to a contiguous integer bucket index for the interval,
+// and back. UTC throughout so the indices line up with the backend's
+// ``date_trunc`` output regardless of the browser timezone. Week indices are
+// anchored to a Monday epoch (1969-12-29) to match postgres' ISO week start.
+const WEEK_EPOCH_MS = Date.UTC(1969, 11, 29);
+const DAY_MS = 86_400_000;
+const timelineBucketIndex = (ts: number, iv: TimeInterval): number => {
+  const d = new Date(ts);
+  switch (iv) {
+    case 'year':    return d.getUTCFullYear();
+    case 'quarter': return d.getUTCFullYear() * 4 + Math.floor(d.getUTCMonth() / 3);
+    case 'month':   return d.getUTCFullYear() * 12 + d.getUTCMonth();
+    case 'week':    return Math.floor((ts - WEEK_EPOCH_MS) / (7 * DAY_MS));
+    case 'day':
+    default:        return Math.floor(ts / DAY_MS);
+  }
+};
+const timelineIndexToTs = (idx: number, iv: TimeInterval): number => {
+  switch (iv) {
+    case 'year':    return Date.UTC(idx, 0, 1);
+    case 'quarter': return Date.UTC(Math.floor(idx / 4), (idx % 4) * 3, 1);
+    case 'month':   return Date.UTC(Math.floor(idx / 12), idx % 12, 1);
+    case 'week':    return WEEK_EPOCH_MS + idx * 7 * DAY_MS;
+    case 'day':
+    default:        return idx * DAY_MS;
+  }
+};
+
+// Densify a sorted timeline so empty intervals between the first and last
+// bucket become explicit zero points. This is what makes a bucketed line read
+// as a real time series — gaps dip to zero instead of being skipped, and the
+// (proportional) time axis no longer compresses uneven spacing into an evenly-
+// spaced, misleading zig-zag. Existing buckets keep their original timestamp;
+// only the synthetic gap points are positioned via ``timelineIndexToTs``.
+// Points with no parseable date (``<UNKNOWN>``, timestamp 0) are dropped — they
+// can't sit on a time axis — and reported separately to the caller.
+const MAX_DENSIFY_BUCKETS = 2000;
+const densifyTimeline = (
+  points: ChartDataPoint[],
+  iv: TimeInterval,
+): { dense: ChartDataPoint[]; unknownCount: number } => {
+  const real = points.filter((p) => p.timestamp > 0);
+  const unknownCount = points
+    .filter((p) => !(p.timestamp > 0))
+    .reduce((sum, p) => sum + (Number(p.count) || 0), 0);
+  if (real.length < 2) return { dense: real, unknownCount };
+
+  const byIdx = new Map<number, ChartDataPoint>();
+  for (const p of real) byIdx.set(timelineBucketIndex(p.timestamp, iv), p);
+  const indices = Array.from(byIdx.keys()).sort((a, b) => a - b);
+  const lo = indices[0];
+  const hi = indices[indices.length - 1];
+  // Safety valve: a day interval over decades would generate 10k+ points and
+  // freeze the render. Fall back to the raw (non-densified) real points.
+  if (hi - lo > MAX_DENSIFY_BUCKETS) return { dense: real, unknownCount };
+
+  const dense: ChartDataPoint[] = [];
+  for (let i = lo; i <= hi; i++) {
+    const existing = byIdx.get(i);
+    if (existing) {
+      dense.push(existing);
+    } else {
+      const ts = timelineIndexToTs(i, iv);
+      dense.push({ timestamp: ts, dateString: new Date(ts).toISOString(), count: 0, documents: [] });
+    }
+  }
+  return { dense, unknownCount };
+};
 import { AnnotationSchemaRead, AssetRead } from '@/client';
 import type { ChartVizConfig, Panel, FormattedAnnotation, PanelConfig, ViewFormulaPhase } from '@/lib/annotations/types';
 import { TimeAxisConfig, TimeFrameFilter } from '@/lib/annotations/types';
@@ -29,6 +98,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from '@/components/ui/switch';
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -67,6 +137,70 @@ const PIE_COLORS = [
   '#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8',
   '#82CA9D', '#A4DE6C', '#D0ED57', '#FFC658', '#FF6B6B'
 ];
+
+// --- Time-axis tick: edge-aware anchoring + two-row stagger ---
+// recharts' default rotated ticks force the first label to hang LEFT of the
+// y-axis (textAnchor="end" + angle), which pins the whole plot inward and
+// wastes the left margin. This tick anchors the first label to ``start`` and
+// the last to ``end`` so neither overhangs the plot edges (letting the y-axis
+// sit flush left), and staggers labels onto two rows so they read horizontally
+// without colliding at tighter widths.
+const formatTimeTick = (value: string | number, interval: TimeInterval): string => {
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return String(value);
+  switch (interval) {
+    case 'year':    return format(d, 'yyyy');
+    case 'quarter': return format(d, "'Q'Q yyyy");
+    case 'month':   return format(d, 'MMM yyyy');
+    case 'week':    return format(d, 'MMM d');
+    case 'day':
+    default:        return format(d, 'MMM d, yyyy');
+  }
+};
+
+const TimeAxisTick = (props: any) => {
+  const { x, y, payload, index, visibleTicksCount, timeInterval } = props;
+  if (!payload) return null;
+  const label = formatTimeTick(payload.value, timeInterval);
+  const isFirst = index === 0;
+  const isLast = typeof visibleTicksCount === 'number' && index === visibleTicksCount - 1;
+  const anchor = isFirst ? 'start' : isLast ? 'end' : 'middle';
+  // Even ticks ride the top row, odd ticks drop to a second row so horizontal
+  // labels don't collide when many buckets share the width.
+  const dy = index % 2 === 0 ? 12 : 26;
+  return (
+    <text x={x} y={y} dy={dy} textAnchor={anchor} className="fill-muted-foreground" style={{ fontSize: 11 }}>
+      {label}
+    </text>
+  );
+};
+
+// --- Compact floating legend (top-right overlay) ---
+// Replaces recharts' bottom <Legend>, which reserved vertical layout space and
+// shrank the plot. As an absolute overlay it reclaims that space; translucent +
+// scrollable so it never hides more than a corner of the series.
+const ChartLegendOverlay: React.FC<{
+  entries: { name: string; color: string; dashed?: boolean }[];
+}> = ({ entries }) => {
+  if (entries.length === 0) return null;
+  return (
+    <div className="absolute top-1.5 right-1.5 z-20 max-w-[45%] max-h-[120px] overflow-y-auto rounded-md border border-border/60 bg-background/75 px-2 py-1.5 shadow-sm backdrop-blur-sm">
+      <ul className="space-y-1">
+        {entries.map((e, i) => (
+          <li key={`${e.name}-${i}`} className="flex items-center gap-1.5 leading-none">
+            <span
+              className="inline-block h-[3px] w-3.5 flex-shrink-0 rounded-sm"
+              style={{ backgroundColor: e.color, opacity: e.dashed ? 0.65 : 1 }}
+            />
+            <span className="truncate text-[11px] text-foreground/90" title={e.name}>
+              {e.name}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+};
 
 // --- DATA STRUCTURES --- //
 export interface ChartDataPoint {
@@ -1042,6 +1176,15 @@ const CustomTooltipContent = ({ active, payload, label, keyToSplitValueMap, coor
     // Consider "near right edge" if we're in the last 25% of the chart
     return cursorX > (chartWidth * 0.75);
   }, [coordinate, viewBox]);
+
+  // ...and near the left edge — the leftmost point's tooltip would otherwise be
+  // shifted left (the default -80px nudge) right off the chart and clipped.
+  const isNearLeftEdge = React.useMemo(() => {
+    if (!coordinate || !viewBox) return false;
+    const chartWidth = viewBox.width || 0;
+    const cursorX = coordinate.x || 0;
+    return cursorX < (chartWidth * 0.2);
+  }, [coordinate, viewBox]);
   
   // Store payload when we have it
   React.useEffect(() => {
@@ -1117,8 +1260,9 @@ const CustomTooltipContent = ({ active, payload, label, keyToSplitValueMap, coor
       style={{ 
         position: 'relative',
         zIndex: 9999,
-        // Shift left for most points, but shift right for rightmost points to prevent cutoff
-        marginLeft: isNearRightEdge ? '-220px' : '-80px',
+        // Shift left for most points; for the leftmost points don't shift (would
+        // clip off the left edge), and for the rightmost shift further left.
+        marginLeft: isNearLeftEdge ? '8px' : isNearRightEdge ? '-220px' : '-80px',
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
@@ -1239,121 +1383,37 @@ const CustomTooltipContent = ({ active, payload, label, keyToSplitValueMap, coor
 // === CUSTOM LEGEND COMPONENT ===
 // Elegant legend that groups statistical variants (min/max/avg) with their base field
 
-interface CustomLegendProps {
-  payload?: any[];
-  showStatistics: boolean;
-}
-
-const CustomLegend: React.FC<CustomLegendProps> = ({ payload, showStatistics }) => {
-  if (!payload || payload.length === 0) return null;
-
-  // Group fields by their base name (without _min/_max/_avg suffix)
-  const fieldGroups = new Map<string, { 
-    base: any; 
-    stats: { min?: any; max?: any; avg?: any } 
-  }>();
-
-  payload.forEach(item => {
-    const dataKey = String(item.dataKey || '');
-    
-    // Skip annotation count
-    if (dataKey === 'count') return;
-    
-    // Check if this is a statistical variant
-    const minMatch = dataKey.match(/^(.+)_min$/);
-    const maxMatch = dataKey.match(/^(.+)_max$/);
-    const avgMatch = dataKey.match(/^(.+)_avg$/);
-    
-    if (showStatistics && minMatch) {
-      const baseKey = minMatch[1];
-      if (!fieldGroups.has(baseKey)) {
-        fieldGroups.set(baseKey, { base: null, stats: {} });
-      }
-      fieldGroups.get(baseKey)!.stats.min = item;
-    } else if (showStatistics && maxMatch) {
-      const baseKey = maxMatch[1];
-      if (!fieldGroups.has(baseKey)) {
-        fieldGroups.set(baseKey, { base: null, stats: {} });
-      }
-      fieldGroups.get(baseKey)!.stats.max = item;
-    } else if (showStatistics && avgMatch) {
-      const baseKey = avgMatch[1];
-      if (!fieldGroups.has(baseKey)) {
-        fieldGroups.set(baseKey, { base: null, stats: {} });
-      }
-      fieldGroups.get(baseKey)!.stats.avg = item;
-    } else {
-      // Base field
-      if (!fieldGroups.has(dataKey)) {
-        fieldGroups.set(dataKey, { base: item, stats: {} });
-      } else {
-        fieldGroups.get(dataKey)!.base = item;
-      }
-    }
-  });
-
+/**
+ * Numeric axis-bound input with a local draft buffer. A plain controlled
+ * `<input type=number>` bound to the parsed config value eats intermediate
+ * states — trailing decimals ("0." snaps back to "0") and a lone "-". Buffering
+ * the raw string and committing only valid parses lets the user type "-0.5"
+ * naturally; an empty field commits null (that side auto-scales).
+ */
+const AxisBoundInput: React.FC<{
+  value: number | null;
+  onCommit: (v: number | null) => void;
+  placeholder?: string;
+}> = ({ value, onCommit, placeholder }) => {
+  const [draft, setDraft] = useState(value === null ? '' : String(value));
+  // Resync when the config changes from outside (e.g. the Auto reset button).
+  useEffect(() => { setDraft(value === null ? '' : String(value)); }, [value]);
   return (
-    <div className="flex flex-wrap justify-center gap-x-6 gap-y-3 px-4 py-3">
-      {Array.from(fieldGroups.entries()).map(([baseKey, group]) => {
-        if (!group.base) return null;
-        
-        const hasStats = showStatistics && (group.stats.min || group.stats.max || group.stats.avg);
-        const displayName = group.base.value?.length > 35 
-          ? group.base.value.substring(0, 32) + '...' 
-          : group.base.value;
-
-        return (
-          <div key={baseKey} className="flex items-center gap-2">
-            {/* Main field indicator */}
-            <div className="flex items-center gap-1.5">
-              <div
-                className="w-4 h-[3px] rounded-sm"
-                style={{ backgroundColor: group.base.color }}
-              />
-              <span className="text-xs font-medium leading-tight">{displayName}</span>
-            </div>
-            
-            {/* Statistical variants indicator - elegant grouped display */}
-            {hasStats && (
-              <div className="flex items-center gap-1 ml-0.5 pl-2 border-l border-border/50">
-                <div className="flex flex-col gap-[2px] items-center">
-                  {/* Visual bars for min/avg/max */}
-                  <div className="flex items-end gap-[3px] h-4">
-                    {group.stats.min && (
-                      <div 
-                        className="w-[4px] h-[8px] rounded-sm"
-                        style={{ backgroundColor: group.base.color, opacity: 0.45 }}
-                        title="Minimum value line"
-                      />
-                    )}
-                    {group.stats.avg && (
-                      <div 
-                        className="w-[4px] h-[14px] rounded-sm"
-                        style={{ backgroundColor: group.base.color, opacity: 0.75 }}
-                        title="Average value line"
-                      />
-                    )}
-                    {group.stats.max && (
-                      <div 
-                        className="w-[4px] h-[8px] rounded-sm"
-                        style={{ backgroundColor: group.base.color, opacity: 0.45 }}
-                        title="Maximum value line"
-                      />
-                    )}
-                  </div>
-                  {/* Connecting line */}
-                  <div 
-                    className="w-full h-[1.5px] opacity-35"
-                    style={{ backgroundColor: group.base.color }}
-                  />
-                </div>
-                <span className="text-[9px] text-muted-foreground ml-0.5 leading-none font-medium">range</span>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
+    <Input
+      type="number"
+      inputMode="decimal"
+      placeholder={placeholder ?? 'auto'}
+      value={draft}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setDraft(raw);
+        const trimmed = raw.trim();
+        if (trimmed === '') { onCommit(null); return; }
+        const parsed = Number(trimmed);
+        if (!Number.isNaN(parsed)) onCommit(parsed); // skip intermediate "-"/"1."
+      }}
+      className="h-6 text-[11px]"
+    />
   );
 };
 
@@ -1406,9 +1466,49 @@ const AnnotationResultsChart: React.FC<Props> = ({
   // --- UI state ---
   const initialSettings = (panelConfig as any).settings;
   const [isGrouped, setIsGrouped] = useState(initialSettings?.isGrouped ?? false);
-  const [selectedTimeInterval, setSelectedTimeInterval] = useState<'day' | 'week' | 'month' | 'quarter' | 'year'>(
-    initialSettings?.selectedTimeInterval || 'month'
-  );
+
+  // Time bucket interval — single source of truth. ``cfg.time_interval`` drives
+  // BOTH the backend ``date_trunc`` (via compileForPanel) and the x-axis tick
+  // labels here, so they can never disagree. Older panels stored the interval
+  // in ``settings.selectedTimeInterval``; migrate that as the fallback default.
+  const selectedTimeInterval: 'day' | 'week' | 'month' | 'quarter' | 'year' =
+    (cfg?.time_interval as 'day' | 'week' | 'month' | 'quarter' | 'year' | undefined)
+    ?? initialSettings?.selectedTimeInterval
+    ?? 'month';
+  const setSelectedTimeInterval = useCallback((iv: 'day' | 'week' | 'month' | 'quarter' | 'year') => {
+    onUpdatePanel({ panel_config: { ...(cfg ?? { kind: 'chart', y: [], mark: 'timeline' }), time_interval: iv } } as any);
+  }, [cfg, onUpdatePanel]);
+
+  // Timeline render style — detail (sharp linear), smooth (spline), bars.
+  // Persisted in panel_config; orthogonal to bucketing (interval). Default
+  // smooth: a bucketed series should read as a clean curve out of the box.
+  const lineStyle: 'detail' | 'smooth' | 'bars' = (cfg?.line_style as any) ?? 'smooth';
+  const setLineStyle = useCallback((s: 'detail' | 'smooth' | 'bars') => {
+    onUpdatePanel({ panel_config: { ...(cfg ?? { kind: 'chart', y: [], mark: 'timeline' }), line_style: s } } as any);
+  }, [cfg, onUpdatePanel]);
+  const curveType: 'linear' | 'monotone' = lineStyle === 'detail' ? 'linear' : 'monotone';
+  const renderAsBars = lineStyle === 'bars';
+
+  // Value-axis range — let the user pin the y-axis so the data magnitude
+  // doesn't dictate the height. Either bound null = that side auto-scales.
+  // Persisted in panel_config alongside the other inline chart options.
+  const yMin: number | null = typeof cfg?.y_min === 'number' ? cfg.y_min : null;
+  const yMax: number | null = typeof cfg?.y_max === 'number' ? cfg.y_max : null;
+  const setYBound = useCallback((key: 'y_min' | 'y_max', next: number | null) => {
+    onUpdatePanel({ panel_config: { ...(cfg ?? { kind: 'chart', y: [], mark: 'timeline' }), [key]: next } } as any);
+  }, [cfg, onUpdatePanel]);
+  const resetYBounds = useCallback(() => {
+    onUpdatePanel({ panel_config: { ...(cfg ?? { kind: 'chart', y: [], mark: 'timeline' }), y_min: null, y_max: null } } as any);
+  }, [cfg, onUpdatePanel]);
+  const yAxisHasBound = yMin !== null || yMax !== null;
+  // recharts pins a number axis to [0, 'auto'] by default and only clips
+  // outliers when allowDataOverflow is on. We touch the axis ONLY when a bound
+  // is set — otherwise spread nothing so existing charts keep their exact
+  // default. When pinned, the unset side falls back to recharts' own defaults
+  // (0 for min, 'auto' for max) and overflow clips to the fixed range.
+  const yAxisRangeProps = yAxisHasBound
+    ? { domain: [yMin ?? 0, yMax ?? 'auto'] as [number | string, number | string], allowDataOverflow: true }
+    : {};
   const [groupingSchemeId, setGroupingSchemeId] = useState<number | null>(
     initialSettings?.groupingSchemeId ?? (schemas.length > 0 ? schemas[0].id : null)
   );
@@ -1499,16 +1599,12 @@ const AnnotationResultsChart: React.FC<Props> = ({
     const normalizeDate = (raw: any): string | null => {
       const d = new Date(raw as any);
       if (isNaN(d.getTime())) return null;
-      let start: Date;
-      switch (selectedTimeInterval) {
-        case 'year':    start = startOfYear(d); break;
-        case 'quarter': start = startOfQuarter(d); break;
-        case 'month':   start = startOfMonth(d); break;
-        case 'week':    start = startOfWeek(d, { weekStartsOn: 1 }); break;
-        case 'day':
-        default:        start = startOfDay(d); break;
-      }
-      return String(start.getTime());
+      // Key by the UTC bucket start — identical to the backend's date_trunc and
+      // to serverChartData's bucket key. date-fns startOf* would normalize in
+      // local time and miss every bucket in a non-UTC browser, leaving the
+      // drill-down / "Based on N documents" count empty.
+      const idx = timelineBucketIndex(d.getTime(), selectedTimeInterval);
+      return String(timelineIndexToTs(idx, selectedTimeInterval));
     };
 
     for (const r of rawItems) {
@@ -1536,15 +1632,16 @@ const AnnotationResultsChart: React.FC<Props> = ({
     return map;
   }, [rowsViewData?.rows?.items, isGrouped, groupingFieldKey, xField, selectedTimeInterval]);
 
-  const { serverChartData, groupValues } = useMemo((): {
+  const { serverChartData, groupValues, unknownCount } = useMemo((): {
     serverChartData: ChartDataPoint[];
     groupValues: string[];
+    unknownCount: number;
   } => {
-    if (isViewLoading) return { serverChartData: [], groupValues: [] };
+    if (isViewLoading) return { serverChartData: [], groupValues: [], unknownCount: 0 };
 
     // New shape: data.aggregate is ViewFormulaPhase (OutputRelation)
     const rel = viewData?.aggregate as ViewFormulaPhase | undefined;
-    if (!rel || rel.rows.length === 0) return { serverChartData: [], groupValues: [] };
+    if (!rel || rel.rows.length === 0) return { serverChartData: [], groupValues: [], unknownCount: 0 };
 
     const relRows = rel.rows;
 
@@ -1587,7 +1684,14 @@ const AnnotationResultsChart: React.FC<Props> = ({
       // Sort by timestamp when x is a date
       const anyDate = points.some(p => p.timestamp > 0);
       if (anyDate) points.sort((a, b) => a.timestamp - b.timestamp);
-      return { serverChartData: points, groupValues: [] };
+      // Timeline mode: fill empty intervals so the line is a true time series
+      // (gaps dip to zero on a proportional axis) instead of an evenly-spaced
+      // categorical zig-zag. Grouped mode keeps every raw point as a category.
+      if (!isGrouped && anyDate) {
+        const { dense, unknownCount } = densifyTimeline(points, selectedTimeInterval);
+        return { serverChartData: dense, groupValues: [], unknownCount };
+      }
+      return { serverChartData: points, groupValues: [], unknownCount: 0 };
     }
 
     // Multi-series (color dimension): pivot rows by keys[colorBy].
@@ -1634,8 +1738,12 @@ const AnnotationResultsChart: React.FC<Props> = ({
     const rankedGroups = Array.from(groups).sort(
       (a, b) => (groupTotals.get(b) ?? 0) - (groupTotals.get(a) ?? 0),
     );
-    return { serverChartData: sorted, groupValues: rankedGroups };
-  }, [viewData?.aggregate, isViewLoading, xField, ySeries, colorBy, isGrouped, bucketAssetsByKey]);
+    if (!isGrouped) {
+      const { dense, unknownCount } = densifyTimeline(sorted, selectedTimeInterval);
+      return { serverChartData: dense, groupValues: rankedGroups, unknownCount };
+    }
+    return { serverChartData: sorted, groupValues: rankedGroups, unknownCount: 0 };
+  }, [viewData?.aggregate, isViewLoading, xField, ySeries, colorBy, isGrouped, bucketAssetsByKey, selectedTimeInterval]);
 
   // High-cardinality guard: many groups produce unreadable charts. Past 20,
   // show a warning and truncate to the top-N (backend already returns all;
@@ -1743,8 +1851,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
   
   // --- Statistical visualization controls ---
   const [showStatistics, setShowStatistics] = useState(false);
-  const [showAnnotationBars, setShowAnnotationBars] = useState(true);
-  const [selectedSchemaIds, setSelectedSchemaIds] = useState<number[]>(() => 
+  const [selectedSchemaIds, setSelectedSchemaIds] = useState<number[]>(() =>
     schemas.map(s => s.id)
   );
   
@@ -2319,6 +2426,23 @@ const AnnotationResultsChart: React.FC<Props> = ({
     }
   }, [processedData.fields.map(f => f.key).sort().join(',')]); // FIXED: Use stable field key representation
 
+  // Non-temporal x → fall back to Grouped. Timeline force-buckets x as a date;
+  // if the backend parsed *zero* of the values as dates (every row landed in
+  // the undated bucket), x isn't a timeline field at all — it's categorical.
+  // Switch to Grouped, which renders it as a categorical bar chart. One-shot
+  // per mount (a ref) so we never fight a user who deliberately picks Timeline.
+  const autoGroupedRef = useRef(false);
+  useEffect(() => {
+    if (autoGroupedRef.current || isGrouped || isViewLoading) return;
+    // serverChartData (densified) holds only dated buckets; unknownCount > 0
+    // with none dated means data came back but nothing was a date.
+    if (serverChartData.length === 0 && unknownCount > 0) {
+      autoGroupedRef.current = true;
+      setIsGrouped(true);
+      persistChartState({ isGrouped: true });
+    }
+  }, [isGrouped, isViewLoading, serverChartData.length, unknownCount, persistChartState]);
+
   // Evidence drawer state — double-click to drill into the annotations that
   // contributed to the clicked bar/point.
   const [evidenceScope, setEvidenceScope] = useState<Scope | null>(null);
@@ -2599,6 +2723,11 @@ const AnnotationResultsChart: React.FC<Props> = ({
   const needsXPick = !isGrouped && !xField;
   const showPickerEmptyState = needsXPick;
 
+  // Dots clutter (and slow) a dense timeline; show them only when the series
+  // is short enough to read point-by-point.
+  const showSeriesDots = Array.isArray(processedData.chartData)
+    && processedData.chartData.length <= 60;
+
   return (
     <div className="h-full flex flex-col space-y-3">
       {/* Mark toggle moved inline (display knob — stays on the canvas, not
@@ -2736,37 +2865,109 @@ const AnnotationResultsChart: React.FC<Props> = ({
             </Popover>
           )}
 
-          {/* Display toggles */}
+          {/* Time bucket interval — single source of truth (cfg.time_interval).
+              Drives the backend date_trunc AND the x-axis tick labels. */}
+          {!isGrouped && (
+            <Select value={selectedTimeInterval} onValueChange={(v) => setSelectedTimeInterval(v as any)}>
+              <SelectTrigger className="w-[88px] h-6 text-[11px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="day"     className="text-xs">Day</SelectItem>
+                <SelectItem value="week"    className="text-xs">Week</SelectItem>
+                <SelectItem value="month"   className="text-xs">Month</SelectItem>
+                <SelectItem value="quarter" className="text-xs">Quarter</SelectItem>
+                <SelectItem value="year"    className="text-xs">Year</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+
+          {/* Render style — how the bucketed series is drawn. Detail = sharp
+              linear line; Smooth = spline; Bars = vertical bars. */}
           {!isGrouped && (
             <ToggleGroup
-              type="multiple"
-              value={[
-                ...(showStatistics ? ['stats'] : []),
-                ...(showAnnotationBars ? ['bars'] : []),
-                ...(showPendingAssets ? ['pending'] : []),
-              ]}
-              onValueChange={(values) => {
-                setShowStatistics(values.includes('stats'));
-                setShowAnnotationBars(values.includes('bars'));
-                if (monitoringMode) handleShowPendingChange(values.includes('pending'));
-              }}
+              type="single"
+              value={lineStyle}
+              onValueChange={(v) => { if (v) setLineStyle(v as 'detail' | 'smooth' | 'bars'); }}
+              size="sm"
+              variant="outline"
+              className="h-6"
+            >
+              <ToggleGroupItem value="detail" className="h-6 px-2 text-[11px]">Detail</ToggleGroupItem>
+              <ToggleGroupItem value="smooth" className="h-6 px-2 text-[11px]">Smooth</ToggleGroupItem>
+              <ToggleGroupItem value="bars"   className="h-6 px-2 text-[11px]">Bars</ToggleGroupItem>
+            </ToggleGroup>
+          )}
+
+          {/* Stats overlay — min/max range lines around numeric metrics. */}
+          {!isGrouped && (
+            <ToggleGroup
+              type="single"
+              value={showStatistics ? 'stats' : ''}
+              onValueChange={(v) => setShowStatistics(v === 'stats')}
               size="sm"
               variant="outline"
               className="h-6"
             >
               <ToggleGroupItem value="stats" className="h-6 px-2 text-[11px]">Stats</ToggleGroupItem>
-              <ToggleGroupItem value="bars" className="h-6 px-2 text-[11px]">Bars</ToggleGroupItem>
-              {monitoringMode && (
-                <ToggleGroupItem value="pending" className="h-6 px-2 text-[11px]">Pending</ToggleGroupItem>
-              )}
             </ToggleGroup>
           )}
+
+          {/* Y-axis range — pin the value axis so the data magnitude doesn't
+              dictate height. Applies to both timeline and grouped (bars). */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn("h-6 px-2 text-[11px]", yAxisHasBound && "border-primary text-primary")}
+              >
+                <SlidersHorizontal className="h-3 w-3 mr-1" />
+                Y axis{yAxisHasBound ? ` (${yMin ?? '·'}–${yMax ?? '·'})` : ''}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-52 p-3" align="end" side="bottom">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-medium">Y-axis range</Label>
+                  {yAxisHasBound && (
+                    <Button variant="ghost" size="sm" className="text-[10px] px-1.5 h-5" onClick={resetYBounds}>
+                      Auto
+                    </Button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">Min</Label>
+                    <AxisBoundInput value={yMin} onCommit={(v) => setYBound('y_min', v)} />
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">Max</Label>
+                    <AxisBoundInput value={yMax} onCommit={(v) => setYBound('y_max', v)} />
+                  </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground leading-snug">
+                  Leave blank for auto. Pinning a bound clips the axis so the data range no longer sets the height.
+                </p>
+              </div>
+            </PopoverContent>
+          </Popover>
+
           {!isGrouped && renderedGroupValues.length === 0 && (
             <AnalyticsOverlayToolbar
               value={analyticsConfig}
               onChange={setAnalyticsConfig}
               disabled={serverChartData.length < 2}
             />
+          )}
+          {/* The time axis can only plot dated buckets — annotations whose x
+              value didn't parse as a date are excluded here (they'd pin to the
+              epoch and distort the scale). Surface the count so it's not a
+              silent drop. */}
+          {!isGrouped && unknownCount > 0 && (
+            <span className="text-[10px] text-muted-foreground ml-1">
+              {unknownCount} undated excluded
+            </span>
           )}
           </div>
 
@@ -2841,7 +3042,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
                     <ResponsiveContainer width="100%" height="100%">
                       <ComposedChart
                         data={data}
-                        margin={{ top: 4, right: 4, left: 4, bottom: 0 }}
+                        margin={{ top: 4, right: 4, left: 1, bottom: 0 }}
                       >
                         <XAxis 
                           dataKey="valueString" 
@@ -2850,13 +3051,13 @@ const AnnotationResultsChart: React.FC<Props> = ({
                           textAnchor="end"
                           height={60}
                         />
-                        <YAxis yAxisId="left" tick={{ fontSize: 12 }} />
+                        <YAxis yAxisId="left" width={30} tickMargin={2} tick={{ fontSize: 12 }} {...yAxisRangeProps} />
                         <RechartsTooltip 
-                          cursor={{ fill: 'rgba(255, 255, 255, 0.1)' }}
+                          cursor={{ fill: 'rgba(255, 255, 255, 0.6)' }}
                           content={({ active, payload, label }) => {
                             if (active && payload && payload.length > 0) {
                               return (
-                                <div className="bg-card/95 border border-border p-3 rounded-lg shadow-md">
+                                <div className="bg-background/95 border border-border p-3 rounded-lg shadow-md">
                                   <p className="font-medium">{label}</p>
                                   <p className="text-sm">Count: {payload[0].value}</p>
                                 </div>
@@ -2880,6 +3081,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
               ))}
           </div>
         ) : (
+          <div className="relative w-full h-full">
           <ResponsiveContainer width="100%" height="100%">
             {processedData.type === 'grouped' ? (
               <ComposedChart
@@ -2893,13 +3095,13 @@ const AnnotationResultsChart: React.FC<Props> = ({
                   textAnchor="end"
                   height={60}
                 />
-                <YAxis yAxisId="left" tick={{ fontSize: 12 }} />
+                <YAxis yAxisId="left" width={30} tickMargin={2} tick={{ fontSize: 12 }} {...yAxisRangeProps} />
                 <RechartsTooltip 
                   cursor={{ fill: 'rgba(255, 255, 255, 0.1)' }}
                   content={({ active, payload, label }) => {
                     if (active && payload && payload.length > 0) {
                       return (
-                        <div className="bg-card/95 border border-border p-3 rounded-lg shadow-md">
+                        <div className="bg-background/95 border border-border p-3 rounded-lg shadow-md">
                           <p className="font-medium">{label}</p>
                           <p className="text-sm">Count: {payload[0].value}</p>
                         </div>
@@ -2920,33 +3122,27 @@ const AnnotationResultsChart: React.FC<Props> = ({
             ) : (
               <ComposedChart
                 data={processedData.chartData as ChartDataPoint[]}
-                margin={{ top: 8, right: 4, left: 4, bottom: 0 }}
+                margin={{ top: 8, right: 4, left: 0, bottom: 0 }}
                 onClick={handleTimelinePointClick}
               >
+                {/* Lines/smooth ride a true time scale (dataKey=timestamp,
+                    type=number, scale=time) so spacing is proportional to real
+                    time and the densified zero points sit in the right place.
+                    Bars want even category slots, so they key off dateString. */}
                 <XAxis
-                  dataKey="dateString"
-                  tick={{ fontSize: 12 }}
-                  angle={-25}
-                  textAnchor="end"
-                  height={60}
-                  tickFormatter={(value: string) => {
-                    const d = new Date(value);
-                    if (isNaN(d.getTime())) return String(value);
-                    const iv = selectedTimeInterval;
-                    switch (iv) {
-                      case 'year':    return format(d, 'yyyy');
-                      case 'quarter': return format(d, "'Q'Q yyyy");
-                      case 'month':   return format(d, 'MMM yyyy');
-                      case 'week':    return format(d, "MMM d");
-                      case 'day':
-                      default:        return format(d, 'MMM d, yyyy');
-                    }
-                  }}
+                  dataKey={renderAsBars ? 'dateString' : 'timestamp'}
+                  {...(renderAsBars
+                    ? {}
+                    : { type: 'number' as const, scale: 'time' as const, domain: ['dataMin', 'dataMax'] as [string, string] })}
+                  interval="preserveStartEnd"
+                  height={38}
+                  tickMargin={4}
+                  tick={<TimeAxisTick timeInterval={selectedTimeInterval} />}
                 />
-                <YAxis yAxisId="left" tick={{ fontSize: 12 }} />
-                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} />
+                <YAxis yAxisId="left" width={30} tickMargin={2} tick={{ fontSize: 12 }} {...yAxisRangeProps} />
+                <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} hide />
                 <RechartsTooltip 
-                  cursor={{ fill: 'rgba(255, 255, 255, 0.1)' }}
+                  cursor={{ fill: 'rgba(255, 255, 255, 0.6)' }}
                   content={<CustomTooltipContent keyToSplitValueMap={new Map()} />}
                   allowEscapeViewBox={{ x: true, y: true }}
                   wrapperStyle={{ pointerEvents: 'auto', zIndex: 9999, outline: 'none' }}
@@ -2981,33 +3177,27 @@ const AnnotationResultsChart: React.FC<Props> = ({
                     if (isNaN(pointDate.getTime())) return false;
                     return intervalStart(pointDate) === targetBucket;
                   });
-                  console.log('[Chart] highlight attempt', {
-                    interval: selectedTimeInterval,
-                    targetIso: new Date(targetBucket).toISOString(),
-                    bucketsCount: chartData.length,
-                    firstBucket: chartData[0]?.dateString,
-                    lastBucket: chartData[chartData.length - 1]?.dateString,
-                    matched: !!matchingPoint,
-                    matchedDateString: matchingPoint?.dateString,
-                  });
-                  
+
                   if (matchingPoint) {
-                    console.log('[Chart] Found matching point, rendering highlight:', matchingPoint.dateString);
+                    // x must match the active axis: numeric timestamp on the
+                    // time scale (lines/smooth), dateString on the category
+                    // scale (bars).
+                    const xRef = renderAsBars ? matchingPoint.dateString : matchingPoint.timestamp;
                     return (
                       <>
                         {/* Subtle background highlight area */}
                         <ReferenceArea
                           yAxisId="left"
-                          x1={matchingPoint.dateString}
-                          x2={matchingPoint.dateString}
+                          x1={xRef}
+                          x2={xRef}
                           strokeOpacity={0.3}
                           fill="#3b82f6"
-                          fillOpacity={0.1}
+                          fillOpacity={0.6}
                         />
                         {/* Vertical reference line at the highlighted timestamp */}
                         <ReferenceLine
                           yAxisId="left"
-                          x={matchingPoint.dateString}
+                          x={xRef}
                           stroke="#3b82f6"
                           strokeWidth={2}
                           strokeDasharray="3 3"
@@ -3024,21 +3214,12 @@ const AnnotationResultsChart: React.FC<Props> = ({
                   return null;
                 })()}
                 
-                {/* Custom legend component that elegantly groups statistical variants */}
-                {fieldsToRender.length > 0 && (
-                  <Legend 
-                    content={<CustomLegend showStatistics={showStatistics} />}
-                    verticalAlign="bottom" 
-                    align="center"
-                    wrapperStyle={{ 
-                      paddingTop: '0px',
-                      paddingBottom: 'px',
-                    }}
-                  />
-                )}
-                
+                {/* Series legend renders as a floating top-right overlay
+                    (ChartLegendOverlay, mounted outside the chart) so it no
+                    longer steals vertical plot space. */}
+
                 {/* Monitoring mode: Stacked status bars */}
-                {monitoringMode && showAnnotationBars && (
+                {monitoringMode && (
                   <>
                     <Bar
                       yAxisId="right"
@@ -3073,22 +3254,6 @@ const AnnotationResultsChart: React.FC<Props> = ({
                   </>
                 )}
                 
-                {/* Standard annotation count bars (non-monitoring mode) */}
-                {!monitoringMode && showAnnotationBars && (
-                  <Bar
-                    yAxisId="right"
-                    dataKey="count"
-                    fill="#e0e7ff"
-                    fillOpacity={0.3}
-                    stroke="#6366f1"
-                    strokeWidth={1}
-                    name="Annotation Count"
-                    isAnimationActive={false}
-                    barSize={20}
-                    maxBarSize={30}
-                  />
-                )}
-                
                 {/* Monitoring mode: Pending count line */}
                 {monitoringMode && showPendingAssets && (
                   <Line
@@ -3113,32 +3278,50 @@ const AnnotationResultsChart: React.FC<Props> = ({
                   })
                 }
                 
-                                 {/* Render lines for each visible field */}
-                 {fieldsToRender.map((field, index) => {
-                   const fieldColor = PIE_COLORS[index % PIE_COLORS.length];
-
-                   return (
-                     <Line
-                       key={field.key}
-                       yAxisId="left"
-                       type="monotone"
-                       dataKey={field.key}
-                       stroke={fieldColor}
-                       strokeWidth={2}
-                       dot={{ fill: fieldColor, strokeWidth: 0, r: 4 }}
-                       activeDot={{
-                         r: 8,
-                         strokeWidth: 0,
-                         fill: fieldColor,
-                         style: { cursor: 'pointer' }
-                       }}
-                       name={field.displayName}
-                       connectNulls={true}
-                       isAnimationActive={false}
-                       onClick={handleTimelinePointClick}
-                     />
-                   );
-                 })}
+                {/* Primary series — one per visible field (or 'count' when no
+                    metric is configured). Drawn per render style: bars, or a
+                    line whose curve is linear (Detail) or spline (Smooth).
+                    Skipped in split mode: the per-group series below already
+                    decompose the total, so the aggregate line would be noise. */}
+                {renderedGroupValues.length === 0 && fieldsToRender.map((field, index) => {
+                  const fieldColor = PIE_COLORS[index % PIE_COLORS.length];
+                  if (renderAsBars) {
+                    return (
+                      <Bar
+                        key={field.key}
+                        yAxisId="left"
+                        dataKey={field.key}
+                        fill={fieldColor}
+                        name={field.displayName}
+                        isAnimationActive={false}
+                        maxBarSize={48}
+                        cursor="pointer"
+                        onClick={handleTimelinePointClick}
+                      />
+                    );
+                  }
+                  return (
+                    <Line
+                      key={field.key}
+                      yAxisId="left"
+                      type={curveType}
+                      dataKey={field.key}
+                      stroke={fieldColor}
+                      strokeWidth={2}
+                      dot={showSeriesDots ? { fill: fieldColor, strokeWidth: 0, r: 3 } : false}
+                      activeDot={{
+                        r: 7,
+                        strokeWidth: 0,
+                        fill: fieldColor,
+                        style: { cursor: 'pointer' }
+                      }}
+                      name={field.displayName}
+                      connectNulls={true}
+                      isAnimationActive={false}
+                      onClick={handleTimelinePointClick}
+                    />
+                  );
+                })}
 
                 {/* Analytics overlays — client-side derived series. */}
                 {overlayData && analyticsConfig.rollingAvg && (
@@ -3201,7 +3384,7 @@ const AnnotationResultsChart: React.FC<Props> = ({
                     <ReferenceLine
                       key={`peak-${idx}`}
                       yAxisId="left"
-                      x={point.dateString}
+                      x={renderAsBars ? point.dateString : point.timestamp}
                       stroke="#a855f7"
                       strokeWidth={1}
                       label={{ value: '▲', fontSize: 10, fill: '#a855f7', position: 'top' }}
@@ -3216,15 +3399,28 @@ const AnnotationResultsChart: React.FC<Props> = ({
                   .filter(g => !hiddenGroupValues.has(g))
                   .map((groupValue, idx) => {
                     const color = PIE_COLORS[idx % PIE_COLORS.length];
+                    if (renderAsBars) {
+                      return (
+                        <Bar
+                          key={`grp-${groupValue}`}
+                          yAxisId="left"
+                          dataKey={`grp:${groupValue}`}
+                          fill={color}
+                          name={groupValue}
+                          isAnimationActive={false}
+                          maxBarSize={48}
+                        />
+                      );
+                    }
                     return (
                       <Line
                         key={`grp-${groupValue}`}
                         yAxisId="left"
-                        type="monotone"
+                        type={curveType}
                         dataKey={`grp:${groupValue}`}
                         stroke={color}
                         strokeWidth={2}
-                        dot={{ fill: color, strokeWidth: 0, r: 3 }}
+                        dot={showSeriesDots ? { fill: color, strokeWidth: 0, r: 3 } : false}
                         activeDot={{ r: 6, strokeWidth: 0, fill: color }}
                         name={groupValue}
                         connectNulls={false}
@@ -3235,6 +3431,22 @@ const AnnotationResultsChart: React.FC<Props> = ({
               </ComposedChart>
             )}
           </ResponsiveContainer>
+          {processedData.type !== 'grouped' && renderedGroupValues.length === 0 && (
+            <ChartLegendOverlay
+              entries={(() => {
+                const entries: { name: string; color: string; dashed?: boolean }[] =
+                  fieldsToRender.map((f, i) => ({ name: f.displayName, color: PIE_COLORS[i % PIE_COLORS.length] }));
+                if (overlayData && analyticsConfig.rollingAvg) {
+                  entries.push({ name: `Rolling avg (${analyticsConfig.rollingAvgWindow})`, color: '#0ea5e9', dashed: true });
+                }
+                if (overlayData && analyticsConfig.trendLine) {
+                  entries.push({ name: 'Trend', color: '#f97316', dashed: true });
+                }
+                return entries;
+              })()}
+            />
+          )}
+          </div>
         )}
       </div>
 
