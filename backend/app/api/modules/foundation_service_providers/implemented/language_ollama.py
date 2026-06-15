@@ -12,6 +12,79 @@ from app.api.modules.foundation_service_providers.base import LanguageModelProvi
 logger = logging.getLogger(__name__)
 
 
+def _replay_content_ollama(execution: Dict[str, Any]) -> Any:
+    """Pick the content for a replayed tool message.
+
+    Prefers ``model_view`` (the exact text the model saw on the original turn —
+    faithful, cache-stable replay). Falls back to ``structured_content`` / ``result``
+    serialised as JSON for legacy entries written before ``model_view`` existed.
+    Returns ``None`` when there is nothing replayable.
+    """
+    mv = execution.get("model_view")
+    if mv is not None:
+        return mv if isinstance(mv, str) else json.dumps(mv, ensure_ascii=False)
+    sc = execution.get("structured_content") or execution.get("result")
+    if sc is None:
+        return None
+    return sc if isinstance(sc, str) else json.dumps(sc, ensure_ascii=False)
+
+
+def _splice_tool_history_ollama(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Expand assistant messages carrying ``tool_executions`` into Ollama's native shape.
+
+    Each assistant message that carries prior tool history is replaced by, per
+    iteration: an assistant message with native ``tool_calls`` followed by one
+    ``{"role": "tool"}`` message per result — then the assistant's own final text.
+    Without this, only the final text survives across turns and every prior
+    tool_call/tool_result pair is dropped (the model forgets what it looked up),
+    which is the parity gap vs. the Anthropic/OpenAI providers.
+
+    Ollama's native tool_call shape is ``{"function": {"name", "arguments": <dict>}}``
+    — arguments is a dict, NOT a JSON string (that is OpenAI's shape).
+    """
+    out: List[Dict[str, Any]] = []
+    for msg in messages:
+        if msg.get("role") != "assistant" or not msg.get("tool_executions"):
+            out.append(msg)
+            continue
+
+        execs: List[Dict[str, Any]] = msg["tool_executions"] or []
+        by_iter: Dict[int, List[Dict[str, Any]]] = {}
+        for ex in execs:
+            by_iter.setdefault(ex.get("iteration", 1), []).append(ex)
+
+        for it in sorted(by_iter.keys()):
+            replayable = [e for e in by_iter[it] if _replay_content_ollama(e) is not None]
+            if not replayable:
+                continue
+
+            tool_calls = [
+                {
+                    "function": {
+                        "name": e.get("tool_name"),
+                        "arguments": e.get("arguments") or {},
+                    }
+                }
+                for e in replayable
+            ]
+            out.append({"role": "assistant", "content": "", "tool_calls": tool_calls})
+
+            for e in replayable:
+                content = _replay_content_ollama(e)
+                out.append({
+                    "role": "tool",
+                    "content": content if isinstance(content, str) else json.dumps(content),
+                })
+
+        # Final assistant prose (with any markers) so later turns keep both the
+        # raw tool data and the model's own last summary.
+        final_text = msg.get("content") or ""
+        if isinstance(final_text, str) and final_text.strip():
+            out.append({"role": "assistant", "content": final_text})
+
+    return out
+
+
 def safe_log_payload(payload: Dict[str, Any], max_length: int = 500) -> str:
     """
     Safely log payload by truncating long strings and removing binary/base64 data.
@@ -170,7 +243,14 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
             logger.info(f"Processing {len(media_inputs)} media inputs for Ollama")
             # Process images and add to messages (check if model supports vision)
             messages = await self._prepare_messages_with_media(messages, media_inputs, model_name)
-        
+
+        # Expand prior tool turns into Ollama's native shape so tool history
+        # survives across user turns. Without this only assistant final text is
+        # replayed and every prior tool_call/tool_result pair is dropped. Runs
+        # before BOTH the tool-loop and plain paths so replay is consistent.
+        if messages:
+            messages = _splice_tool_history_ollama(messages)
+
         # Tools with executor: implement tool loop (both streaming and non-streaming)
         if tools and tool_executor:
             if stream:
@@ -619,6 +699,10 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                         "tool_name": name,
                         "arguments": args,
                         "result": frontend_data if not has_error else None,
+                        "structured_content": frontend_data if not has_error else None,
+                        # model_view is the exact text the model saw on this turn — persisted so
+                        # _splice_tool_history_ollama can faithfully replay it on later turns.
+                        "model_view": llm_content,
                         "error": tool_result.get("error") if has_error and isinstance(tool_result, dict) else None,
                         "status": "failed" if has_error else "completed",
                         "iteration": iteration,
@@ -657,6 +741,10 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                         "id": tc.get("id") or f"call_{name}_{iteration}",
                         "tool_name": name,
                         "arguments": args,
+                        # Persist the same error JSON the model saw as model_view so the
+                        # failure is visible on replay — without it the splicer skips the
+                        # entry and the model has no record the call ever happened.
+                        "model_view": json.dumps(error_result),
                         "error": str(e),
                         "status": "failed",
                         "iteration": iteration,

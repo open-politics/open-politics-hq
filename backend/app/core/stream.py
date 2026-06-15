@@ -148,6 +148,7 @@ def _get_async_redis():
         from app.core.config import settings
         _async_pool = aioredis.ConnectionPool.from_url(
             settings.redis_url, decode_responses=True, max_connections=50,
+            socket_timeout=StreamHub.XREAD_BLOCK_MS / 1000 + 5,
         )
     import redis.asyncio as aioredis
     return aioredis.Redis(connection_pool=_async_pool)

@@ -39,13 +39,11 @@ if TYPE_CHECKING:
     from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
     from app.api.modules.content.services.dataset_service import DatasetService
     from app.api.modules.sharing.services.package_service import PackageService
-    from app.api.modules.content.services.bundle_service import BundleService
 
 from app.api.modules.annotation.services.annotation_service import AnnotationService
 from app.api.modules.content.services.dataset_service import DatasetService
 from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
 from app.api.modules.sharing.services.package_service import PackageService, PackageBuilder
-from app.api.modules.content.services.bundle_service import BundleService
 
 from app.models import (
     ResourceType, 
@@ -89,7 +87,6 @@ class ShareableService:
         infospace_service: InfospaceService,
         dataset_service: DatasetService,
         package_service: PackageService,
-        bundle_service: BundleService
     ):
         self.session = session
         self.settings = settings
@@ -98,7 +95,6 @@ class ShareableService:
         self.infospace_service = infospace_service
         self.dataset_service = dataset_service
         self.package_service = package_service
-        self.bundle_service = bundle_service 
         self.source_instance_id = self.settings.INSTANCE_ID if self.settings and hasattr(self.settings, 'INSTANCE_ID') and self.settings.INSTANCE_ID else "default_shareable_instance"
         self.token_length = 24
         logger.info(f"ShareableService initialized with source_instance_id: {self.source_instance_id}")
@@ -289,11 +285,8 @@ class ShareableService:
         
         elif link.resource_type == ResourceType.BUNDLE:
             # Fetch assets without user context as well.
-            bundle_assets = self.bundle_service.get_assets_for_bundle(
-                bundle_id=resource.id, 
-                user_id=None,
-                infospace_id=resource_infospace_id
-            )
+            from app.api.modules.content.tree import bundle_assets as tree_bundle_assets
+            bundle_assets = tree_bundle_assets(self.session, resource.id)
             bundle_preview = BundlePreview(
                 id=resource.id,
                 name=resource.name,
@@ -370,9 +363,7 @@ class ShareableService:
             ).first()
         
         elif rt == ResourceType.BUNDLE:
-            if u_id is None: # Public view: direct lookup
-                return self.session.exec(select(Bundle).where(Bundle.id == r_id, Bundle.infospace_id == inf_id_ctx)).first()
-            return self.bundle_service.get_bundle(bundle_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
+            return self.session.exec(select(Bundle).where(Bundle.id == r_id, Bundle.infospace_id == inf_id_ctx)).first()
             
         elif rt == ResourceType.SCHEMA: return self.annotation_service.get_schema(schema_id=r_id, infospace_id=inf_id_ctx, user_id=u_id)
         elif rt == ResourceType.RUN:

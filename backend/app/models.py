@@ -22,9 +22,7 @@ from app.api.modules.content.models import (
     Modality,
     ProcessingStatus,
     Source,
-    SourcePollHistory,
     SourceStatus,
-    SourceType,
 )
 from app.api.modules.annotation.models import (
     Annotation,

@@ -15,7 +15,6 @@ from datetime import datetime, timezone, timedelta
 from fastmcp import Client, FastMCP
 from fastmcp.client.auth import BearerAuth
 
-from app.api.modules.content.services import BundleService
 from app.api.modules.annotation.services import AnnotationService
 from app.core.config import settings
 from app.core import security

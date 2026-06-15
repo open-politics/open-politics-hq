@@ -78,9 +78,6 @@ celery.conf.update(
         'app.api.modules.annotation.tasks',
         'app.api.modules.flow.tasks',
         'app.api.modules.sharing.tasks',
-        'app.api.modules.content.services.poll_handlers.rss_poll_handler',
-        'app.api.modules.content.services.poll_handlers.search_poll_handler',
-        'app.api.modules.content.services.poll_handlers.inbox_poll_handler',
     ),
     # Beat schedule — only dispatch_tasks + user_backup entries.
     # All @task schedule params are handled by dispatch_tasks internally.

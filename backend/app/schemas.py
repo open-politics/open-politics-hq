@@ -278,7 +278,7 @@ class AssetCreate(AssetBase):
     source_identifier: Optional[str] = None
     facets: Optional[Dict[str, Any]] = None
     file_info: Optional[Dict[str, Any]] = None
-    discovered_modalities: Optional[List[str]] = None
+    modalities: Optional[List[str]] = None
     event_timestamp: Optional[datetime] = None
     processing_status: Optional[ProcessingStatus] = None
     content_hash: Optional[str] = None  # For deduplication
@@ -308,7 +308,6 @@ class AssetRead(AssetBase):
     created_at: datetime
     text_content: Optional[str] = None
     blob_path: Optional[str] = None
-    logical_path: Optional[str] = None
     source_identifier: Optional[str] = None
     facets: Optional[Dict[str, Any]] = None
     file_info: Optional[Dict[str, Any]] = None
@@ -326,7 +325,7 @@ class AssetRead(AssetBase):
     @classmethod
     def _coerce_tags(cls, v):
         return v if v is not None else []
-    discovered_modalities: Optional[List[str]] = None
+    modalities: Optional[List[str]] = None
 
     # Helper flags
     @computed_field  # type: ignore[misc]
@@ -490,6 +489,7 @@ class AnnotationRunUpdate(SQLModel):
     context_window: Optional[int] = None
     views_config: Optional[List[Dict[str, Any]]] = None
     graph_config: Optional[Dict[str, Any]] = None
+    is_favorite: Optional[bool] = None
 
 class AnnotationRunRead(AnnotationRunBase):
     id: int
@@ -507,6 +507,7 @@ class AnnotationRunRead(AnnotationRunBase):
     error_message: Optional[str]
     annotation_count: Optional[int] = None
     schema_ids: Optional[List[int]] = None
+    is_favorite: bool = False
     # ═══ TRIGGER TRACKING ═══
     trigger_type: str = "manual"
     trigger_context: Optional[Dict[str, Any]] = Field(default_factory=dict)
@@ -1298,7 +1299,7 @@ class TreeNodeType(str, enum.Enum):
 
 class TreeNode(SQLModel):
     """Minimal representation of a tree node for efficient tree rendering."""
-    id: str  # Format: "bundle-123", "asset-456", or "vfolder-123--path|to|folder"
+    id: str  # Format: "bundle-123" or "asset-456" (vfolder nav dropped — folders are bundles)
     type: TreeNodeType
     name: str
     path_prefix: Optional[str] = None  # For virtual folders: blob_path prefix (e.g. "data_set_1/politics")

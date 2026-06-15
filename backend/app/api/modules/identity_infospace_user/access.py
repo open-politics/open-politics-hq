@@ -302,7 +302,7 @@ def _resolve_package_token(
 
     # ── 1. Bundles → recursive expansion (child bundles) ──
     if bundle_ids:
-        from app.core.tree import subtree_ids
+        from app.api.modules.content.tree import subtree_ids
         bundle_ids = subtree_ids(session, bundle_ids)
 
     # ── 2. Graphs → derive run_ids and canon_ids ──
@@ -378,7 +378,7 @@ def _resolve_package_token(
 
         if item.bundle_id is not None:
             # All assets in this bundle's subtree inherit the item's permissions
-            from app.core.tree import subtree_ids as _subtree_ids
+            from app.api.modules.content.tree import subtree_ids as _subtree_ids
             item_subtree = _subtree_ids(session, {item.bundle_id})
             if item_subtree:
                 item_asset_rows = session.execute(sa_text(

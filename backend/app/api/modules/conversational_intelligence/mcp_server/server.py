@@ -52,9 +52,6 @@ from mcp.types import TextContent
 from app.api.modules.identity_infospace_user.access import resolve_access
 from app.core.config import settings
 from app.api.modules.foundation_service_providers import resolve
-from app.api.modules.content.services.bundle_service import BundleService
-from app.api.modules.content.handlers import IngestionContext
-from app.api.modules.content.ingest import ingest
 from app.api.modules.annotation.services import AnnotationService
 from app.models import Asset, AssetKind, Infospace, AnnotationSchema, Annotation
 from app.schemas import (
@@ -119,21 +116,7 @@ def get_services():
     session = Session(engine)
     
     try:
-        # Initialize core services
-        bundle_service = BundleService(session)
         annotation_service = AnnotationService(session=session)
-
-        ingestion_context = IngestionContext(
-            session=session,
-            storage_provider=resolve("storage"),
-            scraping_provider=resolve("scraping"),
-            search_provider=resolve("web_search", infospace_id=infospace_id),
-            bundle_service=bundle_service,
-            user_id=user_id,
-            infospace_id=infospace_id,
-            settings=settings,
-            options={},
-        )
 
         # Retrieve user's stored API keys (no runtime keys in JWT anymore).
         # If the stored blob is present but undecryptable, decrypt_credentials
@@ -154,7 +137,6 @@ def get_services():
             "model_name": model_name,  # Chat's model for annotation runs
             "runtime_api_keys": api_keys,  # Use stored API keys from database
             "annotation_service": annotation_service,
-            "ingestion_context": ingestion_context,
         }
     finally:
         session.close()
@@ -185,22 +167,28 @@ def format_asset_preview(asset: Any, preview_length: int = 200) -> str:
 
 def format_search_summary(results: List[dict], query: str, max_items: int = 5) -> str:
     """
-    Format search results as concise summary for model.
-    
-    Returns XML marker + brief list of top results.
+    Format search results as a summary for the model.
+
+    Includes each hit's snippet (and a short excerpt of scraped body text when
+    present) — not just titles/URLs. A result list with no snippets leaves the
+    model unable to judge or cite what it found; the full bodies still live in
+    structured_content for the UI and can be loaded per-asset after ingestion.
     """
     lines = [f"Found {len(results)} results for '{query}':\n"]
-    
+
     for i, result in enumerate(results[:max_items], 1):
-        lines.append(f"{i}. {result['title']}")
-        lines.append(f"   URL: {result['url']}")
+        lines.append(f"{i}. {result.get('title', '(untitled)')}")
+        lines.append(f"   URL: {result.get('url', '')}")
         if result.get('score'):
             lines.append(f"   Relevance: {int(result['score'] * 100)}%")
+        snippet = result.get("content") or result.get("raw_content") or ""
+        if snippet:
+            lines.append(f"   {truncate_text(snippet, 500)}")
         lines.append("")
-    
+
     if len(results) > max_items:
         lines.append(f"... and {len(results) - max_items} more results")
-    
+
     return "\n".join(lines)
 
 
@@ -415,8 +403,77 @@ def format_schema_summary(schemas: List[Any]) -> str:
             lines.append("  (No fields defined)")
         
         lines.append("")
-    
+
     return "\n".join(lines)
+
+
+# ============================================================================
+# MODEL-FACING PAYLOAD RENDERERS
+# ============================================================================
+#
+# The model only ever sees a tool's ``content`` stream; ``structured_content`` is
+# frontend-only and never reaches it. For BROWSE/DISCOVERY operations a concise
+# summary is correct — the model just needs to know what exists and the IDs to
+# drill into. But for RETRIEVAL/INSPECTION operations (read a document, preview a
+# formula, fetch run results) the model explicitly asked for the payload, so the
+# payload must land in ``content``. These helpers render that payload as bounded
+# text. The two streams are independent — feeding the model the data costs the
+# rich UI card nothing.
+
+
+def _render_asset_full_for_model(asset: Any) -> str:
+    """Render an asset's full content as the model's working payload (depth='full').
+
+    Carries the actual ``text_content`` (plus CSV columns when present) so the
+    model can reason over and cite the body — not just its title. The frontend
+    renders its own rich card from ``structured_content`` independently.
+    """
+    kind = asset.kind.value if getattr(asset, "kind", None) else "text"
+    lines = [f"━━━ Asset {asset.id}: {asset.title} ({kind}) ━━━"]
+    columns = (getattr(asset, "file_info", None) or {}).get("columns")
+    if columns:
+        lines.append(f"Columns: {', '.join(str(c) for c in columns)}")
+    body = asset.text_content or ""
+    lines.append(body if body else "(no text content)")
+    return "\n".join(lines)
+
+
+def _render_rows_for_model(
+    rows: List[Any],
+    *,
+    label: str,
+    total: Optional[int] = None,
+    has_more: bool = False,
+    max_items: int = 15,
+    max_chars: int = 8000,
+) -> str:
+    """Render a bounded sample of structured rows/values as text for the model.
+
+    A bare count ("12 rows", "42 annotations") leaves the model blind to what it
+    fetched and unable to verify or reason over it. This serialises a sample to
+    JSON, bounded by ``max_items`` / ``max_chars`` so one call can't blow the
+    context window, and annotates any truncation so the model knows to paginate
+    for the rest.
+    """
+    shown = rows[:max_items]
+    body = json.dumps(shown, ensure_ascii=False, indent=2, default=str)
+    truncated_chars = len(body) > max_chars
+    if truncated_chars:
+        body = body[:max_chars].rstrip()
+
+    count = total if total is not None else len(rows)
+    header = f"{label} — {count} total"
+    notes = []
+    if len(rows) > len(shown):
+        notes.append(f"showing first {len(shown)}")
+    if truncated_chars:
+        notes.append("sample truncated to fit context")
+    if has_more:
+        notes.append("more rows available — paginate for the rest")
+    if notes:
+        header += f" ({'; '.join(notes)})"
+
+    return f"{header}:\n{body}"
 
 
 # ============================================================================
@@ -716,8 +773,9 @@ async def _navigate_tree_root(services: Dict, ctx: Context) -> ToolResult:
     """Navigate tree root - shows hierarchical structure of bundles and standalone assets."""
     from sqlmodel import select
     from app.models import Asset, Bundle
-    from app.api.tree_renderer import build_root_tree_nodes, get_bundled_asset_ids
-    from app.core.tree import ROOT
+    from app.api.tree_renderer import build_root_tree_nodes
+    from app.api.modules.content.query import AssetQuery
+    from app.api.modules.content.tree import ROOT
 
     # Get root bundles (no parent)
     root_bundles = services["session"].exec(
@@ -726,27 +784,23 @@ async def _navigate_tree_root(services: Dict, ctx: Context) -> ToolResult:
         .where(Bundle.parent_bundle_id == ROOT)
         .order_by(Bundle.name)
     ).all()
-    
+
     await ctx.info(f"Found {len(root_bundles)} root bundles")
-    
-    # Get all bundled asset IDs to exclude from root assets
-    all_bundles = services["session"].exec(
-        select(Bundle).where(Bundle.infospace_id == services["infospace_id"])
-    ).all()
-    all_bundled_ids = get_bundled_asset_ids(all_bundles, session=services["session"])
-    
-    # Get root assets (not in any bundle, no parent)
-    root_assets_query = (
-        select(Asset)
-        .where(Asset.infospace_id == services["infospace_id"])
-        .where(Asset.parent_asset_id.is_(None))
-        .order_by(Asset.updated_at.desc())
+
+    # Root assets = standalone (no parent, in no bundle) — composed from AssetQuery,
+    # the SAME selection the display tree uses (routes/tree.py:_root_query). MCP and UI
+    # now share one traversal instead of hand-rolling it; ``.no_bundles()`` is the
+    # scale-safe array predicate (the old hand-rolled NOT IN blew past Postgres's
+    # 65k-param ceiling on large bundled CSVs).
+    root_assets = (
+        AssetQuery(services["session"], services["infospace_id"])
+        .top_level_only()
+        .no_bundles()
+        .exclude_superseded()
+        .sort("created_at_desc")
+        .paginate(limit=100)  # bounded root listing, matching the display root
+        .execute()
     )
-    
-    if all_bundled_ids:
-        root_assets_query = root_assets_query.where(Asset.id.not_in(all_bundled_ids))
-    
-    root_assets = services["session"].exec(root_assets_query).all()
     
     await ctx.info(f"Found {len(root_assets)} root assets")
     
@@ -833,7 +887,8 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
     )
     from sqlmodel import select
     from app.models import Asset, Bundle
-    
+    from app.api.modules.content.query import AssetQuery
+
     # Parse node ID
     try:
         node_type, node_numeric_id = parse_tree_node_id(node_id)
@@ -875,17 +930,15 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
         
         bundle_assets = []
         if remaining_limit > 0:
-            from sqlalchemy import text as sa_text
-            asset_ids = [
-                r[0] for r in services["session"].execute(
-                    sa_text("SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[] ORDER BY created_at DESC OFFSET :off LIMIT :lim"),
-                    {"bid": bundle.id, "off": asset_skip, "lim": remaining_limit},
-                ).fetchall()
-            ]
-            if asset_ids:
-                bundle_assets = list(services["session"].exec(
-                    select(Asset).where(Asset.id.in_(asset_ids))
-                ).all())
+            aq = (
+                AssetQuery(services["session"], services["infospace_id"])
+                .bundle(bundle.id)
+                .top_level_only()
+                .sort("created_at_desc")
+                .paginate(limit=remaining_limit)
+            )
+            aq._offset = asset_skip
+            bundle_assets = list(aq.execute())
         
         # Build nodes
         children_nodes = build_bundle_children_nodes(bundle, child_bundles, bundle_assets, services["session"])
@@ -893,17 +946,18 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
         # Enrich each node with preview data
         for i, node in enumerate(children_nodes):
             if i < len(child_bundles):
-                # Bundle node
+                # Bundle node — sample a bounded set of members for the preview.
+                # build_bundle_preview only needs a kinds distribution + a few sample
+                # titles, so an unbounded fetch (the old `Asset.id.in_(all_member_ids)`)
+                # both over-fetched and risked the 65k-param ceiling on large bundles.
                 entity = child_bundles[i]
-                child_asset_ids = [
-                    r[0] for r in services["session"].execute(
-                        sa_text("SELECT id FROM asset WHERE bundle_ids @> ARRAY[:bid]::int[]"),
-                        {"bid": entity.id},
-                    ).fetchall()
-                ]
-                child_assets_list = list(services["session"].exec(
-                    select(Asset).where(Asset.id.in_(child_asset_ids))
-                ).all()) if child_asset_ids else []
+                child_assets_list = (
+                    AssetQuery(services["session"], services["infospace_id"])
+                    .bundle(entity.id)
+                    .top_level_only()
+                    .paginate(limit=50)
+                    .execute()
+                )
                 children_nodes[i] = enrich_node_with_preview(node, entity, child_assets_list)
             else:
                 # Asset node
@@ -945,14 +999,17 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
         is_csv = asset.kind and asset.kind.value == 'csv'
         effective_asset_limit = 5 if is_csv else limit
         
-        # Get child assets
-        child_assets = services["session"].exec(
-            select(Asset)
-            .where(Asset.parent_asset_id == node_numeric_id)
-            .order_by(Asset.part_index, Asset.created_at)
-            .offset(offset)
-            .limit(effective_asset_limit)
-        ).all()
+        # Get child assets — AssetQuery (same as the UI's parent_asset listing; its
+        # "part_index" sort orders by part_index NULLS LAST then created_at, matching
+        # the previous hand-rolled order_by).
+        aq = (
+            AssetQuery(services["session"], services["infospace_id"])
+            .parent_asset(node_numeric_id)
+            .sort("part_index")
+            .paginate(limit=effective_asset_limit)
+        )
+        aq._offset = offset
+        child_assets = list(aq.execute())
         
         # Build nodes
         children_nodes = build_asset_children_nodes(asset, child_assets)
@@ -1305,28 +1362,42 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
         
         asset_data.append(item)
     
-    # Build concise summary for model
-    if mode == "search":
-        summary_lines = [f"🔍 Found {len(assets)} assets matching '{query}':\n"]
+    # Build the model-facing content stream.
+    #
+    # depth="full" is a RETRIEVAL operation — the model explicitly asked to read
+    # these documents — so the body must land in the model's stream, not only in
+    # structured_content (which is frontend-only). Browse/preview depths stay a
+    # concise summary: there the model only needs to know what exists and the IDs
+    # to drill into.
+    if depth == "full":
+        header = (
+            f"🔍 Found {len(assets)} assets matching '{query}' — full content:"
+            if mode == "search"
+            else f"📄 Loaded {len(assets)} assets — full content:"
+        )
+        summary_lines = [header, ""]
+        for asset in assets:
+            summary_lines.append(_render_asset_full_for_model(asset))
+            summary_lines.append("")
     else:
-        summary_lines = [f"📄 {len(assets)} assets:\n"]
-    
-    for i, asset in enumerate(assets[:5], 1):
-        # Make asset ID prominent for immediate load operations
-        summary_lines.append(f"📄 Asset ID: {asset.id} | {asset.title}")
-        if depth == "previews":
-            preview = truncate_text(asset.text_content or "", 80)
-            if preview:
-                summary_lines.append(f"    {preview}")
-    
-    if len(assets) > 5:
-        summary_lines.append(f"\n... {len(assets) - 5} more assets")
-    
-    if depth != "full":
+        if mode == "search":
+            summary_lines = [f"🔍 Found {len(assets)} assets matching '{query}':\n"]
+        else:
+            summary_lines = [f"📄 {len(assets)} assets:\n"]
+
+        for i, asset in enumerate(assets[:5], 1):
+            # Make asset ID prominent for immediate load operations
+            summary_lines.append(f"📄 Asset ID: {asset.id} | {asset.title}")
+            if depth == "previews":
+                preview = truncate_text(asset.text_content or "", 80)
+                if preview:
+                    summary_lines.append(f"    {preview}")
+
+        if len(assets) > 5:
+            summary_lines.append(f"\n... {len(assets) - 5} more assets")
+
         summary_lines.append(f"\n→ Load full content: workspace_hub(resource='assets', mode='load', ids=[{assets[0].id if assets else '...'}], depth='full')")
-    else:
-        summary_lines.append(f"\n→ Full content loaded above")
-    
+
     summary_text = "\n".join(summary_lines)
     return ToolResult(
         content=[TextContent(type="text", text=summary_text)],
@@ -1556,54 +1627,29 @@ async def _ingest_urls_with_services(
             {"status": "noop", "assets_created": 0, "asset_ids": [], "bundle_id": bundle_id},
         )
     
-    await ctx.info(f"Ingesting {len(urls)} URLs (scrape={scrape_content})")
-    
-    created_assets = []
-    failed_urls = []
-    
-    context = services["ingestion_context"]
-    opts = {"scrape_immediately": scrape_content}
+    await ctx.info(f"Queuing {len(urls)} URLs for ingestion (scrape={scrape_content})")
 
-    for url in urls:
-        try:
-            assets = await ingest(
-                context,
-                url,
-                bundle_id=bundle_id,
-                options=opts,
-            )
-            created_assets.extend(assets)
-            await ctx.info(f"✓ Ingested: {url}")
-        except Exception as e:
-            logger.error(f"Failed to ingest {url}: {e}")
-            failed_urls.append(url)
-            await ctx.info(f"✗ Failed: {url}")
-    
+    # Unified web path: one `web` job whose source scrapes each URL. Async — the agent
+    # gets the job id to report/poll rather than building assets inline.
+    from app.api.modules.search.web import ingest_urls
+    job = ingest_urls(
+        services["session"], services["infospace_id"], services["user_id"],
+        urls, bundle_id=bundle_id,
+    )
     services["session"].commit()
-    
-    summary_lines = [f"Created {len(created_assets)} assets from {len(urls)} URLs"]
+
+    summary_lines = [f"Queued {len(urls)} URL(s) for ingestion"]
     if bundle_id:
-        summary_lines.append(f"Added to bundle #{bundle_id}")
-    
-    if failed_urls:
-        summary_lines.append(f"\nFailed to ingest {len(failed_urls)} URLs:")
-        for url in failed_urls[:3]:
-            summary_lines.append(f"  • {url}")
-        if len(failed_urls) > 3:
-            summary_lines.append(f"  ... and {len(failed_urls) - 3} more")
-    
-    summary_lines.append(f"\nNew asset IDs: {[a.id for a in created_assets]}")
-    
+        summary_lines.append(f"Into bundle #{bundle_id}")
+    summary_lines.append(f"\nIngestion job: {job.id if job else None}")
+
     structured = {
-        "assets_created": len(created_assets),
-        "asset_ids": [asset.id for asset in created_assets],
+        "status": "queued",
+        "job_id": job.id if job else None,
         "urls_processed": len(urls),
-        "urls_failed": len(failed_urls),
-        "failed_urls": failed_urls,
         "bundle_id": bundle_id,
-        "status": "success" if not failed_urls else "partial_success"
     }
-    
+
     return "\n".join(summary_lines), structured
 
 
@@ -1737,34 +1783,26 @@ async def _organize_create(services: Dict, ctx: Context, name: Optional[str],
             }
         )
     
-    from app.schemas import BundleCreate
+    from app.api.modules.content.tree import create_bundle
 
-    bundle_service = services["bundle_service"]
-    bundle_in = BundleCreate(name=name, description=description)
-    bundle = bundle_service.create_bundle(
-        bundle_in=bundle_in,
+    bundle = create_bundle(
+        services["session"],
         infospace_id=services["infospace_id"],
         user_id=services["user_id"],
+        asset_ids=asset_ids,
+        name=name,
+        description=description,
     )
+    services["session"].commit()
+    services["session"].refresh(bundle)
 
-    assets_added = 0
-    if asset_ids:
-        try:
-            from app.core.tree import copy as tree_copy
-            result = tree_copy(services["session"], asset_ids=asset_ids, to=bundle.id)
-            assets_added = result.assets
-        except Exception as e:
-            logger.warning(f"Failed to add assets: {e}")
-    
-    total_added = assets_added + children_added
-    await ctx.info(f"Created bundle #{bundle.id} with {total_added} assets")
-    
-    summary = f"✅ Created bundle '{name}' (ID: {bundle.id})"
-    if total_added:
+    assets_added = len(asset_ids or [])
+    await ctx.info(f"Created bundle #{bundle.id} with {assets_added} assets")
+
+    summary = f"✅ Created bundle '{bundle.name}' (ID: {bundle.id})"
+    if assets_added:
         summary += f"\n   Added {assets_added} assets"
-        if children_added:
-            summary += f" (+{children_added} children)"
-    
+
     return ToolResult(
         content=[TextContent(type="text", text=summary)],
         structured_content={
@@ -1772,7 +1810,6 @@ async def _organize_create(services: Dict, ctx: Context, name: Optional[str],
             "bundle_id": bundle.id,
             "bundle_name": bundle.name,
             "assets_added": assets_added,
-            "children_added": children_added,
             "status": "success"
         }
     )
@@ -1802,23 +1839,17 @@ async def _organize_add(services: Dict, ctx: Context, bundle_id: Optional[int],
         )
     
     try:
-        from app.core.tree import copy as tree_copy
+        from app.api.modules.content.tree import copy as tree_copy
         result = tree_copy(services["session"], asset_ids=asset_ids, to=bundle_id)
 
-        total_added = result.assets
-        await ctx.info(f"Added {total_added} assets to bundle #{bundle_id}")
+        await ctx.info(f"Added {result.assets} assets to bundle #{bundle_id}")
 
-        summary = f"Added {result.assets} assets to bundle #{bundle_id}"
-        if children_added:
-            summary += f" (+{children_added} children)"
-        
         return ToolResult(
-            content=[TextContent(type="text", text=summary)],
+            content=[TextContent(type="text", text=f"Added {result.assets} assets to bundle #{bundle_id}")],
             structured_content={
                 "operation": "add",
                 "bundle_id": bundle_id,
-                "assets_added": assets_added,
-                "children_added": children_added,
+                "assets_added": result.assets,
                 "status": "success"
             }
         )
@@ -1845,15 +1876,14 @@ async def _organize_remove(services: Dict, ctx: Context, bundle_id: Optional[int
         )
     
     try:
-        from app.core.tree import delete as tree_delete
+        from app.api.modules.content.tree import delete as tree_delete
         result = tree_delete(services["session"], asset_ids=asset_ids, out_of=bundle_id, confirm=True)
 
-        await ctx.info(f"Removed {result.unlinked + result.destroyed_assets} assets from bundle #{bundle_id}")
+        removed_count = result.unlinked + result.destroyed_assets
+        await ctx.info(f"Removed {removed_count} assets from bundle #{bundle_id}")
 
-        summary = f"Removed {result.unlinked + result.destroyed_assets} assets from bundle #{bundle_id}"
-        
         return ToolResult(
-            content=[TextContent(type="text", text=summary)],
+            content=[TextContent(type="text", text=f"Removed {removed_count} assets from bundle #{bundle_id}")],
             structured_content={
                 "operation": "remove",
                 "bundle_id": bundle_id,
@@ -1883,19 +1913,18 @@ async def _organize_rename(services: Dict, ctx: Context, bundle_id: Optional[int
             structured_content={"error": "bundle_id is required"}
         )
     
-    from app.schemas import BundleUpdate
+    from app.api.modules.content.models import Bundle
 
-    bundle_service = services["bundle_service"]
     try:
-        bundle_in = BundleUpdate(name=name, description=description)
-        bundle = bundle_service.update_bundle(
-            bundle_id=bundle_id,
-            bundle_in=bundle_in,
-            infospace_id=services["infospace_id"],
-            user_id=services["user_id"],
-        )
-        if not bundle:
+        bundle = services["session"].get(Bundle, bundle_id)
+        if not bundle or bundle.infospace_id != services["infospace_id"]:
             raise ValueError(f"Bundle {bundle_id} not found")
+        if name:
+            bundle.name = name
+        if description is not None:
+            bundle.description = description
+        services["session"].add(bundle)
+        services["session"].commit()
         
         await ctx.info(f"Updated bundle #{bundle_id}")
         
@@ -1943,7 +1972,7 @@ async def _organize_delete(services: Dict, ctx: Context, bundle_id: Optional[int
             raise ValueError(f"Bundle {bundle_id} not found")
         bundle_name = bundle.name
 
-        from app.core.tree import delete as tree_delete
+        from app.api.modules.content.tree import delete as tree_delete
         tree_delete(services["session"], bundle_ids=[bundle_id], out_of=bundle.parent_bundle_id, confirm=True)
         services["session"].commit()
 
@@ -3222,7 +3251,18 @@ async def _analysis_get_dashboard(
                 "status": ann.status.value if ann.status else None,
                 "timestamp": ann.timestamp.isoformat() if ann.timestamp else None,
             })
-        
+
+        # Put actual extracted values in the model's stream — a bare count leaves
+        # the model unable to verify the run succeeded or reason over what it
+        # extracted. The frontend still renders the full set from structured_content.
+        if annotation_data:
+            summary_lines.append("")
+            summary_lines.append(_render_rows_for_model(
+                annotation_data,
+                label="Annotation values",
+                total=len(annotations),
+            ))
+
         from app.models import Asset
         asset_data = []
         if asset_ids_in_results:
@@ -3452,7 +3492,7 @@ async def _asset_create_csv_row(services: Dict, ctx: Context, builder, data: Dic
 
     # Build and create the CSV row with proper part_index
     from app.models import AssetKind, ProcessingStatus
-    from app.api.modules.content.csv_helpers import (
+    from app.api.modules.content.types.csv import (
         csv_row_title, csv_row_text, csv_row_metadata,
     )
     row_title = csv_row_title(row_data, next_part_index if parent_asset_id else 0)
@@ -3540,7 +3580,9 @@ async def _asset_create_article(services: Dict, ctx: Context, builder, data: Dic
 
 
 async def _asset_create_web(services: Dict, ctx: Context, builder, data: Dict[str, Any]) -> ToolResult:
-    """Create web asset — delegates to WebHandler's composition helpers."""
+    """Create web asset. A stub (bookmark) is source-less authoring — built sync via
+    AssetBuilder. Content-with-an-origin goes through ``intake`` like every producer:
+    one ``web`` job, the source scrapes it, the agent polls the job."""
     url = data.get("url")
     if not url:
         return ToolResult(
@@ -3551,26 +3593,50 @@ async def _asset_create_web(services: Dict, ctx: Context, builder, data: Dict[st
     title = data.get("title")
     stub = data.get("stub", False)
 
-    from app.api.modules.content.handlers.web_handler import (
-        _compose_url_stub, _compose_scraped_url,
-    )
     if stub:
-        builder = await _compose_url_stub(builder, url, title)
-    else:
-        builder = await _compose_scraped_url(builder, url, title, builder.blueprint.infospace_id)
-    asset = await builder.build()
-    services["session"].commit()  # v2: builder flushes only; caller owns tx
-    services["session"].refresh(asset)
+        # URL bookmark — no scraping. Dedupes on URL to avoid duplicate bookmarks.
+        from app.models import AssetKind, ProcessingStatus
+        asset = await (
+            builder
+            .as_kind(AssetKind.WEB)
+            .as_stub(True)
+            .with_title(title or url)
+            .with_source(url)
+            .with_metadata(ingestion_method="url_bookmark")
+            .with_processing_status(ProcessingStatus.READY)
+            .dedup_on(source_identifier=url)
+            .on_match("skip")
+            .build()
+        )
+        services["session"].commit()  # v2: builder flushes only; caller owns tx
+        services["session"].refresh(asset)
+        return ToolResult(
+            content=[TextContent(type="text", text=f"✅ Web #{asset.id}\n{asset.title}")],
+            structured_content={
+                "asset_id": asset.id,
+                "asset_title": asset.title,
+                "asset_kind": asset.kind.value,
+                "url": url,
+                "stub": True,
+                "status": "created"
+            }
+        )
 
+    from app.api.modules.content.intake import intake
+    jobs = intake(
+        services["session"],
+        infospace_id=services["infospace_id"],
+        user_id=services["user_id"],
+        groups={"web": [{"url": url, **({"title": title} if title else {})}]},
+    )
+    job = jobs[0]
     return ToolResult(
-        content=[TextContent(type="text", text=f"✅ Web #{asset.id}\n{asset.title}")],
+        content=[TextContent(type="text", text=f"✅ Queued web ingestion for {url}\nIngestion job: {job.id}")],
         structured_content={
-            "asset_id": asset.id,
-            "asset_title": asset.title,
-            "asset_kind": asset.kind.value,
+            "job_id": job.id,
             "url": url,
-            "stub": stub,
-            "status": "created"
+            "stub": False,
+            "status": "queued"
         }
     )
 
@@ -3712,7 +3778,7 @@ async def _asset_update_csv_row(services: Dict, ctx: Context, asset, data: Dict[
 
     merge_strategy = data.get("merge_strategy", "overwrite")
 
-    from app.api.modules.content.csv_helpers import (
+    from app.api.modules.content.types.csv import (
         merged_csv_row, csv_row_title, csv_row_text, csv_row_update_metadata,
     )
     session = services["session"]
@@ -3766,8 +3832,8 @@ async def _asset_delete(services: Dict, ctx: Context, data: Dict[str, Any]) -> T
             structured_content={"error": "id is required"}
         )
 
-    # Cascade delete via asset_ops (handles children, annotations, graph edges, chunks)
-    from app.api.modules.content.asset_ops import cascade_delete as _cascade_delete
+    # Hard-destroy via the tree primitive (children, annotations, graph edges, chunks).
+    from app.api.modules.content.tree import purge
     session = services["session"]
     infospace_id = services["infospace_id"]
     asset = session.get(Asset, asset_id)
@@ -3776,7 +3842,7 @@ async def _asset_delete(services: Dict, ctx: Context, data: Dict[str, Any]) -> T
             content=[TextContent(type="text", text=f"❌ Asset {asset_id} not found or could not be deleted")],
             structured_content={"error": "asset not found or deletion failed"}
         )
-    _cascade_delete(session, {asset_id})
+    purge(session, {asset_id})
     session.commit()
     deleted = True
 
@@ -4634,10 +4700,16 @@ async def formula_preview(
         rel = aq.relation(formula)
         sample = [r.model_dump(mode="json") for r in rel.rows]
 
-        summary = (
-            f"📐 Formula {name!r}: {rel.total} rows"
-            + (" (more)" if rel.has_more else "")
+        # The model must SEE the sample rows to verify the formula does what the
+        # user asked (this tool's whole purpose) — a row count alone is unverifiable.
+        summary = _render_rows_for_model(
+            sample,
+            label=f"📐 Formula {name!r}",
+            total=rel.total,
+            has_more=rel.has_more,
         )
+        if rel.measure_names:
+            summary = f"Measures: {', '.join(rel.measure_names)}\n" + summary
         return ToolResult(
             content=[TextContent(type="text", text=summary)],
             structured_content={

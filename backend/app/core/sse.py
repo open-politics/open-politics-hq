@@ -112,7 +112,14 @@ async def drain(events: AsyncIterator[Any], envelope_type: type[T]) -> T:
     async for ev in events:
         if isinstance(ev, SectionEvent):
             if ev.role in ("primary", "level"):
-                primary = ev.section
+                if primary is None:
+                    primary = ev.section
+                else:
+                    # Primary now streams in batches; the drained envelope is the
+                    # concatenation. Pagination state tracks the final batch.
+                    primary.items = list(primary.items) + list(ev.section.items)
+                    primary.has_more = ev.section.has_more
+                    primary.cursor_next = ev.section.cursor_next
             elif ev.role == "grouped":
                 grouped.append(ev.section)
         elif isinstance(ev, NavEvent):

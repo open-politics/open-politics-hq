@@ -1,15 +1,16 @@
-"""Web-search composition.
+"""Web-search composition — search, and turn results/URLs into ingestion jobs.
 
-One module; two shapes:
+Three shapes, all over the unified content path (no handlers):
 
-* ``search_web`` — call an external web-search provider (Tavily, etc.) and
-  return raw results. Optionally ingest immediately and return assets.
-* ``create_assets_from_urls`` — given a URL list, ingest each via ``ingest()``.
-* ``create_assets_from_results`` — given search-result dicts (already scraped
-  upstream), create assets in a single ``SearchHandler.handle_bulk`` call.
+* ``search_web``    — call a web-search provider, return raw results. Creates nothing.
+* ``ingest_results`` — already-fetched result dicts → a ``web`` IngestionJob. Full
+  content rides inline (``web.fetch`` passes it through, no re-scrape); a short
+  metasearch snippet carries no ``text`` so the web source scrapes the URL.
+* ``ingest_urls``   — a URL list → a ``web`` IngestionJob (the web source scrapes each).
 
-Route handlers become thin adapters. The infospace owner's credentials drive
-provider resolution; a ``runtime_key`` overrides at call time.
+Routes are thin adapters. The infospace owner's credentials drive provider resolution;
+a ``runtime_key`` overrides at call time. Ingestion is async — callers get the job back
+and poll it (the ``useIngestionJobs`` path).
 """
 
 from __future__ import annotations
@@ -19,14 +20,14 @@ from typing import Any, Dict, List, Optional
 
 from sqlmodel import Session
 
-from app.api.modules.content.handlers import IngestionContext, SearchHandler
-from app.api.modules.content.ingest import ingest
-from app.api.modules.foundation_service_providers import resolve, ProviderError
-from app.core.tree import copy as tree_copy
-from app.models import Asset
-from app.schemas import SearchResult
+from app.api.modules.content.intake import intake
+from app.api.modules.foundation_service_providers import ProviderError, resolve
 
 logger = logging.getLogger(__name__)
+
+# Full article vs metasearch snippet: above any SearXNG snippet (~150-300 chars),
+# below Tavily raw_content (multi-thousand). Full → inline passthrough; snippet → scrape.
+SCRAPE_THRESHOLD = 800
 
 
 async def search_web(
@@ -39,145 +40,66 @@ async def search_web(
     runtime_key: str | None = None,
     provider_params: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """Run a web search and return raw provider results.
-
-    Does NOT create assets. Caller decides whether to hand results back to
-    the user, feed to ``create_assets_from_results``, or otherwise compose.
-    """
-
+    """Run a web search and return raw provider results. Creates nothing — the caller
+    decides whether to hand them back to the user or pass them to ``ingest_results``."""
     try:
         web_search_provider = resolve(
             "web_search", provider,
-            infospace_id=infospace_id,
-            runtime_key=runtime_key,
-            session=session,
+            infospace_id=infospace_id, runtime_key=runtime_key, session=session,
         )
     except ProviderError as e:
         raise ValueError(str(e)) from e
 
     params = provider_params or {}
     raw_results = await web_search_provider.search(query=query, limit=limit, **params)
-    logger.info(f"Web search provider '{provider}' returned {len(raw_results)} results for '{query}'")
+    logger.info("Web search '%s' via %s → %d results", query, provider, len(raw_results or []))
     return list(raw_results or [])
 
 
-async def search_and_ingest(
-    context: IngestionContext,
-    query: str,
+def _result_spec(r: Dict[str, Any]) -> Optional[dict]:
+    """A raw result dict → a ``web`` intake spec. Full content rides inline (passthrough);
+    a short snippet carries no ``text`` so the web source scrapes the locator."""
+    url = r.get("url")
+    if not url:
+        return None
+    spec: dict = {"url": url, "title": r.get("title")}
+    content = r.get("raw_content") or r.get("content") or ""
+    if len(content) >= SCRAPE_THRESHOLD:
+        spec["text"] = content
+    return spec
+
+
+def ingest_results(
+    session: Session,
+    infospace_id: int,
+    user_id: int,
+    results: List[Dict[str, Any]],
     *,
-    provider: str = "tavily",
-    limit: int = 10,
-    runtime_key: str | None = None,
-    provider_params: Optional[Dict[str, Any]] = None,
     bundle_id: Optional[int] = None,
-    scrape_content: bool = True,
-) -> tuple[List[Dict[str, Any]], List[Asset]]:
-    """Run a web search and create assets in one composed call.
-
-    Returns ``(raw_results, assets)``. Callers that only want results use
-    ``search_web`` directly; this is the asset-producing shortcut.
-    """
-
-    raw_results = await search_web(
-        context.session, context.infospace_id, query,
-        provider=provider, limit=limit, runtime_key=runtime_key,
-        provider_params=provider_params,
-    )
-
-    search_results = [
-        SearchResult(
-            title=r.get("title", ""),
-            url=r.get("url", ""),
-            content=r.get("content", ""),
-            score=r.get("score"),
-            provider=provider,
-            raw_data=r.get("raw", r),
-        )
-        for r in raw_results
-    ]
-
-    handler = SearchHandler(context)
-    assets = await handler.handle_bulk(
-        results=search_results,
-        query=query,
-        options={"limit": limit, "scrape_content": scrape_content},
-    )
-
-    if bundle_id and assets:
-        asset_ids = [a.id for a in assets if a.parent_asset_id is None]
-        if asset_ids:
-            tree_copy(context.session, asset_ids=asset_ids, to=bundle_id)
-            context.session.commit()
-
-    return raw_results, assets
+) -> Optional[Any]:
+    """Mint one ``web`` IngestionJob from already-fetched result dicts. Returns the job
+    (or None if nothing ingestable)."""
+    specs = [s for s in (_result_spec(r) for r in results) if s]
+    if not specs:
+        return None
+    jobs = intake(session, infospace_id=infospace_id, user_id=user_id,
+                  groups={"web": specs}, dest_id=bundle_id)
+    return jobs[0] if jobs else None
 
 
-async def create_assets_from_urls(
-    context: IngestionContext,
+def ingest_urls(
+    session: Session,
+    infospace_id: int,
+    user_id: int,
     urls: List[str],
     *,
     bundle_id: Optional[int] = None,
-    scrape_content: bool = True,
-    search_metadata: Optional[Dict[str, Any]] = None,
-) -> tuple[List[Asset], List[str]]:
-    """Ingest each URL via ``ingest()`` and return ``(assets, failed_urls)``.
-
-    One call per URL so handlers can deduplicate / handle_url each.
-    """
-
-    opts = {
-        "scrape_immediately": scrape_content,
-        "search_metadata": search_metadata,
-    }
-
-    assets: List[Asset] = []
-    failed_urls: List[str] = []
-    for url in urls:
-        try:
-            result = await ingest(context, url, bundle_id=bundle_id, options=opts)
-            assets.extend(result)
-        except Exception as e:
-            logger.error(f"Failed to create asset from URL {url}: {e}")
-            failed_urls.append(url)
-
-    return assets, failed_urls
-
-
-async def create_assets_from_results(
-    context: IngestionContext,
-    search_results: List[Dict[str, Any]],
-    *,
-    bundle_id: Optional[int] = None,
-    search_metadata: Optional[Dict[str, Any]] = None,
-) -> List[Asset]:
-    """Create assets directly from search-result dicts (no re-scrape).
-
-    Uses ``SearchHandler.handle_bulk`` so duplicate detection + bundle
-    assignment match the ``search_and_ingest`` path exactly.
-    """
-
-    provider = (search_metadata or {}).get("provider", "unknown")
-    query = (search_metadata or {}).get("query", "Search Results")
-
-    results = [
-        SearchResult(
-            title=r.get("title", ""),
-            url=r.get("url", ""),
-            content=r.get("content", ""),
-            score=r.get("score"),
-            provider=provider,
-            raw_data=r.get("raw", {}),
-        )
-        for r in search_results
-    ]
-
-    handler = SearchHandler(context)
-    assets = await handler.handle_bulk(results=results, query=query, options={})
-
-    if bundle_id and assets:
-        asset_ids = [a.id for a in assets if a.parent_asset_id is None]
-        if asset_ids:
-            tree_copy(context.session, asset_ids=asset_ids, to=bundle_id)
-
-    context.session.commit()
-    return assets
+) -> Optional[Any]:
+    """Mint one ``web`` IngestionJob from a URL list (the web source scrapes each).
+    Returns the job (or None if no URLs)."""
+    clean = [u.strip() for u in (urls or []) if u and u.strip()]
+    if not clean:
+        return None
+    jobs = intake(session, infospace_id=infospace_id, user_id=user_id,
+                  groups={"web": [{"url": u} for u in clean]}, dest_id=bundle_id)
+    return jobs[0] if jobs else None

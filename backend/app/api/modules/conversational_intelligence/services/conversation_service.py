@@ -256,6 +256,15 @@ class IntelligenceConversationService:
         else:
             tools = None
 
+        # Cache the tool surface. It is large (full MCP schemas) and byte-identical
+        # across every tool-loop iteration AND every conversation turn, so it is the
+        # single biggest stable prefix in chat. A marker on the LAST tool caches the
+        # whole tool block on Anthropic (prefix order is tools → system → messages);
+        # OpenAI/Ollama rebuild tool dicts and drop the key, so this is a safe no-op
+        # there (OpenAI caches stable prefixes automatically regardless).
+        if tools:
+            tools[-1] = {**tools[-1], "cacheable": True}
+
         infospace = self.session.get(Infospace, infospace_id)
         if agent == "dossier":
             system_context = self._build_dossier_agent_context(infospace, run_id)
@@ -683,7 +692,7 @@ class IntelligenceConversationService:
             return {"error": "Title and content are required for a report"}
 
         try:
-            from app.api.modules.content.services.asset_builder import AssetBuilder
+            from app.api.modules.content.asset_builder import AssetBuilder
             file_info = {
                 "composition_type": "report",
                 "created_by": "user_action",
@@ -774,9 +783,12 @@ class IntelligenceConversationService:
                 "Always call formula_introspect_schema first."
             )
 
+        # Static manual first so it is a stable, cacheable prefix; the volatile
+        # workspace block (carries the per-request timestamp) goes last so it
+        # doesn't invalidate the cached prefix on every turn.
         return (
-            f"<workspace>\"{safe_name}\" — current: {now}\n{run_hint}</workspace>\n\n"
-            + manual
+            manual
+            + f"\n\n<workspace>\"{safe_name}\" — current: {now}\n{run_hint}</workspace>"
         )
 
     def _build_formula_agent_context(
@@ -851,11 +863,13 @@ class IntelligenceConversationService:
                 "actually returned."
             )
 
+        # Static manual first so it is a stable, cacheable prefix; the active-formula
+        # hint (stable per formula) and the volatile workspace block (per-request
+        # timestamp) follow so they don't invalidate the cached prefix every turn.
         return (
-            f"<workspace>\"{safe_name}\" — current: {now}\n{run_hint}</workspace>"
+            manual
             + active_hint
-            + "\n\n"
-            + manual
+            + f"\n\n<workspace>\"{safe_name}\" — current: {now}\n{run_hint}</workspace>"
         )
 
     def _build_infospace_context(self, infospace: Infospace) -> str:
@@ -870,7 +884,6 @@ class IntelligenceConversationService:
 
         context = f"""<workspace>
 "{safe_name}" - {safe_description}
-Current: {current_datetime}
 </workspace>
 
 <instructions>
@@ -944,7 +957,9 @@ General principles:
 • Trust that tool results are self-documenting
 • Reserve response tokens for insights, not narration
 • User knows the interface - only explain the unexpected
-</instructions>"""
+</instructions>
+
+<now>Current: {current_datetime}</now>"""
         return context
 
     async def get_available_models(

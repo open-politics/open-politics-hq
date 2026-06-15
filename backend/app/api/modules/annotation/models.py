@@ -103,6 +103,7 @@ class AnnotationRun(SQLModel, table=True):
     run_type: RunType = Field(default=RunType.ONE_OFF)
     flow_execution_id: Optional[int] = Field(default=None, foreign_key="flowexecution.id", index=True)
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    is_favorite: bool = Field(default=False, index=True)
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")
     imported_from_uuid: Optional[str] = Field(default=None, index=True)

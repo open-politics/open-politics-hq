@@ -110,21 +110,15 @@ def _dispatch_ingest_task(session: Session, t: Task):
         _update_task_status(session, t.id, "error", "Missing target_source_id in configuration")
         return
 
-    from app.api.modules.content.models import Source, SourceStatus
+    from app.api.modules.content.models import Source
     source = session.get(Source, target_source_id)
     if not source:
         _update_task_status(session, t.id, "error", f"Source {target_source_id} not found")
         return
 
-    # Store user override in source.details
-    source.details = {**(source.details or {}), "user_id": t.user_id}
-    source.status = SourceStatus.PENDING
-    session.add(source)
-    session.commit()
-
-    from app.api.modules.content.tasks.ingest import process_source
-    process_source.delay([target_source_id], t.infospace_id)
-    _update_task_status(session, t.id, "running", "Dispatched to process_source")
+    from app.api.modules.content.intake import run_source_ingestion
+    job = run_source_ingestion(session, target_source_id)
+    _update_task_status(session, t.id, "running", f"Enqueued ingest job {job.id}")
 
 
 def _dispatch_flow_task(session: Session, t: Task, emit_fn):
@@ -159,9 +153,9 @@ def _dispatch_source_poll_task(session: Session, t: Task):
     if not source_id:
         _update_task_status(session, t.id, "error", "Missing source_id in configuration")
         return
-    from app.api.modules.content.tasks.source_monitoring import poll_sources
-    poll_sources.delay([source_id], t.infospace_id)
-    _update_task_status(session, t.id, "running", "Dispatched to poll_sources")
+    from app.api.modules.content.tasks.source_monitoring import source_polling
+    source_polling.delay([source_id], t.infospace_id)
+    _update_task_status(session, t.id, "running", "Dispatched to source_polling")
 
 
 def _dispatch_embed_task(session: Session, t: Task):

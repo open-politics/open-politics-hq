@@ -258,7 +258,15 @@ class InfospaceService:
             for schema in schemas:
                 self.session.delete(schema)
             
-            # 4. Delete asset-bundle links and bundles
+            # 4. Delete ingestion jobs (they reference the infospace, sources, and bundles),
+            # then asset-bundle links and bundles
+            from app.models import IngestionJob
+            deleted_jobs = self.session.execute(
+                text("DELETE FROM ingestionjob WHERE infospace_id = :iid"),
+                {"iid": infospace_id},
+            ).rowcount
+            logger.info(f"Service: Deleted {deleted_jobs} ingestion jobs")
+
             bundles = self.session.exec(
                 select(Bundle).where(Bundle.infospace_id == infospace_id)
             ).all()
@@ -269,15 +277,6 @@ class InfospaceService:
                     text("UPDATE asset SET bundle_ids = NULLIF(array_remove(bundle_ids, :bid), ARRAY[]::int[]) WHERE bundle_ids @> ARRAY[:bid]::int[]"),
                     {"bid": bundle.id},
                 )
-                
-                # Clear root_bundle_id from IngestionJob records
-                from app.models import IngestionJob
-                jobs = self.session.exec(
-                    select(IngestionJob).where(IngestionJob.root_bundle_id == bundle.id)
-                ).all()
-                for job in jobs:
-                    job.root_bundle_id = None
-                
                 # Then delete the bundle itself
                 self.session.delete(bundle)
             

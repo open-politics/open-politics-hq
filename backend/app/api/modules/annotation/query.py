@@ -155,6 +155,29 @@ def _safe_float_sql(acc: str) -> str:
     )
 
 
+def _safe_timestamptz_sql(acc: str) -> str:
+    """Safely bucket a text date — the temporal sibling of :func:`_safe_float_sql`.
+
+    A plain ``::timestamptz`` raises on the first non-date value, 500-ing the
+    whole time-bucketed query; an LLM-extracted date field is free text with no
+    guarantee every cell parses. A regex alone can't fix this — it can reject
+    obvious non-dates but can't validate calendar/leap rules (``2026-02-30``,
+    non-leap ``02-29``), so it would still let the cast raise.
+
+    So this pairs a cheap **date-shaped regex gate** with the exception-trapping
+    ``safe_to_timestamptz`` function (migration ``c3d4e5f6a7b8``). The gate —
+    a leading 4-digit year + separator + digit — keeps categorical / prose
+    columns from paying the function's per-row subtransaction cost (they short
+    to NULL), while the function bulletproofs every date-shaped value: anything
+    Postgres can't parse becomes NULL instead of raising. Month-name / locale
+    formats fall through to NULL (counted as undated upstream) — rare for
+    structured date extraction, which emits ISO/numeric."""
+    return (
+        f"CASE WHEN ({acc}) ~ '^[[:space:]]*[0-9]{{4}}[-/.][0-9]' "
+        f"THEN safe_to_timestamptz({acc}) ELSE NULL END"
+    )
+
+
 def _numeric_lift_sql(acc: str, weights: dict[str, float] | None) -> str:
     """The ordinal/axes thesis in SQL: ``enum_weights`` maps a categorical
     value to a number via CASE (case-insensitive, like ``merge_case``);
@@ -421,16 +444,30 @@ class AnnotationQuery:
         """Compile FieldConditions into SQL and append to clauses/params.
 
         *element_alias* is the SQL alias for the lateral-joined element
-        (e.g. ``"elem"``).  Conditions whose path matches the active
-        explosion are evaluated on the element alias; others on the
-        annotation value column.
+        (e.g. ``"elem"``).  A condition whose explosion matches the active
+        one is evaluated on that element alias.  Any *other* exploded
+        condition is evaluated via an EXISTS subquery over its own array —
+        regardless of whether an unrelated lateral is active (graph mode
+        always joins the triplet lateral, but a filter on ``keywords[*]``
+        has nothing to do with it).  Non-exploded conditions hit the
+        annotation value column directly.
         """
+        # Normalize the active explosion to the bare array path. Callers are
+        # inconsistent: aggregate() passes the already-stripped ``array_field``,
+        # graph callers pass the raw triplet field (``document.triplets[*]``).
+        # ``ExplosionPath.array_field`` is always stripped, so strip here too
+        # or the equality below never holds for graph (and a triplet-field
+        # filter would silently fall through to EXISTS instead of filtering
+        # the lateral element).
+        if active_explosion and "[*]" in active_explosion:
+            active_explosion = parse_explosion(active_explosion).array_field
+
         for i, cond in enumerate(self._conditions):
             ep = parse_explosion(cond.path)
             prefix = f"fc{i}"
 
             if ep.is_exploded and element_alias and ep.array_field == active_explosion:
-                # Element-level condition on the lateral-joined array
+                # Element-level condition on the active lateral-joined array
                 col = element_alias
                 # Rewrite the condition to use just the remainder path
                 inner_cond = FieldCondition(
@@ -439,9 +476,14 @@ class AnnotationQuery:
                     value=cond.value,
                 )
                 frag, frag_params = condition_sql(inner_cond, col, param_prefix=prefix)
-            elif ep.is_exploded and not element_alias:
-                # Element-level condition but no lateral join active.
-                # Use EXISTS on jsonb_array_elements as a sub-condition.
+            elif ep.is_exploded:
+                # Exploded condition on a *different* array than the active
+                # explosion (or no lateral active at all). Evaluate with an
+                # EXISTS subquery over that array. Without this, graph mode —
+                # which always sets element_alias="triplet" — misroutes such
+                # filters to the scalar branch below, producing SQL that
+                # matches nothing (array-of-objects → empty graph) or raises
+                # ValueError (array-of-primitives → 500).
                 frag, frag_params = self._element_exists_condition(
                     cond, ep, annotation_alias, prefix
                 )
@@ -809,7 +851,7 @@ class AnnotationQuery:
                 f"{group_acc} IS NOT NULL AND {group_acc} != '' "
                 f"AND {group_acc} !~ '^<'"  # skip "<UNKNOWN>" etc.
             )
-            group_expr = f"date_trunc('{interval}', ({group_expr})::timestamptz)"
+            group_expr = f"date_trunc('{interval}', {_safe_timestamptz_sql(group_expr)})"
 
         # Second-dimension split accessor — uses the same symmetric accessor
         # helper, so split_by can be exploded on the shared array regardless of
@@ -1020,7 +1062,7 @@ class AnnotationQuery:
                 clauses.append(
                     f"{acc} IS NOT NULL AND {acc} != '' AND {acc} !~ '^<'"
                 )
-                expr = f"date_trunc('{iv}', ({expr})::timestamptz)"
+                expr = f"date_trunc('{iv}', {_safe_timestamptz_sql(expr)})"
             dim_sql.append((d.name, expr))
 
         where = " AND ".join(clauses)

@@ -214,7 +214,7 @@ from app.schemas import BundleCreate, TaskCreate, SourceCreate
 
 SCENARIO_URL_SOURCE = SourceCreate(
     name="Tech News Scrape Source",
-    kind="url_list_scrape",
+    kind="web",
     details={
         "urls": [
             "https://www.wired.com/story/what-is-generative-ai/",
@@ -225,13 +225,10 @@ SCENARIO_URL_SOURCE = SourceCreate(
 
 SCENARIO_SEARCH_SOURCE = SourceCreate(
     name="AI Hardware Search Source",
-    kind="search",
+    kind="web_search",
     details={
-        "search_config": {
-            "query": "future of AI hardware",
-            "provider": "tavily",
-            "max_results": 5
-        }
+        "query": "future of AI hardware",
+        "max_results": 5
     }
 )
 

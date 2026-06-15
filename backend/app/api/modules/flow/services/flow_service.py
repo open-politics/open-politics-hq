@@ -36,7 +36,6 @@ from app.models import (
 )
 from app.schemas import FlowCreate, FlowUpdate, FlowExecutionCreate
 from app.api.modules.annotation.services.annotation_service import AnnotationService
-from app.api.modules.content.services.bundle_service import BundleService
 from app.api.modules.flow.services.filter_service import FilterService, FilterExpression
 
 logger = logging.getLogger(__name__)
@@ -55,11 +54,9 @@ class FlowService:
         self,
         session: Session,
         annotation_service: Optional[AnnotationService] = None,
-        bundle_service: Optional[BundleService] = None,
     ):
         self.session = session
         self.annotation_service = annotation_service
-        self.bundle_service = bundle_service
         self.filter_service = FilterService()
         
         logger.info("FlowService initialized")
@@ -623,9 +620,9 @@ class FlowService:
                 "passed_asset_ids": [],
             }
 
-        bundle_id = target_bundle_id or (flow.input_bundle_id if flow else None)
-        if not bundle_id and source.details and "target_bundle_id" in source.details:
-            bundle_id = source.details["target_bundle_id"]
+        # Destination precedence: step config → flow input bundle → the source's own
+        # output bundle (details never carry a destination — it's a column).
+        bundle_id = target_bundle_id or (flow.input_bundle_id if flow else None) or source.output_bundle_id
 
         # Get max asset id before ingest to identify newly created assets
         max_id_before = 0
@@ -639,23 +636,14 @@ class FlowService:
             max_id_before = row[0] if row else 0
 
         try:
-            from app.api.modules.content.tasks.ingest import process_source
-            from app.api.modules.content.models import Source as SourceModel
+            # Mint a source-driven IngestionJob (same spine as a poll) and drive it
+            # to completion synchronously — the flow needs the assets present before
+            # the post-ingest diff below. Dispatch-swap only; flows stay emergent.
+            from app.api.modules.content.intake import run_source_ingestion
+            from app.api.modules.content.tasks.ingestion import ingest
 
-            # Store overrides in source.details before dispatching
-            source_obj = self.session.get(SourceModel, source_id)
-            if source_obj:
-                details = dict(source_obj.details or {})
-                if bundle_id:
-                    details["target_bundle_id"] = bundle_id
-                if execution.triggered_by_user_id:
-                    details["user_id"] = execution.triggered_by_user_id
-                source_obj.details = details
-                self.session.add(source_obj)
-                self.session.commit()
-
-            result = process_source.delay([source_id], flow.infospace_id)
-            result.get(timeout=300)
+            job = run_source_ingestion(self.session, source_id, dest_id=bundle_id)
+            ingest.delay([job.id], flow.infospace_id).get(timeout=300)
         except Exception as e:
             logger.warning("INGEST step failed: %s", e)
             return {
@@ -1007,11 +995,7 @@ class FlowService:
         
         if bundle_id:
             bundle_ids = [bundle_id]
-        
-        # Initialize bundle service if needed
-        if not self.bundle_service:
-            self.bundle_service = BundleService(self.session)
-        
+
         routed_count = 0
         routed_asset_ids = []
         
@@ -1031,7 +1015,7 @@ class FlowService:
                         if target_bundle_id:
                             filter_expr = self.filter_service.create_from_config({"expression": cond_expr})
                             if filter_expr.evaluate(context):
-                                from app.core.tree import copy as tree_copy
+                                from app.api.modules.content.tree import copy as tree_copy
                                 tree_copy(self.session, asset_ids=[asset_id], to=target_bundle_id)
                                 routed_count += 1
                                 routed_asset_ids.append(asset_id)
@@ -1041,7 +1025,7 @@ class FlowService:
                     elif condition.get("else") and not matched:
                         else_bundle_id = condition.get("bundle_id")
                         if else_bundle_id:
-                            from app.core.tree import copy as tree_copy
+                            from app.api.modules.content.tree import copy as tree_copy
                             tree_copy(self.session, asset_ids=[asset_id], to=else_bundle_id)
                             routed_count += 1
                             routed_asset_ids.append(asset_id)
@@ -1050,7 +1034,7 @@ class FlowService:
             # Simple routing to bundle(s)
             for asset_id in asset_ids:
                 for target_bundle_id in bundle_ids:
-                    from app.core.tree import copy as tree_copy
+                    from app.api.modules.content.tree import copy as tree_copy
                     tree_copy(self.session, asset_ids=[asset_id], to=target_bundle_id)
                     routed_count += 1
                 routed_asset_ids.append(asset_id)

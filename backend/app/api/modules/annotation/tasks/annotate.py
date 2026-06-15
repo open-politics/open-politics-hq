@@ -2543,18 +2543,11 @@ async def _process_annotation_run_async(
                     bundle_id = run.source_bundle_id
                     bundle = session.get(Bundle, bundle_id)
                     if bundle and bundle.infospace_id == run.infospace_id:
-                        # Query asset IDs (do NOT use bundle.assets - loads all into memory)
-                        path_filter = run_config.get("path_filter")  # e.g. "politics/eu" (matches logical_path from virtual folder tree)
+                        # Query asset IDs (do NOT use bundle.assets - loads all into memory).
+                        # Folders are bundles — a path-scoped run targets the sub-bundle.
                         stmt = select(Asset.id).where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id))
-                        if path_filter:
-                            like_val = f"{path_filter}%" if not path_filter.endswith("%") else path_filter
-                            # Use logical_path (matches virtual folder tree); fallback to blob_path for assets without logical_path
-                            stmt = stmt.where(or_(
-                                Asset.logical_path.like(like_val),
-                                (Asset.logical_path.is_(None)) & (Asset.blob_path.isnot(None)) & (Asset.blob_path.like(like_val)),
-                            ))
                         all_bundle_asset_ids = list(session.exec(stmt).all())
-                        logger.info(f"Task: Continuous run {run.id} watching bundle {bundle_id} with {len(all_bundle_asset_ids)} total assets" + (f" (path_filter={path_filter})" if path_filter else ""))
+                        logger.info(f"Task: Continuous run {run.id} watching bundle {bundle_id} with {len(all_bundle_asset_ids)} total assets")
                         
                         # ═══ DELTA TRACKING: Only process assets that don't have annotations for all required schemas ═══
                         # Get the schema IDs this run should process
@@ -2601,15 +2594,9 @@ async def _process_annotation_run_async(
                     bundle_id = run_config["target_bundle_id"]
                     bundle = session.get(Bundle, bundle_id)
                     if bundle and bundle.infospace_id == run.infospace_id:
-                        # Query asset IDs (do NOT use bundle.assets - loads all into memory)
-                        path_filter = run_config.get("path_filter")
+                        # Query asset IDs (do NOT use bundle.assets - loads all into memory).
+                        # Folders are bundles — a path-scoped run targets the sub-bundle.
                         stmt = select(Asset.id).where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id))
-                        if path_filter:
-                            like_val = f"{path_filter}%" if not path_filter.endswith("%") else path_filter
-                            stmt = stmt.where(or_(
-                                Asset.logical_path.like(like_val),
-                                (Asset.logical_path.is_(None)) & (Asset.blob_path.isnot(None)) & (Asset.blob_path.like(like_val)),
-                            ))
                         target_asset_ids_to_process.extend(session.exec(stmt).all())
                     else:
                         logger.error(f"Task: Target Bundle {bundle_id} for Run {run.id} not found or not in infospace.")

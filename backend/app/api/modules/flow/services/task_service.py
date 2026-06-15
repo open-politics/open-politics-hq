@@ -29,7 +29,6 @@ def _add_or_update_schedule(
 def _remove_schedule(recurring_task_id: int) -> None:
     """No-op: Beat schedule removal not implemented."""
     pass
-from app.api.modules.content.tasks.ingest import process_source
 from app.schemas import AnnotationRunCreate, TaskCreate, TaskUpdate
 
 
@@ -136,14 +135,6 @@ def _validate_task_input_config(
             raise ValueError(
                 f"Source with ID {task_in.source_id} not found in this infospace."
             )
-
-        # Validate source-specific configuration
-        if source.kind == "search":
-            search_config = source.details.get("search_config")
-            if not search_config or not isinstance(search_config, dict):
-                raise ValueError("Search source requires a 'search_config' dictionary in details.")
-            if not search_config.get("query"):
-                raise ValueError("Search source requires a 'query' in search_config.")
 
     elif task_in.type == TaskType.PIPELINE:
         # PIPELINE task type is deprecated - use FLOW instead
@@ -358,8 +349,9 @@ class TaskService:
                 # The 'target_source_id' is required and validated in the config
                 target_source_id = task.source_id
                 if target_source_id:
-                    process_source.delay([target_source_id], infospace_id)
-                    logger.info(f"TaskService: Dispatched process_source for Task {task.id} targeting Source {target_source_id}")
+                    from app.api.modules.content.intake import run_source_ingestion
+                    job = run_source_ingestion(self.session, target_source_id)
+                    logger.info(f"TaskService: Enqueued ingest job {job.id} for Task {task.id} (Source {target_source_id})")
                 else:
                     logger.error(f"TaskService: Cannot execute INGEST task {task.id}. Missing 'source_id' on the task.")
                     # Update task status to reflect this configuration error
@@ -412,19 +404,11 @@ class TaskService:
                         self.session.commit()
                         return False
                     
-                    # Dispatch source polling via @task direct invocation
-                    if source.kind in ("rss_feed", "search", "news_source_monitor", "site_discovery"):
-                        from app.api.modules.content.tasks.source_monitoring import poll_sources
-                        poll_sources.delay([task.source_id], infospace_id)
-                        logger.info(f"TaskService: Dispatched poll_sources task {task.id} for source {task.source_id}")
-                    else:
-                        logger.error(f"TaskService: Unsupported source kind '{source.kind}' for MONITOR task {task.id}")
-                        task.last_run_status = "error"
-                        task.last_run_message = f"Manual execution failed: Unsupported source kind '{source.kind}'."
-                        task.last_run_at = datetime.now(timezone.utc)
-                        self.session.add(task)
-                        self.session.commit()
-                        return False
+                    # Dispatch source polling via @task direct invocation — any
+                    # registered Source polls; validity is the source's own concern.
+                    from app.api.modules.content.tasks.source_monitoring import source_polling
+                    source_polling.delay([task.source_id], infospace_id)
+                    logger.info(f"TaskService: Dispatched source_polling task {task.id} for source {task.source_id}")
                 else:
                     # Legacy MONITOR task - deprecated, migrate to FLOW
                     logger.warning(f"TaskService: MONITOR task type is deprecated. Please migrate Task {task.id} to use FLOW.")

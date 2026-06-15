@@ -447,7 +447,7 @@ class RenameEntityTypeRequest(BaseModel):
     graph_id: Optional[int] = None
 
 
-# ── Deletion preview/confirm — mirrors core/tree.py:178 idiom ──
+# ── Deletion preview/confirm — mirrors content/tree.py:178 idiom ──
 
 
 class DeleteImpact(BaseModel):

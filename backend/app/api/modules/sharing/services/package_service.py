@@ -32,7 +32,6 @@ from app.core.config import AppSettings
 from app.schemas import AssetRead, SourceRead, InfospaceCreate, InfospaceRead
 
 from app.api.modules.annotation.services.annotation_service import AnnotationService
-from app.api.modules.content.services.bundle_service import BundleService
 from app.api.modules.content.services.dataset_service import DatasetService
 from app.api.modules.annotation.panel_config import migrate_views_config
 
@@ -1950,7 +1949,7 @@ class PackageImporter:
             # Add bundle to each asset's bundle_ids array
             self.session.add(new_bundle)
             self.session.flush()  # Ensure new_bundle.id is assigned
-            from app.core.tree import copy as tree_copy
+            from app.api.modules.content.tree import copy as tree_copy
             result = tree_copy(self.session, asset_ids=local_asset_ids, to=new_bundle.id)
             new_bundle.asset_count = result.assets
 
@@ -2071,14 +2070,12 @@ class PackageService:
         session: Session,
         storage_provider: StorageProvider,
         annotation_service: AnnotationService,
-        bundle_service: BundleService,
         dataset_service: DatasetService,
         settings: AppSettings
     ):
         self.session = session
         self.storage_provider = storage_provider
         self.annotation_service = annotation_service
-        self.bundle_service = bundle_service
         self.dataset_service = dataset_service
         self.settings = settings
         self.source_instance_id = settings.INSTANCE_ID if hasattr(settings, 'INSTANCE_ID') else "unknown_instance"
@@ -2120,8 +2117,9 @@ class PackageService:
                 raise ValueError(f"Run {resource_id} not found or not accessible in infospace {infospace_id}.")
             return await builder.build_annotation_run_package(run, include_annotations=True, include_justifications=True)
         elif resource_type == ResourceType.BUNDLE:
-            bundle = self.bundle_service.get_bundle(bundle_id=resource_id, infospace_id=infospace_id, user_id=user_id)
-            if not bundle: raise ValueError(f"Bundle {resource_id} not found or not accessible.")
+            bundle = self.session.get(Bundle, resource_id)
+            if not bundle or bundle.infospace_id != infospace_id:
+                raise ValueError(f"Bundle {resource_id} not found or not accessible.")
             return await builder.build_bundle_package(bundle, include_assets_content=True, include_asset_annotations=True)
         elif resource_type == ResourceType.DATASET:
             dataset = self.dataset_service.get_dataset(dataset_id=resource_id, user_id=user_id, infospace_id=infospace_id)
@@ -2151,10 +2149,8 @@ class PackageService:
 
         if pt == ResourceType.SOURCE:
             imported_entity = await importer.import_source_package(package, conflict_strategy)
-            if imported_entity and imported_entity.kind in ["upload_csv", "upload_pdf", "url_list_scrape", "rss_feed"]:
-                from app.api.modules.content.tasks.ingest import process_source
-                process_source.delay([imported_entity.id], imported_entity.infospace_id)
-                logger.info(f"Queued process_source task for imported Source ID: {imported_entity.id} (Kind: {imported_entity.kind})")
+            # No auto-ingest: an imported Source is monitoring config. The user
+            # activates it; source_polling does the rest (monitoring is emergent).
         elif pt == ResourceType.ASSET:
             logger.warning("Direct import of single Asset package. Asset will be imported without an explicit parent Source unless its package data specifies one or it can be inferred.")
             asset_content_from_package = package.content.get("asset")
@@ -2430,7 +2426,7 @@ class PackageService:
                             if local_asset_id:
                                 linked_asset_ids.append(local_asset_id)
                     if linked_asset_ids:
-                        from app.core.tree import copy as tree_copy
+                        from app.api.modules.content.tree import copy as tree_copy
                         result = tree_copy(self.session, asset_ids=linked_asset_ids, to=bundle.id)
                         bundle.asset_count = result.assets
                         self.session.add(bundle)
