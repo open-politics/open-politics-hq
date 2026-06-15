@@ -143,41 +143,31 @@ def create_directory_import_job(
             detail=f"Source path '{request.source_path}' is not under allowed import paths"
         )
 
-    options = request.options or {}
-    if request.file_extensions:
-        options["file_extensions"] = request.file_extensions
-    # Auto-detect reference mode: paths under LOCAL_STORAGE_BASE_PATH must use reference mode
-    # to avoid duplicating data that is already on the server filesystem.
+    # Auto-detect reference mode: paths under LOCAL_STORAGE_BASE_PATH must use reference
+    # mode to avoid duplicating data already on the server filesystem.
     storage_base = Path(settings.LOCAL_STORAGE_BASE_PATH).resolve()
     copy_mode = request.copy_mode if request.copy_mode is not None else False
     if source.is_relative_to(storage_base):
         copy_mode = False
-    options["copy_mode"] = copy_mode
-    options["reconcile_mode"] = request.reconcile_mode
 
-    job = IngestionJob(
-        infospace_id=infospace_id,
-        user_id=access.user_id,
-        source_locator=str(source),
-        kind="directory_local",
-        status=IngestionStatus.PENDING,
-        cursor_state={
-            "stage": "pending",
-            "message": "Queued for import",
-            "progress_pct": 0,
-            "options": options,
-        },
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
+    from app.api.modules.content.tree import resolve_or_create_bundle
+    from app.api.modules.content.intake import intake
 
-    from app.core.events import emit
-    emit("ingestion_job.created", {"infospace_id": infospace_id})
+    # Folder tree → bundle subtree: land the import under a bundle named after the
+    # directory; the `directory` source's per-file `path` becomes sub-bundles under it.
+    # Re-poll dedup rides the source_token (mtime:size) guard, so the old reconcile_mode
+    # flag is obsolete.
+    dest = resolve_or_create_bundle(db, infospace_id, access.user_id, bundle_name=source.name)
+    cfg = {"path": str(source), "copy_mode": copy_mode}
+    if request.file_extensions:
+        cfg["file_extensions"] = request.file_extensions
+    jobs = intake(db, infospace_id=infospace_id, user_id=access.user_id,
+                  groups={"directory": [cfg]}, dest_id=dest.id if dest is not None else None)
 
+    job = jobs[0]
     job_dict = job.model_dump(mode="json")
-    job_dict["progress_pct"] = job.cursor_state.get("progress_pct", 0)
-    job_dict["stage_message"] = job.cursor_state.get("message", "")
+    job_dict["progress_pct"] = (job.cursor_state or {}).get("progress_pct", 0)
+    job_dict["stage_message"] = (job.cursor_state or {}).get("message", "")
     return IngestionJobRead(**job_dict)
 
 
@@ -488,7 +478,7 @@ async def create_batch_ingestion_job(
                 detail=f"items[{i}].locator is required",
             )
 
-    from app.api.modules.content.destination import resolve_or_create_bundle
+    from app.api.modules.content.tree import resolve_or_create_bundle
     try:
         destination = resolve_or_create_bundle(
             db, infospace_id, access.user_id,
@@ -499,37 +489,17 @@ async def create_batch_ingestion_job(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    cursor_state = {
-        "stage": "queued",
-        "message": f"Queued {len(request.items)} items",
-        "progress_pct": 0,
-        "items": [item.model_dump() for item in request.items],
-        "options": request.options or {},
-        "total": len(request.items),
-        "processed": 0,
-        "failed": 0,
-    }
+    from app.api.modules.content.intake import intake
 
-    # Use the first locator as the job's canonical source_locator (cheap label).
-    job = IngestionJob(
-        infospace_id=infospace_id,
-        user_id=access.user_id,
-        source_locator=request.items[0].locator,
-        kind="batch",
-        root_bundle_id=destination.id if destination is not None else None,
-        status=IngestionStatus.PENDING,
-        total_files=len(request.items),
-        processed_files=0,
-        failed_files=0,
-        cursor_state=cursor_state,
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
+    # web_url AND archive_url both flow through the `web` source: it fetches the bytes
+    # and detect_kind names the kind — an archive URL becomes an ARCHIVE asset the
+    # ARCHIVE type unrolls into a bundle; a page becomes a WEB article. One source, no split.
+    specs = [{"url": item.locator, "title": getattr(item, "title", None)} for item in request.items]
+    jobs = intake(db, infospace_id=infospace_id, user_id=access.user_id,
+                  groups={"web": specs},
+                  dest_id=destination.id if destination is not None else None)
 
-    from app.core.events import emit
-    emit("ingestion_job.created", {"infospace_id": infospace_id})
-
+    job = jobs[0]
     job_dict = job.model_dump(mode="json")
     job_dict["progress_pct"] = (job.cursor_state or {}).get("progress_pct", 0)
     job_dict["stage_message"] = (job.cursor_state or {}).get("message", "")
@@ -551,64 +521,26 @@ async def create_archive_ingestion_job(
     and returns job details for frontend progress tracking.
     """
     
-    # Validate it's actually an archive URL
-    from app.api.modules.content.processors import is_archive_url
+    # Validate it's actually an archive URL.
+    from app.api.modules.content.types import is_archive_url
     if not is_archive_url(request.source_locator):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="URL does not appear to be an archive file (.zip, .tar, etc.)"
         )
-    
-    from app.core.config import settings
-    from app.api.modules.content.handlers import IngestionContext
-    from app.api.modules.content.ingest import ingest
-    from app.api.modules.foundation_service_providers import resolve
-    from app.api.modules.content.services.bundle_service import BundleService
 
-    options = request.options or {}
-    options['use_background'] = True  # Always use background for explicit job creation
+    from app.api.modules.content.intake import intake
 
-    storage = resolve("storage", session=db)
-    scraping = resolve("scraping", session=db)
-    try:
-        search = resolve("web_search", infospace_id=infospace_id, session=db)
-    except Exception:
-        search = None
+    # A remote archive is just a web fetch: the `web` source downloads it, detect_kind
+    # sees ARCHIVE (magic bytes / extension), and the ARCHIVE type unrolls it into a bundle.
+    jobs = intake(db, infospace_id=infospace_id, user_id=access.user_id,
+                  groups={"web": [{"url": request.source_locator, "title": request.title}]})
 
-    context = IngestionContext(
-        session=db,
-        storage_provider=storage,
-        scraping_provider=scraping,
-        search_provider=search,
-        bundle_service=BundleService(db),
-        user_id=access.user_id,
-        infospace_id=infospace_id,
-        settings=settings,
-        options=options,
-    )
-
-    assets = await ingest(
-        context,
-        request.source_locator,
-        title=request.title,
-        options=options,
-    )
-    
-    # Get the created job from the asset's metadata
-    if assets and assets[0].file_info:
-        job_id = assets[0].file_info.get('job_id')
-        if job_id:
-            job = db.get(IngestionJob, job_id)
-            if job:
-                job_dict = job.model_dump(mode='json')  # mode='json' serializes datetimes to ISO strings
-                job_dict['progress_pct'] = job.cursor_state.get('progress_pct', 0)
-                job_dict['stage_message'] = job.cursor_state.get('message', '')
-                return IngestionJobRead(**job_dict)
-    
-    raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail="Failed to create ingestion job"
-    )
+    job = jobs[0]
+    job_dict = job.model_dump(mode="json")
+    job_dict["progress_pct"] = (job.cursor_state or {}).get("progress_pct", 0)
+    job_dict["stage_message"] = (job.cursor_state or {}).get("message", "")
+    return IngestionJobRead(**job_dict)
 
 
 @router.post("/infospaces/{infospace_id}/ingestion-jobs/{job_id}/cancel", response_model=Message)
@@ -706,13 +638,7 @@ async def reconcile_directory(
     """
     from pathlib import Path
     from app.core.config import settings
-    from app.api.modules.content.handlers.directory_import_handler import (
-        DirectoryImportHandler,
-        _get_dataset_name_from_path,
-    )
-    from app.api.modules.content.handlers.base import IngestionContext
-    from app.api.modules.foundation_service_providers import resolve
-    from app.api.modules.content.services.bundle_service import BundleService
+    from app.api.modules.content.intake import intake
 
     source = Path(request.source_path).resolve()
     if not source.exists() or not source.is_dir():
@@ -727,7 +653,7 @@ async def reconcile_directory(
     if not any(source.is_relative_to(Path(p).resolve()) for p in allowed_paths):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Source path is not under allowed import paths",
+            detail="Source path is not under allowed import paths",
         )
 
     bundle = db.get(Bundle, request.bundle_id)
@@ -737,35 +663,17 @@ async def reconcile_directory(
             detail=f"Bundle {request.bundle_id} not found",
         )
 
-    storage_provider = resolve("storage", session=db)
-    scraping_provider = resolve("scraping", session=db)
-    bundle_service = BundleService(db)
-    dataset_name = _get_dataset_name_from_path(str(source), settings.LOCAL_STORAGE_BASE_PATH)
-
-    context = IngestionContext(
-        session=db,
-        storage_provider=storage_provider,
-        scraping_provider=scraping_provider,
-        search_provider=None,
-        bundle_service=bundle_service,
-        user_id=access.user_id,
-        infospace_id=infospace_id,
-        settings=settings,
-        options={"allowed_import_paths": allowed_paths},
-    )
-    handler = DirectoryImportHandler(context)
-    created_assets, root_bundle_id = await handler.handle(
-        source_path=str(source),
-        options={
-            "copy_mode": False,
-            "reconcile_mode": True,
-            "root_bundle_id": request.bundle_id,
-        },
-    )
+    # Reconcile == re-run the directory intake. The source_token (mtime:size) guard skips
+    # unchanged files; changed files re-fetch and decide() supersedes; new files are added.
+    # (Deletion-tombstoning is not yet modeled — a removed file is simply not re-seen.)
+    jobs = intake(db, infospace_id=infospace_id, user_id=access.user_id,
+                  groups={"directory": [{"path": str(source), "copy_mode": False}]},
+                  dest_id=request.bundle_id)
+    job = jobs[0] if jobs else None
     return {
-        "message": "Reconcile completed",
-        "bundle_id": root_bundle_id,
-        "assets_created": len(created_assets),
+        "message": "Reconcile queued",
+        "bundle_id": request.bundle_id,
+        "job_id": job.id if job else None,
     }
 
 
@@ -877,52 +785,39 @@ def get_watch_status(
 
     query = select(Source).where(
         Source.infospace_id == infospace_id,
-        Source.kind.in_(["directory_local", "directory_inbox"]),
+        Source.kind == "directory",
     )
     if bundle_id:
         query = query.where(Source.output_bundle_id == bundle_id)
 
     sources = db.exec(query).all()
 
-    # Group by output_bundle_id (skip sources whose bundle was deleted)
+    # Group by output_bundle_id (skip sources whose bundle was deleted). Both
+    # directory flavors are kind="directory" — a watched inbox carries
+    # details.inbox_mode, a reconcile source walks the dataset dir itself.
     by_bundle: dict[int, dict] = {}
     for src in sources:
         bid = src.output_bundle_id
         if bid is None:
             continue
-        if bid not in by_bundle:
-            by_bundle[bid] = {
-                "source_path": src.details.get("source_path", ""),
-                "bundle_id": bid,
-            }
-        entry = by_bundle[bid]
-        if src.kind == "directory_local":
+        entry = by_bundle.setdefault(bid, {"source_path": "", "bundle_id": bid})
+        path = src.details.get("path", "")
+        if src.details.get("inbox_mode"):
+            entry["inbox_source_id"] = src.id
+            entry["inbox_active"] = src.is_active
+            entry["inbox_path"] = path
+            if not entry["source_path"] and path:
+                entry["source_path"] = str(Path(path).parent)
+            from app.api.modules.content.sources.directory import count_inbox_pending_files
+            entry["inbox_files_pending"] = count_inbox_pending_files(Path(path)) if path else 0
+        else:
             entry["reconcile_source_id"] = src.id
             entry["reconcile_active"] = src.is_active
             entry["reconcile_last_poll"] = (
                 src.last_poll_at.isoformat() if src.last_poll_at else None
             )
-        elif src.kind == "directory_inbox":
-            entry["inbox_source_id"] = src.id
-            entry["inbox_active"] = src.is_active
-            entry["inbox_path"] = src.details.get("inbox_path")
-            try:
-                from pathlib import Path as _Path
-                from app.api.modules.content.types import importable_extensions
-                exts = importable_extensions()
-                inbox_dir = _Path(src.details.get("inbox_path", ""))
-                if inbox_dir.exists():
-                    entry["inbox_files_pending"] = sum(
-                        1
-                        for f in inbox_dir.iterdir()
-                        if f.is_file()
-                        and f.suffix.lower() in exts
-                        and not f.name.endswith(".meta.json")
-                    )
-                else:
-                    entry["inbox_files_pending"] = 0
-            except OSError:
-                entry["inbox_files_pending"] = 0
+            if path:
+                entry["source_path"] = path
 
     return [WatchStatusResponse(**v) for v in by_bundle.values()]
 

@@ -15,18 +15,13 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel
 from sqlmodel import Session
 
-from app.api.dependency_injection import get_current_user, get_db, IngestionContextFactoryDep
+from app.api.dependency_injection import get_current_user, get_db
 from app.api.modules.content.schemas import AssetSearch, AssetSearchRequest
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires, resolve_access,
 )
 from app.api.modules.search.assets import search_assets, stream_search_assets
-from app.api.modules.search.web import (
-    create_assets_from_results as compose_from_results,
-    create_assets_from_urls as compose_from_urls,
-    search_and_ingest as compose_search_and_ingest,
-    search_web,
-)
+from app.api.modules.search.web import ingest_results, ingest_urls, search_web
 from app.models import User
 
 logger = logging.getLogger(__name__)
@@ -75,6 +70,7 @@ class SearchAndIngestResponse(BaseModel):
     results: Optional[List[dict]] = None
     assets_created: int = 0
     asset_ids: List[int] = []
+    job_id: Optional[int] = None
     status: str
     message: str
 
@@ -85,46 +81,37 @@ class SearchAndIngestResponse(BaseModel):
 @router.post("/web", response_model=SearchAndIngestResponse)
 async def web_search_and_ingest(
     request: ExternalSearchRequest,
-    make_ingestion_context: IngestionContextFactoryDep,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SearchAndIngestResponse:
-    """Search via an external provider; optionally ingest results as assets."""
+    """Search via an external provider; optionally ingest the results as a ``web`` job.
+
+    Ingestion is async: full-content results ride inline through the web source,
+    snippet-only results get scraped — the caller polls the returned ``job_id``."""
 
     resolve_access(db, request.infospace_id, current_user, Capability.INGEST)
 
     try:
-        if request.create_assets:
-            context = make_ingestion_context(
-                current_user.id, request.infospace_id,
-                {"limit": request.limit, "scrape_content": request.scrape_content},
-            )
-            raw_results, assets = await compose_search_and_ingest(
-                context, request.query,
-                provider=request.provider,
-                limit=request.limit,
-                runtime_key=request.api_key,
-                provider_params=request.provider_params,
-                bundle_id=request.bundle_id,
-                scrape_content=request.scrape_content,
-            )
-            return SearchAndIngestResponse(
-                query=request.query,
-                provider=request.provider,
-                results_found=len(raw_results),
-                assets_created=len(assets),
-                asset_ids=[a.id for a in assets],
-                status="success",
-                message=f"Created {len(assets)} assets from '{request.query}'",
-            )
-
         raw_results = await search_web(
             db, request.infospace_id, request.query,
-            provider=request.provider,
-            limit=request.limit,
-            runtime_key=request.api_key,
-            provider_params=request.provider_params,
+            provider=request.provider, limit=request.limit,
+            runtime_key=request.api_key, provider_params=request.provider_params,
         )
+
+        if request.create_assets:
+            job = ingest_results(
+                db, request.infospace_id, current_user.id, raw_results,
+                bundle_id=request.bundle_id,
+            )
+            return SearchAndIngestResponse(
+                query=request.query, provider=request.provider,
+                results_found=len(raw_results),
+                job_id=job.id if job else None,
+                status="success",
+                message=(f"Queued {len(raw_results)} result(s) from '{request.query}' for ingestion"
+                         if job else f"No ingestable results for '{request.query}'"),
+            )
+
         results_data = [
             {
                 "title": r.get("title", ""),
@@ -139,63 +126,47 @@ async def web_search_and_ingest(
             for r in raw_results
         ]
         return SearchAndIngestResponse(
-            query=request.query,
-            provider=request.provider,
-            results_found=len(raw_results),
-            results=results_data,
-            assets_created=0,
-            asset_ids=[],
+            query=request.query, provider=request.provider,
+            results_found=len(raw_results), results=results_data,
             status="success",
             message=f"Found {len(raw_results)} search results for '{request.query}'",
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.exception(f"Search and ingest failed for query '{request.query}'")
+        logger.exception(f"Search failed for query '{request.query}'")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Search and ingest failed: {e}",
+            detail=f"Search failed: {e}",
         )
 
 
 @router.post("/web/from-urls", response_model=SearchAndIngestResponse)
 async def web_create_assets_from_urls(
     request: SelectiveAssetCreationRequest,
-    make_ingestion_context: IngestionContextFactoryDep,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SearchAndIngestResponse:
-    """Create assets from a specific URL list. Selective asset creation."""
+    """Ingest a specific URL list as a ``web`` job (the web source scrapes each)."""
 
     resolve_access(db, request.infospace_id, current_user, Capability.INGEST)
 
     try:
-        context = make_ingestion_context(
-            current_user.id, request.infospace_id,
-            {"scrape_immediately": request.scrape_content,
-             "search_metadata": request.search_metadata},
-        )
-        created_assets, failed_urls = await compose_from_urls(
-            context, request.urls,
+        job = ingest_urls(
+            db, request.infospace_id, current_user.id, request.urls,
             bundle_id=request.bundle_id,
-            scrape_content=request.scrape_content,
-            search_metadata=request.search_metadata,
         )
         meta = request.search_metadata or {}
-        message = f"Successfully created {len(created_assets)} assets"
-        if failed_urls:
-            message += f", {len(failed_urls)} URLs failed"
         return SearchAndIngestResponse(
             query=meta.get("query", "URL List"),
             provider=meta.get("provider", "direct"),
             results_found=len(request.urls),
-            assets_created=len(created_assets),
-            asset_ids=[a.id for a in created_assets],
-            status="success" if not failed_urls else "partial_success",
-            message=message,
+            job_id=job.id if job else None,
+            status="success",
+            message=f"Queued {len(request.urls)} URL(s) for ingestion",
         )
     except Exception as e:
-        logger.exception("Bulk asset creation from URLs failed")
+        logger.exception("Ingest from URLs failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Asset creation failed: {e}",
@@ -205,37 +176,30 @@ async def web_create_assets_from_urls(
 @router.post("/web/from-results", response_model=SearchAndIngestResponse)
 async def web_create_assets_from_results(
     request: DirectAssetCreationRequest,
-    make_ingestion_context: IngestionContextFactoryDep,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SearchAndIngestResponse:
-    """Create assets directly from search-result dicts (no re-scrape)."""
+    """Ingest already-fetched search-result dicts as a ``web`` job — full content passes
+    through the web source, snippet-only entries get scraped. No re-query."""
 
     resolve_access(db, request.infospace_id, current_user, Capability.INGEST)
 
     try:
-        context = make_ingestion_context(current_user.id, request.infospace_id, {})
-        assets = await compose_from_results(
-            context, request.search_results,
+        job = ingest_results(
+            db, request.infospace_id, current_user.id, request.search_results,
             bundle_id=request.bundle_id,
-            search_metadata=request.search_metadata,
         )
         meta = request.search_metadata or {}
-        failed_count = len(request.search_results) - len(assets)
-        message = f"Successfully created {len(assets)} assets from search results"
-        if failed_count > 0:
-            message += f", {failed_count} results failed"
         return SearchAndIngestResponse(
             query=meta.get("query", "Search Results"),
             provider=meta.get("provider", "direct"),
             results_found=len(request.search_results),
-            assets_created=len(assets),
-            asset_ids=[a.id for a in assets],
-            status="success" if not failed_count else "partial_success",
-            message=message,
+            job_id=job.id if job else None,
+            status="success",
+            message=f"Queued {len(request.search_results)} result(s) for ingestion",
         )
     except Exception as e:
-        logger.exception("Direct asset creation from results failed")
+        logger.exception("Ingest from results failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Asset creation failed: {e}",

@@ -6,8 +6,7 @@ Lightweight helper functions for building tree structures from assets and bundle
 No service class needed - just pure functions for formatting data.
 """
 
-from typing import List, Dict, Set, Optional, Any
-from urllib.parse import quote, unquote
+from typing import List, Dict, Optional, Any
 from sqlalchemy import text
 from sqlmodel import Session, select
 from app.models import Asset, Bundle, AssetKind, Source, Flow, FlowStatus, Task, TaskStatus, IngestionJob, IngestionStatus
@@ -189,23 +188,6 @@ def build_tree_node_from_asset(asset: Asset, parent_type: str = None, parent_id:
     )
 
 
-def get_bundled_asset_ids(bundles: List[Bundle], session: Optional[Session] = None) -> Set[int]:
-    """
-    Extract all asset IDs that are contained in the given bundles.
-
-    Returns a set of asset IDs for efficient lookup.
-    Requires a session to query via the bundle_ids array column.
-    """
-    if not bundles or not session:
-        return set()
-    bundle_id_list = [b.id for b in bundles]
-    rows = session.execute(
-        text("SELECT id FROM asset WHERE bundle_ids && ARRAY[:bids]::int[]"),
-        {"bids": bundle_id_list},
-    ).all()
-    return {r[0] for r in rows}
-
-
 def build_root_tree_nodes(
     root_bundles: List[Bundle],
     root_assets: List[Asset],
@@ -258,77 +240,22 @@ def build_asset_children_nodes(
     return nodes
 
 
-def make_vfolder_node_id(bundle_id: int, path_prefix: str) -> str:
-    """Encode bundle_id and path_prefix for virtual folder node ID.
-    Uses URL-encoding for path to handle |, __, and other special chars in filenames.
-    """
-    encoded = quote(path_prefix, safe="")
-    return f"vfolder-{bundle_id}__{encoded}"
-
-
-def build_tree_node_from_vfolder(
-    bundle_id: int,
-    path_prefix: str,
-    folder_name: str,
-) -> TreeNode:
-    """Build TreeNode for a virtual folder (derived from logical_path)."""
-    new_prefix = f"{path_prefix}/{folder_name}" if path_prefix else folder_name
-    return TreeNode(
-        id=make_vfolder_node_id(bundle_id, new_prefix),
-        type=TreeNodeType.VIRTUAL_FOLDER,
-        name=folder_name,
-        path_prefix=new_prefix,
-        has_children=True,
-        updated_at=datetime.now(timezone.utc),
-    )
-
-
 def parse_tree_node_id(node_id: str) -> tuple[str, int]:
-    """
-    Parse a tree node ID string into type and numeric ID.
-    
-    Args:
-        node_id: Format "bundle-123", "asset-456", or "vfolder-123" / "vfolder-123__path|to|folder"
-    
-    Returns:
-        Tuple of (type_str, numeric_id). For vfolder, use parse_vfolder_node_id for path_prefix.
-        
-    Raises:
-        ValueError: If format is invalid
+    """Parse a tree node id into ``(type, numeric_id)``.
+
+    Format: ``bundle-123`` or ``asset-456``. (Folders are real bundles now —
+    there is no ``vfolder`` node type.) Raises ValueError on invalid input.
     """
     try:
-        if node_id.startswith("vfolder-"):
-            rest = node_id[8:]
-            numeric_id = int(rest.split("__")[0])
-            return "vfolder", numeric_id
-
         type_str, id_str = node_id.split('-', 1)
         numeric_id = int(id_str)
-        
+
         if type_str not in ['bundle', 'asset']:
             raise ValueError(f"Invalid node type: {type_str}")
-        
+
         return type_str, numeric_id
     except (ValueError, AttributeError) as e:
         raise ValueError(f"Invalid tree node ID format '{node_id}': {e}")
-
-
-def parse_vfolder_node_id(node_id: str) -> tuple[int, str]:
-    """
-    Parse a virtual folder node ID into bundle_id and path_prefix.
-    
-    Args:
-        node_id: Format "vfolder-123__urlencoded_path" (path is URL-encoded)
-    
-    Returns:
-        Tuple of (bundle_id, path_prefix with slashes)
-    """
-    if not node_id.startswith("vfolder-"):
-        raise ValueError(f"Invalid vfolder node ID: {node_id}")
-    parts = node_id.split("__", 1)
-    bundle_id = int(parts[0].split("-")[1])  # "vfolder-123" -> 123
-    path_prefix = unquote(parts[1]) if len(parts) > 1 else ""
-    return bundle_id, path_prefix
 
 
 # ============================================================================
@@ -545,18 +472,21 @@ def enrich_node_with_preview(
         node.preview = build_bundle_preview(entity, child_assets)
     
     elif isinstance(entity, Asset):
-        # Asset preview from registry (descriptor.preview_builder_name)
         from app.api.modules.content.types import get_content_type_registry
         registry = get_content_type_registry()
         desc = registry.by_kind(entity.kind)
-        builder = registry.get_preview_builder(entity.kind) if desc else None
-        if builder:
-            # "article" builder takes asset only; "csv"/"pdf" take (asset, child_assets)
-            if desc and desc.preview_builder_name == "article":
-                node.preview = builder(entity)
-            else:
-                child_assets = [e for e in (child_entities or []) if isinstance(e, Asset)]
-                node.preview = builder(entity, child_assets)
+        child_assets = [e for e in (child_entities or []) if isinstance(e, Asset)]
+        if desc and desc.preview is not None:
+            # Migrated types: a preview callable taking (asset, child_assets=None).
+            node.preview = desc.preview(entity, child_assets)
+        else:
+            # Transitional: legacy string-named builders still in tree_renderer.
+            builder = registry.get_preview_builder(entity.kind) if desc else None
+            if builder:
+                if desc and desc.preview_builder_name == "article":
+                    node.preview = builder(entity)
+                else:
+                    node.preview = builder(entity, child_assets)
     
     return node
 

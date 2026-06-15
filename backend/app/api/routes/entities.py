@@ -5,7 +5,7 @@ one canon (``canon_id NOT NULL``). The Canon's parent is the infospace.
 
 Action verbs use the ``/action/{verb}`` convention (matches
 ``annotation_runs.py:1270``). Deletion uses preview/confirm via
-``/action/delete`` mirroring ``core/tree.py:178``.
+``/action/delete`` mirroring ``content/tree.py:178``.
 
 Cross-canon merges are forbidden — entities must share a canon for a merge
 to make sense semantically.

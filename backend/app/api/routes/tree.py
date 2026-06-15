@@ -3,7 +3,7 @@
 Three families:
 
 * ``GET  /tree``          — root tree. Nav (flat bundle registry) + level assets.
-* ``GET  /tree/children`` — lazy-load children of a bundle / vfolder / container asset.
+* ``GET  /tree/children`` — lazy-load children of a bundle or container asset.
 * ``GET  /tree/feed``     — recent assets (flat feed).
 * ``POST /tree/assets/batch`` — id-indexed detail fetch (stays, pure projection).
 * ``POST /tree/delete(-preview)`` — cascaded deletion.
@@ -16,31 +16,18 @@ event generation comes from ``modules/content/views``. The route is thin.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field
-from sqlalchemy import func, text
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.api import dependency_injection
 from app.api.modules.content.models import Asset, AssetKind, Bundle
 from app.api.modules.content.query import AssetQuery
-from app.api.modules.content.schemas import (
-    AssetFeed,
-    AssetFeedMeta,
-    AssetNode,
-    AssetTree,
-    AssetTreeMeta,
-    AssetTreeNav,
-    ListingSection,
-)
+from app.api.modules.content.schemas import AssetFeed, AssetTree
 from app.api.modules.content.views import (
-    _asset_node,
-    _build_nav,
-    _vfolder_node,
     collect_feed,
     collect_tree,
     render_feed,
@@ -49,8 +36,8 @@ from app.api.modules.content.views import (
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, DeleteAccess, Requires, ViewAccess,
 )
-from app.api.tree_renderer import parse_tree_node_id, parse_vfolder_node_id
-from app.core.tree import ROOT, delete as tree_delete
+from app.api.tree_renderer import parse_tree_node_id
+from app.api.modules.content.tree import ROOT, delete as tree_delete
 from app.schemas import AssetRead, Message
 
 logger = logging.getLogger(__name__)
@@ -114,12 +101,13 @@ async def get_infospace_tree_stream(
 
 def _children_query(
     db: Session, infospace_id: int, parent_id: str, skip: int, limit: int, access: Access,
-) -> tuple[str, AssetQuery | None, Bundle | None, str | None]:
-    """Resolve parent_id to (parent_type, query, bundle, path_prefix).
+) -> AssetQuery:
+    """Resolve a parent node id to the AssetQuery for its children.
 
-    Validates the parent node exists and is in scope. Raises HTTPException
-    on invalid input. ``query`` is ``None`` for vfolder parents (those use
-    the bundle + path_prefix to assemble children manually).
+    ``bundle-N`` → member root-assets (child *bundles* come via ``nav``);
+    ``asset-N`` → container parts (``parent_asset_id = N``). Validates existence
+    + scope; raises HTTPException on invalid input. Folders are real bundles now,
+    so there is no ``vfolder`` node type.
     """
     scope = access.scope
     try:
@@ -143,7 +131,7 @@ def _children_query(
             .paginate(limit=limit, max_limit=500)
         )
         query._offset = skip
-        return ("bundle", query, bundle, None)
+        return query
 
     if parent_type == "asset":
         asset = db.get(Asset, parent_numeric_id)
@@ -158,19 +146,7 @@ def _children_query(
             .paginate(limit=limit, max_limit=500)
         )
         query._offset = skip
-        return ("asset", query, None, None)
-
-    if parent_type == "vfolder":
-        try:
-            bundle_id, path_prefix = parse_vfolder_node_id(parent_id)
-        except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-        bundle = db.get(Bundle, bundle_id)
-        if not bundle or bundle.infospace_id != infospace_id:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bundle not found")
-        if scope and scope.bundle_ids and bundle.id not in scope.bundle_ids:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-        return ("vfolder", None, bundle, path_prefix)
+        return query
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid parent type: {parent_type}")
 
@@ -179,7 +155,7 @@ def _children_query(
 async def get_tree_children(
     *,
     infospace_id: int,
-    parent_id: str = Query(..., description="Parent node id (bundle-*, asset-*, vfolder-*)"),
+    parent_id: str = Query(..., description="Parent node id (bundle-*, asset-*)"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     access: Access = ViewAccess,
@@ -188,37 +164,22 @@ async def get_tree_children(
     """Lazy children for a tree node (JSON envelope).
 
     Dispatches by parent type:
-      * ``bundle-N`` — assets whose ``bundle_ids @> [N]`` (and ``parent_asset_id IS NULL``)
-      * ``asset-N``  — container children (``parent_asset_id = N``)
-      * ``vfolder-N__path`` — mix of sub-folder nodes + files at that path
+      * ``bundle-N`` — member root-assets (``bundle_ids @> [N]`` and ``parent_asset_id IS NULL``);
+        child *bundles* (sub-folders) arrive via ``nav``.
+      * ``asset-N``  — container parts (``parent_asset_id = N``).
 
     For a progressive SSE stream, call ``GET /tree/children/stream``.
     """
     scope = access.scope
-    parent_type, query, bundle, path_prefix = _children_query(db, infospace_id, parent_id, skip, limit, access)
-
-    if parent_type in ("bundle", "asset"):
-        assert query is not None
-        return await collect_tree(query, level_parent=parent_id, access_scope=scope)
-
-    # vfolder: manually assemble envelope (mixed folder + asset nodes)
-    assert bundle is not None and path_prefix is not None
-    nav = _build_nav(db, infospace_id, scope)
-    nodes, total = _vfolder_children_nodes(db, bundle, path_prefix, skip, limit)
-    section = ListingSection[AssetNode](
-        at_parent=parent_id,
-        items=nodes,
-        total=total,
-        has_more=(skip + len(nodes)) < total,
-    )
-    return AssetTree(nav=nav, section=section, meta=AssetTreeMeta(bundles=0, assets=0, vfolders=total))
+    query = _children_query(db, infospace_id, parent_id, skip, limit, access)
+    return await collect_tree(query, level_parent=parent_id, access_scope=scope)
 
 
 @router.get("/infospaces/{infospace_id}/tree/children/stream", response_class=EventSourceResponse)
 async def get_tree_children_stream(
     *,
     infospace_id: int,
-    parent_id: str = Query(..., description="Parent node id (bundle-*, asset-*, vfolder-*)"),
+    parent_id: str = Query(..., description="Parent node id (bundle-*, asset-*)"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     access: Access = ViewAccess,
@@ -226,114 +187,9 @@ async def get_tree_children_stream(
 ):
     """Native SSE stream of tree children."""
     scope = access.scope
-    parent_type, query, bundle, path_prefix = _children_query(db, infospace_id, parent_id, skip, limit, access)
-
-    if parent_type in ("bundle", "asset"):
-        assert query is not None
-        async for ev in render_tree(query, level_parent=parent_id, access_scope=scope):
-            yield ServerSentEvent(data=ev, event=ev.name)
-        return
-
-    # vfolder: assemble envelope then emit synthetic events in the wire protocol
-    from app.api.modules.content.schemas import (
-        CountEvent, DoneEvent, NavEvent, SectionEvent, SkeletonEvent,
-    )
-    assert bundle is not None and path_prefix is not None
-    nav = _build_nav(db, infospace_id, scope)
-    nodes, total = _vfolder_children_nodes(db, bundle, path_prefix, skip, limit)
-    section = ListingSection[AssetNode](
-        at_parent=parent_id,
-        items=nodes,
-        total=-1,
-        has_more=(skip + len(nodes)) < total,
-    )
-    yield ServerSentEvent(data=SkeletonEvent(family="tree"), event="skeleton")
-    yield ServerSentEvent(data=NavEvent(nav=nav), event="nav")
-    yield ServerSentEvent(data=SectionEvent(role="level", section=section), event="section")
-    yield ServerSentEvent(data=CountEvent(total=total, at_parent=parent_id), event="count")
-    yield ServerSentEvent(data=DoneEvent(), event="done")
-
-
-def _vfolder_children_nodes(
-    db: Session, bundle: Bundle, path_prefix: str, skip: int, limit: int,
-) -> tuple[List[AssetNode], int]:
-    """Build mixed AssetNode list for a vfolder level: sub-folders + files.
-
-    Folders come from distinct path segments; files are assets at this level
-    whose suffix contains no slash.
-    """
-    base_prefix = f"{path_prefix}/" if path_prefix else ""
-    like_prefix = f"{base_prefix}%"
-    prefix_len = len(base_prefix)
-    params = {
-        "prefix_len": prefix_len,
-        "bundle_id": bundle.id,
-        "like_prefix": like_prefix,
-        "slash_pattern": "%/%",
-    }
-
-    folder_rows = db.execute(text("""
-        SELECT DISTINCT split_part(
-            substring(logical_path from :prefix_len + 1), '/', 1
-        ) AS segment
-        FROM asset
-        WHERE bundle_ids @> ARRAY[:bundle_id]::int[]
-          AND logical_path IS NOT NULL
-          AND logical_path LIKE :like_prefix
-          AND parent_asset_id IS NULL
-          AND substring(logical_path from :prefix_len + 1) LIKE :slash_pattern
-        ORDER BY segment
-    """), params).fetchall()
-    folder_names = [r[0] for r in folder_rows if r[0]]
-
-    file_count = db.execute(text("""
-        SELECT count(*) FROM asset
-        WHERE bundle_ids @> ARRAY[:bundle_id]::int[]
-          AND logical_path IS NOT NULL
-          AND logical_path LIKE :like_prefix
-          AND parent_asset_id IS NULL
-          AND substring(logical_path from :prefix_len + 1) != ''
-          AND substring(logical_path from :prefix_len + 1) NOT LIKE :slash_pattern
-    """), params).scalar() or 0
-
-    total_children = len(folder_names) + file_count
-
-    if skip < len(folder_names):
-        folder_page = folder_names[skip : skip + limit]
-        file_skip = 0
-        remaining = limit - len(folder_page)
-    else:
-        folder_page = []
-        file_skip = skip - len(folder_names)
-        remaining = limit
-
-    files: List[Asset] = []
-    if remaining > 0:
-        file_ids = [
-            r[0] for r in db.execute(text("""
-                SELECT id FROM asset
-                WHERE bundle_ids @> ARRAY[:bundle_id]::int[]
-                  AND logical_path IS NOT NULL
-                  AND logical_path LIKE :like_prefix
-                  AND parent_asset_id IS NULL
-                  AND substring(logical_path from :prefix_len + 1) != ''
-                  AND substring(logical_path from :prefix_len + 1) NOT LIKE :slash_pattern
-                ORDER BY logical_path
-                OFFSET :file_skip LIMIT :remaining
-            """), {**params, "file_skip": file_skip, "remaining": remaining}).fetchall()
-        ]
-        if file_ids:
-            files = list(db.exec(
-                select(Asset).where(Asset.id.in_(file_ids)).order_by(Asset.logical_path)
-            ).all())
-
-    nodes: List[AssetNode] = []
-    for name in folder_page:
-        sub_prefix = f"{base_prefix}{name}"
-        nodes.append(_vfolder_node(bundle.id, sub_prefix, name))
-    for asset in files:
-        nodes.append(_asset_node(asset))
-    return nodes, total_children
+    query = _children_query(db, infospace_id, parent_id, skip, limit, access)
+    async for ev in render_tree(query, level_parent=parent_id, access_scope=scope):
+        yield ServerSentEvent(data=ev, event=ev.name)
 
 
 # ─── GET /tree/feed — recent assets ────────────────────────────────────────
@@ -350,7 +206,6 @@ def _feed_query(
     sort_by: str,
     sort_order: str,
     bundle_id: Optional[int],
-    path_filter: Optional[str],
     cursor: Optional[str],
 ) -> AssetQuery:
     scope = access.scope
@@ -378,10 +233,6 @@ def _feed_query(
         if scope and scope.bundle_ids and bundle_id not in scope.bundle_ids:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
         query.bundle(bundle_id)
-    if path_filter:
-        query._conditions.append(
-            (Asset.logical_path.is_not(None)) & (Asset.logical_path.like(f"{path_filter}%"))
-        )
 
     direction = "desc" if sort_order == "desc" else "asc"
     if sort_by == "created_at":
@@ -406,7 +257,6 @@ async def get_feed_assets(
     sort_by: str = Query("updated_at"),
     sort_order: str = Query("desc"),
     bundle_id: Optional[int] = Query(None),
-    path_filter: Optional[str] = Query(None),
     cursor: Optional[str] = Query(None),
     access: Access = ViewAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
@@ -415,7 +265,7 @@ async def get_feed_assets(
     query = _feed_query(
         db, infospace_id, access,
         skip=skip, limit=limit, kinds=kinds, sort_by=sort_by,
-        sort_order=sort_order, bundle_id=bundle_id, path_filter=path_filter,
+        sort_order=sort_order, bundle_id=bundle_id,
         cursor=cursor,
     )
     return await collect_feed(query)
@@ -431,7 +281,6 @@ async def get_feed_assets_stream(
     sort_by: str = Query("updated_at"),
     sort_order: str = Query("desc"),
     bundle_id: Optional[int] = Query(None),
-    path_filter: Optional[str] = Query(None),
     cursor: Optional[str] = Query(None),
     access: Access = ViewAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
@@ -440,7 +289,7 @@ async def get_feed_assets_stream(
     query = _feed_query(
         db, infospace_id, access,
         skip=skip, limit=limit, kinds=kinds, sort_by=sort_by,
-        sort_order=sort_order, bundle_id=bundle_id, path_filter=path_filter,
+        sort_order=sort_order, bundle_id=bundle_id,
         cursor=cursor,
     )
     async for ev in render_feed(query):
@@ -482,6 +331,10 @@ def batch_get_assets(
 
 class TreeDeleteRequest(BaseModel):
     node_ids: List[str]
+    # The collection (bundle) the user is deleting FROM. Assets lose membership in
+    # this location: last membership → destroyed, otherwise unlinked (kept elsewhere).
+    # ROOT (default) = the top level. Bundle deletes cascade regardless of out_of.
+    out_of: int = ROOT
 
 
 def _parse_delete_request(db: Session, infospace_id: int, node_ids: List[str]) -> tuple[list[int], list[int]]:
@@ -514,10 +367,10 @@ def preview_tree_deletion(
     """Preview deletion impact without mutating."""
 
     if not request.node_ids:
-        return tree_delete(db, out_of=ROOT, confirm=False)
+        return tree_delete(db, out_of=request.out_of, confirm=False)
 
     bundle_ids, asset_ids = _parse_delete_request(db, infospace_id, request.node_ids)
-    return tree_delete(db, asset_ids=asset_ids, bundle_ids=bundle_ids, out_of=ROOT, confirm=False)
+    return tree_delete(db, asset_ids=asset_ids, bundle_ids=bundle_ids, out_of=request.out_of, confirm=False)
 
 
 @router.post("/infospaces/{infospace_id}/tree/delete", response_model=Message)
@@ -535,7 +388,7 @@ def delete_tree_nodes(
 
     bundle_ids, asset_ids = _parse_delete_request(db, infospace_id, request.node_ids)
     failed_count = len(request.node_ids) - len(bundle_ids) - len(asset_ids)
-    result = tree_delete(db, asset_ids=asset_ids, bundle_ids=bundle_ids, out_of=ROOT, confirm=True)
+    result = tree_delete(db, asset_ids=asset_ids, bundle_ids=bundle_ids, out_of=request.out_of, confirm=True)
     db.commit()
 
     message = result.message

@@ -1,8 +1,8 @@
 import logging
-from typing import List
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import text
-from sqlmodel import Session
+from sqlalchemy import func, text
+from sqlmodel import Session, select
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 
@@ -20,42 +20,18 @@ from app.schemas import (
     BundleMoveRequest,
     BundleHierarchy,
 )
-from app.api.modules.content.services import BundleService
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires,
 )
-from app.core.tree import ROOT, copy as tree_copy, move as tree_move, delete as tree_delete, seal_subtree, subtree_ids, unseal_subtree
+from app.api.modules.content.tree import (
+    ROOT, bundle_assets, copy as tree_copy, create_bundle as tree_create_bundle,
+    delete as tree_delete, move as tree_move, seal_subtree, subtree_ids,
+    transfer as tree_transfer, unseal_subtree,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-class MaterializeVfolderRequest(BaseModel):
-    """Request body for materializing a virtual folder as a real bundle."""
-    source_bundle_id: int
-    path_prefix: str = ""
-    name: str
-
-
-@router.post("/infospaces/{infospace_id}/bundles/from-vfolder", response_model=BundleRead, status_code=status.HTTP_201_CREATED)
-def materialize_virtual_folder(
-    *,
-    request: MaterializeVfolderRequest,
-    access: Access = Requires(Capability.ORGANIZE, scope=None),
-    service: BundleService = Depends(dependency_injection.get_bundle_service),
-) -> Bundle:
-    """Create a real bundle from a virtual folder (path prefix within a source bundle)."""
-    try:
-        bundle = service.materialize_virtual_folder(
-            source_bundle_id=request.source_bundle_id,
-            path_prefix=request.path_prefix,
-            name=request.name,
-            infospace_id=access.infospace_id,
-            user_id=access.user_id,
-        )
-        return bundle
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.post("/infospaces/{infospace_id}/bundles", response_model=BundleRead, status_code=status.HTTP_201_CREATED)
@@ -63,22 +39,37 @@ def create_bundle(
     *,
     bundle_in: BundleCreate,
     access: Access = Requires(Capability.ORGANIZE, scope=None),
-    service: BundleService = Depends(dependency_injection.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
 ) -> Bundle:
     """Create a new bundle in an infospace."""
+    # Seed assets must belong to this infospace (attach is infospace-scoped too —
+    # this just turns a silent skip into an explicit 400).
+    seed_ids = list(bundle_in.asset_ids or [])
+    if seed_ids:
+        owned = db.exec(
+            select(func.count(Asset.id)).where(
+                Asset.id.in_(seed_ids), Asset.infospace_id == access.infospace_id
+            )
+        ).one()
+        if owned != len(set(seed_ids)):
+            raise HTTPException(status_code=400, detail="One or more assets not found in this infospace")
+
     try:
-        bundle = service.create_bundle(
-            bundle_in=bundle_in,
+        bundle = tree_create_bundle(
+            db,
             infospace_id=access.infospace_id,
-            user_id=access.user_id
+            user_id=access.user_id,
+            asset_ids=seed_ids or None,
+            **bundle_in.model_dump(exclude={"asset_ids"}, exclude_none=True),
         )
+        db.commit()
+        db.refresh(bundle)
     except IntegrityError:
+        db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f'A bundle named "{bundle_in.name}" already exists in this infospace.',
         )
-    if not bundle:
-        raise HTTPException(status_code=400, detail="Could not create bundle")
 
     # Kick background population if a source_query was provided
     if bundle.bundle_metadata and bundle.bundle_metadata.get("source_query"):
@@ -105,15 +96,16 @@ def get_bundles(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
     access: Access = Requires(scope=None),
-    service: BundleService = Depends(dependency_injection.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
 ) -> List[Bundle]:
     """Get bundles for an infospace."""
-    bundles = service.get_bundles(
-        infospace_id=access.infospace_id,
-        user_id=access.user_id,
-        skip=skip,
-        limit=limit
-    )
+    bundles = db.exec(
+        select(Bundle)
+        .where(Bundle.infospace_id == access.infospace_id)
+        .offset(skip)
+        .limit(limit)
+        .order_by(Bundle.name)
+    ).all()
     if access.scope is not None:
         visible = set(access.scope.bundle_ids)
         bundles = [b for b in bundles if b.id in visible]
@@ -126,21 +118,21 @@ def update_bundle(
     bundle_in: BundleUpdate,
     access: Access = Requires(Capability.ORGANIZE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
-    service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Bundle:
     """Update a bundle."""
     bundle = db.get(Bundle, bundle_id)
     if not bundle or bundle.infospace_id != access.infospace_id:
         raise HTTPException(status_code=404, detail="Bundle not found")
 
-    bundle = service.update_bundle(
-        bundle_id=bundle_id,
-        bundle_in=bundle_in,
-        infospace_id=access.infospace_id,
-        user_id=access.user_id,
-    )
-    if not bundle:
-        raise HTTPException(status_code=404, detail="Bundle not found or update failed")
+    update_data = bundle_in.model_dump(exclude_unset=True)
+    # Map None → ROOT for parent_bundle_id if explicitly set
+    if 'parent_bundle_id' in update_data and update_data['parent_bundle_id'] is None:
+        update_data['parent_bundle_id'] = ROOT
+    for field, value in update_data.items():
+        setattr(bundle, field, value)
+    db.add(bundle)
+    db.commit()
+    db.refresh(bundle)
     return bundle
 
 @router.delete("/infospaces/{infospace_id}/bundles/{bundle_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -148,7 +140,6 @@ def delete_bundle(
     bundle_id: int,
     access: Access = Requires(Capability.DELETE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
-    service: BundleService = Depends(dependency_injection.get_bundle_service),
 ):
     """Delete a bundle."""
     bundle = db.get(Bundle, bundle_id)
@@ -170,7 +161,6 @@ def bulk_delete_bundles(
     request: BulkDeleteBundlesRequest,
     access: Access = Requires(Capability.DELETE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
-    service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Message:
     """
     Delete multiple bundles in one request.
@@ -208,7 +198,6 @@ def add_asset_to_bundle(
     asset_id: int,
     access: Access = Requires(Capability.ORGANIZE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
-    service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Bundle:
     """Add an existing asset to a bundle by ID."""
     bundle = db.get(Bundle, bundle_id)
@@ -233,7 +222,6 @@ def remove_asset_from_bundle(
     asset_id: int,
     access: Access = Requires(Capability.DELETE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
-    service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Bundle:
     """Remove an asset from a bundle by ID."""
     bundle = db.get(Bundle, bundle_id)
@@ -252,7 +240,7 @@ def remove_asset_from_bundle(
 def get_assets_in_bundle(
     bundle_id: int,
     access: Access = Requires(scope=None),
-    service: BundleService = Depends(dependency_injection.get_bundle_service),
+    db: Session = Depends(dependency_injection.get_db),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
 ):
@@ -260,14 +248,10 @@ def get_assets_in_bundle(
     Get all assets within a specific bundle.
     """
     access.require_in_scope("bundle_ids", bundle_id)
-    assets = service.get_assets_for_bundle(
-        bundle_id=bundle_id,
-        infospace_id=access.infospace_id,
-        user_id=access.user_id,
-        skip=skip,
-        limit=limit
-    )
-    return assets
+    bundle = db.get(Bundle, bundle_id)
+    if not bundle or bundle.infospace_id != access.infospace_id:
+        return []
+    return bundle_assets(db, bundle_id, skip=skip, limit=limit)
 
 
 @router.get(
@@ -297,7 +281,7 @@ def get_bundle_descendant_asset_ids(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bundle not found")
 
     # Resolve which bundles to query: recursive walks the subtree via the
-    # canonical primitive in core/tree.py; non-recursive just uses this one.
+    # canonical primitive in content/tree.py; non-recursive just uses this one.
     bids = (
         list(subtree_ids(db, {bundle_id})) if recursive else [bundle_id]
     )
@@ -327,33 +311,30 @@ def transfer_bundle(
     copy: bool = True,
     access: Access = Requires(Capability.ORGANIZE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
-    service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Bundle:
     """
     Transfer a bundle to another infospace.
 
     When copying (copy=True), both the bundle and all its assets are copied to the target infospace.
     When moving (copy=False), the bundle is moved but cross-infospace asset movement has limitations.
-
-    Args:
-        bundle_id: ID of bundle to transfer
-        target_infospace_id: Target infospace ID
-        copy: If True, copy bundle and all assets. If False, move bundle.
     """
     bundle = db.get(Bundle, bundle_id)
     if not bundle or bundle.infospace_id != access.infospace_id:
         raise HTTPException(status_code=404, detail="Bundle not found")
 
-    bundle = service.transfer_bundle(
+    result = tree_transfer(
+        db,
         bundle_id=bundle_id,
         user_id=access.user_id,
         source_infospace_id=access.infospace_id,
         target_infospace_id=target_infospace_id,
-        copy=copy,
+        copy_assets=copy,
     )
-    if not bundle:
+    if not result:
         raise HTTPException(status_code=404, detail="Bundle not found or transfer failed")
-    return bundle
+    db.commit()
+    db.refresh(result)
+    return result
 
 @router.post("/infospaces/{infospace_id}/bundles/{bundle_id}/move", response_model=BundleRead)
 def move_bundle_to_parent(
@@ -362,7 +343,6 @@ def move_bundle_to_parent(
     move_request: BundleMoveRequest,
     access: Access = Requires(Capability.ORGANIZE, scope=None),
     db: Session = Depends(dependency_injection.get_db),
-    service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> Bundle:
     """Move a bundle into another bundle or to root level."""
     bundle = db.get(Bundle, bundle_id)
@@ -385,34 +365,45 @@ def get_bundle_hierarchy(
     max_depth: int = Query(default=10, ge=1, le=20),
     access: Access = Requires(scope=None),
     db: Session = Depends(dependency_injection.get_db),
-    service: BundleService = Depends(dependency_injection.get_bundle_service),
 ) -> BundleHierarchy:
     """Get bundle with its complete child hierarchy."""
     bundle = db.get(Bundle, bundle_id)
     if not bundle or bundle.infospace_id != access.infospace_id:
         raise HTTPException(status_code=404, detail="Bundle not found")
 
-    hierarchy = service.get_bundle_hierarchy(
-        bundle_id=bundle_id,
-        infospace_id=access.infospace_id,
-        user_id=access.user_id,
-        max_depth=max_depth,
-    )
-    if not hierarchy:
-        raise HTTPException(status_code=404, detail="Bundle not found or access denied")
-    return hierarchy
+    def build_hierarchy(bundle_obj: Bundle, current_depth: int = 0) -> Dict[str, Any]:
+        node: Dict[str, Any] = {
+            "id": bundle_obj.id,
+            "name": bundle_obj.name,
+            "description": bundle_obj.description,
+            "asset_count": bundle_obj.asset_count,
+            "child_bundle_count": bundle_obj.child_bundle_count,
+            "parent_bundle_id": bundle_obj.parent_bundle_id,
+            "children": [],
+        }
+        if current_depth > max_depth:
+            return node
+        children_bundles = db.exec(
+            select(Bundle).where(Bundle.parent_bundle_id == bundle_obj.id).order_by(Bundle.name)
+        ).all()
+        node["children"] = [build_hierarchy(c, current_depth + 1) for c in children_bundles]
+        return node
+
+    return build_hierarchy(bundle)
 
 @router.get("/infospaces/{infospace_id}/bundles/root", response_model=List[BundleRead])
 def get_root_bundles(
     *,
     access: Access = Requires(scope=None),
-    service: BundleService = Depends(dependency_injection.get_bundle_service)
+    db: Session = Depends(dependency_injection.get_db),
 ) -> List[Bundle]:
     """Get all top-level bundles (those without parent bundles) in an infospace."""
-    bundles = service.get_root_bundles(
-        infospace_id=access.infospace_id,
-        user_id=access.user_id
-    )
+    bundles = db.exec(
+        select(Bundle).where(
+            Bundle.infospace_id == access.infospace_id,
+            Bundle.parent_bundle_id == ROOT,
+        )
+    ).all()
     if access.scope is not None:
         visible = set(access.scope.bundle_ids)
         bundles = [b for b in bundles if b.id in visible]
@@ -426,7 +417,6 @@ def get_bulk_bundle_assets(
     limit: int = Query(50, ge=1, le=100),
     access: Access = Requires(scope=None),
     db: Session = Depends(dependency_injection.get_db),
-    service: BundleService = Depends(dependency_injection.get_bundle_service)
 ) -> dict:
     """
     Get assets from multiple bundles in a single request.
@@ -461,13 +451,7 @@ def get_bulk_bundle_assets(
             continue
 
         try:
-            assets = service.get_assets_for_bundle(
-                bundle_id=bundle_id,
-                infospace_id=access.infospace_id,
-                user_id=access.user_id,
-                skip=skip,
-                limit=limit
-            )
+            assets = bundle_assets(db, bundle_id, skip=skip, limit=limit)
             results[bundle_id] = {
                 "bundle_name": bundle.name,
                 "assets": [AssetRead.model_validate(a) for a in assets],

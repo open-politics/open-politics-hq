@@ -111,7 +111,7 @@ def _expand_derived_items(db: Session, parent_item: PackageItem) -> list:
     derived = []
 
     if parent_item.bundle_id is not None:
-        from app.core.tree import subtree_ids
+        from app.api.modules.content.tree import subtree_ids
         all_ids = subtree_ids(db, {parent_item.bundle_id})
         child_ids = all_ids - {parent_item.bundle_id}
         for bid in child_ids:

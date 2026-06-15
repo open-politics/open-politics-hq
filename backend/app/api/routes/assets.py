@@ -16,13 +16,15 @@ from app.models import (
     ProcessingStatus,
 )
 from app.schemas import AssetRead, AssetCreate, AssetUpdate, AssetsOut, Message
+# IngestionJobRead is the canonical job-tracking DTO (defined alongside the job
+# routes). Ingest endpoints that mint an IngestionJob return it so the frontend
+# tracks progress via the same useIngestionJobs polling infra. No import cycle:
+# ingestion_jobs.py imports only models/schemas/access/DI, never routes/assets.
+from app.api.routes.ingestion_jobs import IngestionJobRead
 from app.api.dependency_injection import (
     SessionDep,
     CurrentUser,
     StorageProviderDep,
-    BundleServiceDep,
-    IngestionContextFactoryDep,
-    ProcessingServiceDep,
     CheckUploadSizeDep,
 )
 from app.api.modules.identity_infospace_user.access import (
@@ -31,10 +33,8 @@ from app.api.modules.identity_infospace_user.access import (
 from app.api.modules.foundation_service_providers import resolve
 from app.core.config import settings
 from sqlalchemy import func
-from sqlmodel import select, delete
+from sqlmodel import select
 from app.core.celery_app import celery
-from app.api.modules.content.services import BundleService
-from app.api.modules.content.ingest import ingest
 from app.core.db import engine
 from sqlmodel import Session
 
@@ -51,6 +51,22 @@ class BulkUrlIngestion(BaseModel):
     base_title: Optional[str] = None
     scrape_immediately: bool = True
     bundle_id: Optional[int] = None
+
+class IntakeItem(BaseModel):
+    """One thing to ingest — exactly one of url/text/query/storage_path says what it
+    is (field dispatch → source kind). ``storage_path`` is a pre-staged blob."""
+    url: Optional[str] = None
+    text: Optional[str] = None
+    query: Optional[str] = None
+    storage_path: Optional[str] = None
+    title: Optional[str] = None
+    filename: Optional[str] = None
+
+class IntakeRequest(BaseModel):
+    items: List[IntakeItem]
+    bundle_id: Optional[int] = None
+    bundle_name: Optional[str] = None
+    parent_bundle_id: Optional[int] = None
 
 class ReprocessOptions(BaseModel):
     delimiter: Optional[str] = None
@@ -126,107 +142,79 @@ async def create_asset(
     *,
     session: SessionDep,
     access: Access = Requires(Capability.INGEST, scope=None),
-    ingestion_context_factory: IngestionContextFactoryDep,
-    processing_service: ProcessingServiceDep,
     infospace_id: int,
     asset_in: AssetCreate
 ) -> Any:
-    """
-    Generic asset creation endpoint that routes to appropriate specific endpoint.
+    """Author an asset directly from metadata (title, text, blob_path, facets, …).
 
-    This endpoint maintains backward compatibility while using the new ContentService.
-    Based on the asset data provided, it routes to the appropriate ingestion method:
-    - If source_identifier (URL) is provided: ingest as web content
-    - If text_content is provided: ingest as text
-    - Otherwise: create a basic asset record
+    Authoring only — no external fetch. To ingest a URL, text, file, or search, POST
+    to ``/intake`` (mints an IngestionJob; the ``ingest`` task does the work). A
+    blob_path with a processable kind is created PENDING and the processing cascade
+    picks it up via ``asset.ingested``; everything else is born READY.
     """
     try:
-        locator: Any = None
-        options: Dict[str, Any] = {}
+        from app.api.modules.content.types import detect_asset_kind_from_extension, needs_processing
+        from app.api.modules.content.asset_builder import AssetBuilder
 
-        if asset_in.source_identifier and (
-            asset_in.source_identifier.startswith('http://') or
-            asset_in.source_identifier.startswith('https://')
-        ):
-            locator = asset_in.source_identifier
-            options['scrape_immediately'] = True
-        elif asset_in.text_content:
-            locator = asset_in.text_content
-            options['event_timestamp'] = asset_in.event_timestamp
+        asset_in.user_id = access.user_id
+        asset_in.infospace_id = infospace_id
 
-        if locator:
-            context = ingestion_context_factory(
-                user_id=access.user_id,
-                infospace_id=infospace_id,
-                options=options,
-            )
-            assets = await ingest(
-                context,
-                locator,
-                title=asset_in.title,
-                options=options,
-            )
-            asset = assets[0] if assets else None
+        # Infer kind from the blob extension when the caller left it generic.
+        if asset_in.blob_path and asset_in.kind in (None, AssetKind.FILE):
+            import os
+            detected = detect_asset_kind_from_extension(os.path.splitext(asset_in.blob_path)[1].lower())
+            if detected != AssetKind.FILE:
+                asset_in.kind = detected
+
+        builder = AssetBuilder(session, access.user_id, infospace_id)
+        if asset_in.kind is not None:
+            builder.as_kind(asset_in.kind)
+        builder.with_title(asset_in.title or "Untitled")
+        if asset_in.text_content is not None:
+            builder.with_text(asset_in.text_content)
+        if asset_in.blob_path:
+            builder.with_blob(asset_in.blob_path)
+        if asset_in.source_identifier:
+            builder.with_source(asset_in.source_identifier)
+        if asset_in.content_hash:
+            builder.with_content_hash(asset_in.content_hash)
+        if asset_in.event_timestamp:
+            builder.with_timestamp(asset_in.event_timestamp)
+        if asset_in.facets:
+            builder.with_facets(**asset_in.facets)
+        if asset_in.file_info:
+            builder.with_metadata(**asset_in.file_info)
+
+        # A processable blob → PENDING (the cascade expands it); else honor the
+        # caller's status, defaulting to READY.
+        will_process = (
+            bool(asset_in.blob_path) and asset_in.kind is not None
+            and needs_processing(asset_in.kind)
+        )
+        if asset_in.processing_status is not None:
+            builder.with_processing_status(asset_in.processing_status)
+        elif will_process:
+            builder.with_processing_status(ProcessingStatus.PENDING)
+
+        if asset_in.content_hash:
+            builder.dedup_on(content_hash=asset_in.content_hash).on_match("skip")
+        elif asset_in.source_identifier:
+            builder.dedup_on(source_identifier=asset_in.source_identifier).on_match("skip")
         else:
-            from app.api.modules.content.processors import detect_asset_kind_from_extension, needs_processing
+            builder.no_dedup()
 
-            context = ingestion_context_factory(access.user_id, infospace_id, {})
-            asset_in.user_id = access.user_id
-            asset_in.infospace_id = infospace_id
+        asset = await builder.build()
+        session.commit()
+        session.refresh(asset)
 
-            if asset_in.blob_path:
-                import os
-                file_ext = os.path.splitext(asset_in.blob_path)[1].lower()
-                detected_kind = detect_asset_kind_from_extension(file_ext)
-                if detected_kind != AssetKind.FILE:
-                    asset_in.kind = detected_kind
-                    logger.info(f"Detected asset kind '{detected_kind.value}' from blob_path: {asset_in.blob_path}")
-
-            from app.api.modules.content.services.asset_builder import AssetBuilder
-            builder = AssetBuilder(session, access.user_id, infospace_id)
-            if asset_in.kind is not None:
-                builder.as_kind(asset_in.kind)
-            builder.with_title(asset_in.title or "Untitled")
-            if asset_in.text_content is not None:
-                builder.with_text(asset_in.text_content)
-            if asset_in.blob_path:
-                builder.with_blob(asset_in.blob_path)
-            if asset_in.source_identifier:
-                builder.with_source(asset_in.source_identifier)
-            if asset_in.content_hash:
-                builder.with_content_hash(asset_in.content_hash)
-            if asset_in.event_timestamp:
-                builder.with_timestamp(asset_in.event_timestamp)
-            if asset_in.facets:
-                builder.with_facets(**asset_in.facets)
-            if asset_in.file_info:
-                builder.with_metadata(**asset_in.file_info)
-            if asset_in.processing_status is not None:
-                builder.with_processing_status(asset_in.processing_status)
-            # Dedup by content_hash if caller supplied one; otherwise keep as-is.
-            if asset_in.content_hash:
-                builder.dedup_on(content_hash=asset_in.content_hash).on_match("skip")
-            elif asset_in.source_identifier:
-                builder.dedup_on(source_identifier=asset_in.source_identifier).on_match("skip")
-            else:
-                builder.no_dedup()
-            asset = await builder.build()
-            session.commit()
-            session.refresh(asset)
-
-            # Process if needed (using centralized detection)
-            if asset.blob_path and needs_processing(asset.kind):
-                try:
-                    await processing_service.process_content(asset, options)
-                except Exception as e:
-                    logger.error(f"Processing failed for asset {asset.id}: {e}")
-                    # Don't fail the request, asset is already created
-
-        if not asset:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create asset from provided data.")
+        if asset.processing_status == ProcessingStatus.PENDING:
+            from app.core.events import emit
+            emit("asset.ingested", {"infospace_id": infospace_id})
 
         return AssetRead.model_validate(asset)
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Asset creation failed: {e}")
         raise HTTPException(
@@ -267,7 +255,7 @@ async def batch_create_assets(
             data["title"] = "Untitled"
         assets.append(Asset(**{k: v for k, v in data.items() if k in valid}))
 
-    from app.api.modules.content.services.asset_builder import AssetBuilder
+    from app.api.modules.content.asset_builder import AssetBuilder
     builder = AssetBuilder(session, access.user_id, infospace_id)
     created = await builder.build_batch(assets)
     session.commit()
@@ -276,114 +264,51 @@ async def batch_create_assets(
     return [AssetRead.model_validate(a) for a in created]
 
 
-@router.post("/upload", response_model=AssetRead)
+@router.post("/upload", response_model=IngestionJobRead)
 async def upload_file(
     *,
     session: SessionDep,
     access: Access = Requires(Capability.INGEST, scope=None),
-    make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     _: CheckUploadSizeDep,
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
-    process_immediately: bool = Form(True)
+    bundle_id: Optional[int] = Form(None),
 ) -> Any:
+    """Stage an uploaded file to storage, then mint an ``upload`` IngestionJob — the
+    multipart face of ``/intake`` (JSON intake can't carry bytes). Returns the job;
+    the ``ingest`` task detects the kind from the staged blob and the processing
+    cascade expands it. Poll the job (or the ``useIngestionJobs`` hook) for progress.
     """
-    Upload a file and create an asset.
-    """
-    try:
-        from app.api.modules.content.handlers import FileHandler
+    import os
+    import uuid
+    from app.api.modules.foundation_service_providers import resolve
+    from app.api.modules.content.intake import intake
 
-        context = make_ingestion_context(
-            access.user_id, infospace_id, {"process_immediately": process_immediately}
-        )
-        handler = FileHandler(context)
-        assets = await handler.handle(file, title, {"process_immediately": process_immediately})
-        
-        if not assets:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create asset from uploaded file.")
+    file_ext = os.path.splitext(file.filename or "")[1].lower()
+    storage_path = f"user_{access.user_id}/{uuid.uuid4()}{file_ext}"
+    storage = resolve("storage")
+    await storage.upload_file(file, storage_path)
 
-        return AssetRead.model_validate(assets[0])
-        
-    except Exception as e:
-        logger.error(f"File upload failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"File upload failed: {str(e)}"
-        )
+    jobs = intake(
+        session, infospace_id=infospace_id, user_id=access.user_id,
+        groups={"upload": [{
+            "storage_path": storage_path,
+            "filename": file.filename,
+            "title": title or file.filename,
+            "file_info": {
+                "original_filename": file.filename,
+                "mime_type": getattr(file, "content_type", None),
+                "ingestion_method": "file_upload",
+            },
+        }]},
+        dest_id=bundle_id,
+    )
+    return _job_read(jobs[0])
 
-@router.post("/ingest-url", response_model=AssetRead)
-async def ingest_url(
-    *,
-    session: SessionDep,
-    access: Access = Requires(Capability.INGEST, scope=None),
-    make_ingestion_context: IngestionContextFactoryDep,
-    infospace_id: int,
-    url: str,
-    title: Optional[str] = None,
-    scrape_immediately: bool = True
-) -> Any:
-    """
-    Ingest content from a URL.
-
-    Uses WebHandler directly for clean URL ingestion.
-    """
-    try:
-        from app.api.modules.content.handlers import WebHandler
-
-        context = make_ingestion_context(
-            access.user_id, infospace_id, {"scrape_immediately": scrape_immediately}
-        )
-        handler = WebHandler(context)
-        assets = await handler.handle(url, title, {"scrape_immediately": scrape_immediately})
-
-        if not assets:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create asset from URL.")
-
-        return AssetRead.model_validate(assets[0])
-        
-    except Exception as e:
-        logger.error(f"URL ingestion failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"URL ingestion failed: {str(e)}"
-        )
-
-@router.post("/ingest-text", response_model=AssetRead)
-async def ingest_text(
-    *,
-    session: SessionDep,
-    access: Access = Requires(Capability.INGEST, scope=None),
-    make_ingestion_context: IngestionContextFactoryDep,
-    infospace_id: int,
-    text_content: str,
-    title: Optional[str] = None,
-    event_timestamp: Optional[datetime] = None
-) -> Any:
-    """
-    Ingest direct text content.
-
-    Uses TextHandler directly for clean text ingestion.
-    """
-    try:
-        from app.api.modules.content.handlers import TextHandler
-
-        options = {"event_timestamp": event_timestamp} if event_timestamp else {}
-        context = make_ingestion_context(access.user_id, infospace_id, options)
-        handler = TextHandler(context)
-        assets = await handler.handle(text_content, title, options)
-
-        if not assets:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create asset from text.")
-
-        return AssetRead.model_validate(assets[0])
-        
-    except Exception as e:
-        logger.error(f"Text ingestion failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Text ingestion failed: {str(e)}"
-        )
+# /ingest-url and /ingest-text were removed — both collapse into POST /intake
+# (url → web source, text → text source). Dialogs post to /intake and track the
+# returned IngestionJob via the useIngestionJobs poll path.
 
 @router.post("/compose-article", response_model=AssetRead, status_code=status.HTTP_201_CREATED)
 async def compose_article(
@@ -397,7 +322,7 @@ async def compose_article(
     Compose a free-form article with embedded assets and bundle references.
     """
     try:
-        from app.api.modules.content.services.asset_builder import AssetBuilder
+        from app.api.modules.content.asset_builder import AssetBuilder
         from app.models import Asset, AssetKind, ProcessingStatus
         from sqlmodel import select
 
@@ -480,202 +405,146 @@ async def compose_article(
             detail=f"Article composition failed: {str(e)}"
         )
 
-@router.post("/bulk-ingest-urls", response_model=List[AssetRead])
+@router.post("/bulk-ingest-urls", response_model=IngestionJobRead)
 async def bulk_ingest_urls(
     *,
     session: SessionDep,
     access: Access = Requires(Capability.INGEST, scope=None),
-    ingestion_context_factory: IngestionContextFactoryDep,
     infospace_id: int,
     bulk_request: BulkUrlIngestion
 ) -> Any:
-    """
-    Ingest multiple URLs as separate assets.
-    """
-    try:
-        if len(bulk_request.urls) > 100:
-            # For large batches, create IngestionJob — @task picks it up via event
-            from app.models import IngestionJob, IngestionStatus
-            from app.core.events import emit
-            job = IngestionJob(
-                infospace_id=infospace_id,
-                user_id=access.user_id,
-                source_locator="bulk_urls",
-                kind="bulk_urls",
-                status=IngestionStatus.PENDING,
-                total_files=len(bulk_request.urls),
-                cursor_state={
-                    "stage": "pending", "message": "Queued",
-                    "progress_pct": 0, "urls": bulk_request.urls,
-                    "base_title": bulk_request.base_title,
-                    "scrape_immediately": bulk_request.scrape_immediately,
-                    "options": {},
-                },
-            )
-            session.add(job)
-            session.commit()
-            emit("ingestion_job.created", {"infospace_id": infospace_id})
-            return {"message": f"Bulk ingestion of {len(bulk_request.urls)} URLs started in background"}
+    """Ingest multiple URLs as web assets via the unified ``run_ingestion`` path.
 
-        # For smaller batches, process immediately
-        context = ingestion_context_factory(
-            user_id=access.user_id,
-            infospace_id=infospace_id,
-            options={
-                "base_title": bulk_request.base_title,
-                "scrape_immediately": bulk_request.scrape_immediately,
-            },
-        )
-        assets = await ingest(
-            context,
-            bulk_request.urls,
-            options={
-                "base_title": bulk_request.base_title,
-                "scrape_immediately": bulk_request.scrape_immediately,
-            },
-        )
-        
-        return [AssetRead.model_validate(asset) for asset in assets]
-        
-    except Exception as e:
-        logger.error(f"Bulk URL ingestion failed: {e}")
+    Mints a single ``web`` IngestionJob; ``run_ingestion`` enumerates the URLs
+    (the ``web`` source yields one WEB RawItem per URL), builds a WEB asset per
+    URL as PENDING, and ``process_pending`` → ``WebArticle.process`` scrapes each.
+    Returns the job so the client can track progress (poll
+    ``/ingestion-jobs/{id}`` or the ``useIngestionJobs`` hook). Replaces the old
+    sync/≤100 + ``bulk_urls`` split — one job, one source-driven loop, accurate
+    BuildOutcome counters (no len()-inflation).
+    """
+    from app.api.modules.content.intake import intake
+
+    urls = [u.strip() for u in (bulk_request.urls or []) if u and u.strip()]
+    if not urls:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk URL ingestion failed: {str(e)}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No URLs provided.",
         )
+
+    # The web source's read unpacks {urls, title} per spec; WebArticle.process
+    # overwrites the title with the scraped <title>, so a per-URL title is moot.
+    jobs = intake(
+        session, infospace_id=infospace_id, user_id=access.user_id,
+        groups={"web": [{"urls": urls, "title": bulk_request.base_title}]},
+        dest_id=bulk_request.bundle_id,
+    )
+    return _job_read(jobs[0])
+
+
+def _job_read(job) -> IngestionJobRead:
+    """IngestionJob → IngestionJobRead, surfacing cursor_state progress fields."""
+    d = job.model_dump(mode="json")
+    cs = job.cursor_state or {}
+    d["progress_pct"] = cs.get("progress_pct", 0)
+    d["stage_message"] = cs.get("message", "")
+    return IngestionJobRead(**d)
+
+
+# Field dispatch: which field is present → which source kind. URLs are NOT
+# string-classified (all → web); the real kind is decided post-fetch by detect_kind.
+_INTAKE_DISPATCH = [
+    ("url",          "web",        lambda it: {"url": it.url, "title": it.title}),
+    ("query",        "web_search", lambda it: {"query": it.query}),
+    ("storage_path", "upload",     lambda it: {"storage_path": it.storage_path,
+                                               "filename": it.filename, "title": it.title}),
+    ("text",         "text",       lambda it: {"text": it.text, "title": it.title}),
+]
+
+
+@router.post("/intake", response_model=List[IngestionJobRead])
+async def create_intake(
+    *,
+    session: SessionDep,
+    access: Access = Requires(Capability.INGEST, scope=None),
+    infospace_id: int,
+    request: IntakeRequest,
+) -> Any:
+    """Dump anything → ingestion jobs. Each item is field-dispatched to a source kind;
+    same-kind items batch into one PENDING IngestionJob (``cursor_state.config.items``);
+    ``run_ingestion`` does the work via the uniform ``read`` opener. One destination for
+    the whole dump. The single producer the dialogs should call (supersedes the scattered
+    per-shape ingest endpoints). File bytes are staged by the caller into ``storage_path``."""
+    from app.api.modules.content.tree import resolve_or_create_bundle
+    from app.api.modules.content.intake import intake
+
+    if not request.items:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No items to ingest.")
+
+    try:
+        dest = resolve_or_create_bundle(
+            session, infospace_id, access.user_id,
+            bundle_id=request.bundle_id, bundle_name=request.bundle_name,
+            parent_bundle_id=request.parent_bundle_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    dest_id = dest.id if dest is not None else None
+
+    groups: Dict[str, List[dict]] = {}
+    for it in request.items:
+        for field, kind, build in _INTAKE_DISPATCH:
+            if getattr(it, field) not in (None, ""):
+                groups.setdefault(kind, []).append(build(it))
+                break
+
+    if not groups:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No recognizable items (each needs one of url/text/query/storage_path).",
+        )
+
+    jobs = intake(session, infospace_id=infospace_id, user_id=access.user_id,
+                  groups=groups, dest_id=dest_id)
+    return [_job_read(j) for j in jobs]
 
 @router.post("/ingest-search-results", response_model=IngestSearchResultsResponse)
 async def ingest_search_results(
     *,
     session: SessionDep,
     access: Access = Requires(Capability.INGEST, scope=None),
-    bundle_service: BundleServiceDep,
     infospace_id: int,
     bulk_request: BulkSearchResultIngestion
 ) -> Any:
-    """
-    Ingest search results, splitting by whether scraping is needed.
-
-    Per result:
-    - ``len(content) >= SCRAPE_THRESHOLD`` → Tavily-style with pre-fetched
-      full text. Built into an asset inline and returned in ``assets``.
-    - Below threshold → SearXNG-style snippet. URL is queued for the
-      ``run_bulk_url_import`` @task to scrape via Newspaper4k. The client
-      gets a ``scrape_job_id`` and can subscribe to the job's stream for
-      live progress.
-    """
-    # 800 chars: well above any SearXNG metasearch snippet (~150-300 chars)
-    # and well below Tavily's raw_content (multi-thousand chars). Avoids both
-    # false positives (over-scraping Tavily) and false negatives (storing
-    # SearXNG snippets as if they were articles).
+    """Ingest search results through the unified web path. A result whose ``content`` is
+    the full article (≥ threshold) carries it inline → ``web.fetch`` passes it through
+    (no re-scrape); a short metasearch snippet carries no ``text`` → the web source
+    scrapes the URL. One ``web`` IngestionJob; poll it (or the useIngestionJobs hook)."""
+    # 800 chars: above any SearXNG snippet (~150-300), below Tavily raw_content (multi-k).
     SCRAPE_THRESHOLD = 800
+    from app.api.modules.content.intake import intake
 
-    try:
-        from app.api.modules.content.services import AssetBuilder
-        from app.api.modules.content.handlers.search_handler import _compose_search_result
-        from app.core.tree import copy as tree_copy
-        from app.schemas import SearchResult
-        from app.models import IngestionJob, IngestionStatus
-        from app.core.events import emit
+    specs: List[dict] = []
+    for result in bulk_request.results:
+        if not result.url:
+            continue
+        spec = {"url": result.url, "title": result.title}
+        if len(result.content or "") >= SCRAPE_THRESHOLD:
+            spec["text"] = result.content   # full article in hand → passthrough, no re-scrape
+        specs.append(spec)
 
-        created_assets: List[Any] = []
-        urls_to_scrape: List[str] = []
-        failed_count = 0
+    if not specs:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="No ingestable results (each needs a url).")
 
-        for idx, result in enumerate(bulk_request.results):
-            content = result.content or ""
-            # Short snippet → defer to background scraper. The URL is the only
-            # thing the @task needs; it builds the asset itself via WebHandler.
-            if len(content) < SCRAPE_THRESHOLD and result.url:
-                urls_to_scrape.append(result.url)
-                continue
-
-            try:
-                search_result = SearchResult(
-                    title=result.title,
-                    url=result.url,
-                    content=result.content,
-                    score=result.score,
-                    provider=result.provider or "unknown",
-                    raw_data={
-                        "raw_content": result.content,
-                        **(result.file_info or {}),
-                        **(result.facets or {}),
-                    },
-                )
-                builder = AssetBuilder(session, access.user_id, infospace_id)
-                builder = _compose_search_result(builder, search_result, "ingested search results")
-                asset = await (
-                    builder
-                    .with_metadata(
-                        ingestion_rank=idx + 1,
-                        ingestion_source="search_result_ingestor",
-                        ingestion_batch=datetime.now(timezone.utc).isoformat(),
-                    )
-                    .build()
-                )
-                created_assets.append(asset)
-
-                if bulk_request.bundle_id:
-                    try:
-                        tree_copy(session, asset_ids=[asset.id], to=bulk_request.bundle_id)
-                    except Exception as bundle_error:
-                        logger.warning(f"Failed to add asset {asset.id} to bundle: {bundle_error}")
-
-                logger.info(f"✓ Created ARTICLE asset from search result: {result.title}")
-
-            except Exception as e:
-                failed_count += 1
-                logger.error(f"Failed to ingest search result '{result.title}': {e}")
-                continue
-
-        session.commit()
-
-        scrape_job_id: Optional[int] = None
-        if urls_to_scrape:
-            # Hand off to the existing run_bulk_url_import @task. Same primitive
-            # the >100-URL branch of /ingest-urls uses; we just submit smaller
-            # batches and let the task stream progress via ctx.job_progress.
-            job = IngestionJob(
-                infospace_id=infospace_id,
-                user_id=access.user_id,
-                source_locator="bulk_urls",
-                kind="bulk_urls",
-                status=IngestionStatus.PENDING,
-                total_files=len(urls_to_scrape),
-                cursor_state={
-                    "stage": "pending",
-                    "message": f"Queued {len(urls_to_scrape)} URLs for scraping",
-                    "progress_pct": 0,
-                    "urls": urls_to_scrape,
-                    "base_title": None,
-                    "scrape_immediately": True,
-                    "options": {"bundle_id": bulk_request.bundle_id} if bulk_request.bundle_id else {},
-                },
-            )
-            session.add(job)
-            session.commit()
-            session.refresh(job)
-            emit("ingestion_job.created", {"infospace_id": infospace_id})
-            scrape_job_id = job.id
-            logger.info(f"Queued IngestionJob {scrape_job_id} for {len(urls_to_scrape)} URLs")
-
-        logger.info(
-            f"Ingest split: {len(created_assets)} inline, {len(urls_to_scrape)} queued, {failed_count} failed"
-        )
-
-        return IngestSearchResultsResponse(
-            assets=[AssetRead.model_validate(asset) for asset in created_assets],
-            scrape_job_id=scrape_job_id,
-            scrape_url_count=len(urls_to_scrape),
-        )
-
-    except Exception as e:
-        logger.error(f"Bulk search results ingestion failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Bulk search results ingestion failed: {str(e)}"
-        )
+    jobs = intake(session, infospace_id=infospace_id, user_id=access.user_id,
+                  groups={"web": specs}, dest_id=bulk_request.bundle_id)
+    job = jobs[0] if jobs else None
+    return IngestSearchResultsResponse(
+        assets=[],   # all async now — the web job builds them; poll scrape_job_id
+        scrape_job_id=job.id if job else None,
+        scrape_url_count=sum(1 for s in specs if "text" not in s),
+    )
 
 @router.post("/{asset_id}/materialize-csv", response_model=AssetRead)
 async def materialize_csv_from_rows(
@@ -705,15 +574,14 @@ async def materialize_csv_from_rows(
 
     registry = get_content_type_registry()
     descriptor = registry.by_kind(asset.kind)
-    if not descriptor or not descriptor.materializer_class:
+    if not descriptor or not descriptor.materializer:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Asset type does not support materialization (kind: {asset.kind.value})",
         )
 
-    materializer = descriptor.materializer_class()
     try:
-        return await materializer.materialize(asset, session, storage_provider)
+        return await descriptor.materializer(asset, session, storage_provider)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -727,7 +595,6 @@ async def reprocess_asset(
     *,
     session: SessionDep,
     access: Access = Requires(Capability.COMPUTE, scope=None),
-    processing_service: ProcessingServiceDep,
     infospace_id: int,
     asset_id: int,
     options: ReprocessOptions
@@ -747,9 +614,12 @@ async def reprocess_asset(
         
         # Convert options to dict
         reprocess_options = options.model_dump(exclude_none=True)
-        
-        # Reprocess the asset
-        await processing_service.reprocess_content(asset, reprocess_options)
+
+        # Re-extract via the type's processor; persist_children reconciles matched rows
+        # in place so their annotations survive.
+        from app.api.modules.content.tasks.processing import process_asset
+        await process_asset(session, asset, storage=resolve("storage"),
+                            scraping=resolve("scraping"), options=reprocess_options)
         
         return Message(message=f"Asset {asset_id} reprocessed successfully")
         
@@ -769,7 +639,6 @@ async def update_asset_content(
     session: SessionDep,
     access: Access = Requires(Capability.INGEST, scope=None),
     storage_provider: StorageProviderDep,
-    processing_service: ProcessingServiceDep,
     infospace_id: int,
     asset_id: int,
     file: UploadFile = File(...),
@@ -831,10 +700,11 @@ async def update_asset_content(
         session.commit()
         session.refresh(asset)
         
-        # Reprocess the asset with existing options
-        # This will update child row assets in-place (preserving their IDs and relationships)
+        # Re-extract; persist_children updates row assets in place (IDs + annotations kept).
         reprocess_options = (asset.file_info or {}).get('processing_options', {})
-        await processing_service.reprocess_content(asset, reprocess_options)
+        from app.api.modules.content.tasks.processing import process_asset
+        await process_asset(session, asset, storage=storage_provider,
+                            scraping=resolve("scraping"), options=reprocess_options)
         
         logger.info(f"Asset {asset_id} content updated and row assets updated in-place")
         
@@ -909,13 +779,9 @@ async def discover_rss_feeds(
     """
     try:
 
-        from app.api.modules.content.handlers import RSSHandler
+        from app.api.modules.content.sources import rss
 
-        feeds = await RSSHandler.discover_rss_feeds_from_awesome_repo(
-            country=country,
-            category=category,
-            limit=limit
-        )
+        feeds = await rss.discover_feeds(country=country, category=category, limit=limit)
 
         return {
             "feeds": feeds,
@@ -945,9 +811,9 @@ async def preview_rss_feed(
     Preview the content of an RSS feed.
     """
     try:
-        from app.api.modules.content.handlers import RSSHandler
+        from app.api.modules.content.sources import rss
 
-        preview_data = await RSSHandler.preview_rss_feed(feed_url, max_items)
+        preview_data = await rss.preview_feed(feed_url, max_items)
         return preview_data
     except Exception as e:
         logger.error(f"Error previewing RSS feed {feed_url}: {e}", exc_info=True)
@@ -963,65 +829,38 @@ async def ingest_selected_articles(
     *,
     session: SessionDep,
     access: Access = Requires(Capability.INGEST, scope=None),
-    ingestion_context_factory: IngestionContextFactoryDep,
     infospace_id: int,
     feed_url: str,
     selected_articles: List[Dict[str, Any]],
     bundle_id: Optional[int] = None
 ) -> Any:
-    """
-    Ingest selected articles from an RSS feed preview.
-
-    Args:
-        feed_url: URL of the RSS feed
-        selected_articles: List of article objects with at least 'link' and 'title'
-        bundle_id: Optional bundle to add articles to
-    """
+    """Ingest selected articles from an RSS feed preview as a ``web`` job (the web source
+    scrapes each link). Returns the job id to poll."""
     try:
-        
         if not selected_articles:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No articles selected for ingestion"
+                detail="No articles selected for ingestion",
             )
-        
-        # Extract URLs from selected articles
-        article_urls = [article.get('link') for article in selected_articles if article.get('link')]
-        
-        if not article_urls:
+        specs = [{"url": a["link"], "title": a.get("title")}
+                 for a in selected_articles if a.get("link")]
+        if not specs:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No valid article URLs found in selection"
+                detail="No valid article URLs found in selection",
             )
-        
-        # Ingest articles using bulk URL processing
-        opts = {
-            "scrape_immediately": True,
-            "use_bulk_scraping": True,
-            "max_threads": 4,
-            "source_type": "rss_selective_ingestion",
-            "feed_url": feed_url,
-        }
-        context = ingestion_context_factory(
-            user_id=access.user_id,
-            infospace_id=infospace_id,
-            options=opts,
-        )
-        assets = await ingest(
-            context,
-            article_urls,
-            bundle_id=bundle_id,
-            options=opts,
-        )
-        
+
+        from app.api.modules.content.intake import intake
+        jobs = intake(session, infospace_id=infospace_id, user_id=access.user_id,
+                      groups={"web": specs}, dest_id=bundle_id)
+        job = jobs[0] if jobs else None
         return {
-            "message": f"Successfully ingested {len(assets)} articles",
-            "assets": [AssetRead.model_validate(asset) for asset in assets],
+            "message": f"Queued {len(specs)} article(s) for ingestion",
+            "job_id": job.id if job else None,
             "feed_url": feed_url,
             "selected_count": len(selected_articles),
-            "ingested_count": len(assets)
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1136,37 +975,13 @@ def delete_asset(
             detail="Asset not found"
         )
     
-    # Delete children in batches to avoid unbounded memory
-    from app.models import AssetChunk, Annotation
-    num_children = 0
-    batch_size = 1000
-    while True:
-        batch = session.exec(
-            select(Asset).where(Asset.parent_asset_id == asset_id).limit(batch_size)
-        ).all()
-        if not batch:
-            break
-        for child in batch:
-            session.exec(delete(AssetChunk).where(AssetChunk.asset_id == child.id))
-            session.exec(delete(Annotation).where(Annotation.asset_id == child.id))
-            session.delete(child)
-            num_children += 1
-        session.flush()
-    
-    # Delete related records for parent asset
-    from app.models import AssetChunk, Annotation
-    session.exec(
-        delete(AssetChunk).where(AssetChunk.asset_id == asset_id)
-    )
-    session.exec(
-        delete(Annotation).where(Annotation.asset_id == asset_id)
-    )
-    
-    # Finally delete the parent asset
-    session.delete(asset)
+    # Hard-destroy through the one tree primitive: descendants, chunks, annotations,
+    # graph edges, and version refs — scale-safe (recursive CTE, no IN-list).
+    from app.api.modules.content.tree import purge
+    destroyed = purge(session, {asset_id})
     session.commit()
-    
-    return Message(message=f"Asset {asset_id} and {num_children} children deleted")
+
+    return Message(message=f"Deleted asset {asset_id} ({destroyed} assets removed incl. descendants)")
 
 class BulkDeleteRequest(BaseModel):
     asset_ids: List[int]
@@ -1203,19 +1018,16 @@ def bulk_delete_assets(
     if missing_ids:
         logger.warning(f"Some assets not found in infospace {infospace_id}: {missing_ids}")
     
-    # Delete all assets (cascade will handle children)
-    deleted_count = 0
-    for asset in assets_to_delete:
-        session.delete(asset)
-        deleted_count += 1
-    
+    # Hard-destroy through the one tree primitive (descendants + all FK cleanup, scale-safe).
+    from app.api.modules.content.tree import purge
+    destroyed = purge(session, found_ids) if found_ids else 0
     session.commit()
-    
-    message = f"Deleted {deleted_count} asset{'s' if deleted_count != 1 else ''}"
+
+    message = f"Deleted {len(found_ids)} asset{'s' if len(found_ids) != 1 else ''} ({destroyed} rows incl. descendants)"
     if missing_ids:
         message += f" ({len(missing_ids)} not found)"
-    
-    logger.info(f"Bulk deleted {deleted_count} assets from infospace {infospace_id}")
+
+    logger.info(f"Bulk deleted {len(found_ids)} assets ({destroyed} rows) from infospace {infospace_id}")
     return Message(message=message)
 
 class AssetTransferRequest(BaseModel):
@@ -1239,7 +1051,7 @@ async def transfer_assets(
     resolve_access(session, request.source_infospace_id, current_user, Capability.ORGANIZE)
     resolve_access(session, request.target_infospace_id, current_user, Capability.INGEST)
 
-    from app.api.modules.content.asset_ops import transfer_assets as _transfer_assets
+    from app.api.modules.content.asset_builder import transfer_assets as _transfer_assets
     transferred_assets = await _transfer_assets(
         session,
         asset_ids=request.asset_ids,
@@ -1294,36 +1106,18 @@ async def create_assets_background_bulk(
     options: str = Form("{}"),
     access: Access = Requires(Capability.INGEST, scope=None),
 ):
+    """Upload N files (optionally a folder tree) + optional text items as ONE intake.
+
+    Each file stages to storage and becomes an ``upload`` spec carrying its relative
+    folder as ``path``; the upload source's ``ensure_path_bundles`` rebuilds the folder
+    tree as sub-bundles, and a ``.zip`` is detected ARCHIVE (by extension) and dissolved
+    in place by the ARCHIVE type — no client-side extraction. Text items become ``text``
+    specs. Async — returns the job(s) to poll.
     """
-    Upload N files — optionally as a nested Bundle tree.
-
-    Modes (by which form fields are present):
-    - `relative_paths` provided → build Bundle tree from directory structure. Each
-      unique directory becomes a Bundle chained via `parent_bundle_id`. Files land
-      in their parent Bundle.
-    - `parent_bundle_id` → root is an existing bundle (subbundles nest under it).
-    - `bundle_name` → a new root Bundle is created by that name.
-    - If neither and paths share one top-level folder → that folder is root.
-    - If none of the above → files become individual top-level assets (legacy flat).
-
-    Zips (`.zip/.tar/.tar.gz/...`) dissolve into the tree: extracted in-place under
-    a bundle named after the zip's stem. The zip itself is not retained as an asset.
-
-    Returns `{tasks[], asset_ids[], bundles_created[]}` for per-item UI feedback.
-    """
-    import tempfile
     import os as _os
-    from starlette.datastructures import UploadFile as StarletteUploadFile
-    from app.api.modules.content.handlers.archive_handler import ArchiveHandler
-    from app.schemas import BundleCreate
-
-    logger.info(f"Bulk upload: {len(files)} files, paths={'yes' if relative_paths else 'no'}, "
-                f"bundle_name={bundle_name!r}, parent_bundle_id={parent_bundle_id}")
-
-    try:
-        upload_options = json.loads(options) if options else {}
-    except json.JSONDecodeError:
-        upload_options = {}
+    import uuid as _uuid
+    from app.api.modules.content.tree import resolve_or_create_bundle
+    from app.api.modules.content.intake import intake
 
     if relative_paths is not None and len(relative_paths) != len(files):
         raise HTTPException(
@@ -1331,230 +1125,69 @@ async def create_assets_background_bulk(
             detail=f"relative_paths length ({len(relative_paths)}) must match files length ({len(files)})",
         )
 
-    with tempfile.TemporaryDirectory(prefix="bulk_upload_") as workdir:
-        # ── Zip pre-pass ────────────────────────────────────────────────────
-        # Build list of (source, rel_path) where source is either UploadFile or disk path.
-        expanded: List[tuple[Any, str]] = []
-        for idx, uf in enumerate(files):
-            raw_path = (relative_paths[idx] if relative_paths else uf.filename) or uf.filename or f"file_{idx}"
-            rel_path = raw_path.replace("\\", "/").lstrip("/")
-            if _is_archive_filename(uf.filename or ""):
-                arc_path = _os.path.join(workdir, f"arc_{idx}_{Path(uf.filename).name}")
-                with open(arc_path, "wb") as fh:
-                    while True:
-                        chunk = await uf.read(8 * 1024 * 1024)
-                        if not chunk:
-                            break
-                        fh.write(chunk)
-                await uf.close()
-                extract_dir = _os.path.join(workdir, f"ext_{idx}")
-                try:
-                    await ArchiveHandler.extract_archive(arc_path, extract_dir)
-                except Exception as e:
-                    logger.error(f"Archive extraction failed for {uf.filename}: {e}")
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Failed to extract archive {uf.filename!r}: {e}",
-                    )
-                parent_dir = _os.path.dirname(rel_path)
-                stem = _archive_stem(Path(uf.filename).name)
-                archive_rel = (f"{parent_dir}/{stem}" if parent_dir else stem).strip("/")
-                for root_dir, _dirs, fns in _os.walk(extract_dir):
-                    for fn in fns:
-                        abs_p = _os.path.join(root_dir, fn)
-                        sub = _os.path.relpath(abs_p, extract_dir).replace(_os.sep, "/")
-                        expanded.append((abs_p, f"{archive_rel}/{sub}"))
-            else:
-                expanded.append((uf, rel_path))
+    text_payload: List[dict] = []
+    if text_items:
+        try:
+            text_payload = json.loads(text_items) or []
+        except json.JSONDecodeError:
+            text_payload = []
 
-        # Parse text items early so text-only submits skip the file path cleanly.
-        _text_payload: List[dict] = []
-        if text_items:
-            try:
-                _text_payload = json.loads(text_items) or []
-            except json.JSONDecodeError:
-                _text_payload = []
+    if not files and not text_payload:
+        return {"message": "No files to process", "jobs": [], "job_ids": []}
 
-        if not expanded and not _text_payload:
-            return {"message": "No files to process", "tasks": [], "asset_ids": [], "bundles_created": []}
+    storage = resolve("storage")
 
-        # ── Process (root resolution + tree build + ingest) ─────────────────
-        with Session(engine) as session:
-            from app.api.modules.content.handlers import IngestionContext
-            from app.api.modules.content.ingest import ingest
-            from app.api.modules.content.services.bundle_service import BundleService
-
-            storage = resolve("storage", session=session)
-            scraping = resolve("scraping", session=session)
-            try:
-                search = resolve("web_search", infospace_id=infospace_id, session=session)
-            except Exception:
-                search = None
-            bundle_service = BundleService(session)
-
-            opts = {"process_immediately": False, **upload_options}
-            context = IngestionContext(
-                session=session,
-                storage_provider=storage,
-                scraping_provider=scraping,
-                search_provider=search,
-                bundle_service=bundle_service,
-                user_id=access.user_id,
-                infospace_id=infospace_id,
-                settings=settings,
-                options=opts,
+    with Session(engine) as session:
+        try:
+            dest = resolve_or_create_bundle(
+                session, infospace_id, access.user_id,
+                bundle_id=parent_bundle_id, bundle_name=bundle_name,
             )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        dest_id = dest.id if dest is not None else None
 
-            bundles_created: List[dict] = []
-            # "" → root bundle id (0 == no root bundle; files become top-level)
-            dir_to_bundle: Dict[str, int] = {}
+        # Stage each file to storage → an `upload` spec carrying its relative folder as
+        # `path`. The upload source rebuilds the folder tree (ensure_path_bundles); a zip
+        # rides in as an ARCHIVE asset the ARCHIVE type dissolves — no pre-extraction.
+        upload_specs: List[dict] = []
+        for idx, uf in enumerate(files):
+            rel = (((relative_paths[idx] if relative_paths else uf.filename) or uf.filename
+                    or f"file_{idx}").replace("\\", "/").lstrip("/"))
+            ext = _os.path.splitext(uf.filename or "")[1].lower()
+            storage_path = f"user_{access.user_id}/{_uuid.uuid4()}{ext}"
+            await storage.upload_file(uf, storage_path)
+            name = _os.path.basename(rel) or (uf.filename or "file")
+            upload_specs.append({
+                "storage_path": storage_path,
+                "filename": name,
+                "title": name,
+                "path": _os.path.dirname(rel),
+            })
 
-            from app.api.modules.content.destination import resolve_or_create_bundle
-            try:
-                root = resolve_or_create_bundle(
-                    session, infospace_id, access.user_id,
-                    bundle_id=parent_bundle_id, bundle_name=bundle_name,
-                )
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
+        text_specs = [
+            {"text": c, "title": (t.get("title") or "Text").strip() or "Text"}
+            for t in text_payload
+            if (c := (t.get("content") or "").strip())
+        ]
 
-            if root is not None:
-                dir_to_bundle[""] = root.id
-                if bundle_name:  # only record as "created" when we made a new bundle
-                    bundles_created.append({"id": root.id, "name": root.name, "parent_bundle_id": None})
-            else:
-                # Fallback: if every path starts with the same top folder, use it as root.
-                tops = {p.split("/", 1)[0] for _, p in expanded if "/" in p}
-                flats = [p for _, p in expanded if "/" not in p]
-                if tops and not flats and len(tops) == 1:
-                    top = tops.pop()
-                    auto_root = bundle_service.create_bundle(
-                        bundle_in=BundleCreate(name=top),
-                        infospace_id=infospace_id,
-                        user_id=access.user_id,
-                    )
-                    dir_to_bundle[""] = auto_root.id
-                    bundles_created.append({"id": auto_root.id, "name": auto_root.name, "parent_bundle_id": None})
-                    expanded = [(f, p[len(top) + 1:]) for f, p in expanded]
-                else:
-                    dir_to_bundle[""] = 0  # no root bundle — legacy flat behavior
+        groups: Dict[str, List[dict]] = {}
+        if upload_specs:
+            groups["upload"] = upload_specs
+        if text_specs:
+            groups["text"] = text_specs
 
-            def _ensure_dir(dir_path: str) -> Optional[int]:
-                """Create bundles along dir_path as needed, memoize, return leaf bundle id (or None for rootless)."""
-                if dir_path == "":
-                    bid = dir_to_bundle.get("", 0)
-                    return bid if bid else None
-                if dir_path in dir_to_bundle:
-                    bid = dir_to_bundle[dir_path]
-                    return bid if bid else None
-                parts = dir_path.split("/")
-                accum = ""
-                parent_id = dir_to_bundle.get("", 0)
-                for i, part in enumerate(parts):
-                    accum = part if i == 0 else f"{accum}/{part}"
-                    if accum in dir_to_bundle:
-                        parent_id = dir_to_bundle[accum]
-                        continue
-                    create_parent = parent_id if parent_id else None
-                    b = bundle_service.create_bundle(
-                        bundle_in=BundleCreate(name=part, parent_bundle_id=create_parent),
-                        infospace_id=infospace_id,
-                        user_id=access.user_id,
-                    )
-                    dir_to_bundle[accum] = b.id
-                    bundles_created.append({"id": b.id, "name": b.name, "parent_bundle_id": create_parent})
-                    parent_id = b.id
-                return parent_id
+        jobs = intake(session, infospace_id=infospace_id, user_id=access.user_id,
+                      groups=groups, dest_id=dest_id)
 
-            # ── Ingest each file ────────────────────────────────────────────
-            task_results: List[dict] = []
-            asset_ids: List[int] = []
-
-            for file_ref, rel_path in expanded:
-                dir_path = _os.path.dirname(rel_path).strip("/")
-                filename = _os.path.basename(rel_path) or "file"
-                upload_obj: Optional[Any] = None
-                opened_handle = None
-                try:
-                    bundle_id_for_file = _ensure_dir(dir_path)
-                    if isinstance(file_ref, StarletteUploadFile):
-                        upload_obj = file_ref
-                    else:
-                        opened_handle = open(file_ref, "rb")
-                        upload_obj = StarletteUploadFile(filename=filename, file=opened_handle)
-
-                    assets = await ingest(
-                        context, upload_obj,
-                        title=filename,
-                        bundle_id=bundle_id_for_file,
-                        options=opts,
-                    )
-                    # `ingest` → `tree_copy` issues an UPDATE but doesn't commit;
-                    # without this the session rollback on exit would drop the link.
-                    session.commit()
-                    asset = assets[0]
-                    asset_ids.append(asset.id)
-                    task_results.append({
-                        "asset_id": asset.id,
-                        "filename": filename,
-                        "relative_path": rel_path,
-                        "status": "queued" if asset.processing_status == ProcessingStatus.PENDING else "complete",
-                    })
-                except Exception as e:
-                    logger.exception(f"Failed to ingest {rel_path}: {e}")
-                    task_results.append({
-                        "asset_id": None,
-                        "filename": filename,
-                        "relative_path": rel_path,
-                        "status": "failed",
-                        "error": str(e),
-                    })
-                finally:
-                    if opened_handle is not None:
-                        try:
-                            opened_handle.close()
-                        except Exception:
-                            pass
-
-            # ── Text items (optional) ──────────────────────────────────────
-            # Run sync alongside file processing: they share the same resolved
-            # destination bundle and land via the same ingest() primitive.
-            text_payload = _text_payload
-            root_id_for_text = dir_to_bundle.get("") or None
-            for t in text_payload:
-                title = (t.get("title") or "").strip() or "Text"
-                content = (t.get("content") or "").strip()
-                if not content:
-                    continue
-                try:
-                    assets = await ingest(
-                        context, content,
-                        title=title,
-                        bundle_id=root_id_for_text,
-                        options=opts,
-                    )
-                    session.commit()
-                    a = assets[0]
-                    asset_ids.append(a.id)
-                    task_results.append({
-                        "asset_id": a.id, "filename": title,
-                        "relative_path": title, "status": "complete",
-                    })
-                except Exception as e:
-                    logger.exception(f"Failed to ingest text item {title!r}: {e}")
-                    task_results.append({
-                        "asset_id": None, "filename": title,
-                        "relative_path": title, "status": "failed", "error": str(e),
-                    })
-
-            return {
-                "message": f"Upload initiated for {len(expanded)} files"
-                           + (f" + {len(text_payload)} text items" if text_payload else ""),
-                "tasks": task_results,
-                "asset_ids": asset_ids,
-                "bundles_created": bundles_created,
-                "root_bundle_id": dir_to_bundle.get("") or None,
-            }
+    return {
+        "message": (f"Queued {len(upload_specs)} file(s)"
+                    + (f" + {len(text_specs)} text item(s)" if text_specs else "")
+                    + " for ingestion"),
+        "jobs": [_job_read(j).model_dump(mode="json") for j in jobs],
+        "job_ids": [j.id for j in jobs],
+        "root_bundle_id": dest_id,
+    }
 
 @router.post("/bulk-urls-background", response_model=dict)
 async def create_assets_background_urls(
@@ -1570,31 +1203,17 @@ async def create_assets_background_urls(
     """
     logger.info(f"Background URL ingestion: {len(request.urls)} URLs for infospace {infospace_id}")
 
-    from app.models import IngestionJob, IngestionStatus
-    from app.core.events import emit
-    job = IngestionJob(
-        infospace_id=infospace_id,
-        user_id=access.user_id,
-        source_locator="bulk_urls",
-        kind="bulk_urls",
-        status=IngestionStatus.PENDING,
-        total_files=len(request.urls),
-        cursor_state={
-            "stage": "pending", "message": "Queued",
-            "progress_pct": 0, "urls": request.urls,
-            "base_title": getattr(request, 'base_title', None),
-            "scrape_immediately": True,
-            "options": {},
-        },
+    from app.api.modules.content.intake import intake
+    jobs = intake(
+        session, infospace_id=infospace_id, user_id=access.user_id,
+        groups={"web": [{"urls": request.urls, "title": getattr(request, "base_title", None)}]},
+        dest_id=getattr(request, "bundle_id", None),
     )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    emit("ingestion_job.created", {"infospace_id": infospace_id})
+    job = jobs[0] if jobs else None
 
     return {
         "message": f"Background URL ingestion initiated for {len(request.urls)} URLs",
-        "job_id": job.id,
+        "job_id": job.id if job else None,
         "url_count": len(request.urls)
     }
 
@@ -1649,51 +1268,30 @@ async def get_task_status(
 
 
 
-@router.post("/ingest-rss-feeds-from-awesome", response_model=List[AssetRead])
+@router.post("/ingest-rss-feeds-from-awesome", response_model=List[IngestionJobRead])
 async def ingest_rss_feeds_from_awesome(
     *,
     session: SessionDep,
     access: Access = Requires(Capability.INGEST, scope=None),
-    make_ingestion_context: IngestionContextFactoryDep,
     infospace_id: int,
     request: RSSDiscoveryRequest
 ) -> Any:
-    """
-    Discover and ingest RSS feeds from the awesome-rss-feeds repository.
+    """Discover feeds from the awesome-rss-feeds repo (the ``rss`` source's module fn) and
+    ingest them as a single ``rss`` job whose source reads every feed spec. Returns the
+    job to poll."""
+    from app.api.modules.content.sources import rss
+    from app.api.modules.content.intake import intake
 
-    This endpoint will:
-    1. Fetch RSS feeds from the specified country
-    2. Optionally filter by category
-    3. Ingest the feeds and their content
-    4. Optionally add to a bundle
-    """
-    try:
-        from app.api.modules.content.handlers import RSSHandler
-
-        context = make_ingestion_context(
-            user_id=access.user_id,
-            infospace_id=infospace_id,
-            options=request.options,
-        )
-
-        assets = await RSSHandler.ingest_from_awesome_repo(
-            context,
-            country=request.country,
-            category_filter=request.category_filter,
-            max_feeds=request.max_feeds,
-            max_items_per_feed=request.max_items_per_feed,
-            bundle_id=request.bundle_id,
-            options=request.options,
-        )
-
-        return [AssetRead.model_validate(asset) for asset in assets]
-
-    except Exception as e:
-        logger.error(f"RSS feed ingestion from awesome repo failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"RSS feed ingestion failed: {str(e)}"
-        )
+    feeds = await rss.discover_feeds(
+        country=request.country, category=request.category_filter, limit=request.max_feeds,
+    )
+    feed_urls = [f["url"] for f in feeds if f.get("url")][: request.max_feeds]
+    if not feed_urls:
+        return []
+    specs = [{"feed_url": u, "max_items": request.max_items_per_feed} for u in feed_urls]
+    jobs = intake(session, infospace_id=infospace_id, user_id=access.user_id,
+                  groups={"rss": specs}, dest_id=request.bundle_id)
+    return [_job_read(j) for j in jobs]
 
 
 @router.post("/{asset_id}/enrichment/{enricher_name}/retry", response_model=Message)

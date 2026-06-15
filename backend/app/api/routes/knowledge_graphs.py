@@ -6,7 +6,7 @@ Knowledge graphs are backed by a Canon (vocabulary). Create defaults
 can share one canon.
 
 Deletion uses the ``/action/delete`` preview/confirm pattern (mirroring
-``core/tree.py``). Entities are NOT destroyed when a graph is deleted —
+``content/tree.py``). Entities are NOT destroyed when a graph is deleted —
 they live on the canon, not the graph. Edges, FragmentCurations, and
 materialized EntityRelationships for this graph are cascaded away.
 """

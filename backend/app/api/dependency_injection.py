@@ -28,8 +28,8 @@ from app.api.modules.annotation.services import AnnotationService
 from app.api.modules.identity_infospace_user.services import InfospaceService
 from app.api.modules.sharing.services import ShareableService, PackageService, BackupService, UserBackupService
 from app.api.modules.content.services import (
-    BundleService, SourceService,
-    ProcessingService, DatasetService,
+    SourceService,
+    DatasetService,
 )
 from app.api.modules.flow.services import TaskService
 from app.api.modules.conversational_intelligence.services.conversation_service import (
@@ -150,14 +150,6 @@ def get_infospace_service(request: Request, session: SessionDep, settings: Setti
     return instance
 InfospaceServiceDep = Annotated[InfospaceService, Depends(get_infospace_service)]
 
-def get_bundle_service(request: Request, session: SessionDep) -> BundleService:
-    service_name = "bundle_service"
-    if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = BundleService(db=session) 
-    setattr(request.state, service_name, instance)
-    return instance
-BundleServiceDep = Annotated[BundleService, Depends(get_bundle_service)]
-
 def get_source_service(request: Request, session: SessionDep) -> SourceService:
     service_name = "source_service"
     if hasattr(request.state, service_name): return getattr(request.state, service_name)
@@ -165,25 +157,6 @@ def get_source_service(request: Request, session: SessionDep) -> SourceService:
     setattr(request.state, service_name, instance)
     return instance
 SourceServiceDep = Annotated[SourceService, Depends(get_source_service)]
-
-def get_processing_service(
-    request: Request,
-    session: SessionDep,
-    storage_provider: StorageProviderDep,
-    scraping_provider: ScrapingProviderDep,
-) -> ProcessingService:
-    service_name = "processing_service"
-    if hasattr(request.state, service_name):
-        return getattr(request.state, service_name)
-    instance = ProcessingService(
-        session=session,
-        storage_provider=storage_provider,
-        scraping_provider=scraping_provider,
-    )
-    setattr(request.state, service_name, instance)
-    return instance
-
-ProcessingServiceDep = Annotated[ProcessingService, Depends(get_processing_service)]
 
 def get_annotation_service(
     request: Request, session: SessionDep,
@@ -195,51 +168,6 @@ def get_annotation_service(
     return instance
 AnnotationServiceDep = Annotated[AnnotationService, Depends(get_annotation_service)]
 
-
-def get_ingestion_context_factory(
-    session: SessionDep,
-    storage_provider: StorageProviderDep,
-    scraping_provider: ScrapingProviderDep,
-    bundle_service: BundleServiceDep,
-    settings: SettingsDep,
-):
-    """Factory that builds IngestionContext given user_id, infospace_id, options.
-
-    ``search_provider`` (web_search) is resolved inside the factory because it
-    needs ``infospace_id`` for credential resolution — that's not known at
-    dependency-injection time.
-    """
-
-    def factory(
-        user_id: int,
-        infospace_id: int,
-        options: Optional[dict] = None,
-    ):
-        from app.api.modules.content.handlers import IngestionContext
-        from app.api.modules.foundation_service_providers import resolve, ProviderError
-        try:
-            search_provider = resolve("web_search", infospace_id=infospace_id, session=session)
-        except ProviderError:
-            search_provider = None  # optional: ingestion can skip search-driven paths
-        return IngestionContext(
-            session=session,
-            storage_provider=storage_provider,
-            scraping_provider=scraping_provider,
-            search_provider=search_provider,
-            bundle_service=bundle_service,
-            user_id=user_id,
-            infospace_id=infospace_id,
-            settings=settings,
-            options=options or {},
-        )
-
-    return factory
-
-
-IngestionContextFactoryDep = Annotated[
-    Any,  # Callable[[int, int, Optional[dict]], IngestionContext]
-    Depends(get_ingestion_context_factory),
-]
 
 def get_dataset_service(
     request: Request, session: SessionDep, 
@@ -260,7 +188,6 @@ DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
 def get_package_service(
     request: Request, session: SessionDep, storage_provider: StorageProviderDep,
     annotation_service: AnnotationServiceDep,
-    bundle_service: BundleServiceDep,
     dataset_service: DatasetServiceDep,
     settings: SettingsDep
 ) -> PackageService:
@@ -270,7 +197,6 @@ def get_package_service(
         session=session,
         storage_provider=storage_provider,
         annotation_service=annotation_service,
-        bundle_service=bundle_service,
         dataset_service=dataset_service,
         settings=settings
     )
@@ -296,7 +222,6 @@ def get_shareable_service(
     settings: SettingsDep,
     annotation_service: AnnotationServiceDep,
     infospace_service: InfospaceServiceDep, package_service: PackageServiceDep,
-    bundle_service: BundleServiceDep,
     dataset_service: DatasetServiceDep
 ) -> ShareableService:
     service_name = "shareable_service"
@@ -305,8 +230,7 @@ def get_shareable_service(
         session=session, settings=settings,
         annotation_service=annotation_service, storage_provider=storage_provider,
         infospace_service=infospace_service, dataset_service=dataset_service,
-        package_service=package_service,
-        bundle_service=bundle_service
+        package_service=package_service
     )
     setattr(request.state, service_name, instance)
     return instance

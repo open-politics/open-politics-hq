@@ -75,13 +75,9 @@ async def discover_curated_rss_feeds(
         limit: Maximum number of feeds to return
     """
     try:
-        from app.api.modules.content.handlers import RSSHandler
+        from app.api.modules.content.sources import rss
 
-        feeds = await RSSHandler.discover_rss_feeds_from_awesome_repo(
-            country=country,
-            category=category,
-            limit=limit
-        )
+        feeds = await rss.discover_feeds(country=country, category=category, limit=limit)
 
         return {
             "feeds": feeds,

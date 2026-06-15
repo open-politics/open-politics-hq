@@ -13,7 +13,6 @@ from app.models import (
 from app.api.dependency_injection import (
     SessionDep,
     CurrentUser,
-    BundleServiceDep,
     SourceServiceDep,
 )
 from app.api.modules.identity_infospace_user.access import (
@@ -43,8 +42,6 @@ router = APIRouter(
 class RssSourceCreateRequest(BaseModel):
     feed_url: str
     source_name: Optional[str] = None
-    auto_monitor: bool = False
-    monitoring_schedule: Optional[str] = None
     target_bundle_id: Optional[int] = None
     target_bundle_name: Optional[str] = None
 
@@ -58,67 +55,36 @@ def create_source(
     infospace_id: int,
     source_in: SourceCreateRequest,
     session: SessionDep,
-    bundle_service: BundleServiceDep,
     source_service: SourceServiceDep,
 ) -> SourceRead:
-    """
-    Create a new source with optional streaming configuration.
-    
-    If streaming is enabled (is_active=True), the source will automatically poll
-    for new content at the specified interval. Content will be routed to the
-    output_bundle_id or a newly created bundle.
-    """
-    # Use output_bundle_id (streaming) or target_bundle_id (legacy monitoring) or create new
+    """Create a source. ``details`` is the source kind's read-config, verbatim;
+    the destination is the ``output_bundle_id`` column (resolved or created here),
+    never a key inside ``details``. Active sources poll on their interval."""
+    # Destination: explicit bundle id, or find/create one named for the source.
     bundle_id_to_use = source_in.output_bundle_id or source_in.target_bundle_id
-
-    # Create a bundle if necessary (always create one for ingestion)
     if not bundle_id_to_use:
-        bundle_name = (
-            source_in.target_bundle_name or f"Ingestion for {source_in.name}"
-        )
-        
-        # Check if bundle with this name already exists
+        bundle_name = source_in.target_bundle_name or f"Ingestion for {source_in.name}"
         existing_bundle = session.exec(
             select(Bundle).where(Bundle.name == bundle_name, Bundle.infospace_id == infospace_id)
         ).first()
-
         if existing_bundle:
             bundle_id_to_use = existing_bundle.id
         else:
-            bundle_create = BundleCreate(
+            from app.api.modules.content.tree import create_bundle as tree_create_bundle
+            new_bundle = tree_create_bundle(
+                session, infospace_id=infospace_id, user_id=access.user_id,
                 name=bundle_name,
                 description=f"Assets ingested from source: {source_in.name}",
             )
-            new_bundle = bundle_service.create_bundle(
-                bundle_in=bundle_create, user_id=access.user_id, infospace_id=infospace_id
-            )
+            session.commit()
             bundle_id_to_use = new_bundle.id
 
-    # Store the target bundle ID in the source details for use during ingestion
-    if bundle_id_to_use:
-        source_details = source_in.details or {}
-        source_details['target_bundle_id'] = bundle_id_to_use
-        source_create = SourceCreate.model_validate(source_in)
-        source_create.details = source_details
-        # Set output_bundle_id for streaming
-        source_create.output_bundle_id = bundle_id_to_use
-    else:
-        source_create = SourceCreate.model_validate(source_in)
-    
-    # Set streaming fields if provided
-    if hasattr(source_in, 'is_active') and source_in.is_active is not None:
-        source_create.is_active = source_in.is_active
-    if hasattr(source_in, 'poll_interval_seconds') and source_in.poll_interval_seconds is not None:
-        source_create.poll_interval_seconds = source_in.poll_interval_seconds
+    source_create = SourceCreate.model_validate(source_in)
+    source_create.output_bundle_id = bundle_id_to_use
 
-    # Create the source
     source = source_service.create_source(
         user_id=access.user_id, infospace_id=infospace_id, source_in=source_create
     )
-
-    # Note: Monitoring tasks are deprecated. Use the Flows API to create
-    # processing workflows that watch this source's output bundle instead.
-
     session.refresh(source)
     return source
 
@@ -490,58 +456,39 @@ async def create_rss_source(
     access: Access = Requires(Capability.INGEST, scope=None),
     infospace_id: int,
     request: RssSourceCreateRequest,
-    bundle_service: BundleServiceDep,
 ) -> Any:
-    """
-    Create a new Source of kind 'rss' and its output bundle.
-    
-    Note: The auto_monitor parameter is deprecated. Use the Flows API to create
-    processing workflows that watch this source's output bundle.
-    """
-    from app.api.modules.content.handlers import RSSHandler
+    """Create a Source of kind ``rss`` and its output bundle. ``details`` is the
+    rss source's read-config; the destination is the ``output_bundle_id`` column."""
+    from app.api.modules.content.sources import rss
+    from app.api.modules.content.tree import create_bundle as tree_create_bundle
 
     source_name = request.source_name
     if not source_name:
         try:
-            feed_info = await RSSHandler.preview_rss_feed(
+            feed_info = await rss.preview_feed(
                 request.feed_url, max_items=0
             )
             source_name = f"RSS: {feed_info['feed_info']['title']}"
         except Exception:
             source_name = f"RSS Feed: {request.feed_url}"
 
-    # 1. Determine or create the target bundle first
+    # Destination: explicit bundle id, or find/create one named for the feed.
     bundle_id_to_use = request.target_bundle_id
     if not bundle_id_to_use:
-        # Create a new bundle
         bundle_name = request.target_bundle_name or f"RSS: {source_name}"
-        
-        # Check if bundle with this name already exists
         existing_bundle = session.exec(
             select(Bundle).where(Bundle.name == bundle_name, Bundle.infospace_id == infospace_id)
         ).first()
-        
         if existing_bundle:
             bundle_id_to_use = existing_bundle.id
         else:
-            bundle_create = BundleCreate(
+            new_bundle = tree_create_bundle(
+                session, infospace_id=infospace_id, user_id=access.user_id,
                 name=bundle_name,
                 description=f"Assets ingested from RSS feed: {source_name}",
             )
-            new_bundle = bundle_service.create_bundle(
-                bundle_in=bundle_create, user_id=access.user_id, infospace_id=infospace_id
-            )
+            session.commit()
             bundle_id_to_use = new_bundle.id
-
-    # 2. Create the Source with bundle_id in details
-    source_create = SourceCreate(
-        name=source_name, 
-        kind="rss", 
-        details={
-            "feed_url": request.feed_url,
-            "target_bundle_id": bundle_id_to_use  # Store bundle_id for processing
-        }
-    )
 
     stmt = select(Source).where(
         Source.infospace_id == infospace_id,
@@ -551,30 +498,23 @@ async def create_rss_source(
 
     if existing_source:
         source = existing_source
-        # Update the target_bundle_id if it's not already set
-        if not existing_source.details or 'target_bundle_id' not in existing_source.details:
-            if not existing_source.details:
-                existing_source.details = {}
-            existing_source.details['target_bundle_id'] = bundle_id_to_use
-            session.add(existing_source)
+        if not source.output_bundle_id:
+            source.output_bundle_id = bundle_id_to_use
+            session.add(source)
             session.commit()
-            session.refresh(existing_source)
+            session.refresh(source)
     else:
-        source = Source.model_validate(
-            source_create,
-            update={"infospace_id": infospace_id, "user_id": access.user_id},
+        source = Source(
+            name=source_name,
+            kind="rss",
+            details={"feed_url": request.feed_url},
+            output_bundle_id=bundle_id_to_use,
+            infospace_id=infospace_id,
+            user_id=access.user_id,
         )
         session.add(source)
         session.commit()
         session.refresh(source)
-
-    # Note: auto_monitor is deprecated. Users should create a Flow via /flows API
-    # to set up processing workflows for this source's output bundle.
-    if request.auto_monitor:
-        logger.warning(
-            f"auto_monitor is deprecated. Create a Flow watching bundle {bundle_id_to_use} "
-            f"instead for source {source.id}"
-        )
 
     return source
 
@@ -666,32 +606,36 @@ def get_poll_history(
     limit: int = Query(default=20, le=100),
 ) -> Dict[str, Any]:
     """Get recent poll history for a source."""
-    from app.models import SourcePollHistory
-    
+    from app.models import IngestionJob, IngestionStatus
+
     # Verify source exists and belongs to infospace
     source = session.get(Source, source_id)
     if not source or source.infospace_id != infospace_id:
         raise HTTPException(status_code=404, detail="Source not found")
-    
-    polls = session.exec(
-        select(SourcePollHistory)
-        .where(SourcePollHistory.source_id == source_id)
-        .order_by(SourcePollHistory.started_at.desc())
+
+    # A poll IS an IngestionJob with source_id set (SourcePollHistory retired).
+    jobs = session.exec(
+        select(IngestionJob)
+        .where(IngestionJob.source_id == source_id)
+        .order_by(IngestionJob.created_at.desc())
         .limit(limit)
     ).all()
-    
-    return {
-        "source_id": source_id,
-        "polls": [
-            {
-                "id": poll.id,
-                "started_at": poll.started_at.isoformat(),
-                "completed_at": poll.completed_at.isoformat() if poll.completed_at else None,
-                "status": poll.status,
-                "items_found": poll.items_found,
-                "items_ingested": poll.items_ingested,
-                "error_message": poll.error_message,
-            }
-            for poll in polls
-        ],
-    }
+
+    def _record(job):
+        counts = (job.cursor_state or {}).get("counts", {})
+        ingested = job.processed_files or 0
+        started = job.started_at or job.created_at
+        status = ("success" if job.status == IngestionStatus.COMPLETED
+                  else "failed" if job.status == IngestionStatus.FAILED
+                  else job.status.value)
+        return {
+            "id": job.id,
+            "started_at": started.isoformat() if started else None,
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            "status": status,
+            "items_found": sum(counts.values()) if counts else ingested,
+            "items_ingested": ingested,
+            "error_message": job.error_message,
+        }
+
+    return {"source_id": source_id, "polls": [_record(j) for j in jobs]}
