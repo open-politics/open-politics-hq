@@ -106,6 +106,11 @@ interface IntelligenceChatProps {
    *  bounded container (e.g. ``DockedChat``'s 600px panel). Default ``false``
    *  for the full-page workspace chat. */
   embedded?: boolean
+  /** When set, the chat seeds this text and auto-sends it once — exactly once —
+   *  as soon as a model + infospace are ready and the conversation is empty.
+   *  Used by the home inquiry bar's "Ask" mode (``/hq/chat?prompt=…``) so the
+   *  user lands mid-answer instead of having to re-type and hit send. */
+  initialPrompt?: string
 }
 
 type ContextDepth = 'titles' | 'previews' | 'full'
@@ -137,7 +142,7 @@ function ActiveJobBanners() {
   )
 }
 
-export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMutation, embedded = false }: IntelligenceChatProps) {
+export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMutation, embedded = false, initialPrompt }: IntelligenceChatProps) {
   const [input, setInput] = useState('')
   const { selections, setSelection } = useProvidersStore()
   const selectedModel = selections.llm?.modelId || ''
@@ -1295,6 +1300,19 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
     }
   }
 
+
+  // Auto-send a prompt handed in via props (home inquiry bar "Ask" mode).
+  // Fires once, after models + infospace are ready and the chat is still empty.
+  const autoSentRef = useRef(false)
+  useEffect(() => {
+    if (autoSentRef.current) return
+    const prompt = initialPrompt?.trim()
+    if (!prompt) return
+    if (isLoadingModels || !selectedModel || !activeInfospace?.id) return
+    if (messages.length > 0 || isLoading) return
+    autoSentRef.current = true
+    handleSubmit({ text: prompt })
+  }, [initialPrompt, isLoadingModels, selectedModel, activeInfospace?.id, messages.length, isLoading])
 
   const getToolIcon = (toolName: string) => {
     switch (toolName) {

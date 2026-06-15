@@ -3,16 +3,17 @@
 import React from 'react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { 
-  Radio, 
-  Pause, 
-  AlertCircle, 
+import {
+  Radio,
+  Pause,
+  AlertCircle,
+  AlertTriangle,
   Loader2,
   Clock
 } from 'lucide-react';
 
 interface StreamStatusBadgeProps {
-  status: 'active' | 'paused' | 'idle' | 'processing' | 'error' | 'pending';
+  status: 'active' | 'paused' | 'idle' | 'processing' | 'error' | 'pending' | 'warning';
   className?: string;
   showIcon?: boolean;
 }
@@ -52,6 +53,12 @@ export function StreamStatusBadge({
       label: 'Error',
       icon: AlertCircle,
       className: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300 border-red-200 dark:border-red-700',
+      pulse: false,
+    },
+    warning: {
+      label: 'Warning',
+      icon: AlertTriangle,
+      className: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300 border-amber-200 dark:border-amber-700',
       pulse: false,
     },
     pending: {

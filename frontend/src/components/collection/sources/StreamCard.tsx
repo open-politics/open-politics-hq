@@ -13,6 +13,7 @@ import {
   RefreshCw,
   FolderOpen,
   ExternalLink,
+  AlertTriangle,
   Clock,
 } from 'lucide-react';
 import {
@@ -38,12 +39,16 @@ interface StreamCardProps {
     next_poll_at?: string | null;
     output_bundle_id?: number | null;
     consecutive_failures?: number;
+    error_message?: string | null;
     stream_health?: string;
     details?: {
       feed_url?: string;
-      search_config?: {
-        query?: string;
-      };
+      query?: string;
+      urls?: string[];
+      base_url?: string;
+      max_results?: number;
+      max_depth?: number;
+      max_urls?: number;
     };
   };
   outputBundleName?: string;
@@ -57,9 +62,9 @@ interface StreamCardProps {
 
 const sourceKindIcons = {
   rss: '📡',
-  search: '🔍',
-  url_list: '🔗',
-  site_discovery: '🌐',
+  web_search: '🔍',
+  web: '🔗',
+  crawl: '🌐',
   upload: '📤',
 };
 
@@ -73,7 +78,7 @@ export function StreamCard({
   onViewItems,
   className,
 }: StreamCardProps) {
-  const status = source.status.toLowerCase() as 'active' | 'paused' | 'idle' | 'processing' | 'error' | 'pending';
+  const status = source.status.toLowerCase() as 'active' | 'paused' | 'idle' | 'processing' | 'error' | 'pending' | 'warning';
   const isActive = (source.is_active ?? false) && status === 'active';
   
   const pollInterval = (source as any).poll_interval_seconds || 300;
@@ -204,12 +209,25 @@ export function StreamCard({
               {source.details.feed_url}
             </div>
           )}
-          {source.details?.search_config?.query && (
+          {source.details?.query && (
             <div className="truncate">
-              Query: "{source.details.search_config.query}"
+              Query: "{source.details.query}"
             </div>
           )}
         </div>
+
+        {/* Warning/error note — e.g. output bundle was deleted */}
+        {(status === 'warning' || status === 'error') && source.error_message && (
+          <div className={cn(
+            'flex items-start gap-1.5 text-xs rounded-md px-2 py-1.5',
+            status === 'warning'
+              ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+              : 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300',
+          )}>
+            <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+            <span>{source.error_message}</span>
+          </div>
+        )}
 
         {/* Statistics */}
         <div className="flex items-center justify-between pt-2 border-t text-xs text-muted-foreground">

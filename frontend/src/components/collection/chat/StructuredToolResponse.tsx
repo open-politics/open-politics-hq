@@ -35,8 +35,8 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getAssetIcon, formatAssetKind, getAssetBadgeClass } from '@/components/collection/assets/AssetSelector'
-import { SearchResultViewer, SearchResultData } from './SearchResultViewer'
-import { SearchResultIngestor } from './SearchResultIngestor'
+import { SearchResultViewer, SearchResultData } from '@/components/collection/intake/shared/ResultViewer'
+import { SearchResultIngestor } from '@/components/collection/intake/shared/ResultIngestor'
 
 interface StructuredToolResponseProps {
   toolName: string

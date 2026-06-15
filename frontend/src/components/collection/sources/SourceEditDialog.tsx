@@ -150,8 +150,8 @@ export default function SourceEditDialog({ source, open, onClose }: SourceEditDi
               {(source.details as any)?.feed_url && (
                 <div><strong>Feed URL:</strong> {(source.details as any).feed_url}</div>
               )}
-              {(source.details as any)?.search_config?.query && (
-                <div><strong>Search Query:</strong> "{(source.details as any).search_config.query}"</div>
+              {(source.details as any)?.query && (
+                <div><strong>Search Query:</strong> "{(source.details as any).query}"</div>
               )}
               <div><strong>Status:</strong> {source.status}</div>
             </div>

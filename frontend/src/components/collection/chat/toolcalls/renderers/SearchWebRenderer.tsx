@@ -27,10 +27,12 @@ import {
   Sparkles,
   ExternalLink,
   Link as LinkIcon,
-  XCircle
+  XCircle,
+  Repeat
 } from 'lucide-react';
-import { SearchResultViewer, SearchResultData } from '../../SearchResultViewer';
-import { SearchResultIngestor } from '../../SearchResultIngestor';
+import { useDock } from '@/zustand_stores/storeDock';
+import { SearchResultViewer, SearchResultData } from '@/components/collection/intake/shared/ResultViewer';
+import { SearchResultIngestor } from '@/components/collection/intake/shared/ResultIngestor';
 import { cn } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 
@@ -205,6 +207,27 @@ export const SearchWebRenderer = {
                 <Check className="h-3 w-3 mr-1" />
                 {selection.isAllSelected(results.length) ? 'None' : 'All'}
               </Button>
+              {searchResult.query && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-[10px] shrink-0"
+                  title="Turn this search into a recurrent source"
+                  onClick={() => useDock.getState().openSourceForm({
+                    init: {
+                      kind: 'web_search',
+                      name: searchResult.query,
+                      config: { query: searchResult.query },
+                      startStep: 'stream',
+                      lockKind: true,
+                      layout: 'stepped',
+                    },
+                  })}
+                >
+                  <Repeat className="h-3 w-3 mr-1" />
+                  Recurrent
+                </Button>
+              )}
               {selection.selected.size > 0 && (
                 <Button
                   size="sm"
