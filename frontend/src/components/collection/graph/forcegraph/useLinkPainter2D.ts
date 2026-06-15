@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo } from 'react';
 import { resolvePredicateColor, type ColorOverrides } from '@/lib/annotations/colors';
-import { nodeRadius, type ActiveSubNetwork, type GraphEdge, type GraphNode, type GraphViewConfig, type SubNetworkColor } from '../graphTypes';
+import { edgeLabelLines, nodeRadius, type ActiveSubNetwork, type GraphEdge, type GraphNode, type GraphViewConfig, type SubNetworkColor } from '../graphTypes';
 import type { ThemeTokens } from './resolveNodeStyle';
 
 const SUB_NETWORK_HEX: Record<SubNetworkColor, string> = {
@@ -136,18 +136,32 @@ export function useLinkPainter2D({
         mx = (src.x + tgt.x) / 2;
         my = (src.y + tgt.y) / 2;
       }
-      const fontSize = (c.config.labelFontSize - 2) / globalScale;
+      // A bundled edge shows its top predicates stacked, sized by rank, with
+      // a "…" row when more are hidden; a plain edge shows its one predicate.
+      // (``edgeLabelLines`` is the single source of truth, shared with 3D.)
+      const baseFont = (c.config.labelFontSize - 2) / globalScale;
+      const lines = edgeLabelLines(link);
+      const sizes = lines.map(l => baseFont * l.scale);
+      const lineHeights = sizes.map(s => s * 1.15);
+      const totalH = lineHeights.reduce((a, b) => a + b, 0);
+
       ctx.save();
       ctx.globalAlpha = labelOpacity;
-      ctx.font = `${fontSize}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.lineWidth = 2.5 / globalScale;
-      ctx.strokeStyle = c.theme.labelHalo;
       ctx.lineJoin = 'round';
-      ctx.strokeText(link.predicate, mx, my);
-      ctx.fillStyle = isHoveredLink ? c.theme.nodeLabel : c.theme.edgeLabel;
-      ctx.fillText(link.predicate, mx, my);
+      const fillColor = isHoveredLink ? c.theme.nodeLabel : c.theme.edgeLabel;
+      let cursorY = my - totalH / 2;
+      lines.forEach((l, i) => {
+        const cy = cursorY + lineHeights[i] / 2;
+        ctx.font = `${sizes[i]}px sans-serif`;
+        ctx.lineWidth = (2.5 * l.scale) / globalScale;
+        ctx.strokeStyle = c.theme.labelHalo;
+        ctx.strokeText(l.text, mx, cy);
+        ctx.fillStyle = fillColor;
+        ctx.fillText(l.text, mx, cy);
+        cursorY += lineHeights[i];
+      });
       ctx.restore();
     }
 

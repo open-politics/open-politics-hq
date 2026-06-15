@@ -34,7 +34,7 @@ export const EntityTypeLegend: React.FC<EntityTypeLegendProps> = ({
 
   return (
     <div
-      className="absolute left-1/2 -translate-x-1/2 top-2 z-10 max-w-[calc(100%-1rem)]"
+      className="absolute left-1/2 -translate-x-1/2 top-22 z-10 max-w-[calc(100%-1rem)]"
       style={{ pointerEvents: 'none' }}
     >
       <div

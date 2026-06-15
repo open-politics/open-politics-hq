@@ -332,6 +332,16 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
   const width = autoResize ? dimensions.width : propWidth;
   const height = autoResize ? dimensions.height : propHeight;
 
+  // Narrow-panel chrome. Below this width the top-edge overlays (zoom
+  // toolbar on the left, entity-type legend + top-nodes strip centered)
+  // run out of horizontal room and overlap. In compact mode the floating
+  // legend is dropped (the toolbar's Filter popover already lists the same
+  // types with show/hide) and the top-nodes strip collapses to a popover
+  // button — so only the left toolbar + right controls remain, which can't
+  // collide. Threshold is on the measured *panel* width, not the viewport.
+  const COMPACT_CHROME_WIDTH = 600;
+  const compactChrome = width < COMPACT_CHROME_WIDTH;
+
   // ---- Theme + memos ----
   const theme = useThemeReads();
   const degreeMap = useMemo(() => buildDegreeMap(edges), [edges]);
@@ -785,8 +795,17 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
   }, [hiddenTypes]);
 
   const linkVisibility = useCallback((link: any) => {
-    const e = link as GraphEdge & { source?: GraphNode; target?: GraphNode };
-    if (hiddenPreds.has(e.predicate)) return false;
+    const e = link as GraphEdge & { members?: GraphEdge[]; source?: GraphNode; target?: GraphNode };
+    // Predicate hide. A bundled edge stands for several predicates at once,
+    // so it only disappears when *every* member predicate is hidden; a raw
+    // edge (no ``members``) hides on its single predicate as before.
+    if (hiddenPreds.size > 0) {
+      if (Array.isArray(e.members) && e.members.length > 0) {
+        if (e.members.every(m => hiddenPreds.has(m.predicate))) return false;
+      } else if (hiddenPreds.has(e.predicate)) {
+        return false;
+      }
+    }
     const srcType = (typeof e.source === 'object' ? e.source?.type : null)?.toUpperCase();
     const tgtType = (typeof e.target === 'object' ? e.target?.type : null)?.toUpperCase();
     if (srcType && hiddenTypes.has(srcType)) return false;
@@ -1325,7 +1344,7 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
             entries={entityTypeLegend}
             hiddenTypes={hiddenTypes}
             onToggle={onToggleEntityType}
-            hidden={legendHidden}
+            hidden={legendHidden || compactChrome}
           />
           {/* Top-N anchor list — bottom-center, just above the legend. Hides
               when a node is focused or any sub-network HUD is up (HUD takes
@@ -1339,6 +1358,7 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
             onNodeClick={(node) => onNodeClick?.(node)}
             colorOverrides={colorOverrides}
             hidden={legendHidden}
+            compact={compactChrome}
           />
           {viewMode === '3d' && (
             <div className="absolute top-2 right-18 z-20" style={{ pointerEvents: 'auto' }}>

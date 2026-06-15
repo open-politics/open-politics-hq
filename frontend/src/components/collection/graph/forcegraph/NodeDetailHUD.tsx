@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import type { AnnotationSchemaRead } from '@/client';
 import type { FieldDef, FieldRangeCache } from '@/components/collection/annotation/cellRenderers/types';
 import { TypedCell } from '@/components/collection/annotation/cellRenderers';
+import { resolveEntityColor, type ColorOverrides } from '@/lib/annotations/colors';
 import type { GraphNode, GraphEdge } from '../graphTypes';
 
 // =============================================================================
@@ -142,6 +143,12 @@ interface NodeDetailHUDProps {
    *  AND a stronger background to read as the "active cursor". */
   highlightedEdgeId?: string | null;
   onPeerClick?: (peerNode: GraphNode) => void;
+  /** Click on a connection row (focal mode) → inspect that whole relationship.
+   *  The parent opens the edge-bundle inspector for (focal node, peer). */
+  onConnectionClick?: (peerId: string) => void;
+  /** Entity-type colour overrides for the connection-row peer dots — same
+   *  source the canvas legend / nodes use, so colours stay consistent. */
+  colorOverrides?: ColorOverrides;
   onAssetClick?: (assetId: number) => void;
   /** Hover hook for the right-rail "Connection details" cards AND bottom
    *  connection lists. Parent uses this to drive the same edge-amber +
@@ -207,7 +214,7 @@ interface NodeDetailHUDProps {
 export const NodeDetailHUD: React.FC<NodeDetailHUDProps> = ({
   focalNode, subnet, edges, nodes, documents = [], evidence = [],
   searchTerm = '', highlightedEdgeId = null,
-  onPeerClick, onAssetClick, onEdgeHover,
+  onPeerClick, onConnectionClick, colorOverrides, onAssetClick, onEdgeHover,
   eligibleFields = [], visibleFieldUids = [], onVisibleFieldUidsChange,
   showJustifications = false, onShowJustificationsChange,
   highlightedAssetId = null, onAssetHighlightToggle,
@@ -240,7 +247,7 @@ export const NodeDetailHUD: React.FC<NodeDetailHUDProps> = ({
                (anchor ↔ subnet). Only present when both are available
                and there's no lens-chip already serving the same swap. */}
       <div
-        className="absolute top-12 left-1/2 -translate-x-1/2 max-w-[85%] flex items-center gap-1 px-2 py-1 rounded-full bg-background/90 backdrop-blur-sm border shadow-sm"
+        className="absolute top-2 left-1/2 -translate-x-1/2 max-w-[85%] flex items-center gap-1 px-2 py-1 rounded-md bg-background/90"
         style={{ pointerEvents: 'auto' }}
       >
         {/* --- Section 1: HUD owner --- */}
@@ -498,18 +505,33 @@ export const NodeDetailHUD: React.FC<NodeDetailHUDProps> = ({
           className="absolute bottom-2 right-2 w-[480px] max-w-[55%] max-h-[10rem] flex flex-col gap-1 px-2 py-1"
           style={{ pointerEvents: 'auto' }}
         >
-          <div className="text-[10px] font-medium text-muted-foreground px-1">
-            Connections ({edges.length})
-          </div>
-          <ConnectionLanes
-            edges={edges}
-            nodes={nodes}
-            focalId={focalNode?.id}
-            searchTerm={searchTerm}
-            highlightedEdgeId={highlightedEdgeId}
-            onPeerClick={onPeerClick}
-            onEdgeHover={onEdgeHover}
-          />
+          {mode === 'focal' && focalNode ? (
+            <PeerConnections
+              edges={edges}
+              nodes={nodes}
+              focalId={focalNode.id}
+              searchTerm={searchTerm}
+              highlightedEdgeId={highlightedEdgeId}
+              colorOverrides={colorOverrides}
+              onConnectionClick={onConnectionClick}
+              onEdgeHover={onEdgeHover}
+            />
+          ) : (
+            <>
+              <div className="text-[10px] font-medium text-muted-foreground px-1">
+                Connections ({edges.length})
+              </div>
+              <ConnectionLanes
+                edges={edges}
+                nodes={nodes}
+                focalId={focalNode?.id}
+                searchTerm={searchTerm}
+                highlightedEdgeId={highlightedEdgeId}
+                onPeerClick={onPeerClick}
+                onEdgeHover={onEdgeHover}
+              />
+            </>
+          )}
         </div>
       )}
     </div>
@@ -685,6 +707,123 @@ function buildLanes(
   lanes.sort((a, b) => b.entries.length - a.entries.length || a.predicate.localeCompare(b.predicate));
   return lanes;
 }
+
+// -----------------------------------------------------------------------------
+// PeerConnections — focal-mode connection list, grouped by PEER (one row per
+// neighbour) rather than by predicate. Each row collapses every relationship
+// to that peer into a single bundle: the dominant predicate, a "+N" when more
+// than one predicate type connects them, the connection count, and a direction
+// glyph. Sorted by connection count (strongest first). Clicking a row opens the
+// edge-bundle inspector for that pair; hovering lights the pair on the canvas.
+// This is the per-node analogue of the bundled canvas edge — the list and the
+// canvas now describe connections the same way.
+// -----------------------------------------------------------------------------
+
+interface PeerGroup {
+  peerId: string;
+  peer: GraphNode | null;
+  count: number;
+  predicateCount: number;
+  dominantPredicate: string;
+  direction: 'in' | 'out' | 'mixed';
+  /** A representative member edge id — maps to the bundle for hover-highlight. */
+  repEdgeId: string;
+}
+
+function buildPeerGroups(edges: GraphEdge[], nodes: GraphNode[], focalId: string): PeerGroup[] {
+  const nodeById = new Map(nodes.map(n => [n.id, n]));
+  const groups = new Map<string, {
+    count: number; preds: Map<string, number>; out: number; inc: number; repEdgeId: string;
+  }>();
+  for (const e of edges) {
+    const isOut = e.sourceId === focalId;
+    const peerId = isOut ? e.targetId : e.sourceId;
+    let g = groups.get(peerId);
+    if (!g) { g = { count: 0, preds: new Map(), out: 0, inc: 0, repEdgeId: e.id }; groups.set(peerId, g); }
+    g.count += 1;
+    g.preds.set(e.predicate, (g.preds.get(e.predicate) ?? 0) + 1);
+    if (isOut) g.out += 1; else g.inc += 1;
+  }
+  const out: PeerGroup[] = [];
+  for (const [peerId, g] of groups) {
+    const dominantPredicate = Array.from(g.preds.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? '';
+    const direction: PeerGroup['direction'] = g.out > 0 && g.inc > 0 ? 'mixed' : g.inc > 0 ? 'in' : 'out';
+    out.push({
+      peerId, peer: nodeById.get(peerId) ?? null, count: g.count,
+      predicateCount: g.preds.size, dominantPredicate, direction, repEdgeId: g.repEdgeId,
+    });
+  }
+  out.sort((a, b) => b.count - a.count || (a.peer?.label ?? a.peerId).localeCompare(b.peer?.label ?? b.peerId));
+  return out;
+}
+
+const PeerConnections: React.FC<{
+  edges: GraphEdge[];
+  nodes: GraphNode[];
+  focalId: string;
+  searchTerm?: string;
+  highlightedEdgeId?: string | null;
+  colorOverrides?: ColorOverrides;
+  onConnectionClick?: (peerId: string) => void;
+  onEdgeHover?: (edgeId: string | null, peerId: string | null) => void;
+}> = ({ edges, nodes, focalId, searchTerm = '', highlightedEdgeId = null, colorOverrides, onConnectionClick, onEdgeHover }) => {
+  const q = searchTerm.trim().toLowerCase();
+  const groups = useMemo(() => buildPeerGroups(edges, nodes, focalId), [edges, nodes, focalId]);
+
+  if (groups.length === 0) {
+    return (
+      <>
+        <div className="text-[10px] font-medium text-muted-foreground px-1">Connections (0)</div>
+        <div className="px-1 py-0.5 text-[10px] text-muted-foreground italic">none</div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div className="text-[10px] font-medium text-muted-foreground px-1">
+        Connections ({groups.length})
+      </div>
+      <div className="flex flex-col gap-0.5 overflow-y-auto scrollbar-hide flex-1 min-h-0 my-0.5">
+        {groups.map(g => {
+          const peerLabel = g.peer?.label || g.peerId;
+          const matches = q.length > 0 && (
+            peerLabel.toLowerCase().includes(q) || g.dominantPredicate.toLowerCase().includes(q)
+          );
+          const dimmed = q.length > 0 && !matches;
+          const isActive = highlightedEdgeId != null && highlightedEdgeId === g.repEdgeId;
+          const dirGlyph = g.direction === 'out' ? '→' : g.direction === 'in' ? '←' : '↔';
+          const color = resolveEntityColor(g.peer?.type ?? '', colorOverrides);
+          return (
+            <button
+              type="button"
+              key={g.peerId}
+              onClick={() => onConnectionClick?.(g.peerId)}
+              onMouseEnter={() => onEdgeHover?.(g.repEdgeId, g.peerId)}
+              onMouseLeave={() => onEdgeHover?.(null, null)}
+              className={cn(
+                'flex items-center gap-2 px-1.5 py-1 rounded text-[11px] text-left border transition-colors',
+                'bg-muted/50 hover:bg-muted border-border/50',
+                isActive && 'ring-1 ring-amber-500',
+                dimmed && 'opacity-35',
+              )}
+              title={`${peerLabel} — ${g.count} relationship${g.count === 1 ? '' : 's'}${g.predicateCount > 1 ? ` across ${g.predicateCount} types` : ''} · click to inspect`}
+            >
+              <span className="text-[11px] text-muted-foreground/80 shrink-0 tabular-nums w-3 text-center">{dirGlyph}</span>
+              <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+              <span className="font-medium truncate shrink min-w-0">{peerLabel}</span>
+              <span className="text-[10px] italic text-muted-foreground truncate flex-1 min-w-0">
+                {g.dominantPredicate}{g.predicateCount > 1 ? ` +${g.predicateCount - 1}` : ''}
+              </span>
+              <span className="text-muted-foreground tabular-nums shrink-0">{g.count}</span>
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+};
 
 const ConnectionLanes: React.FC<{
   edges: GraphEdge[];

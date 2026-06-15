@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { resolvePredicateColor, type ColorOverrides } from '@/lib/annotations/colors';
-import type { ActiveSubNetwork, GraphEdge, GraphViewConfig } from '../graphTypes';
+import { edgeLabelLines, type ActiveSubNetwork, type GraphEdge, type GraphViewConfig } from '../graphTypes';
 import type { ThemeTokens } from './resolveNodeStyle';
 
 // =============================================================================
@@ -51,30 +51,52 @@ interface SpriteState {
 
 const FONT_SIZE = 24; // px in source canvas; sprite scaled at render time
 const PADDING = 4;
-const LABEL_WORLD_HEIGHT = 6; // world units; scale.x derived from aspect
+const LABEL_WORLD_HEIGHT = 6; // world units per single text line
+// World units per source-canvas pixel — derived from the single-line
+// baseline so a one-line label keeps its previous on-screen size and a
+// stacked (bundled) label grows proportionally taller.
+const PER_PX = LABEL_WORLD_HEIGHT / (FONT_SIZE + PADDING * 2);
 
-function buildLabelTexture(text: string, color: string, haloColor: string): { texture: THREE.CanvasTexture; aspect: number } {
+/** Bake one or more rank-scaled lines into a stacked label texture. Mirrors
+ *  the 2D painter: line 0 largest, each subsequent line smaller, optional
+ *  "…" row. Returns the canvas size so the sprite scale stays in world units
+ *  per pixel. */
+function buildLabelTexture(
+  lines: Array<{ text: string; scale: number }>,
+  color: string,
+  haloColor: string,
+): { texture: THREE.CanvasTexture; w: number; h: number } {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d')!;
-  ctx.font = `${FONT_SIZE}px sans-serif`;
-  const m = ctx.measureText(text);
-  const w = Math.max(8, Math.ceil(m.width)) + PADDING * 2;
-  const h = FONT_SIZE + PADDING * 2;
+  const fonts = lines.map(l => Math.max(1, Math.round(FONT_SIZE * l.scale)));
+  let maxW = 8;
+  lines.forEach((l, i) => {
+    ctx.font = `${fonts[i]}px sans-serif`;
+    maxW = Math.max(maxW, Math.ceil(ctx.measureText(l.text).width));
+  });
+  const lineHeights = fonts.map(f => Math.ceil(f * 1.15));
+  const w = maxW + PADDING * 2;
+  const h = lineHeights.reduce((a, b) => a + b, 0) + PADDING * 2;
   canvas.width = w;
   canvas.height = h;
-  // Re-set after canvas resize (clears state)
-  ctx.font = `${FONT_SIZE}px sans-serif`;
+  // State resets after the canvas resize above.
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.lineWidth = 3;
   ctx.lineJoin = 'round';
-  ctx.strokeStyle = haloColor;
-  ctx.strokeText(text, w / 2, h / 2);
-  ctx.fillStyle = color;
-  ctx.fillText(text, w / 2, h / 2);
+  let cursorY = PADDING;
+  lines.forEach((l, i) => {
+    const cy = cursorY + lineHeights[i] / 2;
+    ctx.font = `${fonts[i]}px sans-serif`;
+    ctx.lineWidth = 3 * l.scale;
+    ctx.strokeStyle = haloColor;
+    ctx.strokeText(l.text, w / 2, cy);
+    ctx.fillStyle = color;
+    ctx.fillText(l.text, w / 2, cy);
+    cursorY += lineHeights[i];
+  });
   const texture = new THREE.CanvasTexture(canvas);
   texture.needsUpdate = true;
-  return { texture, aspect: w / h };
+  return { texture, w, h };
 }
 
 export function useLinkThreeObject(deps: LinkThreeDeps) {
@@ -86,7 +108,7 @@ export function useLinkThreeObject(deps: LinkThreeDeps) {
   // Cache textures by (predicate, color, theme.haloColor). Predicate text
   // rarely changes, so this stays small and dramatically cheaper than the
   // re-bake-per-edge alternative.
-  const textureCacheRef = useRef<Map<string, { texture: THREE.CanvasTexture; aspect: number }>>(new Map());
+  const textureCacheRef = useRef<Map<string, { texture: THREE.CanvasTexture; w: number; h: number }>>(new Map());
 
   // Theme flips invalidate the cache (halo + label color rebake).
   const themeKey = `${deps.theme.edgeLabel}|${deps.theme.labelHalo}`;
@@ -119,10 +141,14 @@ export function useLinkThreeObject(deps: LinkThreeDeps) {
     const color = stateRef.current.config.edgeColorMode === 'predicate'
       ? resolvePredicateColor(link.predicate, stateRef.current.colorOverrides)
       : stateRef.current.theme.edgeLabel;
-    const cacheKey = `${link.predicate}|${color}|${stateRef.current.theme.labelHalo}`;
+    // Bundled edges show their top predicates stacked (rank-sized + "…");
+    // plain edges show one line. Shared with the 2D painter via edgeLabelLines.
+    const lines = edgeLabelLines(link);
+    const linesKey = lines.map(l => `${l.text}@${l.scale}`).join('|');
+    const cacheKey = `${linesKey}|${color}|${stateRef.current.theme.labelHalo}`;
     let entry = textureCacheRef.current.get(cacheKey);
     if (!entry) {
-      entry = buildLabelTexture(link.predicate, color, stateRef.current.theme.labelHalo);
+      entry = buildLabelTexture(lines, color, stateRef.current.theme.labelHalo);
       textureCacheRef.current.set(cacheKey, entry);
     }
     const material = new THREE.SpriteMaterial({
@@ -133,8 +159,8 @@ export function useLinkThreeObject(deps: LinkThreeDeps) {
       opacity: 0,
     });
     const sprite = new THREE.Sprite(material);
-    const baseScaleX = LABEL_WORLD_HEIGHT * entry.aspect;
-    const baseScaleY = LABEL_WORLD_HEIGHT;
+    const baseScaleX = entry.w * PER_PX;
+    const baseScaleY = entry.h * PER_PX;
     sprite.scale.set(baseScaleX, baseScaleY, 1);
     sprite.visible = false; // start hidden — linkPositionUpdate flips on demand
     // Force the label to paint *after* the cylinder geometry it sits on.

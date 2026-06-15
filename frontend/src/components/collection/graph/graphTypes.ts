@@ -46,6 +46,131 @@ export interface GraphEdge {
 }
 
 // =============================================================================
+// Edge bundling — collapse every connection between a node pair into ONE
+// rendered link, regardless of predicate. A dense graph where A and B are
+// joined by five different relationships reads as one weighted connection
+// instead of five fanned arcs; the per-predicate breakdown lives in the edge
+// inspector (click), not on the canvas.
+//
+// A ``BundledEdge`` IS a ``GraphEdge`` (so the renderer's painters / width /
+// highlight machinery work unchanged) plus the aggregate it stands for:
+//   - ``members``         the individual edges it collapses (authoritative
+//                         for evidence / source-doc / curate lookups)
+//   - ``predicateCounts`` per-predicate {count, weight}, sorted strongest-first
+//   - ``totalWeight``     Σ member weight — drives the rendered line width
+//   - ``directionMix``    whether members run one way, the other, or both
+//
+// Grouping is by UNORDERED pair (``pairKey``); the bundle's id is canonical so
+// any member edge can be mapped back to its bundle by recomputing the key.
+// Orientation (``sourceId``/``targetId``) follows the dominant member so the
+// forward arrow points along the strongest relationship.
+// =============================================================================
+
+export interface BundledEdgePredicate {
+  predicate: string;
+  count: number;
+  weight: number;
+}
+
+export interface BundledEdge extends GraphEdge {
+  members: GraphEdge[];
+  predicateCounts: BundledEdgePredicate[];
+  totalWeight: number;
+  memberCount: number;
+  directionMix: 'forward' | 'backward' | 'both';
+}
+
+/** Canonical (order-independent) key for a node pair. Matches the separator
+ *  convention used by the renderer's parallel-edge curvature grouping. */
+export function pairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/** Bundle id for a node pair — deterministic so a member edge maps back to
+ *  its bundle via ``bundleIdForEdge`` without a side table. */
+export function bundleIdForPair(a: string, b: string): string {
+  return `bundle:${pairKey(a, b)}`;
+}
+
+/** The bundle id an individual edge belongs to. */
+export function bundleIdForEdge(e: GraphEdge): string {
+  return bundleIdForPair(e.sourceId, e.targetId);
+}
+
+/** Collapse a flat edge list into one ``BundledEdge`` per unordered node
+ *  pair. Pure — safe to memoize on the edges array. */
+export function bundleEdges(edges: GraphEdge[]): BundledEdge[] {
+  const groups = new Map<string, GraphEdge[]>();
+  for (const e of edges) {
+    const key = pairKey(e.sourceId, e.targetId);
+    const list = groups.get(key);
+    if (list) list.push(e);
+    else groups.set(key, [e]);
+  }
+
+  const out: BundledEdge[] = [];
+  for (const [key, members] of groups) {
+    const predMap = new Map<string, { count: number; weight: number }>();
+    for (const m of members) {
+      const w = m.weight ?? m.frequency ?? 1;
+      const cur = predMap.get(m.predicate);
+      if (cur) { cur.count += 1; cur.weight += w; }
+      else predMap.set(m.predicate, { count: 1, weight: w });
+    }
+    const predicateCounts: BundledEdgePredicate[] = Array.from(predMap.entries())
+      .map(([predicate, v]) => ({ predicate, count: v.count, weight: v.weight }))
+      .sort((a, b) => b.weight - a.weight || b.count - a.count || a.predicate.localeCompare(b.predicate));
+
+    const totalWeight = predicateCounts.reduce((s, p) => s + p.weight, 0);
+    const dominantPredicate = predicateCounts[0]?.predicate ?? members[0].predicate;
+    // Orient the bundle along the dominant relationship so the forward arrow
+    // reads correctly for the strongest member.
+    const dominant = members.find(m => m.predicate === dominantPredicate) ?? members[0];
+
+    // Direction mix relative to the canonical (sorted) endpoints.
+    const canonicalSource = key.slice(0, key.indexOf('|'));
+    let anyForward = false, anyBackward = false;
+    for (const m of members) {
+      if (m.sourceId === canonicalSource) anyForward = true;
+      else anyBackward = true;
+    }
+    const directionMix: BundledEdge['directionMix'] =
+      anyForward && anyBackward ? 'both' : anyBackward ? 'backward' : 'forward';
+
+    out.push({
+      id: `bundle:${key}`,
+      sourceId: dominant.sourceId,
+      targetId: dominant.targetId,
+      predicate: dominantPredicate,
+      weight: totalWeight,
+      frequency: totalWeight,
+      members,
+      predicateCounts,
+      totalWeight,
+      memberCount: members.length,
+      directionMix,
+    });
+  }
+  return out;
+}
+
+/** Label lines for an edge, shared by the 2D painter and the 3D sprite so
+ *  both render the connection identically. A bundle shows its top-3
+ *  predicates sized by rank (strongest largest) with a "…" row when more
+ *  exist; a plain edge shows its single predicate. ``scale`` is relative to
+ *  the base label font size. */
+export function edgeLabelLines(edge: GraphEdge): Array<{ text: string; scale: number }> {
+  const pc = (edge as Partial<BundledEdge>).predicateCounts;
+  if (Array.isArray(pc) && pc.length > 1) {
+    const RANK = [1, 0.82, 0.68];
+    const lines = pc.slice(0, 3).map((p, i) => ({ text: p.predicate, scale: RANK[i] }));
+    if (pc.length > 3) lines.push({ text: '…', scale: 0.6 });
+    return lines;
+  }
+  return [{ text: edge.predicate, scale: 1 }];
+}
+
+// =============================================================================
 // ActiveSubNetwork — single primitive for every "this region of the graph is
 // in focus" lens. Each lens (node selection, asset highlight, keyboard-nav,
 // pin board, future search/time-window/schema-filter) projects to the same

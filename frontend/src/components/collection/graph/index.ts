@@ -6,9 +6,15 @@ export {
 export {
   edgeFieldRange,
   defaultGraphViewConfig,
+  bundleEdges,
+  bundleIdForEdge,
+  bundleIdForPair,
+  pairKey,
   type GraphNode,
   type GraphEdge,
   type GraphViewConfig,
+  type BundledEdge,
+  type BundledEdgePredicate,
 } from './graphTypes';
 export { GraphView } from './GraphView';
 export { CurationControls } from './CurationControls';
