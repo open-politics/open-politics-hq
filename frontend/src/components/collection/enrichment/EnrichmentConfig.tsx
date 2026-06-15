@@ -130,7 +130,7 @@ const EnrichmentConfig: React.FC = () => {
       let started = 0;
       for (const bundle of targetBundles) {
         for (const enricher of targetEnrichers) {
-          await IngestionJobsService.triggerBatchEnrich({
+          await IngestionJobsService.triggerEnrich({
             infospaceId: activeInfospace.id,
             bundleId: bundle.id,
             requestBody: { enricher_name: enricher, batch_size: 50 },

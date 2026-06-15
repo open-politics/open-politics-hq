@@ -418,34 +418,35 @@ function CreateBundleDialog({
 // Main component
 // ---------------------------------------------------------------------------
 
-export default function AssetExplorer() {
+export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: string } = {}) {
   const { activeInfospace } = useInfospaceStore();
   const { openDetailOverlay } = useAssetDetail();
   const infospaceId = activeInfospace?.id ?? 0;
 
-  // Query state
-  const [query, setQuery] = useState('');
+  // Query state — seeded from initialQuery so a query handed in via the URL
+  // (e.g. from the home inquiry bar) auto-streams on landing.
+  const [query, setQuery] = useState(initialQuery);
   const debouncedQuery = useDebounce(query, 300);
   const isSearching = debouncedQuery.trim().length > 0;
   const inputRef = useRef<HTMLInputElement>(null);
 
   // UI state
-  const [sortOption, setSortOption] = useState<SortOption>('created_at_desc');
+  // Sort is derived, not state-switched: a null userSort tracks the sensible
+  // default (relevance while searching, recency while browsing). Deriving it in
+  // the same render as `isSearching` avoids the state→effect→refetch round-trip
+  // that fired a stale second query on every search start (the "0 results then
+  // dump" flash). An explicit pick from the dropdown sticks.
+  const [userSort, setUserSort] = useState<SortOption | null>(null);
+  const sortOption: SortOption = userSort ?? (isSearching ? 'relevance' : 'created_at_desc');
   const [layout, setLayout] = useState<LayoutMode>('results');
   const [activeAssetId, setActiveAssetId] = useState<number | null>(null);
-  const [showHelpers, setShowHelpers] = useState(true);
+  const [showHelpers, setShowHelpers] = useState(false);
   const [bundleDialogOpen, setBundleDialogOpen] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerSelection, setPickerSelection] = useState<Set<string>>(new Set());
   const pickerItemsRef = useRef<Map<string, AssetTreeItem>>(new Map());
   const lastPickerEnterId = useRef<string | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
-
-  // Auto-switch sort
-  useEffect(() => {
-    if (isSearching && sortOption !== 'relevance') setSortOption('relevance');
-    else if (!isSearching && sortOption === 'relevance') setSortOption('created_at_desc');
-  }, [isSearching]);
 
   // Data
   const querySearch = useAssetQuery({
@@ -979,7 +980,7 @@ export default function AssetExplorer() {
                   <DropdownMenuItem
                     key={opt.value}
                     className="cursor-pointer rounded-sm px-2.5 py-2 text-xs focus:bg-muted/80 gap-2"
-                    onSelect={() => setSortOption(opt.value as SortOption)}
+                    onSelect={() => setUserSort(opt.value as SortOption)}
                   >
                     <span className="flex-1">{opt.label}</span>
                     {sortOption === opt.value && (

@@ -9,9 +9,9 @@ import { formatDistanceToNowStrict } from 'date-fns';
 
 const sourceKindIcons: Record<string, React.ElementType> = {
   rss: Rss,
-  search: Search,
-  url_list: Globe,
-  site_discovery: Globe,
+  web_search: Search,
+  web: Globe,
+  crawl: Globe,
   upload: Upload,
 };
 

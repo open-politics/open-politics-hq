@@ -81,7 +81,7 @@ export const useProvidersStore = create<ProvidersState>()(
       selections: {
         llm: { providerId: 'gemini' },
         embedding: { providerId: 'ollama_embeddings' },
-        web_search: { providerId: 'tavily' },
+        web_search: { providerId: 'searxng' },
         geocoding: { providerId: 'nominatim_local' },
         ocr: { providerId: 'tesseract' },
         annotation: { providerId: 'gemini' },

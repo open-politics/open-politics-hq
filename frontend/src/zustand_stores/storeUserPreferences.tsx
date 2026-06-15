@@ -24,6 +24,7 @@ export interface UserUIPreferences {
   active_channel_id: string | null;  // currently selected channel, null = "All"
   default_channel_id: string | null; // landing channel on load, null = "All"
   favorites_view: 'list' | 'card' | 'bento'; // display mode for the Favorites channel
+  all_view: 'list' | 'card' | 'bento'; // display mode for the "All" channel
 }
 
 const DEFAULT_PREFERENCES: UserUIPreferences = {
@@ -36,6 +37,7 @@ const DEFAULT_PREFERENCES: UserUIPreferences = {
   active_channel_id: null,
   default_channel_id: null,
   favorites_view: 'list',
+  all_view: 'list',
 };
 
 interface UserPreferencesState {

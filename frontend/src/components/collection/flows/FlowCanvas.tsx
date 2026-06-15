@@ -32,7 +32,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Loader2, RefreshCw, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import { toast } from 'sonner';
 
-import UnifiedSourceConfiguration from '@/components/collection/sources/configuration/UnifiedSourceConfiguration';
+import { SourceForm } from '@/components/collection/intake/sources/SourceForm';
 
 // Node types registration
 const nodeTypes = {
@@ -416,11 +416,19 @@ function FlowCanvasInner() {
 
       {/* Source Creation Dialog */}
       <Dialog open={isSourceDialogOpen} onOpenChange={setIsSourceDialogOpen}>
-        <DialogContent className="max-w-[95vw] sm:max-w-7xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-hidden p-0">
+          {/* SourceForm owns its own header/flow-steps; keep the title for a11y only. */}
+          <DialogHeader className="sr-only">
             <DialogTitle>Create New Source</DialogTitle>
           </DialogHeader>
-          <UnifiedSourceConfiguration onSuccess={handleSourceCreated} />
+          <SourceForm
+            init={{ layout: 'stepped' }}
+            mode="overlay"
+            fullscreen={false}
+            escalate={() => {}}
+            close={() => setIsSourceDialogOpen(false)}
+            onSuccess={handleSourceCreated}
+          />
         </DialogContent>
       </Dialog>
     </div>

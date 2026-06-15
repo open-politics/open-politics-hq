@@ -1,15 +1,18 @@
 'use client';
 
 import React from 'react';
-import SearchInterface from '@/components/collection/search/SearchInterface';
+import { DiscoverPanel } from '@/components/collection/intake/discover/DiscoverPanel';
 
 export const maxDuration = 60;
 
+// Standalone search route now renders the shared Discover surface (web search +
+// RSS feed → ingest / promote), so it stays in lockstep with the asset-manager
+// toolbar and chat instead of duplicating an older search component.
 export default function SearchPage() {
   return (
     <div className="container mx-auto py-6">
-      <div className="max-w-6xl mx-auto">
-        <SearchInterface className="h-[calc(100vh-8rem)]" />
+      <div className="mx-auto max-w-3xl overflow-hidden rounded-lg border">
+        <DiscoverPanel mode="overlay" fullscreen={false} close={() => {}} escalate={() => {}} />
       </div>
     </div>
   );

@@ -92,7 +92,7 @@ export const useTreeStore = create<TreeState>((set, get) => ({
     // Phase 5 wire protocol: skeleton → nav → section(role='level') → count → done.
     // Nav carries the flat bundle registry; section carries top-level assets.
     // Bundle AssetNodes are synthesized from the nav registry.
-    let navBundles: { id: number; name: string; parent_id: number | null }[] = [];
+    let navBundles: { id: number; name: string; parent_id: number | null; tags?: string[] | null }[] = [];
     let topLevelAssets: AssetNode[] = [];
 
     // Skip set() when the new rootNodes would be structurally equivalent to
@@ -104,19 +104,31 @@ export const useTreeStore = create<TreeState>((set, get) => ({
       if (next.length !== prev.length) return false;
       for (let i = 0; i < next.length; i++) {
         if (next[i].id !== prev[i].id || next[i].name !== prev[i].name) return false;
+        // Tags drive the Favorites filter — a tag change must invalidate the cache.
+        if (String(next[i].tags ?? '') !== String(prev[i].tags ?? '')) return false;
       }
       return true;
     };
 
     const commit = () => {
-      const bundleNodes: AssetNode[] = navBundles.map((b) => ({
-        id: `bundle-${b.id}`,
-        type: 'bundle',
-        name: b.name,
-        has_children: true,
-        children_count: null,
-        updated_at: new Date().toISOString(),
-      }));
+      // Only ROOT bundles belong at the top level. Nested bundles load as
+      // children when their parent is expanded (fetchChildren synthesizes them
+      // from the same nav registry). Without this filter every bundle was dumped
+      // at root, flattening the tree — a nested bundle like News/Researches/Japan
+      // News showed up top-level. A bundle is root if it has no parent (null/0)
+      // OR its parent isn't in the registry (orphan) — so orphans still surface.
+      const knownBundleIds = new Set(navBundles.map((b) => b.id));
+      const bundleNodes: AssetNode[] = navBundles
+        .filter((b) => b.parent_id == null || b.parent_id === 0 || !knownBundleIds.has(b.parent_id))
+        .map((b) => ({
+          id: `bundle-${b.id}`,
+          type: 'bundle',
+          name: b.name,
+          has_children: true,
+          children_count: null,
+          tags: b.tags ?? null,
+          updated_at: new Date().toISOString(),
+        }));
       const nextRootNodes = [...bundleNodes, ...topLevelAssets];
       const prev = get();
       const totalBundlesChanged = prev.totalBundles !== navBundles.length;

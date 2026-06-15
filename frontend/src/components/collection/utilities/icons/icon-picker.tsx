@@ -52,6 +52,12 @@ const HEROICON_ALIASES: Record<string, string> = {
   TrashIcon: "Trash2",
   PencilIcon: "Pencil",
   MagnifyingGlassIcon: "Search",
+  // Auth / session (HeroIcons v2 renamed these; v1 names kept too)
+  ArrowRightEndOnRectangleIcon: "LogIn",
+  ArrowRightOnRectangleIcon: "LogIn",
+  ArrowLeftStartOnRectangleIcon: "LogOut",
+  ArrowRightStartOnRectangleIcon: "LogOut",
+  ArrowLeftOnRectangleIcon: "LogOut",
   // Comms
   ChatBubbleLeftIcon: "MessageCircle",
   ChatBubbleBottomCenterTextIcon: "MessageSquareText",

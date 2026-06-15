@@ -17,6 +17,8 @@ import { motion } from "framer-motion";
 
 export default function AnnotationRunnerPage() {
   const { activeInfospace } = useInfospaceStore();
+  // Focus mode hides all chrome — including the runner dock — for a clean canvas.
+  const focusMode = useAnnotationRunStore((s) => s.focusMode);
   
   const {
     runs,
@@ -34,6 +36,24 @@ export default function AnnotationRunnerPage() {
   } = useAnnotationSystem({ autoLoadRuns: true });
 
   const { assets, fetchAssets: fetchAllAssets } = useAssetStore();
+
+  // Deep-link: open a specific run when arrived via ?runId= (e.g. the favorited
+  // runs on the HQ home). Read from window.location (client-only) so we don't
+  // need a Suspense boundary; apply once the matching run has loaded.
+  const pendingRunIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    const raw = new URLSearchParams(window.location.search).get('runId');
+    pendingRunIdRef.current = raw ? parseInt(raw, 10) : null;
+  }, []);
+  useEffect(() => {
+    const id = pendingRunIdRef.current;
+    if (id == null || Number.isNaN(id)) return;
+    const run = runs.find((r) => r.id === id);
+    if (run) {
+      pendingRunIdRef.current = null;
+      setActiveRun(run);
+    }
+  }, [runs, setActiveRun]);
 
   const [runResults, setRunResults] = useState<FormattedAnnotation[]>([]);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
@@ -296,17 +316,19 @@ export default function AnnotationRunnerPage() {
         {runError && <p className="text-red-500 mt-4 text-center">{runError}</p>}
       </div>
       
-      <AnnotationRunnerDock
-        allAssets={assets}
-        allSchemes={schemas}
-        allRuns={runs}
-        onCreateRun={handleCreateRun}
-        onSelectRun={handleSelectRunFromHistory}
-        activeRunId={activeRun?.id || null}
-        isCreatingRun={isCreatingRun}
-        isLoadingRuns={isLoadingRuns}
-        onClearRun={clearActiveRun}
-      />
+      {!focusMode && (
+        <AnnotationRunnerDock
+          allAssets={assets}
+          allSchemes={schemas}
+          allRuns={runs}
+          onCreateRun={handleCreateRun}
+          onSelectRun={handleSelectRunFromHistory}
+          activeRunId={activeRun?.id || null}
+          isCreatingRun={isCreatingRun}
+          isLoadingRuns={isLoadingRuns}
+          onClearRun={clearActiveRun}
+        />
+      )}
     </div>
   );
 } 

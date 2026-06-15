@@ -1,19 +1,19 @@
 /**
  * Source Configuration Registry
- * 
- * Manages source type schemas and provides a unified interface for source configuration.
- * Follows the same schema-driven pattern as AnnotationSchema for consistency.
+ *
+ * One schema per registered backend source kind. A Source's `details` IS that
+ * source's read-config, verbatim — what the form edits here is exactly what the
+ * backend's `read(config, …)` parses. No nesting, no provider knobs (providers
+ * resolve via the infospace/owner/env chain, never per-source).
  */
 
 import { JSONSchema7 } from 'json-schema';
 
-export type SourceKind = 'rss' | 'search' | 'url_list' | 'site_discovery' | 'upload';
+export type SourceKind = 'rss' | 'web_search' | 'web' | 'crawl';
 
 export interface SourceConfigurationSchema {
   kind: SourceKind;
   locatorSchema: JSONSchema7;
-  providerSchema: JSONSchema7;
-  processingSchema: JSONSchema7;
   uiSchema: UISchema;
 }
 
@@ -53,37 +53,16 @@ class SourceConfigurationRegistry {
   }
 
   private initializeSchemas(): void {
-    // RSS Source Schema
+    // RSS — config = {feed_url, max_items?}
     this.schemas.set('rss', {
       kind: 'rss',
       locatorSchema: {
         type: 'object',
         properties: {
-          feed_url: {
-            type: 'string',
-            format: 'uri',
-            title: 'RSS Feed URL'
-          }
+          feed_url: { type: 'string', format: 'uri', title: 'RSS Feed URL' },
+          max_items: { type: 'number', minimum: 1, maximum: 200, default: 50 },
         },
-        required: ['feed_url']
-      },
-      providerSchema: {
-        type: 'object',
-        properties: {
-          scraping_provider: {
-            type: 'string',
-            enum: ['newspaper4k', 'opol'],
-            default: 'newspaper4k'
-          }
-        }
-      },
-      processingSchema: {
-        type: 'object',
-        properties: {
-          max_items: { type: 'number', minimum: 1, maximum: 100, default: 50 },
-          scrape_full_content: { type: 'boolean', default: true },
-          create_image_assets: { type: 'boolean', default: true }
-        }
+        required: ['feed_url'],
       },
       uiSchema: {
         title: 'RSS Feed',
@@ -97,61 +76,30 @@ class SourceConfigurationRegistry {
             type: 'url',
             required: true,
             placeholder: 'https://example.com/feed.xml',
-            help: 'Enter the URL of the RSS feed you want to monitor'
-          }
-        ]
-      }
+            help: 'Enter the URL of the RSS feed you want to monitor',
+          },
+          {
+            name: 'max_items',
+            label: 'Max Items per Poll',
+            type: 'number',
+            required: false,
+            validation: { min: 1, max: 200 },
+            help: 'How many feed entries to consider per poll (default 50)',
+          },
+        ],
+      },
     });
 
-    // Search Source Schema
-    this.schemas.set('search', {
-      kind: 'search',
+    // Web search — config = {query, max_results?}
+    this.schemas.set('web_search', {
+      kind: 'web_search',
       locatorSchema: {
         type: 'object',
         properties: {
-          search_config: {
-            type: 'object',
-            properties: {
-              query: { type: 'string', title: 'Search Query' },
-              provider: { type: 'string', enum: ['tavily', 'searxng', 'exa'], default: 'tavily' },
-              max_results: { type: 'number', minimum: 1, maximum: 50, default: 10 },
-              search_depth: { type: 'string', enum: ['basic', 'advanced'], default: 'basic' },
-              include_domains: { type: 'array', items: { type: 'string' } },
-              exclude_domains: { type: 'array', items: { type: 'string' } },
-              date_range: { type: 'string' },
-              topic: { type: 'string', enum: ['general', 'news', 'finance', 'tech'], default: 'general' },
-              chunks_per_source: { type: 'number', minimum: 1, maximum: 10, default: 3 },
-              include_images: { type: 'boolean', default: false },
-              include_answer: { type: 'boolean', default: true },
-              days: { type: 'number', minimum: 1, maximum: 365, default: 7 }
-            },
-            required: ['query']
-          }
+          query: { type: 'string', title: 'Search Query' },
+          max_results: { type: 'number', minimum: 1, maximum: 50, default: 20 },
         },
-        required: ['search_config']
-      },
-      providerSchema: {
-        type: 'object',
-        properties: {
-          search_provider: {
-            type: 'string',
-            enum: ['tavily', 'searxng', 'exa'],
-            default: 'tavily'
-          }
-        }
-      },
-      processingSchema: {
-        type: 'object',
-        properties: {
-          scrape_content: { type: 'boolean', default: true },
-          deduplication: {
-            type: 'object',
-            properties: {
-              enabled: { type: 'boolean', default: true },
-              lookback_days: { type: 'number', minimum: 1, maximum: 30, default: 7 }
-            }
-          }
-        }
+        required: ['query'],
       },
       uiSchema: {
         title: 'Search Query',
@@ -160,122 +108,34 @@ class SourceConfigurationRegistry {
         color: 'blue',
         fields: [
           {
-            name: 'search_config.query',
+            name: 'query',
             label: 'Search Query',
             type: 'text',
             required: true,
             placeholder: 'artificial intelligence news',
-            help: 'Enter the search terms you want to monitor'
+            help: 'Enter the search terms you want to monitor',
           },
           {
-            name: 'search_config.provider',
-            label: 'Search Provider',
-            type: 'select',
-            required: true,
-            options: [
-              { label: 'Tavily', value: 'tavily' },
-              { label: 'SearXNG', value: 'searxng' },
-              { label: 'Exa', value: 'exa' }
-            ],
-            help: 'Choose which search provider to use'
-          },
-          {
-            name: 'search_config.max_results',
+            name: 'max_results',
             label: 'Max Results',
             type: 'number',
             required: false,
             validation: { min: 1, max: 50 },
-            help: 'Maximum number of results to fetch per search'
+            help: 'Maximum number of results to fetch per poll (default 20)',
           },
-          {
-            name: 'search_config.include_domains',
-            label: 'Include Domains',
-            type: 'multiselect',
-            required: false,
-            placeholder: 'techcrunch.com, arstechnica.com',
-            help: 'Only include results from these domains (optional)'
-          },
-          {
-            name: 'search_config.exclude_domains',
-            label: 'Exclude Domains',
-            type: 'multiselect',
-            required: false,
-            placeholder: 'spam.com, ads.com',
-            help: 'Exclude results from these domains (optional)'
-          },
-          {
-            name: 'search_config.topic',
-            label: 'Topic',
-            type: 'select',
-            required: false,
-            options: [
-              { label: 'General', value: 'general' },
-              { label: 'News', value: 'news' },
-              { label: 'Finance', value: 'finance' },
-              { label: 'Technology', value: 'tech' }
-            ],
-            help: 'Search topic for better results'
-          },
-          {
-            name: 'search_config.search_depth',
-            label: 'Search Depth',
-            type: 'select',
-            required: false,
-            options: [
-              { label: 'Basic', value: 'basic' },
-              { label: 'Advanced', value: 'advanced' }
-            ],
-            help: 'Search depth for more comprehensive results'
-          },
-          {
-            name: 'search_config.include_images',
-            label: 'Include Images',
-            type: 'boolean',
-            required: false,
-            help: 'Include images in search results'
-          },
-          {
-            name: 'search_config.include_answer',
-            label: 'Include AI Answer',
-            type: 'boolean',
-            required: false,
-            help: 'Include AI-generated answer summary'
-          }
-        ]
-      }
+        ],
+      },
     });
 
-    // URL List Source Schema
-    this.schemas.set('url_list', {
-      kind: 'url_list',
+    // Web — config = {urls}
+    this.schemas.set('web', {
+      kind: 'web',
       locatorSchema: {
         type: 'object',
         properties: {
-          urls: {
-            type: 'array',
-            items: { type: 'string', format: 'uri' },
-            title: 'URL List'
-          }
+          urls: { type: 'array', items: { type: 'string', format: 'uri' }, title: 'URL List' },
         },
-        required: ['urls']
-      },
-      providerSchema: {
-        type: 'object',
-        properties: {
-          scraping_provider: {
-            type: 'string',
-            enum: ['newspaper4k', 'opol'],
-            default: 'newspaper4k'
-          }
-        }
-      },
-      processingSchema: {
-        type: 'object',
-        properties: {
-          scrape_immediately: { type: 'boolean', default: true },
-          use_bulk_scraping: { type: 'boolean', default: true },
-          max_threads: { type: 'number', minimum: 1, maximum: 10, default: 4 }
-        }
+        required: ['urls'],
       },
       uiSchema: {
         title: 'URL List',
@@ -288,49 +148,28 @@ class SourceConfigurationRegistry {
             label: 'URLs',
             type: 'textarea',
             required: true,
-            placeholder: 'https://example1.com\nhttps://example2.com\nhttps://example3.com',
-            help: 'Enter one URL per line'
-          }
-        ]
-      }
+            placeholder: 'https://example1.com\nhttps://example2.com',
+            help: 'Enter one URL per line',
+          },
+        ],
+      },
     });
 
-    // Site Discovery Source Schema
-    this.schemas.set('site_discovery', {
-      kind: 'site_discovery',
+    // Crawl — config = {base_url, max_depth?, max_urls?}
+    this.schemas.set('crawl', {
+      kind: 'crawl',
       locatorSchema: {
         type: 'object',
         properties: {
-          base_url: {
-            type: 'string',
-            format: 'uri',
-            title: 'Base URL'
-          }
+          base_url: { type: 'string', format: 'uri', title: 'Base URL' },
+          max_depth: { type: 'number', minimum: 0, maximum: 3, default: 1 },
+          max_urls: { type: 'number', minimum: 1, maximum: 200, default: 50 },
         },
-        required: ['base_url']
-      },
-      providerSchema: {
-        type: 'object',
-        properties: {
-          scraping_provider: {
-            type: 'string',
-            enum: ['newspaper4k', 'opol'],
-            default: 'newspaper4k'
-          }
-        }
-      },
-      processingSchema: {
-        type: 'object',
-        properties: {
-          max_depth: { type: 'number', minimum: 1, maximum: 5, default: 2 },
-          max_urls: { type: 'number', minimum: 1, maximum: 100, default: 20 },
-          use_source_analysis: { type: 'boolean', default: true },
-          process_rss_feeds: { type: 'boolean', default: true }
-        }
+        required: ['base_url'],
       },
       uiSchema: {
-        title: 'Site Discovery',
-        description: 'Discover and monitor content from a website',
+        title: 'Site Crawl',
+        description: 'Discover and monitor pages of a website (same-origin, bounded)',
         icon: 'globe',
         color: 'purple',
         fields: [
@@ -340,10 +179,26 @@ class SourceConfigurationRegistry {
             type: 'url',
             required: true,
             placeholder: 'https://example.com',
-            help: 'Enter the base URL of the website to discover'
-          }
-        ]
-      }
+            help: 'The page to start crawling from',
+          },
+          {
+            name: 'max_depth',
+            label: 'Max Depth',
+            type: 'number',
+            required: false,
+            validation: { min: 0, max: 3 },
+            help: 'How many link-hops to follow from the base page (default 1)',
+          },
+          {
+            name: 'max_urls',
+            label: 'Max Pages',
+            type: 'number',
+            required: false,
+            validation: { min: 1, max: 200 },
+            help: 'Cap on discovered pages per poll (default 50)',
+          },
+        ],
+      },
     });
   }
 
@@ -360,69 +215,33 @@ class SourceConfigurationRegistry {
     if (!schema) {
       return {
         valid: false,
-        errors: [`Unsupported source kind: ${kind}`]
+        errors: [`Unsupported source kind: ${kind}`],
       };
     }
 
-    // Simple validation - in a real implementation, you'd use a JSON Schema validator
     const errors: string[] = [];
-    
-    // Validate locator schema
     if (schema.locatorSchema.required) {
       for (const field of schema.locatorSchema.required) {
-        if (!config[field]) {
+        if (!config[field] || (Array.isArray(config[field]) && config[field].length === 0)) {
           errors.push(`Missing required field: ${field}`);
         }
       }
     }
 
-    // Validate search_config specifically
-    if (kind === 'search' && config.search_config) {
-      if (!config.search_config.query) {
-        errors.push('Search query is required');
-      }
-    }
-
     return {
       valid: errors.length === 0,
-      errors
+      errors,
     };
   }
 
   getFieldValue(config: any, fieldName: string): any {
-    if (fieldName.includes('.')) {
-      const parts = fieldName.split('.');
-      let value = config;
-      for (const part of parts) {
-        value = value?.[part];
-      }
-      return value;
-    }
-    return config[fieldName];
+    return config?.[fieldName];
   }
 
   setFieldValue(config: any, fieldName: string, value: any): any {
-    const newConfig = { ...config };
-    if (fieldName.includes('.')) {
-      const parts = fieldName.split('.');
-      let current = newConfig;
-      for (let i = 0; i < parts.length - 1; i++) {
-        if (!current[parts[i]]) {
-          current[parts[i]] = {};
-        }
-        current = current[parts[i]];
-      }
-      current[parts[parts.length - 1]] = value;
-    } else {
-      newConfig[fieldName] = value;
-    }
-    return newConfig;
+    return { ...config, [fieldName]: value };
   }
 }
 
 // Export singleton instance
 export const sourceConfigurationRegistry = new SourceConfigurationRegistry();
-
-
-
-

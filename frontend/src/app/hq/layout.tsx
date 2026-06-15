@@ -16,9 +16,9 @@ import useAuth from "@/hooks/useAuth"
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace"
 import { useUserPreferencesStore } from "@/zustand_stores/storeUserPreferences"
 import { useIsMobile } from "@/hooks/use-mobile"
-import AssetDetailProvider, { useAssetDetail } from "@/components/collection/assets/Views/AssetDetailProvider"
-import AssetDetailView from "@/components/collection/assets/Views/AssetDetailView"
-import BundleDetailView from "@/components/collection/assets/Views/BundleDetailView"
+import { useDock } from "@/zustand_stores/storeDock"
+import { useAnnotationRunStore } from "@/zustand_stores/useAnnotationRunStore"
+import { DockHost } from "@/components/collection/intake/DockHost"
 import { TextSpanHighlightProvider } from "@/components/collection/contexts/TextSpanHighlightContext"
 import { ArrowLeft, Menu as MenuIcon, ExternalLink, X } from "lucide-react"
 import { InvitationInbox } from "@/components/collaboration/InvitationInbox"
@@ -67,154 +67,77 @@ function useBreadcrumbs(activeInfospace: any) {
   return items;
 }
 
-// Inspector panel slot - renders inside the resizable panel
-function InspectorPanelSlot() {
-  const { isOpen, selectedAssetId, selectedBundleId, viewType, closeDetailOverlay, openDetailOverlay } = useAssetDetail();
-  
-  // Show nothing if not open, or if neither asset nor bundle is selected
-  if (!isOpen || (!selectedAssetId && !selectedBundleId)) return null;
-  
-  const title = viewType === 'bundle' ? 'Bundle Details' : 'Asset Details';
-  
-  return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden border-l bg-background">
-      <div className="flex shrink-0 items-center justify-between border-b bg-muted/30 p-3">
-        <h3 className="font-semibold text-sm">{title}</h3>
-        <button
-          onClick={closeDetailOverlay}
-          className="p-1 hover:bg-muted rounded-md transition-colors"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <TextSpanHighlightProvider>
-          {viewType === 'bundle' && selectedBundleId ? (
-            <BundleDetailView
-              selectedBundleId={selectedBundleId}
-              selectedAssetId={null}
-              onAssetSelect={(assetId) => {
-                if (assetId) openDetailOverlay(assetId);
-              }}
-              highlightAssetId={null}
-            />
-          ) : selectedAssetId ? (
-            <AssetDetailView
-              selectedAssetId={selectedAssetId}
-              highlightAssetIdOnOpen={selectedAssetId}
-              schemas={[]}
-              onEdit={() => {}}
-            />
-          ) : null}
-        </TextSpanHighlightProvider>
-      </div>
-    </div>
-  );
-}
-
-// Mobile inspector sheet
-function MobileInspectorSheet() {
-  const { isOpen, selectedAssetId, selectedBundleId, viewType, closeDetailOverlay, openDetailOverlay } = useAssetDetail();
-  
-  const title = viewType === 'bundle' ? 'Bundle Details' : 'Asset Details';
-  
-  return (
-    <Sheet open={isOpen} onOpenChange={(open) => !open && closeDetailOverlay()}>
-      <SheetContent side="right" className="flex h-full w-[90vw] flex-col p-0 sm:w-[400px]">
-        <SheetHeader className="shrink-0 border-b p-4">
-          <SheetTitle>{title}</SheetTitle>
-          <SheetDescription className="sr-only">
-            View {viewType === 'bundle' ? 'bundle' : 'asset'} details
-          </SheetDescription>
-        </SheetHeader>
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <TextSpanHighlightProvider>
-            {viewType === 'bundle' && selectedBundleId ? (
-              <BundleDetailView
-                selectedBundleId={selectedBundleId}
-                selectedAssetId={null}
-                onAssetSelect={(assetId) => {
-                  if (assetId) openDetailOverlay(assetId);
-                }}
-                highlightAssetId={null}
-              />
-            ) : selectedAssetId ? (
-              <AssetDetailView
-                selectedAssetId={selectedAssetId}
-                highlightAssetIdOnOpen={selectedAssetId}
-                schemas={[]}
-                onEdit={() => {}}
-              />
-            ) : null}
-          </TextSpanHighlightProvider>
-        </div>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-// Main content with inspector panel (desktop: resizable, mobile: sheet)
-function MainContentWithInspector({ 
-  children, 
-  mainContentRef 
-}: { 
+// Main content + the global right dock. Desktop: a resizable split; mobile: a
+// sheet; fullscreen: the dock lifts over the whole content area. Driven entirely
+// by the dock store, so any route can summon detail / discover / source editing.
+function MainContentWithInspector({
+  children,
+  mainContentRef,
+}: {
   children: React.ReactNode;
   mainContentRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const isMobile = useIsMobile();
-  const { isOpen } = useAssetDetail();
-  
-  // On mobile, use Sheet overlay
+  // A page hosting the dock inline (AssetManager's third column on desktop) stands
+  // the app-wide dock down so the same content isn't rendered twice.
+  const inlineHosted = useDock((s) => s.inlineHostCount > 0);
+  const isOpen = useDock((s) => s.entry !== null) && !inlineHosted;
+  const close = useDock((s) => s.close);
+
   if (isMobile) {
     return (
       <>
-        <main 
+        <main
           ref={mainContentRef}
-          className="relative z-10 flex h-full min-h-0 flex-1 flex-col overflow-hidden focus:outline-none @container" 
+          className="relative z-10 flex h-full min-h-0 flex-1 flex-col overflow-hidden focus:outline-none @container"
           tabIndex={-1}
         >
           {children}
         </main>
-        <MobileInspectorSheet />
+        <Sheet open={isOpen} onOpenChange={(open) => !open && close()}>
+          <SheetContent side="right" className="flex h-full w-[92vw] flex-col p-0 sm:w-[420px]">
+            <SheetHeader className="sr-only">
+              <SheetTitle>Dock</SheetTitle>
+              <SheetDescription>Summoned detail and tools</SheetDescription>
+            </SheetHeader>
+            <DockHost />
+          </SheetContent>
+        </Sheet>
       </>
     );
   }
-  
-  // On desktop, use resizable panels
+
   return (
-    <ResizablePanelGroup 
-      direction="horizontal" 
-      className="relative z-10 flex h-full min-h-0 flex-1"
-      autoSaveId={null}
-    >
-      <ResizablePanel 
-        defaultSize={isOpen ? 60 : 100} 
-        minSize={30}
-        className="min-h-0 overflow-hidden"
+    <>
+      <ResizablePanelGroup
+        direction="horizontal"
+        className="relative z-10 flex h-full min-h-0 flex-1"
+        autoSaveId={null}
       >
-        <main 
-          ref={mainContentRef}
-          className="h-full min-h-0 overflow-y-auto focus:outline-none @container" 
-          tabIndex={-1}
+        <ResizablePanel
+          defaultSize={isOpen ? 50 : 100}
+          minSize={30}
+          className="min-h-0 overflow-hidden"
         >
-          {children}
-        </main>
-      </ResizablePanel>
-      
-      {isOpen && (
-        <>
-          <ResizableHandle withHandle />
-          <ResizablePanel 
-            defaultSize={40} 
-            minSize={20} 
-            maxSize={60}
-            className="min-h-0 overflow-hidden"
+          <main
+            ref={mainContentRef}
+            className="h-full min-h-0 overflow-y-auto focus:outline-none @container"
+            tabIndex={-1}
           >
-            <InspectorPanelSlot />
-          </ResizablePanel>
-        </>
-      )}
-    </ResizablePanelGroup>
+            {children}
+          </main>
+        </ResizablePanel>
+
+        {isOpen && (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize={50} minSize={24} maxSize={75} className="min-h-0 overflow-hidden">
+              <DockHost />
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
+    </>
   );
 }
 
@@ -224,6 +147,10 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
   const activeInfospace = useInfospaceStore.getState().activeInfospace;
   const breadcrumbs = useBreadcrumbs(activeInfospace);
   const mainContentRef = useRef<HTMLDivElement>(null);
+  // Focus mode (annotation runner) hides all chrome for a clean canvas — that
+  // includes this app-level top bar. The runner clears the flag on unmount so
+  // it never leaks onto other routes.
+  const focusMode = useAnnotationRunStore((s) => s.focusMode);
 
   // User preferences
   const { preferences, initializePreferences, updatePreference } = useUserPreferencesStore();
@@ -278,7 +205,8 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
     <>
       <AppSidebar className="fixed md:relative h-full md:h-auto" />
       <SidebarInset className="max-w-full overflow-hidden">
-        <header className="flex h-16 shrink-0 items-center gap-2 border-b mb-2 px-4 relative z-10">
+        {!focusMode && (
+        <header className="flex h-16 shrink-0 items-center gap-2 border-b mb-1 px-4 relative z-10">
           <SidebarTrigger className="-ml-1" />
           <div className="h-4 w-[1px] mx-2 bg-border" />
           <div className="flex-1 min-w-0">
@@ -325,7 +253,8 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
             </div>
           )}
         </header>
-        
+        )}
+
         {/* Mobile Info Banner */}
         {sidebarMobile && !preferences.docs_banner_dismissed && (
           <div className="sm:hidden mx-3 mb-2 relative">
@@ -394,12 +323,12 @@ export default function HQLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AssetDetailProvider renderMode="panel">
+    <TextSpanHighlightProvider>
       <div className="h-full max-h-screen w-full flex flex-col md:flex-row overflow-hidden">
         <SidebarContent user={user}>
           {children}
         </SidebarContent>
       </div>
-    </AssetDetailProvider>
+    </TextSpanHighlightProvider>
   )
 }

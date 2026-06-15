@@ -21,6 +21,8 @@ export interface QueryResult {
   asset: AssetRead;
   score: number | null;
   highlight: string | null;
+  /** Which clause matched — drives the AssetSelector title/content tiers. */
+  field?: 'title' | 'body';
 }
 
 export interface NameMatches {
@@ -45,6 +47,24 @@ interface UseAssetQueryOptions {
 }
 
 const EMPTY_NAME_MATCHES: NameMatches = { bundles: [], assets: [] };
+
+
+/**
+ * Append ``incoming`` to ``prev`` while keeping the list duplicate-free by
+ * asset id. Streaming is idempotent at the item level: the same node can
+ * legitimately arrive twice (a ``rank DESC`` cursor page overlapping its
+ * predecessor, an SSE re-delivery, a dev StrictMode double-mount), and the
+ * render keys rows by ``asset.id`` — so a repeat would crash React with a
+ * duplicate-key warning. Merge-by-id makes the result set correct by
+ * construction regardless of how the batches arrive.
+ */
+function mergeResultsById(prev: QueryResult[], incoming: QueryResult[]): QueryResult[] {
+  if (incoming.length === 0) return prev;
+  if (prev.length === 0) return incoming;
+  const seen = new Set(prev.map((r) => r.asset.id));
+  const fresh = incoming.filter((r) => !seen.has(r.asset.id));
+  return fresh.length === 0 ? prev : [...prev, ...fresh];
+}
 
 
 /**
@@ -82,10 +102,12 @@ function projectAssetNodeToAssetRead(node: AssetNode): AssetRead {
 
 function toQueryResult(node: AssetNode): QueryResult {
   const headline = node.matches?.find((m) => m.snippet)?.snippet ?? null;
+  const field = node.matches?.[0]?.field === 'title' ? 'title' : 'body';
   return {
     asset: projectAssetNodeToAssetRead(node),
     score: node.score ?? null,
     highlight: headline,
+    field,
   };
 }
 
@@ -105,12 +127,20 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
 
   const activeQuery = useRef(query);
   activeQuery.current = query;
+  // Tracks the stream currently in flight so a new fetch (or unmount) can abort
+  // it. Without this, two streams for the *same* query — e.g. a dev StrictMode
+  // double-mount, which the activeQuery guard can't tell apart — run at once and
+  // interleave their appends into duplicate rows.
+  const controllerRef = useRef<AbortController | null>(null);
 
   const fetchQuery = useCallback(
     async (q: string, append = false, cursor?: string | null) => {
       if (!infospaceId) return;
       const isEmpty = !q.trim() && !parentAssetId && sort === 'relevance';
       if (isEmpty) return;
+
+      // Cancel whatever is still streaming before opening a new connection.
+      controllerRef.current?.abort();
 
       setIsLoading(true);
       if (!append) setError(null);
@@ -121,6 +151,12 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
 
       const url = `/api/v1/search/infospaces/${infospaceId}/assets/stream`;
       const controller = new AbortController();
+      controllerRef.current = controller;
+      // Primary now streams as several batches per request. The first batch of a
+      // fresh query replaces; every later batch (this stream or a loadMore page)
+      // appends — so the list fills in progressively instead of the last small
+      // batch clobbering the page.
+      let primaryReceived = false;
 
       try {
         await connectSSE({
@@ -129,6 +165,7 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
           body,
           signal: controller.signal,
           onEvent: (event) => {
+            if (controller.signal.aborted) return;
             if (activeQuery.current !== q) {
               controller.abort();
               return;
@@ -151,11 +188,12 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
               const section = payload.section ?? {};
               const items: AssetNode[] = section.items ?? [];
               const mapped = items.map(toQueryResult);
-              if (append) {
-                setResults((prev) => [...prev, ...mapped]);
+              if (append || primaryReceived) {
+                setResults((prev) => mergeResultsById(prev, mapped));
               } else {
                 setResults(mapped);
               }
+              primaryReceived = true;
               if (typeof section.total === 'number' && section.total >= 0) {
                 setTotal(section.total);
               }
@@ -188,16 +226,21 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
             }
           },
           onError: (err) => {
-            if (activeQuery.current !== q) return;
+            if (controller.signal.aborted || activeQuery.current !== q) return;
             setError(err.message);
           },
         });
       } catch (err: unknown) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
-        if (activeQuery.current !== q) return;
+        if (controller.signal.aborted || activeQuery.current !== q) return;
         setError(err instanceof Error ? err.message : 'Query failed');
       } finally {
-        setIsLoading(false);
+        // Only the stream that still owns the slot clears the spinner — an
+        // aborted predecessor must not flip loading off under its successor.
+        if (controllerRef.current === controller) {
+          controllerRef.current = null;
+          setIsLoading(false);
+        }
       }
     },
     [infospaceId, parentAssetId, limit, sort],
@@ -206,6 +249,7 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
   useEffect(() => {
     const isEmpty = !query.trim() && !parentAssetId && sort === 'relevance';
     if (!enabled || isEmpty) {
+      controllerRef.current?.abort();
       setResults([]);
       setChildResults([]);
       setTotal(0);
@@ -214,6 +258,7 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
       return;
     }
     fetchQuery(query);
+    return () => controllerRef.current?.abort();
   }, [query, parentAssetId, sort, enabled, fetchQuery]);
 
   const search = useCallback(() => fetchQuery(query), [query, fetchQuery]);

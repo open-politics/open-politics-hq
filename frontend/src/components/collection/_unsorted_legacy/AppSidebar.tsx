@@ -116,7 +116,14 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
     ]
   }, [resolvedTheme])
 
-  const toolsNav = React.useMemo(() => [
+  const inquireNav = React.useMemo(() => [
+    {
+      title: "Explore",
+      url: "/hq/infospaces/explore",
+      icon: Search,
+      isActive: true,
+      colorClass: "sidebar-sky",
+    },
     {
       title: "Chat",
       url: "/hq/chat",
@@ -124,6 +131,9 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       isActive: true,
       colorClass: "sidebar-teal",
     },
+  ], [])
+
+  const toolsNav = React.useMemo(() => [
     {
       title: "Analysis",
       url: "/hq/infospaces/annotation-runner",
@@ -144,13 +154,6 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
 
   const storesNav = React.useMemo(() => [
     {
-      title: "Explore",
-      url: "/hq/infospaces/explore",
-      icon: Search,
-      isActive: true,
-      colorClass: "sidebar-sky",
-    },
-    {
       title: "Assets",
       url: "/hq/infospaces/asset-manager",
       icon: FileText,
@@ -170,6 +173,12 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       icon: Network,
       isActive: true,
       colorClass: "sidebar-teal",
+      items: [
+        { title: "Graph View", url: "/hq/infospaces/graphs?tab=view" },
+        { title: "Canons", url: "/hq/infospaces/graphs?tab=canons" },
+        { title: "Connections", url: "/hq/infospaces/graphs?tab=connections" },
+        { title: "All graphs", url: "/hq/infospaces/graphs?tab=graphs" },
+      ],
     }
   ], [])
   
@@ -232,9 +241,11 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       </SidebarHeader>
       <SidebarContent className="flex flex-col">
         <NavMain title="Navigation" items={navMain} />
+        <NavMain title="Inquire" items={inquireNav} />
+        <SidebarSeparator />
         <NavMain title="Tools" items={toolsNav} />
         <SidebarSeparator />
-        <NavMain title="Stores" items={storesNav} />  
+        <NavMain title="Stores" items={storesNav} />
         <SidebarSeparator />
         <NavMain title="Sharing" items={sharingNav} />
         <SidebarSeparator />
