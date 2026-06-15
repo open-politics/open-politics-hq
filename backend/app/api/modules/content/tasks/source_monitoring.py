@@ -1,7 +1,7 @@
 """
 Source monitoring @task: poll active sources for new content.
 
-Replaces legacy poll_active_sources + execute_source_poll + bulk_poll_sources.
+Replaces legacy poll_active_sources + execute_source_poll + bulk_source_polling.
 Single @task discovers sources due for polling, executes poll inline.
 """
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 POLL_CIRCUIT_BREAKER_THRESHOLD = 5
 
 
-@task("poll_sources",
+@task("source_polling",
       check=lambda iid: (
           select(Source.id)
           .where(
@@ -40,7 +40,7 @@ POLL_CIRCUIT_BREAKER_THRESHOLD = 5
       queue="default",
       timeout=600,
       tags=frozenset({"content", "source"}))
-def poll_sources(ctx: TaskContext, source_ids: list[int]):
+def source_polling(ctx: TaskContext, source_ids: list[int]):
     """Poll sources that are due. One source per iteration with error isolation."""
     from app.api.modules.content.services.source_service import SourceService
 

@@ -20,62 +20,12 @@ from typing import Any, Callable, Generator, Optional
 from sqlalchemy import literal_column, text, update, exists
 from sqlmodel import Session, select
 
+from app.api.modules.content.contexts import EnrichmentContext
 from app.api.modules.content.models import Asset, AssetChunk, AssetKind, ProcessingStatus
 from app.api.modules.content.utils.watcher_filters import non_superseded_filter
 from app.core.tasks import TaskContext, task
 
 logger = logging.getLogger(__name__)
-
-
-# ── EnrichmentContext ─────────────────────────────────────────────────────────
-
-class EnrichmentContext(TaskContext):
-    """Extended context for enrichment domain.
-
-    ``provider()`` is inherited from TaskContext unchanged — the enrichment_config
-    lookup is handled inside resolve() itself, keyed by infospace_id.
-    """
-
-    def __init__(self, enricher_name: str = "", enrichment_config=None, **kwargs):
-        super().__init__(**kwargs)
-        self._enricher_name = enricher_name
-        self.enrichment_config = enrichment_config
-
-    def _mark_resolved(self, session: Session, asset_id: int):
-        """Add enricher name to enrichment_resolved (idempotent, dedup guard)."""
-        session.execute(text(
-            "UPDATE asset SET enrichment_resolved = "
-            "array_append(COALESCE(enrichment_resolved, ARRAY[]::text[]), :name) "
-            "WHERE id = :id "
-            "AND NOT (COALESCE(enrichment_resolved, ARRAY[]::text[]) @> ARRAY[:name]::text[])"
-        ), {"name": self._enricher_name, "id": asset_id})
-
-    def done(self, session: Session, asset_id: int, facets: dict | None = None):
-        """Mark enrichment complete for one asset. Event emitted once per batch by wrapper."""
-        self._mark_resolved(session, asset_id)
-        if facets:
-            from app.api.modules.content.facets import merge_facets
-            merge_facets(session, asset_id, facets)
-        self.stat("done")
-
-    def fail(self, session: Session, asset_id: int, reason: str):
-        """Mark failed. Prevents re-dispatch + records diagnostics."""
-        self._mark_resolved(session, asset_id)
-        now_iso = datetime.now(timezone.utc).isoformat()
-        session.execute(text(
-            "UPDATE asset SET enrichment_errors = "
-            "CASE WHEN jsonb_typeof(enrichment_errors) = 'object' "
-            "     THEN enrichment_errors ELSE '{}'::jsonb END "
-            "|| jsonb_build_object(:name, jsonb_build_object('reason', :reason, 'at', :ts)) "
-            "WHERE id = :id"
-        ), {"name": self._enricher_name, "id": asset_id, "reason": reason, "ts": now_iso})
-        self.item_failed(asset_id)
-        self.stat("failed")
-
-    def skip(self, session: Session, asset_id: int):
-        """Prevent re-dispatch without marking enriched."""
-        self._mark_resolved(session, asset_id)
-        self.stat("skipped")
 
 
 # ── retry_enrichment utility ──────────────────────────────────────────────────
@@ -208,7 +158,7 @@ def enricher(
           check=lambda q: q.where(
               Asset.kind == AssetKind.PDF_PAGE,
               Asset.parent_asset_id.isnot(None),
-              text("discovered_modalities @> '[\"image\"]'::jsonb"),
+              text("modalities @> '[\"image\"]'::jsonb"),
           ),
           capability="ocr", batch=10, queue="external_api", timeout=600,
           triggers=["asset.processed"])
@@ -256,7 +206,7 @@ def enrich_ocr(ctx: EnrichmentContext, asset_ids: list[int]):
                     ocr_failed.append((aid, "no blob_path for parent"))
                 continue
             try:
-                from app.api.modules.content.storage_access import read_to_bytes
+                from app.api.modules.content.utils.storage_access import read_to_bytes
                 pdf_bytes = io.BytesIO(await read_to_bytes(storage, blob_path))
 
                 for asset_id, page_index in page_list:
@@ -444,7 +394,7 @@ def enrich_hash(ctx: EnrichmentContext, asset_ids: list[int]):
 
     async def _compute():
         import asyncio
-        from app.api.modules.content.storage_access import read_to_path
+        from app.api.modules.content.utils.storage_access import read_to_path
         for asset_id, blob_path in work:
             try:
                 path, is_temp = await read_to_path(storage, blob_path)

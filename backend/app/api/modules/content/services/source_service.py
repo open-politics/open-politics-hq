@@ -1,50 +1,29 @@
 """
 Source Service
-=============
+==============
 
-Service for managing Source model operations and bridging the unified AssetDiscoveryService
-with existing Source-based workflows. This service handles:
-- Source CRUD operations
-- Integration with AssetDiscoveryService for content discovery
-- Source status management and monitoring
-- Legacy Source model compatibility
+Source rows are monitoring config: ``kind`` is a registered source kind and
+``details`` is that source's read-config. This service owns their CRUD +
+stream lifecycle (activate/pause) + poll analytics. Ingestion itself lives on
+the one spine — ``run_source_ingestion`` mints a job; the ``ingest`` task runs it.
 """
 
 import logging
-import json
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple, Union
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 from sqlmodel import Session, select, func
-from fastapi import HTTPException
 
-from app.models import (
-    Source, 
-    SourceStatus, 
-    Asset,
-    AssetKind,
-    ProcessingStatus
-)
-from app.schemas import SourceCreate, SourceUpdate, SourceRead
-# IngestionContext and ingest are imported lazily inside the methods that use
-# them — eager import here creates a cycle: services/__init__ → source_service →
-# handlers → handlers/base → services/bundle_service → services/__init__.
+from app.models import Source, SourceStatus, Asset
+from app.schemas import SourceCreate, SourceUpdate
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 class SourceService:
-    """
-    Service for managing Source operations and integration with unified asset discovery.
-    
-    This service provides:
-    - Source CRUD operations
-    - Integration with AssetDiscoveryService for modern content discovery
-    - Legacy Source model support for existing workflows
-    - Source status tracking and monitoring
-    """
-    
+    """Source CRUD + stream lifecycle + poll analytics."""
+
     def __init__(self, session: Session):
         self.session = session
         logger.info("SourceService initialized")
@@ -68,6 +47,13 @@ class SourceService:
         Returns:
             Created Source object
         """
+        from app.api.modules.content.sources import registered_source_kinds
+
+        if source_in.kind not in registered_source_kinds():
+            raise ValueError(
+                f"Unknown source kind {source_in.kind!r}; registered kinds: "
+                f"{sorted(registered_source_kinds())}"
+            )
         logger.info(f"Creating source '{source_in.name}' in infospace {infospace_id}")
 
         # Create source
@@ -103,24 +89,18 @@ class SourceService:
         Returns:
             (inbox_source, inbox_path_str, inbox_files_pending)
         """
-        from app.api.modules.content.handlers.directory_import_handler import (
-            _get_dataset_name_from_path,
-        )
-        from app.api.modules.content.services.poll_handlers.inbox_poll_handler import (
-            prepare_inbox_directory,
-            count_inbox_pending_files,
+        from app.api.modules.content.sources.directory import (
+            count_inbox_pending_files, dataset_name_from_path, prepare_inbox_directory,
         )
 
         inbox_dir = prepare_inbox_directory(Path(source_path))
         inbox_path_str = str(inbox_dir)
-        dataset_name = _get_dataset_name_from_path(
-            source_path, settings.LOCAL_STORAGE_BASE_PATH
-        )
+        dataset_name = dataset_name_from_path(source_path, settings.LOCAL_STORAGE_BASE_PATH)
 
         inbox_source = self.session.exec(
             select(Source).where(
                 Source.infospace_id == infospace_id,
-                Source.kind == "directory_inbox",
+                Source.kind == "directory",
                 Source.output_bundle_id == bundle_id,
             )
         ).first()
@@ -128,12 +108,8 @@ class SourceService:
         if not inbox_source:
             inbox_source = Source(
                 name=f"Inbox: {dataset_name}",
-                kind="directory_inbox",
-                details={
-                    "inbox_path": inbox_path_str,
-                    "dataset_name": dataset_name,
-                    "source_path": source_path,
-                },
+                kind="directory",
+                details={},
                 infospace_id=infospace_id,
                 user_id=user_id,
                 is_active=True,
@@ -147,12 +123,12 @@ class SourceService:
             inbox_source.poll_interval_seconds = interval_seconds
             self.session.add(inbox_source)
 
-        # Update details in case source_path changed
-        details = dict(inbox_source.details or {})
-        details["inbox_path"] = inbox_path_str
-        details["dataset_name"] = dataset_name
-        details["source_path"] = source_path
-        inbox_source.details = details
+        # details IS the directory source's read-config.
+        inbox_source.details = {
+            "path": inbox_path_str,
+            "dataset_name": dataset_name,
+            "inbox_mode": True,
+        }
 
         inbox_files_pending = count_inbox_pending_files(inbox_dir)
         self.session.commit()
@@ -240,167 +216,29 @@ class SourceService:
         user_id: int,
         infospace_id: int
     ) -> bool:
-        """Delete a source and optionally its assets."""
+        """Delete a source. Its assets are DETACHED (kept), never destroyed.
+
+        Clearing ``source_id`` lets ingested content outlive the source — deleting
+        a source must not take its data with it. Detaching also satisfies the
+        asset→source FK before the source row is removed.
+        """
         source = self.get_source(source_id, user_id, infospace_id)
         if not source:
             return False
-        
-        # Delete associated assets
-        assets = self.session.exec(
-            select(Asset).where(Asset.source_id == source_id)
-        ).all()
-        
-        for asset in assets:
-            self.session.delete(asset)
-        
-        # Delete source
+
+        detached = self.session.execute(
+            text("UPDATE asset SET source_id = NULL WHERE source_id = :sid"),
+            {"sid": source_id},
+        ).rowcount
+
         self.session.delete(source)
         self.session.commit()
-        
-        logger.info(f"Source {source_id} and {len(assets)} associated assets deleted")
+
+        logger.info(f"Source {source_id} deleted; {detached} assets detached (kept)")
         return True
     
-    # ─────────────── UNIFIED DISCOVERY INTEGRATION ─────────────── #
-    
-    async def create_source_and_discover_assets(
-        self,
-        user_id: int,
-        infospace_id: int,
-        source_in: SourceCreate,
-        discovery_options: Optional[Dict[str, Any]] = None,
-        processing_options: Optional[Dict[str, Any]] = None,
-        bundle_id: Optional[int] = None
-    ) -> Tuple[Source, List[Asset]]:
-        """
-        Create a source and immediately discover assets using the unified discovery service.
-        
-        This bridges the old Source model with the new unified discovery system.
-        """
-        logger.info(f"Creating source and discovering assets for '{source_in.name}'")
-        
-        # Create the source first
-        source = self.create_source(user_id, infospace_id, source_in)
-        
-        try:
-            locator = self._extract_locator_from_source(source)
-            opts = {**(discovery_options or {}), **(processing_options or {})}
+    # ─────────────── ONE-OFF INGEST ─────────────── #
 
-            from app.api.modules.foundation_service_providers import resolve
-            from app.api.modules.content.services.bundle_service import BundleService
-            from app.api.modules.content.handlers import IngestionContext
-            from app.api.modules.content.ingest import ingest
-            storage = resolve("storage")
-            context = IngestionContext(
-                session=self.session,
-                storage_provider=storage,
-                scraping_provider=resolve("scraping"),
-                search_provider=resolve("web_search", infospace_id=infospace_id),
-                bundle_service=BundleService(self.session),
-                user_id=user_id,
-                infospace_id=infospace_id,
-                settings=settings,
-                options=opts,
-            )
-            assets = await ingest(context, locator, bundle_id=bundle_id, options=opts)
-            
-            # Link assets to the source
-            for asset in assets:
-                asset.source_id = source.id
-                self.session.add(asset)
-            
-            # Update source status
-            source.status = SourceStatus.COMPLETE
-            source.updated_at = datetime.now(timezone.utc)
-            
-            # Add discovery metadata to source
-            if source.source_metadata is None:
-                source.source_metadata = {}
-            source.source_metadata.update({
-                'assets_discovered': len(assets),
-                'discovery_method': 'unified_asset_discovery',
-                'completed_at': datetime.now(timezone.utc).isoformat()
-            })
-            
-            self.session.add(source)
-            self.session.commit()
-            
-            logger.info(f"Source {source.id} created with {len(assets)} discovered assets")
-            return source, assets
-            
-        except Exception as e:
-            logger.error(f"Failed to discover assets for source {source.id}: {e}")
-            # Mark source as failed
-            source.status = SourceStatus.FAILED
-            source.error_message = str(e)
-            self.session.add(source)
-            self.session.commit()
-            raise
-    
-    def _extract_locator_from_source(self, source: Source) -> Union[str, List[str]]:
-        """
-        Extracts the primary content locator (e.g., URL, search query) from a Source's details.
-        This is the bridge between a stored Source configuration and the AssetDiscoveryService.
-
-        Args:
-            source: The Source object.
-
-        Returns:
-            A string or list of strings that can be used by the AssetDiscoveryService.
-
-        Raises:
-            ValueError: If a suitable locator cannot be found for the source kind.
-        """
-        details = source.details or {}
-        kind = source.kind
-
-        # Define a mapping from source kind to the expected key in the details dict.
-        # The order can imply priority if multiple keys could exist.
-        KIND_TO_LOCATOR_KEY_MAP = {
-            "rss_feed": "feed_url",
-            "rss": "feed_url",  # Alternative RSS source kind
-            "url_monitor": "urls",
-            "site_discovery": "base_url",
-            "url_list": "urls",
-            "url_list_scrape": "urls", # Legacy compatibility
-            "upload_csv": "storage_path",
-            "upload_pdf": "storage_path",
-            "text_block_ingest": "text_content",
-            "search": "search_config", # Special case, returns a dict
-            "search_monitor": "search_config" # Special case, returns a dict
-        }
-
-        locator_key = KIND_TO_LOCATOR_KEY_MAP.get(kind)
-
-        if not locator_key:
-            raise ValueError(f"Unknown or unhandled source kind '{kind}' for locator extraction.")
-
-        locator = details.get(locator_key)
-
-        if kind in ["search", "search_monitor"]:
-            if isinstance(locator, dict) and "query" in locator:
-                # For search kinds, the locator is the query string itself.
-                return locator["query"]
-            else:
-                raise ValueError(f"Source kind '{kind}' requires a 'search_config' dict with a 'query' key in details.")
-
-        if locator is None:
-            # Fallback for legacy or misconfigured sources
-            for fallback_key in ["url", "urls", "query", "feed_url", "base_url", "text_content"]:
-                if fallback_key in details:
-                    logger.warning(f"Source {source.id} (kind: {kind}) is missing primary locator key '{locator_key}'. Using fallback '{fallback_key}'.")
-                    return details[fallback_key]
-            raise ValueError(f"Could not find a valid locator for source {source.id} (kind: {kind}) using key '{locator_key}'. Details are missing the required field.")
-
-        # Basic type validation
-        if kind in ["url_list", "url_monitor", "url_list_scrape"] and not isinstance(locator, list):
-            raise ValueError(f"Source kind '{kind}' expects the locator '{locator_key}' to be a list of strings.")
-        if kind in ["rss_feed", "site_discovery", "upload_csv", "upload_pdf", "text_block_ingest"] and not isinstance(locator, str):
-            raise ValueError(f"Source kind '{kind}' expects the locator '{locator_key}' to be a string.")
-
-        return locator
-    
-    # ─────────────── LEGACY PROCESSING SUPPORT ─────────────── #
-    
     def trigger_source_processing(
         self,
         source_id: int,
@@ -408,35 +246,25 @@ class SourceService:
         infospace_id: int,
         override_details: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """
-        Trigger legacy source processing via Celery task.
-        
-        This maintains compatibility with existing Source-based workflows.
-        """
+        """Trigger a one-off ingest of a Source on the one spine: merge any override
+        into details, then mint an IngestionJob via ``run_source_ingestion`` (the same
+        path a poll takes). Returns False if the source is missing or unregistered."""
         source = self.get_source(source_id, user_id, infospace_id)
         if not source:
             return False
-        
         try:
-            # Store overrides in source.details before dispatching
             if override_details:
                 source.details = {**(source.details or {}), **override_details}
-
-            source.status = SourceStatus.PENDING
-            source.updated_at = datetime.now(timezone.utc)
-            self.session.add(source)
-            self.session.commit()
-
-            from app.api.modules.content.tasks.ingest import process_source
-            process_source.delay([source.id], source.infospace_id)
-
-            logger.info(f"Triggered source processing for source {source_id}")
+                self.session.add(source)
+                self.session.commit()
+            from app.api.modules.content.intake import run_source_ingestion
+            job = run_source_ingestion(self.session, source_id)
+            logger.info("Triggered source %s ingest as job %s", source_id, job.id)
             return True
-
         except Exception as e:
             logger.error(f"Failed to trigger processing for source {source_id}: {e}")
             return False
-    
+
     # ─────────────── SOURCE ANALYTICS ─────────────── #
     
     def get_source_stats(
@@ -507,35 +335,6 @@ class SourceService:
         
         return list(self.session.exec(query))
     
-    # ─────────────── UTILITY METHODS ─────────────── #
-    
-    def get_supported_source_kinds(self) -> List[str]:
-        """Get list of supported source kinds from PollHandler registry."""
-        from app.api.modules.content.services.poll_handlers import registered_poll_kinds
-        return list(registered_poll_kinds())
-    
-    def validate_source_details(self, kind: str, details: Dict[str, Any]) -> bool:
-        """Validate source details for a given kind."""
-        try:
-            if kind == "url_list":
-                return "urls" in details and isinstance(details["urls"], list)
-            elif kind in ["rss_feed", "rss"]:
-                return "feed_url" in details and isinstance(details["feed_url"], str)
-            elif kind == "search":
-                return "search_config" in details and "query" in details["search_config"]
-            elif kind == "url_monitor":
-                return "urls" in details and isinstance(details["urls"], list)
-            elif kind == "site_discovery":
-                return "base_url" in details and isinstance(details["base_url"], str)
-            elif kind == "text_block_ingest":
-                return "text_content" in details and isinstance(details["text_content"], str)
-            elif kind in ["upload_csv", "upload_pdf"]:
-                return "storage_path" in details and isinstance(details["storage_path"], str)
-            else:
-                return False
-        except Exception:
-            return False
-    
     # ─────────────── STREAMING OPERATIONS ─────────────── #
     # Merged from StreamSourceService for unified source management
     
@@ -604,170 +403,20 @@ class SourceService:
         self,
         source_id: int,
         user_id: Optional[int] = None,
-        runtime_api_keys: Optional[Dict[str, str]] = None
+        runtime_api_keys: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """
-        Execute a single poll of a source.
-        
-        Polling is dispatched via the PollHandler registry (poll_handlers/).
-        This method is generic — it never branches on source.kind.
-        """
-        from app.models import (
-            SourcePollHistory,
-            IngestionJob,
-            IngestionStatus,
-            Bundle,
-        )
-        from app.api.modules.content.services.bundle_service import BundleService
-        from app.api.modules.content.services.poll_handlers import (
-            get_poll_handler,
-            registered_poll_kinds,
-            PollResult,
-        )
+        """Enqueue a poll: mint a PENDING IngestionJob for the source via the shared
+        ``run_source_ingestion`` and let the ``ingest`` task run the spine
+        (read -> guard -> fetch -> build -> count -> finalize). Monitoring is then just
+        a Source minting a job each cycle on the one ingest primitive. ``runtime_api_keys``
+        is kept for signature compatibility (providers resolve at the task boundary)."""
+        from app.api.modules.content.intake import run_source_ingestion
 
-        source = self.session.get(Source, source_id)
-        if not source:
-            raise ValueError(f"Source {source_id} not found")
+        job = run_source_ingestion(self.session, source_id)
+        logger.info("Source %s poll enqueued as ingestion job %s (kind=%s)",
+                    source_id, job.id, job.kind)
+        return {"status": "queued", "job_id": job.id, "kind": job.kind}
 
-        handler_cls = get_poll_handler(source.kind)
-        if handler_cls is None:
-            raise ValueError(
-                f"No poll handler registered for source kind '{source.kind}'. "
-                f"Registered kinds: {list(registered_poll_kinds())}"
-            )
-
-        from app.api.modules.foundation_service_providers import resolve
-
-        storage_provider = resolve("storage")
-        scraping_provider = resolve("scraping")
-        try:
-            search_provider = resolve("web_search", infospace_id=source.infospace_id)
-        except Exception as e:
-            logger.warning("Search provider init failed: %s", e)
-            search_provider = None
-        bundle_service = BundleService(self.session)
-        from app.api.modules.content.handlers import IngestionContext
-        context = IngestionContext(
-            session=self.session,
-            storage_provider=storage_provider,
-            scraping_provider=scraping_provider,
-            search_provider=search_provider,
-            bundle_service=bundle_service,
-            user_id=source.user_id,
-            infospace_id=source.infospace_id,
-            settings=settings,
-            options=source.details.get("processing_options", {}).copy(),
-        )
-        context.options["cursor_state"] = source.cursor_state
-
-        job = IngestionJob(
-            infospace_id=source.infospace_id,
-            user_id=source.user_id,
-            source_locator=(
-                source.details.get("feed_url")
-                or (source.details.get("search_config") or {}).get("query")
-                or source.details.get("inbox_path")
-                or source.details.get("source_path")
-                or str(source.id)
-            ),
-            kind=f"source_poll:{source.kind}",
-            source_id=source.id,
-            status=IngestionStatus.PROCESSING,
-            started_at=datetime.now(timezone.utc),
-        )
-        self.session.add(job)
-        poll_history = SourcePollHistory(
-            source_id=source_id,
-            started_at=datetime.now(timezone.utc),
-            status="processing",
-            cursor_before=source.cursor_state.copy(),
-        )
-        self.session.add(poll_history)
-        source.status = SourceStatus.PROCESSING
-        source.updated_at = datetime.now(timezone.utc)
-        self.session.add(source)
-        self.session.commit()
-
-        try:
-            handler = handler_cls()
-            result: PollResult = await handler.poll(
-                source=source,
-                context=context,
-                runtime_options={"runtime_api_keys": runtime_api_keys or {}},
-            )
-            ingested_count = 0
-            for asset in result.assets:
-                asset.source_id = source.id
-                self.session.add(asset)
-                self.session.flush()
-                if source.output_bundle_id:
-                    from app.core.tree import copy as tree_copy
-                    tree_copy(self.session, asset_ids=[asset.id], to=source.output_bundle_id)
-                ingested_count += 1
-
-            source.cursor_state.update(result.cursor_update)
-            source.items_last_poll = len(result.assets)
-            source.total_items_ingested += ingested_count
-            source.last_poll_at = datetime.now(timezone.utc)
-            if source.poll_interval_seconds:
-                source.next_poll_at = datetime.now(timezone.utc) + timedelta(
-                    seconds=source.poll_interval_seconds
-                )
-            source.consecutive_failures = 0
-            source.status = SourceStatus.PENDING
-            job.status = IngestionStatus.COMPLETED
-            job.processed_files = ingested_count
-            job.completed_at = datetime.now(timezone.utc)
-            job.cursor_state = {
-                "summary": result.summary,
-                "stage": "completed",
-                "progress_pct": 100,
-            }
-            poll_history.completed_at = datetime.now(timezone.utc)
-            poll_history.status = "success"
-            poll_history.items_found = len(result.assets)
-            poll_history.items_ingested = ingested_count
-            poll_history.cursor_after = source.cursor_state.copy()
-            self.session.add(source)
-            self.session.add(job)
-            self.session.add(poll_history)
-            self.session.commit()
-
-            for action in result.post_commit_actions:
-                try:
-                    action()
-                except Exception as post_err:
-                    logger.warning("Post-commit action failed: %s", post_err)
-            logger.info(
-                "Source %s poll completed: %d items ingested (%s)",
-                source_id, ingested_count, result.summary,
-            )
-            new_asset_ids = [a.id for a in result.assets]
-            return {
-                "status": "success",
-                "items_found": len(result.assets),
-                "items_ingested": ingested_count,
-                "job_id": job.id,
-                "new_asset_ids": new_asset_ids,
-            }
-        except Exception as e:
-            source.status = SourceStatus.FAILED
-            source.consecutive_failures += 1
-            source.last_error_at = datetime.now(timezone.utc)
-            source.error_message = str(e)
-            job.status = IngestionStatus.FAILED
-            job.error_message = str(e)[:500]
-            job.completed_at = datetime.now(timezone.utc)
-            poll_history.completed_at = datetime.now(timezone.utc)
-            poll_history.status = "failed"
-            poll_history.error_message = str(e)
-            self.session.add(source)
-            self.session.add(job)
-            self.session.add(poll_history)
-            self.session.commit()
-            logger.error("Source %s poll failed: %s", source_id, e)
-            raise
-    
     def get_stream_stats(self, source_id: int, user_id: int, infospace_id: int) -> Dict[str, Any]:
         """
         Get streaming statistics for a source.
@@ -781,28 +430,28 @@ class SourceService:
             Statistics dictionary
         """
         from datetime import timedelta
-        from app.models import SourcePollHistory
-        
+        from app.models import IngestionJob, IngestionStatus
+
         source = self.get_source(source_id, user_id, infospace_id)
         if not source:
             raise ValueError(f"Source {source_id} not found")
-        
-        # Get recent poll history
-        recent_polls = self.session.exec(
-            select(SourcePollHistory)
-            .where(SourcePollHistory.source_id == source_id)
-            .order_by(SourcePollHistory.started_at.desc())
+
+        # Recent poll jobs (a poll IS an IngestionJob with source_id set).
+        recent_jobs = self.session.exec(
+            select(IngestionJob)
+            .where(IngestionJob.source_id == source_id)
+            .order_by(IngestionJob.created_at.desc())
             .limit(24)
         ).all()
-        
+
         # Calculate items per hour (last 24 hours)
         now = datetime.now(timezone.utc)
         last_24h = now - timedelta(hours=24)
-        
+
         recent_items = sum(
-            poll.items_ingested
-            for poll in recent_polls
-            if poll.started_at >= last_24h and poll.status == "success"
+            (job.processed_files or 0)
+            for job in recent_jobs
+            if job.created_at and job.created_at >= last_24h and job.status == IngestionStatus.COMPLETED
         )
         
         return {
@@ -839,29 +488,35 @@ class SourceService:
         Returns:
             List of poll history records
         """
-        from app.models import SourcePollHistory
-        
+        from app.models import IngestionJob, IngestionStatus
+
         source = self.get_source(source_id, user_id, infospace_id)
         if not source:
             raise ValueError(f"Source {source_id} not found")
-        
-        polls = self.session.exec(
-            select(SourcePollHistory)
-            .where(SourcePollHistory.source_id == source_id)
-            .order_by(SourcePollHistory.started_at.desc())
+
+        # A poll IS an IngestionJob with source_id set (SourcePollHistory retired).
+        jobs = self.session.exec(
+            select(IngestionJob)
+            .where(IngestionJob.source_id == source_id)
+            .order_by(IngestionJob.created_at.desc())
             .limit(limit)
         ).all()
-        
-        return [
-            {
-                "id": poll.id,
-                "started_at": poll.started_at.isoformat() if poll.started_at else None,
-                "completed_at": poll.completed_at.isoformat() if poll.completed_at else None,
-                "status": poll.status,
-                "items_found": poll.items_found,
-                "items_ingested": poll.items_ingested,
-                "error_message": poll.error_message,
-                "triggered_pipeline": poll.triggered_pipeline,
-            }
-            for poll in polls
-        ]
+
+        records = []
+        for job in jobs:
+            counts = (job.cursor_state or {}).get("counts", {})
+            ingested = job.processed_files or 0
+            started = job.started_at or job.created_at
+            records.append({
+                "id": job.id,
+                "started_at": started.isoformat() if started else None,
+                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+                "status": ("success" if job.status == IngestionStatus.COMPLETED
+                           else "failed" if job.status == IngestionStatus.FAILED
+                           else job.status.value),
+                "items_found": sum(counts.values()) if counts else ingested,
+                "items_ingested": ingested,
+                "error_message": job.error_message,
+                "triggered_pipeline": None,
+            })
+        return records

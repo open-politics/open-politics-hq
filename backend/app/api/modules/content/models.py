@@ -43,6 +43,7 @@ class AssetKind(str, enum.Enum):
     ARTICLE = "article"
     RSS_FEED = "rss_feed"
     FILE = "file"
+    ARCHIVE = "archive"  # zip/tar/gz container — extracted into children by the ARCHIVE type
 
 
 class ProcessingStatus(str, enum.Enum):
@@ -50,18 +51,6 @@ class ProcessingStatus(str, enum.Enum):
     PENDING = "pending"
     PROCESSING = "processing"
     FAILED = "failed"
-
-
-class SourceType(str, enum.Enum):
-    RSS_FEED = "rss_feed"
-    DIRECT_FILE = "direct_file"
-    WEB_PAGE = "web_page"
-    SEARCH_QUERY = "search_query"
-    URL_LIST = "url_list"
-    SITE_DISCOVERY = "site_discovery"
-    FILE_UPLOAD = "file_upload"
-    TEXT_CONTENT = "text_content"
-    ARCHIVE_DATASET = "archive_dataset"
 
 
 class SourceStatus(str, enum.Enum):
@@ -73,6 +62,9 @@ class SourceStatus(str, enum.Enum):
     COMPLETE = "complete"
     FAILED = "failed"
     ERROR = "error"
+    # Attention needed but not a poll failure — e.g. the output bundle was deleted.
+    # Polling is paused; error_message carries the reason.
+    WARNING = "warning"
 
 
 class IngestionStatus(str, enum.Enum):
@@ -118,22 +110,7 @@ class Source(SQLModel, table=True):
     assets: List["Asset"] = Relationship(back_populates="source")
     monitoring_tasks: List["Task"] = Relationship(back_populates="source")
     output_bundle: Optional["Bundle"] = Relationship()
-    poll_history: List["SourcePollHistory"] = Relationship(back_populates="source")
     ingestion_jobs: List["IngestionJob"] = Relationship(back_populates="source")
-
-
-class SourcePollHistory(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    source_id: int = Field(foreign_key="source.id")
-    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    completed_at: Optional[datetime] = None
-    status: str
-    items_found: int = Field(default=0)
-    items_ingested: int = Field(default=0)
-    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
-    cursor_before: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
-    cursor_after: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
-    source: Optional[Source] = Relationship(back_populates="poll_history")
 
 
 # ─── Bundles ───
@@ -171,13 +148,16 @@ class Asset(SQLModel, table=True):
     stub: bool = Field(default=False, index=True)
     text_content: Optional[str] = Field(default=None, sa_column=Column(Text))
     blob_path: Optional[str] = None
-    logical_path: Optional[str] = Field(default=None, index=True)
     source_identifier: Optional[str] = Field(default=None, index=True)
+    # Cheap change-token for drift detection (ETag / mtime / feed pubdate). Set
+    # only on root assets (parent_asset_id IS NULL) — children are re-derived by
+    # processing, not fetched, so they carry no source token of their own.
+    source_token: Optional[str] = Field(default=None, index=True)
     # Enrichment-discovered facets (language, location, ocr_used, quality_score, etc.)
     facets: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column("metadata", JSONB))
     # Intrinsic file properties (size, mime_type, page_count, columns, etc.)
     file_info: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
-    discovered_modalities: Optional[List[str]] = Field(default=None, sa_column=Column(JSONB))
+    modalities: Optional[List[str]] = Field(default=None, sa_column=Column(JSONB))
     content_hash: Optional[str] = Field(default=None, index=True)
     fragments: Optional[Dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSONB))
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
@@ -187,7 +167,7 @@ class Asset(SQLModel, table=True):
     user_id: Optional[int] = Field(default=None, foreign_key="user.id")
     source_id: Optional[int] = Field(default=None, foreign_key="source.id")
     # Multi-membership: asset can belong to many bundles. {0} = root.
-    # All mutations MUST use core.tree (no ORM read-modify-write).
+    # All mutations MUST use content.tree (no ORM read-modify-write).
     bundle_ids: List[int] = Field(
         sa_column=Column("bundle_ids", PG_ARRAY(sa.Integer), nullable=False, server_default=text("ARRAY[0]::int[]")),
     )
@@ -241,7 +221,7 @@ class Asset(SQLModel, table=True):
 
     __table_args__ = (
         Index("ix_asset_fragments", "fragments", postgresql_using="gin", postgresql_ops={"fragments": "jsonb_path_ops"}),
-        Index("ix_asset_discovered_modalities", "discovered_modalities", postgresql_using="gin"),
+        Index("ix_asset_modalities", "modalities", postgresql_using="gin"),
         Index("ix_asset_metadata", "metadata", postgresql_using="gin", postgresql_ops={"metadata": "jsonb_path_ops"}),
         Index("ix_asset_enrichment_resolved", "enrichment_resolved", postgresql_using="gin"),
         Index("ix_asset_bundle_ids", "bundle_ids", postgresql_using="gin"),
@@ -336,9 +316,7 @@ class Dataset(SQLModel, table=True):
     infospace_id: int = Field(foreign_key="infospace.id")
     user_id: int = Field(foreign_key="user.id")
     asset_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
-    datarecord_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
     source_job_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
-    source_scheme_ids: Optional[List[int]] = Field(default=None, sa_column=Column(JSON))
     custom_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     imported_from_uuid: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

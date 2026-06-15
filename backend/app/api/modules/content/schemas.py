@@ -12,14 +12,130 @@ variants, but keeps its domain-specific item types in
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, Generic, Literal, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.modules.content.models import AssetKind, ProcessingStatus
-from app.api.modules.content.query_parser import ParsedQuery
 from app.api.modules.graph.schemas import GraphEdgeData, GraphNodeData
+
+
+# ─── Parsed AQL contract ────────────────────────────────────────────────────
+# The structured form of an asset-query-language string: produced by
+# ``content.query.parse`` (the engine), consumed by ``AssetQuery.from_aql``, and
+# exposed to the frontend (the ``parsed`` field on AssetSearch, for pill rendering).
+# Dataclasses, not pydantic — a pure internal contract with a hand-written
+# ``to_dict``; the wire models below carry it as an arbitrary-type field.
+
+
+@dataclass
+class AnnotationFilter:
+    field: str
+    op: str  # ==, !=, >=, >, <=, <
+    value: str
+    negated: bool = False
+
+
+@dataclass
+class SemanticClause:
+    text: str
+    threshold: float | None = None
+    threshold_op: str | None = None  # >, >=, <, <=
+
+
+@dataclass
+class ParsedQuery:
+    # Free text — passed directly to websearch_to_tsquery (handles quotes, -, or)
+    text: str = ""
+    # Semantic search on asset embeddings
+    semantic: SemanticClause | None = None
+    # Filters
+    kinds: list[str] = field(default_factory=list)
+    excluded_kinds: list[str] = field(default_factory=list)
+    date_after: str | None = None
+    date_before: str | None = None
+    bundle_refs: list[str] = field(default_factory=list)
+    asset_refs: list[str] = field(default_factory=list)
+    # Entities — inner list = OR, outer list = AND
+    entities: list[list[str]] = field(default_factory=list)
+    entity_negations: list[str] = field(default_factory=list)
+    entity_semantic: SemanticClause | None = None
+    # Tags
+    tags: list[str] = field(default_factory=list)
+    # Annotations
+    annotations: list[AnnotationFilter] = field(default_factory=list)
+    run_ids: list[int] = field(default_factory=list)
+    # Children display: None = default (3/parent), 0 = hide, N = up to N/parent
+    children_limit: int | None = None
+
+    @property
+    def has_text(self) -> bool:
+        return bool(self.text.strip())
+
+    @property
+    def has_semantic(self) -> bool:
+        return self.semantic is not None or self.entity_semantic is not None
+
+    @property
+    def has_filters(self) -> bool:
+        return bool(
+            self.kinds or self.excluded_kinds or self.date_after or self.date_before
+            or self.bundle_refs or self.asset_refs or self.entities or self.entity_negations
+            or self.entity_semantic or self.annotations or self.run_ids or self.tags
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.has_text and not self.has_semantic and not self.has_filters
+
+    def to_dict(self) -> dict:
+        """Parsed structure for frontend pill rendering."""
+        d: dict = {}
+        if self.text:
+            d["text"] = self.text
+        if self.semantic:
+            d["semantic"] = _semantic_dict(self.semantic)
+        if self.kinds:
+            d["kinds"] = self.kinds
+        if self.excluded_kinds:
+            d["excluded_kinds"] = self.excluded_kinds
+        if self.date_after:
+            d["date_after"] = self.date_after
+        if self.date_before:
+            d["date_before"] = self.date_before
+        if self.bundle_refs:
+            d["bundle_refs"] = self.bundle_refs
+        if self.asset_refs:
+            d["asset_refs"] = self.asset_refs
+        if self.entities:
+            d["entities"] = self.entities
+        if self.entity_negations:
+            d["entity_negations"] = self.entity_negations
+        if self.entity_semantic:
+            d["entity_semantic"] = _semantic_dict(self.entity_semantic)
+        if self.tags:
+            d["tags"] = self.tags
+        if self.annotations:
+            d["annotations"] = [
+                {"field": a.field, "op": a.op, "value": a.value, **({"negated": True} if a.negated else {})}
+                for a in self.annotations
+            ]
+        if self.run_ids:
+            d["run_ids"] = self.run_ids
+        if self.children_limit is not None:
+            d["children_limit"] = self.children_limit
+        return d
+
+
+def _semantic_dict(s: SemanticClause) -> dict:
+    d: dict = {"text": s.text}
+    if s.threshold is not None:
+        d["threshold"] = s.threshold
+    if s.threshold_op:
+        d["op"] = s.threshold_op
+    return d
 
 
 T = TypeVar("T")
@@ -44,7 +160,8 @@ class AssetMatch(BaseModel):
     """
 
     field: Literal["title", "body", "chunk", "annotation", "entity", "facet"]
-    score: float
+    # None for exact matches (e.g. a title hit) where a relevance % is meaningless.
+    score: float | None = None
     snippet: str | None = None
     location: dict[str, int] | None = None
 
@@ -113,6 +230,7 @@ class AssetTreeBundleSkeleton(BaseModel):
     id: int
     name: str
     parent_id: int | None = None
+    tags: list[str] | None = None
 
 
 class AssetTreeNav(BaseModel):

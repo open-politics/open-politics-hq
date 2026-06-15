@@ -24,49 +24,25 @@ from app.api.modules.foundation_service_providers.base import StorageProvider
 # types <- processors.base <- processors/__init__ <- strategy <- types
 # Concrete processors and base are imported lazily in _register_builtin and get_processor.
 
-# Type for metadata extractors (Phase 1 pipeline - defined later)
-MetadataExtractorT = TypeVar("MetadataExtractorT")
+# The descriptor record + @content_type decorator live in .base so per-type files
+# import them without a cycle through this package init (which imports those files
+# to register their classes).
+from app.api.modules.content.types.base import (
+    ContentTypeDescriptor, content_type, consume_declared, Text, Image, Audio, Video,
+    excerpt, order_modalities, article_preview,
+)
 
 
-@runtime_checkable
-class MetadataExtractor(Protocol):
-    """Protocol for Phase 1 metadata extraction. Register on ContentTypeDescriptor."""
-
-    async def extract(
-        self, asset: Asset, storage: StorageProvider
-    ) -> Optional[Dict[str, Any]]:
-        """Extract metadata for content detection. Returns dict or None."""
-        ...
-
-
-@dataclass
-class ContentTypeDescriptor:
-    """Everything the system knows about a content type."""
-
-    kind: AssetKind
-    extensions: FrozenSet[str]
-    importable: bool = True
-    is_container: bool = False
-    child_kind: Optional[AssetKind] = None
-    processor_class: Optional[Type[Any]] = None
-    metadata_extractors: List[Type] = field(default_factory=list)
-    category: str = "document"  # document, media, data, email, archive
-    # Override importable extensions when only some extensions are importable (e.g. FILE has .json only)
-    importable_extensions: Optional[FrozenSet[str]] = None
-    # Heavy processing: PDF/CSV take longer; used by ProcessingStrategy for immediate vs background
-    is_heavy_processing: bool = False
-    # Typically fast (e.g. web scraping) → immediate processing by default
-    is_typically_fast: bool = False
-    # Modalities this kind can support (discovered during processing; e.g. PDF can be text or image-dominant)
-    supported_modalities: Tuple[Modality, ...] = (Modality.TEXT,)  # Default for text-based kinds
-    # Skip content processing (e.g. RSS_FEED: children already extracted by poll handler)
-    skip_processing: bool = False
-    # Reprocess strategy: "delete_and_recreate" (default) or "preserve_children" (e.g. CSV rows)
-    reprocess_strategy: str = "delete_and_recreate"
-    # Preview builder name for tree UI: "csv", "pdf", "article", or None
-    preview_builder_name: Optional[str] = None
-    # Materializer class for kinds that can be materialized (e.g. CSV container -> file)
-    materializer_class: Optional[Type[Any]] = None
+def _sniff_image(head: bytes) -> bool:
+    """Magic-byte check for the common raster formats — the IMAGE kind has no
+    class to host a ``recognizes()``, so its sniffer lives here."""
+    return (
+        head.startswith(b"\x89PNG\r\n\x1a\n")              # PNG
+        or head.startswith(b"\xff\xd8\xff")                 # JPEG
+        or head[:6] in (b"GIF87a", b"GIF89a")               # GIF
+        or (head[:4] == b"RIFF" and head[8:12] == b"WEBP")  # WEBP
+        or head.startswith(b"BM")                            # BMP
+    )
 
 
 class ContentTypeRegistry:
@@ -75,42 +51,28 @@ class ContentTypeRegistry:
     def __init__(self):
         self._by_kind: dict[AssetKind, ContentTypeDescriptor] = {}
         self._extension_to_descriptor: dict[str, ContentTypeDescriptor] = {}
-        self._extension_processor_override: dict[str, Type[Any]] = {}
+        self._mimetype_to_descriptor: dict[str, ContentTypeDescriptor] = {}
+        self._sniffers: list[ContentTypeDescriptor] = []
         self._register_builtin()
 
     def _register(self, descriptor: ContentTypeDescriptor) -> None:
         self._by_kind[descriptor.kind] = descriptor
         for ext in descriptor.extensions:
             self._extension_to_descriptor[ext.lower()] = descriptor
+        for mt in descriptor.mimetypes:
+            self._mimetype_to_descriptor[mt.lower()] = descriptor
+        if descriptor.recognizer is not None:
+            self._sniffers.append(descriptor)
 
     def _register_builtin(self) -> None:
-        # Import processors here to avoid circular imports at module load
-        from app.api.modules.content.processors.csv_processor import CSVProcessor
-        from app.api.modules.content.processors.csv_materializer import CsvMaterializer
-        from app.api.modules.content.processors.excel_processor import ExcelProcessor
-        from app.api.modules.content.processors.pdf_processor import PDFProcessor
-        from app.api.modules.content.processors.web_processor import WebProcessor
-
-        from app.api.modules.content.processors.pdf_processor import PdfMetadataExtractor
+        # Migrated types register themselves via @content_type on import.
+        from app.api.modules.content.types import pdf, web_article, csv, archive, rss_feed  # noqa: F401
 
         descriptors = [
-            # Documents
-            ContentTypeDescriptor(
-                kind=AssetKind.PDF,
-                extensions=frozenset({".pdf"}),
-                importable=True,
-                is_container=True,
-                child_kind=AssetKind.PDF_PAGE,
-                processor_class=PDFProcessor,
-                metadata_extractors=[PdfMetadataExtractor],
-                category="document",
-                is_heavy_processing=True,
-                supported_modalities=(Modality.TEXT, Modality.IMAGE),  # Pages can be text or image-dominant
-                preview_builder_name="pdf",
-            ),
             ContentTypeDescriptor(
                 kind=AssetKind.TEXT,
                 extensions=frozenset({".txt", ".md"}),
+                mimetypes=frozenset({"text/plain", "text/markdown"}),
                 importable=True,
                 is_container=False,
                 category="document",
@@ -118,29 +80,17 @@ class ContentTypeRegistry:
             ),
             ContentTypeDescriptor(
                 kind=AssetKind.FILE,
-                extensions=frozenset({".doc", ".docx", ".json", ".zip", ".tar", ".gz"}),
+                extensions=frozenset({".doc", ".docx", ".json"}),  # zip/tar/gz → ARCHIVE type
                 importable_extensions=frozenset({".json"}),
                 is_container=False,
                 category="document",
             ),
-            # Data - CSVProcessor for .csv; ExcelProcessor for .xlsx/.xls via extension override
-            ContentTypeDescriptor(
-                kind=AssetKind.CSV,
-                extensions=frozenset({".csv", ".xlsx", ".xls"}),
-                importable=True,
-                is_container=True,
-                child_kind=AssetKind.CSV_ROW,
-                processor_class=CSVProcessor,
-                materializer_class=CsvMaterializer,
-                category="data",
-                is_heavy_processing=True,
-                reprocess_strategy="preserve_children",
-                preview_builder_name="csv",
-            ),
-            # Excel uses CSV kind but ExcelProcessor; register extension override
             ContentTypeDescriptor(
                 kind=AssetKind.IMAGE,
                 extensions=frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}),
+                mimetypes=frozenset({"image/jpeg", "image/png", "image/gif",
+                                     "image/webp", "image/bmp", "image/svg+xml"}),
+                recognizer=_sniff_image,
                 importable=True,
                 is_container=False,
                 category="media",
@@ -231,32 +181,11 @@ class ContentTypeRegistry:
                 category="document",
                 preview_builder_name="article",
             ),
-            ContentTypeDescriptor(
-                kind=AssetKind.RSS_FEED,
-                extensions=frozenset(),
-                importable=False,
-                is_container=True,
-                category="document",
-                skip_processing=True,  # Children already extracted by poll handler
-            ),
-            ContentTypeDescriptor(
-                kind=AssetKind.WEB,
-                extensions=frozenset(),
-                importable=False,
-                is_container=True,
-                processor_class=WebProcessor,
-                category="document",
-                preview_builder_name="article",
-                is_typically_fast=True,
-            ),
         ]
 
-        for d in descriptors:
+        # Inline legacy descriptors + the @content_type-registered migrated types.
+        for d in descriptors + consume_declared():
             self._register(d)
-
-        # ExcelProcessor: .xlsx/.xls use CSV kind but ExcelProcessor (extension override)
-        self._extension_processor_override[".xlsx"] = ExcelProcessor
-        self._extension_processor_override[".xls"] = ExcelProcessor
 
     def by_kind(self, kind: AssetKind) -> Optional[ContentTypeDescriptor]:
         """Get descriptor for an AssetKind."""
@@ -272,6 +201,42 @@ class ContentTypeRegistry:
         desc = self._extension_to_descriptor.get(ext)
         return desc.kind if desc else AssetKind.FILE
 
+    def detect_kind(
+        self,
+        mimetype: Optional[str] = None,
+        head: Optional[bytes] = None,
+        filename: Optional[str] = None,
+    ) -> AssetKind:
+        """The one classifier — resolve a kind from whatever signals exist, in
+        confidence order: declared mimetype → content sniff → filename extension →
+        FILE. Each signal's data lives on the types themselves (``mimetypes`` /
+        ``recognizes`` / ``extensions``); there is no central detection table to
+        keep in sync. Generic mimetypes (``application/octet-stream``, a catch-all
+        ``text/plain``) are simply left unmapped, so they fall through to the sniff
+        or extension that actually knows."""
+        # 1. Declared mimetype (drop any "; charset=…" parameter).
+        if mimetype:
+            mt = mimetype.split(";", 1)[0].strip().lower()
+            desc = self._mimetype_to_descriptor.get(mt)
+            if desc:
+                return desc.kind
+        # 2. Content sniff — a format signature in the first bytes (doesn't lie the
+        #    way a server-sent mimetype can). First claimant wins.
+        if head:
+            for desc in self._sniffers:
+                try:
+                    if desc.recognizer(head):
+                        return desc.kind
+                except Exception:
+                    continue
+        # 3. Filename extension.
+        if filename and "." in filename:
+            kind = self.extension_to_kind("." + filename.rsplit(".", 1)[-1].lower())
+            if kind is not AssetKind.FILE:
+                return kind
+        # 4. Nothing claimed it.
+        return AssetKind.FILE
+
     def importable_extensions(self, categories: Optional[List[str]] = None) -> Set[str]:
         """Extensions that are importable. Optionally filter by category."""
         result: Set[str] = set()
@@ -285,9 +250,10 @@ class ContentTypeRegistry:
         return result
 
     def processable_kinds(self) -> FrozenSet[AssetKind]:
-        """AssetKinds that have processors and need content processing."""
+        """AssetKinds that have a processor (migrated callable or legacy class)."""
         return frozenset(
-            d.kind for d in self._by_kind.values() if d.processor_class is not None
+            d.kind for d in self._by_kind.values()
+            if d.processor is not None or d.processor_class is not None
         )
 
     def is_container(self, kind: AssetKind) -> bool:
@@ -313,16 +279,7 @@ class ContentTypeRegistry:
         return frozenset(result)
 
     def get_processor_class(self, asset: Asset) -> Optional[Type[Any]]:
-        """
-        Get processor class for an asset.
-        Priority: extension override (e.g. ExcelProcessor for xlsx/xls) then kind.
-        """
-        import os
-
-        if asset.blob_path:
-            ext = os.path.splitext(asset.blob_path)[1].lower()
-            if ext in self._extension_processor_override:
-                return self._extension_processor_override[ext]
+        """Legacy processor class for an asset (None for @content_type-migrated kinds)."""
         desc = self.by_kind(asset.kind)
         return desc.processor_class if desc else None
 
@@ -366,6 +323,18 @@ def get_content_type_registry() -> ContentTypeRegistry:
 def detect_asset_kind_from_extension(file_ext: str) -> AssetKind:
     """Detect AssetKind from file extension. Canonical source of truth."""
     return _registry.extension_to_kind(file_ext)
+
+
+def detect_kind(
+    mimetype: Optional[str] = None,
+    head: Optional[bytes] = None,
+    filename: Optional[str] = None,
+) -> AssetKind:
+    """The one content classifier: mimetype → sniff → extension → FILE, off the
+    types' own recognition signals. See ``ContentTypeRegistry.detect_kind``. This
+    is the seam ``run_ingestion`` calls after fetch for items whose source couldn't
+    name the kind at read time."""
+    return _registry.detect_kind(mimetype=mimetype, head=head, filename=filename)
 
 
 def needs_processing(kind: AssetKind) -> bool:

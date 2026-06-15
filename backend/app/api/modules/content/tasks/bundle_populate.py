@@ -7,7 +7,7 @@ from sqlmodel import select
 
 from app.api.modules.content.models import Bundle
 from app.api.modules.content.query import AssetQuery
-from app.api.modules.content.query_parser import parse
+from app.api.modules.content.query import parse
 from app.core.tasks import TaskContext, task
 from app.core.task_utils import run_async_in_celery
 
@@ -54,7 +54,7 @@ def populate_bundle_from_query(ctx: TaskContext, bundle_ids: list[int]):
             if not asset_ids:
                 continue
 
-            from app.core.tree import copy as tree_copy
+            from app.api.modules.content.tree import copy as tree_copy
             result = tree_copy(session, asset_ids=asset_ids, to=bundle_id)
             bundle.asset_count = result.assets
             session.commit()

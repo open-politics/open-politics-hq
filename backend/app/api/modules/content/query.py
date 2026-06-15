@@ -11,7 +11,7 @@ Supports:
 - Relevance scoring (ts_rank) and highlights (ts_headline)
 - Cursor/offset pagination, composite sort
 
-Also provides from_aql() to compile a ParsedQuery (from aql.py) into an AssetQuery.
+Also provides from_aql() to compile a ParsedQuery (from parse(), below) into an AssetQuery.
 """
 
 from __future__ import annotations
@@ -21,14 +21,15 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from sqlalchemy import and_, or_, column as sa_column, func, text
+from sqlalchemy import and_, case, or_, column as sa_column, func, text
 from sqlmodel import Session, select
 
 from app.api.modules.content.facets import build_facet_filter
 from app.api.modules.content.models import Asset, AssetKind, Bundle
 from app.api.modules.content.utils.watcher_filters import non_superseded_filter
+from app.api.modules.content.schemas import AnnotationFilter, ParsedQuery, SemanticClause
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class AssetQuery:
         )
 
     Or via AQL:
-        from app.api.modules.content.aql import parse
+        from app.api.modules.content.query import parse
         aq = AssetQuery.from_aql(session, infospace_id, parse('corruption kind:pdf after:2019'))
     """
 
@@ -69,6 +70,7 @@ class AssetQuery:
         self._entity_semantic_threshold_op: Optional[str] = None
         self._sort: str = "created_at_desc"
         self._cursor: Optional[int] = None
+        self._cursor_value: Any = None  # last row's sort-column value (keyset pagination)
         self._limit: int = 25
         self._offset: int = 0
 
@@ -274,7 +276,7 @@ class AssetQuery:
     def no_bundles(self) -> AssetQuery:
         """Only return assets that are not in any real bundle.
 
-        Uses the ROOT=0 sentinel convention from ``core/tree.py``: every
+        Uses the ROOT=0 sentinel convention from ``content/tree.py``: every
         asset's ``bundle_ids`` array is non-empty, with ``0`` meaning "at
         root" and any positive id meaning "in that bundle". An asset is
         unbundled iff its array contains only zeros — i.e. it is a subset
@@ -452,18 +454,23 @@ class AssetQuery:
         """
         if cursor is None:
             self._cursor = None
+            self._cursor_value = None
         elif isinstance(cursor, int):
             self._cursor = cursor
+            self._cursor_value = None  # legacy id-only cursor → id keyset fallback
         else:
             try:
                 from app.core.cursor import decode_cursor
-                _, _, _, last_id = decode_cursor(cursor)
+                _f, _d, last_value, last_id = decode_cursor(cursor)
                 self._cursor = last_id
+                self._cursor_value = last_value
             except Exception:
                 try:
                     self._cursor = int(cursor)
+                    self._cursor_value = None
                 except ValueError:
                     self._cursor = None
+                    self._cursor_value = None
         self._limit = min(limit or 25, max_limit)
         return self
 
@@ -481,31 +488,85 @@ class AssetQuery:
 
     # ─── Build & execute ───
 
+    def _relevance_rank(self):
+        """Combined FTS relevance expression: title (weighted) + content + substring boost.
+
+        ``text_search_vector`` is a generated column over ``text_content`` ONLY, so
+        ``ts_rank`` on it alone scores a direct title match near zero and buries it
+        under content hits. We add:
+          * the title's own ``ts_rank`` (word/stem matches, ranked by quality), and
+          * a substring boost (catches filenames / partial words ``tsquery`` can't
+            tokenize — the same ILIKE that lets the row match in ``.text()``),
+        each weighted so a title match outranks a content-only match.
+
+        Single source of truth: used by both the ORDER BY and the returned score,
+        so the hybrid-merge re-sort (execute_scored_async) stays consistent.
+        """
+        tsq = func.websearch_to_tsquery('english', self._text_query)
+        content_rank = func.ts_rank(sa_column('text_search_vector'), tsq)
+        title_rank = func.ts_rank(
+            func.to_tsvector('english', func.coalesce(Asset.title, '')), tsq
+        )
+        rank = content_rank + (title_rank * 2.0)
+        # Substring boost for matches tsquery can't tokenize (filenames, partials).
+        plain = _strip_fts_operators(self._text_query).strip()
+        if plain:
+            rank = rank + case((Asset.title.ilike(f"%{plain}%"), 2.0), else_=0.0)
+        return rank
+
     def _apply_sort_and_pagination(self, stmt):
-        """Apply ORDER BY, cursor/offset, and LIMIT to a statement."""
-        # Use event_timestamp (source publication date) when available, fall back to created_at
+        """Apply ORDER BY, keyset cursor, offset, and LIMIT.
+
+        Pagination is a true keyset: ``ORDER BY <sort_col> <dir>, id <dir>`` and the
+        cursor seeks past the last row with ``WHERE (sort_col, id) <dir> (last_value,
+        last_id)``. Because the id tiebreaker shares the sort column's direction and
+        the cursor carries the column's *actual* value, Load-more is exact — no
+        overlap/skip — and index-friendly on a composite ``(sort_col, id)`` index.
+        Holds for every stored-column sort: date (the feed/tree default), title,
+        part_index.
+
+        Relevance is the one exception: its sort key is a per-query computed rank
+        (ts_rank + title boost + ilike boost), not stored and not carried in the
+        cursor, so it stays an id-tiebreaker approximation — shallow paging is an
+        accepted ceiling (the search path has the frontend merge-by-id safety net).
+        """
         effective_date = func.coalesce(Asset.event_timestamp, Asset.created_at)
 
-        if self._sort == "created_at_desc":
-            stmt = stmt.order_by(effective_date.desc())
-        elif self._sort == "created_at_asc":
-            stmt = stmt.order_by(effective_date.asc())
-        elif self._sort == "title":
-            stmt = stmt.order_by(Asset.title.asc())
+        # Relevance — rank-ordered, not keyset-able by a stored column.
+        if self._sort == "relevance" and self._text_query:
+            stmt = stmt.order_by(self._relevance_rank().desc(), Asset.id.desc())
+            if self._cursor is not None:
+                stmt = stmt.where(Asset.id < self._cursor)
+            if self._offset > 0:
+                stmt = stmt.offset(self._offset)
+            if self._limit is not None:
+                stmt = stmt.limit(self._limit)
+            return stmt
+
+        # Stored-column sorts → real keyset on (sort_col, id).
+        if self._sort == "title":
+            sort_col, ascending = Asset.title, True
         elif self._sort == "part_index":
-            stmt = stmt.order_by(Asset.part_index.asc().nulls_last(), Asset.created_at.asc())
-        elif self._sort == "relevance" and self._text_query:
-            tsv = sa_column('text_search_vector')
-            tsq = func.websearch_to_tsquery('english', self._text_query)
-            stmt = stmt.order_by(func.ts_rank(tsv, tsq).desc())
+            sort_col, ascending = Asset.part_index, True
+        elif self._sort == "created_at_asc":
+            sort_col, ascending = effective_date, True
+        else:  # created_at_desc + unknown fallback
+            sort_col, ascending = effective_date, False
+
+        if ascending:
+            stmt = stmt.order_by(sort_col.asc().nulls_last(), Asset.id.asc())
         else:
-            stmt = stmt.order_by(effective_date.desc())
+            stmt = stmt.order_by(sort_col.desc().nulls_last(), Asset.id.desc())
 
         if self._cursor is not None:
-            if self._sort in ("created_at_desc", "relevance"):
-                stmt = stmt.where(Asset.id < self._cursor)
-            elif self._sort == "created_at_asc":
-                stmt = stmt.where(Asset.id > self._cursor)
+            value = self._coerce_cursor_value(self._cursor_value)
+            if value is None:
+                # Legacy id-only cursor (or unparseable value) → id keyset fallback.
+                stmt = stmt.where(Asset.id > self._cursor if ascending else Asset.id < self._cursor)
+            elif ascending:
+                stmt = stmt.where(or_(sort_col > value, and_(sort_col == value, Asset.id > self._cursor)))
+            else:
+                stmt = stmt.where(or_(sort_col < value, and_(sort_col == value, Asset.id < self._cursor)))
 
         if self._offset > 0:
             stmt = stmt.offset(self._offset)
@@ -513,6 +574,25 @@ class AssetQuery:
         if self._limit is not None:
             stmt = stmt.limit(self._limit)
         return stmt
+
+    def _coerce_cursor_value(self, value):
+        """Coerce a decoded cursor value to the active sort column's type.
+
+        Date sorts compare against ``coalesce(event_timestamp, created_at)`` — the
+        cursor carries an ISO string, parsed back to ``datetime`` so Postgres
+        compares timestamp-to-timestamp. title/part_index values are used as-is.
+        """
+        if value is None:
+            return None
+        if self._sort not in ("title", "part_index"):
+            # Date-typed column (effective_date) — cursor carries an ISO string.
+            if isinstance(value, str):
+                try:
+                    return datetime.fromisoformat(value)
+                except ValueError:
+                    return None
+            return value
+        return value
 
     def _build_base_select(self):
         """Build base select with all conditions."""
@@ -542,6 +622,19 @@ class AssetQuery:
         stmt = self._build_base_select()
         return list(self.session.exec(stmt).all())
 
+    def _scored_select(self):
+        """Build the (Asset, rank, headline) select for FTS, sorted + paginated."""
+        tsq = func.websearch_to_tsquery('english', self._text_query)
+        rank_col = self._relevance_rank().label('rank')
+        headline_col = func.ts_headline(
+            'english',
+            func.coalesce(Asset.text_content, ''),
+            tsq,
+            'MaxFragments=3,MaxWords=35,StartSel=<mark>,StopSel=</mark>',
+        ).label('headline')
+        stmt = select(Asset, rank_col, headline_col).where(and_(*self._conditions))
+        return self._apply_sort_and_pagination(stmt)
+
     def execute_scored(self) -> List[Tuple[Asset, Optional[float], Optional[str]]]:
         """Execute returning (asset, rank, headline) tuples.
 
@@ -549,22 +642,41 @@ class AssetQuery:
         Otherwise rank and headline are None.
         """
         if self._text_query:
-            tsv = sa_column('text_search_vector')
-            tsq = func.websearch_to_tsquery('english', self._text_query)
-            rank_col = func.ts_rank(tsv, tsq).label('rank')
-            headline_col = func.ts_headline(
-                'english',
-                func.coalesce(Asset.text_content, ''),
-                tsq,
-                'MaxFragments=3,MaxWords=35,StartSel=<mark>,StopSel=</mark>',
-            ).label('headline')
-
-            stmt = select(Asset, rank_col, headline_col).where(and_(*self._conditions))
-            stmt = self._apply_sort_and_pagination(stmt)
-            rows = list(self.session.exec(stmt).all())
+            rows = list(self.session.exec(self._scored_select()).all())
             return [(row[0], float(row[1]), row[2]) for row in rows]
         else:
             return [(a, None, None) for a in self.execute()]
+
+    def execute_scored_stream(
+        self, batch_size: int = 5
+    ) -> Iterator[List[Tuple[Asset, Optional[float], Optional[str]]]]:
+        """Yield (asset, rank, headline) in small batches off a server-side cursor.
+
+        Text/filter only — semantic & hybrid need the whole set to merge and
+        re-sort scores, so those callers stay on ``execute_scored_async``. With
+        ``stream_results`` Postgres hands rows back (and runs ``ts_headline`` per
+        row) incrementally once the ORDER BY is resolved, so the UI fills in
+        progressively instead of waiting for the entire page to materialise.
+        """
+        if self._text_query:
+            stmt = self._scored_select()
+            scored = True
+        else:
+            stmt = self._build_base_select()
+            scored = False
+
+        result = self.session.exec(stmt.execution_options(stream_results=True, yield_per=batch_size))
+        batch: List[Tuple[Asset, Optional[float], Optional[str]]] = []
+        for row in result:
+            if scored:
+                batch.append((row[0], float(row[1]), row[2]))
+            else:
+                batch.append((row, None, None))
+            if len(batch) >= batch_size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
 
     async def execute_async(self) -> List[Asset]:
         """Execute with async semantic search when semantic() was used."""
@@ -717,8 +829,6 @@ class AssetQuery:
         parent_asset_id: Optional[int] = None,
     ) -> AssetQuery:
         """Build an AssetQuery from a ParsedQuery (AQL parse result)."""
-        from app.api.modules.content.query_parser import ParsedQuery  # noqa: F811
-
         q = cls(session, infospace_id)
 
         if parsed.text:
@@ -875,3 +985,166 @@ def _resolve_asset_ids(session: Session, infospace_id: int, refs: list[str]) -> 
         if asset:
             ids.append(asset.id)
     return ids
+
+
+# ─── AQL text parser ───────────────────────────────────────────────────────
+# Parse an asset-query-language string into a ParsedQuery (the contract in
+# schemas.py), which AssetQuery.from_aql compiles into a query. Pure, no DB.
+#
+#   corruption                FTS (unquoted words AND'd)    "Deutsche Bank"  phrase
+#   -sports                   FTS negation                  ~corruption>0.7  semantic+threshold
+#   kind:pdf,email  -kind:image    after:2019-01  before:2022-12
+#   bundle:"leaked docs"  asset:123  tag:important,review  run:42
+#   entity:"A","B"  entity:~politician>0.7  -entity:"name"
+#   annotation:sentiment>=0.8  annotation:doc.topics.0=="climate"
+# Composition: space = AND, comma = OR within a filter, - = NOT, ~ = semantic.
+
+_THRESHOLD_RE = re.compile(r'([><]=?)([\d.]+)$')
+_ANNOTATION_OP_RE = re.compile(r'^([a-zA-Z0-9_.]+)(==|!=|>=|>|<=|<)(.+)$')
+_PREFIX_RE = re.compile(r'^(-)?([a-z]+):(.+)$', re.DOTALL)
+
+_KNOWN_PREFIXES = frozenset({"kind", "after", "before", "bundle", "asset", "run", "entity", "annotation", "children", "tag"})
+
+
+def _tokenize(raw: str) -> list[str]:
+    """Split query string into tokens, respecting quoted strings."""
+    tokens: list[str] = []
+    current: list[str] = []
+    in_quotes = False
+    for ch in raw:
+        if ch == '"':
+            in_quotes = not in_quotes
+            current.append(ch)
+        elif ch == ' ' and not in_quotes:
+            if current:
+                tokens.append(''.join(current))
+                current = []
+        else:
+            current.append(ch)
+    if current:
+        tokens.append(''.join(current))
+    return tokens
+
+
+def _strip_quotes(s: str) -> str:
+    if len(s) >= 2 and s.startswith('"') and s.endswith('"'):
+        return s[1:-1]
+    return s
+
+
+def _parse_comma_values(s: str) -> list[str]:
+    """Parse comma-separated values, respecting quotes."""
+    parts: list[str] = []
+    current: list[str] = []
+    in_q = False
+    for ch in s:
+        if ch == '"':
+            in_q = not in_q
+        elif ch == ',' and not in_q:
+            parts.append(_strip_quotes(''.join(current).strip()))
+            current = []
+            continue
+        current.append(ch)
+    if current:
+        parts.append(_strip_quotes(''.join(current).strip()))
+    return [p for p in parts if p]
+
+
+def _parse_semantic(raw: str) -> SemanticClause:
+    """Parse semantic value: 'query', 'query>0.7', '"phrase">0.5'."""
+    m = _THRESHOLD_RE.search(raw)
+    if m:
+        query = _strip_quotes(raw[:m.start()])
+        return SemanticClause(text=query, threshold_op=m.group(1), threshold=float(m.group(2)))
+    return SemanticClause(text=_strip_quotes(raw))
+
+
+def parse(raw: str) -> ParsedQuery:
+    """Parse a query string into structured filters."""
+    q = ParsedQuery()
+    if not raw or not raw.strip():
+        return q
+
+    tokens = _tokenize(raw.strip())
+    text_parts: list[str] = []
+
+    for token in tokens:
+        # Try prefix match: [-]prefix:value
+        prefix_match = _PREFIX_RE.match(token)
+
+        if prefix_match and prefix_match.group(2) in _KNOWN_PREFIXES:
+            negated = prefix_match.group(1) == '-'
+            prefix = prefix_match.group(2)
+            rest = prefix_match.group(3)
+
+            if prefix == 'kind':
+                values = _parse_comma_values(rest)
+                if negated:
+                    q.excluded_kinds.extend(values)
+                else:
+                    q.kinds.extend(values)
+
+            elif prefix == 'after':
+                q.date_after = _strip_quotes(rest)
+
+            elif prefix == 'before':
+                q.date_before = _strip_quotes(rest)
+
+            elif prefix == 'bundle':
+                q.bundle_refs.extend(_parse_comma_values(rest))
+
+            elif prefix == 'asset':
+                q.asset_refs.extend(_parse_comma_values(rest))
+
+            elif prefix == 'children':
+                val = _strip_quotes(rest).lower()
+                if val in ('none', '0'):
+                    q.children_limit = 0
+                elif val in ('show', 'all'):
+                    q.children_limit = -1  # -1 = unlimited
+                else:
+                    try:
+                        q.children_limit = max(0, int(val))
+                    except ValueError:
+                        pass
+
+            elif prefix == 'tag':
+                q.tags.extend(_parse_comma_values(rest))
+
+            elif prefix == 'run':
+                try:
+                    q.run_ids.append(int(_strip_quotes(rest)))
+                except ValueError:
+                    pass
+
+            elif prefix == 'entity':
+                if rest.startswith('~'):
+                    q.entity_semantic = _parse_semantic(rest[1:])
+                else:
+                    values = _parse_comma_values(rest)
+                    if negated:
+                        q.entity_negations.extend(values)
+                    else:
+                        q.entities.append(values)
+
+            elif prefix == 'annotation':
+                ann_match = _ANNOTATION_OP_RE.match(rest)
+                if ann_match:
+                    q.annotations.append(AnnotationFilter(
+                        field=ann_match.group(1),
+                        op=ann_match.group(2),
+                        value=_strip_quotes(ann_match.group(3)),
+                        negated=negated,
+                    ))
+
+            continue
+
+        # No prefix — semantic (~) or free text
+        if token.startswith('~'):
+            q.semantic = _parse_semantic(token[1:])
+        else:
+            # Everything else is free text (websearch_to_tsquery handles quotes, -, or)
+            text_parts.append(token)
+
+    q.text = ' '.join(text_parts)
+    return q
