@@ -2867,11 +2867,13 @@ export type SourceCreateRequest = {
     details?: {
         [key: string]: unknown;
     };
+    on_drift?: (string | null);
     target_bundle_id?: (number | null);
     target_bundle_name?: (string | null);
     is_active?: (boolean | null);
     poll_interval_seconds?: (number | null);
     output_bundle_id?: (number | null);
+    max_poll_failures?: (number | null);
 };
 
 export type SourceRead = {
@@ -2880,6 +2882,7 @@ export type SourceRead = {
     details?: {
         [key: string]: unknown;
     };
+    on_drift?: (string | null);
     id: number;
     uuid: string;
     infospace_id: number;
@@ -2905,6 +2908,7 @@ export type SourceRead = {
     total_items_ingested?: number;
     consecutive_failures?: number;
     last_error_at?: (string | null);
+    max_poll_failures?: (number | null);
     /**
      * True if the source has any enabled monitoring tasks.
      */
@@ -2938,6 +2942,8 @@ export type SourceUpdate = {
     details?: ({
     [key: string]: unknown;
 } | null);
+    on_drift?: (string | null);
+    max_poll_failures?: (number | null);
     is_active?: (boolean | null);
     poll_interval_seconds?: (number | null);
     output_bundle_id?: (number | null);

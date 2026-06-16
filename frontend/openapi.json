@@ -42626,6 +42626,17 @@
             "title": "Details",
             "default": {}
           },
+          "on_drift": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Drift"
+          },
           "target_bundle_id": {
             "anyOf": [
               {
@@ -42682,6 +42693,17 @@
               }
             ],
             "title": "Output Bundle Id"
+          },
+          "max_poll_failures": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Poll Failures"
           }
         },
         "type": "object",
@@ -42707,6 +42729,17 @@
             "type": "object",
             "title": "Details",
             "default": {}
+          },
+          "on_drift": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Drift"
           },
           "id": {
             "type": "integer",
@@ -42864,6 +42897,17 @@
             ],
             "title": "Last Error At"
           },
+          "max_poll_failures": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Poll Failures"
+          },
           "is_monitored": {
             "type": "boolean",
             "title": "Is Monitored",
@@ -42980,6 +43024,28 @@
               }
             ],
             "title": "Details"
+          },
+          "on_drift": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Drift"
+          },
+          "max_poll_failures": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Poll Failures"
           },
           "is_active": {
             "anyOf": [
