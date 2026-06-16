@@ -8,7 +8,7 @@ import {
 import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict } from 'date-fns';
 import type { SourceRead } from '@/client';
-import type { SourceKind } from '@/lib/sourceConfigurationRegistry';
+import type { SourceKind } from '@/lib/annotations/types';
 import { useSourceStore } from '@/zustand_stores/storeSources';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';

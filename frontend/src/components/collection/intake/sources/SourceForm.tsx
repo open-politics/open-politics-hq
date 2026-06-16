@@ -12,7 +12,8 @@ import {
   Loader2, Radio, Rss, Search,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { sourceConfigurationRegistry, type FieldSchema, type SourceKind } from '@/lib/sourceConfigurationRegistry';
+import { sourceConfigurationRegistry, type FieldSchema, type ConfigurableSourceKind } from '@/lib/sourceConfigurationRegistry';
+import type { SourceKind } from '@/lib/annotations/types';
 import { useSourceForm, type SourceFormInit } from './useSourceForm';
 import { BundlePicker } from '@/components/collection/assets/BundlePicker';
 import { DockBack, DockClose } from '../DockNav';
@@ -253,11 +254,11 @@ export function SourceForm({
                 return (
                   <button
                     key={kind}
-                    onClick={() => f.handleKindChange(kind as SourceKind)}
+                    onClick={() => f.handleKindChange(kind as ConfigurableSourceKind)}
                     className={cn('flex items-center gap-2 rounded-md border p-2 text-left text-sm transition-colors', sel ? 'border-primary bg-primary/5' : 'hover:bg-muted/50')}
                   >
                     <Icon className={cn('size-4', sel ? 'text-primary' : 'text-muted-foreground')} />
-                    <span className="truncate">{sourceConfigurationRegistry.getSchema(kind as SourceKind)?.uiSchema.title || kind}</span>
+                    <span className="truncate">{sourceConfigurationRegistry.getSchema(kind as ConfigurableSourceKind)?.uiSchema.title || kind}</span>
                   </button>
                 );
               })}

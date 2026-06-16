@@ -90,7 +90,6 @@ function projectAssetNodeToAssetRead(node: AssetNode): AssetRead {
     created_at: node.created_at ?? node.updated_at,
     text_content: null,
     blob_path: null,
-    logical_path: null,
     source_identifier: null,
     facets: (node.facets as any) ?? null,
     processing_status: (node.processing_status ?? undefined) as ProcessingStatus | undefined,

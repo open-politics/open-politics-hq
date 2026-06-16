@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { sourceConfigurationRegistry, type SourceKind } from '@/lib/sourceConfigurationRegistry';
+import { sourceConfigurationRegistry, type ConfigurableSourceKind } from '@/lib/sourceConfigurationRegistry';
+import type { SourceKind } from '@/lib/annotations/types';
 import { useSourceStore } from '@/zustand_stores/storeSources';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useBundleStore } from '@/zustand_stores/storeBundles';

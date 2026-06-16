@@ -8,11 +8,12 @@
  */
 
 import { JSONSchema7 } from 'json-schema';
+import type { SourceKind } from '@/lib/annotations/types';
 
-export type SourceKind = 'rss' | 'web_search' | 'web' | 'crawl';
+export type ConfigurableSourceKind = Extract<SourceKind, 'rss' | 'web_search' | 'web' | 'crawl'>;
 
 export interface SourceConfigurationSchema {
-  kind: SourceKind;
+  kind: ConfigurableSourceKind;
   locatorSchema: JSONSchema7;
   uiSchema: UISchema;
 }
@@ -46,7 +47,7 @@ export interface ValidationResult {
 }
 
 class SourceConfigurationRegistry {
-  private schemas: Map<SourceKind, SourceConfigurationSchema> = new Map();
+  private schemas: Map<ConfigurableSourceKind, SourceConfigurationSchema> = new Map();
 
   constructor() {
     this.initializeSchemas();
@@ -202,15 +203,15 @@ class SourceConfigurationRegistry {
     });
   }
 
-  getSchema(kind: SourceKind): SourceConfigurationSchema | undefined {
+  getSchema(kind: ConfigurableSourceKind): SourceConfigurationSchema | undefined {
     return this.schemas.get(kind);
   }
 
-  getSupportedKinds(): SourceKind[] {
+  getSupportedKinds(): ConfigurableSourceKind[] {
     return Array.from(this.schemas.keys());
   }
 
-  validateConfiguration(kind: SourceKind, config: any): ValidationResult {
+  validateConfiguration(kind: ConfigurableSourceKind, config: any): ValidationResult {
     const schema = this.getSchema(kind);
     if (!schema) {
       return {
