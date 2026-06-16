@@ -29,7 +29,10 @@ POLL_CIRCUIT_BREAKER_THRESHOLD = 5
               Source.next_poll_at <= func.now(),
               or_(
                   Source.consecutive_failures.is_(None),
-                  Source.consecutive_failures <= POLL_CIRCUIT_BREAKER_THRESHOLD,
+                  Source.consecutive_failures <= func.coalesce(
+                      Source.max_poll_failures,
+                      POLL_CIRCUIT_BREAKER_THRESHOLD,
+                  ),
               ),
           )
           .order_by(Source.next_poll_at)
@@ -42,7 +45,7 @@ POLL_CIRCUIT_BREAKER_THRESHOLD = 5
       tags=frozenset({"content", "source"}))
 def source_polling(ctx: TaskContext, source_ids: list[int]):
     """Poll sources that are due. One source per iteration with error isolation."""
-    from app.api.modules.content.services.source_service import SourceService
+    from app.api.modules.content.services.source_service import execute_poll
 
     for source_id in source_ids:
         try:
@@ -51,8 +54,8 @@ def source_polling(ctx: TaskContext, source_ids: list[int]):
                     source = session.get(Source, sid)
                     if not source or not source.is_active:
                         return None
-                    svc = SourceService(session)
-                    return await svc.execute_poll(
+                    return await execute_poll(
+                        session,
                         source_id=sid,
                         user_id=source.user_id,
                     )

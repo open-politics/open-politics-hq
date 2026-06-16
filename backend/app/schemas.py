@@ -183,21 +183,39 @@ class SourceBase(SQLModel):
     name: str
     kind: str
     details: Dict[str, Any] = {}
+    on_drift: Optional[str] = None
+
+    @field_validator("on_drift", mode="before")
+    @classmethod
+    def _validate_on_drift(cls, v):
+        if v is not None and v not in ("skip", "supersede", "update"):
+            raise ValueError("on_drift must be skip, supersede, update, or null")
+        return v
 
 class SourceCreate(SourceBase):
     # ═══ STREAMING CONFIGURATION ═══
     is_active: Optional[bool] = False
     poll_interval_seconds: Optional[int] = 300
     output_bundle_id: Optional[int] = None
+    max_poll_failures: Optional[int] = None
 
 class SourceUpdate(SQLModel):
     name: Optional[str] = None
     kind: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
+    on_drift: Optional[str] = None
+    max_poll_failures: Optional[int] = None
     # ═══ STREAMING UPDATES ═══
     is_active: Optional[bool] = None
     poll_interval_seconds: Optional[int] = None
     output_bundle_id: Optional[int] = None
+
+    @field_validator("on_drift", mode="before")
+    @classmethod
+    def _validate_on_drift(cls, v):
+        if v is not None and v not in ("skip", "supersede", "update"):
+            raise ValueError("on_drift must be skip, supersede, update, or null")
+        return v
 
 class SourceRead(SourceBase):
     id: int
@@ -223,6 +241,8 @@ class SourceRead(SourceBase):
     total_items_ingested: int = 0
     consecutive_failures: int = 0
     last_error_at: Optional[datetime] = None
+    on_drift: Optional[str] = None
+    max_poll_failures: Optional[int] = None
 
     @computed_field  # type: ignore[misc]
     @property
@@ -236,9 +256,10 @@ class SourceRead(SourceBase):
     @property
     def stream_health(self) -> str:
         """Return health indicator: healthy, degraded, failing."""
-        if self.consecutive_failures >= 3:
+        threshold = self.max_poll_failures or 5
+        if self.consecutive_failures >= threshold:
             return "failing"
-        elif self.consecutive_failures >= 1:
+        elif self.consecutive_failures >= max(1, threshold // 2):
             return "degraded"
         return "healthy"
 
@@ -697,6 +718,7 @@ class SourceCreateRequest(SourceBase):
     is_active: Optional[bool] = False
     poll_interval_seconds: Optional[int] = 300
     output_bundle_id: Optional[int] = None
+    max_poll_failures: Optional[int] = None
 
 # --- New Models for Provider Discovery ---
 class ProviderModel(SQLModel):

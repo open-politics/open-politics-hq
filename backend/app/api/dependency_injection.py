@@ -28,7 +28,6 @@ from app.api.modules.annotation.services import AnnotationService
 from app.api.modules.identity_infospace_user.services import InfospaceService
 from app.api.modules.sharing.services import ShareableService, PackageService, BackupService, UserBackupService
 from app.api.modules.content.services import (
-    SourceService,
     DatasetService,
 )
 from app.api.modules.flow.services import TaskService
@@ -149,14 +148,6 @@ def get_infospace_service(request: Request, session: SessionDep, settings: Setti
     setattr(request.state, service_name, instance)
     return instance
 InfospaceServiceDep = Annotated[InfospaceService, Depends(get_infospace_service)]
-
-def get_source_service(request: Request, session: SessionDep) -> SourceService:
-    service_name = "source_service"
-    if hasattr(request.state, service_name): return getattr(request.state, service_name)
-    instance = SourceService(session=session)
-    setattr(request.state, service_name, instance)
-    return instance
-SourceServiceDep = Annotated[SourceService, Depends(get_source_service)]
 
 def get_annotation_service(
     request: Request, session: SessionDep,

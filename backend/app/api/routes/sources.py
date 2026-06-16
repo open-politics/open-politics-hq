@@ -13,7 +13,14 @@ from app.models import (
 from app.api.dependency_injection import (
     SessionDep,
     CurrentUser,
-    SourceServiceDep,
+)
+from app.api.modules.content.services.source_service import (
+    create_source as svc_create_source,
+    activate_stream as svc_activate_stream,
+    pause_stream as svc_pause_stream,
+    execute_poll as svc_execute_poll,
+    get_stream_stats as svc_get_stream_stats,
+    trigger_source_processing as svc_trigger_source_processing,
 )
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires, resolve_access,
@@ -55,7 +62,6 @@ def create_source(
     infospace_id: int,
     source_in: SourceCreateRequest,
     session: SessionDep,
-    source_service: SourceServiceDep,
 ) -> SourceRead:
     """Create a source. ``details`` is the source kind's read-config, verbatim;
     the destination is the ``output_bundle_id`` column (resolved or created here),
@@ -82,8 +88,8 @@ def create_source(
     source_create = SourceCreate.model_validate(source_in)
     source_create.output_bundle_id = bundle_id_to_use
 
-    source = source_service.create_source(
-        user_id=access.user_id, infospace_id=infospace_id, source_in=source_create
+    source = svc_create_source(
+        session, user_id=access.user_id, infospace_id=infospace_id, source_in=source_create
     )
     session.refresh(source)
     return source
@@ -318,7 +324,6 @@ def trigger_source_processing(
     infospace_id: int,
     source_id: int,
     session: SessionDep,
-    source_service: SourceServiceDep,
 ) -> Dict[str, Any]:
     """
     Trigger processing for a specific source.
@@ -348,8 +353,8 @@ def trigger_source_processing(
                 detail="Source is already being processed"
             )
         
-        # Use SourceService to trigger processing
-        success = source_service.trigger_source_processing(
+        success = svc_trigger_source_processing(
+            session,
             source_id=source_id,
             user_id=access.user_id,
             infospace_id=infospace_id
@@ -530,10 +535,9 @@ def activate_stream(
     infospace_id: int,
     source_id: int,
     session: SessionDep,
-    source_service: SourceServiceDep,
 ) -> SourceRead:
     """Activate a source stream - enable polling."""
-    source = source_service.activate_stream(source_id, access.user_id)
+    source = svc_activate_stream(session, source_id, access.user_id)
 
     return SourceRead.model_validate(source)
 
@@ -545,10 +549,9 @@ def pause_stream(
     infospace_id: int,
     source_id: int,
     session: SessionDep,
-    source_service: SourceServiceDep,
 ) -> SourceRead:
     """Pause a source stream - disable polling."""
-    source = source_service.pause_stream(source_id, access.user_id)
+    source = svc_pause_stream(session, source_id, access.user_id)
 
     return SourceRead.model_validate(source)
 
@@ -560,7 +563,6 @@ async def poll_source(
     infospace_id: int,
     source_id: int,
     session: SessionDep,
-    source_service: SourceServiceDep,
 ) -> Dict[str, Any]:
     """Manually trigger a poll of a source."""
     from app.core.security import decrypt_credentials, CredentialDecryptionError
@@ -576,7 +578,7 @@ async def poll_source(
             # Never fall back to {} — a keyless poll would look "broken" instead
             # of "blocked by a rotation/misconfig". Surface it.
             raise HTTPException(status_code=503, detail=str(e)) from e
-    result = await source_service.execute_poll(source_id, user_id=access.user_id, runtime_api_keys=api_keys)
+    result = await svc_execute_poll(session, source_id, user_id=access.user_id, runtime_api_keys=api_keys)
     
     return result
 
@@ -588,10 +590,9 @@ def get_stream_stats(
     infospace_id: int,
     source_id: int,
     session: SessionDep,
-    source_service: SourceServiceDep,
 ) -> Dict[str, Any]:
     """Get stream statistics for a source."""
-    stats = source_service.get_stream_stats(source_id, access.user_id, infospace_id)
+    stats = svc_get_stream_stats(session, source_id, access.user_id, infospace_id)
     
     return stats
 

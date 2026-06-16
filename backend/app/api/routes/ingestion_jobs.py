@@ -713,7 +713,6 @@ def enable_directory_watch(
     request: EnableWatchRequest,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
     access: Access = Requires(Capability.SETUP, scope=None),
-    source_service: dependency_injection.SourceServiceDep,
 ) -> Any:
     """
     Enable watching and/or version inbox for an already-imported directory.
@@ -740,7 +739,9 @@ def enable_directory_watch(
     inbox_files_pending = 0
 
     if request.enable_inbox:
-        inbox_source, inbox_path_str, inbox_files_pending = source_service.ensure_inbox_source(
+        from app.api.modules.content.services.source_service import ensure_inbox_source
+        inbox_source, inbox_path_str, inbox_files_pending = ensure_inbox_source(
+            db,
             infospace_id=infospace_id,
             user_id=access.user_id,
             bundle_id=request.bundle_id,

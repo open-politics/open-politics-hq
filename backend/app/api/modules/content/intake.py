@@ -104,7 +104,8 @@ def run_source_ingestion(session: Session, source_id: int, *, dest_id: Optional[
         root_bundle_id=dest_id or source.output_bundle_id,
         status=IngestionStatus.PENDING,
         source_locator=source.name or f"source:{source.id}",
-        cursor_state={"config": dict(source.details or {}),
+        cursor_state={"config": {**dict(source.details or {}),
+                                  **({"on_drift": source.on_drift} if source.on_drift else {})},
                       "cursor": dict(source.cursor_state or {})},
     )
     session.add(job)

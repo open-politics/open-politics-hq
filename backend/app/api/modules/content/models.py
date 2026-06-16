@@ -104,6 +104,8 @@ class Source(SQLModel, table=True):
     total_items_ingested: int = Field(default=0)
     consecutive_failures: int = Field(default=0)
     last_error_at: Optional[datetime] = None
+    on_drift: Optional[str] = None
+    max_poll_failures: Optional[int] = None
 
     infospace: Optional[Infospace] = Relationship(back_populates="sources")
     user: Optional[User] = Relationship(back_populates="sources")

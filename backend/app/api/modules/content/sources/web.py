@@ -39,15 +39,23 @@ class WebPage:
             for url in urls:
                 if not url:
                     continue
+                # For non-inline URLs, HEAD to capture a drift token (ETag / Last-Modified)
+                # and content-type hint. The token feeds the stage-1 guard so re-polls of
+                # unchanged pages skip before fetch. The ct hint lets fetch() skip its own HEAD.
+                token = None
+                meta = {"ingestion_method": "web_url"}
+                if not text:
+                    ct_hint, token = await _head_signals(url)
+                    if ct_hint:
+                        meta["_ct"] = ct_hint
                 yield RawItem(
                     source_identifier=url,
-                    # Content already in hand → it's an ARTICLE; else kind is decided
-                    # post-fetch via detect_kind (HTML→WEB, pdf/img/…→that type).
                     kind=AssetKind.ARTICLE if text else None,
                     title=title or url,
-                    locator=url,            # always kept → fetch can still scrape if needed
+                    locator=url,
                     text=text,
-                    metadata={"ingestion_method": "web_url"},
+                    source_token=token,
+                    metadata=meta,
                 )
 
     async def view(self, item: RawItem, ctx: SourceContext) -> Preview:
@@ -66,7 +74,7 @@ class WebPage:
                 metadata=item.metadata,
             )
         url = item.locator
-        ct = await _head_content_type(url)
+        ct = (item.metadata or {}).get("_ct") or await _head_content_type(url)
         if ct is None or ct in _HTML_CTS:
             # Page (or unknown content-type) — stay a stub; WebArticle.process realizes it.
             return FetchedContent(mimetype=ct or "text/html",
@@ -86,18 +94,37 @@ class WebPage:
 _HTML_CTS = {"text/html", "application/xhtml+xml"}
 
 
-async def _head_content_type(url: str) -> Optional[str]:
-    """Cheap HEAD → bare content-type (charset stripped). None if HEAD fails or
-    omits it (treated as 'probably a page')."""
+async def _head_signals(url: str) -> tuple[Optional[str], Optional[str]]:
+    """HEAD → (content_type, drift_token). The drift token is built from ETag,
+    Last-Modified, or Content-Length — whatever the server provides. Both None
+    on failure (safe: the stage-1 guard treats None as 'no drift signal')."""
     import aiohttp
     try:
         async with aiohttp.ClientSession() as sess:
             async with sess.head(url, allow_redirects=True,
                                  timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                ct = (resp.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
-                return ct or None
+                ct = (resp.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower() or None
+                etag = resp.headers.get("ETag")
+                if etag:
+                    token = f"etag:{etag}"
+                else:
+                    parts = []
+                    lm = resp.headers.get("Last-Modified")
+                    cl = resp.headers.get("Content-Length")
+                    if lm:
+                        parts.append(f"lm:{lm}")
+                    if cl:
+                        parts.append(f"cl:{cl}")
+                    token = "|".join(parts) or None
+                return ct, token
     except Exception:
-        return None
+        return None, None
+
+
+async def _head_content_type(url: str) -> Optional[str]:
+    """Fallback for fetch() when read() didn't capture a ct hint (one-shot intake)."""
+    ct, _ = await _head_signals(url)
+    return ct
 
 
 async def _download(url: str) -> bytes:
