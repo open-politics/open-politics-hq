@@ -172,7 +172,7 @@ class Infospace(SQLModel, table=True):
 
         Narrow accessor — only reads ``enrichment_config``. For the effective
         selection (which cascades to the owner's ``provider_defaults``), use
-        ``foundation_service_providers.get_selection(session, infospace_id,
+        ``foundation_service_providers.get_configured_foundation_provider(session, infospace_id,
         "embedding")``. Don't use this property as a gate in routes/tasks:
         it will reject setups where the user configured embedding via the
         ProviderHub (user defaults) rather than per-infospace.
@@ -185,7 +185,7 @@ class Infospace(SQLModel, table=True):
 
         Narrow accessor — only reads this infospace's own enrichment_config.
         For the effective cascaded selection, call
-        ``foundation_service_providers.get_selection(...)`` instead.
+        ``foundation_service_providers.get_configured_foundation_provider(...)`` instead.
         """
         config = self.enrichment_config
         if not config:

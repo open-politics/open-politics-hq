@@ -436,11 +436,11 @@ async def find_entity_duplicates(
     ``/action/extend`` flow.
     """
     from app.api.modules.foundation_service_providers import (
-        resolve, ProviderError, get_selection,
+        resolve, ProviderError, get_configured_foundation_provider,
     )
     from app.core.similarity import find_duplicates
 
-    sel = get_selection(db, access.infospace_id, "embedding")
+    sel = get_configured_foundation_provider(db, access.infospace_id, "embedding")
     if not sel or not sel.model_name:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -14,7 +14,7 @@ from app.api.modules.identity_infospace_user.access import (
 from app.models import Asset, AssetKind
 from app.schemas import Message
 from app.api.modules.embedding import embed as embed_mod
-from app.api.modules.foundation_service_providers import get_selection
+from app.api.modules.foundation_service_providers import get_configured_foundation_provider
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ async def generate_infospace_embeddings(
     infospace_id = access.infospace_id
     infospace = access.infospace
 
-    sel = get_selection(session, infospace_id, "embedding")
+    sel = get_configured_foundation_provider(session, infospace_id, "embedding")
     if not sel or not sel.model_name:
         raise HTTPException(status_code=400, detail="No embedding provider configured. Select a model in infospace settings or your user provider defaults.")
 
@@ -123,7 +123,7 @@ async def generate_asset_embeddings(
     access = resolve_access(session, asset.infospace_id, current_user, Capability.COMPUTE)
     infospace = access.infospace
 
-    sel = get_selection(session, infospace.id, "embedding")
+    sel = get_configured_foundation_provider(session, infospace.id, "embedding")
     if not sel or not sel.model_name:
         raise HTTPException(status_code=400, detail="No embedding provider configured for this infospace or user")
 

@@ -4022,8 +4022,8 @@ async def _workspace_semantic_search(
     session = services["session"]
     infospace_id = services["infospace_id"]
     
-    from app.api.modules.foundation_service_providers import get_selection
-    sel = get_selection(session, infospace_id, "embedding")
+    from app.api.modules.foundation_service_providers import get_configured_foundation_provider
+    sel = get_configured_foundation_provider(session, infospace_id, "embedding")
     if not sel or not sel.model_name:
         return ToolResult(
             content=[

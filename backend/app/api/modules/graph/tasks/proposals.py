@@ -46,8 +46,8 @@ def _embed_strings(session, infospace_id: int, strings: list[str]) -> Optional[l
     """
     try:
         from app.api.modules.embedding.embed import embed_texts
-        from app.api.modules.foundation_service_providers import get_selection
-        sel = get_selection(session, infospace_id, "embedding")
+        from app.api.modules.foundation_service_providers import get_configured_foundation_provider
+        sel = get_configured_foundation_provider(session, infospace_id, "embedding")
         if not sel or not sel.model_name:
             return None
         vectors, _em = run_async_in_celery(embed_texts, session, infospace_id, strings)

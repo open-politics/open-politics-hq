@@ -771,9 +771,9 @@ class AssetQuery:
         """Embed entity query text, search Entity embeddings, filter assets via GraphEdge."""
         from app.api.modules.content.models import EMBEDDING_SUPPORTED_DIMS
         from app.api.modules.embedding.embed import embed_texts
-        from app.api.modules.foundation_service_providers import get_selection
+        from app.api.modules.foundation_service_providers import get_configured_foundation_provider
 
-        sel = get_selection(self.session, self.infospace_id, "embedding")
+        sel = get_configured_foundation_provider(self.session, self.infospace_id, "embedding")
         if not sel or not sel.model_name:
             logger.debug("Entity semantic: no embedding configured for infospace %s", self.infospace_id)
             return

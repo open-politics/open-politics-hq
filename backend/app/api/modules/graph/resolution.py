@@ -124,10 +124,10 @@ async def find_by_embedding(
     """
     from app.api.modules.content.models import EMBEDDING_SUPPORTED_DIMS
     from app.api.modules.embedding.embed import embed_texts
-    from app.api.modules.foundation_service_providers import get_selection
+    from app.api.modules.foundation_service_providers import get_configured_foundation_provider
 
     try:
-        sel = get_selection(session, infospace_id, "embedding")
+        sel = get_configured_foundation_provider(session, infospace_id, "embedding")
         if not sel or not sel.model_name:
             logger.debug(f"No embedding configured for infospace {infospace_id}")
             return None
@@ -268,8 +268,8 @@ async def resolve_entities_batch(
     if use_embeddings and raw_names:
         try:
             from app.api.modules.embedding.embed import embed_texts
-            from app.api.modules.foundation_service_providers import get_selection
-            sel = get_selection(session, infospace_id, "embedding")
+            from app.api.modules.foundation_service_providers import get_configured_foundation_provider
+            sel = get_configured_foundation_provider(session, infospace_id, "embedding")
             if sel and sel.model_name:
                 vectors, _em = await embed_texts(session, infospace_id, raw_names)
                 if vectors:

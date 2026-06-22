@@ -43,7 +43,7 @@ from .registry import (
     is_capability_available,
     list_providers,
     get_model_spec,
-    get_selection,
+    get_configured_foundation_provider,
     probe_providers,
     CAPABILITIES,
 )
@@ -77,7 +77,7 @@ __all__ = [
     "is_capability_available",
     "list_providers",
     "get_model_spec",
-    "get_selection",
+    "get_configured_foundation_provider",
     "probe_providers",
     "CAPABILITIES",
 ]

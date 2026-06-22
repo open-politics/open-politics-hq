@@ -315,7 +315,7 @@ def _load_from_session(
         ec = infospace.enrichment_config
         if isinstance(ec, dict):
             ec = EnrichmentConfig(**ec)
-        sel = ec.get_selection(capability)
+        sel = ec.provider_for(capability)
         if sel is not None:
             selection = sel
 
@@ -323,7 +323,7 @@ def _load_from_session(
         pd = owner.provider_defaults
         if isinstance(pd, dict):
             pd = PD(**pd)
-        selection = pd.get(capability, context)
+        selection = pd.provider_for(capability, context)
 
     return _Context(
         selection=selection,
@@ -358,7 +358,7 @@ def _load_context(
 # ── Effective-selection lookup (for preconditions, not construction) ────────
 
 
-def get_selection(
+def get_configured_foundation_provider(
     session: Session,
     infospace_id: int,
     capability: str,

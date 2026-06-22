@@ -140,13 +140,13 @@ async def embed_texts(
     Returns ``(vectors, embedding_model)``. Vectors are truncated to the row's
     declared dimension when the provider returns a larger Matryoshka vector.
     """
-    from app.api.modules.foundation_service_providers import get_selection, resolve
+    from app.api.modules.foundation_service_providers import get_configured_foundation_provider, resolve
 
     if not texts:
         infospace = session.get(Infospace, infospace_id)
         if not infospace:
             raise ValueError(f"Infospace {infospace_id} not found")
-        sel = get_selection(session, infospace_id, "embedding")
+        sel = get_configured_foundation_provider(session, infospace_id, "embedding")
         if not sel or not sel.model_name:
             raise ValueError(f"Infospace {infospace_id} has no embedding configured")
         em = await ensure_embedding_model(
@@ -171,7 +171,7 @@ async def embed_texts(
         infospace = session.get(Infospace, infospace_id)
         if not infospace:
             raise ValueError(f"Infospace {infospace_id} not found")
-        sel = get_selection(session, infospace_id, "embedding")
+        sel = get_configured_foundation_provider(session, infospace_id, "embedding")
         if not sel or not sel.model_name:
             raise ValueError(f"Infospace {infospace_id} has no embedding configured")
         dim_override = infospace.get_embedding_dimension_override()

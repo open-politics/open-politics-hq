@@ -231,7 +231,7 @@ async def infospace_enrichment_status(
             continue
 
         enabled = bool(config and config.is_enabled(name)) if config else False
-        sel = config.get_selection(name) if config else None
+        sel = config.provider_for(name) if config else None
 
         entry = {
             "name": name,

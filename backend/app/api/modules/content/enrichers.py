@@ -538,7 +538,7 @@ def enrich_embedding(ctx: EnrichmentContext, asset_ids: list[int]):
         from app.api.modules.embedding import chunk as chunk_mod
         from app.api.modules.embedding.embed import ensure_embedding_model
         from app.api.modules.identity_infospace_user.models import Infospace
-        from app.api.modules.foundation_service_providers import get_selection
+        from app.api.modules.foundation_service_providers import get_configured_foundation_provider
 
         assets = session.exec(select(Asset).where(Asset.id.in_(asset_ids))).all()
 
@@ -549,7 +549,7 @@ def enrich_embedding(ctx: EnrichmentContext, asset_ids: list[int]):
                 if not infospace:
                     continue
 
-                sel = get_selection(session, iid, "embedding")
+                sel = get_configured_foundation_provider(session, iid, "embedding")
                 if not sel or not sel.model_name:
                     continue
                 dim_override = infospace.get_embedding_dimension_override()

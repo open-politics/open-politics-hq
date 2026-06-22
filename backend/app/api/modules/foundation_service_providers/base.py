@@ -172,10 +172,10 @@ class ProviderDefaults(BaseModel):
             data.pop("search")
         super().__init__(**data)
 
-    def get(
+    def provider_for(
         self, capability: str, context: Optional[str] = None
     ) -> Optional[ProviderSelection]:
-        """Get provider selection for a capability, with optional context override."""
+        """Configured provider for a capability, with optional context override."""
         cap = getattr(self, capability, None)
         if cap is None:
             return None
@@ -221,9 +221,9 @@ class EnrichmentConfig(BaseModel):
             return True
         return False
 
-    def get_selection(self, enricher_name: str) -> Optional[ProviderSelection]:
-        """Get provider selection for an enricher, if configured."""
-        val = getattr(self, enricher_name, None)
+    def provider_for(self, capability: str) -> Optional[ProviderSelection]:
+        """Configured provider for a capability, if set on this infospace."""
+        val = getattr(self, capability, None)
         if isinstance(val, dict):
             return ProviderSelection(**val)
         if isinstance(val, ProviderSelection):
