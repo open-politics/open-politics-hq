@@ -59,8 +59,8 @@ export const RelationshipsPanel: React.FC<Props> = ({
     const q = searchInput.trim().toLowerCase();
     if (!q) return relationships;
     return relationships.filter(r => {
-      const aLabel = formatLabel(nodesById.get(r.entity_a_id), r.entity_a_id).toLowerCase();
-      const bLabel = formatLabel(nodesById.get(r.entity_b_id), r.entity_b_id).toLowerCase();
+      const aLabel = formatLabel(nodesById.get(r.entry_a_id), r.entry_a_id).toLowerCase();
+      const bLabel = formatLabel(nodesById.get(r.entry_b_id), r.entry_b_id).toLowerCase();
       return aLabel.includes(q) || bLabel.includes(q);
     });
   }, [relationships, searchInput, nodesById]);
@@ -77,7 +77,7 @@ export const RelationshipsPanel: React.FC<Props> = ({
     setActiveTags(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t]);
 
   const togglePin = async (row: EntityRelationshipRead) => {
-    await upsert(graphId, row.entity_a_id, row.entity_b_id, {
+    await upsert(graphId, row.entry_a_id, row.entry_b_id, {
       is_pinned: !row.is_pinned,
     });
     refresh();
@@ -155,14 +155,14 @@ export const RelationshipsPanel: React.FC<Props> = ({
           ) : (
             <div>
               {filtered.map(row => {
-                const a = nodesById.get(row.entity_a_id);
-                const b = nodesById.get(row.entity_b_id);
-                const aLabel = formatLabel(a, row.entity_a_id);
-                const bLabel = formatLabel(b, row.entity_b_id);
+                const a = nodesById.get(row.entry_a_id);
+                const b = nodesById.get(row.entry_b_id);
+                const aLabel = formatLabel(a, row.entry_a_id);
+                const bLabel = formatLabel(b, row.entry_b_id);
                 const tombstoned = row.is_active === false;
                 return (
                   <div
-                    key={`${row.entity_a_id}-${row.entity_b_id}`}
+                    key={`${row.entry_a_id}-${row.entry_b_id}`}
                     className={`px-3 py-2 border-b hover:bg-muted/30 ${tombstoned ? 'opacity-60' : ''}`}
                   >
                     <div className="flex items-start gap-2">
@@ -179,8 +179,8 @@ export const RelationshipsPanel: React.FC<Props> = ({
                         type="button"
                         className="flex-1 min-w-0 text-left"
                         onClick={() => setEditing({
-                          a: { id: row.entity_a_id, label: aLabel },
-                          b: { id: row.entity_b_id, label: bLabel },
+                          a: { id: row.entry_a_id, label: aLabel },
+                          b: { id: row.entry_b_id, label: bLabel },
                           initial: row,
                         })}
                       >
@@ -226,7 +226,7 @@ export const RelationshipsPanel: React.FC<Props> = ({
                           type="button"
                           title="Focus on graph"
                           className="mt-0.5 text-muted-foreground hover:text-foreground"
-                          onClick={(e) => { e.stopPropagation(); onSelectPair(row.entity_a_id, row.entity_b_id); }}
+                          onClick={(e) => { e.stopPropagation(); onSelectPair(row.entry_a_id, row.entry_b_id); }}
                         >
                           <Target className="h-3.5 w-3.5" />
                         </button>

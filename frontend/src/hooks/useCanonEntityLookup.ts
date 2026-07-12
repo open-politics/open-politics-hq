@@ -58,10 +58,12 @@ export function useCanonEntityLookup(
     })
       .then(rows => {
         if (cancelled) return;
+        // ``r`` is a CanonEntryRead row — read the renamed ``canonical``/``type``
+        // fields, then normalise into this hook's own EntityLookupEntry shape.
         setEntities((rows as any[]).map(r => ({
           id: r.id,
-          canonical_name: r.canonical_name ?? '',
-          entity_type: r.entity_type ?? '',
+          canonical_name: r.canonical ?? '',
+          entity_type: r.type ?? '',
           aliases: Array.isArray(r.aliases) ? r.aliases : [],
         })));
       })

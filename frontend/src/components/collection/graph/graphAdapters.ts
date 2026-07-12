@@ -39,14 +39,16 @@ export function aggregatorResponseToGraphData(response: any): { nodes: GraphNode
 export function curatedDataToGraphData(
   entities: Array<{
     id: number;
-    canonical_name: string;
-    entity_type: string;
+    canonical: string;
+    type: string;
     aliases?: string[];
     properties?: Record<string, any>;
   }>,
   triplets: Array<{
     id: number;
     predicate: string;
+    // Triplet subject/object keep the LLM-facing ``canonical_name`` wire key
+    // emitted by ``getCuratedTriplets`` — this is NOT a CanonEntry field read.
     subject: {
       canonical_id: number;
       canonical_name: string;
@@ -64,8 +66,8 @@ export function curatedDataToGraphData(
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = entities.map((entity) => ({
     id: `entity_${entity.id}`,
-    label: entity.canonical_name,
-    type: entity.entity_type,
+    label: entity.canonical,
+    type: entity.type,
     aliases: entity.aliases || [],
     properties: entity.properties,
   }));

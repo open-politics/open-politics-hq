@@ -110,7 +110,7 @@ export const ProposalReviewDialog: React.FC<Props> = ({
         infospaceId: activeInfospace.id,
         canonId,
         requestBody: {
-          entity_ids: [row.keep_id, ...row.candidate_ids],
+          entry_ids: [row.keep_id, ...row.candidate_ids],
           keep_id: row.keep_id,
         },
       });

@@ -215,7 +215,8 @@ const KnowledgeGraphManager: React.FC = () => {
             <TableBody>
               {graphs.map((g) => {
                 const canon = canonById.get(g.canon_id);
-                const CanonIcon = canon?.role === 'geo' ? MapPin : Users;
+                // Geo is no longer a canon role; the infospace's geo-default canon gets the pin icon.
+                const CanonIcon = canon && canon.id === activeInfospace?.default_geo_canon_id ? MapPin : Users;
                 return (
                 <TableRow key={g.id}>
                   <TableCell className="font-medium">{g.name}</TableCell>
@@ -304,7 +305,7 @@ const KnowledgeGraphManager: React.FC = () => {
                     const isDefault = c.id === activeInfospace?.default_canon_id;
                     return (
                       <option key={c.id} value={c.id}>
-                        {c.name} ({c.role}){isDefault ? ' — default' : ''}
+                        {c.name}{isDefault ? ' — default' : ''}
                       </option>
                     );
                   })}
