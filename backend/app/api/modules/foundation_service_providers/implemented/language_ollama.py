@@ -579,8 +579,11 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
         """
         
         iterative_messages = list(messages)
+        tools = list(tools or [])  # local mutable copy so the crux can grow it mid-turn
         all_tool_executions = []  # Track all tool executions for frontend display
-        max_iterations = 10
+        # Caller-tunable (operator arcs raise it); the payload reads only `options`
+        # from kwargs, so this never leaks to the Ollama API.
+        max_iterations = max(1, min(int(kwargs.get("max_tool_iterations") or 10), 100))
         accumulated_content = ""
         
         for iteration in range(1, max_iterations + 1):
@@ -692,7 +695,13 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
                     
                     # Check if tool execution failed
                     has_error = isinstance(tool_result, dict) and bool(tool_result.get("error"))
-                    
+
+                    # The crux, ported: a load op returns ``_load_tools`` to grow the
+                    # tool set. Each iteration re-runs _normalize_tools_for_ollama(tools),
+                    # so extending the raw list in place is picked up next iteration.
+                    if isinstance(tool_result, dict) and tool_result.get("_load_tools"):
+                        self._extend_loop_tools(tools, tool_result["_load_tools"])
+
                     # Record execution with FULL data for frontend
                     tool_execution = {
                         "id": tc.get("id") or f"call_{name}_{iteration}",
@@ -1200,6 +1209,17 @@ class OllamaLanguageModelProvider(LanguageModelProvider):
         
         return tool_calls if tool_calls else None
     
+    def _extend_loop_tools(self, tools: List[Dict[str, Any]], new_tools: List[Dict[str, Any]]) -> None:
+        """Mid-turn tool-set growth from a load op's ``_load_tools`` (the crux,
+        ported from Anthropic). Extends the RAW ``tools`` list in place; the loop
+        re-runs ``_normalize_tools_for_ollama(tools)`` each iteration, so later
+        iterations see the additions. Dedup by name."""
+        existing = {t.get("name") for t in tools}
+        additions = [t for t in (new_tools or []) if t.get("name") not in existing]
+        if additions:
+            tools.extend(additions)
+            logger.info("Loaded %d tool(s) mid-turn: %s", len(additions), [t.get("name") for t in additions])
+
     def _normalize_tools_for_ollama(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert tools to Ollama's function calling format."""
         normalized_tools = []

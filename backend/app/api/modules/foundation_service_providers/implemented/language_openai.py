@@ -140,6 +140,10 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
         # Add tools if provided
         if tools:
             base_params["tools"] = self._prepare_tools_for_responses(tools, kwargs.get("mcp_headers"))
+            # Caller-tunable tool-loop cap (browse→load→act arcs raise it). Popped
+            # inside the loop before the API call so it never leaks to the SDK.
+            if kwargs.get("max_tool_iterations"):
+                base_params["_max_tool_iterations"] = int(kwargs["max_tool_iterations"])
         
         # Add structured output format if provided
         if response_format:
@@ -371,8 +375,10 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
         """
         # Bumped from 10 → 20 in 2026-04: legitimate multi-tool workflows
         # (schema list → get → update, batched task ops) were hitting the cap
-        # even when the model picked the right path.
-        max_iterations = 20
+        # even when the model picked the right path. Caller-tunable via
+        # ``max_tool_iterations`` (operator arcs raise it); popped here so it never
+        # reaches ``responses.create``.
+        max_iterations = max(1, min(int(request_params.pop("_max_tool_iterations", 20)), 100))
         iteration = 0
 
         # Stateless mode: build conversation by appending function_call + function_call_output to input
@@ -503,6 +509,11 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
                         "error": tool_result.get("error") if has_error and isinstance(tool_result, dict) else None,
                         "status": "failed" if has_error else "completed",
                     })
+
+                    # The crux, ported: a load op returns a top-level ``_load_tools``
+                    # to grow the tool set for later iterations of THIS turn.
+                    if isinstance(tool_result, dict) and tool_result.get("_load_tools"):
+                        self._extend_loop_tools(request_params, tool_result["_load_tools"])
 
                     llm_chars = len(llm_content) if isinstance(llm_content, str) else 0
                     logger.info(f"Tool {name} executed - sent {llm_chars} chars to LLM")
@@ -758,6 +769,20 @@ class OpenAILanguageModelProvider(LanguageModelProvider):
 
         return input_items
     
+    def _extend_loop_tools(self, request_params: Dict[str, Any], new_tools: List[Dict[str, Any]]) -> None:
+        """Mid-turn tool-set growth from a load op's ``_load_tools`` (the crux,
+        ported from Anthropic). Each iteration does ``loop_params = request_params.copy()``
+        (shallow — re-reads ``request_params['tools']``), so extending that list in
+        place is visible to every later iteration. Dedup by name."""
+        existing = {t.get("name") for t in request_params.get("tools", [])}
+        additions = [
+            t for t in self._prepare_tools_for_responses(new_tools)
+            if t.get("name") not in existing
+        ]
+        if additions:
+            request_params.setdefault("tools", []).extend(additions)
+            logger.info("Loaded %d tool(s) mid-turn: %s", len(additions), [t.get("name") for t in additions])
+
     def _prepare_tools_for_responses(self, tools: List[Dict[str, Any]], mcp_headers: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         """Convert tools to OpenAI function calling format."""
         responses_tools = []

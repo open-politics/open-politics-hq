@@ -677,6 +677,19 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
             "cache_read_input_tokens": 0,
         }
 
+        # Assistant text from *completed* iterations. Each iteration's own text
+        # lives in ``accumulated_content`` (reset per turn — it becomes that turn's
+        # assistant message for the model). The client replaces ``content`` on every
+        # chunk, so we must yield the running transcript (prefix + current); otherwise
+        # a later iteration's text overwrites all earlier narration and the message
+        # appears to vanish, leaving only the final response.
+        content_prefix = ""
+
+        def _full_content() -> str:
+            if content_prefix and accumulated_content:
+                return f"{content_prefix}\n\n{accumulated_content}"
+            return content_prefix or accumulated_content
+
         try:
             while iteration < max_iterations:
                 iteration += 1
@@ -742,7 +755,7 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                                 
                                 # Yield thinking delta
                                 yield GenerationResponse(
-                                    content=accumulated_content,
+                                    content=_full_content(),
                                     model_used=current_model,
                                     thinking_trace=accumulated_thinking_blocks[0].get("thinking") if accumulated_thinking_blocks else None,
                                     tool_calls=None,
@@ -755,7 +768,7 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                                 
                                 # Yield content delta
                                 yield GenerationResponse(
-                                    content=accumulated_content,
+                                    content=_full_content(),
                                     model_used=current_model,
                                     thinking_trace=accumulated_thinking_blocks[0].get("thinking") if accumulated_thinking_blocks else None,
                                     tool_calls=None,
@@ -810,7 +823,7 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                         f"output={cumulative_usage['output_tokens']}"
                     )
                     yield GenerationResponse(
-                        content=accumulated_content,
+                        content=_full_content(),
                         model_used=current_model,
                         usage=dict(cumulative_usage),
                         thinking_trace=accumulated_thinking_blocks[0].get("thinking") if accumulated_thinking_blocks else None,
@@ -902,9 +915,9 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                             "thinking_after": thinking_after,
                         }
                         all_tool_executions.append(pending_execution)
-                        
+
                         yield GenerationResponse(
-                            content=accumulated_content,
+                            content=_full_content(),
                             model_used=current_model,
                             thinking_trace=None,
                             tool_calls=None,
@@ -922,6 +935,13 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                         # the loop would only exit on the iteration cap.
                         if isinstance(tool_result, dict) and tool_result.get("_terminate_loop"):
                             terminate_signal = True
+
+                        # Mid-turn tool-set expansion: a ``load`` op returns
+                        # ``_load_tools`` (generic tool dicts) to grow the tool set
+                        # for later iterations of this same turn. Mirrors the
+                        # ``_terminate_loop`` sentinel above.
+                        if isinstance(tool_result, dict) and tool_result.get("_load_tools"):
+                            self._extend_loop_tools(request_params, tool_result["_load_tools"])
 
                         # Extract separate streams for LLM and frontend
                         llm_content, frontend_data = self._extract_tool_result_streams(tool_result, name)
@@ -945,7 +965,7 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                         
                         # Yield status update after execution
                         yield GenerationResponse(
-                            content=accumulated_content,
+                            content=_full_content(),
                             model_used=current_model,
                             thinking_trace=None,
                             tool_calls=None,
@@ -1000,7 +1020,7 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                         
                         # Yield error status
                         yield GenerationResponse(
-                            content=accumulated_content,
+                            content=_full_content(),
                             model_used=current_model,
                             thinking_trace=None,
                             tool_calls=None,
@@ -1034,7 +1054,7 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                         f"output={cumulative_usage['output_tokens']}"
                     )
                     yield GenerationResponse(
-                        content=accumulated_content,
+                        content=_full_content(),
                         model_used=current_model,
                         usage=dict(cumulative_usage),
                         thinking_trace=accumulated_thinking_blocks[0].get("thinking") if accumulated_thinking_blocks else None,
@@ -1044,6 +1064,14 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                         raw_response=None,
                     )
                     return
+
+                # This iteration made tool calls and the loop continues. Fold its
+                # narration into the transcript so the next iteration's text appends
+                # to it rather than replacing it on the client.
+                if accumulated_content:
+                    content_prefix = (
+                        f"{content_prefix}\n\n{accumulated_content}" if content_prefix else accumulated_content
+                    )
 
             # Max iterations reached
             logger.warning(f"Tool loop reached maximum iterations ({max_iterations})")
@@ -1095,6 +1123,16 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
         # being held open by ``tool_choice=any`` until the iteration cap.
         terminate_signal = False
 
+        # Assistant text from completed iterations (see _stream_tool_loop_wrapper):
+        # the final return must carry the whole transcript, not just the last turn's
+        # text, or earlier narration between tool rounds is lost.
+        content_prefix = ""
+
+        def _full(current: str) -> str:
+            if content_prefix and current:
+                return f"{content_prefix}\n\n{current}"
+            return content_prefix or current
+
         while iteration < max_iterations:
             iteration += 1
             logger.debug(f"Tool loop iteration {iteration}/{max_iterations}")
@@ -1138,7 +1176,7 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
             if not tool_uses:
                 logger.info(f"Tool loop iteration {iteration}: No tool calls, completing")
                 return GenerationResponse(
-                    content=content_text,
+                    content=_full(content_text),
                     model_used=response.model,
                     usage=response.usage.model_dump() if hasattr(response.usage, 'model_dump') else response.usage.__dict__,
                     thinking_trace=thinking_blocks[0].get("thinking") if thinking_blocks else None,
@@ -1209,6 +1247,11 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                     # Honour executor's terminate sentinel (Phase B done()).
                     if isinstance(tool_result, dict) and tool_result.get("_terminate_loop"):
                         terminate_signal = True
+
+                    # Mid-turn tool-set expansion (see _extend_loop_tools); mirrors
+                    # the terminate sentinel above.
+                    if isinstance(tool_result, dict) and tool_result.get("_load_tools"):
+                        self._extend_loop_tools(request_params, tool_result["_load_tools"])
 
                     # Extract separate streams for LLM and frontend
                     llm_content, frontend_data = self._extract_tool_result_streams(tool_result, name)
@@ -1301,7 +1344,7 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
             if terminate_signal:
                 logger.info(f"Tool loop terminated by executor sentinel at iteration {iteration}")
                 return GenerationResponse(
-                    content=content_text,
+                    content=_full(content_text),
                     model_used=response.model,
                     usage=response.usage.model_dump() if hasattr(response.usage, 'model_dump') else dict(response.usage),
                     thinking_trace=thinking_blocks[0].get("thinking") if thinking_blocks else None,
@@ -1311,12 +1354,19 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
                     raw_response=None,
                 )
 
+            # This iteration made tool calls and the loop continues. Fold its
+            # narration into the transcript so the next iteration appends to it.
+            if content_text:
+                content_prefix = (
+                    f"{content_prefix}\n\n{content_text}" if content_prefix else content_text
+                )
+
         # Max iterations reached
         logger.warning(f"Tool loop reached maximum iterations ({max_iterations})")
         final_response = await self._streamed_final(loop_params)
-        
+
         return GenerationResponse(
-            content=final_response.content[0].text if final_response.content else "Maximum tool execution iterations reached",
+            content=_full(final_response.content[0].text if final_response.content else "Maximum tool execution iterations reached"),
             model_used=final_response.model,
             usage=final_response.usage.model_dump() if hasattr(final_response.usage, 'model_dump') else final_response.usage.__dict__,
             thinking_trace=None,
@@ -1642,7 +1692,31 @@ class AnthropicLanguageModelProvider(LanguageModelProvider):
         
         logger.info(f"Prepared {len(formatted_tools)} tools for Anthropic")
         return formatted_tools
-    
+
+    def _extend_loop_tools(self, request_params: Dict[str, Any], new_tools: List[Dict[str, Any]]) -> None:
+        """Extend the loop's tool set in place with ``_load_tools`` from a load op.
+
+        The catalogue's ``load`` returns generic tool dicts under ``_load_tools``
+        to add tools the model can call on *subsequent* iterations of the same
+        turn. Because each iteration does ``loop_params = request_params.copy()``
+        (a shallow copy that re-reads ``request_params["tools"]``), extending that
+        list in place is visible to every later iteration. Dedup by name. Loaded
+        tools are sent uncached — the original cached prefix (up to its
+        ``cache_control`` marker) still hits, and we don't add a cache breakpoint
+        per load to stay within Anthropic's four-breakpoint limit.
+        """
+        existing = {t.get("name") for t in request_params.get("tools", [])}
+        additions = [
+            t for t in self._prepare_tools_for_anthropic(new_tools)
+            if t.get("name") not in existing
+        ]
+        if additions:
+            request_params.setdefault("tools", []).extend(additions)
+            logger.info(
+                "Loaded %d tool(s) mid-turn: %s",
+                len(additions), [t.get("name") for t in additions],
+            )
+
     def get_model_info(self, model_name: str) -> Optional[ModelInfo]:
         """Get cached model info"""
         return self._model_cache.get(model_name)

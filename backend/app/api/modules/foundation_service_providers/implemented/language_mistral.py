@@ -88,6 +88,18 @@ class MistralLanguageModelProvider(LanguageModelProvider):
         """Get information about a specific model."""
         return self._model_cache.get(model_name)
     
+    def _extend_loop_tools(self, request_params: Dict, new_tools: List[Dict]) -> None:
+        """Mid-turn tool-set growth from a load op's ``_load_tools`` (the crux,
+        ported from Anthropic). ``loop_params = request_params.copy()`` re-reads
+        ``request_params['tools']`` each iteration, so extending in place is seen by
+        later iterations. Dedup by function name (Mistral nests it under ``function``)."""
+        def _n(t): return (t.get("function") or {}).get("name")
+        existing = {_n(t) for t in request_params.get("tools", [])}
+        additions = [t for t in self._prepare_tools_for_mistral(new_tools) if _n(t) not in existing]
+        if additions:
+            request_params.setdefault("tools", []).extend(additions)
+            logger.info("Loaded %d tool(s) mid-turn: %s", len(additions), [_n(t) for t in additions])
+
     def _prepare_tools_for_mistral(self, tools: List[Dict]) -> List[Dict]:
         """Convert tools to Mistral format."""
         mistral_tools = []
@@ -177,6 +189,9 @@ class MistralLanguageModelProvider(LanguageModelProvider):
         # Add tools if provided
         if tools:
             request_params["tools"] = self._prepare_tools_for_mistral(tools)
+            # Caller-tunable tool-loop cap (operator arcs raise it); popped in the loop.
+            if kwargs.get("max_tool_iterations"):
+                request_params["_max_tool_iterations"] = int(kwargs["max_tool_iterations"])
             # Default tool_choice is "auto" - let model decide
             if kwargs.get("tool_choice"):
                 request_params["tool_choice"] = kwargs["tool_choice"]
@@ -415,9 +430,9 @@ class MistralLanguageModelProvider(LanguageModelProvider):
         # Bumped from 10 → 20 in 2026-04 (matches Anthropic/OpenAI) — see
         # conversation_service system prompt for the routing guidance that
         # should keep real paths well under this cap.
-        max_iterations = 20
+        max_iterations = max(1, min(int(request_params.pop("_max_tool_iterations", 20)), 100))
         iteration = 0
-        
+
         # Build conversation by appending to messages array
         conversation_messages = list(request_params.get("messages", []))
         
@@ -529,7 +544,11 @@ class MistralLanguageModelProvider(LanguageModelProvider):
                     
                     # Check if tool execution failed
                     has_error = isinstance(tool_result, dict) and bool(tool_result.get("error"))
-                    
+
+                    # The crux, ported: grow the tool set mid-turn from a load op.
+                    if isinstance(tool_result, dict) and tool_result.get("_load_tools"):
+                        self._extend_loop_tools(request_params, tool_result["_load_tools"])
+
                     # Send concise content to LLM with tool_call_id
                     # Mistral requires tool_call_id to match the tool call ID
                     tool_call_id = tc.get("id")
