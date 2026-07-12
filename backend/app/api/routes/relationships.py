@@ -8,7 +8,7 @@ is_pinned). Most pairs have no overlay row and show only derived counts.
 PATCH lazy-materializes: the first user pin/note/tag creates the row.
 DELETE removes only the overlay; derived counts are unchanged.
 
-Canonical ordering: ``entity_a_id < entity_b_id`` is enforced at the DB
+Canonical ordering: ``entry_a_id < entry_b_id`` is enforced at the DB
 level. Routes accept ``(a, b)`` in any order; ``_normalize_pair`` puts them
 into canonical order before lookup/insert. Callers don't need to know the
 ordering.
@@ -27,7 +27,7 @@ from sqlmodel import Session, select
 from sqlalchemy import and_, func, or_, text
 
 from app.models import (
-    Entity, EntityRelationship, GraphEdge, KnowledgeGraph,
+    CanonEntry, EntityRelationship, GraphEdge, KnowledgeGraph,
 )
 from app.api.modules.graph.schemas import (
     EntityRelationshipRead, EntityRelationshipUpdate,
@@ -44,9 +44,9 @@ logger = logging.getLogger(__name__)
 def _normalize_pair(a: int, b: int) -> tuple[int, int]:
     """Return ``(min, max)`` so callers can pass ``(a, b)`` in any order.
 
-    Mirrors the DB CHECK ``entity_a_id < entity_b_id`` — see the
+    Mirrors the DB CHECK ``entry_a_id < entry_b_id`` — see the
     ``EntityRelationship`` model. Pairs where ``a == b`` are rejected;
-    a relationship requires two distinct entities.
+    a relationship requires two distinct entries.
     """
     if a == b:
         raise HTTPException(
@@ -69,16 +69,16 @@ def _ensure_graph_in_scope(
 
 def _ensure_pair_in_canon(
     graph: KnowledgeGraph, a_id: int, b_id: int, db: Session,
-) -> tuple[Entity, Entity]:
-    """Both entities must exist and live in the graph's canon."""
-    a = db.get(Entity, a_id)
-    b = db.get(Entity, b_id)
+) -> tuple[CanonEntry, CanonEntry]:
+    """Both entries must exist and live in the graph's canon."""
+    a = db.get(CanonEntry, a_id)
+    b = db.get(CanonEntry, b_id)
     if not a or not b:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found")
     if a.canon_id != graph.canon_id or b.canon_id != graph.canon_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Entities must belong to the graph's canon ({graph.canon_id})",
+            detail=f"Entries must belong to the graph's canon ({graph.canon_id})",
         )
     return a, b
 
@@ -126,16 +126,16 @@ def list_relationships(
         WITH normalized AS (
             SELECT
                 graph_id,
-                LEAST(source_entity_id, target_entity_id) AS entity_a_id,
-                GREATEST(source_entity_id, target_entity_id) AS entity_b_id,
+                LEAST(source_entry_id, target_entry_id) AS entry_a_id,
+                GREATEST(source_entry_id, target_entry_id) AS entry_b_id,
                 predicate
               FROM graphedge
              WHERE graph_id = :gid
-               AND source_entity_id <> target_entity_id
+               AND source_entry_id <> target_entry_id
         )
         SELECT
-            n.entity_a_id,
-            n.entity_b_id,
+            n.entry_a_id,
+            n.entry_b_id,
             count(*) AS edge_count,
             array_agg(DISTINCT n.predicate) FILTER (WHERE n.predicate IS NOT NULL) AS predicates,
             er.id AS er_id,
@@ -143,10 +143,10 @@ def list_relationships(
           FROM normalized n
           LEFT JOIN entityrelationship er
             ON er.graph_id = n.graph_id
-           AND er.entity_a_id = n.entity_a_id
-           AND er.entity_b_id = n.entity_b_id
+           AND er.entry_a_id = n.entry_a_id
+           AND er.entry_b_id = n.entry_b_id
         {overlay_filter}
-         GROUP BY n.entity_a_id, n.entity_b_id, er.id, er.label, er.notes, er.tags, er.properties, er.is_pinned, er.is_active
+         GROUP BY n.entry_a_id, n.entry_b_id, er.id, er.label, er.notes, er.tags, er.properties, er.is_pinned, er.is_active
          ORDER BY edge_count DESC
          LIMIT :lim OFFSET :off
     """)
@@ -155,8 +155,8 @@ def list_relationships(
     return [
         EntityRelationshipRead(
             graph_id=graph_id,
-            entity_a_id=row.entity_a_id,
-            entity_b_id=row.entity_b_id,
+            entry_a_id=row.entry_a_id,
+            entry_b_id=row.entry_b_id,
             edge_count=row.edge_count,
             predicates=list(row.predicates or []),
             id=row.er_id,
@@ -191,16 +191,16 @@ def get_relationship(
           FROM graphedge
          WHERE graph_id = :gid
            AND (
-             (source_entity_id = :a AND target_entity_id = :b) OR
-             (source_entity_id = :b AND target_entity_id = :a)
+             (source_entry_id = :a AND target_entry_id = :b) OR
+             (source_entry_id = :b AND target_entry_id = :a)
            )
     """), {"gid": graph_id, "a": a_id, "b": b_id}).first()
 
     overlay = db.exec(
         select(EntityRelationship).where(
             EntityRelationship.graph_id == graph_id,
-            EntityRelationship.entity_a_id == a_id,
-            EntityRelationship.entity_b_id == b_id,
+            EntityRelationship.entry_a_id == a_id,
+            EntityRelationship.entry_b_id == b_id,
         )
     ).first()
 
@@ -209,8 +209,8 @@ def get_relationship(
 
     return EntityRelationshipRead(
         graph_id=graph_id,
-        entity_a_id=a_id,
-        entity_b_id=b_id,
+        entry_a_id=a_id,
+        entry_b_id=b_id,
         edge_count=int(edge_stats.edge_count or 0) if edge_stats else 0,
         predicates=list((edge_stats.predicates if edge_stats else None) or []),
         id=overlay.id if overlay else None,
@@ -246,15 +246,15 @@ def upsert_relationship(
     overlay = db.exec(
         select(EntityRelationship).where(
             EntityRelationship.graph_id == graph_id,
-            EntityRelationship.entity_a_id == a_id,
-            EntityRelationship.entity_b_id == b_id,
+            EntityRelationship.entry_a_id == a_id,
+            EntityRelationship.entry_b_id == b_id,
         )
     ).first()
 
     if overlay is None:
         overlay = EntityRelationship(
-            entity_a_id=a_id,
-            entity_b_id=b_id,
+            entry_a_id=a_id,
+            entry_b_id=b_id,
             graph_id=graph_id,
             created_by=access.user_id,
         )
@@ -284,15 +284,15 @@ def upsert_relationship(
           FROM graphedge
          WHERE graph_id = :gid
            AND (
-             (source_entity_id = :a AND target_entity_id = :b) OR
-             (source_entity_id = :b AND target_entity_id = :a)
+             (source_entry_id = :a AND target_entry_id = :b) OR
+             (source_entry_id = :b AND target_entry_id = :a)
            )
     """), {"gid": graph_id, "a": a_id, "b": b_id}).first()
 
     return EntityRelationshipRead(
         graph_id=graph_id,
-        entity_a_id=a_id,
-        entity_b_id=b_id,
+        entry_a_id=a_id,
+        entry_b_id=b_id,
         edge_count=int(edge_stats.edge_count or 0) if edge_stats else 0,
         predicates=list((edge_stats.predicates if edge_stats else None) or []),
         id=overlay.id,
@@ -328,8 +328,8 @@ def delete_relationship_overlay(
     overlay = db.exec(
         select(EntityRelationship).where(
             EntityRelationship.graph_id == graph_id,
-            EntityRelationship.entity_a_id == a_id,
-            EntityRelationship.entity_b_id == b_id,
+            EntityRelationship.entry_a_id == a_id,
+            EntityRelationship.entry_b_id == b_id,
         )
     ).first()
 

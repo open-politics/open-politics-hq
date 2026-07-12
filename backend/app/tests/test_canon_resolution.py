@@ -2,7 +2,7 @@
 
 Key invariants under test:
 - Resolution scopes by ``canon_id`` only — same ``(name, type)`` curated
-  into different canons produces two different Entity rows.
+  into different canons produces two different CanonEntry rows.
 - ``find_by_alias`` returns entries from the target canon only.
 - ``resolve_entities_batch`` creates fresh rows when the lookup misses.
 - The ``_resolve_target_canon`` helper falls back to the infospace's
@@ -19,7 +19,7 @@ import uuid
 
 import pytest
 
-from app.api.modules.graph.models import Canon, Entity, KnowledgeGraph
+from app.api.modules.graph.models import Canon, CanonEntry, KnowledgeGraph
 from app.api.modules.graph.resolution import (
     find_by_alias,
     resolve_entities_batch,
@@ -66,8 +66,8 @@ def test_find_by_alias_returns_only_canon_members(client, headers, workspace):
         f"{API}/infospaces/{workspace}/entities",
         headers=headers,
         json={
-            "canonical_name": name,
-            "entity_type": "Organization",
+            "canonical": name,
+            "type": "Organization",
             "canon_id": canon_a,
         },
     )
@@ -161,6 +161,40 @@ def test_resolve_target_canon_uses_graph_canon(client, headers, workspace):
             next(gen)
         except StopIteration:
             pass
+
+
+def test_resolve_entities_batch_settled_only(client, headers, workspace):
+    """settled_only: an exact/alias match returns the entry; an unmatched mention is
+    absent from the result and is NOT created (it would stage as a proposal)."""
+    canon_id = client.post(
+        f"{API}/infospaces/{workspace}/canons",
+        headers=headers, json={"name": f"Settled-{uuid.uuid4().hex[:6]}"},
+    ).json()["id"]
+    known = f"Germany-{uuid.uuid4().hex[:4]}"
+    miss = f"Atlantis-{uuid.uuid4().hex[:4]}"
+    client.post(
+        f"{API}/infospaces/{workspace}/entities", headers=headers,
+        json={"canonical": known, "type": "country", "canon_id": canon_id},
+    )
+
+    db, gen = _db_session()
+    try:
+        result = asyncio.run(resolve_entities_batch(
+            session=db, infospace_id=workspace, canon_id=canon_id,
+            entities=[(known, "country"), (miss, "country")],
+            use_embeddings=False, settled_only=True,
+        ))
+        db.commit()
+        assert (known, "country") in result, "settled match should resolve"
+        assert (miss, "country") not in result, "unmatched mention must be absent"
+    finally:
+        db.close()
+        try: next(gen)
+        except StopIteration: pass
+
+    # The miss was NOT created — only the seeded entry exists.
+    entries = client.get(f"{API}/infospaces/{workspace}/canons/{canon_id}/entities", headers=headers).json()
+    assert {e["canonical"] for e in entries} == {known}
 
 
 def test_cross_canon_collision_creates_fresh(client, headers, workspace):

@@ -1,34 +1,35 @@
 """Graph domain — knowledge primitives.
 
 Public surface:
-- ``Canon`` / ``CanonRole``: vocabulary container, role enum (general | geo | …).
-- ``Entity``: a member of a canon (replaces ``EntityCanonical``).
+- ``Canon``: a portable vocabulary container.
+- ``CanonEntry``: a member of a canon (table ``canon_entry``; was ``Entity`` /
+  ``EntityCanonical``).
 - ``EntityRelationship``: sparse, lazy-materialized aggregate per pair.
 - ``KnowledgeGraph``: backed by exactly one Canon.
-- ``GraphEdge``: per-triplet evidence row (``source_entity_id`` /
-  ``target_entity_id``).
+- ``GraphEdge``: per-triplet evidence row (``source_entry_id`` /
+  ``target_entry_id``).
 - ``FragmentCuration``: provenance for a curated annotation fragment.
-- ``EntityEditLog``: audit log for manual entity edits.
+- ``EntityEditLog``: audit log for manual entry edits.
 """
 
 from app.api.modules.graph.models import (
     Canon,
-    CanonRole,
     KnowledgeGraph,
-    Entity,
+    CanonEntry,
     EntityRelationship,
     EntityEditLog,
     FragmentCuration,
     GraphEdge,
+    CanonProposal,
 )
 
 __all__ = [
     "Canon",
-    "CanonRole",
     "KnowledgeGraph",
-    "Entity",
+    "CanonEntry",
     "EntityRelationship",
     "EntityEditLog",
     "FragmentCuration",
     "GraphEdge",
+    "CanonProposal",
 ]

@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from sqlmodel import Session
 from sqlalchemy import text
 
-from app.api.modules.graph.models import Entity
+from app.api.modules.graph.models import CanonEntry
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +28,11 @@ class GraphService:
         """Get entity neighborhood for interactive graph exploration.
 
         Returns entities connected via materialized GraphEdge rows up to the
-        given depth. ``graph_id`` is now an explicit caller parameter — Entity
-        no longer carries a graph_id (entities live on canons; graphs reference
-        entities via edges).
+        given depth. ``graph_id`` is now an explicit caller parameter — CanonEntry
+        no longer carries a graph_id (entries live on canons; graphs reference
+        entries via edges).
         """
-        entity = self.session.get(Entity, entity_id)
+        entity = self.session.get(CanonEntry, entity_id)
         if not entity:
             return {"nodes": [], "edges": []}
         if infospace_id and entity.infospace_id != infospace_id:
@@ -40,7 +40,7 @@ class GraphService:
 
         seen: set[int] = {entity_id}
         frontier: List[int] = [entity_id]
-        nodes: Dict[int, Entity] = {entity_id: entity}
+        nodes: Dict[int, CanonEntry] = {entity_id: entity}
         edges: List[Dict[str, Any]] = []
 
         for _ in range(depth):
@@ -52,7 +52,7 @@ class GraphService:
                 for conn_id, pred in connected:
                     if conn_id not in seen:
                         seen.add(conn_id)
-                        conn_entity = self.session.get(Entity, conn_id)
+                        conn_entity = self.session.get(CanonEntry, conn_id)
                         if conn_entity:
                             nodes[conn_id] = conn_entity
                             edges.append({
@@ -73,8 +73,8 @@ class GraphService:
             "nodes": [
                 {
                     "id": str(e.id),
-                    "name": e.canonical_name,
-                    "type": e.entity_type,
+                    "name": e.canonical,
+                    "type": e.type,
                 }
                 for e in nodes.values()
             ],
@@ -94,24 +94,24 @@ class GraphService:
         """
         if graph_id is not None:
             sql = text("""
-                SELECT target_entity_id AS other_id, predicate
+                SELECT target_entry_id AS other_id, predicate
                 FROM graphedge
-                WHERE source_entity_id = :eid AND graph_id = :gid
+                WHERE source_entry_id = :eid AND graph_id = :gid
                 UNION ALL
-                SELECT source_entity_id AS other_id, predicate
+                SELECT source_entry_id AS other_id, predicate
                 FROM graphedge
-                WHERE target_entity_id = :eid AND graph_id = :gid
+                WHERE target_entry_id = :eid AND graph_id = :gid
             """)
             rows = self.session.execute(sql, {"eid": entity_id, "gid": graph_id}).fetchall()
         else:
             sql = text("""
-                SELECT target_entity_id AS other_id, predicate
+                SELECT target_entry_id AS other_id, predicate
                 FROM graphedge
-                WHERE source_entity_id = :eid AND infospace_id = :iid AND graph_id IS NULL
+                WHERE source_entry_id = :eid AND infospace_id = :iid AND graph_id IS NULL
                 UNION ALL
-                SELECT source_entity_id AS other_id, predicate
+                SELECT source_entry_id AS other_id, predicate
                 FROM graphedge
-                WHERE target_entity_id = :eid AND infospace_id = :iid AND graph_id IS NULL
+                WHERE target_entry_id = :eid AND infospace_id = :iid AND graph_id IS NULL
             """)
             rows = self.session.execute(sql, {"eid": entity_id, "iid": infospace_id}).fetchall()
         return [(r[0], r[1]) for r in rows if r[0] != entity_id]

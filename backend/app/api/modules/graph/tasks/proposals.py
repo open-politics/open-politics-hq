@@ -27,7 +27,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlmodel import select
 
-from app.api.modules.graph.models import Entity, GraphEdge, KnowledgeGraph, Canon
+from app.api.modules.graph.models import CanonEntry, GraphEdge, KnowledgeGraph, Canon
 from app.api.modules.graph.schemas import (
     ProposeResolutionsParams,
     ResolutionProposal,
@@ -78,23 +78,23 @@ def _propose_entity_pairs(
     entity_type_filter: Optional[list[str]],
     max_proposals: int,
 ) -> list[ResolutionProposal]:
-    """Scan entities in the canon for embedding-similar pairs of the same type.
+    """Scan entries in the canon for embedding-similar pairs of the same type.
 
-    The "keep" entity is the one with the longer canonical_name (more specific
+    The "keep" entry is the one with the longer canonical (more specific
     label tends to be the better canonical). Caller can override via the
     confirm step.
     """
-    stmt = select(Entity).where(Entity.canon_id == canon_id)
+    stmt = select(CanonEntry).where(CanonEntry.canon_id == canon_id)
     if entity_type_filter:
-        stmt = stmt.where(Entity.entity_type.in_(entity_type_filter))
+        stmt = stmt.where(CanonEntry.type.in_(entity_type_filter))
     entities = session.exec(stmt).all()
     if len(entities) < 2:
         return []
 
-    # Group by entity_type — only same-type pairs are merge candidates.
-    by_type: dict[str, list[Entity]] = {}
+    # Group by type — only same-type pairs are merge candidates.
+    by_type: dict[str, list[CanonEntry]] = {}
     for e in entities:
-        by_type.setdefault(e.entity_type, []).append(e)
+        by_type.setdefault(e.type, []).append(e)
 
     proposals: list[ResolutionProposal] = []
     for etype, group in by_type.items():
@@ -118,12 +118,12 @@ def _propose_entity_pairs(
                     sim = _cosine(getattr(a, col), getattr(b, col))
                     if sim < threshold:
                         continue
-                    keep, cand = (a, b) if len(a.canonical_name) >= len(b.canonical_name) else (b, a)
+                    keep, cand = (a, b) if len(a.canonical) >= len(b.canonical) else (b, a)
                     proposals.append(ResolutionProposal(
                         kind="entity",
-                        keep=keep.canonical_name,
+                        keep=keep.canonical,
                         keep_id=keep.id,
-                        candidates=[cand.canonical_name],
+                        candidates=[cand.canonical],
                         candidate_ids=[cand.id],
                         similarity=round(sim, 4),
                         type=etype,

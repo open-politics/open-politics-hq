@@ -18,7 +18,7 @@ from sqlmodel import Session, select
 from sqlalchemy import func, update, or_
 
 from app.models import (
-    KnowledgeGraph, GraphEdge, Entity, Canon, FragmentCuration, EntityRelationship,
+    KnowledgeGraph, GraphEdge, CanonEntry, Canon, FragmentCuration, EntityRelationship,
 )
 from app.api.modules.graph.schemas import (
     KnowledgeGraphCreate, KnowledgeGraphUpdate, KnowledgeGraphRead,
@@ -258,22 +258,22 @@ def list_entity_types(
     graph_id: int | None = None,
     db: Session = Depends(get_db),
 ) -> Any:
-    """List all unique entity types with entity counts.
+    """List all unique entity types with entry counts.
 
-    When ``graph_id`` is provided, scopes to entities in the graph's canon.
-    Otherwise lists all entities in the infospace.
+    When ``graph_id`` is provided, scopes to entries in the graph's canon.
+    Otherwise lists all entries in the infospace.
     """
     infospace_id = access.infospace_id
     stmt = (
-        select(Entity.entity_type, func.count(Entity.id).label("count"))
-        .where(Entity.infospace_id == infospace_id)
-        .group_by(Entity.entity_type)
-        .order_by(func.count(Entity.id).desc())
+        select(CanonEntry.type, func.count(CanonEntry.id).label("count"))
+        .where(CanonEntry.infospace_id == infospace_id)
+        .group_by(CanonEntry.type)
+        .order_by(func.count(CanonEntry.id).desc())
     )
     if graph_id is not None:
         graph = db.get(KnowledgeGraph, graph_id)
         if graph:
-            stmt = stmt.where(Entity.canon_id == graph.canon_id)
+            stmt = stmt.where(CanonEntry.canon_id == graph.canon_id)
     rows = db.exec(stmt).all()
     return [EntityTypeSummary(entity_type=r[0], count=r[1]) for r in rows]
 
@@ -291,14 +291,14 @@ def rename_entity_types(
         raise HTTPException(status_code=400, detail="old_types must not be empty")
 
     stmt = (
-        update(Entity)
-        .where(Entity.infospace_id == infospace_id)
-        .where(Entity.entity_type.in_(body.old_types))
+        update(CanonEntry)
+        .where(CanonEntry.infospace_id == infospace_id)
+        .where(CanonEntry.type.in_(body.old_types))
     )
     if body.graph_id is not None:
         graph = db.get(KnowledgeGraph, body.graph_id)
         if graph:
-            stmt = stmt.where(Entity.canon_id == graph.canon_id)
-    result = db.exec(stmt.values(entity_type=body.new_type))
+            stmt = stmt.where(CanonEntry.canon_id == graph.canon_id)
+    result = db.exec(stmt.values(type=body.new_type))
     db.commit()
     return {"updated": result.rowcount, "new_type": body.new_type}

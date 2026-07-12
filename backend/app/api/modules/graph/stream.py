@@ -462,8 +462,8 @@ def _safe_col_alias(field_path: str, fallback: str) -> str:
 class PersistentGraphSource:
     """Materialized source: reads the ``GraphEdge`` table.
 
-    Windows by edge id ascending. Entity metadata comes from ``Entity`` via
-    join. The DB-side columns are ``source_entity_id`` / ``target_entity_id``
+    Windows by edge id ascending. Entry metadata comes from ``CanonEntry`` via
+    join. The DB-side columns are ``source_entry_id`` / ``target_entry_id``
     (graph-theory neutral); the projected fields keep the ``subject_*`` /
     ``object_*`` names that the streaming triplet shape expects (LLM-facing
     contract).
@@ -490,14 +490,14 @@ class PersistentGraphSource:
                 SELECT
                     ge.id AS edge_id,
                     ge.annotation_id,
-                    src.canonical_name AS subject_name,
-                    src.entity_type    AS subject_type,
-                    ge.predicate       AS predicate,
-                    tgt.canonical_name AS object_name,
-                    tgt.entity_type    AS object_type
+                    src.canonical     AS subject_name,
+                    src.type          AS subject_type,
+                    ge.predicate      AS predicate,
+                    tgt.canonical     AS object_name,
+                    tgt.type          AS object_type
                 FROM graphedge ge
-                JOIN entity src ON src.id = ge.source_entity_id
-                JOIN entity tgt ON tgt.id = ge.target_entity_id
+                JOIN canon_entry src ON src.id = ge.source_entry_id
+                JOIN canon_entry tgt ON tgt.id = ge.target_entry_id
                 WHERE {' AND '.join(where)}
                 ORDER BY ge.id ASC
                 LIMIT :stream_lim

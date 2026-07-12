@@ -11,13 +11,13 @@ Action verbs use ``/action/{verb}`` (mirrors ``annotation_runs.py:1270``'s
 ``/action/delete``.
 
 Lean route shape: ``Requires() → method call → return``. No new services;
-reuses ``resolve_entities_batch`` and the existing entity FK-rewrite block
+reuses ``resolve_entities_batch`` and the existing entry FK-rewrite block
 from ``routes/entities.py`` (transitively, via merge logic).
 
 Bridging with run-scoped merge maps:
 - ``POST /infospaces/{iid}/canons/{cid}/action/extend`` reads
   ``run.graph_config.entity_merges`` (transient, never moved) and
-  materializes the entries as Entity rows in the canon. The run config is
+  materializes the entries as CanonEntry rows in the canon. The run config is
   NOT mutated.
 - ``GET /infospaces/{iid}/runs/{run_id}/canon-suggestions`` proposes which
   entries from the run would land in canon (add / already_present /
@@ -25,34 +25,48 @@ Bridging with run-scoped merge maps:
 """
 
 import logging
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 from sqlalchemy import func
 
+from datetime import datetime, timezone
+
 from app.models import (
-    Canon, Entity, EntityRelationship, FragmentCuration, GraphEdge,
-    KnowledgeGraph, Infospace,
+    Canon, CanonEntry, EntityRelationship, FragmentCuration, GraphEdge,
+    KnowledgeGraph, Infospace, CanonProposal, Annotation,
 )
 from app.api.modules.annotation.models import AnnotationRun
 from app.api.modules.graph.schemas import (
     CanonRead, CanonCreate, CanonUpdate,
     ExtendCanonRequest, CanonExtendResponse,
+    PromoteRunRequest, PromoteResponse,
+    ResolveIntoCanonRequest, CanonProposalRead, CanonProposalAcceptRequest,
+    BulkProposalRequest, BulkProposalResponse,
     CanonSuggestion, CanonSuggestionsResponse,
-    EntityRead,
+    CanonEntryRead,
     MergeEntitiesRequest,
     DeleteImpact, DeleteRequest,
     EntityMergeHint,
     ProposeResolutionsParams,
 )
-from app.api.modules.graph.resolution import resolve_entities_batch, find_by_alias
+from app.api.modules.graph.resolution import resolve_entities_batch, find_by_alias, resolve_entity
+from app.api.modules.graph.services.canon_service import (
+    combine_entries, serialize_canon, materialize_canon,
+)
+from app.api.modules.graph.promote import normalize_run_folds, promote_folds
 from app.api.dependency_injection import get_db
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _dump_type_schemas(type_schemas) -> Dict[str, Any]:
+    """Plain-JSON form of a ``{type: [CanonPropertyDef]}`` map for the JSON column."""
+    return {k: [d.model_dump() for d in v] for k, v in (type_schemas or {}).items()}
 
 
 router = APIRouter(
@@ -68,13 +82,10 @@ router = APIRouter(
 def list_canons(
     *,
     access: Access = Requires(scope="canon_ids"),
-    role: Optional[str] = Query(default=None, description="Filter by canon role (general | geo | …)"),
     db: Session = Depends(get_db),
 ) -> Any:
     """List canons for an infospace."""
     stmt = select(Canon).where(Canon.infospace_id == access.infospace_id)
-    if role:
-        stmt = stmt.where(Canon.role == role)
     stmt = access.scope_filter(stmt, Canon.id, "canon_ids")
     return list(db.exec(stmt).all())
 
@@ -91,7 +102,9 @@ async def create_canon(
         infospace_id=access.infospace_id,
         name=body.name,
         description=body.description,
-        role=body.role,
+        external_id=body.external_id,
+        tags=body.tags or [],
+        type_schemas=_dump_type_schemas(body.type_schemas),
     )
     db.add(canon)
     db.flush()
@@ -158,7 +171,7 @@ def update_canon(
     body: CanonUpdate,
     db: Session = Depends(get_db),
 ) -> Any:
-    """Update name / description / role."""
+    """Update name / description / external_id / tags / type_schemas."""
     canon = db.get(Canon, canon_id)
     if not canon or canon.infospace_id != access.infospace_id:
         raise HTTPException(status_code=404, detail="Canon not found")
@@ -166,15 +179,19 @@ def update_canon(
         canon.name = body.name
     if body.description is not None:
         canon.description = body.description
-    if body.role is not None:
-        canon.role = body.role
+    if body.external_id is not None:
+        canon.external_id = body.external_id
+    if body.tags is not None:
+        canon.tags = body.tags
+    if body.type_schemas is not None:
+        canon.type_schemas = _dump_type_schemas(body.type_schemas)
     db.add(canon)
     db.commit()
     db.refresh(canon)
     return canon
 
 
-@router.get("/{canon_id}/entities", response_model=List[EntityRead])
+@router.get("/{canon_id}/entities", response_model=List[CanonEntryRead])
 def list_canon_entities(
     *,
     canon_id: int,
@@ -184,15 +201,15 @@ def list_canon_entities(
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> Any:
-    """List entities in a canon."""
+    """List entries in a canon."""
     canon = db.get(Canon, canon_id)
     if not canon or canon.infospace_id != access.infospace_id:
         raise HTTPException(status_code=404, detail="Canon not found")
     access.require_in_scope("canon_ids", canon_id)
 
-    stmt = select(Entity).where(Entity.canon_id == canon_id)
+    stmt = select(CanonEntry).where(CanonEntry.canon_id == canon_id)
     if entity_type:
-        stmt = stmt.where(Entity.entity_type == entity_type)
+        stmt = stmt.where(CanonEntry.type == entity_type)
     stmt = stmt.offset(offset).limit(limit)
     return list(db.exec(stmt).all())
 
@@ -208,11 +225,12 @@ async def extend_canon_from_run(
     body: ExtendCanonRequest,
     db: Session = Depends(get_db),
 ) -> Any:
-    """Pull a run's transient ``entity_merges`` into the canon as Entity rows.
+    """Promote a run's folds into the canon as CanonEntry rows.
 
-    The run's ``graph_config`` is NOT mutated — merge hints stay transient.
-    Existing entities (matched by alias) accumulate the new aliases; missing
-    entities are created.
+    The run's config is NOT mutated — folds stay the run's working canvas. This
+    is the canon-centric face of the promote seam (pick a canon, pull a run's
+    folds in); the run-centric face is ``POST /runs/{id}/action/promote``. Both
+    call ``promote_folds``.
     """
     canon = db.get(Canon, canon_id)
     if not canon or canon.infospace_id != access.infospace_id:
@@ -223,49 +241,20 @@ async def extend_canon_from_run(
     if not run or run.infospace_id != access.infospace_id:
         raise HTTPException(status_code=404, detail=f"Run {body.run_id} not found")
 
-    groups = (run.graph_config or {}).get("entity_merges", [])
-    if not groups:
-        return CanonExtendResponse(added=0, skipped=0, entries=[])
-
-    added = 0
-    skipped = 0
-    entries: list[dict] = []
-    for group in groups:
-        keep = group.get("keep", "")
-        etype = group.get("type") or "UNKNOWN"
-        names = group.get("names", [])
-        if not keep:
-            skipped += 1
-            continue
-
-        existing = find_by_alias(db, canon_id=canon_id, raw_name=keep, entity_type=etype)
-        if existing:
-            new_aliases = set(existing.aliases or [])
-            new_aliases.update(names)
-            new_aliases.add(keep)
-            existing.aliases = list(new_aliases)
-            db.add(existing)
-            entries.append({"keep": keep, "type": etype, "status": "extended", "entity_id": existing.id})
-            added += 1
-        else:
-            ent = Entity(
-                infospace_id=access.infospace_id,
-                canon_id=canon_id,
-                canonical_name=keep,
-                entity_type=etype,
-                aliases=list({keep, *names}),
-                provenance_type="manual",
-            )
-            db.add(ent)
-            db.flush()
-            entries.append({"keep": keep, "type": etype, "status": "created", "entity_id": ent.id})
-            added += 1
-
+    folds = normalize_run_folds(run)
+    summary = promote_folds(
+        db, infospace_id=access.infospace_id, canon_id=canon_id,
+        folds=folds, log_user_id=access.user_id,
+    )
     db.commit()
-    return CanonExtendResponse(added=added, skipped=skipped, entries=entries)
+    return CanonExtendResponse(
+        added=summary["created"] + summary["merged"] + summary["extended"],
+        skipped=summary["skipped"],
+        entries=summary["entries"],
+    )
 
 
-@router.post("/{canon_id}/action/merge-entities", response_model=EntityRead)
+@router.post("/{canon_id}/action/merge-entities", response_model=CanonEntryRead)
 def merge_in_canon(
     *,
     canon_id: int,
@@ -273,93 +262,296 @@ def merge_in_canon(
     body: MergeEntitiesRequest,
     db: Session = Depends(get_db),
 ) -> Any:
-    """Merge entities within a canon. Cross-canon merges rejected — entities
+    """Merge entries within a canon. Cross-canon merges rejected — entries
     must share a canon for a merge to make sense.
     """
     canon = db.get(Canon, canon_id)
     if not canon or canon.infospace_id != access.infospace_id:
         raise HTTPException(status_code=404, detail="Canon not found")
-    if len(body.entity_ids) < 2:
-        raise HTTPException(status_code=400, detail="At least 2 entity IDs required")
+    if len(body.entry_ids) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 entry IDs required")
 
-    entities: List[Entity] = []
-    for eid in body.entity_ids:
+    entities: List[CanonEntry] = []
+    for eid in body.entry_ids:
         access.require_in_scope("entity_ids", eid)
-        ent = db.get(Entity, eid)
+        ent = db.get(CanonEntry, eid)
         if not ent or ent.canon_id != canon_id:
             raise HTTPException(
                 status_code=404,
-                detail=f"Entity {eid} not in canon {canon_id}",
+                detail=f"Entry {eid} not in canon {canon_id}",
             )
         entities.append(ent)
 
-    keep_id = body.keep_id or body.entity_ids[0]
-    keep_entity = next((e for e in entities if e.id == keep_id), entities[0])
-
-    all_aliases = set(keep_entity.aliases or [])
-    all_additional_types = set(keep_entity.additional_types or [])
-    for ent in entities:
-        if ent.id != keep_entity.id:
-            all_aliases.add(ent.canonical_name)
-            all_aliases.update(ent.aliases or [])
-            all_additional_types.update(ent.additional_types or [])
-    if body.canonical_name:
-        keep_entity.canonical_name = body.canonical_name
-    keep_entity.aliases = list(all_aliases)
-    keep_entity.additional_types = list(all_additional_types)
-    keep_entity.provenance_type = "manual"
-
-    merged_ids = {e.id for e in entities if e.id != keep_entity.id}
-    if merged_ids:
-        from sqlalchemy import or_
-        for ge in db.exec(
-            select(GraphEdge).where(or_(
-                GraphEdge.source_entity_id.in_(merged_ids),
-                GraphEdge.target_entity_id.in_(merged_ids),
-            ))
-        ).all():
-            if ge.source_entity_id in merged_ids:
-                ge.source_entity_id = keep_entity.id
-            if ge.target_entity_id in merged_ids:
-                ge.target_entity_id = keep_entity.id
-            db.add(ge)
-        for fc in db.exec(
-            select(FragmentCuration).where(or_(
-                FragmentCuration.source_entity_id.in_(merged_ids),
-                FragmentCuration.target_entity_id.in_(merged_ids),
-                FragmentCuration.entity_id.in_(merged_ids),
-            ))
-        ).all():
-            if fc.source_entity_id in merged_ids:
-                fc.source_entity_id = keep_entity.id
-            if fc.target_entity_id in merged_ids:
-                fc.target_entity_id = keep_entity.id
-            if fc.entity_id in merged_ids:
-                fc.entity_id = keep_entity.id
-            db.add(fc)
-        for rel in db.exec(
-            select(EntityRelationship).where(or_(
-                EntityRelationship.entity_a_id.in_(merged_ids),
-                EntityRelationship.entity_b_id.in_(merged_ids),
-            ))
-        ).all():
-            new_a = keep_entity.id if rel.entity_a_id in merged_ids else rel.entity_a_id
-            new_b = keep_entity.id if rel.entity_b_id in merged_ids else rel.entity_b_id
-            if new_a == new_b:
-                db.delete(rel)
-                continue
-            new_a, new_b = sorted((new_a, new_b))
-            rel.entity_a_id = new_a
-            rel.entity_b_id = new_b
-            db.add(rel)
-
-    for ent in entities:
-        if ent.id != keep_entity.id:
-            db.delete(ent)
-
+    keep_entity = combine_entries(
+        session=db,
+        canon_id=canon_id,
+        entry_ids=body.entry_ids,
+        keep_id=body.keep_id,
+        canonical=body.canonical,
+        log_user_id=access.user_id,
+    )
     db.commit()
     db.refresh(keep_entity)
     return keep_entity
+
+
+@router.get("/{canon_id}/export")
+def export_canon(
+    *,
+    access: Access = Requires(scope="canon_ids"),
+    canon_id: int,
+    db: Session = Depends(get_db),
+) -> Any:
+    """Serialize a canon + its entries to the portable wire format.
+
+    The result is a standalone file (``format: "canon/v1"``) — authorable,
+    diffable, importable into any deployment. Excludes local-only fields
+    (id, infospace_id, embeddings). See ``canon_service.serialize_canon``.
+    """
+    canon = db.get(Canon, canon_id)
+    if not canon or canon.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=404, detail="Canon not found")
+    return serialize_canon(db, canon_id)
+
+
+@router.post("/import", response_model=CanonRead)
+def import_canon(
+    *,
+    access: Access = Requires(Capability.ORGANIZE, scope="canon_ids"),
+    payload: Dict[str, Any],
+    into_canon_id: Optional[int] = Query(
+        None, description="Merge into this existing canon instead of matching/creating."
+    ),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Import a serialized canon (materialize = deserialize = commit).
+
+    Body is the exported wire format. Deterministic merge by ``external_id``;
+    a fresh canon is created when no match/target is given. See
+    ``canon_service.materialize_canon``.
+    """
+    if into_canon_id is not None:
+        access.require_in_scope("canon_ids", into_canon_id)
+    try:
+        canon = materialize_canon(
+            db, access.infospace_id, payload, into_canon_id=into_canon_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    db.commit()
+    db.refresh(canon)
+    # Embeddings are local-only (never travel), so a freshly imported canon has
+    # none — backfill them so fuzzy resolution works. Best-effort, no-op without
+    # a provider; the canon is fully usable on exact/alias regardless.
+    _dispatch_embed_backfill(access.infospace_id, canon.id)
+    return canon
+
+
+def _dispatch_embed_backfill(infospace_id: int, canon_id: int) -> None:
+    """Fire-and-forget embedding backfill for a canon (the ``embed_canon`` @task)."""
+    try:
+        from app.api.modules.graph.tasks.maintenance import embed_canon
+        from app.api.modules.graph.schemas import EmbedCanonParams
+        embed_canon.delay([None], infospace_id, params=EmbedCanonParams(canon_id=canon_id))
+    except Exception as e:
+        logger.warning("embed backfill dispatch failed for canon %s: %s", canon_id, e)
+
+
+@router.post("/{canon_id}/action/embed", response_model=dict)
+def embed_canon_action(
+    *,
+    access: Access = Requires(Capability.ORGANIZE, scope="canon_ids"),
+    canon_id: int,
+    db: Session = Depends(get_db),
+) -> Any:
+    """Backfill embeddings for a canon's entries (the ``embed_canon`` @task).
+
+    Embed-on-create covers entries made during normal curation; this catches
+    imported / pre-existing / post-model-change entries. Idempotent — only
+    entries missing the current provider's embedding are touched."""
+    canon = db.get(Canon, canon_id)
+    if not canon or canon.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=404, detail="Canon not found")
+    _dispatch_embed_backfill(access.infospace_id, canon_id)
+    return {"status": "dispatched", "canon_id": canon_id}
+
+
+@router.get("/{canon_id}/proposals", response_model=List[CanonProposalRead])
+def list_canon_proposals(
+    *,
+    access: Access = Requires(scope="canon_ids"),
+    canon_id: int,
+    status_filter: str = Query("pending", alias="status"),
+    run_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Staged resolution proposals for a canon (resolve-into-canon mode), most-seen
+    first. Filter by status (default ``pending``) and optionally by run."""
+    canon = db.get(Canon, canon_id)
+    if not canon or canon.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=404, detail="Canon not found")
+    stmt = select(CanonProposal).where(
+        CanonProposal.canon_id == canon_id,
+        CanonProposal.status == status_filter,
+    )
+    if run_id is not None:
+        stmt = stmt.where(CanonProposal.run_id == run_id)
+    stmt = stmt.order_by(CanonProposal.occurrence_count.desc(), CanonProposal.id.desc())
+    return db.exec(stmt).all()
+
+
+async def _settle_proposal(
+    db: Session, canon_id: int, prop: CanonProposal,
+    merge_into_entry_id: Optional[int], user_id: Optional[int],
+) -> None:
+    """Settle one proposal — merge its surface into an existing entry (alias
+    append) or create a new entry — and mark it accepted. No commit, no
+    re-curation: the caller owns the transaction and dispatches re-curation
+    once per affected run."""
+    if merge_into_entry_id is not None:
+        entry = db.get(CanonEntry, merge_into_entry_id)
+        if not entry or entry.canon_id != canon_id:
+            raise HTTPException(status_code=404, detail="Target entry not in canon")
+        aliases = list(entry.aliases or [])
+        if prop.surface not in aliases:
+            aliases.append(prop.surface)
+            entry.aliases = aliases
+            db.add(entry)
+    else:
+        await resolve_entity(
+            db, prop.infospace_id, canon_id, prop.surface, prop.type,
+            use_embeddings=False,
+        )
+    prop.status = "accepted"
+    prop.resolved_at = datetime.now(timezone.utc)
+    prop.resolved_by = user_id
+    db.add(prop)
+
+
+def _dispatch_recurate(db: Session, infospace_id: int, run_id: int) -> bool:
+    """Fire-and-forget re-curation of a run after settling proposals. Routes
+    through the ``curate_annotated`` @task (async, batched, idempotent via the
+    per-fragment guard) so the request never blocks on a full-run re-scan.
+    Returns True if work was dispatched."""
+    ann_ids = db.exec(select(Annotation.id).where(Annotation.run_id == run_id)).all()
+    if not ann_ids:
+        return False
+    from app.api.modules.graph.tasks.curation import curate_annotated
+    curate_annotated.delay(list(ann_ids), infospace_id)
+    return True
+
+
+@router.post("/{canon_id}/proposals/{proposal_id}/action/accept", response_model=CanonProposalRead)
+async def accept_canon_proposal(
+    *,
+    canon_id: int,
+    proposal_id: int,
+    access: Access = Requires(Capability.ORGANIZE, scope="canon_ids"),
+    body: CanonProposalAcceptRequest,
+    db: Session = Depends(get_db),
+) -> Any:
+    """Settle a proposal: merge its surface into an existing entry (alias append) or
+    create a new entry. The surface then resolves on its own, so the run is
+    re-curated (async) to land any edges blocked while it was unsettled
+    (per-fragment idempotency skips already-curated work)."""
+    canon = db.get(Canon, canon_id)
+    if not canon or canon.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=404, detail="Canon not found")
+    prop = db.get(CanonProposal, proposal_id)
+    if not prop or prop.canon_id != canon_id:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    if prop.status != "pending":
+        raise HTTPException(status_code=409, detail=f"Proposal already {prop.status}")
+
+    run_id = prop.run_id
+    await _settle_proposal(db, canon_id, prop, body.merge_into_entry_id, access.user_id)
+    db.commit()
+    db.refresh(prop)
+
+    if run_id:
+        _dispatch_recurate(db, access.infospace_id, run_id)
+    return prop
+
+
+@router.post("/{canon_id}/proposals/{proposal_id}/action/dismiss", response_model=CanonProposalRead)
+def dismiss_canon_proposal(
+    *,
+    canon_id: int,
+    proposal_id: int,
+    access: Access = Requires(Capability.ORGANIZE, scope="canon_ids"),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Dismiss a proposal — it leaves the pending list and never re-prompts (repeat
+    sightings only bump its count)."""
+    canon = db.get(Canon, canon_id)
+    if not canon or canon.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=404, detail="Canon not found")
+    prop = db.get(CanonProposal, proposal_id)
+    if not prop or prop.canon_id != canon_id:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    prop.status = "dismissed"
+    prop.resolved_at = datetime.now(timezone.utc)
+    prop.resolved_by = access.user_id
+    db.add(prop)
+    db.commit()
+    db.refresh(prop)
+    return prop
+
+
+@router.post("/{canon_id}/proposals/action/bulk", response_model=BulkProposalResponse)
+async def bulk_triage_proposals(
+    *,
+    canon_id: int,
+    access: Access = Requires(Capability.ORGANIZE, scope="canon_ids"),
+    body: BulkProposalRequest,
+    db: Session = Depends(get_db),
+) -> Any:
+    """Triage many proposals in one call — the live-flood ergonomic. Each is
+    settled (alias/create) or dismissed; every affected run is then re-curated
+    **once** (not once per proposal), async. Unknown or non-pending proposals are
+    skipped, not errored, so a partially-stale selection still applies cleanly."""
+    canon = db.get(Canon, canon_id)
+    if not canon or canon.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=404, detail="Canon not found")
+
+    now = datetime.now(timezone.utc)
+    accepted = dismissed = skipped = 0
+    affected_runs: set[int] = set()
+
+    for item in body.accept:
+        prop = db.get(CanonProposal, item.proposal_id)
+        if not prop or prop.canon_id != canon_id or prop.status != "pending":
+            skipped += 1
+            continue
+        try:
+            await _settle_proposal(db, canon_id, prop, item.merge_into_entry_id, access.user_id)
+        except HTTPException:
+            # e.g. a bad merge_into_entry_id — skip this item, keep the rest.
+            # (The raise happens before any mutation, so nothing partial to undo.)
+            skipped += 1
+            continue
+        if prop.run_id:
+            affected_runs.add(prop.run_id)
+        accepted += 1
+
+    for pid in body.dismiss:
+        prop = db.get(CanonProposal, pid)
+        if not prop or prop.canon_id != canon_id or prop.status != "pending":
+            skipped += 1
+            continue
+        prop.status = "dismissed"
+        prop.resolved_at = now
+        prop.resolved_by = access.user_id
+        db.add(prop)
+        dismissed += 1
+
+    db.commit()
+
+    runs_recurated = sum(1 for rid in affected_runs if _dispatch_recurate(db, access.infospace_id, rid))
+    return BulkProposalResponse(
+        accepted=accepted, dismissed=dismissed,
+        runs_recurated=runs_recurated, skipped=skipped,
+    )
 
 
 @router.post("/{canon_id}/action/delete", response_model=DeleteImpact)
@@ -377,9 +569,9 @@ def delete_canon(
     - This canon is the infospace's ``default_canon_id`` or ``default_geo_canon_id``.
 
     Cascade (when no blockers + confirm=True):
-    - All Entities in this canon (via ON DELETE CASCADE).
+    - All CanonEntry rows in this canon (via ON DELETE CASCADE).
     - GraphEdge / FragmentCuration / EntityRelationship cascades follow via
-      Entity FK ON DELETE CASCADE.
+      CanonEntry FK ON DELETE CASCADE.
 
     Annotations, assets, schemas always survive.
     """
@@ -399,12 +591,12 @@ def delete_canon(
     if infospace and (infospace.default_canon_id == canon_id or infospace.default_geo_canon_id == canon_id):
         blockers.append("Canon is set as an infospace default — change the default before deleting")
 
-    entity_count = db.exec(select(func.count(Entity.id)).where(Entity.canon_id == canon_id)).first() or 0
+    entity_count = db.exec(select(func.count(CanonEntry.id)).where(CanonEntry.canon_id == canon_id)).first() or 0
     edge_count = db.exec(select(func.count(GraphEdge.id)).where(
-        GraphEdge.source_entity_id.in_(select(Entity.id).where(Entity.canon_id == canon_id))
+        GraphEdge.source_entry_id.in_(select(CanonEntry.id).where(CanonEntry.canon_id == canon_id))
     )).first() or 0
     curation_count = db.exec(select(func.count(FragmentCuration.id)).where(
-        FragmentCuration.source_entity_id.in_(select(Entity.id).where(Entity.canon_id == canon_id))
+        FragmentCuration.source_entry_id.in_(select(CanonEntry.id).where(CanonEntry.canon_id == canon_id))
     )).first() or 0
 
     impact = DeleteImpact(
@@ -516,7 +708,7 @@ def suggest_canon_extensions(
         match = find_by_alias(db, canon_id=canon_id, raw_name=keep, entity_type=etype)
         if match is None:
             add.append(CanonSuggestion(keep=keep, names=names, type=etype, status="add"))
-        elif match.canonical_name.strip().lower() == keep.strip().lower():
+        elif match.canonical.strip().lower() == keep.strip().lower():
             already.append(CanonSuggestion(
                 keep=keep, names=names, type=etype, status="already_present",
                 matched_entity_id=match.id,
@@ -528,3 +720,89 @@ def suggest_canon_extensions(
             ))
 
     return CanonSuggestionsResponse(add=add, already_present=already, conflict=conflict)
+
+
+@run_suggestions_router.post(
+    "/{run_id}/action/promote",
+    response_model=PromoteResponse,
+)
+def promote_run_to_canon(
+    *,
+    run_id: int,
+    body: PromoteRunRequest,
+    access: Access = Requires(Capability.ORGANIZE, scope="run_ids"),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Promote a run's folds into its declared canon — the run-centric seam.
+
+    Target precedence: explicit ``body.canon_id`` > the run's primary declared
+    canon (``canon_ids[0]``) > the infospace default. Folds come from both
+    sources (entity_merges + value-fold MergeMaps), normalized and resolved by
+    ``promote_folds``. The run's config is untouched — additive + idempotent.
+    """
+    access.require_in_scope("run_ids", run_id)
+    run = db.get(AnnotationRun, run_id)
+    if not run or run.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    canon_id = body.canon_id
+    if canon_id is None and run.canon_ids:
+        canon_id = run.canon_ids[0]
+    if canon_id is None:
+        infospace = db.get(Infospace, access.infospace_id)
+        canon_id = infospace.default_canon_id if infospace else None
+    if canon_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No target canon — attach a canon to the run or pass canon_id.",
+        )
+    canon = db.get(Canon, canon_id)
+    if not canon or canon.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=404, detail=f"Canon {canon_id} not found")
+
+    folds = normalize_run_folds(run)
+    summary = promote_folds(
+        db, infospace_id=access.infospace_id, canon_id=canon_id,
+        folds=folds, log_user_id=access.user_id,
+    )
+    db.commit()
+    return PromoteResponse(canon_id=canon_id, **summary)
+
+
+@run_suggestions_router.post("/{run_id}/action/resolve-into-canon")
+async def set_resolve_into_canon(
+    *,
+    run_id: int,
+    body: ResolveIntoCanonRequest,
+    access: Access = Requires(Capability.ORGANIZE, scope="run_ids"),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Toggle "resolve into canon" mode on a run. Requires an attached canon. On
+    enable, settled-only curation applies to future content (manual curate + live
+    reconcile) and an initial pass runs over the run's existing annotations —
+    settled mentions dedup into the canon, the rest stage as proposals."""
+    access.require_in_scope("run_ids", run_id)
+    run = db.get(AnnotationRun, run_id)
+    if not run or run.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if body.enabled and not run.canon_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Attach a canon to the run (canon_ids) before enabling resolve-into-canon.",
+        )
+    run.resolve_into_canon = body.enabled
+    run.updated_at = datetime.now(timezone.utc)
+    db.add(run)
+    db.commit()
+
+    if body.enabled:
+        from app.api.modules.graph.tasks.curation import curate_annotation_batch
+        ann_ids = db.exec(select(Annotation.id).where(Annotation.run_id == run_id)).all()
+        if ann_ids:
+            try:
+                await curate_annotation_batch(db, list(ann_ids), curated_by=access.user_id)
+                db.commit()
+            except Exception as e:
+                logger.warning("resolve-into-canon initial pass failed: %s", e)
+                db.rollback()
+    return {"run_id": run_id, "resolve_into_canon": run.resolve_into_canon}

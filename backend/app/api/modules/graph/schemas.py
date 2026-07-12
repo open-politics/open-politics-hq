@@ -83,6 +83,24 @@ class GraphChunkData(BaseModel):
 # ── Canon ──
 
 
+class CanonPropertyDef(BaseModel):
+    """One typed property slot a canon declares for an entity type.
+
+    ``Canon.type_schemas`` maps a type name → an ordered list of these. It's
+    *guidance* for the workbench editor (which typed input to render for an
+    entry of that type), never a gate: entries keep a free-form ``properties``
+    bag, so undeclared types and extra keys are always allowed.
+
+    ``type`` is one of: ``text``, ``number``, ``integer``, ``boolean``,
+    ``date``, ``url``, ``list`` (a list of text).
+    """
+
+    name: str
+    type: str = "text"
+    description: Optional[str] = None
+    required: bool = False
+
+
 class CanonRead(BaseModel):
     """Response schema for Canon."""
 
@@ -90,10 +108,12 @@ class CanonRead(BaseModel):
 
     id: int
     uuid: str
+    external_id: Optional[str] = None
     infospace_id: int
     name: str
     description: Optional[str] = None
-    role: str = "general"
+    tags: List[str] = []
+    type_schemas: Dict[str, List[CanonPropertyDef]] = {}
     created_at: datetime
     updated_at: datetime
 
@@ -109,7 +129,9 @@ class CanonCreate(BaseModel):
 
     name: str
     description: Optional[str] = None
-    role: Literal["general", "geo"] = "general"
+    external_id: Optional[str] = None
+    tags: Optional[List[str]] = None
+    type_schemas: Optional[Dict[str, List[CanonPropertyDef]]] = None
     from_run: Optional[int] = None
     from_merges: Optional[List["EntityMergeHint"]] = None
 
@@ -117,13 +139,15 @@ class CanonCreate(BaseModel):
 class CanonUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    role: Optional[Literal["general", "geo"]] = None
+    external_id: Optional[str] = None
+    tags: Optional[List[str]] = None
+    type_schemas: Optional[Dict[str, List[CanonPropertyDef]]] = None
 
 
 class ExtendCanonRequest(BaseModel):
     """``POST /canons/{id}/action/extend`` body: pull a run's merge entries
     into this canon. The run's ``graph_config.entity_merges`` is read-only
-    (transient) — entries are materialized as Entity rows under this canon.
+    (transient) — entries are materialized as CanonEntry rows under this canon.
     """
 
     run_id: int
@@ -133,6 +157,80 @@ class CanonExtendResponse(BaseModel):
     added: int
     skipped: int
     entries: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class PromoteRunRequest(BaseModel):
+    """``POST /runs/{run_id}/action/promote`` body. Target canon defaults to the
+    run's primary declared canon (``canon_ids[0]``), then the infospace default.
+    """
+    canon_id: Optional[int] = None
+
+
+class PromoteResponse(BaseModel):
+    """Outcome of promoting a run's folds into a canon."""
+    canon_id: int
+    created: int = 0
+    merged: int = 0
+    extended: int = 0
+    skipped: int = 0
+    entries: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+# ── Resolve-into-canon mode + staged proposals ───────────────────────────────
+
+
+class ResolveIntoCanonRequest(BaseModel):
+    """``POST /runs/{id}/action/resolve-into-canon`` body — toggle the mode."""
+    enabled: bool = True
+
+
+class CanonProposalRead(BaseModel):
+    """A staged, human-confirmed resolution proposal (settled-only mode)."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    canon_id: int
+    run_id: Optional[int] = None
+    surface: str
+    type: str
+    status: str
+    suggested_entry_ids: List[int] = []
+    occurrence_count: int = 1
+    example_annotation_ids: List[int] = []
+    created_at: datetime
+    updated_at: datetime
+
+
+class CanonProposalAcceptRequest(BaseModel):
+    """Accept a proposal: merge the surface into an existing entry (alias), or
+    create a new entry when ``merge_into_entry_id`` is omitted."""
+    merge_into_entry_id: Optional[int] = None
+
+
+class BulkProposalAcceptItem(BaseModel):
+    """One accept in a bulk triage call — same semantics as the single accept."""
+    proposal_id: int
+    merge_into_entry_id: Optional[int] = None
+
+
+class BulkProposalRequest(BaseModel):
+    """Triage many proposals in one call. Each is settled (alias/create or
+    dismissed); affected runs are then re-curated **once each** (not once per
+    proposal) — the live-flood ergonomic."""
+    accept: List[BulkProposalAcceptItem] = []
+    dismiss: List[int] = []
+
+
+class BulkProposalResponse(BaseModel):
+    accepted: int
+    dismissed: int
+    runs_recurated: int
+    skipped: int  # not found / not pending
+
+
+class EmbedCanonParams(BaseModel):
+    """Backfill embeddings for a canon's entries (the ``embed_canon`` @task)."""
+    canon_id: int
 
 
 class CanonSuggestion(BaseModel):
@@ -198,22 +296,25 @@ class KnowledgeGraphUpdate(BaseModel):
     edit_policy: Optional[str] = None
 
 
-# ── Entity ──
+# ── CanonEntry ──
 
 
-class EntityRead(BaseModel):
-    """Response schema for Entity."""
+class CanonEntryRead(BaseModel):
+    """Response schema for CanonEntry."""
 
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     uuid: str
+    external_id: Optional[str] = None
     infospace_id: int
     canon_id: int
-    canonical_name: str
-    entity_type: str
+    canonical: str
+    type: str
     additional_types: List[str] = []
     aliases: List[str] = []
+    tags: List[str] = []
+    parents: List[str] = []
     embedding_384: Optional[List[float]] = None
     embedding_512: Optional[List[float]] = None
     embedding_768: Optional[List[float]] = None
@@ -225,19 +326,26 @@ class EntityRead(BaseModel):
     updated_at: datetime
 
 
-class EntityCreate(BaseModel):
-    canonical_name: str
-    entity_type: str
+class CanonEntryCreate(BaseModel):
+    canonical: str
+    type: str
     canon_id: int
+    external_id: Optional[str] = None
     additional_types: Optional[List[str]] = None
     aliases: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+    parents: Optional[List[str]] = None
     properties: Optional[Dict[str, Any]] = None
 
 
-class EntityUpdate(BaseModel):
-    canonical_name: Optional[str] = None
+class CanonEntryUpdate(BaseModel):
+    canonical: Optional[str] = None
+    type: Optional[str] = None
+    external_id: Optional[str] = None
     additional_types: Optional[List[str]] = None
     aliases: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+    parents: Optional[List[str]] = None
     properties: Optional[Dict[str, Any]] = None
 
 
@@ -247,7 +355,7 @@ class EntityEditLogRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    entity_id: int
+    entry_id: int
     action: str
     performed_by: str
     previous_state: Dict[str, Any] = {}
@@ -268,8 +376,8 @@ class EntityRelationshipRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     graph_id: int
-    entity_a_id: int
-    entity_b_id: int
+    entry_a_id: int
+    entry_b_id: int
     edge_count: int
     predicates: List[str] = []
     # Materialized overlay (null when no row exists)
@@ -307,9 +415,9 @@ class FragmentCurationRead(BaseModel):
     annotation_id: int
     fragment_path: str
     status: str = "curated"
-    source_entity_id: Optional[int] = None
-    target_entity_id: Optional[int] = None
-    entity_id: Optional[int] = None
+    source_entry_id: Optional[int] = None
+    target_entry_id: Optional[int] = None
+    entry_id: Optional[int] = None
     source_asset_superseded: bool = False
     source_run_id: Optional[int] = None
     curated_by: Optional[int] = None
@@ -320,10 +428,10 @@ class FragmentCurationRead(BaseModel):
 
 
 class MergeEntitiesRequest(BaseModel):
-    """Request schema for merging entities within a canon."""
+    """Request schema for merging entries within a canon."""
 
-    entity_ids: List[int]
-    canonical_name: Optional[str] = None
+    entry_ids: List[int]
+    canonical: Optional[str] = None
     keep_id: Optional[int] = None
 
 

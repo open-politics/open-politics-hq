@@ -11,8 +11,8 @@ Cross-canon merges are forbidden — entities must share a canon for a merge
 to make sense semantically.
 
 GraphEdge / FragmentCuration FK rewiring on merge:
-- GraphEdge has ``source_entity_id`` / ``target_entity_id``.
-- FragmentCuration has ``source_entity_id`` / ``target_entity_id`` / ``entity_id``.
+- GraphEdge has ``source_entry_id`` / ``target_entry_id``.
+- FragmentCuration has ``source_entry_id`` / ``target_entry_id`` / ``entry_id``.
 """
 import logging
 from typing import Any, List, Optional
@@ -21,13 +21,13 @@ from sqlmodel import Session, select
 from sqlalchemy import func, or_
 
 from app.models import (
-    Entity, EntityEditLog, EntityRelationship, FragmentCuration,
+    CanonEntry, EntityEditLog, EntityRelationship, FragmentCuration,
     GraphEdge, KnowledgeGraph, Canon,
 )
 from app.api.modules.graph.schemas import (
-    EntityRead,
-    EntityCreate,
-    EntityUpdate,
+    CanonEntryRead,
+    CanonEntryCreate,
+    CanonEntryUpdate,
     FindDuplicatesRequest,
     FindDuplicatesResponse,
     MergeEntitiesRequest,
@@ -36,6 +36,7 @@ from app.api.modules.graph.schemas import (
     DeleteImpact,
     DeleteRequest,
 )
+from app.api.modules.graph.services.canon_service import combine_entries
 from app.api.dependency_injection import get_db
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires,
@@ -50,7 +51,7 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=List[EntityRead])
+@router.get("", response_model=List[CanonEntryRead])
 def list_entities(
     *,
     access: Access = Requires(scope="entity_ids"),
@@ -58,35 +59,35 @@ def list_entities(
     entity_type: Optional[str] = None,
     db: Session = Depends(get_db)
 ) -> Any:
-    """List entities for an infospace. Optionally filter by canon and/or type."""
+    """List entries for an infospace. Optionally filter by canon and/or type."""
     infospace_id = access.infospace_id
-    stmt = select(Entity).where(Entity.infospace_id == infospace_id)
+    stmt = select(CanonEntry).where(CanonEntry.infospace_id == infospace_id)
     if canon_id is not None:
-        stmt = stmt.where(Entity.canon_id == canon_id)
+        stmt = stmt.where(CanonEntry.canon_id == canon_id)
     if entity_type:
-        stmt = stmt.where(Entity.entity_type == entity_type)
-    stmt = access.scope_filter(stmt, Entity.id, "entity_ids")
+        stmt = stmt.where(CanonEntry.type == entity_type)
+    stmt = access.scope_filter(stmt, CanonEntry.id, "entity_ids")
 
     entities = db.exec(stmt).all()
     return list(entities)
 
 
-@router.post("", response_model=EntityRead, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=CanonEntryRead, status_code=status.HTTP_201_CREATED)
 async def create_entity(
     *,
     access: Access = Requires(Capability.ORGANIZE, scope=None),
-    entity_in: EntityCreate,
+    entity_in: CanonEntryCreate,
     db: Session = Depends(get_db)
 ) -> Any:
-    """Create an entity manually in a specific canon."""
+    """Create an entry manually in a specific canon."""
     infospace_id = access.infospace_id
-    canonical_name = entity_in.canonical_name
-    entity_type = entity_in.entity_type
+    canonical_name = entity_in.canonical
+    entity_type = entity_in.type
 
     if not canonical_name or not entity_type:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="canonical_name and entity_type are required",
+            detail="canonical and type are required",
         )
 
     # Validate canon belongs to this infospace.
@@ -99,25 +100,28 @@ async def create_entity(
 
     # Existence check within the canon.
     existing = db.exec(
-        select(Entity).where(
-            Entity.canon_id == entity_in.canon_id,
-            Entity.canonical_name == canonical_name,
-            Entity.entity_type == entity_type,
+        select(CanonEntry).where(
+            CanonEntry.canon_id == entity_in.canon_id,
+            CanonEntry.canonical == canonical_name,
+            CanonEntry.type == entity_type,
         )
     ).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Entity '{canonical_name}' ({entity_type}) already exists in canon {canon.id}",
+            detail=f"Entry '{canonical_name}' ({entity_type}) already exists in canon {canon.id}",
         )
 
-    entity = Entity(
+    entity = CanonEntry(
         infospace_id=infospace_id,
         canon_id=entity_in.canon_id,
-        canonical_name=canonical_name,
-        entity_type=entity_type,
+        canonical=canonical_name,
+        type=entity_type,
+        external_id=entity_in.external_id,
         additional_types=entity_in.additional_types or [],
         aliases=entity_in.aliases if entity_in.aliases is not None else [canonical_name],
+        tags=entity_in.tags or [],
+        parents=entity_in.parents or [],
         properties=entity_in.properties or {},
         provenance_type="manual",
     )
@@ -125,7 +129,7 @@ async def create_entity(
     db.add(entity)
     db.flush()
     db.add(EntityEditLog(
-        entity_id=entity.id,
+        entry_id=entity.id,
         action="create",
         performed_by=f"user:{access.user_id}",
         previous_state={},
@@ -135,41 +139,49 @@ async def create_entity(
     return entity
 
 
-@router.patch("/{entity_id}", response_model=EntityRead)
+@router.patch("/{entity_id}", response_model=CanonEntryRead)
 def update_entity(
     *,
     access: Access = Requires(Capability.ORGANIZE, scope="entity_ids"),
     entity_id: int,
-    entity_in: EntityUpdate,
+    entity_in: CanonEntryUpdate,
     db: Session = Depends(get_db)
 ) -> Any:
-    """Update an entity (rename, edit aliases, additional_types, properties)."""
+    """Update an entry (rename, edit aliases, additional_types, properties)."""
     infospace_id = access.infospace_id
-    entity = db.get(Entity, entity_id)
+    entity = db.get(CanonEntry, entity_id)
     if not entity or entity.infospace_id != infospace_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found")
     access.require_in_scope("entity_ids", entity_id)
 
     prev_state = {
-        "canonical_name": entity.canonical_name,
+        "canonical": entity.canonical,
         "aliases": list(entity.aliases or []),
         "additional_types": list(entity.additional_types or []),
         "properties": dict(entity.properties or {}),
     }
 
-    if entity_in.canonical_name is not None:
-        entity.canonical_name = entity_in.canonical_name
+    if entity_in.canonical is not None:
+        entity.canonical = entity_in.canonical
+    if entity_in.type is not None:
+        entity.type = entity_in.type
+    if entity_in.external_id is not None:
+        entity.external_id = entity_in.external_id
     if entity_in.additional_types is not None:
         entity.additional_types = entity_in.additional_types
     if entity_in.aliases is not None:
         entity.aliases = entity_in.aliases
+    if entity_in.tags is not None:
+        entity.tags = entity_in.tags
+    if entity_in.parents is not None:
+        entity.parents = entity_in.parents
     if entity_in.properties is not None:
         entity.properties = entity_in.properties
 
     db.add(entity)
-    if any(v is not None for v in (entity_in.canonical_name, entity_in.aliases, entity_in.additional_types, entity_in.properties)):
+    if any(v is not None for v in (entity_in.canonical, entity_in.type, entity_in.external_id, entity_in.aliases, entity_in.additional_types, entity_in.tags, entity_in.parents, entity_in.properties)):
         db.add(EntityEditLog(
-            entity_id=entity_id,
+            entry_id=entity_id,
             action="update_properties",
             performed_by=f"user:{access.user_id}",
             previous_state=prev_state,
@@ -196,23 +208,23 @@ def delete_entity(
     Annotations, assets, schemas always survive.
     """
     infospace_id = access.infospace_id
-    entity = db.get(Entity, entity_id)
+    entity = db.get(CanonEntry, entity_id)
     if not entity or entity.infospace_id != infospace_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found")
     access.require_in_scope("entity_ids", entity_id)
 
     edges = db.exec(select(func.count(GraphEdge.id)).where(
-        or_(GraphEdge.source_entity_id == entity_id, GraphEdge.target_entity_id == entity_id)
+        or_(GraphEdge.source_entry_id == entity_id, GraphEdge.target_entry_id == entity_id)
     )).first() or 0
     curations = db.exec(select(func.count(FragmentCuration.id)).where(
         or_(
-            FragmentCuration.source_entity_id == entity_id,
-            FragmentCuration.target_entity_id == entity_id,
-            FragmentCuration.entity_id == entity_id,
+            FragmentCuration.source_entry_id == entity_id,
+            FragmentCuration.target_entry_id == entity_id,
+            FragmentCuration.entry_id == entity_id,
         )
     )).first() or 0
     relationships = db.exec(select(func.count(EntityRelationship.id)).where(
-        or_(EntityRelationship.entity_a_id == entity_id, EntityRelationship.entity_b_id == entity_id)
+        or_(EntityRelationship.entry_a_id == entity_id, EntityRelationship.entry_b_id == entity_id)
     )).first() or 0
 
     blockers: List[str] = []
@@ -245,34 +257,34 @@ def delete_entity(
     return impact
 
 
-@router.post("/action/merge", response_model=EntityRead)
+@router.post("/action/merge", response_model=CanonEntryRead)
 async def merge_entities(
     *,
     access: Access = Requires(Capability.ORGANIZE, scope="entity_ids"),
     merge_request: MergeEntitiesRequest,
     db: Session = Depends(get_db)
 ) -> Any:
-    """Merge multiple entities into one. All entities must share a canon
-    (cross-canon merges rejected — entities don't have semantically
+    """Merge multiple entries into one. All entries must share a canon
+    (cross-canon merges rejected — entries don't have semantically
     comparable identity across vocabularies).
     """
     infospace_id = access.infospace_id
-    for eid in merge_request.entity_ids:
+    for eid in merge_request.entry_ids:
         access.require_in_scope("entity_ids", eid)
-    entity_ids = merge_request.entity_ids
+    entity_ids = merge_request.entry_ids
     if len(entity_ids) < 2:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least 2 entity IDs required for merge",
+            detail="At least 2 entry IDs required for merge",
         )
 
-    entities: List[Entity] = []
+    entities: List[CanonEntry] = []
     for eid in entity_ids:
-        entity = db.get(Entity, eid)
+        entity = db.get(CanonEntry, eid)
         if not entity or entity.infospace_id != infospace_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Entity {eid} not found",
+                detail=f"Entry {eid} not found",
             )
         entities.append(entity)
 
@@ -280,101 +292,17 @@ async def merge_entities(
     if len(canon_ids) > 1:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Cross-canon merge rejected — entities must share the same canon",
+            detail="Cross-canon merge rejected — entries must share the same canon",
         )
 
-    keep_id = merge_request.keep_id or entity_ids[0]
-    keep_entity = next((e for e in entities if e.id == keep_id), entities[0])
-
-    # Aggregate aliases + types + properties
-    all_aliases = set(keep_entity.aliases or [])
-    all_additional_types = set(keep_entity.additional_types or [])
-    for entity in entities:
-        if entity.id != keep_entity.id:
-            all_aliases.add(entity.canonical_name)
-            all_aliases.update(entity.aliases or [])
-            all_additional_types.update(entity.additional_types or [])
-
-    if merge_request.canonical_name is not None:
-        keep_entity.canonical_name = merge_request.canonical_name
-    keep_entity.aliases = list(all_aliases)
-    keep_entity.additional_types = list(all_additional_types)
-
-    merged_properties = dict(keep_entity.properties or {})
-    for entity in entities:
-        if entity.id != keep_entity.id:
-            merged_properties.update(entity.properties or {})
-    keep_entity.properties = merged_properties
-    keep_entity.provenance_type = "manual"
-
-    # Rewire FK references for GraphEdge, FragmentCuration, EntityRelationship.
-    merged_ids = {e.id for e in entities if e.id != keep_entity.id}
-    if merged_ids:
-        # GraphEdge: source / target
-        for ge in db.exec(
-            select(GraphEdge).where(
-                or_(
-                    GraphEdge.source_entity_id.in_(merged_ids),
-                    GraphEdge.target_entity_id.in_(merged_ids),
-                )
-            )
-        ).all():
-            if ge.source_entity_id in merged_ids:
-                ge.source_entity_id = keep_entity.id
-            if ge.target_entity_id in merged_ids:
-                ge.target_entity_id = keep_entity.id
-            db.add(ge)
-        # FragmentCuration: source / target / entity_id (single-entity fragments)
-        for fc in db.exec(
-            select(FragmentCuration).where(
-                or_(
-                    FragmentCuration.source_entity_id.in_(merged_ids),
-                    FragmentCuration.target_entity_id.in_(merged_ids),
-                    FragmentCuration.entity_id.in_(merged_ids),
-                )
-            )
-        ).all():
-            if fc.source_entity_id in merged_ids:
-                fc.source_entity_id = keep_entity.id
-            if fc.target_entity_id in merged_ids:
-                fc.target_entity_id = keep_entity.id
-            if fc.entity_id in merged_ids:
-                fc.entity_id = keep_entity.id
-            db.add(fc)
-        # EntityRelationship: entity_a / entity_b — must preserve canonical
-        # ordering after rewrite. If a row collapses (a == b after merge),
-        # delete it.
-        for rel in db.exec(
-            select(EntityRelationship).where(
-                or_(
-                    EntityRelationship.entity_a_id.in_(merged_ids),
-                    EntityRelationship.entity_b_id.in_(merged_ids),
-                )
-            )
-        ).all():
-            new_a = keep_entity.id if rel.entity_a_id in merged_ids else rel.entity_a_id
-            new_b = keep_entity.id if rel.entity_b_id in merged_ids else rel.entity_b_id
-            if new_a == new_b:
-                db.delete(rel)
-                continue
-            # Restore canonical order
-            new_a, new_b = sorted((new_a, new_b))
-            rel.entity_a_id = new_a
-            rel.entity_b_id = new_b
-            db.add(rel)
-
-    for entity in entities:
-        if entity.id != keep_entity.id:
-            db.delete(entity)
-
-    db.add(keep_entity)
-    prev = {e.id: {"canonical_name": e.canonical_name, "aliases": e.aliases, "properties": e.properties} for e in entities}
-    db.add(EntityEditLog(
-        entity_id=keep_entity.id,
-        action="merge",
-        performed_by=f"user:{access.user_id}",
-        previous_state={"merged_entity_ids": entity_ids, "merged_states": prev},
-    ))
+    keep_entity = combine_entries(
+        session=db,
+        canon_id=entities[0].canon_id,
+        entry_ids=entity_ids,
+        keep_id=merge_request.keep_id,
+        canonical=merge_request.canonical,
+        log_user_id=access.user_id,
+    )
     db.commit()
     db.refresh(keep_entity)
     return keep_entity
@@ -412,7 +340,7 @@ async def trigger_resolution(
         resolved.append({
             "raw_name": raw_entity.name,
             "canonical_id": canonical.id,
-            "canonical_name": canonical.canonical_name,
+            "canonical_name": canonical.canonical,
         })
 
     db.commit()
@@ -498,9 +426,9 @@ def get_entity_neighborhood(
     rarely the hot path.
     """
     infospace_id = access.infospace_id
-    entity = db.get(Entity, entity_id)
+    entity = db.get(CanonEntry, entity_id)
     if not entity or entity.infospace_id != infospace_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entity not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found")
     access.require_in_scope("entity_ids", entity_id)
 
     from app.api.modules.graph.services import GraphService

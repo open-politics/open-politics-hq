@@ -1,7 +1,7 @@
 """
-Graph curation: extract entity triplets from annotations, resolve to ``Entity``,
-create ``FragmentCuration`` + ``GraphEdge``. Reactivate any tombstone
-``EntityRelationship`` for the affected pair.
+Graph curation: extract entity triplets from annotations, resolve to
+``CanonEntry``, create ``FragmentCuration`` + ``GraphEdge``. Reactivate any
+tombstone ``EntityRelationship`` for the affected pair.
 
 Curation is always explicit — triggered by user action or flow step, never
 automatic. The ``@task`` wrapper provides retries and observability for bulk
@@ -9,7 +9,7 @@ invocation via flows.
 
 LLM-facing contract: triplets carry ``subject_name`` / ``object_name`` keys
 (RDF-derived, what LLMs handle natively). DB-side, GraphEdge stores
-``source_entity_id`` / ``target_entity_id`` (graph-theory neutral). The
+``source_entry_id`` / ``target_entry_id`` (graph-theory neutral). The
 translation between the two happens here at the curation boundary.
 """
 
@@ -20,7 +20,7 @@ from sqlmodel import Session, select
 from sqlalchemy import update
 
 from app.api.modules.graph.models import (
-    Entity,
+    Canon,
     EntityRelationship,
     FragmentCuration,
     GraphEdge,
@@ -252,13 +252,18 @@ def _resolve_target_canon(
     session: Session,
     infospace_id: int,
     graph_id: Optional[int],
+    run: Optional[AnnotationRun] = None,
 ) -> Tuple[int, Optional[int]]:
     """Resolve curation target → ``(canon_id, graph_id)``. Always returns a real canon.
 
-    - If ``graph_id`` is provided: validate it belongs to the infospace and
-      return its ``canon_id``.
-    - Otherwise: fall back to ``infospace.default_canon_id`` (the General canon
-      every infospace gets at creation).
+    Precedence (each falls through to the next when absent):
+    1. ``graph_id`` → the graph's ``canon_id`` (validated in-infospace). Highest:
+       a graph names its canon explicitly.
+    2. ``run.canon_ids`` → the run's declared coordinate frame. Phase 2 targets the
+       primary (``canon_ids[0]``); multi-canon union read is deferred. The primary
+       is validated to belong to this infospace.
+    3. ``infospace.default_canon_id`` → the General canon every infospace gets at
+       creation. The backward-compatible fallback for runs with no declared canon.
 
     Migration guarantees ``Infospace.default_canon_id IS NOT NULL`` after
     upgrade; the assertion catches any regression where that invariant breaks.
@@ -268,6 +273,12 @@ def _resolve_target_canon(
         if not graph or graph.infospace_id != infospace_id:
             raise ValueError(f"Graph {graph_id} not in infospace {infospace_id}")
         return graph.canon_id, graph_id
+    if run is not None and run.canon_ids:
+        primary = run.canon_ids[0]
+        canon = session.get(Canon, primary)
+        if not canon or canon.infospace_id != infospace_id:
+            raise ValueError(f"Canon {primary} not in infospace {infospace_id}")
+        return primary, None
     infospace = session.get(Infospace, infospace_id)
     if not infospace or not infospace.default_canon_id:
         raise RuntimeError(
@@ -293,8 +304,8 @@ def _reactivate_relationship_overlay(
         update(EntityRelationship)
         .where(
             EntityRelationship.graph_id == graph_id,
-            EntityRelationship.entity_a_id == entity_a_id,
-            EntityRelationship.entity_b_id == entity_b_id,
+            EntityRelationship.entry_a_id == entity_a_id,
+            EntityRelationship.entry_b_id == entity_b_id,
             EntityRelationship.is_active == False,  # noqa: E712
         )
         .values(is_active=True)
@@ -341,6 +352,72 @@ def _resolve_graph_field_paths(
     return out
 
 
+async def _stage_proposals(
+    session: Session,
+    infospace_id: int,
+    canon_id: int,
+    run_id: Optional[int],
+    unmatched: List[Tuple[str, str]],
+    annotation_id: int,
+) -> None:
+    """Upsert a ``CanonProposal`` per unmatched ``(surface, type)`` — settled-only
+    staging. Deduped on ``(canon_id, type, normalized_surface)``: a repeat bumps
+    ``occurrence_count`` rather than inserting, and an ``accepted``/``dismissed`` row
+    stays put (only the count bumps) so a settled or dismissed surface never
+    re-prompts. Embedding-similar existing entries are attached as suggestions when a
+    provider is configured (one batched embed per call); without embeddings the
+    proposal is just "create new?".
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy import func as sa_func
+    from app.api.modules.graph.models import CanonProposal
+    from app.api.modules.graph.resolution import find_similar_entries_sql
+
+    if not unmatched:
+        return
+
+    suggestions: Dict[Tuple[str, str], List[int]] = {}
+    try:
+        from app.api.modules.embedding.embed import embed_texts
+        from app.api.modules.foundation_service_providers import get_configured_foundation_provider
+        sel = get_configured_foundation_provider(session, infospace_id, "embedding")
+        if sel and sel.model_name:
+            surfaces = [s for s, _ in unmatched]
+            vectors, _em = await embed_texts(session, infospace_id, surfaces)
+            if vectors:
+                for (surface, etype), vec in zip(unmatched, vectors):
+                    if vec:
+                        suggestions[(surface, etype)] = find_similar_entries_sql(
+                            session, canon_id, etype, vec,
+                        )
+    except Exception as e:
+        logger.warning("stage_proposals: suggestion embedding failed: %s", e)
+
+    for surface, etype in unmatched:
+        norm = (surface or "").strip().lower()
+        if not norm:
+            continue
+        stmt = pg_insert(CanonProposal.__table__).values(
+            infospace_id=infospace_id,
+            canon_id=canon_id,
+            run_id=run_id,
+            surface=surface,
+            normalized_surface=norm,
+            type=etype,
+            status="pending",
+            suggested_entry_ids=suggestions.get((surface, etype), []),
+            occurrence_count=1,
+            example_annotation_ids=[annotation_id],
+        ).on_conflict_do_update(
+            constraint="uq_canon_proposal_surface",
+            set_={
+                "occurrence_count": CanonProposal.__table__.c.occurrence_count + 1,
+                "updated_at": sa_func.now(),
+            },
+        )
+        session.execute(stmt)
+
+
 async def curate_annotation_batch(
     session: Session,
     annotation_ids: List[int],
@@ -374,12 +451,18 @@ async def curate_annotation_batch(
                 skipped += 1
                 continue
 
-            existing = session.exec(
-                select(FragmentCuration).where(FragmentCuration.annotation_id == ann_id)
-            ).first()
-            if existing:
-                skipped += 1
-                continue
+            # Per-fragment idempotency: skip only fragments already curated, not the
+            # whole annotation. Lets a partially-settled annotation (resolve-into-canon
+            # mode) re-land its blocked fragments once their entities settle, while a
+            # fully-curated annotation re-curates to a clean no-op (no duplicate edges).
+            curated_paths = {
+                fc.fragment_path for fc in session.exec(
+                    select(FragmentCuration).where(
+                        FragmentCuration.annotation_id == ann_id,
+                        FragmentCuration.status == "curated",
+                    )
+                ).all()
+            }
 
             # Discover all (path, triplets) pairs to curate for this annotation.
             field_triplet_groups = _resolve_graph_field_paths(
@@ -410,17 +493,28 @@ async def curate_annotation_batch(
                 graph_id = graph_id_override
 
             canon_id, resolved_graph_id = _resolve_target_canon(
-                session, ann.infospace_id, graph_id,
+                session, ann.infospace_id, graph_id, run,
             )
 
             unique_pairs = _apply_merge_hints(unique_pairs, merge_normalize, merge_type_override)
 
+            # "Resolve into canon" mode (run toggle): settled-only resolution — exact/
+            # alias matches auto-apply, unmatched mentions stage as proposals below.
+            settled = bool(run and getattr(run, "resolve_into_canon", False))
             resolution_map = await resolve_entities_batch(
                 session,
                 infospace_id=ann.infospace_id,
                 canon_id=canon_id,
                 entities=unique_pairs,
+                settled_only=settled,
             )
+
+            if settled:
+                unmatched = [p for p in unique_pairs if p not in resolution_map]
+                if unmatched:
+                    await _stage_proposals(
+                        session, ann.infospace_id, canon_id, run.id, unmatched, ann_id,
+                    )
 
             ann_curated = 0
             for source_field_path, triplets in field_triplet_groups:
@@ -429,6 +523,9 @@ async def curate_annotation_batch(
                 # "triplets[3]". Frontend reads this for evidence drill-down.
                 frag_root = source_field_path
                 for i, triplet in enumerate(triplets):
+                    fragment_path = f"{frag_root}[{i}]"
+                    if fragment_path in curated_paths:
+                        continue  # already curated — per-fragment idempotency
                     pairs = _triplet_to_entity_pairs(triplet, entities)
                     if len(pairs) < 2:
                         continue
@@ -455,19 +552,18 @@ async def curate_annotation_batch(
                         f"{target_entity.canon_id} vs {canon_id}"
                     )
 
-                    fragment_path = f"{frag_root}[{i}]"
                     fc = FragmentCuration(
                         annotation_id=ann_id,
                         fragment_path=fragment_path,
                         status="curated",
-                        source_entity_id=source_entity.id,
-                        target_entity_id=target_entity.id,
+                        source_entry_id=source_entity.id,
+                        target_entry_id=target_entity.id,
                         curated_by=curated_by or ann.user_id,
                     )
                     session.add(fc)
                     edge = GraphEdge(
-                        source_entity_id=source_entity.id,
-                        target_entity_id=target_entity.id,
+                        source_entry_id=source_entity.id,
+                        target_entry_id=target_entity.id,
                         predicate=triplet.get("predicate"),
                         annotation_id=ann_id,
                         infospace_id=ann.infospace_id,

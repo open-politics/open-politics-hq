@@ -59,8 +59,8 @@ def two_entities(client, headers, workspace, canon_id):
         f"{API}/infospaces/{workspace}/entities",
         headers=headers,
         json={
-            "canonical_name": f"Trump-{uuid.uuid4().hex[:4]}",
-            "entity_type": "Person",
+            "canonical": f"Trump-{uuid.uuid4().hex[:4]}",
+            "type": "Person",
             "canon_id": canon_id,
         },
     )
@@ -69,8 +69,8 @@ def two_entities(client, headers, workspace, canon_id):
         f"{API}/infospaces/{workspace}/entities",
         headers=headers,
         json={
-            "canonical_name": f"Biden-{uuid.uuid4().hex[:4]}",
-            "entity_type": "Person",
+            "canonical": f"Biden-{uuid.uuid4().hex[:4]}",
+            "type": "Person",
             "canon_id": canon_id,
         },
     )
@@ -108,8 +108,8 @@ def test_patch_lazy_materializes(client, headers, workspace, graph_id, two_entit
     assert body["is_pinned"] is True
     assert body["notes"] == "Important"
     assert "political_rivalry" in body["tags"]
-    assert body["entity_a_id"] == min(a, b)
-    assert body["entity_b_id"] == max(a, b)
+    assert body["entry_a_id"] == min(a, b)
+    assert body["entry_b_id"] == max(a, b)
 
 
 def test_patch_canonical_ordering_normalized(client, headers, workspace, graph_id, two_entities):
@@ -123,9 +123,9 @@ def test_patch_canonical_ordering_normalized(client, headers, workspace, graph_i
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    # Stored canonically — entity_a_id < entity_b_id always
-    assert body["entity_a_id"] == min(a, b)
-    assert body["entity_b_id"] == max(a, b)
+    # Stored canonically — entry_a_id < entry_b_id always
+    assert body["entry_a_id"] == min(a, b)
+    assert body["entry_b_id"] == max(a, b)
     assert body["label"] == "rivalry"
 
 
@@ -158,8 +158,8 @@ def test_get_relationship_with_overlay(client, headers, workspace, graph_id, two
     )
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["entity_a_id"] == min(a, b)
-    assert body["entity_b_id"] == max(a, b)
+    assert body["entry_a_id"] == min(a, b)
+    assert body["entry_b_id"] == max(a, b)
     assert body["edge_count"] == 0  # no GraphEdges yet
     assert body["label"] == "test"
 
@@ -171,8 +171,8 @@ def test_get_404_when_no_overlay_and_no_edges(client, headers, workspace, graph_
         f"{API}/infospaces/{workspace}/entities",
         headers=headers,
         json={
-            "canonical_name": f"Loner-A-{uuid.uuid4().hex[:4]}",
-            "entity_type": "Person",
+            "canonical": f"Loner-A-{uuid.uuid4().hex[:4]}",
+            "type": "Person",
             "canon_id": canon_id,
         },
     ).json()["id"]
@@ -180,8 +180,8 @@ def test_get_404_when_no_overlay_and_no_edges(client, headers, workspace, graph_
         f"{API}/infospaces/{workspace}/entities",
         headers=headers,
         json={
-            "canonical_name": f"Loner-B-{uuid.uuid4().hex[:4]}",
-            "entity_type": "Person",
+            "canonical": f"Loner-B-{uuid.uuid4().hex[:4]}",
+            "type": "Person",
             "canon_id": canon_id,
         },
     ).json()["id"]
@@ -210,8 +210,8 @@ def test_cross_canon_pair_refused(client, headers, workspace, graph_id, two_enti
         f"{API}/infospaces/{workspace}/entities",
         headers=headers,
         json={
-            "canonical_name": f"Other-{uuid.uuid4().hex[:4]}",
-            "entity_type": "Person",
+            "canonical": f"Other-{uuid.uuid4().hex[:4]}",
+            "type": "Person",
             "canon_id": other_canon,
         },
     ).json()["id"]
@@ -237,8 +237,8 @@ def test_delete_overlay_only(client, headers, workspace, graph_id, canon_id):
         f"{API}/infospaces/{workspace}/entities",
         headers=headers,
         json={
-            "canonical_name": f"Del-A-{uuid.uuid4().hex[:4]}",
-            "entity_type": "Person",
+            "canonical": f"Del-A-{uuid.uuid4().hex[:4]}",
+            "type": "Person",
             "canon_id": canon_id,
         },
     ).json()["id"]
@@ -246,8 +246,8 @@ def test_delete_overlay_only(client, headers, workspace, graph_id, canon_id):
         f"{API}/infospaces/{workspace}/entities",
         headers=headers,
         json={
-            "canonical_name": f"Del-B-{uuid.uuid4().hex[:4]}",
-            "entity_type": "Person",
+            "canonical": f"Del-B-{uuid.uuid4().hex[:4]}",
+            "type": "Person",
             "canon_id": canon_id,
         },
     ).json()["id"]
