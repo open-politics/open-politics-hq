@@ -93,10 +93,13 @@ export type AnnotationRunCreate = {
     views_config?: (Array<{
     [key: string]: unknown;
 }> | null);
+    canon_ids?: Array<(number)>;
+    resolve_into_canon?: boolean;
     schema_ids: Array<(number)>;
     target_asset_ids?: (Array<(number)> | null);
     target_bundle_id?: (number | null);
     source_bundle_id?: (number | null);
+    live?: (boolean | null);
     follow_on_version_change?: (boolean | null);
     run_type?: (string | null);
     flow_execution_id?: (number | null);
@@ -150,6 +153,8 @@ export type AnnotationRunRead = {
     views_config?: (Array<{
     [key: string]: unknown;
 }> | null);
+    canon_ids?: Array<(number)>;
+    resolve_into_canon?: boolean;
     id: number;
     uuid: string;
     infospace_id: number;
@@ -172,16 +177,13 @@ export type AnnotationRunRead = {
 } | null);
     pipeline_execution_id?: (number | null);
     triggered_by_source_id?: (number | null);
-    monitor_id?: (number | null);
     source_bundle_id?: (number | null);
+    live?: boolean;
     graph_config?: ({
     [key: string]: unknown;
 } | null);
     progress_total?: (number | null);
     progress_current?: (number | null);
-    parent_run_id?: (number | null);
-    extension_count?: (number | null);
-    effective_status?: (RunStatus | null);
 };
 
 export type AnnotationRunsOut = {
@@ -204,6 +206,8 @@ export type AnnotationRunUpdate = {
     [key: string]: unknown;
 } | null);
     is_favorite?: (boolean | null);
+    live?: (boolean | null);
+    canon_ids?: (Array<(number)> | null);
 };
 
 export type AnnotationSchemaCreate = {
@@ -507,6 +511,7 @@ export type AssetSearchRequest = {
     cursor?: (string | null);
     sort?: string;
     scope_hints?: AssetSearchScopeHints;
+    include_folders?: boolean;
 };
 
 /**
@@ -747,6 +752,7 @@ export type Body_sso_complete_discourse_sso = {
 
 export type Body_users_upload_background_image = {
     file: string;
+    theme?: string;
 };
 
 export type Body_users_upload_profile_picture = {
@@ -767,6 +773,31 @@ export type BulkDeleteBundlesRequest = {
 
 export type BulkDeleteRequest = {
     asset_ids: Array<(number)>;
+};
+
+/**
+ * One accept in a bulk triage call — same semantics as the single accept.
+ */
+export type BulkProposalAcceptItem = {
+    proposal_id: number;
+    merge_into_entry_id?: (number | null);
+};
+
+/**
+ * Triage many proposals in one call. Each is settled (alias/create or
+ * dismissed); affected runs are then re-curated **once each** (not once per
+ * proposal) — the live-flood ergonomic.
+ */
+export type BulkProposalRequest = {
+    accept?: Array<BulkProposalAcceptItem>;
+    dismiss?: Array<(number)>;
+};
+
+export type BulkProposalResponse = {
+    accepted: number;
+    dismissed: number;
+    runs_recurated: number;
+    skipped: number;
 };
 
 /**
@@ -864,12 +895,69 @@ export type BundleUpdate = {
 export type CanonCreate = {
     name: string;
     description?: (string | null);
-    role?: 'general' | 'geo';
+    external_id?: (string | null);
+    tags?: (Array<(string)> | null);
+    type_schemas?: ({
+    [key: string]: Array<CanonPropertyDef>;
+} | null);
     from_run?: (number | null);
     from_merges?: (Array<EntityMergeHint> | null);
 };
 
-export type role = 'general' | 'geo';
+export type CanonEntryCreate = {
+    canonical: string;
+    type: string;
+    canon_id: number;
+    external_id?: (string | null);
+    additional_types?: (Array<(string)> | null);
+    aliases?: (Array<(string)> | null);
+    tags?: (Array<(string)> | null);
+    parents?: (Array<(string)> | null);
+    properties?: ({
+    [key: string]: unknown;
+} | null);
+};
+
+/**
+ * Response schema for CanonEntry.
+ */
+export type CanonEntryRead = {
+    id: number;
+    uuid: string;
+    external_id?: (string | null);
+    infospace_id: number;
+    canon_id: number;
+    canonical: string;
+    type: string;
+    additional_types?: Array<(string)>;
+    aliases?: Array<(string)>;
+    tags?: Array<(string)>;
+    parents?: Array<(string)>;
+    embedding_384?: (Array<(number)> | null);
+    embedding_512?: (Array<(number)> | null);
+    embedding_768?: (Array<(number)> | null);
+    embedding_1024?: (Array<(number)> | null);
+    embedding_1536?: (Array<(number)> | null);
+    properties?: {
+        [key: string]: unknown;
+    };
+    provenance_type?: string;
+    created_at: string;
+    updated_at: string;
+};
+
+export type CanonEntryUpdate = {
+    canonical?: (string | null);
+    type?: (string | null);
+    external_id?: (string | null);
+    additional_types?: (Array<(string)> | null);
+    aliases?: (Array<(string)> | null);
+    tags?: (Array<(string)> | null);
+    parents?: (Array<(string)> | null);
+    properties?: ({
+    [key: string]: unknown;
+} | null);
+};
 
 export type CanonExtendResponse = {
     added: number;
@@ -880,15 +968,62 @@ export type CanonExtendResponse = {
 };
 
 /**
+ * One typed property slot a canon declares for an entity type.
+ *
+ * ``Canon.type_schemas`` maps a type name → an ordered list of these. It's
+ * *guidance* for the workbench editor (which typed input to render for an
+ * entry of that type), never a gate: entries keep a free-form ``properties``
+ * bag, so undeclared types and extra keys are always allowed.
+ *
+ * ``type`` is one of: ``text``, ``number``, ``integer``, ``boolean``,
+ * ``date``, ``url``, ``list`` (a list of text).
+ */
+export type CanonPropertyDef = {
+    name: string;
+    type?: string;
+    description?: (string | null);
+    required?: boolean;
+};
+
+/**
+ * Accept a proposal: merge the surface into an existing entry (alias), or
+ * create a new entry when ``merge_into_entry_id`` is omitted.
+ */
+export type CanonProposalAcceptRequest = {
+    merge_into_entry_id?: (number | null);
+};
+
+/**
+ * A staged, human-confirmed resolution proposal (settled-only mode).
+ */
+export type CanonProposalRead = {
+    id: number;
+    canon_id: number;
+    run_id?: (number | null);
+    surface: string;
+    type: string;
+    status: string;
+    suggested_entry_ids?: Array<(number)>;
+    occurrence_count?: number;
+    example_annotation_ids?: Array<(number)>;
+    created_at: string;
+    updated_at: string;
+};
+
+/**
  * Response schema for Canon.
  */
 export type CanonRead = {
     id: number;
     uuid: string;
+    external_id?: (string | null);
     infospace_id: number;
     name: string;
     description?: (string | null);
-    role?: string;
+    tags?: Array<(string)>;
+    type_schemas?: {
+        [key: string]: Array<CanonPropertyDef>;
+    };
     created_at: string;
     updated_at: string;
 };
@@ -919,7 +1054,11 @@ export type CanonSuggestionsResponse = {
 export type CanonUpdate = {
     name?: (string | null);
     description?: (string | null);
-    role?: ('general' | 'geo' | null);
+    external_id?: (string | null);
+    tags?: (Array<(string)> | null);
+    type_schemas?: ({
+    [key: string]: Array<CanonPropertyDef>;
+} | null);
 };
 
 /**
@@ -1081,6 +1220,8 @@ export type ChatRequest = {
     max_tokens?: (number | null);
     thinking_enabled?: boolean;
     tools_enabled?: boolean;
+    max_tool_iterations?: (number | null);
+    current_route?: (string | null);
     tools?: (Array<{
     [key: string]: unknown;
 }> | null);
@@ -1442,17 +1583,6 @@ export type EnrichmentConfig = {
     embedding_dimension_override?: (number | null);
 };
 
-export type EntityCreate = {
-    canonical_name: string;
-    entity_type: string;
-    canon_id: number;
-    additional_types?: (Array<(string)> | null);
-    aliases?: (Array<(string)> | null);
-    properties?: ({
-    [key: string]: unknown;
-} | null);
-};
-
 /**
  * A merge group: names that should resolve to ``keep``.
  *
@@ -1468,31 +1598,6 @@ export type EntityMergeHint = {
 };
 
 /**
- * Response schema for Entity.
- */
-export type EntityRead = {
-    id: number;
-    uuid: string;
-    infospace_id: number;
-    canon_id: number;
-    canonical_name: string;
-    entity_type: string;
-    additional_types?: Array<(string)>;
-    aliases?: Array<(string)>;
-    embedding_384?: (Array<(number)> | null);
-    embedding_512?: (Array<(number)> | null);
-    embedding_768?: (Array<(number)> | null);
-    embedding_1024?: (Array<(number)> | null);
-    embedding_1536?: (Array<(number)> | null);
-    properties?: {
-        [key: string]: unknown;
-    };
-    provenance_type?: string;
-    created_at: string;
-    updated_at: string;
-};
-
-/**
  * A relationship view: derived aggregation + materialized overlay.
  *
  * ``edge_count`` and ``predicates`` are computed from GraphEdge groupby.
@@ -1501,8 +1606,8 @@ export type EntityRead = {
  */
 export type EntityRelationshipRead = {
     graph_id: number;
-    entity_a_id: number;
-    entity_b_id: number;
+    entry_a_id: number;
+    entry_b_id: number;
     edge_count: number;
     predicates?: Array<(string)>;
     id?: (number | null);
@@ -1536,15 +1641,6 @@ export type EntityTypeSummary = {
     count: number;
 };
 
-export type EntityUpdate = {
-    canonical_name?: (string | null);
-    additional_types?: (Array<(string)> | null);
-    aliases?: (Array<(string)> | null);
-    properties?: ({
-    [key: string]: unknown;
-} | null);
-};
-
 /**
  * Evidence rigor levels for formal research annotation.
  */
@@ -1563,7 +1659,7 @@ export type ExportMixedBatchRequest = {
 /**
  * ``POST /canons/{id}/action/extend`` body: pull a run's merge entries
  * into this canon. The run's ``graph_config.entity_merges`` is read-only
- * (transient) — entries are materialized as Entity rows under this canon.
+ * (transient) — entries are materialized as CanonEntry rows under this canon.
  */
 export type ExtendCanonRequest = {
     run_id: number;
@@ -1573,9 +1669,8 @@ export type ExtendCanonRequest = {
  * Request body for ``POST /runs/{run_id}/extend``.
  *
  * At least one of ``asset_ids``, ``bundle_id``, ``schema_ids`` must be set.
- * The service resolves the family-scoped delta and creates a child run
- * (``parent_run_id`` = root). Existing annotations in the run's family are
- * not re-processed.
+ * The run grows in place — no child run — and is re-pended; only the new
+ * (asset, schema) pairs are processed.
  */
 export type ExtendRunRequest = {
     asset_ids?: (Array<(number)> | null);
@@ -1863,7 +1958,7 @@ export type GeocodeActionRequest = {
 };
 
 /**
- * One already-resolved location, sourced from Entity.properties.
+ * One already-resolved location, sourced from CanonEntry.properties.
  */
 export type GeocodedEntityOut = {
     entity_id: number;
@@ -2233,11 +2328,11 @@ export type Measure = {
 export type agg = 'count' | 'mean' | 'sum' | 'max' | 'min' | 'median' | 'mode' | 'distribution' | 'top';
 
 /**
- * Request schema for merging entities within a canon.
+ * Request schema for merging entries within a canon.
  */
 export type MergeEntitiesRequest = {
-    entity_ids: Array<(number)>;
-    canonical_name?: (string | null);
+    entry_ids: Array<(number)>;
+    canonical?: (string | null);
     keep_id?: (number | null);
 };
 
@@ -2484,6 +2579,28 @@ export type PromoteFragmentRequest = {
 };
 
 /**
+ * Outcome of promoting a run's folds into a canon.
+ */
+export type PromoteResponse = {
+    canon_id: number;
+    created?: number;
+    merged?: number;
+    extended?: number;
+    skipped?: number;
+    entries?: Array<{
+        [key: string]: unknown;
+    }>;
+};
+
+/**
+ * ``POST /runs/{run_id}/action/promote`` body. Target canon defaults to the
+ * run's primary declared canon (``canon_ids[0]``), then the infospace default.
+ */
+export type PromoteRunRequest = {
+    canon_id?: (number | null);
+};
+
+/**
  * Parameters for the ``propose_resolutions`` ``@task``.
  *
  * Scans entities and/or predicates for similarity-based merge candidates.
@@ -2622,6 +2739,13 @@ export type ResolveEntitiesRequest = {
     raw_entities: Array<RawEntityItem>;
     similarity_threshold?: number;
     use_embeddings?: boolean;
+};
+
+/**
+ * ``POST /runs/{id}/action/resolve-into-canon`` body — toggle the mode.
+ */
+export type ResolveIntoCanonRequest = {
+    enabled?: boolean;
 };
 
 export type ResourceType = 'source' | 'bundle' | 'asset' | 'schema' | 'infospace' | 'run' | 'package' | 'dataset' | 'mixed';
@@ -3461,10 +3585,6 @@ export type CreateBatchAnnotations1Data = {
 export type CreateBatchAnnotations1Response = (Message);
 
 export type GetRunResultsData = {
-    /**
-     * Default True: include annotations from extension (child) runs. Matches the dashboard's family-aware semantics — opt out only for diagnostics that need this run's own annotations.
-     */
-    includeDescendants?: boolean;
     infospaceId: number;
     limit?: number;
     packageToken?: (string | null);
@@ -3476,10 +3596,6 @@ export type GetRunResultsData = {
 export type GetRunResultsResponse = (Array<AnnotationRead>);
 
 export type GetRunResults1Data = {
-    /**
-     * Default True: include annotations from extension (child) runs. Matches the dashboard's family-aware semantics — opt out only for diagnostics that need this run's own annotations.
-     */
-    includeDescendants?: boolean;
     infospaceId: number;
     limit?: number;
     packageToken?: (string | null);
@@ -4490,10 +4606,6 @@ export type UnsealBundleResponse = (Message);
 export type ListCanonsData = {
     infospaceId: number;
     packageToken?: (string | null);
-    /**
-     * Filter by canon role (general | geo | …)
-     */
-    role?: (string | null);
     xPackageToken?: (string | null);
 };
 
@@ -4537,7 +4649,7 @@ export type ListCanonEntitiesData = {
     xPackageToken?: (string | null);
 };
 
-export type ListCanonEntitiesResponse = (Array<EntityRead>);
+export type ListCanonEntitiesResponse = (Array<CanonEntryRead>);
 
 export type ExtendCanonFromRunData = {
     canonId: number;
@@ -4557,7 +4669,84 @@ export type MergeInCanonData = {
     xPackageToken?: (string | null);
 };
 
-export type MergeInCanonResponse = (EntityRead);
+export type MergeInCanonResponse = (CanonEntryRead);
+
+export type ExportCanonData = {
+    canonId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type ExportCanonResponse = (unknown);
+
+export type ImportCanonData = {
+    infospaceId: number;
+    /**
+     * Merge into this existing canon instead of matching/creating.
+     */
+    intoCanonId?: (number | null);
+    packageToken?: (string | null);
+    requestBody: {
+        [key: string]: unknown;
+    };
+    xPackageToken?: (string | null);
+};
+
+export type ImportCanonResponse = (CanonRead);
+
+export type EmbedCanonActionData = {
+    canonId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type EmbedCanonActionResponse = ({
+    [key: string]: unknown;
+});
+
+export type ListCanonProposalsData = {
+    canonId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    runId?: (number | null);
+    status?: string;
+    xPackageToken?: (string | null);
+};
+
+export type ListCanonProposalsResponse = (Array<CanonProposalRead>);
+
+export type AcceptCanonProposalData = {
+    canonId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    proposalId: number;
+    requestBody: CanonProposalAcceptRequest;
+    xPackageToken?: (string | null);
+};
+
+export type AcceptCanonProposalResponse = (CanonProposalRead);
+
+export type DismissCanonProposalData = {
+    canonId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    proposalId: number;
+    xPackageToken?: (string | null);
+};
+
+export type DismissCanonProposalResponse = (CanonProposalRead);
+
+export type BulkTriageProposalsData = {
+    canonId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: BulkProposalRequest;
+    xPackageToken?: (string | null);
+};
+
+export type BulkTriageProposalsResponse = (BulkProposalResponse);
 
 export type DeleteCanonData = {
     canonId: number;
@@ -4592,6 +4781,26 @@ export type SuggestCanonExtensionsData = {
 };
 
 export type SuggestCanonExtensionsResponse = (CanonSuggestionsResponse);
+
+export type PromoteRunToCanonData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: PromoteRunRequest;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type PromoteRunToCanonResponse = (PromoteResponse);
+
+export type SetResolveIntoCanonData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: ResolveIntoCanonRequest;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type SetResolveIntoCanonResponse = (unknown);
 
 export type ListConversationsData = {
     /**
@@ -4864,26 +5073,26 @@ export type ListEntitiesData = {
     xPackageToken?: (string | null);
 };
 
-export type ListEntitiesResponse = (Array<EntityRead>);
+export type ListEntitiesResponse = (Array<CanonEntryRead>);
 
 export type CreateEntityData = {
     infospaceId: number;
     packageToken?: (string | null);
-    requestBody: EntityCreate;
+    requestBody: CanonEntryCreate;
     xPackageToken?: (string | null);
 };
 
-export type CreateEntityResponse = (EntityRead);
+export type CreateEntityResponse = (CanonEntryRead);
 
 export type UpdateEntityData = {
     entityId: number;
     infospaceId: number;
     packageToken?: (string | null);
-    requestBody: EntityUpdate;
+    requestBody: CanonEntryUpdate;
     xPackageToken?: (string | null);
 };
 
-export type UpdateEntityResponse = (EntityRead);
+export type UpdateEntityResponse = (CanonEntryRead);
 
 export type DeleteEntityData = {
     entityId: number;
@@ -4902,7 +5111,7 @@ export type MergeEntitiesData = {
     xPackageToken?: (string | null);
 };
 
-export type MergeEntitiesResponse = (EntityRead);
+export type MergeEntitiesResponse = (CanonEntryRead);
 
 export type TriggerResolutionData = {
     /**
@@ -5874,10 +6083,6 @@ export type CreateRunResponse = (AnnotationRunRead);
 
 export type ListRunsData = {
     /**
-     * When False (default), only family roots are returned — extension runs are folded into their parent's annotation_count and effective_status. Set True to surface every run, e.g. for diagnostics.
-     */
-    includeChildren?: boolean;
-    /**
      * Include counts of annotations and assets
      */
     includeCounts?: boolean;
@@ -5901,10 +6106,6 @@ export type CreateRun1Response = (AnnotationRunRead);
 
 export type ListRuns1Data = {
     /**
-     * When False (default), only family roots are returned — extension runs are folded into their parent's annotation_count and effective_status. Set True to surface every run, e.g. for diagnostics.
-     */
-    includeChildren?: boolean;
-    /**
      * Include counts of annotations and assets
      */
     includeCounts?: boolean;
@@ -5918,10 +6119,6 @@ export type ListRuns1Data = {
 export type ListRuns1Response = (AnnotationRunsOut);
 
 export type ListRunsStreamData = {
-    /**
-     * See list_runs — same flag, default folds extensions into parents.
-     */
-    includeChildren?: boolean;
     /**
      * Include counts of annotations and assets
      */
@@ -6001,10 +6198,6 @@ export type ExportRunAnnotationsCsvData = {
      * Flatten nested JSON fields into dot-notation columns
      */
     flattenJson?: boolean;
-    /**
-     * Default True: include annotations from extension (child) runs so the export reflects what the dashboard shows. Pass False to scope the export to this run id only.
-     */
-    includeDescendants?: boolean;
     /**
      * Include justification text (adds columns)
      */
@@ -7048,6 +7241,10 @@ export type GetBackgroundImageData = {
 };
 
 export type GetBackgroundImageResponse = (unknown);
+
+export type DeleteBackgroundImageData = {
+    theme?: string;
+};
 
 export type DeleteBackgroundImageResponse = (UserOut);
 

@@ -24,6 +24,8 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+openapi-ts-error-*.log
+openapi.tmp.json
 
 # local env files
 # .env*.local
