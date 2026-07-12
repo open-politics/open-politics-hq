@@ -28,6 +28,7 @@ import { OpenAPI } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import { toast } from 'sonner';
+import { TopbarSlot } from '@/components/layout/TopbarSlot';
 
 interface ChatMessage {
   id: string;
@@ -204,34 +205,36 @@ export default function ContentSearchPage() {
 
   return (
     <div className="h-full flex flex-col min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] w-full max-w-full overflow-y-auto scrollbar-hide">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Search className="h-6 w-6" />
-            Content Search
-          </h1>
-          <p className="text-muted-foreground">
-            Ask questions about your assets using AI-powered retrieval
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowSettings(!showSettings)}
-          >
-            <Settings className="h-4 w-4 mr-2" />
-            Settings
-          </Button>
-          {messages.length > 0 && (
-            <Button variant="outline" size="sm" onClick={clearChat}>
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Clear Chat
+      {/* Header → app top bar */}
+      <TopbarSlot>
+        <div className="flex w-full items-center gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <Search className="h-4 w-4 shrink-0" />
+            <h1 className="text-sm font-semibold truncate">Content Search</h1>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <Badge variant="outline" className="hidden md:inline-flex items-center gap-1 font-normal">
+              <Brain className="h-3 w-3" />
+              <span className="max-w-[160px] truncate">{config.model || defaultModel || 'No model'}</span>
+            </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={() => setShowSettings(!showSettings)}
+            >
+              <Settings className="h-4 w-4 sm:mr-2" />
+              <span className="hidden sm:inline">Settings</span>
             </Button>
-          )}
+            {messages.length > 0 && (
+              <Button variant="outline" size="sm" className="h-8" onClick={clearChat}>
+                <RefreshCw className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">Clear</span>
+              </Button>
+            )}
+          </div>
         </div>
-      </div>
+      </TopbarSlot>
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-0">
         {/* Settings Panel */}
@@ -307,15 +310,10 @@ export default function ContentSearchPage() {
         {/* Main Chat Area */}
         <Card className={`flex flex-col ${showSettings ? 'lg:col-span-3' : 'lg:col-span-4'}`}>
           <CardHeader className="border-b">
-            <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-2">
-                <Brain className="h-5 w-5" />
-                AI Assistant
-              </CardTitle>
-              <Badge variant="outline">
-                {config.model || defaultModel || 'No model selected'}
-              </Badge>
-            </div>
+            <CardTitle className="flex items-center gap-2">
+              <Brain className="h-5 w-5" />
+              AI Assistant
+            </CardTitle>
           </CardHeader>
 
           {/* Messages Area */}

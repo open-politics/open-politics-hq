@@ -30,7 +30,8 @@ export default function AccountSettingsPage() {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [statusBanner, setStatusBanner] = useState<{ type: 'loading' | 'success' | 'error'; message: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const backgroundInputRef = useRef<HTMLInputElement>(null);
+  const bgLightInputRef = useRef<HTMLInputElement>(null);
+  const bgDarkInputRef = useRef<HTMLInputElement>(null);
   
   // User preferences
   const { preferences, initializePreferences, updatePreference, uploadBackgroundImage, deleteBackgroundImage } = useUserPreferencesStore();
@@ -193,52 +194,40 @@ export default function AccountSettingsPage() {
     }
   };
 
-  const handleBackgroundImageUpload = async (file: File) => {
+  const handleBackgroundUpload = async (file: File, theme: 'light' | 'dark') => {
     if (!file) return;
-    
-    // Validate file type and size
+
     if (!file.type.startsWith('image/')) {
       showStatus('error', 'Please select an image file', 3000);
       return;
     }
-    
     if (file.size > 10 * 1024 * 1024) { // 10MB limit
       showStatus('error', 'Image size must be less than 10MB', 3000);
       return;
     }
-    
-    showStatus('loading', 'Uploading background image...');
-    
+
+    showStatus('loading', `Uploading ${theme} mode background...`);
+
     try {
-      await uploadBackgroundImage(file);
-      showStatus('success', 'Background image uploaded successfully!', 2000);
-      
-      // Force page reload after a short delay to refresh user data and background
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+      // The store updates from the response, so the live wallpaper and the
+      // preview below both refresh reactively — no page reload needed.
+      await uploadBackgroundImage(file, theme);
+      showStatus('success', 'Background image uploaded!', 2000);
     } catch (err: any) {
       const errorMsg = err?.body?.detail || 'Failed to upload background image';
       showStatus('error', errorMsg, 4000);
     }
   };
 
-  const handleBackgroundFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      handleBackgroundImageUpload(file);
-    }
-  };
-
-  const handleDeleteBackground = async () => {
-    if (!confirm('Are you sure you want to remove your custom background image?')) {
+  const handleBackgroundDelete = async (theme: 'light' | 'dark') => {
+    if (!confirm(`Remove your ${theme} mode background image?`)) {
       return;
     }
-    
+
     showStatus('loading', 'Removing background image...');
-    
+
     try {
-      await deleteBackgroundImage();
+      await deleteBackgroundImage(theme);
       showStatus('success', 'Background image removed', 2000);
     } catch (err: any) {
       const errorMsg = err?.body?.detail || 'Failed to remove background image';
@@ -452,63 +441,67 @@ export default function AccountSettingsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Background Image Section */}
+          {/* Background Image Section — one wallpaper per theme */}
           <div className="space-y-4 p-4 border rounded-lg">
             <div>
-              <div className="flex items-center gap-2 mb-2">
+              <div className="flex items-center gap-2 mb-1">
                 <ImageIcon className="h-4 w-4" />
-                <Label className="text-base font-medium">Custom Background Image</Label>
+                <Label className="text-base font-medium">Custom Background Images</Label>
               </div>
-              <p className="text-sm text-muted-foreground mb-4">
-                Upload a custom background image for your interface (max 10MB)
+              <p className="text-sm text-muted-foreground">
+                Set a wallpaper per theme — e.g. a dark-mode-only background. Each shows behind the
+                app in its own theme (max 10MB). Leave one empty for no wallpaper in that theme.
               </p>
             </div>
 
-            {preferences.custom_background_url ? (
-              <div className="space-y-3">
-                <div className="relative w-full h-32 rounded-md overflow-hidden bg-muted">
-                  <img
-                    src={preferences.custom_background_url}
-                    alt="Custom background preview"
-                    className="w-full h-full object-cover"
+            {(['dark', 'light'] as const).map((theme) => {
+              const url = theme === 'light'
+                ? preferences.custom_background_url_light
+                : preferences.custom_background_url_dark;
+              const inputRef = theme === 'light' ? bgLightInputRef : bgDarkInputRef;
+              return (
+                <div key={theme} className="space-y-2">
+                  <Label className="text-sm font-medium capitalize">{theme} mode</Label>
+                  {url ? (
+                    <div className="space-y-2">
+                      <div className="relative w-full h-28 rounded-md overflow-hidden bg-muted">
+                        <img
+                          src={url}
+                          alt={`${theme} mode background preview`}
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => inputRef.current?.click()}>
+                          <Upload className="h-4 w-4 mr-2" />
+                          Replace
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => handleBackgroundDelete(theme)}>
+                          <X className="h-4 w-4 mr-2" />
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={() => inputRef.current?.click()}>
+                      <Upload className="h-4 w-4 mr-2" />
+                      Upload {theme} mode background
+                    </Button>
+                  )}
+                  <input
+                    ref={inputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleBackgroundUpload(file, theme);
+                      e.target.value = '';
+                    }}
                   />
                 </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => backgroundInputRef.current?.click()}
-                  >
-                    <Upload className="h-4 w-4 mr-2" />
-                    Replace Image
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleDeleteBackground}
-                  >
-                    <X className="h-4 w-4 mr-2" />
-                    Remove Image
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <Button
-                variant="outline"
-                onClick={() => backgroundInputRef.current?.click()}
-              >
-                <Upload className="h-4 w-4 mr-2" />
-                Upload Background Image
-              </Button>
-            )}
-
-            <input
-              ref={backgroundInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={handleBackgroundFileSelect}
-            />
+              );
+            })}
           </div>
 
           {/* Reset Docs Banner */}

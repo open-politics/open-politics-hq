@@ -19,7 +19,9 @@ export interface UserUIPreferences {
   docs_banner_dismissed: boolean;
   tutorial_completed: boolean;
   tutorial_step: number | null;
-  custom_background_url: string | null;
+  custom_background_url: string | null;        // legacy single wallpaper (shared fallback)
+  custom_background_url_light: string | null;  // wallpaper shown in light mode
+  custom_background_url_dark: string | null;   // wallpaper shown in dark mode
   channels: Channel[];
   active_channel_id: string | null;  // currently selected channel, null = "All"
   default_channel_id: string | null; // landing channel on load, null = "All"
@@ -33,6 +35,8 @@ const DEFAULT_PREFERENCES: UserUIPreferences = {
   tutorial_completed: false,
   tutorial_step: null,
   custom_background_url: null,
+  custom_background_url_light: null,
+  custom_background_url_dark: null,
   channels: [],
   active_channel_id: null,
   default_channel_id: null,
@@ -69,9 +73,9 @@ interface UserPreferencesState {
   removeChannel: (id: string) => Promise<void>;
   setActiveChannel: (id: string | null) => void;
 
-  // Background image helpers
-  uploadBackgroundImage: (file: File) => Promise<void>;
-  deleteBackgroundImage: () => Promise<void>;
+  // Background image helpers (per theme)
+  uploadBackgroundImage: (file: File, theme: 'light' | 'dark') => Promise<void>;
+  deleteBackgroundImage: (theme: 'light' | 'dark') => Promise<void>;
 }
 
 export const useUserPreferencesStore = create<UserPreferencesState>()((set, get) => ({
@@ -224,30 +228,21 @@ export const useUserPreferencesStore = create<UserPreferencesState>()((set, get)
     set({ preferences: { ...get().preferences, active_channel_id: id } });
   },
 
-  // Helper to upload background image
-  uploadBackgroundImage: async (file: File) => {
+  // Helper to upload a background image for a given theme
+  uploadBackgroundImage: async (file: File, theme: 'light' | 'dark') => {
     set({ isLoading: true, error: null });
 
     try {
       const response = await UsersService.uploadBackgroundImage({
         formData: {
-          file: file,
+          file: file as any,
+          theme,
         },
       });
 
-      console.log('Upload response:', response);
-      console.log('UI preferences from response:', response.ui_preferences);
-
       if (response.ui_preferences) {
-        const newPreferences = {
-          ...DEFAULT_PREFERENCES,
-          ...response.ui_preferences,
-        };
-        
-        console.log('Setting new preferences:', newPreferences);
-        
         set({
-          preferences: newPreferences,
+          preferences: { ...DEFAULT_PREFERENCES, ...response.ui_preferences },
           isLoading: false,
         });
       }
@@ -257,39 +252,30 @@ export const useUserPreferencesStore = create<UserPreferencesState>()((set, get)
       const message = error instanceof Error ? error.message : 'Failed to upload background image';
       console.error('Error uploading background:', error);
 
-      set({
-        error: message,
-        isLoading: false,
-      });
-
+      set({ error: message, isLoading: false });
       toast.error(message);
       throw error;
     }
   },
 
-  // Helper to delete background image
-  deleteBackgroundImage: async () => {
+  // Helper to delete the background image for a given theme
+  deleteBackgroundImage: async (theme: 'light' | 'dark') => {
     const currentPreferences = get().preferences;
+    const key = theme === 'light' ? 'custom_background_url_light' : 'custom_background_url_dark';
 
     // Optimistic update
     set({
-      preferences: {
-        ...currentPreferences,
-        custom_background_url: null,
-      },
+      preferences: { ...currentPreferences, [key]: null },
       isLoading: true,
       error: null,
     });
 
     try {
-      const response = await UsersService.deleteBackgroundImage();
+      const response = await UsersService.deleteBackgroundImage({ theme });
 
       if (response.ui_preferences) {
         set({
-          preferences: {
-            ...DEFAULT_PREFERENCES,
-            ...response.ui_preferences,
-          },
+          preferences: { ...DEFAULT_PREFERENCES, ...response.ui_preferences },
           isLoading: false,
         });
       }
@@ -300,12 +286,7 @@ export const useUserPreferencesStore = create<UserPreferencesState>()((set, get)
       console.error('Error deleting background:', error);
 
       // Revert on error
-      set({
-        preferences: currentPreferences,
-        error: message,
-        isLoading: false,
-      });
-
+      set({ preferences: currentPreferences, error: message, isLoading: false });
       toast.error(message);
       throw error;
     }

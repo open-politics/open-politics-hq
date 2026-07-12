@@ -9,7 +9,7 @@ import { useAssetDetail } from '@/components/collection/assets/Views/AssetDetail
 import AnnotationSchemaCard from '@/components/collection/annotation/AnnotationSchemaCard'
 import { SchemePreview } from '@/components/collection/annotation/schemaCreation/SchemePreview'
 import { useHomeData } from '@/components/collection/home/useHomeData'
-import { HomeIdentityRibbon } from '@/components/collection/home/HomeIdentityRibbon'
+import { HomeIdentityBar } from '@/components/collection/home/HomeIdentityBar'
 import { HomeInquiryBar } from '@/components/collection/home/HomeInquiryBar'
 import { HomeAssetsPanel, HomeSchemasPanel } from '@/components/collection/home/HomeFoundation'
 import { HomeAnalysisModule, HomeGraphsModule, HomePackagesModule } from '@/components/collection/home/HomeWork'
@@ -41,15 +41,13 @@ function HomePage() {
       variants={{ show: { transition: { staggerChildren: 0.06 } } }}
       className="flex h-full w-full flex-col gap-4 overflow-y-auto p-4 scrollbar-hide min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] sm:p-6"
     >
-      <motion.div variants={fade}>
-        <HomeIdentityRibbon
-          name={activeInfospace?.name || ''}
-          assets={data.assets.total}
-          schemas={data.schemas.total}
-          runs={data.analysis.total}
-          embeddingsOn={data.embeddingsOn}
-        />
-      </motion.div>
+      <HomeIdentityBar
+        name={activeInfospace?.name || ''}
+        assets={data.assets.total}
+        schemas={data.schemas.total}
+        runs={data.analysis.total}
+        embeddingsOn={data.embeddingsOn}
+      />
 
       <div className="grid flex-1 gap-4 lg:grid-cols-[minmax(280px,360px)_1fr]">
         {/* Foundation spine */}

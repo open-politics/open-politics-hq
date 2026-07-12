@@ -22,7 +22,7 @@ export function HomeAnalysisModule({ favorites, isLoading }: { favorites: Annota
           <HomeRow
             key={r.id}
             href={`${RUNNER_HREF}?runId=${r.id}`}
-            leading={<RunStatusDot status={(r.effective_status ?? r.status) as string} />}
+            leading={<RunStatusDot status={r.status as string} />}
             label={r.name || `Run ${r.id}`}
             meta={r.annotation_count != null ? r.annotation_count.toLocaleString() : undefined}
           />

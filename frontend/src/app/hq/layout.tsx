@@ -2,13 +2,8 @@
 
 import { SidebarInset, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/collection/_unsorted_legacy/AppSidebar"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { TopbarSlotProvider, TopbarSlotRenderer } from "@/components/layout/TopbarSlot"
+import { DefaultTopbar } from "@/components/layout/DefaultTopbar"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable"
 import LottiePlaceholder from "@/components/ui/lottie-placeholder"
@@ -19,53 +14,15 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useDock } from "@/zustand_stores/storeDock"
 import { useAnnotationRunStore } from "@/zustand_stores/useAnnotationRunStore"
 import { DockHost } from "@/components/collection/intake/DockHost"
+import { CommandRegistryBridge } from "@/components/collection/chat/directives/CommandRegistryBridge"
+import { ActiveObservations } from "@/components/collection/chat/observe/ActiveObservations"
+import { OperatorCompanion } from "@/components/collection/chat/OperatorCompanion"
 import { TextSpanHighlightProvider } from "@/components/collection/contexts/TextSpanHighlightContext"
 import { ArrowLeft, Menu as MenuIcon, ExternalLink, X } from "lucide-react"
-import { InvitationInbox } from "@/components/collaboration/InvitationInbox"
+import { cn } from "@/lib/utils"
 import { useEffect, useState, useRef } from 'react';
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
-
-// Helper to generate breadcrumbs from the current path and infospace
-function useBreadcrumbs(activeInfospace: any) {
-  const pathname = usePathname();
-  // Remove leading/trailing slashes, split into segments
-  const segments = pathname
-    .replace(/^\/|\/$/g, '')
-    .split('/')
-    .filter(Boolean);
-
-  // Build up breadcrumb items
-  const items: { label: string, href: string }[] = [];
-  let href = '';
-  segments.forEach((seg, idx) => {
-    href += '/' + seg;
-    // Special case for infospaces
-    if (seg === 'hq') {
-      items.push({ label: 'HQ', href: '/hq' });
-    } else if (seg === 'infospaces' && activeInfospace) {
-      items.push({ label: 'Infospaces', href: '/hq/infospaces' });
-      // If next segment is the infospace id, show its name
-      if (segments[idx + 1] && segments[idx + 1] === String(activeInfospace.id)) {
-        items.push({ label: activeInfospace.name || 'Infospace', href: `/hq/infospaces/${activeInfospace.id}` });
-      }
-    } else if (
-      seg !== 'hq' &&
-      seg !== 'infospaces' &&
-      (!activeInfospace || seg !== String(activeInfospace.id))
-    ) {
-      // Capitalize and prettify
-      items.push({ label: seg.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), href });
-    }
-  });
-
-  // If on /hq root, show only HQ
-  if (items.length === 0 && segments[0] === 'hq') {
-    items.push({ label: 'HQ', href: '/hq' });
-  }
-
-  return items;
-}
 
 // Main content + the global right dock. Desktop: a resizable split; mobile: a
 // sheet; fullscreen: the dock lifts over the whole content area. Driven entirely
@@ -144,8 +101,6 @@ function MainContentWithInspector({
 // Component that uses the sidebar context
 function SidebarContent({ children, user }: { children: React.ReactNode, user: any }) {
   const { isMobile: sidebarMobile } = useSidebar();
-  const activeInfospace = useInfospaceStore.getState().activeInfospace;
-  const breadcrumbs = useBreadcrumbs(activeInfospace);
   const mainContentRef = useRef<HTMLDivElement>(null);
   // Focus mode (annotation runner) hides all chrome for a clean canvas — that
   // includes this app-level top bar. The runner clears the flag on unmount so
@@ -154,6 +109,16 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
 
   // User preferences
   const { preferences, initializePreferences, updatePreference } = useUserPreferencesStore();
+  // When a custom background image is set, the main content surface goes frosted
+  // (translucent + blurred) so the wallpaper rendered behind the app by
+  // <BackgroundImage> shows through. The sidebar and cards keep their own solid
+  // surfaces, so text stays readable. Without a custom background the inset keeps
+  // its default opaque `bg-background`.
+  const hasCustomBackground = !!(
+    preferences.custom_background_url ||
+    preferences.custom_background_url_light ||
+    preferences.custom_background_url_dark
+  );
 
   // Bootstrap infospaces once at the layout level (which is always mounted),
   // not from the sidebar — on mobile the sidebar lives inside a Radix <Sheet>
@@ -202,56 +167,21 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
   }, []);
 
   return (
-    <>
+    <TopbarSlotProvider>
       <AppSidebar className="fixed md:relative h-full md:h-auto" />
-      <SidebarInset className="max-w-full overflow-hidden">
+      <SidebarInset
+        className={cn(
+          "max-w-full overflow-hidden",
+          hasCustomBackground && "bg-transparent backdrop-blur-sm"
+        )}
+      >
         {!focusMode && (
         <header className="flex h-16 shrink-0 items-center gap-2 border-b mb-1 px-4 relative z-10">
           <SidebarTrigger className="-ml-1" />
           <div className="h-4 w-[1px] mx-2 bg-border" />
-          <div className="flex-1 min-w-0">
-            <Breadcrumb>
-              <BreadcrumbList className="flex-wrap">
-                {breadcrumbs.map((item, idx) => (
-                  <span key={item.href} className="flex items-center">
-                    <BreadcrumbItem>
-                      <BreadcrumbLink href={item.href}>{item.label}</BreadcrumbLink>
-                    </BreadcrumbItem>
-                    {idx < breadcrumbs.length - 1 && <BreadcrumbSeparator />}
-                  </span>
-                ))}
-              </BreadcrumbList>
-            </Breadcrumb>
+          <div className="flex-1 min-w-0 flex items-center gap-2">
+            <TopbarSlotRenderer fallback={<DefaultTopbar />} />
           </div>
-          
-          {/* Invitation inbox */}
-          <InvitationInbox />
-
-          {/* Docs Banner - Desktop */}
-          {!preferences.docs_banner_dismissed && (
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-500 rounded-md flex-shrink-0">
-              <Link 
-                href="https://docs.open-politics.org/pages/app/overview" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300 hover:text-blue-800 dark:hover:text-blue-200 transition-colors font-medium"
-              >
-                <span className="text-sm">📚 Check out our updated docs</span>
-                <ExternalLink className="h-3 w-3" />
-              </Link>
-              <span className="text-blue-400">•</span>
-              <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full font-semibold">
-                v0.9.9
-              </span>
-              <button
-                onClick={() => updatePreference('docs_banner_dismissed', true)}
-                className="ml-1 p-0.5 text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-200 transition-colors"
-                aria-label="Dismiss banner"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          )}
         </header>
         )}
 
@@ -286,7 +216,7 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
           {children}
         </MainContentWithInspector>
       </SidebarInset>
-    </>
+    </TopbarSlotProvider>
   );
 }
 
@@ -325,6 +255,9 @@ export default function HQLayout({ children }: { children: React.ReactNode }) {
   return (
     <TextSpanHighlightProvider>
       <div className="h-full max-h-screen w-full flex flex-col md:flex-row overflow-hidden">
+        <CommandRegistryBridge />
+        <ActiveObservations />
+        <OperatorCompanion />
         <SidebarContent user={user}>
           {children}
         </SidebarContent>

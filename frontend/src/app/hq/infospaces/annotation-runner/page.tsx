@@ -13,6 +13,7 @@ import { useAssetStore } from "@/zustand_stores/storeAssets";
 import { AnnotationsService } from "@/client";
 import { adaptEnhancedAnnotationToFormattedAnnotation } from "@/lib/annotations/adapters";
 import { FormattedAnnotation, AnnotationRunParams } from "@/lib/annotations/types";
+import { runPollIntervalMs } from "@/lib/annotations/pollIntervals";
 import { motion } from "framer-motion";
 
 export default function AnnotationRunnerPage() {
@@ -136,12 +137,6 @@ export default function AnnotationRunnerPage() {
       }
     });
     
-    console.log('[AnnotationRunnerPage] Extracted assets from annotations:', {
-      totalAnnotations: runResults.length,
-      uniqueAssets: uniqueAssets.size,
-      assetIds: Array.from(uniqueAssets.keys())
-    });
-    
     return Array.from(uniqueAssets.values());
   }, [runResults, assets, activeInfospace?.id]);
 
@@ -153,29 +148,14 @@ export default function AnnotationRunnerPage() {
     }
   }, [activeRun?.id, fetchRunResults]);
 
-  // Debug: log when activeRun's status / progress changes so we can see which
-  // pieces of state the SSE handler actually updates.
-  useEffect(() => {
-    // eslint-disable-next-line no-console
-    console.log('[page] activeRun snapshot', activeRun ? {
-      id: activeRun.id,
-      status: activeRun.status,
-      progress_current: activeRun.progress_current,
-      progress_total: activeRun.progress_total,
-    } : null);
-  }, [activeRun?.id, activeRun?.status, activeRun?.progress_current, activeRun?.progress_total]);
-
-  // Presence: subscribe to annotation run stream for live progress
-  // ``effective_status`` rolls up family activity: when an extension run is
-  // mid-flight the parent's stored ``status`` is still ``completed`` (we
-  // never lie about the parent's own lifecycle), but ``effective_status``
-  // flips to ``running``. Listening on either keeps SSE + polling alive
-  // during extensions without changing the parent's underlying status.
+  // Presence: subscribe to annotation run stream for live progress.
+  // A *live* run is never really "done" — when it's completed it's watching,
+  // and the reconciler can flip it back to PENDING as new content lands. So we
+  // keep SSE + polling alive for a live run too, to catch the next cycle.
   const isRunActive =
     activeRun?.status === 'running' ||
     activeRun?.status === 'pending' ||
-    activeRun?.effective_status === 'running' ||
-    activeRun?.effective_status === 'pending';
+    !!(activeRun as any)?.live;
   const { isConnected: streamConnected } = useStream<{
     run_id: number;
     progress_current?: number;
@@ -238,10 +218,11 @@ export default function AnnotationRunnerPage() {
 
     if (isRunActive && activeRun?.id) {
       const runId = activeRun.id;
+      // Fast while processing; slow for a caught-up "watching" live run.
       pollIntervalRef.current = setInterval(async () => {
         await loadRuns();
         await fetchRunResults(runId, true);
-      }, 5000);
+      }, runPollIntervalMs({ status: activeRun?.status }));
     } else if (activeRun?.status === 'completed' || activeRun?.status === 'completed_with_errors' || activeRun?.status === 'failed') {
       fetchRunResults(activeRun.id);
     }

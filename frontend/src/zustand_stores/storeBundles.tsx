@@ -42,7 +42,17 @@ export const useBundleStore = create<BundleState>((set, get) => ({
   fetchBundles: async (infospaceId: number) => {
     set({ isLoading: true, error: null });
     try {
-      const bundles = await BundlesService.getBundles({ infospaceId });
+      // Page until exhausted. The flat list is the tree's backbone — folder
+      // search hits, breadcrumb paths, and reveal (ancestorBundleNodeIds) all
+      // walk it, so it must be complete: a missing ancestor past the endpoint's
+      // 100-cap silently breaks the parent chain.
+      const PAGE = 100;
+      const bundles: BundleRead[] = [];
+      for (let skip = 0; ; skip += PAGE) {
+        const page = await BundlesService.getBundles({ infospaceId, skip, limit: PAGE });
+        bundles.push(...page);
+        if (page.length < PAGE) break;
+      }
       set({ bundles, isLoading: false });
     } catch (err: any) {
       const message = err.body?.detail || err.message || 'Failed to fetch bundles';

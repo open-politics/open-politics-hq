@@ -15,7 +15,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { connectSSE } from '@/lib/sse';
-import type { AssetRead, BundleRead, AssetNode, AssetKind, ProcessingStatus } from '@/client';
+import type { AssetRead, AssetNode, AssetKind, ProcessingStatus } from '@/client';
 
 export interface QueryResult {
   asset: AssetRead;
@@ -23,11 +23,10 @@ export interface QueryResult {
   highlight: string | null;
   /** Which clause matched — drives the AssetSelector title/content tiers. */
   field?: 'title' | 'body';
-}
-
-export interface NameMatches {
-  bundles: BundleRead[];
-  assets: QueryResult[];
+  /** Node kind: 'bundle' is a folder hit (rendered as a folder), else an asset. */
+  type: 'asset' | 'bundle';
+  /** Full polymorphic node id ("asset-5" / "bundle-5") — the dedupe & reveal key. */
+  nodeId: string;
 }
 
 export interface ChildResultGroup {
@@ -44,25 +43,26 @@ interface UseAssetQueryOptions {
   sort?: string;
   limit?: number;
   enabled?: boolean;
+  /** Lead results with ranked folder (bundle) name-matches. Discovery surfaces
+   *  (explore, the tree/picker) opt in; asset-only callers leave it off. */
+  includeFolders?: boolean;
 }
-
-const EMPTY_NAME_MATCHES: NameMatches = { bundles: [], assets: [] };
-
 
 /**
  * Append ``incoming`` to ``prev`` while keeping the list duplicate-free by
- * asset id. Streaming is idempotent at the item level: the same node can
+ * node id. Streaming is idempotent at the item level: the same node can
  * legitimately arrive twice (a ``rank DESC`` cursor page overlapping its
  * predecessor, an SSE re-delivery, a dev StrictMode double-mount), and the
- * render keys rows by ``asset.id`` — so a repeat would crash React with a
- * duplicate-key warning. Merge-by-id makes the result set correct by
- * construction regardless of how the batches arrive.
+ * render keys rows by node id — so a repeat would crash React with a
+ * duplicate-key warning. Keying by the full ``nodeId`` string (not the numeric
+ * id) is essential now that folders ride the stream: ``bundle-5`` and
+ * ``asset-5`` are distinct nodes that would otherwise collide.
  */
 function mergeResultsById(prev: QueryResult[], incoming: QueryResult[]): QueryResult[] {
   if (incoming.length === 0) return prev;
   if (prev.length === 0) return incoming;
-  const seen = new Set(prev.map((r) => r.asset.id));
-  const fresh = incoming.filter((r) => !seen.has(r.asset.id));
+  const seen = new Set(prev.map((r) => r.nodeId));
+  const fresh = incoming.filter((r) => !seen.has(r.nodeId));
   return fresh.length === 0 ? prev : [...prev, ...fresh];
 }
 
@@ -107,14 +107,15 @@ function toQueryResult(node: AssetNode): QueryResult {
     score: node.score ?? null,
     highlight: headline,
     field,
+    type: node.type === 'bundle' ? 'bundle' : 'asset',
+    nodeId: node.id,
   };
 }
 
 
 export function useAssetQuery(options: UseAssetQueryOptions) {
-  const { infospaceId, query, parentAssetId, sort = 'relevance', limit = 50, enabled = true } = options;
+  const { infospaceId, query, parentAssetId, sort = 'relevance', limit = 50, enabled = true, includeFolders = false } = options;
 
-  const [nameMatches] = useState<NameMatches>(EMPTY_NAME_MATCHES);
   const [results, setResults] = useState<QueryResult[]>([]);
   const [childResults, setChildResults] = useState<ChildResultGroup[]>([]);
   const [parsed] = useState<Record<string, unknown>>({});
@@ -145,6 +146,7 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
       if (!append) setError(null);
 
       const body: Record<string, unknown> = { q, mode: 'text', limit, sort };
+      if (includeFolders) body.include_folders = true;
       if (cursor) body.cursor = cursor;
       if (parentAssetId) body.scope_hints = { parent_asset_id: parentAssetId };
 
@@ -242,7 +244,7 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
         }
       }
     },
-    [infospaceId, parentAssetId, limit, sort],
+    [infospaceId, parentAssetId, limit, sort, includeFolders],
   );
 
   useEffect(() => {
@@ -270,5 +272,5 @@ export function useAssetQuery(options: UseAssetQueryOptions) {
   const isCounting = total === -1;
   const resolvedTotal = isCounting ? null : total;
 
-  return { nameMatches, results, childResults, parsed, total: resolvedTotal, isCounting, hasMore, isLoading, error, search, loadMore };
+  return { results, childResults, parsed, total: resolvedTotal, isCounting, hasMore, isLoading, error, search, loadMore };
 }
