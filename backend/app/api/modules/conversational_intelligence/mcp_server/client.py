@@ -6,6 +6,7 @@ analysis MCP server, allowing language model providers to use MCP tools.
 
 The client uses existing Pydantic schemas for consistent serialization and validation.
 """
+import json
 import logging
 from typing import Dict, Any, List, Optional
 import asyncio
@@ -22,6 +23,33 @@ from jose import jwt
 import os
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_json_str_args(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Coerce JSON-string tool args into objects/arrays.
+
+    LLMs frequently send object/array parameters (a source's ``details``, a
+    schema's ``output_contract``, …) as a JSON *string*. Any ``Dict``/``List``-
+    typed tool param then fails FastMCP validation before the tool body runs.
+    Here, any string value that looks like JSON (starts with ``{`` or ``[``) and
+    parses is replaced with the parsed value — so those params accept both the
+    stringified and the native form transparently. Plain strings are untouched;
+    numeric strings ('3600') are left for pydantic's own int coercion.
+    """
+    if not isinstance(arguments, dict):
+        return arguments
+    out: Dict[str, Any] = {}
+    for key, value in arguments.items():
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped[:1] in ("{", "["):
+                try:
+                    out[key] = json.loads(stripped)
+                    continue
+                except (ValueError, TypeError):
+                    pass
+        out[key] = value
+    return out
 
 
 def create_mcp_context_token(user_id: int, infospace_id: int, conversation_id: Optional[int] = None, model_name: Optional[str] = None) -> str:
@@ -150,7 +178,9 @@ class IntelligenceMCPClient:
         logger.info(f"Executing MCP tool: {tool_name} with args: {arguments}")
         
         try:
-            result = await self._connected_client.call_tool(tool_name, arguments or {})
+            result = await self._connected_client.call_tool(
+                tool_name, _coerce_json_str_args(arguments or {})
+            )
             
             # Extract concise text content for LLM (what model should see)
             content_text = None

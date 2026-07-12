@@ -14,6 +14,8 @@ from app.api.modules.foundation_service_providers.base import GenerationResponse
 from app.models import Asset, User, Infospace, Bundle, AnnotationSchema, Annotation, AssetKind
 from app.api.modules.annotation.services import AnnotationService
 from app.api.modules.content.query import AssetQuery
+from app.api.modules.identity_infospace_user.access import resolve_access_capped
+from app.api.modules.conversational_intelligence import catalogue as C
 from app.schemas import AnnotationRunCreate
 from app.api.modules.conversational_intelligence.mcp_server.client import (
     IntelligenceMCPClient,
@@ -180,6 +182,7 @@ class IntelligenceConversationService:
         agent: Optional[str] = None,
         run_id: Optional[int] = None,
         formula_id: Optional[str] = None,
+        current_route: Optional[str] = None,
         **kwargs,
     ) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
@@ -222,8 +225,38 @@ class IntelligenceConversationService:
         model_spec = get_model_spec("language", provider_instance.provider_key, model_name)
         supports_tools = bool(getattr(model_spec, "supports_tools", False)) if model_spec else False
 
+        # The HQ operator is the default persona (browse-all catalogue). dossier/
+        # formula stay explicit; unset and legacy 'intelligence' both map to operator.
+        is_operator = agent in (None, "", "intelligence", "operator")
+        schema_by_name: Dict[str, Any] = {}
+        active_scenario = None  # sticky operator scenario, derived from history below
+
+        # The operator runs long multi-step arcs (browse → load → seed → sources →
+        # schema → live run). Raise its per-turn tool-loop cap above the default 20 so
+        # a full arc doesn't get truncated mid-build. Caller can still override.
+        if is_operator and "max_tool_iterations" not in kwargs:
+            kwargs["max_tool_iterations"] = 40
         if supports_tools and tools_enabled:
-            if tools is not None and len(tools) > 0:
+            if is_operator:
+                # Operator persona: browse-all catalogue. Ignore any frontend tool
+                # filter — fetch the full surface to build the load index, then hand
+                # the model only the hot core (catalogue + load). It browses and
+                # loads the rest on demand.
+                full_tools = await self.get_universal_tools(user_id, infospace_id, api_keys)
+                schema_by_name = {t.get("name"): t for t in full_tools if t.get("name")}
+                tools = [dict(t) for t in C.HOT_CORE_TOOLS]
+                # Sticky scenario: if a prior turn loaded one, re-preload its tools now so
+                # the model just acts instead of re-loading (the crux only expands mid-turn).
+                active_scenario = C.active_scenario_from_messages(messages)
+                if active_scenario:
+                    extra, _ = C.resolve_load(list(active_scenario.tools), None, schema_by_name)
+                    have = {t.get("name") for t in tools}
+                    tools += [t for t in extra if t.get("name") not in have]
+                logger.info(
+                    f"Operator: {len(schema_by_name)} operations catalogued, hot core = {len(tools)} tools"
+                    + (f" (+scenario '{active_scenario.name}')" if active_scenario else "")
+                )
+            elif tools is not None and len(tools) > 0:
                 logger.info(f"Using {len(tools)} filtered tools provided by frontend")
             else:
                 tools = await self.get_universal_tools(user_id, infospace_id, api_keys)
@@ -266,7 +299,9 @@ class IntelligenceConversationService:
             tools[-1] = {**tools[-1], "cacheable": True}
 
         infospace = self.session.get(Infospace, infospace_id)
-        if agent == "dossier":
+        if is_operator:
+            system_context = self._build_operator_context(infospace, active_scenario, current_route)
+        elif agent == "dossier":
             system_context = self._build_dossier_agent_context(infospace, run_id)
         elif agent == "formula":
             system_context = self._build_formula_agent_context(infospace, run_id, formula_id)
@@ -279,6 +314,30 @@ class IntelligenceConversationService:
             f"Intelligence chat: user={user_id}, infospace={infospace_id}, model={model_name}, tools={len(tools) if tools else 0}, supports_tools={supports_tools}"
         )
 
+        # Operator intercepts the hot-core tools locally (catalogue/load); anything
+        # it loads routes through the normal MCP path, which re-gates via each
+        # operation's declared `requires`.
+        if is_operator:
+            operator_access = resolve_access_capped(
+                self.session, infospace_id, self.session.get(User, user_id)
+            )
+
+            async def _tool_executor(name, args):
+                if name == "catalogue":
+                    return self._op_catalogue(args, operator_access, infospace_id)
+                if name == "load":
+                    return self._op_load(args, schema_by_name)
+                if name == "inspect":
+                    return self._op_inspect(args, messages)
+                return await self.execute_tool_call(
+                    name, args, user_id, infospace_id, api_keys, conversation_id
+                )
+        else:
+            def _tool_executor(name, args):
+                return self.execute_tool_call(
+                    name, args, user_id, infospace_id, api_keys, conversation_id
+                )
+
         try:
             return await provider_instance.generate(
                 messages=context_messages,
@@ -287,9 +346,7 @@ class IntelligenceConversationService:
                 stream=stream,
                 thinking_enabled=thinking_enabled,
                 mcp_headers={"Authorization": f"Bearer {context_token}"},
-                tool_executor=lambda name, args: self.execute_tool_call(
-                    name, args, user_id, infospace_id, api_keys, conversation_id
-                ),
+                tool_executor=_tool_executor,
                 **kwargs,
             )
 
@@ -400,363 +457,6 @@ class IntelligenceConversationService:
                 f"MCP capability execution failed: {tool_name} - {e}", exc_info=True
             )
             return {"error": f"Capability execution failed: {str(e)}"}
-
-    async def _tool_search_assets(
-        self, arguments: Dict[str, Any], infospace_id: int
-    ) -> Dict[str, Any]:
-        """Execute unified search_assets tool call."""
-        query = arguments.get("query", "")
-        search_method = arguments.get("search_method", "hybrid")
-        asset_kinds = arguments.get("asset_kinds", [])
-        limit = arguments.get("limit", 10)
-        distance_threshold = arguments.get("distance_threshold", 0.8)
-
-        logger.info(
-            f"Asset search: query='{query}', method={search_method}, limit={limit}"
-        )
-
-        options = {"asset_kinds": asset_kinds, "distance_threshold": distance_threshold}
-
-        def _serialize_asset(a: Asset) -> Dict[str, Any]:
-            try:
-                return {
-                    "id": a.id,
-                    "title": a.title,
-                    "kind": a.kind.value if getattr(a, "kind", None) else None,
-                    "text_content": getattr(a, "text_content", None),
-                    "facets": getattr(a, "facets", None),
-                    "file_info": getattr(a, "file_info", None),
-                    "created_at": a.created_at.isoformat()
-                    if getattr(a, "created_at", None)
-                    else None,
-                    "event_timestamp": a.event_timestamp.isoformat()
-                    if getattr(a, "event_timestamp", None)
-                    else None,
-                }
-            except Exception:
-                return {"id": getattr(a, "id", None), "title": getattr(a, "title", None)}
-
-        kinds = [AssetKind(k) for k in (asset_kinds or []) if k in AssetKind.__members__]
-
-        def _text_query(q: str, n: int) -> AssetQuery:
-            aq = (
-                AssetQuery(self.session, infospace_id)
-                .exclude_superseded()
-                .text(q, mode="fts")
-                .sort("relevance" if q else "created_at_desc")
-                .paginate(limit=n)
-            )
-            if kinds:
-                aq.kinds(kinds)
-            return aq
-
-        def _semantic_query(q: str, n: int) -> AssetQuery:
-            aq = (
-                AssetQuery(self.session, infospace_id)
-                .exclude_superseded()
-                .semantic(q, top_k=n)
-                .paginate(limit=n)
-            )
-            if kinds:
-                aq.kinds(kinds)
-            return aq
-
-        if search_method == "text":
-            assets = _text_query(query, limit).execute()
-            return {
-                "assets": [_serialize_asset(a) for a in assets],
-                "total_found": len(assets),
-                "search_method": "text",
-            }
-
-        elif search_method == "semantic":
-            try:
-                assets = await _semantic_query(query, limit).execute_async()
-            except Exception as e:
-                logger.warning(f"Semantic search failed, falling back to text: {e}")
-                assets = _text_query(query, limit).execute()
-            return {
-                "assets": [_serialize_asset(a) for a in assets],
-                "total_found": len(assets),
-                "search_method": "semantic",
-            }
-
-        elif search_method == "hybrid":
-            half = max(1, limit // 2)
-
-            async def _run_text():
-                return _text_query(query, half).execute()
-
-            async def _run_sem():
-                try:
-                    return await _semantic_query(query, half).execute_async()
-                except Exception as e:
-                    logger.warning(f"Semantic search failed in hybrid: {e}")
-                    return []
-
-            text_list, sem_list = await asyncio.gather(_run_text(), _run_sem())
-
-            merged: Dict[int, Dict[str, Any]] = {}
-            for a in text_list:
-                sa = _serialize_asset(a)
-                sa["search_method"] = "text"
-                if sa.get("id") is not None:
-                    merged[sa["id"]] = sa
-            for a in sem_list:
-                sa = _serialize_asset(a)
-                _id = sa.get("id")
-                if _id in merged:
-                    merged[_id]["search_method"] = "hybrid"
-                else:
-                    sa["search_method"] = "semantic"
-                    if _id is not None:
-                        merged[_id] = sa
-
-            def sort_key(x: Dict[str, Any]):
-                return (x.get("search_method") == "hybrid", x.get("created_at") or "")
-
-            sorted_assets = sorted(merged.values(), key=sort_key, reverse=True)
-
-            return {
-                "assets": sorted_assets[:limit],
-                "total_found": len(sorted_assets),
-                "search_method": "hybrid",
-                "text_results": len(text_list),
-                "semantic_results": len(sem_list),
-            }
-
-        else:
-            raise ValueError(f"Unknown search method: {search_method}")
-
-    async def _tool_get_asset_details(
-        self, arguments: Dict[str, Any], infospace_id: int
-    ) -> Dict[str, Any]:
-        """Execute get_asset_details tool call"""
-        asset_ids = arguments.get("asset_ids", [])
-
-        assets = self.session.exec(
-            select(Asset)
-            .where(Asset.id.in_(asset_ids))
-            .where(Asset.infospace_id == infospace_id)
-        ).all()
-
-        return {
-            "assets": [
-                {
-                    "id": asset.id,
-                    "title": asset.title,
-                    "kind": asset.kind.value,
-                    "text_content": asset.text_content,
-                    "facets": asset.facets,
-                    "file_info": asset.file_info,
-                    "created_at": asset.created_at.isoformat(),
-                    "event_timestamp": asset.event_timestamp.isoformat()
-                    if asset.event_timestamp
-                    else None,
-                }
-                for asset in assets
-            ]
-        }
-
-    async def _tool_get_annotations(
-        self, arguments: Dict[str, Any], infospace_id: int
-    ) -> Dict[str, Any]:
-        """Execute get_annotations tool call"""
-        asset_ids = arguments.get("asset_ids", [])
-        schema_ids = arguments.get("schema_ids", [])
-
-        query_conditions = [
-            Annotation.infospace_id == infospace_id,
-            Annotation.asset_id.in_(asset_ids),
-        ]
-
-        if schema_ids:
-            query_conditions.append(Annotation.schema_id.in_(schema_ids))
-
-        annotations = self.session.exec(
-            select(Annotation).where(and_(*query_conditions))
-        ).all()
-
-        return {
-            "annotations": [
-                {
-                    "id": annotation.id,
-                    "asset_id": annotation.asset_id,
-                    "schema_id": annotation.schema_id,
-                    "value": annotation.value,
-                    "status": annotation.status.value,
-                    "timestamp": annotation.timestamp.isoformat(),
-                }
-                for annotation in annotations
-            ],
-            "total_found": len(annotations),
-        }
-
-    async def _tool_analyze_assets(
-        self,
-        arguments: Dict[str, Any],
-        user_id: int,
-        infospace_id: int,
-    ) -> Dict[str, Any]:
-        """Execute analyze_assets tool call - create new annotation run"""
-        asset_ids = arguments.get("asset_ids", [])
-        schema_id = arguments.get("schema_id")
-        custom_instructions = arguments.get("custom_instructions")
-        previous_run_id = arguments.get("previous_run_id")
-
-        if not asset_ids or not schema_id:
-            return {"error": "asset_ids and schema_id are required"}
-
-        configuration = {}
-        if custom_instructions:
-            configuration["custom_instructions"] = custom_instructions
-        if previous_run_id:
-            configuration["previous_run_id"] = previous_run_id
-
-        run_create = AnnotationRunCreate(
-            name=f"AI Analysis - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}",
-            description=f"Analysis requested through chat interface: {custom_instructions}"
-            if custom_instructions
-            else "Analysis requested through chat interface",
-            schema_ids=[schema_id],
-            target_asset_ids=asset_ids,
-            configuration=configuration,
-        )
-
-        try:
-            run = self.annotation_service.create_run(
-                user_id, infospace_id, run_create
-            )
-            return {
-                "run_id": run.id,
-                "run_name": run.name,
-                "status": "started",
-                "message": f"Analysis run {run.id} started for {len(asset_ids)} assets",
-            }
-        except Exception as e:
-            return {"error": f"Failed to create analysis run: {str(e)}"}
-
-    async def _tool_list_schemas(self, infospace_id: int) -> Dict[str, Any]:
-        """Execute list_schemas tool call"""
-        schemas = self.session.exec(
-            select(AnnotationSchema)
-            .where(AnnotationSchema.infospace_id == infospace_id)
-            .where(AnnotationSchema.is_active == True)
-        ).all()
-
-        return {
-            "schemas": [
-                {
-                    "id": schema.id,
-                    "name": schema.name,
-                    "description": schema.description,
-                    "version": schema.version,
-                }
-                for schema in schemas
-            ]
-        }
-
-    async def _tool_list_bundles(self, infospace_id: int) -> Dict[str, Any]:
-        """Execute list_bundles tool call"""
-        bundles = self.session.exec(
-            select(Bundle).where(Bundle.infospace_id == infospace_id)
-        ).all()
-
-        return {
-            "bundles": [
-                {
-                    "id": bundle.id,
-                    "name": bundle.name,
-                    "description": bundle.description,
-                    "asset_count": bundle.asset_count,
-                    "created_at": bundle.created_at.isoformat(),
-                }
-                for bundle in bundles
-            ]
-        }
-
-    async def _tool_create_report(
-        self,
-        arguments: Dict[str, Any],
-        user_id: int,
-        infospace_id: int,
-    ) -> Dict[str, Any]:
-        """Execute create_report tool call - create a new report asset"""
-        title = arguments.get("title")
-        content = arguments.get("content")
-        source_asset_ids = arguments.get("source_asset_ids", [])
-        source_bundle_ids = arguments.get("source_bundle_ids", [])
-        source_run_ids = arguments.get("source_run_ids", [])
-
-        if not title or not content:
-            return {"error": "Title and content are required for a report"}
-
-        try:
-            from app.api.modules.content.asset_builder import AssetBuilder
-            file_info = {
-                "composition_type": "report",
-                "created_by": "user_action",
-                "source_asset_ids": source_asset_ids or [],
-                "source_bundle_ids": source_bundle_ids or [],
-                "source_run_ids": source_run_ids or [],
-            }
-            report_asset = await (
-                AssetBuilder(self.session, user_id, infospace_id)
-                .as_kind(AssetKind.ARTICLE)
-                .with_title(title)
-                .with_text(content)
-                .with_metadata(**file_info)
-                .no_dedup()
-                .build()
-            )
-            self.session.commit()
-            self.session.refresh(report_asset)
-
-            return {
-                "report_id": report_asset.id,
-                "report_name": report_asset.title,
-                "status": "created",
-                "message": f"Report {report_asset.id} created successfully",
-            }
-        except Exception as e:
-            logger.error(f"Failed to create report: {e}")
-            return {"error": f"Failed to create report: {str(e)}"}
-
-    async def _tool_curate_asset_fragment(
-        self,
-        arguments: Dict[str, Any],
-        user_id: int,
-        infospace_id: int,
-    ) -> Dict[str, Any]:
-        """Execute curate_asset_fragment tool call"""
-        asset_id = arguments.get("asset_id")
-        fragment_key = arguments.get("fragment_key")
-        fragment_value = arguments.get("fragment_value")
-
-        if not asset_id or not fragment_key or not fragment_value:
-            return {
-                "error": "asset_id, fragment_key, and fragment_value are required"
-            }
-
-        try:
-            annotation = self.annotation_service.curate_fragment(
-                user_id=user_id,
-                infospace_id=infospace_id,
-                asset_id=asset_id,
-                field_name=fragment_key,
-                value=fragment_value,
-            )
-
-            return {
-                "asset_id": asset_id,
-                "fragment_key": fragment_key,
-                "fragment_value": fragment_value,
-                "status": "curated",
-                "message": f"Fragment '{fragment_key}' curated on asset {asset_id} with audit trail in run {annotation.run_id}",
-            }
-        except Exception as e:
-            logger.error(f"Failed to curate asset fragment: {e}")
-            return {"error": f"Failed to curate asset fragment: {str(e)}"}
 
     def _build_dossier_agent_context(self, infospace: Infospace, run_id: Optional[int]) -> str:
         """Build the DossierAgent's system prompt.
@@ -890,22 +590,22 @@ class IntelligenceConversationService:
 Tool results display: After executing a tool, reference with <tool_results tool="name" />
 The UI will render rich interactive results at that marker.
 
-Pick the entry point by task type — do NOT default to navigate() for everything:
-• Browse/explore the workspace tree   → navigate()
+Pick the entry point by task type — do NOT default to workspace_hub() for everything:
+• Browse/explore the workspace tree   → workspace_hub()
 • Edit, create, inspect a SCHEMA      → analysis_hub(operation="schema.list" | "schema.get" | "schema.update" | "schema.create")
 • Start or inspect an annotation RUN  → analysis_hub(operation="run.start" | "run.list" | "run.dashboard")
-• Organize assets into bundles        → organize()
-• Research the web                    → search_web() → ingest_urls()
+• Organize assets into bundles        → library_hub(operation="collection.create" | "collection.add")
+• Research the web                    → web_research(query=..., ingest_urls=[...])
 • Remember user context               → working_memory()
 
-Schemas are NOT assets — navigate() will not find them. Use analysis_hub for anything schema-related.
+Schemas are NOT assets — workspace_hub() will not find them. Use analysis_hub for anything schema-related.
 
 Minimum call plans (plan the path mentally BEFORE the first tool call):
 • Schema edit: schema.list → schema.get(id) → schema.update(id, output_contract=...)   (3 calls)
 • Schema create: analysis_hub(op="schema.create", schema_name, output_contract)          (1 call)
 • Run start: analysis_hub(op="run.start", schema_id, asset_ids)                          (1 call)
-• Asset browse: navigate(mode="search", query=..., depth="previews")                     (1 call)
-• Asset load for editing: navigate(mode="view", node_id=..., depth="full")               (1 call)
+• Asset browse: workspace_hub(mode="search", query=..., depth="previews")                     (1 call)
+• Asset load for editing: workspace_hub(mode="view", node_id=..., depth="full")               (1 call)
 
 If the minimum path isn't obvious from the request, ask ONE clarifying question instead
 of exploring. This is not the same as asking permission for a clear task — it's avoiding
@@ -913,14 +613,14 @@ wrong actions on ambiguous intent. Example: user says "schreib sie rein" (write 
 if it's unclear whether they mean "list them for review" vs "commit to the schema", ask.
 
 Efficient navigation patterns (CRITICAL - prevents iteration limits):
-• SEARCH FIRST, don't walk the tree: navigate(resource="assets", mode="search", query="topic", depth="previews")
-• Direct bundle access: navigate(mode="view", node_id="bundle-123", depth="previews") to see contents
+• SEARCH FIRST, don't walk the tree: workspace_hub(resource="assets", mode="search", query="topic", depth="previews")
+• Direct bundle access: workspace_hub(mode="view", node_id="bundle-123", depth="previews") to see contents
 • Batch operations: tasks(operation="batch", actions=[...]) instead of individual calls
 
 ⚠️ NEVER use depth="full" for search/list - use "previews" for browsing, "full" only when editing specific documents
 
 Common anti-patterns that cause iteration limits:
-❌ Using navigate() to find schemas or runs (use analysis_hub)
+❌ Using workspace_hub() to find schemas or runs (use analysis_hub)
 ❌ Multiple separate calls to explore structure (tree → view → list → load)
 ❌ Individual task additions instead of batching (3 tasks = 3 calls, should be 1)
 ❌ Fetching content multiple times or at wrong depth (search previews → then load full)
@@ -934,7 +634,7 @@ Depth usage (BUDGET-AWARE):
 Key principles:
 • Always use depth="previews" for browsing (efficient ~125 tokens/asset)
 • Only use depth="full" for small specific documents you're actively editing (can be 1k-100k+ tokens)
-• CSVs: navigate(mode="view") for preview, paginate with mode="list" for more
+• CSVs: workspace_hub(mode="view") for preview, paginate with mode="list" for more
 • Track work: working_memory() avoids redundant fetches
 • Batch operations: MANDATORY - Use tasks(operation="batch") for 2+ task operations (prevents iteration limits)
 • Chain operations: Multiple tools in one response when logical
@@ -961,6 +661,183 @@ General principles:
 
 <now>Current: {current_datetime}</now>"""
         return context
+
+    # ── Operator persona: hot-core tool handlers + prompt ────────────────────
+
+    def _op_catalogue(self, args: Optional[Dict[str, Any]], access, infospace_id: int) -> Dict[str, Any]:
+        """Operator hot-core: browse the gated catalogue + read docs (act-then-show)."""
+        a = args or {}
+        path = a.get("path")
+        query = a.get("query")
+
+        # Docs branch: path == "docs" lists; "docs/<slug>" reads one.
+        if path and (path == "docs" or path.startswith("docs/")):
+            if path == "docs":
+                docs = C.list_docs()
+                body = "Docs:\n" + "\n".join(f"- docs/{d['path']} — {d['title']}" for d in docs)
+                return {"content": body, "structured_content": {"kind": "catalogue", "docs": docs}}
+            slug = path[len("docs/"):]
+            doc = C.read_doc(slug)
+            if doc is None:
+                return {"content": f"No doc at {path}.",
+                        "structured_content": {"kind": "catalogue", "error": "doc_not_found", "path": path}}
+            return {"content": doc, "structured_content": {"kind": "doc", "path": path}}
+
+        # Operations branch (gated + provisioning-annotated).
+        ops = C.browse(access, self.session, infospace_id, path)
+        if query:
+            q = query.lower()
+            ops = [o for o in ops if q in o["path"].lower() or q in o["summary"].lower()]
+        lines = []
+        for o in ops:
+            flag = f"   ⚠ needs: {', '.join(o['needs_setup'])}" if o["needs_setup"] else ""
+            lines.append(f"- {o['path']} ({o['name']}) — {o['summary']}{flag}")
+        docs = C.list_docs()
+        doc_lines = "\n".join(f"- docs/{d['path']} — {d['title']}" for d in docs)
+        # Scenarios lead: for a known journey, one load(scenario=…) beats browsing.
+        scenarios = C.list_scenarios()
+        scenario_lines = "\n".join(f"- {s['name']} — {s['summary']}" for s in scenarios)
+        content = (
+            "Scenarios — a whole journey in one call (instructions + tools + a prefilled "
+            "playbook); load(scenario='<name>'):\n" + scenario_lines
+            + "\n\nOperations — call load(tools=[name,…]) to use them this turn:\n"
+            + "\n".join(lines)
+            + "\n\nDocs — catalogue(path='docs/<slug>') to read:\n" + doc_lines
+        )
+        return {"content": content,
+                "structured_content": {"kind": "catalogue", "operations": ops,
+                                       "docs": docs, "scenarios": scenarios}}
+
+    def _op_load(self, args: Optional[Dict[str, Any]], schema_by_name: Dict[str, Any]) -> Dict[str, Any]:
+        """Operator hot-core: load operations/sets/a scenario into the tool set for THIS turn.
+
+        Returns the ``_load_tools`` sentinel the provider loop consumes to extend
+        the model's available tools mid-turn (see AnthropicLanguageModelProvider).
+        A scenario additionally hands back its playbook and stays sticky across
+        turns (derived from history by ``active_scenario_from_messages``).
+        """
+        a = args or {}
+
+        scenario = a.get("scenario")
+        if scenario:
+            schemas, playbook, unknown = C.resolve_scenario_load(scenario, schema_by_name)
+            if unknown or not schemas:
+                names = ", ".join(s["name"] for s in C.list_scenarios())
+                return {"content": f"Unknown scenario '{scenario}'. Available: {names}.",
+                        "structured_content": {"kind": "scenario", "error": "unknown_scenario",
+                                               "available": [s["name"] for s in C.list_scenarios()]}}
+            loaded = [s.get("name") for s in schemas]
+            msg = (f"Loaded scenario '{scenario}' — its tools are ready and it stays active. "
+                   f"Follow the playbook; fill every <placeholder> with the specifics.\n\n{playbook}")
+            return {"content": msg,
+                    "structured_content": {"kind": "scenario", "scenario": scenario, "loaded": loaded},
+                    "_load_tools": schemas}
+
+        schemas, unknown = C.resolve_load(a.get("tools"), a.get("sets"), schema_by_name)
+        loaded = [s.get("name") for s in schemas]
+        msg = f"Loaded: {', '.join(loaded) or '(none)'}. Call them directly now."
+        if unknown:
+            msg += f" Unknown (not loaded — browse the catalogue): {', '.join(unknown)}."
+        return {"content": msg,
+                "structured_content": {"kind": "load", "loaded": loaded, "unknown": unknown},
+                "_load_tools": schemas}
+
+    def _op_inspect(self, args: Optional[Dict[str, Any]], messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Operator hot-core: pull the FULL payload of a prior tool result into context.
+
+        Cross-turn, the provider replays only each tool's bounded ``model_view`` — the
+        full ``structured_content`` is carried in history but not surfaced to the model.
+        This resolves a handle (exact tool-execution id) or the most-recent call of a
+        named tool, and returns its full payload, optionally sliced by a dotted path.
+        Act-then-show. In-flight (same-turn) results aren't in history yet — the model
+        just saw those; this is for earlier turns.
+        """
+        a = args or {}
+        handle = a.get("handle")
+        tool = a.get("tool")
+        path = a.get("path")
+
+        target = None
+        for msg in reversed(messages or []):
+            if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                continue
+            for ex in reversed(msg.get("tool_executions") or []):
+                if handle and str(ex.get("id")) == str(handle):
+                    target = ex
+                    break
+                if tool and not handle and ex.get("tool_name") == tool:
+                    target = ex
+                    break
+            if target:
+                break
+
+        if target is None:
+            ref = handle or tool or "(nothing specified)"
+            return {"content": f"No prior result found for {ref}. Pass tool=<operation name> or a handle.",
+                    "structured_content": {"kind": "inspect", "error": "not_found", "ref": ref}}
+
+        payload = target.get("structured_content")
+        if payload is None:
+            payload = target.get("result")
+        if payload is None:
+            payload = target.get("model_view")
+
+        value = payload
+        if path:
+            try:
+                for part in path.split("."):
+                    if isinstance(value, list):
+                        value = value[int(part)]
+                    elif isinstance(value, dict):
+                        value = value.get(part)
+                    else:
+                        value = None
+                        break
+            except (ValueError, IndexError, TypeError):
+                value = None
+
+        body = json.dumps(value, ensure_ascii=False, default=str)
+        truncated = len(body) > 8000
+        if truncated:
+            body = body[:8000] + " …(truncated — narrow with a path=)"
+        head = f"{target.get('tool_name')} [{target.get('id')}]" + (f" · {path}" if path else "")
+        return {"content": f"{head}:\n{body}",
+                "structured_content": {"kind": "inspect", "handle": target.get("id"),
+                                       "tool": target.get("tool_name"), "path": path,
+                                       "truncated": truncated, "value": value}}
+
+    def _build_operator_context(self, infospace: Infospace, active_scenario=None,
+                                current_route: Optional[str] = None) -> str:
+        """The ONE operator persona: the static manual (prompts/operator.md, a
+        cacheable prefix) + a small volatile workspace block + (if a scenario is
+        active) a concise journey header. The full playbook lives in history (the
+        load result); this header just keeps the model oriented every turn."""
+        from pathlib import Path
+        now = datetime.now(timezone.utc).strftime("%A, %B %d, %Y at %H:%M UTC")
+        safe_name = (infospace.name or "").replace("{", "{{").replace("}", "}}")
+        route = (current_route or "").replace("{", "{{").replace("}", "}}")
+        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "operator.md"
+        try:
+            manual = prompt_path.read_text(encoding="utf-8")
+        except OSError as e:
+            logger.warning(f"operator prompt missing: {e}; using inline fallback")
+            manual = (
+                "You are the HQ operator. You start with only `catalogue` and `load`. "
+                "Browse the catalogue, load what you need, then act. Read a doc "
+                "(catalogue path='docs/<slug>') before a multi-step build."
+            )
+        where = f" · user is on {route}" if route else ""
+        ctx = manual + f"\n\n<workspace>\"{safe_name}\" — current: {now}{where}</workspace>"
+        if active_scenario is not None:
+            phases = " → ".join(f"{i}·{p.label}" for i, p in enumerate(active_scenario.phases, 1))
+            ctx += (
+                f"\n\n<active-scenario name=\"{active_scenario.name}\">"
+                f"\nYou are running the '{active_scenario.name}' arc; its tools are already loaded "
+                f"(don't re-browse for these steps). Follow the playbook you loaded — phases: {phases}. "
+                f"Work them in order, pausing at each reflection stop."
+                f"\n</active-scenario>"
+            )
+        return ctx
 
     async def get_available_models(
         self,

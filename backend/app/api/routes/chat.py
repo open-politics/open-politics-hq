@@ -241,6 +241,8 @@ async def _prepare_chat(
         kwargs["temperature"] = request.temperature
     if request.max_tokens is not None:
         kwargs["max_tokens"] = request.max_tokens
+    if request.max_tool_iterations is not None:
+        kwargs["max_tool_iterations"] = request.max_tool_iterations
     if media_inputs:
         kwargs["media_inputs"] = media_inputs
 
@@ -305,6 +307,7 @@ async def intelligence_chat(
             agent=request.agent,
             run_id=request.run_id,
             formula_id=request.formula_id,
+            current_route=request.current_route,
             **kwargs,
         )
 
@@ -395,6 +398,7 @@ async def intelligence_chat_stream(
             agent=request.agent,
             run_id=request.run_id,
             formula_id=request.formula_id,
+            current_route=request.current_route,
             **kwargs,
         ):
             final_response = response

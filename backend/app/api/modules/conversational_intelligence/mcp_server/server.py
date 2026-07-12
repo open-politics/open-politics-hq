@@ -41,15 +41,19 @@ ADDING NEW TOOLS
 """
 
 
+import inspect
 import json
 import logging
+
+from fastapi import HTTPException
 from typing import List, Optional, Any, Dict, Union, Tuple
 from datetime import datetime, timezone
 from fastmcp import FastMCP, Context
 from fastmcp.tools.tool import ToolResult
 from mcp.types import TextContent
 
-from app.api.modules.identity_infospace_user.access import resolve_access
+from app.api.modules.identity_infospace_user.access import resolve_access_capped, Capability
+from app.api.modules.conversational_intelligence.catalogue import make_operation, requires_for
 from app.core.config import settings
 from app.api.modules.foundation_service_providers import resolve
 from app.api.modules.annotation.services import AnnotationService
@@ -81,6 +85,41 @@ mcp = FastMCP(
     "Intelligence Analysis Server",
     auth=jwt_verifier
 )
+
+# The @operation decorator (see ../catalogue.py) wraps @mcp.tool and records each
+# tool's catalogue metadata (path · requires · needs · posture · summary) into the
+# operation registry that the conversation service browses, gates, and provisions.
+operation = make_operation(mcp)
+
+
+def _gate(services):
+    """Resolve deployment-capped access and enforce the calling operation's
+    declared ``requires`` (from the catalogue registry).
+
+    The operation name is read from the calling frame — the ``@operation`` tool
+    function — so every tool gates identically with no repeated name and no
+    drift. Raises 403 when the user (∩ the deployment ceiling) lacks a required
+    capability. Fat hubs escalate per-mode on the returned ``access``.
+    """
+    op_name = inspect.currentframe().f_back.f_code.co_name
+    return resolve_access_capped(
+        services["session"], services["infospace_id"], services["user"],
+        *requires_for(op_name),
+    )
+
+
+def _require(access, *caps: Capability) -> None:
+    """Raise 403 unless the (already deployment-capped) ``access`` has all caps.
+
+    Per-mode escalation inside fat hubs (e.g. library delete → DELETE,
+    analysis schema-writes → ORGANIZE, run.start → COMPUTE).
+    """
+    for cap in caps:
+        if not access.has(cap):
+            raise HTTPException(
+                status_code=403,
+                detail=f"This action requires the '{cap.value}' capability.",
+            )
 
 
 # ============================================================================
@@ -480,18 +519,20 @@ def _render_rows_for_model(
 # CATEGORY: NAVIGATION & DISCOVERY
 # ============================================================================
 
-@mcp.tool(tags=["workspace", "navigation", "search"])
+@operation(path="workspace", tags=["workspace", "navigation", "search"],
+           summary="Browse and search the workspace tree; view, open, or load assets and bundles.")
 async def workspace_hub(
     ctx: Context,
-    mode: Annotated[str, "Action: 'tree' (browse structure), 'view' (see children/content), 'search' (keyword), 'semantic' (concept search), 'load' (fetch by ID), 'open' (open asset in detail view)"] = "tree",
-    query: Annotated[Optional[str], "Search query (for search/semantic modes)"] = None,
-    node_id: Annotated[Optional[str], "Target ID for view mode (e.g. 'bundle-123', 'asset-456')"] = None,
+    mode: Annotated[str, "Action: 'tree' (browse structure), 'view' (see children/content), 'search' (find by name/concept), 'load' (fetch by ID), 'open' (open an asset OR bundle in the detail panel)"] = "tree",
+    query: Annotated[Optional[str], "Search query (for search mode)"] = None,
+    node_id: Annotated[Optional[str], "Target ID for view/open mode (e.g. 'bundle-123', 'asset-456')"] = None,
     ids: Annotated[Optional[List[int]], "Asset IDs to load (for load mode)"] = None,
     asset_id: Annotated[Optional[int], "Asset ID to open (for open mode)"] = None,
+    bundle_id: Annotated[Optional[int], "Bundle/collection ID to open in the detail panel (for open mode)"] = None,
     depth: Annotated[str, "Detail level: 'tree' (structure), 'titles' (metadata), 'previews' (recommended), 'full' (complete content)"] = "previews",
-    resource: Annotated[Optional[str], "Override target: 'files' (bundles) or 'assets' (documents). Auto-detected by mode if omitted."] = None,
+    resource: Annotated[Optional[str], "Narrow search to one type: 'bundles' or 'assets'. Omit to search both. (For browse modes: which tree to open.)"] = None,
     semantic_queries: Annotated[Optional[List[str]], "Multiple angles for semantic search"] = None,
-    search_method: Annotated[str, "Search approach: 'hybrid', 'semantic', 'text'"] = "hybrid",
+    search: Annotated[str, "How to match (search mode): 'basic' (default — name match, fast, spans bundles + assets), 'semantic' (meaning, not names), 'hybrid' (name + meaning). Reach for semantic when the query is conceptual rather than a name."] = "basic",
     filters: Annotated[Optional[Dict[str, Any]], "Filters: {'asset_kinds': ['pdf'], 'bundle_id': 123, 'parent_asset_id': 456}"] = None,
     limit: Annotated[Optional[int], "Max items to return"] = None,
     offset: Annotated[int, "Pagination offset"] = 0,
@@ -502,25 +543,28 @@ async def workspace_hub(
     
     <quick_start>
     • Browse: workspace_hub() or workspace_hub(mode="view", node_id="bundle-123")
-    • Search: workspace_hub(mode="search", query="budget report")
-    • Semantic: workspace_hub(mode="semantic", query="implications of tax changes")
+    • Search (default — bundles + assets by name): workspace_hub(mode="search", query="Q1 reports")
+    • Targeted: add search="semantic" (meaning) or resource="bundles"/"assets" (one type)
+    • Semantic: workspace_hub(mode="search", query="implications of tax changes", search="semantic")
     • Load: workspace_hub(mode="load", ids=[123], depth="full")
-    • Open: workspace_hub(mode="open", asset_id=123) - opens asset in detail panel
+    • Open an asset: workspace_hub(mode="open", asset_id=123) - opens it in the detail panel
+    • Open a bundle: workspace_hub(mode="open", bundle_id=123) - opens the collection in the detail panel
+      (prefer this over mode="view" when the user wants to *see/open* a collection, not just list its contents)
     </quick_start>
     """
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         
-        # Auto-detect resource if not specified
-        if not resource:
-            if mode in ["search", "semantic", "load"]:
-                resource = "assets"
-            else:
-                resource = "files"
+        # Resource defaults. Search spans BOTH types (resource stays None) unless
+        # the caller narrows it to 'bundles'/'assets'. Browse/load have a natural
+        # type: load fetches assets; tree/view open the bundle tree.
+        if not resource and mode not in ["search", "semantic"]:
+            resource = "assets" if mode == "load" else "bundles"
                 
-        # Extract convenient filter args if passed in filters dict
+        # Extract convenient filter args if passed in filters dict. An explicit
+        # ``bundle_id`` arg (open mode / scoping) takes precedence over filters.
         asset_kinds = filters.get("asset_kinds") if filters else None
-        bundle_id = filters.get("bundle_id") if filters else None
+        bundle_id = bundle_id or (filters.get("bundle_id") if filters else None)
         parent_asset_id = filters.get("parent_asset_id") if filters else None
         date_from = filters.get("date_from") if filters else None
         date_to = filters.get("date_to") if filters else None
@@ -691,26 +735,70 @@ async def workspace_hub(
                 combine_results=combine_results
             )
         
-        # Open mode - returns a navigate-like result that auto-opens in the detail panel
+        # Open mode - returns a navigate-like result that auto-opens in the detail
+        # panel. Works for an asset OR a bundle; the frontend ConversationalAssetExplorer
+        # auto-opens whichever the payload carries (asset_id → asset overlay,
+        # bundle_id → bundle detail). Same docking surface either way.
         if mode == "open":
             target_asset_id = asset_id
-            # Also support extracting from node_id format
-            if not target_asset_id and node_id:
-                if node_id.startswith("asset-"):
+            target_bundle_id = bundle_id
+            # Resolve a typed node_id (e.g. 'asset-456' / 'bundle-123').
+            if node_id:
+                if node_id.startswith("asset-") and not target_asset_id:
                     try:
                         target_asset_id = int(node_id.split("-")[1])
                     except (ValueError, IndexError):
                         pass
-            # Or from ids list
-            if not target_asset_id and ids and len(ids) > 0:
+                elif node_id.startswith("bundle-") and not target_bundle_id:
+                    try:
+                        target_bundle_id = int(node_id.split("-")[1])
+                    except (ValueError, IndexError):
+                        pass
+            # A bare ids list is asset-oriented (load semantics).
+            if not target_asset_id and not target_bundle_id and ids and len(ids) > 0:
                 target_asset_id = ids[0]
-                
+
+            # Bundle open — explicit asset target wins if somehow both are set.
+            if target_bundle_id and not target_asset_id:
+                from app.models import Bundle
+                from app.api.modules.content.tree import bundle_counts as _bundle_counts
+                bundle = services["session"].get(Bundle, target_bundle_id)
+                if not bundle or bundle.infospace_id != services["infospace_id"]:
+                    return ToolResult(
+                        content=[TextContent(type="text", text=f"❌ Bundle {target_bundle_id} not found in this infospace")],
+                        structured_content={"error": "bundle_not_found", "bundle_id": target_bundle_id}
+                    )
+
+                await ctx.info(f"Opening bundle {target_bundle_id}: {bundle.name}")
+
+                # bundle_id at top level + a single bundle node — both auto-open paths
+                # the ConversationalAssetExplorer understands.
+                return ToolResult(
+                    content=[TextContent(type="text", text=f"📂 Opening collection: {bundle.name}")],
+                    structured_content={
+                        "resource": "bundles",
+                        "mode": "open",
+                        "auto_open": True,
+                        "bundle_id": target_bundle_id,
+                        "total": 1,
+                        "nodes": [{
+                            "id": f"bundle-{target_bundle_id}",
+                            "bundle_id": target_bundle_id,
+                            "type": "bundle",
+                            "name": bundle.name,
+                            "children_count": sum(
+                                _bundle_counts(services["session"], [target_bundle_id]).get(target_bundle_id, (0, 0))
+                            ),
+                        }]
+                    }
+                )
+
             if not target_asset_id:
                 return ToolResult(
-                    content=[TextContent(type="text", text="❌ asset_id is required for open mode. Use: workspace_hub(mode='open', asset_id=123)")],
-                    structured_content={"error": "asset_id_required"}
+                    content=[TextContent(type="text", text="❌ asset_id or bundle_id is required for open mode. Use: workspace_hub(mode='open', asset_id=123) or workspace_hub(mode='open', bundle_id=123)")],
+                    structured_content={"error": "open_target_required"}
                 )
-            
+
             # Fetch asset info
             from app.models import Asset
             asset = services["session"].get(Asset, target_asset_id)
@@ -719,9 +807,9 @@ async def workspace_hub(
                     content=[TextContent(type="text", text=f"❌ Asset {target_asset_id} not found in this infospace")],
                     structured_content={"error": "asset_not_found", "asset_id": target_asset_id}
                 )
-            
+
             await ctx.info(f"Opening asset {target_asset_id}: {asset.title}")
-            
+
             # Return navigate-like structure with auto_open flag
             # This lets the existing ConversationalAssetExplorer render it AND auto-open
             return ToolResult(
@@ -742,7 +830,7 @@ async def workspace_hub(
             )
         
         # Tree mode is the default and most efficient way to browse
-        if mode == "tree" or (resource == "files" and mode not in ["search", "view", "expand", "open"]):
+        if mode == "tree" or (resource == "bundles" and mode not in ["search", "view", "expand", "open"]):
             return await _navigate_tree_root(services, ctx)
         elif mode in ["view", "expand"]:  # Support both for backward compatibility
             if not node_id:
@@ -751,22 +839,31 @@ async def workspace_hub(
                     structured_content={"error": "node_id required"}
                 )
             return await _navigate_tree_expand(services, ctx, node_id, effective_limit, offset)
-        
-        # Route to resource-specific handlers
-        if resource == "assets":
-            return await _navigate_assets(services, ctx, mode, depth, ids, query, search_method, effective_filters, effective_limit, offset)
-        elif resource == "files":
-            # Default to tree mode
-            return await _navigate_tree_root(services, ctx)
-        else:
-            # Unsupported resources: bundles (use tree), schemas (use annotation UI), runs (use annotation UI)
-            return ToolResult(
-                content=[TextContent(type="text", text=f"Resource '{resource}' not supported. Use workspace_hub() for files/bundles, or the annotation UI for schemas/runs.")],
-                structured_content={
-                    "error": f"unsupported resource: {resource}",
-                    "hint": "Use workspace_hub() for tree view, workspace_hub(mode='view', node_id='...') to explore"
-                }
+
+        # Search — tiered. Basic name match across bundles + assets by default;
+        # narrow with resource='bundles'/'assets', escalate with search='semantic'/'hybrid'.
+        if mode == "search":
+            if resource == "bundles":
+                return await _search_bundles(services, ctx, query, effective_limit or 30)
+            # 'basic' is a name match → text FTS on the asset side; only a basic,
+            # unscoped, both-types search leads with folder name-matches.
+            method = "text" if search == "basic" else search
+            include_folders = (
+                search == "basic" and resource is None
+                and parent_asset_id is None and bundle_id is None
             )
+            return await _navigate_assets(
+                services, ctx, mode, depth, ids, query, method,
+                effective_filters, effective_limit, offset,
+                include_folders=include_folders,
+            )
+
+        # Non-search asset ops (load).
+        if resource == "assets":
+            return await _navigate_assets(services, ctx, mode, depth, ids, query, search, effective_filters, effective_limit, offset)
+
+        # Fallback: browse the tree.
+        return await _navigate_tree_root(services, ctx)
 
 
 async def _navigate_tree_root(services: Dict, ctx: Context) -> ToolResult:
@@ -827,8 +924,9 @@ async def _navigate_tree_root(services: Dict, ctx: Context) -> ToolResult:
         preview = node_data.get("preview")
         
         if node_type == "bundle":
+            from app.api.modules.content.tree import fmt_count
             children_count = node_data.get("children_count", 0)
-            summary_lines.append(f"📦 {node_id} | {node_name} ({children_count} items)")
+            summary_lines.append(f"📦 {node_id} | {node_name} ({fmt_count(children_count)} items)")
         else:
             kind = node_data.get("kind", "unknown")
             # At root level: Show file type and basic info only
@@ -859,7 +957,7 @@ async def _navigate_tree_root(services: Dict, ctx: Context) -> ToolResult:
     return ToolResult(
         content=[TextContent(type="text", text=summary_text)],
         structured_content={
-            "resource": "files",
+            "resource": "bundles",
             "mode": "tree",
             "nodes": nodes_data,
             "total_nodes": len(tree_nodes),
@@ -1073,8 +1171,9 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
         preview = node_data.get("preview")
         
         if child_type == "bundle":
+            from app.api.modules.content.tree import fmt_count
             children_count = node_data.get("children_count", 0)
-            summary_lines.append(f"  📦 {child_id} | {child_name} ({children_count} items)")
+            summary_lines.append(f"  📦 {child_id} | {child_name} ({fmt_count(children_count)} items)")
             # Show bundle preview if available
             if preview and preview.get("kinds"):
                 kind_summary = ", ".join([f"{count} {kind}" for kind, count in list(preview["kinds"].items())[:3]])
@@ -1139,16 +1238,69 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
     )
 
 
-async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str, 
-                           ids: Optional[List[int]], query: Optional[str], 
-                           search_method: str, filters: Optional[Dict], 
-                           limit: int, offset: int) -> ToolResult:
-    """Navigate assets: search or load specific ones."""
+async def _search_bundles(services: Dict, ctx: Context, query: Optional[str], limit: int) -> ToolResult:
+    """Search bundles (folders) by name — ranked, no document search.
+
+    The targeted 'bundles only' search: workspace_hub(mode='search',
+    resource='bundles', query='...'). Reuses the same rank_bundles primitive the
+    basic search and the explore stream use.
+    """
+    if not query:
+        return ToolResult(
+            content=[TextContent(type="text", text="Provide a query to search bundles.")],
+            structured_content={"error": "missing_query"},
+        )
+    from app.api.modules.content.query import rank_bundles, parse as _parse_aql
+    from app.api.modules.content.tree import bundle_counts, fmt_count
+    ranked = rank_bundles(services["session"], services["infospace_id"], _parse_aql(query), None, limit=limit)
+    # Capped live counts — cheap on huge folders, and can't drift like the cache.
+    counts = bundle_counts(services["session"], [b.id for b, _ in ranked])
+    items = [{
+        "id": f"bundle-{b.id}",
+        "bundle_id": b.id,
+        "type": "bundle",
+        "name": b.name,
+        "children_count": sum(counts.get(b.id, (0, 0))),
+    } for b, _score in ranked]
+
+    await ctx.info(f"Found {len(items)} bundles matching '{query}'")
+    lines = [f"📁 Found {len(items)} bundles matching '{query}':"]
+    for it in items[:10]:
+        lines.append(f"📦 {it['id']} | {it['name']} ({fmt_count(it['children_count'])} items)")
+    if len(items) > 10:
+        lines.append(f"... {len(items) - 10} more")
+    lines.append("\n💡 Look inside: workspace_hub(mode='view', node_id='bundle-X')")
+    summary = "\n".join(lines)
+    return ToolResult(
+        content=[TextContent(type="text", text=summary)],
+        structured_content={
+            "resource": "bundles", "mode": "search", "items": items,
+            "total": len(items), "query": query, "message": summary, "summary": summary,
+        },
+    )
+
+
+async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
+                           ids: Optional[List[int]], query: Optional[str],
+                           search_method: str, filters: Optional[Dict],
+                           limit: int, offset: int,
+                           include_folders: bool = False) -> ToolResult:
+    """Navigate assets: search or load specific ones.
+
+    ``include_folders`` leads a search result with ranked bundle name-matches
+    (the basic, both-types search). Set by the dispatcher; off for scoped or
+    document-only searches.
+    """
     
     # Import at function level so it's available in all branches
     from sqlmodel import select
     from app.models import Asset, Bundle
-    
+
+    # The basic both-types search leads asset hits with ranked folder
+    # name-matches — the Finder behaviour, as a tool result. Set via
+    # include_folders; empty for semantic/hybrid, bundle-only, or scoped searches.
+    bundle_data: List[Dict[str, Any]] = []
+
     if mode == "load" and ids:
         # Load specific assets by ID
         
@@ -1240,7 +1392,29 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
             raise ValueError(f"Unknown search_method: {search_method}")
         
         await ctx.info(f"Found {len(assets)} assets matching '{query}'")
-        
+
+        # Lead with ranked folder name-matches when the dispatcher asked for the
+        # basic both-types search (gating — semantic/hybrid, bundle-only, scoped —
+        # is decided there).
+        if include_folders:
+            from app.api.modules.content.query import rank_bundles, parse as _parse_aql
+            from app.api.modules.content.tree import bundle_counts, fmt_count
+            ranked_bundles = rank_bundles(
+                services["session"], services["infospace_id"], _parse_aql(query), None, limit=limit
+            )
+            # Live counts — the denormalized Bundle.asset_count drifts for ingested folders.
+            b_counts = bundle_counts(services["session"], [b.id for b, _ in ranked_bundles])
+            for b, _score in ranked_bundles:
+                bundle_data.append({
+                    "id": f"bundle-{b.id}",
+                    "bundle_id": b.id,
+                    "type": "bundle",
+                    "name": b.name,
+                    "children_count": sum(b_counts.get(b.id, (0, 0))),
+                })
+            if bundle_data:
+                await ctx.info(f"Found {len(bundle_data)} folders matching '{query}'")
+
     else:
         # List all assets (rarely used, generally search is better)
         # WARNING: depth="full" for list is wasteful - use "previews" for browsing
@@ -1398,6 +1572,16 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
 
         summary_lines.append(f"\n→ Load full content: workspace_hub(resource='assets', mode='load', ids=[{assets[0].id if assets else '...'}], depth='full')")
 
+    # Folders lead the result (Finder-style) — prepend their summary and nodes.
+    if bundle_data:
+        folder_lines = [f"📁 {len(bundle_data)} folders matching '{query}':"]
+        for b in bundle_data[:5]:
+            folder_lines.append(f"📦 {b['id']} | {b['name']} ({fmt_count(b['children_count'])} items)")
+        if len(bundle_data) > 5:
+            folder_lines.append(f"... {len(bundle_data) - 5} more folders")
+        folder_lines.append("")
+        summary_lines = folder_lines + summary_lines
+
     summary_text = "\n".join(summary_lines)
     return ToolResult(
         content=[TextContent(type="text", text=summary_text)],
@@ -1405,8 +1589,8 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
             "resource": "assets",
             "mode": mode,
             "depth": depth,
-            "items": asset_data,
-            "total": len(assets),
+            "items": bundle_data + asset_data,
+            "total": len(bundle_data) + len(assets),
             "query": query,
             "message": summary_text,  # Full summary for frontend
             "summary": summary_text
@@ -1414,7 +1598,9 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
     )
 
 
-@mcp.tool(tags=["search", "web", "ingestion"])
+@operation(path="ingest/web-research", requires=(Capability.INGEST,), needs=("web_search",),
+           tags=["search", "web", "ingestion"],
+           summary="Live web search with optional one-shot ingestion of results into a bundle.")
 async def web_research(
     ctx: Context,
     query: Annotated[Optional[str], "What to search for (e.g., 'recent climate legislation in Europe')"] = None,
@@ -1459,7 +1645,7 @@ async def web_research(
     Returns combined structured_content with `search` and/or `ingestion` keys depending on what ran.
     """
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         
         if not query and not ingest_urls and not ingest_top_k:
             return ToolResult(
@@ -1657,7 +1843,8 @@ async def _ingest_urls_with_services(
 # CATEGORY: ORGANIZATION & CURATION
 # ============================================================================
 
-@mcp.tool(tags=["library", "assets", "bundles"])
+@operation(path="library", requires=(Capability.ORGANIZE,), tags=["library", "assets", "bundles"],
+           summary="Create, rename, organize, and delete assets and bundles.")
 async def library_hub(
     ctx: Context,
     operation: Annotated[str, "asset.create/update/delete or collection.create/add/remove/rename/delete"] = "asset.create",
@@ -1698,8 +1885,11 @@ async def library_hub(
     </quick_start>
     """
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         
+        if operation.endswith(".delete"):
+            _require(access, Capability.DELETE)
+
         await ctx.info(f"library_hub: operation={operation}")
         
         try:
@@ -2087,6 +2277,64 @@ async def _analysis_get_schema(
     )
 
 
+def _fields_to_output_contract(fields: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build a hierarchical output_contract from a simple field list.
+
+    Each field: {name, type, description?, options?/enum?, entity_type?, array?}.
+    Types: text/string, number, integer, boolean, enum, entity. ``array: true``
+    (or a type suffixed with ``[]``) wraps the field in an array. Entity fields
+    get HQ's {name, type(x-entityTypeDeclared), additional_types} object shape so
+    curation resolves them to the canon. Lets the model author schemas the
+    natural way (a field list) instead of hand-writing a full JSON Schema.
+    """
+    props: Dict[str, Any] = {}
+    required: List[str] = []
+    for f in fields or []:
+        if not isinstance(f, dict) or not f.get("name"):
+            continue
+        name = str(f["name"]).strip()
+        ftype = str(f.get("type") or "text").strip().lower()
+        desc = f.get("description") or ""
+        is_array = bool(f.get("array") or f.get("multiple")) or ftype.endswith("[]")
+        if ftype.endswith("[]"):
+            ftype = ftype[:-2]
+        options = f.get("options") or f.get("enum")
+
+        if ftype == "entity":
+            et = (f.get("entity_type") or "").strip()
+            type_prop: Dict[str, Any] = {"type": "string", "description": "Entity type — usually matches the declared primary type."}
+            if et:
+                type_prop["x-entityTypeDeclared"] = et
+            leaf: Dict[str, Any] = {
+                "type": "object",
+                "description": desc,
+                "properties": {
+                    "name": {"type": "string", "description": (f"Name of the {et}").strip()},
+                    "type": type_prop,
+                    "additional_types": {"type": "array", "items": {"type": "string"}, "description": "Optional additional entity types beyond the primary type."},
+                },
+            }
+        elif ftype in ("enum", "select") or options:
+            leaf = {"type": "string", "enum": list(options or []), "description": desc}
+        elif ftype in ("number", "float"):
+            leaf = {"type": "number", "description": desc}
+        elif ftype in ("integer", "int"):
+            leaf = {"type": "integer", "description": desc}
+        elif ftype in ("boolean", "bool"):
+            leaf = {"type": "boolean", "description": desc}
+        else:  # text / string / default
+            leaf = {"type": "string", "description": desc}
+
+        props[name] = {"type": "array", "items": leaf, "description": desc} if is_array else leaf
+        required.append(name)
+
+    return {
+        "type": "object",
+        "properties": {"document": {"type": "object", "properties": props, "required": required}},
+        "required": ["document"],
+    }
+
+
 async def _analysis_create_schema(
     services: Dict,
     ctx: Context,
@@ -2292,12 +2540,14 @@ async def _analysis_delete_schema(
     )
 
 
-@mcp.tool(tags=["analysis", "schema", "runs"])
+@operation(path="analysis", needs=("language",), posture="confirm", tags=["analysis", "schema", "runs"],
+           summary="Author annotation schemas; start and list annotation runs; open dashboards; share.")
 async def analysis_hub(
     ctx: Context,
     operation: Annotated[str, "schema.list, schema.get, schema.create, schema.update, schema.delete, run.start, run.list, run.dashboard, run.share"] = "schema.list",
     schema_name: Annotated[Optional[str], "Schema name — required for schema.create, optional rename for schema.update"] = None,
-    output_contract: Annotated[Optional[Dict[str, Any]], "Full JSON Schema output_contract — same shape as schema.list returns. Required for schema.create, optional for schema.update. Use the hierarchical {type, properties: {document: {type, properties: {...}, required: [...]}}, required: ['document']} convention."] = None,
+    output_contract: Annotated[Optional[Dict[str, Any]], "Full JSON Schema output_contract — same shape as schema.list returns. Use the hierarchical {type, properties: {document: {type, properties: {...}, required: [...]}}, required: ['document']} convention. For schema.create, prefer the simpler schema_fields instead."] = None,
+    schema_fields: Annotated[Optional[Any], "EASY way to create a schema: a list (or JSON string) of fields [{name, type, description, options?, entity_type?, array?}]. Types: text, number, integer, boolean, enum (with options), entity (with entity_type, array:true for many). Converted to output_contract for you — prefer this over hand-writing output_contract."] = None,
     schema_description: Annotated[Optional[str], "Schema description"] = None,
     schema_instructions: Annotated[Optional[str], "LLM instructions for the schema"] = None,
     schema_version: Annotated[Optional[str], "Schema version (defaults to 1.0 on create)"] = None,
@@ -2315,6 +2565,9 @@ async def analysis_hub(
     run_id: Annotated[Optional[int], "Required for run.dashboard/run.share"] = None,
     share_name: Annotated[Optional[str], "Optional title for run.share"] = None,
     expiration_days: Annotated[Optional[int], "Optional expiry for run.share"] = None,
+    live: Annotated[bool, "run.start: keep the run LIVE — HQ re-annotates new content in scope as it arrives"] = False,
+    source_bundle_id: Annotated[Optional[int], "run.start: the bundle a live run watches (its subtree). Use instead of asset_ids to watch a whole bundle, even an empty one."] = None,
+    follow_on_version_change: Annotated[bool, "run.start: re-annotate when an asset's content version changes"] = False,
 ) -> ToolResult:
     """
     Unified analysis control panel: schemas CRUD, runs, dashboards, sharing.
@@ -2339,7 +2592,12 @@ async def analysis_hub(
       schema.list → schema.get(schema_id=...) → schema.update(schema_id=..., output_contract=...)
     """
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
+
+        if operation in ("schema.create", "schema.update", "schema.delete"):
+            _require(access, Capability.ORGANIZE)
+        elif operation == "run.start":
+            _require(access, Capability.COMPUTE)
 
         await ctx.info(f"analysis_hub: operation={operation}")
 
@@ -2355,9 +2613,19 @@ async def analysis_hub(
             return await _analysis_get_schema(services, ctx, schema_id)
 
         if operation == "schema.create":
+            # Accept the natural field-list form and convert it to output_contract.
+            if schema_fields is not None and not output_contract:
+                try:
+                    fields = json.loads(schema_fields) if isinstance(schema_fields, str) else schema_fields
+                    output_contract = _fields_to_output_contract(fields)
+                except (ValueError, TypeError) as e:
+                    return ToolResult(
+                        content=[TextContent(type="text", text=f"❌ schema_fields must be a list of field objects: {e}")],
+                        structured_content={"error": "invalid_schema_fields", "detail": str(e)},
+                    )
             if not schema_name or not output_contract:
                 return ToolResult(
-                    content=[TextContent(type="text", text="❌ schema.create requires schema_name and output_contract (full JSON Schema)")],
+                    content=[TextContent(type="text", text="❌ schema.create requires schema_name and either schema_fields (a field list) or output_contract (full JSON Schema)")],
                     structured_content={"error": "missing_schema_definition"},
                 )
             return await _analysis_create_schema(
@@ -2407,9 +2675,9 @@ async def analysis_hub(
             )
 
         if operation == "run.start":
-            if not schema_id or not asset_ids:
+            if not schema_id or (not asset_ids and not source_bundle_id):
                 return ToolResult(
-                    content=[TextContent(type="text", text="❌ run.start requires schema_id and asset_ids")],
+                    content=[TextContent(type="text", text="❌ run.start requires schema_id and either asset_ids or source_bundle_id (for a live bundle watch)")],
                     structured_content={"error": "missing_run_parameters"}
                 )
             return await _analysis_start_run(
@@ -2418,7 +2686,10 @@ async def analysis_hub(
                 asset_ids=asset_ids,
                 schema_id=schema_id,
                 name=run_name,
-                custom_instructions=custom_instructions
+                custom_instructions=custom_instructions,
+                live=live,
+                source_bundle_id=source_bundle_id,
+                follow_on_version_change=follow_on_version_change,
             )
 
         if operation == "run.list":
@@ -2466,17 +2737,21 @@ async def _analysis_start_run(
     schema_id: int,
     name: Optional[str],
     custom_instructions: Optional[str],
+    live: bool = False,
+    source_bundle_id: Optional[int] = None,
+    follow_on_version_change: bool = False,
 ) -> ToolResult:
     await ctx.info(f"Creating analysis run for {len(asset_ids)} assets with schema #{schema_id}")
     
     try:
         # Validate that the assets exist in this infospace BEFORE creating the run
         # This gives immediate feedback rather than failing in background celery task
+        asset_ids = asset_ids or []
         valid_assets = services["session"].exec(
             select(Asset)
             .where(Asset.id.in_(asset_ids))
             .where(Asset.infospace_id == services["infospace_id"])
-        ).all()
+        ).all() if asset_ids else []
         valid_asset_ids = {a.id for a in valid_assets}
         invalid_ids = [aid for aid in asset_ids if aid not in valid_asset_ids]
         
@@ -2495,10 +2770,10 @@ async def _analysis_start_run(
                 }
             )
         
-        if not valid_assets:
+        if not valid_assets and not source_bundle_id:
             return ToolResult(
-                content=[TextContent(type="text", text="❌ No valid assets provided for analysis run.\n\n💡 Use workspace_hub(mode='view') to browse available assets first.")],
-                structured_content={"error": "no_valid_assets", "status": "failed"}
+                content=[TextContent(type="text", text="❌ run.start needs asset_ids, or source_bundle_id for a live bundle watch.")],
+                structured_content={"error": "no_target", "status": "failed"}
             )
         
         run_name = name or f"Analysis - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
@@ -2538,8 +2813,11 @@ async def _analysis_start_run(
             name=run_name,
             description=f"Analysis via chat{': ' + custom_instructions if custom_instructions else ''}",
             schema_ids=[schema_id],
-            target_asset_ids=list(valid_asset_ids),  # Use validated IDs
-            configuration=configuration
+            target_asset_ids=list(valid_asset_ids) if valid_asset_ids else None,
+            source_bundle_id=source_bundle_id,
+            live=live,
+            follow_on_version_change=follow_on_version_change,
+            configuration=configuration,
         )
         
         run = services["annotation_service"].create_run(
@@ -2558,8 +2836,11 @@ async def _analysis_start_run(
         if len(valid_assets) > 5:
             asset_summary += f"... (+{len(valid_assets) - 5} more)"
         
+        target_desc = (f"{len(valid_assets)} documents: {asset_summary}" if valid_assets
+                       else f"bundle #{source_bundle_id}")
+        live_note = " · LIVE (HQ re-annotates new content as it arrives)" if live else ""
         return ToolResult(
-            content=[TextContent(type="text", text=f"🔬 Started analysis run '{run_name}' (ID: {run.id})\n\n📊 Analyzing {len(valid_assets)} documents: {asset_summary}\n\n🤖 Model: {model_name}\n📋 Schema: #{schema_id}\n\n⏳ Status: {run.status.value}\n\n→ Check results: analysis_hub(operation='run.dashboard', run_id={run.id})")],
+            content=[TextContent(type="text", text=f"🔬 Started run '{run_name}' (ID: {run.id}){live_note}\n\n📊 Target: {target_desc}\n\n🤖 Model: {model_name}\n📋 Schema: #{schema_id}\n\n⏳ Status: {run.status.value}\n\n→ Check results: analysis_hub(operation='run.dashboard', run_id={run.id})")],
             structured_content={
                 "run_id": run.id,
                 "run_name": run.name,
@@ -2567,12 +2848,19 @@ async def _analysis_start_run(
                 "schema_id": schema_id,
                 "model_name": model_name,
                 "asset_count": len(valid_assets),
-                "asset_ids": list(valid_asset_ids),
+                "asset_ids": list(valid_asset_ids) if valid_asset_ids else [],
+                "live": bool(live),
+                "source_bundle_id": source_bundle_id,
                 "status": run.status.value,
-                "created_at": run.created_at.isoformat() if run.created_at else None
+                "created_at": run.created_at.isoformat() if run.created_at else None,
+                # Co-presence: open the started run beside the chat (dock).
+                "ui_directive": {
+                    "command": "open_form",
+                    "payload": {"key": "runDashboard", "init": {"runId": run.id}},
+                },
             }
         )
-        
+
     except Exception as e:
         logger.error(f"Failed to create analysis run: {e}", exc_info=True)
         return ToolResult(
@@ -2628,7 +2916,8 @@ def _format_task_list(tasks_list: List[Dict[str, Any]]) -> Tuple[str, Dict[str, 
     )
 
 
-@mcp.tool(tags=["tasks", "productivity"])
+@operation(path="workspace/tasks", tags=["tasks", "productivity"],
+           summary="Conversation-scoped task planning (batch add/start/finish/cancel).")
 async def tasks(
     ctx: Context,
     operation: Annotated[Optional[str], "Operation: 'view' (default) or 'batch' (execute multiple actions)"] = "view",
@@ -2845,7 +3134,8 @@ async def tasks(
 
 
 
-@mcp.tool(tags=["memory", "context"])
+@operation(path="workspace/memory", tags=["memory", "context"],
+           summary="Scratchpad for assets, findings, paths, and notes across turns.")
 async def working_memory(
     operation: Annotated[str, "Action: 'view' (show current memory), 'add' (save item), 'remove' (delete item), 'pin' (mark important), 'unpin', 'clear' (reset all)"],
     ctx: Context,
@@ -4254,7 +4544,7 @@ async def get_asset_details(asset_id: int, ctx: Context) -> dict:
     Use this when you need the full content of an asset for detailed analysis.
     """
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         
         from app.models import Asset
         asset = services["session"].get(Asset, asset_id)
@@ -4288,7 +4578,7 @@ async def get_asset_annotations(
     Optionally filter by schema IDs (comma-separated).
     """
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         
         from sqlmodel import select, and_
         from app.models import Annotation
@@ -4354,12 +4644,18 @@ def _dashboard_dict(run: Any) -> dict:
     """
     cfg = getattr(run, "views_config", None)
     if isinstance(cfg, list):
-        if cfg and isinstance(cfg[0], dict):
-            return cfg[0]
-        return {}
-    if isinstance(cfg, dict):
-        return cfg
-    return {}
+        d = cfg[0] if (cfg and isinstance(cfg[0], dict)) else {}
+    elif isinstance(cfg, dict):
+        d = cfg
+    else:
+        d = {}
+    # Guarantee the well-formed shape at the single read boundary, so the first
+    # write (e.g. formula_create right after run.start) can't persist a blob with
+    # no `panels` key — which makes the runner's dashboardConfig.panels undefined
+    # and crashes addPanel/updatePanel on open.
+    d.setdefault("panels", [])
+    d.setdefault("formulas", [])
+    return d
 
 
 def _save_dashboard(run: Any, dashboard: dict) -> None:
@@ -4374,7 +4670,8 @@ def _save_dashboard(run: Any, dashboard: dict) -> None:
     run.views_config = [dashboard]
 
 
-@mcp.tool(tags=["dossier", "formula", "introspection"])
+@operation(path="visualize/formula/introspect", tags=["dossier", "formula", "introspection"],
+           summary="Discover a run schema's paths, axes, entity vocabularies, and row-shapes.")
 async def formula_introspect_schema(
     ctx: Context,
     run_id: Annotated[int, "Annotation run to introspect"],
@@ -4392,7 +4689,7 @@ async def formula_introspect_schema(
     from sqlmodel import select
 
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         session = services["session"]
 
         run = session.get(AnnotationRun, run_id)
@@ -4517,7 +4814,8 @@ def _truncate_sample(value: Any, max_chars: int = 800) -> Any:
     return value if isinstance(value, (dict, list)) else s
 
 
-@mcp.tool(tags=["dossier", "formula", "create"])
+@operation(path="visualize/formula/create", requires=(Capability.ORGANIZE,), tags=["dossier", "formula", "create"],
+           summary="Author a new Formula (PanelProjection) on a run's dashboard.")
 async def formula_create(
     ctx: Context,
     run_id: Annotated[int, "Annotation run that owns the dashboard"],
@@ -4537,7 +4835,7 @@ async def formula_create(
     import uuid
 
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         session = services["session"]
         run = session.get(AnnotationRun, run_id)
         if not run or run.infospace_id != services["infospace_id"]:
@@ -4588,7 +4886,8 @@ async def formula_create(
         )
 
 
-@mcp.tool(tags=["dossier", "formula", "edit"])
+@operation(path="visualize/formula/edit", requires=(Capability.ORGANIZE,), tags=["dossier", "formula", "edit"],
+           summary="Merge a partial PanelProjection onto an existing formula.")
 async def formula_edit(
     ctx: Context,
     run_id: int,
@@ -4602,7 +4901,7 @@ async def formula_edit(
     from pydantic import ValidationError as _ValidationError
 
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         session = services["session"]
         run = session.get(AnnotationRun, run_id)
         if not run or run.infospace_id != services["infospace_id"]:
@@ -4658,7 +4957,8 @@ async def formula_edit(
         )
 
 
-@mcp.tool(tags=["dossier", "formula", "preview"])
+@operation(path="visualize/formula/preview", tags=["dossier", "formula", "preview"],
+           summary="Run a formula and return a sample of output rows with provenance.")
 async def formula_preview(
     ctx: Context,
     run_id: int,
@@ -4673,7 +4973,7 @@ async def formula_preview(
     from app.api.modules.annotation.query import AnnotationQuery
 
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         session = services["session"]
         run = session.get(AnnotationRun, run_id)
         if not run or run.infospace_id != services["infospace_id"]:
@@ -4723,7 +5023,8 @@ async def formula_preview(
         )
 
 
-@mcp.tool(tags=["dossier", "formula", "list"])
+@operation(path="visualize/formula/list", tags=["dossier", "formula", "list"],
+           summary="List saved formulas on a run's dashboard.")
 async def formula_list(
     ctx: Context,
     run_id: int,
@@ -4732,7 +5033,7 @@ async def formula_list(
     from app.api.modules.annotation.models import AnnotationRun
 
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         session = services["session"]
         run = session.get(AnnotationRun, run_id)
         if not run or run.infospace_id != services["infospace_id"]:
@@ -4763,7 +5064,8 @@ async def formula_list(
         )
 
 
-@mcp.tool(tags=["dossier", "panel", "create"])
+@operation(path="visualize/panel/create", requires=(Capability.ORGANIZE,), tags=["dossier", "panel", "create"],
+           summary="Drop a dashboard panel bound to a formula.")
 async def panel_create(
     ctx: Context,
     run_id: int,
@@ -4783,7 +5085,7 @@ async def panel_create(
         )
 
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         session = services["session"]
         run = session.get(AnnotationRun, run_id)
         if not run or run.infospace_id != services["infospace_id"]:
@@ -4832,7 +5134,8 @@ async def panel_create(
         )
 
 
-@mcp.tool(tags=["dossier", "panel", "layout"])
+@operation(path="visualize/panel/layout", tags=["dossier", "panel", "layout"],
+           summary="Inspect the run's dashboard layout.")
 async def panel_layout(
     ctx: Context,
     run_id: int,
@@ -4841,7 +5144,7 @@ async def panel_layout(
     from app.api.modules.annotation.models import AnnotationRun
 
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         session = services["session"]
         run = session.get(AnnotationRun, run_id)
         if not run or run.infospace_id != services["infospace_id"]:
@@ -4868,7 +5171,8 @@ async def panel_layout(
         )
 
 
-@mcp.tool(tags=["dossier", "snapshot"])
+@operation(path="visualize/observation/snapshot", requires=(Capability.ORGANIZE,), tags=["dossier", "snapshot"],
+           summary="Freeze a formula's current output as an immutable Observation.")
 async def observation_snapshot(
     ctx: Context,
     run_id: int,
@@ -4886,7 +5190,7 @@ async def observation_snapshot(
     from app.api.modules.annotation import snapshots as _snapshots
 
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         session = services["session"]
         run = session.get(AnnotationRun, run_id)
         if not run or run.infospace_id != services["infospace_id"]:
@@ -4924,7 +5228,8 @@ async def observation_snapshot(
         )
 
 
-@mcp.tool(tags=["dossier", "notes"])
+@operation(path="visualize/dossier/note", requires=(Capability.ORGANIZE,), tags=["dossier", "notes"],
+           summary="Append cited markdown to the dossier note.")
 async def dossier_note_append(
     ctx: Context,
     run_id: int,
@@ -4939,7 +5244,7 @@ async def dossier_note_append(
     from app.api.modules.annotation.models import AnnotationRun
 
     with get_services() as services:
-        resolve_access(services["session"], services["infospace_id"], services["user"])
+        access = _gate(services)
         session = services["session"]
         run = session.get(AnnotationRun, run_id)
         if not run or run.infospace_id != services["infospace_id"]:
@@ -4960,3 +5265,108 @@ async def dossier_note_append(
             content=[TextContent(type="text", text=f"✓ Appended {len(md)} chars to dossier notes")],
             structured_content={"notes_md": new_notes},
         )
+
+
+@operation(path="ingest/sources", requires=(Capability.INGEST,), posture="confirm",
+           tags=["sources", "ingestion", "monitoring"],
+           summary="Set up and manage recurring sources (RSS, web search, …) that fill a bundle on a schedule — the basis of live monitoring.")
+async def sources_hub(
+    ctx: Context,
+    operation: Annotated[str, "create | activate | pause | list"] = "list",
+    kind: Annotated[Optional[str], "create (single): source kind — rss, web_search, web, crawl"] = None,
+    name: Annotated[Optional[str], "create (single): a friendly name"] = None,
+    details: Annotated[Optional[Dict[str, Any]], "create (single): the source read-config verbatim, e.g. {'feed_url': '...'} for rss or {'query': '...'} for web_search"] = None,
+    poll_interval_seconds: Annotated[int, "create: seconds between polls (default 3600 = hourly)"] = 3600,
+    output_bundle_id: Annotated[Optional[int], "create: the bundle this source fills"] = None,
+    sources: Annotated[Optional[List[Dict[str, Any]]], "create (batch): a list of {kind, name, details, poll_interval_seconds?, output_bundle_id?} — proposes them all at once as one checklist the user confirms together. Prefer this over N separate calls when setting up multiple sources."] = None,
+    source_id: Annotated[Optional[int], "activate/pause: the source id"] = None,
+) -> ToolResult:
+    """Recurring sources. HQ polls active sources on their schedule and ingests
+    new items into their output bundle — no further conversation needed. Pair a
+    source with a live run (analysis_hub run.start, live=true, source_bundle_id)
+    to auto-annotate arrivals: that is a complete monitoring operation."""
+    from app.api.modules.content.services.source_service import (
+        activate_stream, pause_stream,
+    )
+    from app.api.modules.content.sources import registered_source_kinds
+    from app.models import Source
+    from sqlmodel import select as _select
+
+    with get_services() as services:
+        _gate(services)  # requires INGEST (declared on @operation)
+        session = services["session"]
+        iid = services["infospace_id"]
+        uid = services["user_id"]
+
+        if operation == "create":
+            # One source (kind/name/details) or many (sources=[{...}]) — both stage a
+            # single `stage_sources` directive carrying a list, so N sources confirm
+            # together as one inline checklist under one return token.
+            specs = list(sources) if sources else (
+                [{"kind": kind, "name": name, "details": details,
+                  "poll_interval_seconds": poll_interval_seconds,
+                  "output_bundle_id": output_bundle_id}]
+                if (kind and name) else []
+            )
+            if not specs:
+                return ToolResult(content=[TextContent(type="text", text="❌ create needs a source (kind + name) or a `sources` list")],
+                                  structured_content={"error": "missing_params"})
+            registered = registered_source_kinds()
+            inits = []
+            for spec in specs:
+                k, n = spec.get("kind"), spec.get("name")
+                if not k or not n:
+                    return ToolResult(content=[TextContent(type="text", text="❌ each source needs kind + name")],
+                                      structured_content={"error": "missing_params"})
+                if k not in registered:
+                    return ToolResult(
+                        content=[TextContent(type="text", text=f"❌ Unknown source kind '{k}'. Registered: {sorted(registered)}")],
+                        structured_content={"error": "invalid_kind", "registered": sorted(registered)})
+                inits.append({
+                    "kind": k, "name": n, "config": spec.get("details") or {},
+                    "streamEnabled": True,
+                    "pollInterval": spec.get("poll_interval_seconds", poll_interval_seconds),
+                    "bundleId": spec.get("output_bundle_id", output_bundle_id),
+                    "lockKind": True,
+                })
+            # Stage-then-confirm (posture=confirm): render the confirmation *inline in
+            # the chat* (command=stage_sources, not open_form → no dock). The user
+            # commits it right in the conversation, and a <form_result> resumes us.
+            import uuid as _uuid
+            token = f"src-{_uuid.uuid4().hex[:12]}"
+            count = len(inits)
+            label = (f"{count} recurring sources" if count > 1
+                     else f"a recurring {inits[0]['kind']} source '{inits[0]['name']}'")
+            return ToolResult(
+                content=[TextContent(type="text", text=f"⏸ Prepared {label} — confirm below and I'll continue.")],
+                structured_content={
+                    "staged": True, "count": count,
+                    "ui_directive": {
+                        "command": "stage_sources",
+                        "payload": {"sources": inits},
+                        "await_return": True, "return_token": token,
+                    },
+                },
+            )
+
+        if operation in ("activate", "pause"):
+            if not source_id:
+                return ToolResult(content=[TextContent(type="text", text=f"❌ {operation} needs source_id")],
+                                  structured_content={"error": "missing_source_id"})
+            try:
+                (activate_stream if operation == "activate" else pause_stream)(session, source_id, uid)
+            except Exception as e:
+                return ToolResult(content=[TextContent(type="text", text=f"❌ {e}")],
+                                  structured_content={"error": f"{operation}_failed", "detail": str(e)})
+            verb = "activated ▶" if operation == "activate" else "paused ⏸"
+            return ToolResult(content=[TextContent(type="text", text=f"Source #{source_id} {verb}")],
+                              structured_content={"source_id": source_id, "is_active": operation == "activate"})
+
+        sources = session.exec(_select(Source).where(Source.infospace_id == iid)).all()
+        rows = [{"id": s.id, "name": s.name, "kind": s.kind, "is_active": s.is_active,
+                 "poll_interval_seconds": s.poll_interval_seconds, "output_bundle_id": s.output_bundle_id}
+                for s in sources]
+        lines = [f"- #{r['id']} {r['name']} ({r['kind']}) {'▶ active' if r['is_active'] else '⏸ paused'} · every {r['poll_interval_seconds']}s → bundle {r['output_bundle_id']}"
+                 for r in rows]
+        return ToolResult(content=[TextContent(type="text", text="Recurring sources:\n" + ("\n".join(lines) or "(none yet)"))],
+                          structured_content={"sources": rows})
