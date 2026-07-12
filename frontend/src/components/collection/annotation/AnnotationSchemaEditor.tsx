@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -28,14 +28,14 @@ import {
   ChevronRight, ChevronDown, Type, Hash, ToggleLeft, List, Tags, ListOrdered,
   Braces, LayoutList, GitFork, ChevronsUpDown, Check, BarChart3, Table2, PieChart,
   Map, Clock, Network, CalendarClock, MapPin, CalendarRange, Users, Globe, AtSign,
-  Link2, Unlink, Sparkles, X,
+  Link2, Unlink, Sparkles, X, Spline, Library,
 } from "lucide-react";
 import GraphSchemaVisualEditor, { TagInput } from "./GraphSchemaVisualEditor";
 import { HexColorPicker } from "react-colorful";
 import { IconPickerDialog } from "@/components/collection/utilities/icons/IconPickerOverlay";
 import { IconRenderer } from "@/components/collection/utilities/icons/icon-picker";
 import { resolveEntityColor } from "@/lib/annotations/colors";
-import { AnnotationSchemaRead, AnnotationSchemaUpdate } from "@/client";
+import { AnnotationSchemaRead, AnnotationSchemaUpdate, type CanonRead } from "@/client";
 import { adaptSchemaReadToSchemaFormData, adaptSchemaFormDataToSchemaCreate } from "@/lib/annotations/adapters";
 import { useToast } from "@/components/ui/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -45,6 +45,8 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { Command, CommandList, CommandGroup, CommandItem, CommandEmpty } from "@/components/ui/command";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
+import { FieldConnectors, type FieldLink } from "./FieldConnectors";
+import { useCanons } from "@/hooks/useCanons";
 
 // =============================================================================
 // Helpers
@@ -658,6 +660,43 @@ const TopBar: React.FC<{
 // Nav tree (left rail)
 // =============================================================================
 
+// Resolve a ref's dot-path of field *names* (e.g. "mails.sender") to the target
+// field's UI id, descending object/array-of-object children.
+function resolveFieldIdByNamePath(fields: AdvancedSchemeField[], segments: string[]): string | null {
+  if (segments.length === 0) return null;
+  const [head, ...rest] = segments;
+  const match = fields.find(f => f.name === head);
+  if (!match) return null;
+  if (rest.length === 0) return match.id;
+  const kids = getChildren(match);
+  return kids ? resolveFieldIdByNamePath(kids, rest) : null;
+}
+
+// Every "field reuses another field's vocabulary" link in the schema, as
+// (source id → target id) pairs the connector overlay can draw between rows.
+function collectFieldLinks(structure: SchemaSection[], selectedId: string | null): FieldLink[] {
+  const links: FieldLink[] = [];
+  const walk = (fields: AdvancedSchemeField[], section: SchemaSection) => {
+    for (const f of fields) {
+      if (f.ref?.target) {
+        const targetId = resolveFieldIdByNamePath(section.fields, f.ref.target.split('.'));
+        if (targetId && targetId !== f.id) {
+          links.push({
+            id: `${f.id}->${targetId}`,
+            sourceId: f.id,
+            targetId,
+            active: selectedId === f.id || selectedId === targetId,
+          });
+        }
+      }
+      const kids = getChildren(f);
+      if (kids) walk(kids, section);
+    }
+  };
+  for (const s of structure) walk(s.fields, s);
+  return links;
+}
+
 const NavFieldRow: React.FC<{
   field: AdvancedSchemeField;
   sectionId: string;
@@ -678,6 +717,7 @@ const NavFieldRow: React.FC<{
   return (
     <>
       <div
+        data-field-id={field.id}
         className={cn(
           "group flex items-center gap-1.5 pr-1 rounded-md cursor-pointer transition-colors",
           selected ? "bg-primary/10 text-foreground" : "hover:bg-muted/40 text-foreground/90",
@@ -697,6 +737,9 @@ const NavFieldRow: React.FC<{
           {hasChildren && (expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />)}
         </button>
         {field.ref && <Link2 className="h-3 w-3 text-cyan-600 shrink-0" />}
+        {field.canonTie?.type && (
+          <Library className="h-3 w-3 text-violet-500 shrink-0" aria-label={`Tied to canon type ${field.canonTie.type}`} />
+        )}
         <span className={cn("text-xs font-mono truncate flex-1 py-1", !isValidFieldName(field.name) && field.name && "text-amber-600")}>
           {field.name || <span className="italic text-muted-foreground">unnamed</span>}
         </span>
@@ -756,12 +799,31 @@ const NavTree: React.FC<{
     { value: "per_video" as const, icon: Video, label: "Video", color: "text-orange-600" },
   ];
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showLinks, setShowLinks] = useState(true);
+  const links = useMemo(() => collectFieldLinks(structure, selectedNodeId), [structure, selectedNodeId]);
+
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="h-10 flex items-center px-4 border-b shrink-0">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Outline</span>
+      <div className="h-10 flex items-center gap-1 px-4 border-b shrink-0">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold flex-1">Outline</span>
+        {links.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowLinks(v => !v)}
+            title={showLinks ? "Hide field links" : "Trace linked fields — each reuses another field's vocabulary"}
+            className={cn(
+              "h-6 px-1.5 flex items-center gap-1 rounded-md text-[10px] font-mono transition-colors",
+              showLinks ? "text-cyan-600 dark:text-cyan-400 bg-cyan-500/10" : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+            )}
+          >
+            <Spline className="h-3.5 w-3.5" />
+            <span className="tabular-nums">{links.length}</span>
+          </button>
+        )}
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
+      <div ref={scrollRef} className="relative flex-1 min-h-0 overflow-y-auto px-2 py-2">
+        {showLinks && <FieldConnectors scrollRef={scrollRef} links={links} />}
         {structure.map(section => {
           const meta = SECTION_META[section.name] || { icon: FileText, color: "text-muted-foreground", title: section.name, sub: "" };
           const SectIcon = meta.icon;
@@ -1601,6 +1663,7 @@ const AuxPanel: React.FC<{
   onRemoveField: () => void;
   disabled: boolean;
 }> = ({ resolution, onUpdateField, onRemoveField, disabled }) => {
+  const { canons } = useCanons();
   if (resolution.kind !== "field") {
     return (
       <div className="h-full flex flex-col">
@@ -1654,6 +1717,14 @@ const AuxPanel: React.FC<{
           <RefRow field={field} section={section} disabled={disabled} onFieldUpdate={onUpdateField} />
 
           <div className="border-t" />
+
+          {/* Tie to canon */}
+          {isCanonTieable(field) && (
+            <>
+              <CanonTieRow field={field} canons={canons} disabled={disabled} onFieldUpdate={onUpdateField} />
+              <div className="border-t" />
+            </>
+          )}
 
           {/* Justification */}
           <JustificationPanel field={field} disabled={disabled} onUpdateField={onUpdateField} />
@@ -1765,6 +1836,100 @@ const RefRow: React.FC<{
             </div>
           </PopoverContent>
         </Popover>
+      )}
+    </div>
+  );
+};
+
+// =============================================================================
+// Canon tie — bind an entity/text field to a canon + type, preview its shape
+// =============================================================================
+
+// A canon tie only makes sense for fields that resolve to a thing: entities and
+// the text fields (like "location") that get curated into a canon.
+function isCanonTieable(field: AdvancedSchemeField): boolean {
+  if (field.type === "entity" || field.type === "string") return true;
+  if (field.type === "array" && (field.items?.type === "entity" || field.items?.type === "string")) return true;
+  return false;
+}
+
+const CanonTieRow: React.FC<{
+  field: AdvancedSchemeField;
+  canons: CanonRead[];
+  disabled: boolean;
+  onFieldUpdate: (update: Partial<AdvancedSchemeField>) => void;
+}> = ({ field, canons, disabled, onFieldUpdate }) => {
+  const tie = field.canonTie;
+  const canon = tie?.canonId != null ? canons.find(c => c.id === tie.canonId) : undefined;
+  const declaredTypes = canon ? Object.keys(canon.type_schemas ?? {}) : [];
+  const slots = (canon && tie?.type ? (canon.type_schemas?.[tie.type] ?? []) : []);
+  const setTie = (patch: Partial<NonNullable<AdvancedSchemeField["canonTie"]>>) =>
+    onFieldUpdate({ canonTie: { ...(tie ?? {}), ...patch } });
+
+  return (
+    <div>
+      <SectionLabel>Tie to canon</SectionLabel>
+      <p className="text-[11px] text-muted-foreground -mt-1 mb-2">
+        Resolve this field into a canon and fill that type&apos;s declared properties. The run&apos;s own canon overrides the preference set here.
+      </p>
+      <div className="space-y-2">
+        <Select
+          value={canon ? String(canon.id) : "__none__"}
+          onValueChange={(v) => setTie({ canonId: v === "__none__" ? null : Number(v) })}
+          disabled={disabled}
+        >
+          <SelectTrigger className="h-8 text-xs">
+            <span className="flex items-center gap-1.5 min-w-0">
+              <Library className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+              <SelectValue placeholder="Preferred canon (optional)" />
+            </span>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__" className="text-xs">No preferred canon</SelectItem>
+            {canons.map(c => <SelectItem key={c.id} value={String(c.id)} className="text-xs">{c.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+
+        {declaredTypes.length > 0 ? (
+          <Select value={tie?.type ?? "__none__"} onValueChange={(v) => setTie({ type: v === "__none__" ? undefined : v })} disabled={disabled}>
+            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Canon type…" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__" className="text-xs">No type</SelectItem>
+              {declaredTypes.map(t => <SelectItem key={t} value={t} className="text-xs font-mono">{t}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        ) : (
+          <Input
+            value={tie?.type ?? ""}
+            onChange={(e) => setTie({ type: e.target.value || undefined })}
+            placeholder="canon type (e.g. person, location)"
+            className="h-8 text-xs font-mono"
+            disabled={disabled}
+          />
+        )}
+      </div>
+
+      {slots.length > 0 && (
+        <div className="mt-2.5">
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Will ask the model to fill</p>
+          <div className="flex flex-wrap gap-1">
+            {slots.map(s => (
+              <span key={s.name} className="inline-flex items-center gap-1 text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded">
+                {s.name}<span className="text-muted-foreground">{s.type}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tie && (tie.canonId != null || tie.type) && !disabled && (
+        <button
+          type="button"
+          onClick={() => onFieldUpdate({ canonTie: undefined })}
+          className="mt-2 h-6 px-2 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground rounded-md hover:bg-muted/50 transition-colors"
+        >
+          <Unlink className="h-3 w-3" /> Clear tie
+        </button>
       )}
     </div>
   );

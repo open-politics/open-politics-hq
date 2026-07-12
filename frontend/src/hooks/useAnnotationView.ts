@@ -237,12 +237,11 @@ export function useAnnotationView(params: UseAnnotationViewParams): UseAnnotatio
     fetchData();
   }, [fetchData]);
 
-  // Live family refresh — subscribe to the run's presence stream.
-  // When an extension run completes, refetch automatically so panels
-  // bound to the parent see new annotations without a manual reload.
+  // Live refresh — subscribe to the run's presence stream. When the run
+  // completes a pass (including a live run's reconcile cycle), refetch so
+  // panels pick up the new annotations without a manual reload.
   useStream<{
     run_id?: number;
-    parent_run_id?: number | null;
     progress_current?: number;
     progress_total?: number;
     status?: string;

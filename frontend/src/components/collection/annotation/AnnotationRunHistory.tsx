@@ -60,6 +60,7 @@ import {
 import { toast } from 'sonner';
 import ShareAnnotationRunDialog from './ShareAnnotationRunDialog';
 import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
+import { TopbarSlot } from '@/components/layout/TopbarSlot';
 
 const FavoriteRunCard: React.FC<{
   run: AnnotationRunRead & { timestamp: string; documentCount: number; schemeCount: number };
@@ -482,63 +483,60 @@ const RunHistoryPanel: React.FC<{
 
   return (
     <div className="flex flex-col h-full">
-      {/* Fixed Header Section */}
+      {/* Favorites section (the command strip now lives in the app top bar) */}
       <div className="flex-shrink-0">
-        <div className="p-4 pb-0">
-          {/* Main Header Row */}
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
-            {/* Left Side - Title and Icon */}
-            <div className="flex items-center gap-4 pl-0">
-              <div className="p-3 flex items-center gap-2">
-                <Terminal className="h-6 w-6 text-blue-700 dark:text-blue-400" />
-                <Play className="h-6 w-6 text-blue-700 dark:text-blue-400" />
-                <History className="h-6 w-6 text-blue-700 dark:text-blue-400" />
+        <div className={cn(favoriteRunsFromList.length > 0 && "p-4 pb-0")}>
+          {/* Command strip → app top bar */}
+          <TopbarSlot>
+            <div className="flex w-full items-center gap-3">
+              {/* Left — icons + title */}
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="flex items-center gap-1 text-blue-700 dark:text-blue-400 shrink-0">
+                  <Terminal className="h-4 w-4" />
+                  <Play className="h-4 w-4" />
+                  <History className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 leading-tight">
+                  <h1 className="text-sm font-semibold truncate">Run History</h1>
+                  <p className="hidden sm:block text-[11px] text-muted-foreground">
+                    {runs.length} total • {favoriteRunsFromList.length} favorited
+                  </p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Run History</h1>
-                <p className="text-gray-600 dark:text-gray-400 text-sm">
-                  {runs.length} total runs • {favoriteRunsFromList.length} favorited
-                </p>
-              </div>
-            </div>
 
-            {/* Right Side - Search and Settings */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-              <div className="relative flex-1 sm:flex-initial">
+              {/* Right — search + import + sort */}
+              <div className="ml-auto flex items-center gap-2">
                 <Input
                   placeholder="Search runs..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full sm:w-80 lg:w-96 h-10 bg-background/50 border-primary/50 focus:border-primary/50 focus:bg-background transition-colors"
+                  className="h-8 w-40 sm:w-56 lg:w-72 bg-background/50 border-primary/40 focus:border-primary/50 focus:bg-background transition-colors"
                 />
-              </div>
-              <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={handleImportClick}
                   disabled={isImporting}
-                  className="bg-background/50 border-border/60 hover:bg-muted/80 hover:border-border transition-colors flex-1 sm:flex-initial max-w-32"
+                  className="h-8 bg-background/50 border-border/60 hover:bg-muted/80 hover:border-border transition-colors"
                 >
                   {isImporting ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin sm:mr-2" />
                   ) : (
-                    <Upload className="h-4 w-4 mr-2" />
+                    <Upload className="h-4 w-4 sm:mr-2" />
                   )}
-                  <span className="hidden sm:inline">{isImporting ? 'Importing...' : 'Import Run'}</span>
-                  <span className="sm:hidden">{isImporting ? 'Importing...' : 'Import'}</span>
+                  <span className="hidden sm:inline">{isImporting ? 'Importing...' : 'Import'}</span>
                 </Button>
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       size="icon"
-                      className="bg-background/50 border-border/60 hover:bg-muted/80 hover:border-border transition-colors"
+                      className="h-8 w-8 bg-background/50 border-border/60 hover:bg-muted/80 hover:border-border transition-colors"
                     >
                       <Settings className="h-4 w-4" />
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-56 p-3">
+                  <PopoverContent className="w-56 p-3" align="end">
                     <div className="space-y-3">
                       <h4 className="font-medium text-sm">Sort Options</h4>
                       <div className="space-y-2">
@@ -560,7 +558,7 @@ const RunHistoryPanel: React.FC<{
                 </Popover>
               </div>
             </div>
-          </div>
+          </TopbarSlot>
 
           
 

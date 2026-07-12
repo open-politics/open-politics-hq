@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2, GitMerge, Database, Fingerprint, Check, Box, Square, Maximize2, Minimize2 } from 'lucide-react';
+import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2, GitMerge, Database, Fingerprint, Check, Box, Square, Maximize2, Minimize2, Library, ArrowUpToLine } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { AnnotationSchemaRead, AssetRead, KnowledgeGraphRead, SimilarPairRead } from '@/client';
 import { FormattedAnnotation, TimeAxisConfig, PanelConfig, GraphVizConfig } from '@/lib/annotations/types';
@@ -46,6 +47,7 @@ import { ValueAliasManager } from './panels/ValueAliasManager';
 import { EvidenceDrawer } from './panels/EvidenceDrawer';
 import { walkOutputContract, flattenFieldPaths } from '@/lib/annotations/fieldPaths';
 import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
+import { usePromoteRun, useSetResolveIntoCanon } from '@/hooks/useCanons';
 import { effectiveMergeMaps } from '@/lib/annotations/valueAliases';
 import { createScopeFromSelection, createCooccursScope, entityPathsFromSchema, focusedEntityNamesFromFilter, pushCooccursToDashboard } from '@/lib/annotations/scopes';
 import type { Scope } from '@/lib/annotations/types';
@@ -405,6 +407,34 @@ export default function AnnotationResultsGraph({
   const { activeInfospace } = useInfospaceStore();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Canon-frame actions on the run. The run object lives in the run store; we
+  // guard on id so a stale active run (e.g. mid-switch) can't leak into the
+  // wrong panel. canon_ids being non-empty is what unlocks Promote + the
+  // resolve-into-canon toggle.
+  const activeRun = useAnnotationRunStore(s => s.activeRun);
+  const patchActiveRun = useAnnotationRunStore(s => s.patchActiveRun);
+  const run = activeRun?.id === runId ? activeRun : null;
+  const hasCanon = (run?.canon_ids ?? []).length > 0;
+  const resolveOn = !!run?.resolve_into_canon;
+  const { promote: promoteRun, loading: promoting } = usePromoteRun();
+  const { setMode: setResolveMode, loading: settingResolve } = useSetResolveIntoCanon();
+  // Dedup leans on embeddings — gate it the same way semantic search does.
+  const embeddingsOn = !!(activeInfospace?.enrichment_config as any)?.embedding?.model_name;
+
+  const handlePromote = useCallback(async () => {
+    await promoteRun(runId);
+  }, [promoteRun, runId]);
+
+  const handleToggleResolve = useCallback(async () => {
+    const next = !resolveOn;
+    const ok = await setResolveMode(runId, next);
+    if (!ok) return;
+    patchActiveRun({ resolve_into_canon: next });
+    if (next) {
+      toast.success('Resolving into canon — settled matches auto-apply, the rest stage as proposals.');
+    }
+  }, [resolveOn, setResolveMode, runId, patchActiveRun]);
   
   // Schema selection - use persisted setting if available
   const persistedSchemaId = initialSettings?.selectedGraphSchemaId;
@@ -2233,22 +2263,61 @@ export default function AnnotationResultsGraph({
             Curate ({curationData.totalTriplets})
           </Button>
           )}
-          {nodes.length >= 2 && (
+          {hasCanon && (
           <Button
-            variant={activeDedupPairs.length > 0 ? "secondary" : "outline"}
+            variant="outline"
             size="sm"
             className="h-6 text-[11px] px-1.5"
-            onClick={() => {
-              if (showDedupPanel) { setShowDedupPanel(false); }
-              else if (dedupPairs.length > 0) { setShowDedupPanel(true); }
-              else { handleFindDuplicates(); }
-            }}
-            disabled={isDedupLoading}
+            onClick={handlePromote}
+            disabled={promoting}
+            title="Promote this run's authored merges into its canon"
           >
-            {isDedupLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Fingerprint className="h-3 w-3 mr-1" />}
-            {activeDedupPairs.length > 0 ? `Dedup (${activeDedupPairs.length})` : 'Dedup'}
+            {promoting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <ArrowUpToLine className="h-3 w-3 mr-1" />}
+            Promote
           </Button>
           )}
+          {hasCanon && (
+          <Button
+            variant={resolveOn ? "secondary" : "outline"}
+            size="sm"
+            className="h-6 text-[11px] px-1.5"
+            onClick={handleToggleResolve}
+            disabled={settingResolve}
+            title={resolveOn
+              ? 'Resolving into canon — settled matches auto-apply, the rest stage as proposals. Click to turn off.'
+              : 'Resolve into canon — settled-only curation + staged proposals'}
+          >
+            {settingResolve ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Library className="h-3 w-3 mr-1" />}
+            Resolve into canon
+          </Button>
+          )}
+          {nodes.length >= 2 && (() => {
+            const dedupButton = (
+              <Button
+                variant={activeDedupPairs.length > 0 ? "secondary" : "outline"}
+                size="sm"
+                className="h-6 text-[11px] px-1.5"
+                onClick={() => {
+                  if (showDedupPanel) { setShowDedupPanel(false); }
+                  else if (dedupPairs.length > 0) { setShowDedupPanel(true); }
+                  else { handleFindDuplicates(); }
+                }}
+                disabled={isDedupLoading || !embeddingsOn}
+              >
+                {isDedupLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Fingerprint className="h-3 w-3 mr-1" />}
+                {activeDedupPairs.length > 0 ? `Dedup (${activeDedupPairs.length})` : 'Dedup'}
+              </Button>
+            );
+            if (embeddingsOn) return dedupButton;
+            return (
+              <TooltipProvider delayDuration={100}>
+                <Tooltip>
+                  <TooltipTrigger asChild>{dedupButton}</TooltipTrigger>
+                  <TooltipContent>Configure an embedding provider to suggest duplicates.</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            );
+          })()}
         </ButtonGroup>
 
         {/* Graph Settings */}

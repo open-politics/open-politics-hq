@@ -552,7 +552,7 @@ export default function AnnotationRunner({
     };
   }, [currentRunAssets, runDataSources]);
 
-  const handleUpdateRun = useCallback((field: 'name' | 'description', value: string) => {
+  const handleUpdateRun = useCallback((field: 'name' | 'description' | 'live', value: string | boolean) => {
     if (!activeRun) return;
     const updatePayload: AnnotationRunUpdate = { [field]: value };
     updateJob(activeRun.id, updatePayload);
@@ -643,7 +643,6 @@ export default function AnnotationRunner({
     <AssetDetailContext.Provider value={assetDetailBridge}>
     <div className="flex-1 flex flex-col overflow-auto">
       <div className={cn("flex-1 space-y-2", focusMode ? "p-0" : "p-1.5 md:p-4")}>
-        {!focusMode && (
         <AnnotationRunnerHeader
           activeRun={activeRun}
           dashboardConfig={dashboardConfig}
@@ -677,7 +676,6 @@ export default function AnnotationRunner({
           onOpenFormula={(id) => setFormulaEditor({ id })}
           onOpenDossierAgent={activeRun ? () => setDossierAgentOpen(true) : undefined}
         />
-        )}
 
         {/* Formula workspace — full-screen overlay when open. Closes
             via the inner "Close" button in its top bar. */}

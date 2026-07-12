@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye, ChevronRight, Microscope, Terminal, Minimize2, Image as ImageIcon } from 'lucide-react';
+import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye, ChevronRight, Microscope, Terminal, Minimize2, Image as ImageIcon, Radio, Folder, X, Library } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -11,12 +11,18 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { AnnotationSchemaRead, AssetRead } from '@/client';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import { Switch } from '@/components/ui/switch';
 import { Kbd, KbdGroup } from '@/components/ui/kbd';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
 import { AnnotationRunParams } from '@/lib/annotations/types';
+import { BundlePicker } from '@/components/collection/assets/BundlePicker';
+import { CanonPicker } from '@/components/collection/graph/CanonPicker';
+import { useCanons } from '@/hooks/useCanons';
+import { useBundleStore } from '@/zustand_stores/storeBundles';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { SchemePreview } from './schemaCreation/SchemePreview';
 import AnnotationSchemaEditor from './AnnotationSchemaEditor';
 import AssetSelector from '../assets/AssetSelector';
@@ -152,6 +158,22 @@ export default function AnnotationRunnerDock({
   const [maxToolIterations, setMaxToolIterations] = useState<number>(40);
   const [tempApiKey, setTempApiKey] = useState('');
   const [enableVisionProcessing, setEnableVisionProcessing] = useState(false);
+  // Live: keep the run watching one or more bundle subtrees for new content.
+  // Live scope is explicit (its own watch-list), decoupled from the asset
+  // selection — picking a bundle in the tree just pre-seeds it.
+  const [isLive, setIsLive] = useState(false);
+  const [liveBundleIds, setLiveBundleIds] = useState<number[]>([]);
+  // The run's declared canon frame (canon_ids) — what curation resolves into.
+  const [selectedCanonIds, setSelectedCanonIds] = useState<number[]>([]);
+  const { activeInfospace } = useInfospaceStore();
+  const { bundles, fetchBundles } = useBundleStore();
+  const { canons } = useCanons();
+  // Load the bundle list (same source as the Sources output picker) so the live
+  // watch-list picker is populated. Refetch when the dock opens so bundles
+  // created elsewhere this session show up.
+  useEffect(() => {
+    if (isExpanded && activeInfospace?.id) fetchBundles(activeInfospace.id);
+  }, [isExpanded, activeInfospace?.id, fetchBundles]);
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem();
   const { apiKeys, selections, setApiKey } = useProvidersStore();
   const selectedProvider = selections.annotation?.providerId || null;
@@ -231,7 +253,14 @@ export default function AnnotationRunnerDock({
   const processingAutoExpandedRef = useRef(false);
 
   const handleRunClick = useCallback(async () => {
-    if (selectedAssetItems.size === 0) {
+    // Live runs are scoped by their watch-list of bundles; one-off runs by the
+    // selected assets.
+    if (isLive) {
+      if (liveBundleIds.length === 0) {
+        toast.error("Add at least one bundle/folder to watch. New content there gets annotated as it lands.");
+        return;
+      }
+    } else if (selectedAssetItems.size === 0) {
       toast.error("Please select at least one asset to annotate.");
       return;
     }
@@ -280,9 +309,13 @@ export default function AnnotationRunnerDock({
     configuration.api_keys = apiKeys;
     
     const runParams: AnnotationRunParams = {
-        assetIds: Array.from(finalAssetIds),
-        bundleId: null, 
+        // A live run is scoped by its watched bundle subtree(s), not a frozen list.
+        assetIds: isLive ? [] : Array.from(finalAssetIds),
+        bundleId: null,
+        sourceBundleIds: isLive ? liveBundleIds : undefined,
+        live: isLive,
         schemaIds: Array.from(selectedSchemeIds),
+        canonIds: selectedCanonIds,
         name: newRunName || `Run - ${format(new Date(), 'yyyy-MM-dd HH:mm')}`,
         description: newRunDescription || undefined,
         configuration: {
@@ -294,7 +327,27 @@ export default function AnnotationRunnerDock({
     setIsExpanded(false);
     setNewRunName('');
     setNewRunDescription('');
-  }, [selectedAssetItems, selectedSchemeIds, isAiConfigured, selectedProvider, justificationsEnabled, csvRowProcessing, includeThoughts, annotationConcurrency, extractionStrategy, maxToolIterations, selectedModel, enableVisionProcessing, apiKeys, newRunName, newRunDescription, onCreateRun]);
+    // Reset scope state so the next run starts clean (no accidental duplicate
+    // live run over the same watch-list).
+    setIsLive(false);
+    setLiveBundleIds([]);
+    setSelectedCanonIds([]);
+  }, [selectedAssetItems, selectedSchemeIds, isAiConfigured, selectedProvider, justificationsEnabled, csvRowProcessing, includeThoughts, annotationConcurrency, extractionStrategy, maxToolIterations, selectedModel, enableVisionProcessing, apiKeys, newRunName, newRunDescription, isLive, liveBundleIds, selectedCanonIds, onCreateRun]);
+
+  // Switching to Live pre-seeds the watch-list from any bundle already picked in
+  // the asset tree (the `bundle-N` selection keys), so the common "I selected a
+  // folder, now keep it live" flow just carries over.
+  const handleModeChange = useCallback((value: string) => {
+    const live = value === 'live';
+    setIsLive(live);
+    if (live && liveBundleIds.length === 0) {
+      const fromTree = Array.from(selectedAssetItems)
+        .filter(i => i.startsWith('bundle-'))
+        .map(i => parseInt(i.replace('bundle-', ''), 10))
+        .filter(n => !isNaN(n));
+      if (fromTree.length > 0) setLiveBundleIds(fromTree);
+    }
+  }, [liveBundleIds.length, selectedAssetItems]);
 
   const handleSchemeToggle = (id: number) => {
     if (selectedSchemeIds.has(id)) {
@@ -438,11 +491,6 @@ export default function AnnotationRunnerDock({
     return `${key.slice(0, 4)}****${key.slice(-4)}`;
   }, []);
 
-  // Debug: Monitor store changes
-  useEffect(() => {
-    console.log('DOCK Store Changed:', { selectedProvider, apiKeys });
-  }, [selectedProvider, apiKeys]);
-
   // Drive dock open/closed/minimized from the run lifecycle:
   //   selecting a run → minimize (give panels the screen)
   //   clearing a run  → close to the peek bar (or open if no runs exist)
@@ -520,6 +568,8 @@ export default function AnnotationRunnerDock({
           setSelectedSchemeIds(new Set());
           setNewRunName('');
           setNewRunDescription('');
+          setIsLive(false);
+          setLiveBundleIds([]);
           toast.info('New run started');
         }
       }
@@ -571,7 +621,7 @@ export default function AnnotationRunnerDock({
         if (!isInInput || isTextarea) {
           e.preventDefault();
           // Check if run can be started (same conditions as button disabled state)
-          if (!isCreatingRun && selectedAssetItems.size > 0 && selectedSchemeIds.size > 0 && isAiConfigured) {
+          if (!isCreatingRun && (isLive ? liveBundleIds.length > 0 : selectedAssetItems.size > 0) && selectedSchemeIds.size > 0 && isAiConfigured) {
             handleRunClick();
           }
         }
@@ -580,17 +630,17 @@ export default function AnnotationRunnerDock({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isExpanded, isMinimized, activeRunId, onClearRun, sortedRuns, onSelectRun, handleRunClick, isCreatingRun, selectedAssetItems.size, selectedSchemeIds.size, isAiConfigured]);
+  }, [isExpanded, isMinimized, activeRunId, onClearRun, sortedRuns, onSelectRun, handleRunClick, isCreatingRun, selectedAssetItems.size, selectedSchemeIds.size, isAiConfigured, isLive, liveBundleIds.length]);
 
   return (
     <TooltipProvider>
       <div className={cn(
         "fixed flex flex-col bg-card/95 backdrop-blur-lg text-card-foreground shadow-2xl z-40 transition-all duration-300 ease-in-out rounded-md border",
         isMinimized 
-          ? "bottom-4 right-4 w-12 h-12 shadow-2xl ring-1 ring-primary/20"
+          ? "bottom-0.5 right-4 w-12 h-12 shadow-2xl ring-1 ring-primary/20"
           : isExpanded 
-            ? "bottom-4 left-1/2 transform -translate-x-1/2 w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[1500px] max-w-[95vw] shadow-lg hover:shadow-xl"
-            : "bottom-4 left-1/2 transform -translate-x-1/2 w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[400px] sm:max-w-[700px] shadow-2xl ring-1 ring-primary/20"
+            ? "bottom-0.5 left-1/2 transform -translate-x-1/2 w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[1500px] max-w-[95vw] shadow-lg hover:shadow-xl"
+            : "bottom-0.5 left-1/2 transform -translate-x-1/2 w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[700px] sm:max-w-[700px] shadow-2xl ring-1 ring-primary/20"
       )}>
         <div className="flex items-center justify-center sm:justify-between px-2 sm:px-4 py-0.5 cursor-pointer hover:bg-muted/30 transition-colors rounded-none " onClick={() => {
           if (isMinimized) {
@@ -740,20 +790,103 @@ export default function AnnotationRunnerDock({
 
         {isExpanded && !isMinimized && (
           <div className="p-3 sm:p-4 max-h-[70vh] sm:max-h-[75vh] overflow-y-auto">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+              <div className="space-y-1.5 min-w-0">
+                <Label htmlFor="new-job-name-dock" className="text-xs font-medium">Name</Label>
+                <Input
+                  id="new-job-name-dock"
+                  placeholder="Enter a descriptive name..."
+                  value={newRunName}
+                  onChange={(e) => setNewRunName(e.target.value)}
+                  className="transition-all duration-200 focus:ring-2 focus:ring-primary/20 h-9"
+                />
+              </div>
+              {/* Mode switcher: run once over the asset selection, or stay
+                  live and watch bundle(s) for new content. */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Mode</Label>
+                <Tabs value={isLive ? 'live' : 'once'} onValueChange={handleModeChange}>
+                  <TabsList className="h-9">
+                    <TabsTrigger value="once" className="text-xs px-3 py-1">Run once</TabsTrigger>
+                    <TabsTrigger value="live" className="text-xs px-3 py-1 data-[state=active]:text-green-600 dark:data-[state=active]:text-green-400">
+                      <Radio className={cn('h-3 w-3 mr-1', isLive && 'animate-pulse')} />
+                      Live
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+              {/* Hint sits inline (same row) so toggling Live doesn't grow the dock height. */}
+              <div className="space-y-1.5 min-w-0">
+                <Label className="text-xs font-medium">Hint</Label>
+                <p className={cn(
+                  'min-h-9 flex items-center text-[10px] leading-tight',
+                  isLive ? 'text-green-600 dark:text-green-500' : 'text-muted-foreground'
+                )}>
+                  {isLive
+                    ? 'New content in the selected bundles/folders below is annotated as it lands.'
+                    : 'Processes the current asset selection once.'}
+                </p>
+              </div>
+            </div>
+            {/* Live scope is explicit: a watch-list of bundles, with a
+                warning until at least one is chosen. */}
+            {isLive && (
+              <div className="mt-3 rounded-md border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 p-2.5 space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Radio className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+                  <span className="text-xs font-medium text-green-700 dark:text-green-400">Bundles to watch</span>
+                </div>
+                {liveBundleIds.length === 0 ? (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                    Live needs at least one bundle/folder — new content there is annotated as it lands.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {liveBundleIds.map(id => {
+                      const b = bundles.find(x => x.id === id);
+                      return (
+                        <span key={id} className="inline-flex items-center gap-1 rounded-full bg-green-100 dark:bg-green-900/40 px-2 py-0.5 text-[11px] text-green-700 dark:text-green-300">
+                          <Folder className="h-3 w-3" />
+                          {b?.name || `Bundle ${id}`}
+                          <button type="button" onClick={() => setLiveBundleIds(prev => prev.filter(x => x !== id))} className="hover:text-red-500" aria-label="Remove bundle">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                <BundlePicker
+                  bundles={bundles}
+                  value={undefined}
+                  allowRoot={false}
+                  placeholder="Add a bundle to watch…"
+                  onChange={(id) => { if (id != null) setLiveBundleIds(prev => prev.includes(id) ? prev : [...prev, id]); }}
+                  className="h-8"
+                />
+              </div>
+            )}
+            {/* Canon frame — which canon(s) this run's entities resolve into.
+                Optional: empty falls back to the infospace default canon. */}
+            {canons.length > 0 && (
+              <div className="mt-3 rounded-md border bg-muted/30 p-2.5 space-y-2">
+                <div className="flex items-center gap-1.5">
+                  <Library className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-xs font-medium text-muted-foreground">Canon frame</span>
+                  <span className="text-[10px] text-muted-foreground/70">
+                    {selectedCanonIds.length === 0 ? 'defaults to the General canon' : 'entities resolve into the primary'}
+                  </span>
+                </div>
+                <CanonPicker
+                  canons={canons}
+                  value={selectedCanonIds}
+                  onChange={setSelectedCanonIds}
+                  defaultCanonId={activeInfospace?.default_canon_id ?? null}
+                />
+              </div>
+            )}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 mt-3 sm:mt-4">
                                     <div className="space-y-3">
-                      {/* Basic Settings */}
-                      <div className="space-y-2">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="new-job-name-dock" className="text-xs font-medium">Run Name</Label>
-                        <Input 
-                          id="new-job-name-dock" 
-                          placeholder="Enter a descriptive name..." 
-                          value={newRunName} 
-                          onChange={(e) => setNewRunName(e.target.value)}
-                          className="transition-all duration-200 focus:ring-2 focus:ring-primary/20 h-9"
-                        />
-                      </div>
                       <div className="space-y-1.5">
                         <Label htmlFor="new-job-description-dock" className="text-xs font-medium">Description</Label>
                         <Textarea 
@@ -764,7 +897,6 @@ export default function AnnotationRunnerDock({
                           className="transition-all duration-200 focus:ring-2 focus:ring-primary/20 min-h-[70px] resize-none text-sm"
                         />
                       </div>
-                    </div>
 
                     {/* Processing Settings */}
                     <div className="border rounded-lg bg-muted/20">
@@ -1304,9 +1436,9 @@ export default function AnnotationRunnerDock({
                         )}
                       </div>
                     </div>
-                    <Button 
-                      onClick={handleRunClick} 
-                      disabled={isCreatingRun || selectedAssetItems.size === 0 || selectedSchemeIds.size === 0 || !isAiConfigured}
+                    <Button
+                      onClick={handleRunClick}
+                      disabled={isCreatingRun || (isLive ? liveBundleIds.length === 0 : selectedAssetItems.size === 0) || selectedSchemeIds.size === 0 || !isAiConfigured}
                       className="h-10 font-medium transition-all duration-200 disabled:opacity-50 text-sm"
                       size="lg"
                     >

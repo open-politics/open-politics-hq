@@ -130,7 +130,9 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
       return null;
     }
     try {
-      const newRun = await RunsService.extendRun({
+      // Extension now grows the SAME run in place and re-pends it — the
+      // response is that run, flipped back to PENDING. No child row.
+      const updatedRun = await RunsService.extendRun({
         infospaceId: activeInfospace.id,
         runId: params.runId,
         requestBody: {
@@ -140,26 +142,12 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
           configuration_overrides: params.configurationOverrides ?? null,
         },
       });
-      toast.success(`Extension queued — ${newRun.description || `run ${newRun.id}`}.`);
-      // Re-fetch the parent so its rolled-up ``effective_status`` flips to
-      // RUNNING immediately. That re-enables the page-level SSE listener and
-      // the 5s poll, and the header's progress bar reads from the rollup —
-      // so the user sees live activity without a manual refresh. Parent's
-      // own ``status`` stays ``completed`` (we never lie about its lifecycle).
-      try {
-        const parentRefreshed = await RunsService.getRun({
-          infospaceId: activeInfospace.id,
-          runId: params.runId,
-        });
-        setActiveRun(prev => (prev && prev.id === params.runId ? parentRefreshed : prev));
-      } catch {
-        // Best-effort — even if the refresh fails, the polling baseline will
-        // pick up the rollup on the next tick.
-      }
-      // Don't prepend the child to the runs list — extensions are hidden
-      // from the history (parent_run_id IS NOT NULL). Keeping the list as-is
-      // matches the backend's default filter.
-      return newRun;
+      toast.success(`Run "${updatedRun.name}" extended — processing the new items.`);
+      // It's the same run: swap it into the active slot and the list so the
+      // status (now PENDING) and progress reflect the new pass immediately.
+      setActiveRun(prev => (prev && prev.id === updatedRun.id ? updatedRun : prev));
+      setRuns(prev => prev.map(r => (r.id === updatedRun.id ? updatedRun : r)));
+      return updatedRun;
     } catch (e: any) {
       toast.error("Failed to extend run.", { description: e.body?.detail || e.message });
       return null;
@@ -173,14 +161,26 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     }
     setIsCreatingRun(true);
     try {
+        // One or more watched bundles. The single FK (source_bundle_id) gets the
+        // first for back-compat (monitoring filter); the full list rides in
+        // configuration.source_bundle_ids, which the scope resolver unions.
+        const watchedBundles = params.sourceBundleIds && params.sourceBundleIds.length > 0
+            ? params.sourceBundleIds
+            : (params.sourceBundleId != null ? [params.sourceBundleId] : []);
+
         const runCreatePayload: AnnotationRunCreate = {
             name: params.name,
             description: params.description,
             schema_ids: params.schemaIds,
             target_asset_ids: params.assetIds && params.assetIds.length > 0 ? params.assetIds : undefined,
             target_bundle_id: params.bundleId,
-            source_bundle_id: params.sourceBundleId, // NEW: Support continuous runs
-            configuration: params.configuration || {},
+            source_bundle_id: watchedBundles.length > 0 ? watchedBundles[0] : null,
+            live: params.live, // Keep the run live: reconcile new content over time
+            canon_ids: params.canonIds && params.canonIds.length > 0 ? params.canonIds : undefined,
+            configuration: {
+                ...(params.configuration || {}),
+                ...(watchedBundles.length > 0 ? { source_bundle_ids: watchedBundles } : {}),
+            },
         };
 
         const newRun = await RunsService.createRun({
@@ -296,19 +296,29 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
 
   const updateJob = useCallback(async (jobId: number, data: AnnotationRunUpdate): Promise<AnnotationRunRead | null> => {
     if(!activeInfospace?.id) return null;
+    // Optimistic: apply locally first so toggles (e.g. live on/off) feel instant
+    // instead of stalling on the round-trip. Snapshot for rollback on failure.
+    const prevRuns = runs;
+    const prevActive = activeRun;
+    setRuns(prev => prev.map(r => r.id === jobId ? ({ ...r, ...data } as AnnotationRunRead) : r));
+    if (activeRun?.id === jobId) {
+      setActiveRun(prev => (prev ? ({ ...prev, ...data } as AnnotationRunRead) : prev));
+    }
     try {
       const updatedRun = await RunsService.updateRun({ infospaceId: activeInfospace.id, runId: jobId, requestBody: data });
       setRuns(prev => prev.map(r => r.id === jobId ? updatedRun : r));
       if (activeRun?.id === jobId) {
         setActiveRun(updatedRun);
       }
-      toast.success("Run updated successfully.");
       return updatedRun;
     } catch (e: any) {
+      // Roll back the optimistic change.
+      setRuns(prevRuns);
+      if (prevActive?.id === jobId) setActiveRun(prevActive);
       toast.error("Failed to update run.", { description: e.body?.detail || e.message });
       return null;
     }
-  }, [activeInfospace, activeRun]);
+  }, [activeInfospace, activeRun, runs]);
 
   useEffect(() => {
     if (autoLoadRuns && activeInfospace?.id) {

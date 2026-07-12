@@ -417,6 +417,14 @@ const buildJsonSchemaProperties = (
             // If the field was originally a ref, preserve the target on the
             // emitted node so the parser can reconstruct the ref on reload.
             if (refTargetPath) property['x-ref'] = refTargetPath;
+            // Canon tie — round-trip the backing canon + type so curation can
+            // resolve the field's output into that canon and fill its shape.
+            if (field.canonTie && (field.canonTie.canonId != null || field.canonTie.type)) {
+                property['x-canon'] = {
+                    ...(field.canonTie.canonId != null ? { canon_id: field.canonTie.canonId } : {}),
+                    ...(field.canonTie.type ? { type: field.canonTie.type } : {}),
+                };
+            }
             properties[rawField.name] = property;
         }
     });
@@ -600,17 +608,24 @@ const parseJsonSchemaProperties = (properties: any = {}, required: string[] = []
 
     for (const [name, schema] of Object.entries<any>(properties)) {
         // Entity field — recognized by x-entityField extension
+        let field: AdvancedSchemeField;
         if (schema && schema['x-entityField'] === true) {
-            out.push(parseEntityField(name, schema, required));
-            continue;
+            field = parseEntityField(name, schema, required);
+        } else if (isGraphProperty(schema)) {
+            // Graph field — recognized by triplet shape, regardless of property name
+            field = parseGraphField(name, schema, required);
+        } else {
+            field = parseRegularField(name, schema, required);
         }
-        // Graph field — recognized by triplet shape, regardless of property name
-        if (isGraphProperty(schema)) {
-            out.push(parseGraphField(name, schema, required));
-            continue;
+        // Canon tie round-trips for every field kind (see x-canon emission).
+        const xc = schema?.['x-canon'];
+        if (xc && typeof xc === 'object') {
+            field.canonTie = {
+                canonId: typeof xc.canon_id === 'number' ? xc.canon_id : null,
+                type: typeof xc.type === 'string' ? xc.type : undefined,
+            };
         }
-        // Regular field
-        out.push(parseRegularField(name, schema, required));
+        out.push(field);
     }
 
     return out;

@@ -94,6 +94,24 @@ export interface FieldRef {
   target: string;
 }
 
+/**
+ * Canon tie. Marks an entity-shaped field as backed by a canon: the field's
+ * type resolves into a canon vocabulary, and the canon's declared property
+ * shape (`type_schemas[type]`) is what the field asks the model to fill.
+ *
+ * `type` (the canon entry type) is the durable, canon-blind half — a run can
+ * point the schema at any canon and the tie still means the same thing.
+ * `canonId` is a soft, authoring-time preference: it sources the type list and
+ * the property preview in the editor; the run's own canon still wins at
+ * resolution. Emitted round-trip as the `x-canon` JSON Schema extension.
+ */
+export interface CanonTie {
+  /** Preferred canon for authoring — soft; the run's canon overrides. */
+  canonId?: number | null;
+  /** The canon entry type this field fills (e.g. "person", "location"). */
+  type?: string;
+}
+
 export interface AdvancedSchemeField {
   // UI-specific identifier for keys and loops
   id: string;
@@ -157,6 +175,10 @@ export interface AdvancedSchemeField {
   // Intra-schema reference. When set, this field inherits the target's
   // definition. Only `description` is overridable. See FieldRef.
   ref?: FieldRef;
+
+  // Canon tie. When set, this (entity) field resolves into a canon and asks the
+  // model to fill that canon type's declared properties. Emits as `x-canon`.
+  canonTie?: CanonTie;
 
   // Intelligence-layer axis reference (M3). Emits as `x-axis` on the JSON
   // Schema property. References a key in the schema's top-level `axes` block.
@@ -298,8 +320,11 @@ export interface AnnotationRunParams {
   description?: string;
   assetIds?: number[];
   bundleId?: number | null;
-  sourceBundleId?: number | null; // NEW: For continuous runs watching a bundle
+  sourceBundleId?: number | null; // Single watched bundle (legacy/back-compat)
+  sourceBundleIds?: number[]; // One or more bundles a live run watches (subtrees)
+  live?: boolean; // Keep the run live: reconcile new content in scope over time
   schemaIds: number[];
+  canonIds?: number[]; // Declared coordinate frame — canon(s) curation resolves into
   configuration?: Record<string, any>;
 }
 

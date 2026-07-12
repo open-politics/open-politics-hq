@@ -674,6 +674,11 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                 if (run.views_config && run.views_config.length > 0) {
                     const rawConfig = run.views_config[0] as unknown as DashboardConfig;
                     const config = migrateDashboardConfig(deserializeDashboardConfig(rawConfig) || rawConfig);
+                    // Normalize: a run authored elsewhere (e.g. the operator's run.start /
+                    // panel_create) can persist a dashboard blob with no `panels` key. Every
+                    // mutator (addPanel/updatePanel/removePanel) and the layout helpers assume
+                    // an array, so guarantee it here — the single load boundary — not at each use.
+                    if (!Array.isArray(config.panels)) config.panels = [];
                     set({ dashboardConfig: config, isDashboardDirty: false });
                 } else {
                     const defaultConfig: DashboardConfig = {
@@ -830,6 +835,7 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
                         },
                     };
 
+                    if (!Array.isArray(state.dashboardConfig.panels)) state.dashboardConfig.panels = [];
                     state.dashboardConfig.panels.push(newPanel);
                     state.isDashboardDirty = true;
                 }

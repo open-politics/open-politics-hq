@@ -6,12 +6,9 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
+import { TopbarSlot } from '@/components/layout/TopbarSlot';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,7 +56,10 @@ import {
   Check,
   Play,
   X,
-  Maximize2
+  Maximize2,
+  Radio,
+  ChevronDown,
+  Library
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -71,6 +71,7 @@ import { DashboardConfig, PanelViewConfig, useAnnotationRunStore } from '@/zusta
 import { FormattedAnnotation } from '@/lib/annotations/types';
 import ShareAnnotationRunDialog from './ShareAnnotationRunDialog';
 import { VariableSplittingControls } from './VariableSplittingControls';
+import { useCanons } from '@/hooks/useCanons';
 
 const panelTypes = [
   { type: 'table', name: 'Data Table', description: 'Tabular view with filtering and sorting', icon: Table, color: 'bg-blue-500 dark:bg-blue-600' },
@@ -89,7 +90,7 @@ interface AnnotationRunnerHeaderProps {
   isProcessing: boolean;
   isRetryingJob: boolean;
 
-  onUpdateRun: (field: 'name' | 'description', value: string) => void;
+  onUpdateRun: (field: 'name' | 'description' | 'live', value: string | boolean) => void;
   onRetryJobFailures: (runId: number) => void;
   onSaveDashboard: () => Promise<void>;
   onUpdateDashboardConfig: (updates: Partial<DashboardConfig>) => void;
@@ -159,19 +160,25 @@ export default function AnnotationRunnerHeader({
   const nameIsDirty = editingName.trim() !== (activeRun.name ?? '');
   const descriptionIsDirty = editingDescription.trim() !== (activeRun.description ?? '');
 
-  const { getGlobalVariableSplitting, setGlobalVariableSplitting, toggleFocusMode } = useAnnotationRunStore();
+  const { getGlobalVariableSplitting, setGlobalVariableSplitting, toggleFocusMode, focusMode } = useAnnotationRunStore();
 
-  // ``effective_status`` reflects the family rollup — when an extension run
-  // is mid-flight the parent's stored ``status`` stays ``completed`` but
-  // ``effective_status`` flips to ``running``. The dot, label, and progress
-  // bar all read from the rolled-up state so the UI shows the extension's
-  // live activity. ``isCompleted`` stays anchored to ``status`` so the
-  // "completed" affordance only appears when the *whole* family is done.
-  const effective = (activeRun as any).effective_status ?? activeRun.status;
-  const isRunning = effective === 'running' || effective === 'pending';
-  const isFailed = effective === 'failed';
-  const isPartial = effective === 'completed_with_errors';
-  const isCompleted = effective === 'completed';
+  // Canon frame the run resolves into — surfaced as a subtle chip by name.
+  const { canons } = useCanons();
+  const canonIds = activeRun.canon_ids ?? [];
+  const canonNames = canonIds
+    .map((id) => canons.find((c) => c.id === id)?.name ?? `Canon ${id}`)
+    .join(', ');
+
+  // A run is one durable object — its own ``status`` is the truth. A *live* run
+  // that's completed isn't "done", it's caught up and watching, so it gets its
+  // own affordance (green, no pulse, "Watching") distinct from a finished one-off.
+  const status = activeRun.status;
+  const isLive = !!(activeRun as any).live;
+  const isRunning = status === 'running' || status === 'pending';
+  const isFailed = status === 'failed';
+  const isPartial = status === 'completed_with_errors';
+  const isCompleted = status === 'completed';
+  const isWatching = isLive && isCompleted;
 
   // Sync editing fields when activeRun changes
   useEffect(() => {
@@ -185,7 +192,9 @@ export default function AnnotationRunnerHeader({
   }, [activeRun.id, activeRun.status, activeRun.error_message]);
 
   // --- Status dot ---
-  const statusDotColor = isCompleted
+  const statusDotColor = isWatching
+    ? 'bg-green-500 animate-pulse'
+    : isCompleted
     ? 'bg-green-500'
     : isRunning
     ? 'bg-blue-500 animate-pulse'
@@ -195,15 +204,17 @@ export default function AnnotationRunnerHeader({
     ? 'bg-yellow-500'
     : 'bg-gray-400';
 
-  const statusLabel = isCompleted
+  const statusLabel = isWatching
+    ? 'Watching'
+    : isCompleted
     ? 'Completed'
     : isRunning
-    ? (activeRun.status === 'pending' ? 'Pending' : 'Running')
+    ? (status === 'pending' ? 'Pending' : 'Running')
     : isFailed
     ? 'Failed'
     : isPartial
-    ? 'Partial'
-    : (activeRun.status ?? '').replace(/_/g, ' ');
+    ? (isLive ? 'Watching (with errors)' : 'Partial')
+    : (status ?? '').replace(/_/g, ' ');
 
   // --- Handlers ---
 
@@ -270,22 +281,24 @@ export default function AnnotationRunnerHeader({
 
   const hasProgress = isRunning && activeRun.progress_total != null && activeRun.progress_total > 0;
 
-  // Stop propagation helper — prevents clicks on interactive elements from toggling the fold
-  const stopProp = (e: React.MouseEvent) => e.stopPropagation();
-
   return (
     <>
-      <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-        <div className="rounded-md border-b sticky top-0 bg-background/95 rounded-none backdrop-blur z-10">
-          {/* BAR — Whole thing is the fold trigger */}
-          <CollapsibleTrigger asChild>
-            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-3 py-2 cursor-pointer select-none hover:bg-muted/30 transition-colors">
+      <TopbarSlot>
+            <div className="flex w-full items-center justify-between gap-x-3">
               {/* LEFT — identity + status */}
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 <Play className="h-4 w-4 text-muted-foreground shrink-0" />
                 <span className="text-sm font-medium truncate max-w-[30vw]" title={activeRun.name}>
                   {activeRun.name}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => setIsExpanded((v) => !v)}
+                  title="Edit run details"
+                  className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                >
+                  <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', isExpanded && 'rotate-180')} />
+                </button>
 
                 <TooltipProvider delayDuration={100}>
                   <Tooltip>
@@ -315,6 +328,16 @@ export default function AnnotationRunnerHeader({
                   </span>
                 )}
 
+                {canonIds.length > 0 && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground shrink-0"
+                    title={`Resolves into canon: ${canonNames}`}
+                  >
+                    <Library className="h-3 w-3" />
+                    <span className="truncate max-w-[10rem]">{canonNames}</span>
+                  </span>
+                )}
+
                 {isDashboardDirty && (
                   <div className="flex items-center gap-1 shrink-0">
                     <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
@@ -323,8 +346,8 @@ export default function AnnotationRunnerHeader({
                 )}
               </div>
 
-              {/* RIGHT — grouped action buttons, stopProp so they don't toggle fold */}
-              <div className="flex items-center shrink-0" onClick={stopProp}>
+              {/* RIGHT — grouped action buttons */}
+              <div className="flex items-center shrink-0">
                 <ButtonGroup>
                   {/* Group 1: Data */}
                   <ButtonGroup>
@@ -516,11 +539,11 @@ export default function AnnotationRunnerHeader({
                 </ButtonGroup>
               </div>
             </div>
-          </CollapsibleTrigger>
+      </TopbarSlot>
 
-          {/* FOLDOUT — edit name & description */}
-          <CollapsibleContent>
-            <Separator />
+      {/* Run details — inline editor on the run page (not the bar) */}
+      {!focusMode && isExpanded && (
+        <div className="rounded-md border bg-background/95 backdrop-blur">
             <div className="px-3 py-2.5 space-y-2.5">
               {/* Name */}
               <div className="flex items-center gap-2">
@@ -584,9 +607,8 @@ export default function AnnotationRunnerHeader({
                 </Alert>
               )}
             </div>
-          </CollapsibleContent>
         </div>
-      </Collapsible>
+      )}
 
       {/* Share Dialog */}
       {isShareDialogOpen && activeRun && (
@@ -615,6 +637,25 @@ export default function AnnotationRunnerHeader({
                   <Label htmlFor="dashboard-description">Description</Label>
                   <Textarea id="dashboard-description" value={settingsDescription} onChange={(e) => setSettingsDescription(e.target.value)} placeholder="Enter dashboard description (optional)..." rows={3} />
                 </div>
+              </div>
+              <Separator />
+              <div className="space-y-3">
+                <div>
+                  <h4 className="text-sm font-medium text-foreground">Live monitoring</h4>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    A live run keeps watching its scope and re-annotates new content as it lands.
+                    Applies immediately.
+                  </p>
+                </div>
+                <Tabs value={isLive ? 'live' : 'once'} onValueChange={(v) => onUpdateRun('live', v === 'live')}>
+                  <TabsList className="h-9">
+                    <TabsTrigger value="once" className="text-xs px-3 py-1">Run once</TabsTrigger>
+                    <TabsTrigger value="live" className="text-xs px-3 py-1 data-[state=active]:text-green-600 dark:data-[state=active]:text-green-400">
+                      <Radio className={cn('h-3 w-3 mr-1', isLive && 'animate-pulse')} />
+                      Live
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
               </div>
               <Separator />
               <div className="space-y-4">
