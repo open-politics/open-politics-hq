@@ -1730,12 +1730,19 @@ class PackageImporter:
         completed_at = self._safe_parse_datetime(run_data.get("completed_at"), "completed_at")
 
         # Create the annotation run
+        # Strip transient streaming state — asset ids don't survive the import
+        # remap, so a carried-over cursor/watermark would mis-scope the run.
+        imported_config = {
+            k: v for k, v in (run_data.get("configuration") or {}).items()
+            if k not in ("_watermark", "_cursor", "_chained_asset_ids")
+        }
+
         new_run = AnnotationRun(
             infospace_id=self.target_infospace_id,
             user_id=self.target_user_id,
             imported_from_uuid=source_uuid,
             name=run_data.get("name", f"Imported Run {source_uuid[:8]}"),
-            configuration=run_data.get("configuration", {}),
+            configuration=imported_config,
             status=RunStatus(run_data.get("status", "completed")) if run_data.get("status") else RunStatus.COMPLETED,
             include_parent_context=run_data.get("include_parent_context", False),
             context_window=run_data.get("context_window", 0),

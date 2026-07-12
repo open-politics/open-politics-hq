@@ -41,13 +41,13 @@ from app.api.modules.annotation.models import (
 annotation_run_schema_association = RunSchemaLink.__table__
 from app.api.modules.graph.models import (
     Canon,
-    CanonRole,
     KnowledgeGraph,
-    Entity,
+    CanonEntry,
     EntityRelationship,
     EntityEditLog,
     GraphEdge,
     FragmentCuration,
+    CanonProposal,
 )
 from app.api.modules.flow.models import (
     Flow,

@@ -14,6 +14,36 @@ logger = logging.getLogger(__name__)
 
 redis_url = settings.redis_url
 
+# The domain task modules. Importing any of them runs its @task / @enricher
+# decorators, which (a) register the Celery task, (b) populate the in-process @task
+# registry, and (c) wire its event-bus subscriptions. The worker loads these via
+# Celery's ``imports`` below. The web process must load the SAME set at startup
+# (``load_task_modules()``) so producer-side ``emit()`` / ``kick_tasks()`` — which
+# dispatch via the in-process subscriber/registry — reach their tasks identically
+# from API routes and the chat MCP tools. Without it, a backend-initiated intake
+# mints a PENDING IngestionJob that nothing dispatches until an unrelated worker-side
+# poll happens to sweep it via the ``ingest`` task's self-chain.
+TASK_MODULES = (
+    'app.core.events',
+    'app.core.dispatch',
+    'app.api.modules.content.enrichers',
+    'app.api.modules.content.tasks',
+    'app.api.modules.graph.tasks',
+    'app.api.modules.annotation.tasks',
+    'app.api.modules.flow.tasks',
+    'app.api.modules.sharing.tasks',
+)
+
+
+def load_task_modules() -> None:
+    """Import every module in ``TASK_MODULES`` so this process's @task registry and
+    event-bus subscriptions match the worker's. Idempotent (import caches). Called at
+    web-process startup; the worker gets the same set via Celery's ``imports``."""
+    import importlib
+
+    for module in TASK_MODULES:
+        importlib.import_module(module)
+
 # Initialize Celery with explicit configuration
 celery = Celery(
     "app",
@@ -68,17 +98,9 @@ celery.conf.update(
     # Task time limits (avoid runaway workers)
     task_soft_time_limit=3600,
     task_time_limit=3720,
-    # Task imports - only load when worker starts
-    imports=(
-        'app.core.events',
-        'app.core.dispatch',
-        'app.api.modules.content.enrichers',
-        'app.api.modules.content.tasks',
-        'app.api.modules.graph.tasks',
-        'app.api.modules.annotation.tasks',
-        'app.api.modules.flow.tasks',
-        'app.api.modules.sharing.tasks',
-    ),
+    # Task imports — the worker loads these on start; the web process loads the same
+    # set via load_task_modules() so emit()/kick_tasks() work from both (see TASK_MODULES).
+    imports=TASK_MODULES,
     # Beat schedule — only dispatch_tasks + user_backup entries.
     # All @task schedule params are handled by dispatch_tasks internally.
     beat_schedule={

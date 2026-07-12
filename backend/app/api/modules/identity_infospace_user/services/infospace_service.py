@@ -25,12 +25,6 @@ from app.models import (
     Asset,
     Task,
     Package,
-    ResourceType,
-    Annotation,
-    ShareableLink,
-    RunSchemaLink,
-    Bundle,
-    InfospaceBackup
 )
 from app.api.modules.identity_infospace_user.models import InfospaceCollaborator, CollaboratorRole
 
@@ -79,10 +73,10 @@ class InfospaceService:
 
         Atomically creates a "General" canon and wires it as
         ``infospace.default_canon_id``. Every infospace gets exactly one
-        General canon at creation; users can create role-specific canons
-        (geo, project-specific, archival) on demand thereafter.
+        General canon at creation; users can create project-specific or
+        archival canons on demand thereafter.
         """
-        from app.api.modules.graph.models import Canon, CanonRole
+        from app.api.modules.graph.models import Canon
 
         logger.info(f"Service: Creating infospace '{infospace_in.name}' for user {user_id}")
         db_infospace = Infospace.model_validate(infospace_in)
@@ -95,7 +89,6 @@ class InfospaceService:
             infospace_id=db_infospace.id,
             name="General",
             description="Default vocabulary for this infospace.",
-            role=CanonRole.GENERAL,
         )
         self.session.add(general_canon)
         self.session.flush()  # need canon.id
@@ -206,221 +199,74 @@ class InfospaceService:
         infospace_id: int,
         user_id: int,
     ) -> bool:
-        """Delete an infospace and all its related entities in the correct order."""
-        logger.info(f"Service: Attempting to delete infospace {infospace_id} by user {user_id}")
-        db_infospace = self.get_infospace(infospace_id, user_id) # Validates access
+        """Delete an infospace, its entire subtree, and its blobs.
+
+        The schema owns the cascade: every ownership FK is ON DELETE CASCADE
+        (migration u1_infospace_cascade_delete), so removing the infospace row
+        clears sources, bundles, assets, annotations, runs, the graph and
+        collaborators in one statement — no hand-ordered deletes, no ordering
+        bugs. Only ``fragmentcuration`` is cleared first: it is human curation
+        deliberately left NO ACTION (so a re-annotate can never silently cascade
+        it away), and therefore must go before the annotations and entities it
+        references are removed. Asset files and backup archives are deleted
+        best-effort after the commit — orphaned blobs are recoverable, a
+        half-deleted infospace is not.
+        """
+        logger.info(f"Service: deleting infospace {infospace_id} by user {user_id}")
+        db_infospace = self.get_infospace(infospace_id, user_id)  # validates access
         if not db_infospace:
             return False
-        
+
         try:
-            logger.info(f"Service: Starting cascade deletion for infospace {infospace_id}")
-            
-            # 0. First, clean up any corrupted backup records that might cause constraint violations
-            self._cleanup_orphaned_backup_records()
-            
-            # 1. Delete annotations first (they reference runs, schemas, and assets)
-            annotations = self.session.exec(
-                select(Annotation).where(Annotation.infospace_id == infospace_id)
-            ).all()
-            logger.info(f"Service: Deleting {len(annotations)} annotations")
-            for annotation in annotations:
-                self.session.delete(annotation)
-            
-            # 2. Delete annotation runs (they reference schemas via link table)
-            runs = self.session.exec(
-                select(AnnotationRun).where(AnnotationRun.infospace_id == infospace_id)
-            ).all()
-            logger.info(f"Service: Deleting {len(runs)} annotation runs")
-            for run in runs:
-                # Delete run aggregates first (they reference runs)
-                from app.models import RunAggregate
-                run_aggregates = self.session.exec(
-                    select(RunAggregate).where(RunAggregate.run_id == run.id)
+            # Collect blob paths before the rows vanish.
+            asset_blobs = [
+                p for (p,) in self.session.execute(
+                    text("SELECT DISTINCT blob_path FROM asset WHERE infospace_id = :iid AND blob_path IS NOT NULL"),
+                    {"iid": infospace_id},
                 ).all()
-                for aggregate in run_aggregates:
-                    self.session.delete(aggregate)
-                
-                # Delete run-schema links
-                run_schema_links = self.session.exec(
-                    select(RunSchemaLink).where(RunSchemaLink.run_id == run.id)
+            ]
+            backup_blobs = [
+                p for (p,) in self.session.execute(
+                    text("SELECT storage_path FROM infospacebackup WHERE infospace_id = :iid AND storage_path IS NOT NULL"),
+                    {"iid": infospace_id},
                 ).all()
-                for link in run_schema_links:
-                    self.session.delete(link)
-                
-                # Then delete the run itself
-                self.session.delete(run)
-            
-            # 3. Delete annotation schemas
-            schemas = self.session.exec(
-                select(AnnotationSchema).where(AnnotationSchema.infospace_id == infospace_id)
-            ).all()
-            logger.info(f"Service: Deleting {len(schemas)} annotation schemas")
-            for schema in schemas:
-                self.session.delete(schema)
-            
-            # 4. Delete ingestion jobs (they reference the infospace, sources, and bundles),
-            # then asset-bundle links and bundles
-            from app.models import IngestionJob
-            deleted_jobs = self.session.execute(
-                text("DELETE FROM ingestionjob WHERE infospace_id = :iid"),
+            ]
+
+            # The one ownership child left NO ACTION — clear it before the
+            # annotations / entries it references are cascade-deleted.
+            self.session.execute(
+                text(
+                    "DELETE FROM fragmentcuration WHERE "
+                    "annotation_id IN (SELECT id FROM annotation WHERE infospace_id = :iid) "
+                    "OR entry_id IN (SELECT id FROM canon_entry WHERE infospace_id = :iid) "
+                    "OR source_entry_id IN (SELECT id FROM canon_entry WHERE infospace_id = :iid) "
+                    "OR target_entry_id IN (SELECT id FROM canon_entry WHERE infospace_id = :iid)"
+                ),
                 {"iid": infospace_id},
-            ).rowcount
-            logger.info(f"Service: Deleted {deleted_jobs} ingestion jobs")
-
-            bundles = self.session.exec(
-                select(Bundle).where(Bundle.infospace_id == infospace_id)
-            ).all()
-            logger.info(f"Service: Deleting {len(bundles)} bundles")
-            for bundle in bundles:
-                # Remove this bundle from all assets' bundle_ids arrays
-                self.session.execute(
-                    text("UPDATE asset SET bundle_ids = NULLIF(array_remove(bundle_ids, :bid), ARRAY[]::int[]) WHERE bundle_ids @> ARRAY[:bid]::int[]"),
-                    {"bid": bundle.id},
-                )
-                # Then delete the bundle itself
-                self.session.delete(bundle)
-            
-            # 5. Delete assets (they reference sources)
-            assets = self.session.exec(
-                select(Asset).where(Asset.infospace_id == infospace_id)
-            ).all()
-            logger.info(f"Service: Deleting {len(assets)} assets")
-            for asset in assets:
-                self.session.delete(asset)
-            
-            # 6. Delete sources
-            sources = self.session.exec(
-                select(Source).where(Source.infospace_id == infospace_id)
-            ).all()
-            logger.info(f"Service: Deleting {len(sources)} sources")
-            for source in sources:
-                self.session.delete(source)
-            
-            # 7. Delete datasets
-            datasets = self.session.exec(
-                select(Dataset).where(Dataset.infospace_id == infospace_id)
-            ).all()
-            logger.info(f"Service: Deleting {len(datasets)} datasets")
-            for dataset in datasets:
-                self.session.delete(dataset)
-            
-            # 8. Delete tasks
-            tasks = self.session.exec(
-                select(Task).where(Task.infospace_id == infospace_id)
-            ).all()
-            logger.info(f"Service: Deleting {len(tasks)} tasks")
-            for task in tasks:
-                self.session.delete(task)
-            
-            # 9. Delete packages
-            packages = self.session.exec(
-                select(Package).where(Package.infospace_id == infospace_id)
-            ).all()
-            logger.info(f"Service: Deleting {len(packages)} packages")
-            for package in packages:
-                self.session.delete(package)
-            
-            # 10. Delete shareable links (optional infospace_id, but clean up if present)
-            shareable_links = self.session.exec(
-                select(ShareableLink).where(ShareableLink.infospace_id == infospace_id)
-            ).all()
-            logger.info(f"Service: Deleting {len(shareable_links)} shareable links")
-            for link in shareable_links:
-                self.session.delete(link)
-            
-            # 11. Delete chat conversations and their messages
-            from app.models import ChatConversation, ChatConversationMessage
-            conversations = self.session.exec(
-                select(ChatConversation).where(ChatConversation.infospace_id == infospace_id)
-            ).all()
-            logger.info(f"Service: Deleting {len(conversations)} chat conversations")
-            for conversation in conversations:
-                # Delete all messages first
-                messages = self.session.exec(
-                    select(ChatConversationMessage).where(ChatConversationMessage.conversation_id == conversation.id)
-                ).all()
-                for message in messages:
-                    self.session.delete(message)
-                # Then delete the conversation
-                self.session.delete(conversation)
-            
-            # 12. Delete infospace backups (optional infospace_id, but clean up if present)
-            infospace_backups = self.session.exec(
-                select(InfospaceBackup).where(InfospaceBackup.infospace_id == infospace_id)
-            ).all()
-            logger.info(f"Service: Deleting {len(infospace_backups)} infospace backups")
-            for backup in infospace_backups:
-                # Try to clean up storage file if storage provider is available
-                if self.storage_provider and backup.storage_path:
-                    try:
-                        # Note: This is a sync call, but most storage providers handle this
-                        import asyncio
-                        if hasattr(self.storage_provider, 'delete_file'):
-                            # Try async delete if available
-                            try:
-                                loop = asyncio.get_event_loop()
-                                if loop.is_running():
-                                    # If we're in an async context, we can't use asyncio.run()
-                                    # Just delete the database record and let cleanup handle storage later
-                                    logger.warning(f"Service: Skipping storage cleanup for backup {backup.id} (async context)")
-                                else:
-                                    asyncio.run(self.storage_provider.delete_file(backup.storage_path))
-                                    logger.info(f"Service: Cleaned up storage for backup {backup.id}")
-                            except Exception:
-                                # Fallback to sync delete if async fails
-                                logger.warning(f"Service: Could not clean up storage for backup {backup.id}, will be handled by cleanup job")
-                    except Exception as e:
-                        logger.warning(f"Service: Failed to clean up storage for backup {backup.id}: {e}")
-                
-                self.session.delete(backup)
-            
-            # 13. Finally, delete the infospace itself
-            self.session.delete(db_infospace)
-            
-            # Commit all deletions
+            )
+            self.session.execute(
+                text("DELETE FROM infospace WHERE id = :iid"), {"iid": infospace_id}
+            )
             self.session.commit()
-            logger.info(f"Service: Successfully deleted infospace {infospace_id} and all related entities")
-            return True
-            
         except Exception as e:
-            # Rollback on any error
             self.session.rollback()
-            logger.error(f"Service: Error during cascade deletion of infospace {infospace_id}: {e}", exc_info=True)
-            raise e
+            logger.error(f"Service: error deleting infospace {infospace_id}: {e}", exc_info=True)
+            raise
 
-    def _cleanup_orphaned_backup_records(self):
-        """
-        Cleans up any InfospaceBackup records that have a null infospace_id.
-        This typically happens if the infospace was deleted without its backups.
-        """
-        logger.info("Service: Starting cleanup of orphaned backup records.")
-        try:
-            # Find all backup records where infospace_id is null
-            orphaned_backups = self.session.exec(
-                select(InfospaceBackup).where(InfospaceBackup.infospace_id == None)
-            ).all()
-            logger.info(f"Service: Found {len(orphaned_backups)} orphaned backup records to delete.")
+        # Best-effort blob cleanup — never fails the delete (orphans are
+        # reclaimable via scripts/audit_orphaned_user_files.py).
+        if self.storage_provider:
+            for path in (*asset_blobs, *backup_blobs):
+                try:
+                    self.storage_provider.delete_file_sync(path)
+                except Exception as e:
+                    logger.warning(f"Service: could not delete blob {path}: {e}")
 
-            for backup in orphaned_backups:
-                logger.info(f"Service: Deleting orphaned backup record ID: {backup.id}")
-                self.session.delete(backup)
-                # If storage path is not null, try to clean up the file
-                if self.storage_provider and backup.storage_path:
-                    try:
-                        if hasattr(self.storage_provider, 'delete_file'):
-                            import asyncio
-                            if not asyncio.get_event_loop().is_running():
-                                asyncio.run(self.storage_provider.delete_file(backup.storage_path))
-                                logger.info(f"Service: Cleaned up orphaned storage for backup {backup.id}")
-                            else:
-                                logger.warning(f"Service: Skipping orphaned storage cleanup for backup {backup.id} (async context)")
-                    except Exception as e:
-                        logger.warning(f"Service: Could not clean up orphaned storage for backup {backup.id}: {e}")
-                self.session.commit() # Commit each deletion to avoid transaction buildup
-            logger.info("Service: Finished cleanup of orphaned backup records.")
-        except Exception as e:
-            logger.error(f"Service: Error during cleanup of orphaned backup records: {e}", exc_info=True)
-            self.session.rollback() # Rollback on error
+        logger.info(
+            f"Service: deleted infospace {infospace_id} "
+            f"({len(asset_blobs)} asset blobs, {len(backup_blobs)} backups removed)"
+        )
+        return True
 
     def ensure_default_infospace(
         self,

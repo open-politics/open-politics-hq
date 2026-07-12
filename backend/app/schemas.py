@@ -464,6 +464,12 @@ class AnnotationRunBase(SQLModel):
     include_parent_context: bool = False
     context_window: int = 0
     views_config: Optional[List[Dict[str, Any]]] = None
+    # The run's declared coordinate frame — the canon(s) curation resolves into.
+    # Explicit declaration replaces the implicit infospace-default fallback.
+    canon_ids: List[int] = []
+    # "Resolve into canon" mode — settled-only curation + staged proposals. Toggled
+    # via POST /runs/{id}/action/resolve-into-canon; exposed here so the UI reflects it.
+    resolve_into_canon: bool = False
 
     @field_validator("views_config", mode="before")
     @classmethod
@@ -488,7 +494,8 @@ class AnnotationRunCreate(AnnotationRunBase):
     schema_ids: List[int]
     target_asset_ids: Optional[List[int]] = None
     target_bundle_id: Optional[int] = None
-    source_bundle_id: Optional[int] = None  # LEGACY: For continuous runs watching a bundle
+    source_bundle_id: Optional[int] = None  # The bundle a live run watches (its subtree)
+    live: Optional[bool] = False  # Keep the run live: reconcile new content in scope
     follow_on_version_change: Optional[bool] = False  # Re-annotate when content version changes
     # ═══ RUN TYPE ═══
     run_type: Optional[str] = "one_off"  # one_off | flow_step
@@ -511,6 +518,8 @@ class AnnotationRunUpdate(SQLModel):
     views_config: Optional[List[Dict[str, Any]]] = None
     graph_config: Optional[Dict[str, Any]] = None
     is_favorite: Optional[bool] = None
+    live: Optional[bool] = None  # Toggle watching on/off for an existing run
+    canon_ids: Optional[List[int]] = None  # Re-declare the run's canon frame
 
 class AnnotationRunRead(AnnotationRunBase):
     id: int
@@ -534,20 +543,12 @@ class AnnotationRunRead(AnnotationRunBase):
     trigger_context: Optional[Dict[str, Any]] = Field(default_factory=dict)
     pipeline_execution_id: Optional[int] = None
     triggered_by_source_id: Optional[int] = None
-    monitor_id: Optional[int] = None
-    source_bundle_id: Optional[int] = None  # NEW: For continuous runs watching a bundle
-    graph_config: Optional[Dict[str, Any]] = None  # NEW: Graph configuration for Knowledge Graph schemas
+    source_bundle_id: Optional[int] = None  # The bundle a live run watches (its subtree)
+    live: bool = False  # When true + status=completed, the run is "watching" for new content
+    graph_config: Optional[Dict[str, Any]] = None  # Graph configuration for Knowledge Graph schemas
     # ═══ PROGRESS ═══
     progress_total: Optional[int] = None
     progress_current: Optional[int] = None
-    # ═══ FAMILY (extension) ═══
-    # Set when the run has any descendants (parent_run_id == this id). Lets
-    # the UI show extension activity without lying about the underlying stored
-    # status. Family rollups: annotation_count covers parent + descendants;
-    # effective_status flips to RUNNING when any descendant is mid-flight.
-    parent_run_id: Optional[int] = None
-    extension_count: Optional[int] = None  # Number of descendant runs.
-    effective_status: Optional[RunStatus] = None  # RUNNING if any descendant is non-terminal, else the parent's own status.
 
 
 class AnnotationRunsOut(SQLModel):
@@ -1165,6 +1166,8 @@ class ChatRequest(SQLModel):
     max_tokens: Optional[int] = None
     thinking_enabled: bool = False
     tools_enabled: bool = True  # Enable/disable tool calls (default: True for backward compatibility)
+    max_tool_iterations: Optional[int] = None  # Cap on the agentic tool loop per turn (default 20, up to 100); browse→load→act workflows raise it
+    current_route: Optional[str] = None  # The page the user is on (e.g. "/hq/infospaces/annotation-runner") — lets the operator ground navigation in where you already are
     tools: Optional[List[Dict[str, Any]]] = None  # Tools to use for the chat
     response_format: Optional[Dict[str, Any]] = None  # JSON schema for structured output
     api_keys: Optional[Dict[str, str]] = None  # Runtime API keys for providers (e.g., {"tavily": "key", "openai": "key"})
@@ -1181,7 +1184,7 @@ class ChatRequest(SQLModel):
     # workspace_hub / library_hub / analysis_hub tool family. 'dossier' selects
     # the M7 DossierAgent — formula authoring + observation snapshots, scoped
     # to a single run. See ``docs/intelligence/HOW_TO.md`` § DossierAgent.
-    agent: Optional[str] = None  # 'intelligence' | 'dossier' | 'formula'
+    agent: Optional[str] = None  # 'operator' (browse-all catalogue) | 'intelligence' (legacy default) | 'dossier' | 'formula'
     # When agent='dossier'|'formula', the run the agent operates against. The
     # agent's tools take run_id explicitly; this lets the system prompt scope
     # itself and surface defaults for tool calls.

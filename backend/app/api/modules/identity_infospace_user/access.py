@@ -327,11 +327,11 @@ def _resolve_package_token(
 
     # ── 2b. Canons → derive entity_ids (bounded; bulk caps at first 50K) ──
     if canon_ids:
-        from app.api.modules.graph.models import Entity
+        from app.api.modules.graph.models import CanonEntry
         MAX_CANON_ENTITIES_PER_PACKAGE = 50_000
         canon_entity_rows = session.exec(
-            select(Entity.id)
-            .where(Entity.canon_id.in_(canon_ids))
+            select(CanonEntry.id)
+            .where(CanonEntry.canon_id.in_(canon_ids))
             .limit(MAX_CANON_ENTITIES_PER_PACKAGE)
         ).all()
         entity_ids |= set(canon_entity_rows)
@@ -468,6 +468,60 @@ def resolve_access(
     return access
 
 
+def apply_deployment_ceiling(access: Access) -> Access:
+    """Cap an Access's capabilities by the deployment ceiling.
+
+    ``DEPLOYMENT_CAPABILITIES`` is a hard limit on what ANY user may do on this
+    deployment, regardless of role (a read-only or ingest-only node). Returns
+    the access unchanged when the ceiling is the full set (the common case).
+
+    Extracted from ``Requires()`` so non-route surfaces (the chat MCP tools)
+    can apply the same cap — otherwise a permissive user on a restricted
+    deployment could act past the ceiling the route layer enforces.
+    """
+    from app.core.config import settings
+
+    ceiling_names = settings.deployment_capability_names
+    if ceiling_names == frozenset(c.value for c in Capability):
+        return access
+    ceiling = frozenset(c for c in Capability if c.value in ceiling_names)
+    return Access(
+        infospace_id=access.infospace_id,
+        infospace=access.infospace,
+        user_id=access.user_id,
+        is_owner=access.is_owner,
+        capabilities=access.capabilities & ceiling,
+        scope=access.scope,
+        role=access.role,
+    )
+
+
+def resolve_access_capped(
+    session: Session,
+    infospace_id: int,
+    user: Optional[User],
+    *required_capabilities: Capability,
+    package_token: Optional[str] = None,
+) -> Access:
+    """``resolve_access`` + the deployment ceiling.
+
+    Use from surfaces that don't go through ``Requires()`` (the chat MCP tools).
+    Applies ``apply_deployment_ceiling`` before checking ``required_capabilities``,
+    so the deployment cap is honored, then raises 403 on any missing capability.
+    The returned access is already capped — callers doing per-mode escalation can
+    trust ``access.has(cap)``.
+    """
+    access = _resolve_access(session, infospace_id, user, package_token=package_token)
+    access = apply_deployment_ceiling(access)
+    for cap in required_capabilities:
+        if cap not in access.capabilities:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"This action requires the '{cap.value}' capability.",
+            )
+    return access
+
+
 # ─── FastAPI dependency factory ───
 
 _SCOPE_UNSET = object()
@@ -502,25 +556,11 @@ def Requires(*required_capabilities: Capability, scope: str | None = _SCOPE_UNSE
         x_package_token: Optional[str] = Header(None, alias="X-Package-Token"),
         package_token: Optional[str] = Query(None, alias="package_token"),
     ) -> Access:
-        from app.core.config import settings
-
         token = x_package_token or package_token
         access = _resolve_access(db, infospace_id, current_user, package_token=token)
 
-        # Intersect user capabilities with deployment ceiling
-        ceiling_names = settings.deployment_capability_names
-        if ceiling_names != frozenset({"organize", "ingest", "compute", "delete", "setup"}):
-            ceiling = frozenset(c for c in Capability if c.value in ceiling_names)
-            capped_capabilities = access.capabilities & ceiling
-            access = Access(
-                infospace_id=access.infospace_id,
-                infospace=access.infospace,
-                user_id=access.user_id,
-                is_owner=access.is_owner,
-                capabilities=capped_capabilities,
-                scope=access.scope,
-                role=access.role,
-            )
+        # Intersect user capabilities with the deployment ceiling
+        access = apply_deployment_ceiling(access)
 
         for cap in required_capabilities:
             if cap not in access.capabilities:

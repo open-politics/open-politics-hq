@@ -47,14 +47,17 @@ def _get_item_fk_validators() -> dict[str, tuple]:
         return _ITEM_FK_VALIDATORS
     from app.api.modules.content.models import Asset, Bundle
     from app.api.modules.annotation.models import AnnotationRun, AnnotationSchema
-    from app.api.modules.graph.models import Canon, Entity, KnowledgeGraph
+    from app.api.modules.graph.models import Canon, CanonEntry, KnowledgeGraph
     _ITEM_FK_VALIDATORS = {
         "bundle_id": (Bundle, "infospace_id"),
         "run_id": (AnnotationRun, "infospace_id"),
         "schema_id": (AnnotationSchema, "infospace_id"),
         "asset_id": (Asset, "infospace_id"),
         "graph_id": (KnowledgeGraph, "infospace_id"),
-        "entity_id": (Entity, "infospace_id"),
+        # PackageItem.entity_id is a wire-format key in the package/sharing
+        # layer; it stays named entity_id (its FK auto-follows the
+        # entity→canon_entry table rename), but resolves to the CanonEntry model.
+        "entity_id": (CanonEntry, "infospace_id"),
         "canon_id": (Canon, "infospace_id"),
     }
     return _ITEM_FK_VALIDATORS
@@ -568,7 +571,7 @@ def _resolve_resource_name(db: Session, item: PackageItem) -> Optional[str]:
         "graph": ("knowledgegraph", "name", "graph_id"),
         "schema": ("annotationschema", "name", "schema_id"),
         "asset": ("asset", "title", "asset_id"),
-        "entity": ("entity", "canonical_name", "entity_id"),
+        "entity": ("canon_entry", "canonical", "entity_id"),
         "canon": ("canon", "name", "canon_id"),
     }
     rtype = item.resource_type

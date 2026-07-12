@@ -8,6 +8,7 @@ import uuid
 from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.types import JSON
 
 from app.api.modules.foundation_service_providers.base import ProviderDefaults, ProviderSelection, EnrichmentConfig
@@ -44,9 +45,12 @@ class User(SQLModel, table=True):
     bio: Optional[str] = Field(default=None, max_length=500)
     description: Optional[str] = Field(default=None, sa_column=Column(Text))
 
+    # MutableDict so in-place edits (e.g. ui_preferences['custom_background_url'] = ...)
+    # are tracked by SQLAlchemy and actually persist on commit. Without it, a plain
+    # JSONB column ignores in-place mutation and the change is silently dropped.
     ui_preferences: Optional[Dict[str, Any]] = Field(
         default_factory=dict,
-        sa_column=Column(JSONB)
+        sa_column=Column(MutableDict.as_mutable(JSONB))
     )
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -219,7 +223,13 @@ class Infospace(SQLModel, table=True):
     default_geo_canon_id: Optional[int] = Field(default=None, foreign_key="canon.id", index=True)
 
     owner: Optional[User] = Relationship(back_populates="infospaces")
-    collaborators: List["InfospaceCollaborator"] = Relationship(back_populates="infospace")
+    # passive_deletes: defer to the DB's ON DELETE CASCADE on
+    # infospacecollaborator.infospace_id instead of letting the ORM NULL the
+    # NOT NULL column when an infospace is removed.
+    collaborators: List["InfospaceCollaborator"] = Relationship(
+        back_populates="infospace",
+        sa_relationship_kwargs={"passive_deletes": True},
+    )
 
     sources: List["Source"] = Relationship(back_populates="infospace")
     bundles: List["Bundle"] = Relationship(back_populates="infospace")

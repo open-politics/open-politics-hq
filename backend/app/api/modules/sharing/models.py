@@ -202,8 +202,10 @@ class PackageItem(SQLModel, table=True):
     asset_id: Optional[int] = Field(
         default=None, sa_column=Column(Integer, ForeignKey("asset.id", ondelete="CASCADE"))
     )
+    # Column stays named entity_id (a wire-format key in the package layer); its
+    # FK target follows the entity→canon_entry table rename.
     entity_id: Optional[int] = Field(
-        default=None, sa_column=Column(Integer, ForeignKey("entity.id", ondelete="CASCADE"))
+        default=None, sa_column=Column(Integer, ForeignKey("canon_entry.id", ondelete="CASCADE"))
     )
     canon_id: Optional[int] = Field(
         default=None, sa_column=Column(Integer, ForeignKey("canon.id", ondelete="CASCADE"))

@@ -1,7 +1,7 @@
 from typing import Any, List
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from sqlmodel import col, delete, func, select
 import uuid
@@ -488,66 +488,72 @@ async def upload_background_image(
     session: SessionDep,
     current_user: CurrentUser,
     storage_provider: StorageProviderDep,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    theme: str = Form("dark"),
 ) -> Any:
     """
-    Upload a custom background image for the current user's UI preferences.
+    Upload a custom background image for the current user, scoped to a theme
+    ('light' or 'dark') so light and dark mode can each carry their own wallpaper.
+    Stored under ui_preferences['custom_background_url_<theme>'].
     """
+    if theme not in ("light", "dark"):
+        raise HTTPException(status_code=400, detail="theme must be 'light' or 'dark'")
+
     # Validate file type
     if not file.content_type or not file.content_type.startswith('image/'):
         raise HTTPException(
             status_code=400,
             detail="Only image files are allowed"
         )
-    
+
     # Validate file size (10MB limit for backgrounds)
     max_size = 10 * 1024 * 1024  # 10MB
     file.file.seek(0, 2)  # Seek to end to get size
     file_size = file.file.tell()
     file.file.seek(0)  # Reset to beginning
-    
+
     if file_size > max_size:
         raise HTTPException(
             status_code=400,
             detail="File size too large. Maximum size is 10MB"
         )
-    
+
+    pref_key = f"custom_background_url_{theme}"
+
     # Generate unique object name for storage
     file_extension = file.filename.split('.')[-1] if file.filename and '.' in file.filename else 'jpg'
     object_name = f"background-images/{current_user.id}/{uuid.uuid4().hex}.{file_extension}"
-    
+
     try:
-        # Delete old background image if exists
-        if current_user.ui_preferences and current_user.ui_preferences.get('custom_background_url'):
+        # Delete old background image for this theme if it exists
+        if current_user.ui_preferences and current_user.ui_preferences.get(pref_key):
             try:
-                old_url = current_user.ui_preferences.get('custom_background_url')
+                old_url = current_user.ui_preferences.get(pref_key)
                 # URL format: /api/v1/users/background-image/{user_id}/{filename}
-                url_parts = old_url.split('/')
-                if len(url_parts) >= 2:
-                    filename = url_parts[-1]
-                    old_object_name = f"background-images/{current_user.id}/{filename}"
-                    await storage_provider.delete_file(old_object_name)
+                old_filename = old_url.split('/')[-1]
+                old_object_name = f"background-images/{current_user.id}/{old_filename}"
+                await storage_provider.delete_file(old_object_name)
             except Exception as e:
                 # Log but don't fail if old file deletion fails
                 print(f"Warning: Could not delete old background image: {e}")
-        
+
         # Upload new file to storage
         await storage_provider.upload_file(file, object_name)
-        
+
         # Generate public URL for the uploaded file
         background_url = f"{settings.API_V1_STR}/users/background-image/{current_user.id}/{object_name.split('/')[-1]}"
-        
-        # Update ui_preferences
+
+        # Update ui_preferences (MutableDict column → in-place edit persists)
         if not current_user.ui_preferences:
             current_user.ui_preferences = {}
-        current_user.ui_preferences['custom_background_url'] = background_url
-        
+        current_user.ui_preferences[pref_key] = background_url
+
         session.add(current_user)
         session.commit()
         session.refresh(current_user)
-        
+
         return current_user
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -633,19 +639,18 @@ async def get_profile_picture(user_id: int, filename: str, session: SessionDep) 
 
 
 @router.get("/background-image/{user_id}/{filename}")
-async def get_background_image(user_id: int, filename: str, session: SessionDep, current_user: CurrentUser) -> StreamingResponse:
+async def get_background_image(user_id: int, filename: str, session: SessionDep) -> StreamingResponse:
     """
-    Serve user background images (requires authentication - user can only access their own background).
+    Serve user background images publicly (no auth), matching how profile pictures
+    are served. The filename is a random UUID so the URL is effectively unguessable,
+    and backgrounds are decorative, low-sensitivity assets — serving them statically
+    lets a plain CSS url()/<img> load them without a token-fetch workaround.
     """
     # Verify the user exists and is active
     user = session.get(User, user_id)
     if not user or not user.is_active:
         raise HTTPException(status_code=404, detail="User not found")
-    
-    # Verify the requesting user is the same as the resource owner
-    if current_user.id != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this background image")
-    
+
     # Construct the object name in storage
     object_name = f"background-images/{user_id}/{filename}"
     
@@ -679,11 +684,11 @@ async def get_background_image(user_id: int, filename: str, session: SessionDep,
             generate(),
             media_type=content_type,
             headers={
-                "Cache-Control": "private, max-age=86400",  # Private cache for 24 hours
+                "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
                 "Content-Disposition": f"inline; filename={filename}"
             }
         )
-        
+
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Background image not found")
     except Exception as e:
@@ -695,35 +700,39 @@ async def delete_background_image(
     session: SessionDep,
     current_user: CurrentUser,
     storage_provider: StorageProviderDep,
+    theme: str = "dark",
 ) -> Any:
     """
-    Delete the current user's custom background image.
+    Delete the current user's custom background image for a theme ('light' or 'dark').
     """
-    # Check if user has a background image
-    if not current_user.ui_preferences or not current_user.ui_preferences.get('custom_background_url'):
+    if theme not in ("light", "dark"):
+        raise HTTPException(status_code=400, detail="theme must be 'light' or 'dark'")
+
+    pref_key = f"custom_background_url_{theme}"
+
+    # Check if user has a background image for this theme
+    if not current_user.ui_preferences or not current_user.ui_preferences.get(pref_key):
         raise HTTPException(
             status_code=404,
             detail="No background image found"
         )
-    
+
     try:
         # Extract filename from URL and delete from storage
-        background_url = current_user.ui_preferences.get('custom_background_url')
-        url_parts = background_url.split('/')
-        if len(url_parts) >= 2:
-            filename = url_parts[-1]
-            object_name = f"background-images/{current_user.id}/{filename}"
-            await storage_provider.delete_file(object_name)
-        
-        # Remove from ui_preferences
-        current_user.ui_preferences['custom_background_url'] = None
-        
+        background_url = current_user.ui_preferences.get(pref_key)
+        filename = background_url.split('/')[-1]
+        object_name = f"background-images/{current_user.id}/{filename}"
+        await storage_provider.delete_file(object_name)
+
+        # Clear this theme's slot (MutableDict column → in-place edit persists)
+        current_user.ui_preferences[pref_key] = None
+
         session.add(current_user)
         session.commit()
         session.refresh(current_user)
-        
+
         return current_user
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=500,

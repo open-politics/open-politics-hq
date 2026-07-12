@@ -8,8 +8,13 @@ from contextlib import asynccontextmanager
 import fastapi.sse
 fastapi.sse._PING_INTERVAL = 3.0
 
-# Import celery app early to initialize Redis connection for task queueing
-from app.core.celery_app import celery  # noqa: F401
+# Import celery app early to initialize Redis connection for task queueing.
+# load_task_modules() populates THIS process's @task registry + event-bus
+# subscriptions (the worker gets the same set via Celery's `imports`), so that
+# producer-side emit()/kick_tasks() from API routes and the chat MCP tools actually
+# reach their tasks — e.g. intake()'s `ingestion_job.created` → `ingest`.
+from app.core.celery_app import celery, load_task_modules  # noqa: F401
+load_task_modules()
 from app.core.config import settings
 
 from app.api.api_router_global import api_router

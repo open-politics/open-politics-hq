@@ -75,7 +75,7 @@ def init_db(session: Session) -> None:
         raise
 
     if not super_user_infospace:
-        from app.api.modules.graph.models import Canon, CanonRole
+        from app.api.modules.graph.models import Canon
         infospace_in = InfospaceCreate(
             name="Default Infospace",
             description="This is the default infospace for the user",
@@ -92,7 +92,6 @@ def init_db(session: Session) -> None:
             infospace_id=infospace.id,
             name="General",
             description="Default vocabulary for this infospace.",
-            role=CanonRole.GENERAL,
         )
         session.add(general_canon)
         session.flush()
