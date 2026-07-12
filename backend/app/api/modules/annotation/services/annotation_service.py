@@ -361,10 +361,12 @@ class AnnotationService:
         infospace_id: int,
         skip: int = 0,
         limit: int = 100,
-        include_descendants: bool = False,
     ) -> List[Annotation]:
         """
         Get all annotations for a specific run.
+
+        A run is one durable object — its annotations are its own. (Extension
+        grows the run in place; there are no child runs to union in.)
 
         Args:
             run_id: ID of the run
@@ -372,9 +374,6 @@ class AnnotationService:
             infospace_id: ID of the infospace
             skip: Number of records to skip
             limit: Maximum number of records to return
-            include_descendants: When True, also return annotations from
-                child runs (``parent_run_id == run_id``). Use for family-aware
-                exports / reads on a run that has been extended.
 
         Returns:
             List of annotations
@@ -409,28 +408,15 @@ class AnnotationService:
         for schema_id, count in schema_breakdown:
             logger.info(f"DEBUG: Run {run_id} has {count} annotations for schema_id {schema_id}")
 
-        family_ids: List[int] = [run_id]
-        if include_descendants:
-            descendants = self.session.exec(
-                select(AnnotationRun.id).where(
-                    AnnotationRun.parent_run_id == run_id,
-                    AnnotationRun.infospace_id == infospace_id,
-                )
-            ).all()
-            family_ids.extend([d for d in descendants if d is not None])
-
         query = (
             select(Annotation)
-            .where(Annotation.run_id.in_(family_ids))
+            .where(Annotation.run_id == run_id)
             .offset(skip)
             .limit(limit)
         )
         annotations = self.session.exec(query).all()
 
-        logger.info(
-            "DEBUG: Returning %d annotations for run %d (family=%s, include_descendants=%s)",
-            len(annotations), run_id, family_ids, include_descendants,
-        )
+        logger.info("DEBUG: Returning %d annotations for run %d", len(annotations), run_id)
         return list(annotations)
     
     def update_annotation(
@@ -969,10 +955,12 @@ class AnnotationService:
             trigger_context=getattr(run_in, 'trigger_context', None) or {},
             pipeline_execution_id=getattr(run_in, 'pipeline_execution_id', None),
             triggered_by_source_id=getattr(run_in, 'triggered_by_source_id', None),
-            # ═══ NEW: Continuous run support ═══
+            # ═══ Live / continuous run support ═══
             source_bundle_id=getattr(run_in, 'source_bundle_id', None),
+            live=getattr(run_in, 'live', False) or False,
             follow_on_version_change=getattr(run_in, 'follow_on_version_change', False) or False,
             graph_config=getattr(run_in, 'graph_config', None),
+            canon_ids=getattr(run_in, 'canon_ids', None) or [],
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc)
         )
@@ -1003,195 +991,77 @@ class AnnotationService:
         configuration_overrides: Optional[Dict[str, Any]] = None,
     ) -> AnnotationRun:
         """
-        Extend an existing run with new assets and/or schemas.
+        Grow a run's scope in place and re-pend it — no child runs.
 
-        Creates a child run (parent_run_id = root) carrying the delta — the
-        new (asset, schema) pairs that don't yet exist anywhere in the run's
-        family. The parent run stays untouched; reads via ``/view`` walk
-        descendants and surface the union transparently.
-
-        ``parent_run_id`` always points to the *root* of the family. If the
-        caller passes a child run id, this method walks up to the root so the
-        family stays flat (single-level descendant lookup).
-
-        Asset/schema delta semantics:
-          - asset_ids only: same schemas as parent, new assets minus those
-            already fully annotated for all parent schemas across the family.
-          - schema_ids only: same assets as parent (resolved from family
-            annotation history), new schemas only.
-          - both: cross-product, family-deduped on (asset, schema).
+        Appends new assets and/or schemas to **this** run, resets the streaming
+        watermark (so the grown scope is re-scanned regardless of asset id), and
+        flips the run to PENDING. The universal delta-skip (pair-level, in the
+        engine) guarantees only the genuinely new (asset, schema) pairs are
+        processed. The same durable run keeps its dashboards, history slot and
+        identity — "add assets" is just "grow scope, re-pend."
 
         Gates:
-          - parent must exist in the infospace.
-          - parent must not be a flow_step / have flow_execution_id.
-          - parent must not have source_bundle_id (continuous runs self-extend).
-          - parent must be in a terminal state (COMPLETED / COMPLETED_WITH_ERRORS /
-            FAILED) — extending mid-flight races with the parent's own cursor.
+          - run must exist in the infospace.
+          - run must not be flow-driven (``flow_execution_id`` / non-one_off).
 
-        Returns the new child run.
+        Returns the same (now re-pended) run.
         """
-        from app.api.modules.annotation.models import RunSchemaLink
-
         if not asset_ids and not bundle_id and not schema_ids:
             raise ValueError("Must provide asset_ids, bundle_id, or schema_ids to extend.")
 
-        parent = self.session.get(AnnotationRun, run_id)
-        if not parent or parent.infospace_id != infospace_id:
+        run = self.session.get(AnnotationRun, run_id)
+        if not run or run.infospace_id != infospace_id:
             raise ValueError(f"Run {run_id} not found in infospace {infospace_id}.")
-
-        # Walk to root so the family stays flat.
-        root = parent
-        while root.parent_run_id:
-            next_root = self.session.get(AnnotationRun, root.parent_run_id)
-            if not next_root:
-                break
-            root = next_root
-
-        # Gates
-        if root.flow_execution_id is not None or (root.run_type or "one_off") != "one_off":
+        if run.flow_execution_id is not None or (run.run_type or "one_off") != "one_off":
             raise ValueError("Cannot extend a flow-driven run.")
-        if root.source_bundle_id is not None:
-            raise ValueError("Continuous runs (source_bundle_id) self-extend on poll. Cannot extend manually.")
-        if root.status not in (
-            RunStatus.COMPLETED,
-            RunStatus.COMPLETED_WITH_ERRORS,
-            RunStatus.FAILED,
-        ):
-            raise ValueError(
-                f"Cannot extend a run that is still in progress (status={root.status}). "
-                "Wait for it to finish first."
-            )
 
-        # Resolve the family: root + existing descendants.
-        descendant_ids = list(self.session.exec(
-            select(AnnotationRun.id).where(AnnotationRun.parent_run_id == root.id)
-        ).all())
-        family_run_ids = [root.id] + descendant_ids
+        cfg = dict(run.configuration or {})
 
-        # Resolve target schemas. If the caller passed schema_ids we use exactly
-        # those (schema extension); otherwise we inherit the parent's schemas.
+        # Add schemas (idempotent — only links not already present).
         if schema_ids:
-            child_schemas = []
+            existing_schema_ids = {s.id for s in (run.target_schemas or [])}
             for sid in schema_ids:
+                if sid in existing_schema_ids:
+                    continue
                 schema = self.session.get(AnnotationSchema, sid)
                 if not schema or schema.infospace_id != infospace_id:
                     raise ValueError(f"AnnotationSchema {sid} not found in infospace.")
-                child_schemas.append(schema)
-        else:
-            child_schemas = list(root.target_schemas) if root.target_schemas else []
-        if not child_schemas:
-            raise ValueError("No schemas to run against. Parent has none and caller passed none.")
-        child_schema_ids = [s.id for s in child_schemas]
+                run.target_schemas.append(schema)
 
-        # Resolve target assets.
-        target_asset_ids: List[int] = []
-        target_bundle_id: Optional[int] = None
-
+        # Grow the asset scope (dedup, preserve order). A bundle scope just sets
+        # ``target_bundle_id``; the streaming delta resolves its subtree.
         if asset_ids:
-            target_asset_ids = list(asset_ids)
-        elif bundle_id:
-            target_bundle_id = bundle_id
-        elif schema_ids:
-            # Schema-only extension: re-run all assets the family has touched.
-            family_assets = self.session.exec(
-                select(Annotation.asset_id)
-                .where(Annotation.run_id.in_(family_run_ids))
-                .distinct()
-            ).all()
-            target_asset_ids = [aid for aid in family_assets if aid is not None]
-            if not target_asset_ids:
-                raise ValueError("Schema extension requested but parent run has no annotated assets to re-run.")
+            current = list(cfg.get("target_asset_ids") or [])
+            cfg["target_asset_ids"] = list(dict.fromkeys(current + list(asset_ids)))
+        if bundle_id:
+            cfg["target_bundle_id"] = bundle_id
 
-        # Family-scoped delta: drop (asset, schema) pairs that are already
-        # successfully annotated within the family. We keep an asset only if it
-        # is missing at least one of the target schemas across the family.
-        if target_asset_ids:
-            existing_pairs = self.session.exec(
-                select(Annotation.asset_id, Annotation.schema_id)
-                .where(
-                    Annotation.run_id.in_(family_run_ids),
-                    Annotation.asset_id.in_(target_asset_ids),
-                    Annotation.schema_id.in_(child_schema_ids),
-                    Annotation.status != ResultStatus.FAILED,
-                )
-                .distinct()
-            ).all()
-            done_per_asset: Dict[int, set] = {}
-            for asset_id, schema_id in existing_pairs:
-                done_per_asset.setdefault(asset_id, set()).add(schema_id)
-            target_set = set(child_schema_ids)
-            delta_asset_ids = [
-                aid for aid in target_asset_ids
-                if done_per_asset.get(aid, set()) != target_set
-            ]
-            target_asset_ids = delta_asset_ids
-
-        # If the delta is empty there is nothing to do — surface as a no-op
-        # instead of creating an empty run that completes instantly.
-        if not target_asset_ids and not target_bundle_id:
-            raise ValueError(
-                "Nothing to extend — every (asset, schema) pair is already annotated "
-                "in this run's family."
-            )
-
-        # Build the child run.
-        merged_config = dict(root.configuration or {})
-        # Strip self-chain cursor state from parent — child starts fresh.
-        merged_config.pop("_cursor", None)
-        merged_config.pop("_chained_asset_ids", None)
-        # Strip credentials. ``api_keys`` is a transient per-session snapshot
-        # (from the dock at submission time) — carrying it forward would pin
-        # the extension to whatever key was active when the parent ran, even
-        # if the user has since rotated keys in infospace settings or has a
-        # fresh BYOK in their browser. The runner's ``resolve()`` falls back
-        # to current infospace credentials when ``runtime_key`` is None;
-        # callers wanting BYOK pass fresh keys via ``configuration_overrides``.
-        merged_config.pop("api_keys", None)
         if configuration_overrides:
-            merged_config.update(configuration_overrides)
-        if target_asset_ids:
-            merged_config["target_asset_ids"] = target_asset_ids
-        if target_bundle_id:
-            merged_config["target_bundle_id"] = target_bundle_id
+            cfg.update(configuration_overrides)
 
-        child = AnnotationRun(
-            name=f"{root.name} (extension)",
-            description=(
-                f"Extension of run {root.id}: "
-                + (f"{len(target_asset_ids)} new assets" if target_asset_ids else f"bundle {target_bundle_id}")
-                + (f" × {len(child_schema_ids)} schemas" if schema_ids else "")
-            ),
-            configuration=merged_config,
-            status=RunStatus.PENDING,
-            infospace_id=infospace_id,
-            user_id=user_id,
-            target_schemas=child_schemas,
-            include_parent_context=root.include_parent_context,
-            context_window=root.context_window,
-            views_config=[],  # Children have no dashboards — parent owns the view.
-            parent_run_id=root.id,
-            run_type="one_off",
-            trigger_type="extension",
-            trigger_context={
-                "parent_run_id": root.id,
-                "extended_by_user_id": user_id,
-                "delta_asset_count": len(target_asset_ids),
-                "delta_schema_count": len(child_schema_ids) if schema_ids else 0,
-            },
-            tags=list(root.tags or []),
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
-        self.session.add(child)
+        # Reset the streaming watermark so a full coverage pass re-scans the grown
+        # scope — the delta-skip still only processes the new pairs. ``api_keys``
+        # is a transient per-session snapshot; drop it so the run falls back to
+        # current infospace credentials (callers wanting BYOK pass fresh keys via
+        # ``configuration_overrides``).
+        cfg.pop("_watermark", None)  # WATERMARK_KEY in annotate.py — reset the stream cursor
+        cfg.pop("api_keys", None)
+        run.configuration = cfg
+        run.status = RunStatus.PENDING
+        run.completed_at = None
+        run.progress_total = None
+        run.progress_current = 0
+        run.updated_at = datetime.now(timezone.utc)
+        self.session.add(run)
         self.session.commit()
-        self.session.refresh(child)
+        self.session.refresh(run)
 
         emit("annotation_run.created", {"infospace_id": infospace_id})
         logger.info(
-            "Service: Extension run %d created (parent=%d, %d assets × %d schemas).",
-            child.id, root.id, len(target_asset_ids), len(child_schema_ids),
+            "Service: Run %d extended in place and re-pended (assets=%s, schemas=%s).",
+            run.id, len(asset_ids or []), len(schema_ids or []),
         )
-        return child
+        return run
 
     def _get_or_create_curation_schema(self, infospace_id: int, user_id: int) -> AnnotationSchema:
         """Get or create the schema for manual curations."""
@@ -1334,24 +1204,18 @@ class AnnotationService:
         return True
 
     def compute_run_aggregates(
-        self, run_id: int, replace_existing: bool = True, include_followups: bool = False
+        self, run_id: int, replace_existing: bool = True
     ) -> List[RunAggregate]:
         """
-        Compute RunAggregate from all annotations.
-        If replace_existing, delete existing first.
-        If include_followups, also include annotations from runs with parent_run_id=run_id.
+        Compute RunAggregate from a run's annotations.
+        If replace_existing, delete existing first (idempotent — safe to recompute
+        on every catch-up cycle of a live run).
         """
         if replace_existing:
             self.session.exec(delete(RunAggregate).where(RunAggregate.run_id == run_id))
             self.session.commit()
-        run_ids = [run_id]
-        if include_followups:
-            followups = self.session.exec(
-                select(AnnotationRun.id).where(AnnotationRun.parent_run_id == run_id)
-            ).all()
-            run_ids.extend(followups)
         annotations = self.session.exec(
-            select(Annotation).where(Annotation.run_id.in_(run_ids))
+            select(Annotation).where(Annotation.run_id == run_id)
         ).all()
         field_stats: Dict[str, Dict[str, Any]] = {}
 

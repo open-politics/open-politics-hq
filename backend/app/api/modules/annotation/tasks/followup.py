@@ -114,15 +114,15 @@ def version_gap(ctx: TaskContext, ids: list[int]):
                             "new_asset_id": asset_id,
                         },
                     )
+                    # Independent follow-up run — no family linkage. (Version
+                    # following is better expressed as a live bundle run; this
+                    # path stays for non-live follow_on_version_change runs.)
                     new_run = ann_svc.create_run(
                         user_id=source_run.user_id,
                         infospace_id=source_run.infospace_id,
                         run_in=run_in,
                         queue_task=True,
                     )
-                    new_run.parent_run_id = source_run.id
-                    session.add(new_run)
-                    session.commit()
                     logger.info(
                         "Created follow-up run %d for versioned asset %d (source run %d)",
                         new_run.id, asset_id, source_run.id

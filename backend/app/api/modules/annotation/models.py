@@ -111,8 +111,19 @@ class AnnotationRun(SQLModel, table=True):
     trigger_context: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     source_bundle_id: Optional[int] = Field(default=None, foreign_key="bundle.id", index=True)
     graph_config: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSON))
+    # The run's declared coordinate frame: the canon(s) curation resolves into.
+    # Explicit declaration replaces the implicit infospace-default fallback.
+    # Phase 2 targets the primary (canon_ids[0]); multi-canon union read is deferred.
+    canon_ids: List[int] = Field(default_factory=list, sa_column=Column(JSON))
     follow_on_version_change: bool = Field(default=False, index=True)
-    parent_run_id: Optional[int] = Field(default=None, foreign_key="annotationrun.id", index=True)
+    # A live run is never "done" — it cycles PENDING → RUNNING → COMPLETED(idle,
+    # watching) → PENDING as new content lands in its scope. The `live_runs`
+    # reconciler re-pends it; the streaming delta makes re-pending idempotent.
+    live: bool = Field(default=False, index=True)
+    # "Resolve into canon" mode: when on (and canon_ids set), curation of this run's
+    # entity mentions is settled-only — exact/alias matches auto-apply, unmatched
+    # mentions stage as human-confirmed CanonProposals instead of auto-creating.
+    resolve_into_canon: bool = Field(default=False, index=True)
     progress_total: Optional[int] = Field(default=None)
     progress_current: Optional[int] = Field(default=None)
 

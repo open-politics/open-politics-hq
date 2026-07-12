@@ -8,7 +8,7 @@ from app.models import (
     Annotation,
     AnnotationSchema,
     FragmentCuration,
-    Entity,
+    CanonEntry,
     Asset,
 )
 from app.schemas import (
@@ -304,20 +304,11 @@ def get_run_results(
     run_id: int,
     skip: int = 0,
     limit: int = 100,
-    include_descendants: bool = Query(
-        True,
-        description=(
-            "Default True: include annotations from extension (child) runs. "
-            "Matches the dashboard's family-aware semantics — opt out only "
-            "for diagnostics that need this run's own annotations."
-        ),
-    ),
     session: SessionDep,
     annotation_service: AnnotationServiceDep,
 ) -> List[AnnotationRead]:
     """
-    Retrieve all annotations for a specific AnnotationRun (and, by default,
-    its extension descendants).
+    Retrieve all annotations for a specific AnnotationRun.
     """
     access.require_in_scope("run_ids", run_id)
     try:
@@ -327,7 +318,6 @@ def get_run_results(
             infospace_id=access.infospace_id,
             skip=skip,
             limit=limit,
-            include_descendants=include_descendants,
         )
         return results
     except ValueError as ve:
@@ -527,8 +517,8 @@ async def curate_fragments(
 
                 if existing:
                     existing.status = curation_request.status
-                    existing.source_entity_id = source_entity_id
-                    existing.target_entity_id = target_entity_id
+                    existing.source_entry_id = source_entity_id
+                    existing.target_entry_id = target_entity_id
                     existing.curated_by = access.user_id
                     session.add(existing)
                     session.flush()
@@ -538,8 +528,8 @@ async def curate_fragments(
                         annotation_id=annotation_id,
                         fragment_path=path,
                         status=curation_request.status,
-                        source_entity_id=source_entity_id,
-                        target_entity_id=target_entity_id,
+                        source_entry_id=source_entity_id,
+                        target_entry_id=target_entity_id,
                         curated_by=access.user_id,
                     )
                     session.add(fc)
@@ -549,8 +539,8 @@ async def curate_fragments(
                 # Create materialized GraphEdge for triplets
                 if source_entity_id and target_entity_id and is_triplet(fragment):
                     edge = GraphEdge(
-                        source_entity_id=source_entity_id,
-                        target_entity_id=target_entity_id,
+                        source_entry_id=source_entity_id,
+                        target_entry_id=target_entity_id,
                         predicate=fragment.get("predicate"),
                         annotation_id=annotation_id,
                         infospace_id=infospace_id,
@@ -614,12 +604,12 @@ def remove_curation(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Curation not found")
 
         # Remove the materialized edge for this curation
-        if curation.source_entity_id and curation.target_entity_id:
+        if curation.source_entry_id and curation.target_entry_id:
             edge = session.exec(
                 select(GraphEdge).where(
                     GraphEdge.annotation_id == annotation_id,
-                    GraphEdge.source_entity_id == curation.source_entity_id,
-                    GraphEdge.target_entity_id == curation.target_entity_id,
+                    GraphEdge.source_entry_id == curation.source_entry_id,
+                    GraphEdge.target_entry_id == curation.target_entry_id,
                 )
             ).first()
             if edge:
@@ -629,12 +619,12 @@ def remove_curation(
             # no other contributing GraphEdge survives in the same graph.
             from app.api.modules.graph.models import EntityRelationship
             if edge and edge.graph_id is not None:
-                a, b = sorted((curation.source_entity_id, curation.target_entity_id))
+                a, b = sorted((curation.source_entry_id, curation.target_entry_id))
                 remaining = session.exec(
                     select(GraphEdge.id).where(
                         GraphEdge.graph_id == edge.graph_id,
-                        ((GraphEdge.source_entity_id == a) & (GraphEdge.target_entity_id == b))
-                        | ((GraphEdge.source_entity_id == b) & (GraphEdge.target_entity_id == a)),
+                        ((GraphEdge.source_entry_id == a) & (GraphEdge.target_entry_id == b))
+                        | ((GraphEdge.source_entry_id == b) & (GraphEdge.target_entry_id == a)),
                     )
                 ).first()
                 if remaining is None:
@@ -642,8 +632,8 @@ def remove_curation(
                         update(EntityRelationship)
                         .where(
                             EntityRelationship.graph_id == edge.graph_id,
-                            EntityRelationship.entity_a_id == a,
-                            EntityRelationship.entity_b_id == b,
+                            EntityRelationship.entry_a_id == a,
+                            EntityRelationship.entry_b_id == b,
                         )
                         .values(is_active=False)
                     )
@@ -687,8 +677,8 @@ def get_curated_triplets(
                 Annotation.infospace_id == infospace_id,
                 FragmentCuration.status == "curated",
                 or_(
-                    FragmentCuration.source_entity_id.isnot(None),
-                    FragmentCuration.target_entity_id.isnot(None),
+                    FragmentCuration.source_entry_id.isnot(None),
+                    FragmentCuration.target_entry_id.isnot(None),
                 ),
             )
         )
@@ -698,8 +688,8 @@ def get_curated_triplets(
             stmt = stmt.join(
                 GraphEdge,
                 (GraphEdge.annotation_id == FragmentCuration.annotation_id)
-                & (GraphEdge.source_entity_id == FragmentCuration.source_entity_id)
-                & (GraphEdge.target_entity_id == FragmentCuration.target_entity_id),
+                & (GraphEdge.source_entry_id == FragmentCuration.source_entry_id)
+                & (GraphEdge.target_entry_id == FragmentCuration.target_entry_id),
             ).where(GraphEdge.graph_id == graph_id)
 
         stmt = access.scope_filter(stmt, Annotation.run_id, "run_ids")
@@ -707,14 +697,14 @@ def get_curated_triplets(
         curations = session.exec(stmt).all()
 
         # Build entity map — scoped to the graph's canon when filtering by graph,
-        # otherwise the infospace's entities. Entities now belong to canons
+        # otherwise the infospace's entries. Entries now belong to canons
         # (not graphs); we resolve graph→canon once.
-        entity_stmt = select(Entity).where(Entity.infospace_id == infospace_id)
+        entity_stmt = select(CanonEntry).where(CanonEntry.infospace_id == infospace_id)
         if graph_id is not None:
             from app.api.modules.graph.models import KnowledgeGraph
             graph = session.get(KnowledgeGraph, graph_id)
             if graph:
-                entity_stmt = entity_stmt.where(Entity.canon_id == graph.canon_id)
+                entity_stmt = entity_stmt.where(CanonEntry.canon_id == graph.canon_id)
         entities = session.exec(entity_stmt).all()
         entity_map = {e.id: e for e in entities}
 
@@ -727,8 +717,8 @@ def get_curated_triplets(
                 if not is_triplet(fragment):
                     continue
 
-                source_id = curation.source_entity_id
-                target_id = curation.target_entity_id
+                source_id = curation.source_entry_id
+                target_id = curation.target_entry_id
 
                 # Output keys keep the LLM-facing subject/object terminology
                 # so the wire format stays familiar to existing consumers; the
@@ -743,13 +733,13 @@ def get_curated_triplets(
                         "raw_name": fragment["subject_name"],
                         "raw_type": fragment.get("subject_type"),
                         "canonical_id": source_id,
-                        "canonical_name": entity_map[source_id].canonical_name if source_id and source_id in entity_map else fragment["subject_name"],
+                        "canonical_name": entity_map[source_id].canonical if source_id and source_id in entity_map else fragment["subject_name"],
                     },
                     "object": {
                         "raw_name": fragment["object_name"],
                         "raw_type": fragment.get("object_type"),
                         "canonical_id": target_id,
-                        "canonical_name": entity_map[target_id].canonical_name if target_id and target_id in entity_map else fragment["object_name"],
+                        "canonical_name": entity_map[target_id].canonical if target_id and target_id in entity_map else fragment["object_name"],
                     },
                     "properties": {k: v for k, v in fragment.items() if k not in ['subject_name', 'subject_type', 'predicate', 'object_name', 'object_type']},
                     "curated_at": curation.curated_at.isoformat() if curation.curated_at else None,

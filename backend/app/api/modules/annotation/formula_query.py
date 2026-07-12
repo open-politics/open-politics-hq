@@ -66,6 +66,7 @@ class FormulaQuery:
         incoming_scopes: Iterable[Scope] = (),
         panel_merge_maps: Iterable[Any] = (),
         run_aliases: Iterable[Any] = (),
+        canon_aliases: Iterable[Any] = (),
         formula_lookup_cfg: dict[str, Any] | None = None,
     ) -> None:
         self.formula = formula
@@ -74,6 +75,7 @@ class FormulaQuery:
             incoming_scopes=incoming_scopes,
             panel_merge_maps=panel_merge_maps,
             run_aliases=run_aliases,
+            canon_aliases=canon_aliases,
         )
         if formula_lookup_cfg:
             attach_formula_lookup(self.aq, formula_lookup_cfg)
@@ -90,6 +92,7 @@ class FormulaQuery:
         incoming_scopes: Iterable[Scope] = (),
         panel_merge_maps: Iterable[Any] = (),
         run_aliases: Iterable[Any] = (),
+        canon_aliases: Iterable[Any] = (),
     ) -> AnnotationQuery:
         """Translate Formula + scopes + merge-map layers into a
         configured :class:`AnnotationQuery`. Single source of truth for
@@ -101,6 +104,10 @@ class FormulaQuery:
         1. Scope merge_maps   — carried from source panel at gesture time
         2. Panel merge_maps   — panel-local aliases
         3. Run aliases        — run-wide canonical library
+        4. Canon aliases      — the attached canon's durable value vocabulary
+                                (the read-time inverse of value-fold promotion;
+                                lowest precedence so any explicit run/panel/scope
+                                alias overrides it per field)
 
         The Formula itself does NOT carry merge_maps any more — that
         belonged to the run/panel context, not to the data spec.
@@ -133,6 +140,8 @@ class FormulaQuery:
         for mm in panel_merge_maps:
             aq.merge(mm)
         for mm in run_aliases:
+            aq.merge(mm)
+        for mm in canon_aliases:
             aq.merge(mm)
         return aq
 

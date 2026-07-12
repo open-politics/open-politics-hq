@@ -7,7 +7,7 @@ subscribes on the ``/stream`` endpoint and pushes markers as resolved events
 arrive.
 
 No DB migration. No per-action Job model. Results land on
-``Entity.properties["coords"]``; the run disappears.
+``CanonEntry.properties["coords"]``; the run disappears.
 
 Canon scoping: results land in the infospace's ``default_geo_canon_id`` when
 set, otherwise ``default_canon_id`` (the General canon every infospace has).
@@ -25,7 +25,7 @@ from sqlmodel import select
 
 from app.api.modules.annotation.models import Annotation
 from app.api.modules.annotation.schemas import GeocodeParams
-from app.api.modules.graph.models import Entity
+from app.api.modules.graph.models import CanonEntry
 from app.api.modules.graph.resolution import resolve_entities_batch
 from app.core.task_utils import run_async_in_celery
 from app.core.tasks import TaskContext, task
@@ -187,12 +187,12 @@ def _extract_location_strings(annotation: Annotation, field_path: str) -> list[s
 def geocode(ctx: TaskContext, annotation_ids: list[int], params: GeocodeParams):
     """Resolve every location string in the selected annotations to coordinates.
 
-    For each unique location: find/create ``Entity`` (``entity_type=location``)
+    For each unique location: find/create ``CanonEntry`` (``type=location``)
     in the infospace's geo canon (or default canon as fallback), call the
     geocoding provider, patch ``properties.coords``, emit
     ``ctx.send(event='resolved', ...)`` so the map panel can place the marker.
 
-    The entity itself carries the result — re-running the action on the same
+    The entry itself carries the result — re-running the action on the same
     data is cheap (cache hit via ``properties.coords``).
     """
 
@@ -288,7 +288,7 @@ def geocode(ctx: TaskContext, annotation_ids: list[int], params: GeocodeParams):
             })
             return
 
-        # Resolve names → Entity rows in the chosen canon.
+        # Resolve names → CanonEntry rows in the chosen canon.
         entity_map = run_async_in_celery(
             resolve_entities_batch,
             session,
@@ -306,7 +306,7 @@ def geocode(ctx: TaskContext, annotation_ids: list[int], params: GeocodeParams):
         skipped_count = 0
 
         for ent in (entity_map or {}).values():
-            if not isinstance(ent, Entity):
+            if not isinstance(ent, CanonEntry):
                 continue
             existing_props = ent.properties or {}
             existing_coords = existing_props.get("coords")
@@ -318,7 +318,7 @@ def geocode(ctx: TaskContext, annotation_ids: list[int], params: GeocodeParams):
             if existing_coords and existing_bbox and existing_geometry:
                 ctx.send(topic, resource_id, "resolved", {
                     "entity_id": ent.id,
-                    "name": ent.canonical_name,
+                    "name": ent.canonical,
                     "coords": existing_coords,
                     "display_name": existing_props.get("display_name"),
                     "bbox": existing_bbox,
@@ -333,16 +333,16 @@ def geocode(ctx: TaskContext, annotation_ids: list[int], params: GeocodeParams):
             # The merge below only fills missing keys, so cached values stay
             # authoritative.
             try:
-                geo = run_async_in_celery(geocoder.geocode, ent.canonical_name)
+                geo = run_async_in_celery(geocoder.geocode, ent.canonical)
             except Exception as e:
-                logger.warning("Geocode failed for %r: %s", ent.canonical_name, e)
+                logger.warning("Geocode failed for %r: %s", ent.canonical, e)
                 if existing_coords:
                     # Provider failed but we still have coords — emit them so
                     # the marker stays on the map; bbox/geometry just won't
                     # backfill this round.
                     ctx.send(topic, resource_id, "resolved", {
                         "entity_id": ent.id,
-                        "name": ent.canonical_name,
+                        "name": ent.canonical,
                         "coords": existing_coords,
                         "display_name": existing_props.get("display_name"),
                         "bbox": existing_bbox,
@@ -360,7 +360,7 @@ def geocode(ctx: TaskContext, annotation_ids: list[int], params: GeocodeParams):
                     # Provider returned nothing but coords are cached — replay.
                     ctx.send(topic, resource_id, "resolved", {
                         "entity_id": ent.id,
-                        "name": ent.canonical_name,
+                        "name": ent.canonical,
                         "coords": existing_coords,
                         "display_name": existing_props.get("display_name"),
                         "bbox": existing_bbox,
@@ -397,7 +397,7 @@ def geocode(ctx: TaskContext, annotation_ids: list[int], params: GeocodeParams):
 
             ctx.send(topic, resource_id, "resolved", {
                 "entity_id": ent.id,
-                "name": ent.canonical_name,
+                "name": ent.canonical,
                 "coords": coords,
                 "display_name": new_props.get("display_name"),
                 "bbox": bbox,

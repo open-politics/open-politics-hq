@@ -89,81 +89,39 @@ class RunsCountPhase(BaseModel):
 
 def _fetch_runs(
     session, access, infospace_id: int, skip: int, limit: int,
-    include_counts: bool, include_children: bool = False,
+    include_counts: bool,
 ):
-    """Fetch runs + batch annotation counts.
+    """Fetch runs + per-run annotation counts.
 
-    By default returns only family roots (``parent_run_id IS NULL``) so the
-    history list shows one row per unit of analysis. Extensions are folded in
-    via family rollup (annotation_count, effective_status) on the parent row.
-
-    Pass ``include_children=True`` to surface every run, e.g. for diagnostics.
+    One row per run — there is no family tier. A run is a single durable object;
+    extension grows it in place and a live run's annotations accumulate on the
+    same row, so its own ``status`` and count are the whole truth.
     """
     query = (
         select(AnnotationRun)
         .where(AnnotationRun.infospace_id == infospace_id)
     )
-    if not include_children:
-        query = query.where(AnnotationRun.parent_run_id.is_(None))
     query = access.scope_filter(query, AnnotationRun.id, "run_ids")
     query = query.offset(skip).limit(limit)
     runs = list(session.exec(query).all())
 
     run_ids = [r.id for r in runs]
 
-    # Family rollup: discover descendants for each parent in one query so the
-    # counts query can fan to (parent + descendants) without N+1 lookups.
-    family_by_root: dict[int, list[int]] = {rid: [rid] for rid in run_ids}
-    if run_ids:
-        descendant_rows = session.exec(
-            select(AnnotationRun.id, AnnotationRun.parent_run_id, AnnotationRun.status)
-            .where(
-                AnnotationRun.parent_run_id.in_(run_ids),
-                AnnotationRun.infospace_id == infospace_id,
-            )
-        ).all()
-        # status of each descendant — used to compute effective_status below.
-        descendants_by_root: dict[int, list[tuple[int, str]]] = {}
-        for child_id, parent_id, child_status in descendant_rows:
-            family_by_root.setdefault(parent_id, [parent_id]).append(child_id)
-            descendants_by_root.setdefault(parent_id, []).append((child_id, child_status))
-    else:
-        descendants_by_root = {}
-
     counts_by_run: dict[int, int] = {}
     if include_counts and run_ids:
-        all_family_ids = [fid for ids in family_by_root.values() for fid in ids]
-        # Sum annotations per family root: GROUP BY runs that belong to the
-        # family, then aggregate in Python (cheap — <100 runs/family typical).
         count_rows = session.exec(
             select(Annotation.run_id, func.count(Annotation.id))
-            .where(Annotation.run_id.in_(all_family_ids))
+            .where(Annotation.run_id.in_(run_ids))
             .group_by(Annotation.run_id)
         ).all()
-        counts_per_run = dict(count_rows)
-        for root_id, family_ids in family_by_root.items():
-            counts_by_run[root_id] = sum(counts_per_run.get(fid, 0) for fid in family_ids)
+        counts_by_run = dict(count_rows)
 
-    non_terminal = {RunStatus.PENDING.value, RunStatus.RUNNING.value, RunStatus.WAITING.value}
     result_runs = []
     for run in runs:
         run_read = AnnotationRunRead.model_validate(run.model_dump(exclude_none=False))
         run_read.schema_ids = [s.id for s in run.target_schemas] if run.target_schemas else []
         if include_counts:
             run_read.annotation_count = counts_by_run.get(run.id, 0)
-
-        descendants = descendants_by_root.get(run.id, [])
-        run_read.extension_count = len(descendants)
-        # Effective status: any non-terminal descendant lifts the run into
-        # RUNNING. The stored ``status`` field stays accurate to the parent's
-        # own lifecycle.
-        if descendants and any(
-            (s if isinstance(s, str) else getattr(s, "value", str(s))) in non_terminal
-            for _cid, s in descendants
-        ):
-            run_read.effective_status = RunStatus.RUNNING
-        else:
-            run_read.effective_status = run.status
         result_runs.append(run_read)
 
     return result_runs
@@ -177,14 +135,6 @@ async def list_runs(
     skip: int = 0,
     limit: int = 100,
     include_counts: bool = Query(True, description="Include counts of annotations and assets"),
-    include_children: bool = Query(
-        False,
-        description=(
-            "When False (default), only family roots are returned — extension "
-            "runs are folded into their parent's annotation_count and "
-            "effective_status. Set True to surface every run, e.g. for diagnostics."
-        ),
-    ),
     session: SessionDep,
 ):
     """Retrieve runs for the infospace (JSON).
@@ -195,13 +145,11 @@ async def list_runs(
     infospace_id = access.infospace_id
 
     result_runs = await asyncio.to_thread(
-        _fetch_runs, session, access, infospace_id, skip, limit, include_counts, include_children,
+        _fetch_runs, session, access, infospace_id, skip, limit, include_counts,
     )
     count_query = select(func.count(AnnotationRun.id)).where(
         AnnotationRun.infospace_id == infospace_id
     )
-    if not include_children:
-        count_query = count_query.where(AnnotationRun.parent_run_id.is_(None))
     count_query = access.scope_filter(count_query, AnnotationRun.id, "run_ids")
     total_count = await asyncio.to_thread(lambda: session.exec(count_query).one())
     return AnnotationRunsOut(data=result_runs, count=total_count)
@@ -214,10 +162,6 @@ async def list_runs_stream(
     skip: int = 0,
     limit: int = 100,
     include_counts: bool = Query(True, description="Include counts of annotations and assets"),
-    include_children: bool = Query(
-        False,
-        description="See list_runs — same flag, default folds extensions into parents.",
-    ),
     session: SessionDep,
 ):
     """Progressive SSE feed for run list — runs first, count later.
@@ -229,7 +173,7 @@ async def list_runs_stream(
 
     try:
         result_runs = await asyncio.to_thread(
-            _fetch_runs, session, access, infospace_id, skip, limit, include_counts, include_children,
+            _fetch_runs, session, access, infospace_id, skip, limit, include_counts,
         )
     except Exception as e:
         logger.exception("SSE list_runs error")
@@ -245,8 +189,6 @@ async def list_runs_stream(
         count_query = select(func.count(AnnotationRun.id)).where(
             AnnotationRun.infospace_id == infospace_id
         )
-        if not include_children:
-            count_query = count_query.where(AnnotationRun.parent_run_id.is_(None))
         count_query = access.scope_filter(count_query, AnnotationRun.id, "run_ids")
         total_count = await asyncio.to_thread(
             lambda: session.exec(count_query).one()
@@ -269,14 +211,9 @@ def get_run(
 ) -> Any:
     """Retrieve a specific Run by its ID.
 
-    Returns family-rolled-up fields:
-      * ``annotation_count`` — sum across the run and its descendants.
-      * ``effective_status`` — RUNNING when any descendant is non-terminal,
-        else the parent's own status. The stored ``status`` is unchanged.
-      * ``progress_total`` / ``progress_current`` — when a descendant is
-        actively running, these reflect the descendant's progress so the UI
-        shows live extension activity.
-      * ``extension_count`` — number of descendant runs.
+    A run is one durable object — its own ``status`` and annotation count are
+    the whole truth (extension grows it in place; a live run accumulates on the
+    same row).
     """
     try:
         infospace_id = access.infospace_id
@@ -288,33 +225,9 @@ def get_run(
         run_read = AnnotationRunRead.model_validate(run.model_dump(exclude_none=False))
         run_read.schema_ids = [schema.id for schema in run.target_schemas] if run.target_schemas else []
 
-        # Family lookup — descendants and their statuses for rollup.
-        descendants = session.exec(
-            select(AnnotationRun).where(
-                AnnotationRun.parent_run_id == run.id,
-                AnnotationRun.infospace_id == infospace_id,
-            )
-        ).all()
-        run_read.extension_count = len(descendants)
-
-        non_terminal_states = {RunStatus.PENDING, RunStatus.RUNNING, RunStatus.WAITING}
-        active_descendants = [d for d in descendants if d.status in non_terminal_states]
-        if active_descendants:
-            run_read.effective_status = RunStatus.RUNNING
-            # Surface the active extension's progress so the UI shows live
-            # numbers while the extension processes. Multiple actives sum.
-            total = sum((d.progress_total or 0) for d in active_descendants)
-            current = sum((d.progress_current or 0) for d in active_descendants)
-            if total > 0:
-                run_read.progress_total = total
-                run_read.progress_current = current
-        else:
-            run_read.effective_status = run.status
-
         if include_counts:
-            family_ids = [run.id] + [d.id for d in descendants]
             run_read.annotation_count = session.exec(
-                select(func.count(Annotation.id)).where(Annotation.run_id.in_(family_ids))
+                select(func.count(Annotation.id)).where(Annotation.run_id == run.id)
             ).one() or 0
         else:
             run_read.annotation_count = None
@@ -457,9 +370,8 @@ class ExtendRunRequest(BaseModel):
     """Request body for ``POST /runs/{run_id}/extend``.
 
     At least one of ``asset_ids``, ``bundle_id``, ``schema_ids`` must be set.
-    The service resolves the family-scoped delta and creates a child run
-    (``parent_run_id`` = root). Existing annotations in the run's family are
-    not re-processed.
+    The run grows in place — no child run — and is re-pended; only the new
+    (asset, schema) pairs are processed.
     """
     asset_ids: Optional[list[int]] = None
     bundle_id: Optional[int] = None
@@ -476,19 +388,17 @@ def extend_run(
     session: SessionDep,
     annotation_service: AnnotationService = Depends(get_annotation_service),
 ) -> AnnotationRunRead:
-    """Extend a run with new assets and/or schemas.
+    """Grow a run with new assets and/or schemas, in place.
 
-    Creates a child run (``parent_run_id`` = root of the family) carrying
-    only the (asset, schema) delta — pairs already annotated within the
-    family are skipped. The parent run stays untouched. Reads via ``/view``
-    transparently merge family annotations.
+    Appends to the same run's scope, resets its streaming watermark, and
+    re-pends it. The universal delta-skip processes only the new (asset,
+    schema) pairs. Returns the same (now re-pended) run.
 
-    Gates: parent must be a one_off run in a terminal state, no
-    ``flow_execution_id``, no ``source_bundle_id``.
+    Gates: must be a one_off run, no ``flow_execution_id``.
     """
     access.require_in_scope("run_ids", run_id)
     try:
-        child = annotation_service.extend_run(
+        run = annotation_service.extend_run(
             run_id=run_id,
             user_id=access.user_id,
             infospace_id=access.infospace_id,
@@ -497,9 +407,11 @@ def extend_run(
             schema_ids=body.schema_ids,
             configuration_overrides=body.configuration_overrides,
         )
-        run_read = AnnotationRunRead.model_validate(child.model_dump(exclude_none=False))
-        run_read.schema_ids = [s.id for s in child.target_schemas] if child.target_schemas else []
-        run_read.annotation_count = 0
+        run_read = AnnotationRunRead.model_validate(run.model_dump(exclude_none=False))
+        run_read.schema_ids = [s.id for s in run.target_schemas] if run.target_schemas else []
+        run_read.annotation_count = session.exec(
+            select(func.count(Annotation.id)).where(Annotation.run_id == run.id)
+        ).one() or 0
         return run_read
     except ValueError as e:
         logger.warning(f"Route: Extension rejected for run {run_id}: {e}")
@@ -643,14 +555,6 @@ def export_run_annotations_csv(
     flatten_json: bool = Query(True, description="Flatten nested JSON fields into dot-notation columns"),
     include_metadata: bool = Query(True, description="Include asset and schema metadata"),
     include_justifications: bool = Query(False, description="Include justification text (adds columns)"),
-    include_descendants: bool = Query(
-        True,
-        description=(
-            "Default True: include annotations from extension (child) runs so "
-            "the export reflects what the dashboard shows. Pass False to scope "
-            "the export to this run id only."
-        ),
-    ),
 ) -> StreamingResponse:
     """
     Export annotation run results as CSV.
@@ -689,7 +593,6 @@ def export_run_annotations_csv(
             infospace_id=infospace_id,
             skip=0,
             limit=1_000_000,  # Get all annotations
-            include_descendants=include_descendants,
         )
         
         if not annotations:
@@ -900,20 +803,13 @@ class ViewGraphPhase(BaseModel):
 
 
 def _resolve_family(session, infospace_id: int, run_id: int) -> list[int]:
-    """Return ``[run_id]`` plus every descendant linked via ``parent_run_id``.
+    """Return ``[run_id]``.
 
-    The annotation run family is flat by construction (``extend_run`` always
-    points new children at the *root*), so a single-level lookup suffices.
-    Descendants are server-resolved on every read so panels stay naive — they
-    bind to the parent run id and the family rolls up underneath.
+    A run is one durable object now — extension grows it in place, so there is
+    no family to resolve. Kept as a single seam in case explicit multi-run
+    composition wants to expand here later.
     """
-    descendants = list(session.exec(
-        select(AnnotationRun.id).where(
-            AnnotationRun.parent_run_id == run_id,
-            AnnotationRun.infospace_id == infospace_id,
-        )
-    ).all())
-    return [run_id] + descendants
+    return [run_id]
 
 
 def _build_formula_query(
@@ -923,9 +819,9 @@ def _build_formula_query(
     :class:`FormulaQuery`. Single boundary between the wire format and
     the engine.
 
-    The query covers the run *and* its descendants. Package scope is still
-    enforced via ``AnnotationQuery.scope`` — descendants outside the grant's
-    ``run_ids`` get filtered in the materialization SQL.
+    The query covers the run (and any explicitly-requested ``additional_run_ids``).
+    Package scope is still enforced via ``AnnotationQuery.scope`` — runs outside
+    the grant's ``run_ids`` get filtered in the materialization SQL.
     """
     explicit_ids = [run_id] + body.additional_run_ids
     for rid in explicit_ids:
@@ -951,11 +847,23 @@ def _build_formula_query(
         (_run.views_config.get("aliases") or [])
         if _run and isinstance(_run.views_config, dict) else []
     )
+    # Canon value vocabulary — the durable, lowest-precedence base layer. A run
+    # with a canon attached auto-canonicalizes its grouped fields from the
+    # canon's value-typed entries (the read-time inverse of value-fold promotion),
+    # so promoted aliases apply without re-entering them per run.
+    canon_aliases: list = []
+    canon_ids = getattr(_run, "canon_ids", None) or [] if _run else []
+    if canon_ids:
+        from app.api.modules.graph.promote import canon_value_merge_maps
+        field_paths = [d.path for d in body.formula.group if getattr(d, "path", None)]
+        field_paths += [f for f in (body.fields or []) if f]
+        canon_aliases = canon_value_merge_maps(session, canon_ids[0], field_paths)
     return FormulaQuery(
         session, access, rolled, body.formula,
         incoming_scopes=body.incoming_scopes,
         panel_merge_maps=body.merge_maps,
         run_aliases=run_aliases,
+        canon_aliases=canon_aliases,
         formula_lookup_cfg=formula_lookup_cfg,
     )
 
@@ -1235,7 +1143,7 @@ def kick_geocode(
     live ``resolved`` markers as the geocoder fills in each location.
 
     No DB migration, no GeocodingJob. Results land on
-    ``Entity.properties['coords']``.
+    ``CanonEntry.properties['coords']``.
     """
     access.require_in_scope("run_ids", run_id)
 
@@ -1272,7 +1180,7 @@ def kick_geocode(
 
 
 class GeocodedEntityOut(BaseModel):
-    """One already-resolved location, sourced from Entity.properties."""
+    """One already-resolved location, sourced from CanonEntry.properties."""
     entity_id: int
     name: str
     coords: list[float]  # [lon, lat]
@@ -1304,7 +1212,7 @@ def get_geocoded_entities(
     (cached entries complete near-instantly).
     """
     from app.api.modules.annotation.tasks.geocode import _extract_location_strings
-    from app.api.modules.graph.models import Entity
+    from app.api.modules.graph.models import CanonEntry
 
     access.require_in_scope("run_ids", run_id)
 
@@ -1327,14 +1235,14 @@ def get_geocoded_entities(
     if not strings:
         return []
 
-    # Match entities case-insensitively by canonical_name. Only return
+    # Match entries case-insensitively by canonical. Only return
     # those with resolved coords — skip the unresolved/unseen ones.
     lowered = [s.lower() for s in strings]
     entities = session.exec(
-        select(Entity).where(
-            Entity.infospace_id == access.infospace_id,
-            Entity.entity_type == "location",
-            func.lower(Entity.canonical_name).in_(lowered),
+        select(CanonEntry).where(
+            CanonEntry.infospace_id == access.infospace_id,
+            CanonEntry.type == "location",
+            func.lower(CanonEntry.canonical).in_(lowered),
         )
     ).all()
 
@@ -1345,7 +1253,7 @@ def get_geocoded_entities(
             continue
         out.append(GeocodedEntityOut(
             entity_id=ent.id,
-            name=ent.canonical_name,
+            name=ent.canonical,
             coords=list(coords),
             display_name=(ent.properties or {}).get("display_name"),
             bbox=(ent.properties or {}).get("bbox"),

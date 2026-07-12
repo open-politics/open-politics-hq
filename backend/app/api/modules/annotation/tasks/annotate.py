@@ -1155,8 +1155,6 @@ async def demultiplex_results(
     logger.debug(f"DEBUG: demultiplex_results returning {len(annotations)} annotations for Run {run.id}, Asset {parent_asset.id}")
     return annotations
 
-CHAINED_RUN_CURSOR_KEY = "_chained_asset_ids"
-
 
 @task("process_annotation_run",
       check=lambda iid: (
@@ -1207,34 +1205,25 @@ def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
                     logger.debug("chain_backoff set failed", exc_info=True)
                 continue
 
-            # Load cursor from configuration (persisted between self-chain invocations)
+            # Streaming: the run carries no cursor — the annotations table (and
+            # the watermark in config) are the position. Skip if already caught up.
             with Session(engine) as session:
                 run = session.get(AnnotationRun, run_id)
                 if not run:
                     continue
                 if run.status in (RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_ERRORS):
                     continue
-                cursor = (run.configuration or {}).get("_cursor", 0)
 
             try:
-                next_cursor = run_async_in_celery(_process_annotation_run_async, run_id, cursor, chunk_size)
-                if isinstance(next_cursor, int):
-                    # Store cursor for next self-chain invocation
-                    with Session(engine) as session:
-                        run = session.get(AnnotationRun, run_id)
-                        if run:
-                            cfg = dict(run.configuration or {})
-                            cfg["_cursor"] = next_cursor
-                            run.configuration = cfg
-                            session.add(run)
-                            session.commit()
-                    logger.info("Annotation run %d: chunk done, cursor %d → %d", run_id, cursor, next_cursor)
+                result = run_async_in_celery(_process_annotation_run_async, run_id, chunk_size)
+                if result == "more":
+                    # Batch landed, more remain. The run stays PENDING so the
+                    # @task self-chain (PENDING check) re-invokes for the next batch.
+                    logger.info("Annotation run %d: batch done, more remain", run_id)
                     ctx.stat("chunk_done")
                 else:
-                    # Async returned without an int cursor — either the run
-                    # finished or the guard skipped. Only emit the completion
-                    # event when the run actually reached a terminal state, so
-                    # a skip can't cause resume_waiting_flows loops.
+                    # "done" or a skip. Emit completion only on a real terminal
+                    # transition, so a skip can't drive resume_waiting_flows loops.
                     with Session(engine) as session:
                         run = session.get(AnnotationRun, run_id)
                         if run and run.status in (
@@ -1248,11 +1237,6 @@ def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
                             })
                             ctx.stat("done")
                         else:
-                            logger.info(
-                                "process_annotation_run run %d returned without cursor but status=%s; not emitting completion",
-                                run_id,
-                                run.status if run else "missing",
-                            )
                             ctx.stat("skipped")
             except Exception as e:
                 logger.exception("process_annotation_run failed for run %d: %s", run_id, e)
@@ -1269,13 +1253,10 @@ def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
                             # Presence: push failure to watching browsers
                             fail_payload = {
                                 "run_id": run_id,
-                                "parent_run_id": run.parent_run_id,
                                 "status": "failed",
                                 "error": str(e),
                             }
                             ctx.send("annotation_run", run_id, "failed", fail_payload)
-                            if run.parent_run_id:
-                                ctx.send("annotation_run", run.parent_run_id, "failed", fail_payload)
                     except Exception as db_exc:
                         logger.error("Could not update run %d to FAILED: %s", run_id, db_exc)
                 ctx.item_failed(run_id)
@@ -2338,10 +2319,31 @@ async def process_assets_parallel(
     # Create semaphore for concurrency control
     semaphore = asyncio.Semaphore(concurrency_limit)
 
-    # Create tasks for all asset-schema combinations
+    # Pair-level delta-skip: never re-annotate an (asset, schema) pair this run
+    # already has a non-failed annotation for. This is the universal delta-skip —
+    # it makes re-pend idempotent (insert-only annotations have no upsert guard)
+    # and lets a run gain a schema without re-running the schemas it already did.
+    asset_ids_in_batch = list(assets_map.keys())
+    schema_ids_in_batch = [si["schema"].id for si in validated_schemas]
+    done_pairs: set = set()
+    if asset_ids_in_batch and schema_ids_in_batch:
+        done_rows = session.exec(
+            select(Annotation.asset_id, Annotation.schema_id).where(
+                Annotation.run_id == run.id,
+                Annotation.asset_id.in_(asset_ids_in_batch),
+                Annotation.schema_id.in_(schema_ids_in_batch),
+                Annotation.status != ResultStatus.FAILED,
+            ).distinct()
+        ).all()
+        done_pairs = {(a, s) for a, s in done_rows}
+
+    # Create tasks for all asset-schema combinations not already done.
     tasks = []
     for schema_info in validated_schemas:
+        schema_id = schema_info["schema"].id
         for asset_id, asset in assets_map.items():
+            if (asset_id, schema_id) in done_pairs:
+                continue
             task = process_single_asset_schema(
                 asset=asset,
                 schema_info=schema_info,
@@ -2357,14 +2359,9 @@ async def process_assets_parallel(
     total_tasks = len(tasks)
     logger.info(f"Task: Starting parallel processing of {total_tasks} asset-schema combinations with concurrency limit {concurrency_limit}")
 
-    from app.core.stream import FamilyStreamWriter
-    parent_key = (
-        stream_key(run.infospace_id, "annotation_run", run.parent_run_id)
-        if run.parent_run_id else None
-    )
-    writer = FamilyStreamWriter(
+    from app.core.stream import StreamWriter
+    writer = StreamWriter(
         stream_key(run.infospace_id, "annotation_run", run.id),
-        parent_key,
     )
     base_progress = run.progress_current or 0
 
@@ -2448,12 +2445,89 @@ async def process_assets_parallel(
 
     return all_created_annotations, errors_run_level, True
 
-async def _process_annotation_run_async(
-    run_id: int, cursor: int = 0, chunk_size: int = 50
-) -> Optional[int]:
+# ─── Streaming delta scope (live runs) ──────────────────────────────────────
+#
+# A run's work is "the (asset, schema) pairs in its scope it hasn't annotated."
+# We never materialize the scope — we stream it: each invocation processes the
+# next batch of un-annotated assets and re-pends itself while work remains. The
+# annotations table IS the cursor (done = a non-failed annotation exists), so
+# re-pending is idempotent at any scale and flat in memory. The `live_runs`
+# reconciler rides this: it just flips a caught-up live run back to PENDING.
+
+WATERMARK_KEY = "_watermark"  # max asset id this run has attempted; the stream cursor
+LIVE_AGGREGATE_THROTTLE_SECONDS = 120  # min gap between aggregate recomputes for a live run
+
+
+def _run_scope_clause(session: Session, run: AnnotationRun):
+    """SQL predicate selecting the assets in a run's scope, or None if unscoped.
+
+    A run can watch one or more bundles: ``source_bundle_id`` (single, legacy),
+    ``configuration["source_bundle_ids"]`` (a list — the canonical multi-bundle
+    form), and ``target_bundle_id`` (one-off). Each resolves to its **subtree**
+    (folders are bundles; ``bundle_ids`` is direct membership). An explicit
+    ``target_asset_ids`` list scopes by id. The scope is the **union** of all of
+    these — so adding an explicit asset to a bundle-watching run actually widens
+    the scope rather than being silently shadowed by the bundle.
     """
-    Process an annotation run. When cursor=0, does full setup; when cursor>0, uses
-    stored asset IDs. Returns next_cursor for self-chaining, or None if done.
+    cfg = run.configuration or {}
+    clauses = []
+
+    roots: set[int] = set()
+    if run.source_bundle_id:
+        roots.add(run.source_bundle_id)
+    roots.update(cfg.get("source_bundle_ids") or [])
+    if cfg.get("target_bundle_id"):
+        roots.add(cfg["target_bundle_id"])
+    if roots:
+        from app.api.modules.content.tree import subtree_ids
+        bids = list(subtree_ids(session, roots))
+        clauses.append(text("bundle_ids && CAST(:scope_bids AS int[])").bindparams(scope_bids=bids))
+
+    asset_ids = cfg.get("target_asset_ids")
+    if asset_ids:
+        clauses.append(Asset.id.in_(list(asset_ids)))
+
+    if not clauses:
+        return None
+    return clauses[0] if len(clauses) == 1 else or_(*clauses)
+
+
+def _delta_query(session: Session, run: AnnotationRun, watermark: int, *, limit: Optional[int] = None):
+    """Assets in scope, above the watermark, ordered by id so batches advance
+    monotonically. Returns None if the run is unscoped.
+
+    The watermark (max asset id attempted) is the cursor — it keeps a fresh pass
+    O(N) and steady-state reconciles O(new). Dedup is **not** done here: the
+    engine's pair-level skip (``process_assets_parallel``) drops any (asset,
+    schema) pair this run already has a non-failed annotation for, which makes
+    re-pend/extend idempotent without this query re-aggregating the run's whole
+    annotation set on every batch (that was an O(N²) trap on large fresh runs).
+    """
+    scope = _run_scope_clause(session, run)
+    if scope is None:
+        return None
+    q = (
+        select(Asset.id)
+        .where(
+            scope,
+            Asset.infospace_id == run.infospace_id,
+            Asset.id > watermark,
+        )
+        .order_by(Asset.id)
+    )
+    return q.limit(limit) if limit is not None else q
+
+
+async def _process_annotation_run_async(
+    run_id: int, chunk_size: int = 50
+) -> Optional[str]:
+    """
+    Process one batch of an annotation run's streaming delta.
+
+    Resolves the next ``chunk_size`` un-annotated assets in scope, annotates them,
+    advances the watermark. Returns ``"more"`` if work remains (run left PENDING
+    so the @task self-chain re-invokes), ``"done"`` if the run reached a terminal
+    state this call, or ``None`` if skipped (already terminal/invalid).
     """
     import time
     start_time = time.time()
@@ -2464,49 +2538,22 @@ async def _process_annotation_run_async(
             run = session.get(AnnotationRun, run_id)
             if not run:
                 logger.error(f"Task: AnnotationRun {run_id} not found")
-                return
-            
-            if run.status == RunStatus.COMPLETED or run.status == RunStatus.COMPLETED_WITH_ERRORS:
-                logger.warning(f"Task: AnnotationRun {run_id} is already completed. Skipping.")
-                return None
-            if cursor == 0 and run.status == RunStatus.RUNNING:
-                logger.warning(f"Task: AnnotationRun {run_id} is already processing. Skipping.")
                 return None
 
-            if cursor == 0:
-                    run.started_at = datetime.now(timezone.utc)
+            if run.status in (RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_ERRORS):
+                # Caught up / idle. A live run is re-pended by the reconciler;
+                # nothing to do here until then.
+                logger.warning(f"Task: AnnotationRun {run_id} is already caught up. Skipping.")
+                return None
+
+            if not run.started_at:
+                run.started_at = datetime.now(timezone.utc)
             run.updated_at = datetime.now(timezone.utc)
             session.add(run)
             session.commit()
             session.refresh(run)
 
-            # Chained call: load asset IDs from previous run's stored list
-            if cursor > 0:
-                stored_ids = (run.configuration or {}).get(CHAINED_RUN_CURSOR_KEY)
-                if not stored_ids:
-                    logger.error(f"Task: Run {run_id} cursor={cursor} but no {CHAINED_RUN_CURSOR_KEY} in config")
-                    run.status = RunStatus.FAILED
-                    run.error_message = "Chained run missing asset ID list"
-                    session.add(run)
-                    session.commit()
-                    return None
-                target_asset_ids_to_process = stored_ids[cursor : cursor + chunk_size]
-                if not target_asset_ids_to_process:
-                    run.status = RunStatus.COMPLETED
-                    run.completed_at = datetime.now(timezone.utc)
-                    session.add(run)
-                    session.commit()
-                    return None
-                # Clear stored list on last chunk to free memory
-                if cursor + len(target_asset_ids_to_process) >= len(stored_ids):
-                    cfg = dict(run.configuration or {})
-                    cfg.pop(CHAINED_RUN_CURSOR_KEY, None)
-                    run.configuration = cfg
-                    session.add(run)
-                    session.commit()
-                # Skip asset resolution - we have our chunk
-                # target_asset_ids_to_process already set above
-            # Create providers (needed for both cursor=0 and cursor>0)
+            # Create providers
             provider_start_time = time.time()
             app_settings = settings
             try:
@@ -2535,94 +2582,39 @@ async def _process_annotation_run_async(
                 return None
 
             run_config = run.configuration or {}
-            if cursor == 0:
-                target_asset_ids_to_process = []
 
-                # Check for source_bundle_id first (for continuous runs watching a bundle)
-                if run.source_bundle_id:
-                    bundle_id = run.source_bundle_id
-                    bundle = session.get(Bundle, bundle_id)
-                    if bundle and bundle.infospace_id == run.infospace_id:
-                        # Query asset IDs (do NOT use bundle.assets - loads all into memory).
-                        # Folders are bundles — a path-scoped run targets the sub-bundle.
-                        stmt = select(Asset.id).where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id))
-                        all_bundle_asset_ids = list(session.exec(stmt).all())
-                        logger.info(f"Task: Continuous run {run.id} watching bundle {bundle_id} with {len(all_bundle_asset_ids)} total assets")
-                        
-                        # ═══ DELTA TRACKING: Only process assets that don't have annotations for all required schemas ═══
-                        # Get the schema IDs this run should process
-                        run_schema_ids = [schema.id for schema in run.target_schemas] if run.target_schemas else []
-                        
-                        if run_schema_ids and all_bundle_asset_ids:
-                            # Find assets that already have annotations for ALL schemas (from ANY run in this infospace)
-                            # This prevents reprocessing assets that have already been annotated
-                            # Note: select and func are already imported at module level
-                            
-                            # Query: For each asset, count how many schemas it has annotations for
-                            # Check annotations from ANY run in the same infospace (not just this run)
-                            # This ensures we don't reprocess assets that were annotated by previous continuous runs
-                            assets_with_complete_annotations = session.exec(
-                                select(Annotation.asset_id, func.count(func.distinct(Annotation.schema_id)).label('schema_count'))
-                                .where(
-                                    Annotation.asset_id.in_(all_bundle_asset_ids),
-                                    Annotation.schema_id.in_(run_schema_ids),
-                                    Annotation.infospace_id == run.infospace_id,  # Same infospace
-                                    Annotation.status != ResultStatus.FAILED  # Don't count failed annotations
-                                )
-                                .group_by(Annotation.asset_id)
-                                .having(func.count(func.distinct(Annotation.schema_id)) == len(run_schema_ids))
-                            ).all()
-                            
-                            complete_asset_ids = {row.asset_id for row in assets_with_complete_annotations}
-                            unannotated_asset_ids = [aid for aid in all_bundle_asset_ids if aid not in complete_asset_ids]
-                            
-                            logger.info(f"Task: Continuous run {run.id} - {len(complete_asset_ids)} assets already fully annotated (across all runs), {len(unannotated_asset_ids)} assets need processing")
-                            target_asset_ids_to_process.extend(unannotated_asset_ids)
-                        else:
-                            # No schemas configured or no assets - process all (fallback behavior)
-                            logger.warning(f"Task: Continuous run {run.id} - No schemas configured or no assets, processing all assets")
-                            target_asset_ids_to_process.extend(all_bundle_asset_ids)
-                    else:
-                        logger.error(f"Task: Source Bundle {bundle_id} for Run {run.id} not found or not in infospace.")
-                        run.status = RunStatus.FAILED
-                        run.error_message = f"Source Bundle {bundle_id} not found/invalid."
-                        session.add(run)
-                        session.commit()
-                elif run_config.get("target_asset_ids"):
-                    target_asset_ids_to_process.extend(run_config["target_asset_ids"])
-                elif run_config.get("target_bundle_id"):
-                    bundle_id = run_config["target_bundle_id"]
-                    bundle = session.get(Bundle, bundle_id)
-                    if bundle and bundle.infospace_id == run.infospace_id:
-                        # Query asset IDs (do NOT use bundle.assets - loads all into memory).
-                        # Folders are bundles — a path-scoped run targets the sub-bundle.
-                        stmt = select(Asset.id).where(text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id))
-                        target_asset_ids_to_process.extend(session.exec(stmt).all())
-                    else:
-                        logger.error(f"Task: Target Bundle {bundle_id} for Run {run.id} not found or not in infospace.")
-                        run.status = RunStatus.FAILED
-                        run.error_message = f"Target Bundle {bundle_id} not found/invalid."
-                        session.add(run)
-                        session.commit()
-            
+            # ═══ Streaming delta ═══
+            # Resolve the next batch of un-annotated assets in scope, above the
+            # watermark. The annotations table is the cursor, so re-pending (by
+            # the live_runs reconciler or extend) is idempotent. Bundle scopes
+            # resolve to the bundle's full subtree.
+            watermark = int(run_config.get(WATERMARK_KEY, 0) or 0)
+            delta = _delta_query(session, run, watermark, limit=chunk_size)
+            if delta is None:
+                logger.error(f"Task: Run {run.id} has no resolvable scope (bundle or asset list).")
+                run.status = RunStatus.FAILED
+                run.error_message = "No target scope (bundle or asset list)."
+                session.add(run)
+                session.commit()
+                return "done"
+
+            target_asset_ids_to_process = list(session.exec(delta).all())
+
             if not target_asset_ids_to_process:
-                # For continuous runs, it's normal to have no assets to process if all are already annotated
-                if run.source_bundle_id:
-                    logger.info(f"Task: Continuous run {run.id} - No unannotated assets to process (all assets already annotated). Completing run.")
-                    run.status = RunStatus.COMPLETED
-                    run.completed_at = datetime.now(timezone.utc)
-                    run.updated_at = datetime.now(timezone.utc)
-                    session.add(run)
-                    session.commit()
-                    logger.info(f"Task: Continuous run {run.id} completed successfully with 0 annotations (all assets already annotated).")
-                    return None
-                else:
-                    logger.error(f"Task: No target assets for Run {run.id}.")
-                    run.status = RunStatus.FAILED
-                    run.error_message = "No target assets found."
-                    session.add(run)
-                    session.commit()
-                    return None
+                # Caught up — every (asset, schema) pair in scope is annotated.
+                # A live run sits here, "watching", until the reconciler re-pends it.
+                run.status = RunStatus.COMPLETED
+                run.completed_at = datetime.now(timezone.utc)
+                run.updated_at = datetime.now(timezone.utc)
+                session.add(run)
+                session.commit()
+                logger.info(f"Task: Run {run.id} caught up — no un-annotated assets in scope.")
+                return "done"
+
+            # Watermark advances to the highest scope-asset id in this batch
+            # (attempted, success or fail). Captured pre-expansion so it tracks
+            # scope ids, not CSV/PDF child ids; committed after the batch lands.
+            batch_watermark = max(target_asset_ids_to_process)
 
             # CSV Row Expansion: Check for CSV parent assets and optionally expand to their CSV_ROW children
             csv_row_processing = run_config.get("csv_row_processing", True)  # Default to True for CSV row processing
@@ -2741,22 +2733,16 @@ async def _process_annotation_run_async(
             else:
                 logger.info(f"Task: PDF page processing disabled for Run {run.id}. Processing PDF parent assets directly.")
 
-            # Self-chain: store full list and process first chunk if run is large
-            if len(target_asset_ids_to_process) > chunk_size:
-                # Set progress_total to full asset count (before slicing)
-                run.progress_total = len(target_asset_ids_to_process)
-                run.progress_current = 0
-                cfg = dict(run.configuration or {})
-                cfg[CHAINED_RUN_CURSOR_KEY] = target_asset_ids_to_process
-                run.configuration = cfg
-                session.add(run)
-                session.commit()
-                session.refresh(run)
-                target_asset_ids_to_process = target_asset_ids_to_process[:chunk_size]
-                logger.info(f"Task: Run {run.id} has {run.progress_total} assets, processing first {chunk_size} (self-chain will continue)")
-            else:
-                # Small run — set progress for single invocation
-                run.progress_total = len(target_asset_ids_to_process)
+            # Streaming: this batch is already bounded (delta LIMIT chunk_size on
+            # scope assets; CSV/PDF expansion may fan it out, the inner chunk loop
+            # below handles that). No frozen list — the watermark + coverage are
+            # the cursor. progress_total is computed once per pass as the count of
+            # un-annotated scope assets at pass start; progress_current accumulates.
+            if run.progress_total is None:
+                count_q = select(func.count()).select_from(
+                    _delta_query(session, run, watermark).subquery()
+                )
+                run.progress_total = session.exec(count_q).one() or 0
                 run.progress_current = 0
                 session.add(run)
                 session.commit()
@@ -2955,19 +2941,12 @@ async def _process_annotation_run_async(
                     # per result. Just make sure we're seeing the latest values.
                     session.refresh(run)
                 logger.info(f"Task: Run {run.id} chunk {chunk_idx + 1}/{len(chunks)} committed {len(chunk_annotations)} annotations (progress: {run.progress_current}/{run.progress_total})")
-                # Presence: push progress to watching browsers (and to the
-                # parent's stream when this is an extension run).
-                from app.core.stream import stream_key, FamilyStreamWriter
-                _parent_key = (
-                    stream_key(run.infospace_id, "annotation_run", run.parent_run_id)
-                    if run.parent_run_id else None
-                )
-                FamilyStreamWriter(
+                # Presence: push progress to watching browsers.
+                from app.core.stream import stream_key, StreamWriter
+                StreamWriter(
                     stream_key(run.infospace_id, "annotation_run", run.id),
-                    _parent_key,
                 ).send("progress", {
                     "run_id": run.id,
-                    "parent_run_id": run.parent_run_id,
                     "progress_current": run.progress_current,
                     "progress_total": run.progress_total,
                     "status": run.status.value if hasattr(run.status, "value") else str(run.status),
@@ -2978,21 +2957,49 @@ async def _process_annotation_run_async(
 
             session.refresh(run)
 
-            # Self-chain: if more chunks remain, return next cursor instead of marking complete
-            stored_ids = (run.configuration or {}).get(CHAINED_RUN_CURSOR_KEY)
-            if stored_ids:
-                next_cursor = cursor + len(target_asset_ids_to_process)
-                if next_cursor < len(stored_ids):
-                    logger.info(f"Task: Run {run.id} chunk done, {len(stored_ids) - next_cursor} assets remain. Returning next_cursor={next_cursor}")
-                    return next_cursor
+            # This batch landed. Advance the watermark to the highest scope-asset
+            # id we attempted, then re-pend for the next batch if the streaming
+            # delta still has work. The run stays PENDING so the @task self-chain
+            # picks it up; we report "more" so the wrapper doesn't emit completion.
+            cfg = dict(run.configuration or {})
+            cfg[WATERMARK_KEY] = max(int(cfg.get(WATERMARK_KEY, 0) or 0), batch_watermark)
+            run.configuration = cfg
+            session.add(run)
+            session.commit()
+            session.refresh(run)
 
-            # Determine final run status
-            has_failed_annotations = any(ann.status == ResultStatus.FAILED for ann in all_created_annotations)
-            if errors_run_level or has_failed_annotations:
+            # Resolve-into-canon: curate this batch's new annotations as they land —
+            # settled-only (auto-applies exact/alias matches, stages the rest as
+            # proposals). Fires every batch (the last batch commits here too), so the
+            # whole live stream resolves continuously. curate_annotated auto-detects
+            # run.resolve_into_canon; the per-fragment guard keeps it idempotent.
+            if getattr(run, "resolve_into_canon", False) and run.canon_ids:
+                batch_ann_ids = [a.id for a in all_created_annotations if a.id is not None]
+                if batch_ann_ids:
+                    from app.api.modules.graph.tasks.curation import curate_annotated
+                    curate_annotated.delay(batch_ann_ids, run.infospace_id)
+
+            remaining = session.exec(
+                _delta_query(session, run, cfg[WATERMARK_KEY], limit=1)
+            ).first()
+            if remaining is not None:
+                logger.info(f"Task: Run {run.id} batch done (watermark {cfg[WATERMARK_KEY]}); more remain.")
+                return "more"
+
+            # Determine final run status. ``all_created_annotations`` holds only
+            # THIS batch's results, so a multi-batch run could hide earlier
+            # failures — ask the DB for the run's total failed count instead.
+            failed_count = session.exec(
+                select(func.count(Annotation.id)).where(
+                    Annotation.run_id == run.id,
+                    Annotation.status == ResultStatus.FAILED,
+                )
+            ).one() or 0
+            if errors_run_level or failed_count:
                 run.status = RunStatus.COMPLETED_WITH_ERRORS
-                error_messages = errors_run_level
-                if has_failed_annotations:
-                    error_messages.append(f"{sum(1 for ann in all_created_annotations if ann.status == ResultStatus.FAILED)} annotations failed.")
+                error_messages = list(errors_run_level)
+                if failed_count:
+                    error_messages.append(f"{failed_count} annotations failed.")
                 run.error_message = "\n".join(error_messages)
             else:
                 run.status = RunStatus.COMPLETED
@@ -3006,7 +3013,6 @@ async def _process_annotation_run_async(
             event_name = "completed" if run.status == RunStatus.COMPLETED else "completed_with_errors"
             payload = {
                 "run_id": run.id,
-                "parent_run_id": run.parent_run_id,
                 "status": run.status.value if hasattr(run.status, "value") else str(run.status),
                 "progress_current": run.progress_current,
                 "progress_total": run.progress_total,
@@ -3014,27 +3020,29 @@ async def _process_annotation_run_async(
             _sw = StreamWriter(stream_key(run.infospace_id, "annotation_run", run.id))
             _sw.send(event_name, payload)
             _sw.expire(3600)
-            # If this is an extension, mirror the event into the parent's stream
-            # so panels bound to the parent can refetch without polling.
-            if run.parent_run_id:
-                _psw = StreamWriter(stream_key(run.infospace_id, "annotation_run", run.parent_run_id))
-                _psw.send(event_name, payload)
 
-            # Compute aggregates for this run and update monitor aggregates if applicable
+            # Recompute aggregates. For a one-off run this happens once. A LIVE
+            # run completes a pass on every reconcile cycle, and a full recompute
+            # is O(total annotations) — re-aggregating the whole run on every
+            # trickle would throw away the O(new) streaming. So throttle it for
+            # live runs: dashboards lag by at most the window.
             try:
-                from app.api.modules.annotation.services.annotation_service import AnnotationService
-                annotation_service = AnnotationService(session=session)
-                annotation_service.compute_run_aggregates(run_id=run.id)
-                # Check for monitor_id attribute safely (may not exist on all AnnotationRun instances)
-                monitor_id = getattr(run, 'monitor_id', None)
-                if monitor_id:
-                    annotation_service.update_monitor_aggregates(monitor_id=monitor_id, run_id=run.id)
+                cfg2 = dict(run.configuration or {})
+                last_agg = float(cfg2.get("_aggregates_at", 0) or 0)
+                if not run.live or (time.time() - last_agg) >= LIVE_AGGREGATE_THROTTLE_SECONDS:
+                    from app.api.modules.annotation.services.annotation_service import AnnotationService
+                    AnnotationService(session=session).compute_run_aggregates(run_id=run.id)
+                    cfg2["_aggregates_at"] = time.time()
+                    run.configuration = cfg2
+                    session.add(run)
+                    session.commit()
             except Exception as agg_exc:
                 logger.error(f"Task: Aggregation failed for run {run.id}: {agg_exc}", exc_info=True)
             
             total_time = time.time() - start_time
             logger.info(f"Task: AnnotationRun {run.id} finished. Status: {run.status}. Total Annotations: {len(all_created_annotations)}. Total time: {total_time:.2f}s")
-            
+            return "done"
+
         except Exception as e_task_critical:
             logger.exception(f"Task: Critical unexpected error processing AnnotationRun {run_id}: {e_task_critical}")
             # Use a fresh session for the FAILED update; the outer session may be in failed state (e.g. InFailedSqlTransaction)
@@ -3052,16 +3060,12 @@ async def _process_annotation_run_async(
                         from app.core.stream import stream_key, StreamWriter
                         fail_payload = {
                             "run_id": run_id,
-                            "parent_run_id": run_to_fail.parent_run_id,
                             "status": "failed",
                             "error": str(e_task_critical),
                         }
                         _sw = StreamWriter(stream_key(run_to_fail.infospace_id, "annotation_run", run_id))
                         _sw.send("failed", fail_payload)
                         _sw.expire(3600)
-                        if run_to_fail.parent_run_id:
-                            _psw = StreamWriter(stream_key(run_to_fail.infospace_id, "annotation_run", run_to_fail.parent_run_id))
-                            _psw.send("failed", fail_payload)
             except Exception as db_exc:
                 logger.error(f"Task: Could not update run {run_id} to FAILED status: {db_exc}", exc_info=True)
 
