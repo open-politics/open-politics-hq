@@ -599,9 +599,22 @@ class AssetQuery:
         stmt = select(Asset).where(and_(*self._conditions))
         return self._apply_sort_and_pagination(stmt)
 
-    def count(self) -> int:
-        """Return total count matching the current conditions (ignores limit/offset/cursor)."""
-        stmt = select(func.count(Asset.id)).where(and_(*self._conditions))
+    def count(self, cap: int | None = None) -> int:
+        """Count matching rows (ignores limit/offset/cursor).
+
+        ``cap=None`` → exact full count (the content-explorer / detailed total,
+        streamed to a later stage since it can be O(matches)). ``cap=N`` → a
+        bounded count: stop scanning after N+1 matches and return ``min(actual,
+        N+1)`` — a result > N means "more than N" (render as ``N+``). O(N) instead
+        of O(matches), so it stays cheap even on a folder holding tens of
+        thousands of assets. Same predicates either way — one primitive, two
+        cost profiles.
+        """
+        if cap is None:
+            stmt = select(func.count(Asset.id)).where(and_(*self._conditions))
+            return self.session.exec(stmt).one() or 0
+        inner = select(Asset.id).where(and_(*self._conditions)).limit(cap + 1)
+        stmt = select(func.count()).select_from(inner.subquery())
         return self.session.exec(stmt).one() or 0
 
     def count_by_parent(self) -> dict[int, int]:
@@ -800,7 +813,7 @@ class AssetQuery:
             FROM asset a
             JOIN annotation ann ON ann.asset_id = a.id
             JOIN graphedge ge ON ge.annotation_id = ann.id
-            JOIN entity ec ON (ge.source_entity_id = ec.id OR ge.target_entity_id = ec.id)
+            JOIN canon_entry ec ON (ge.source_entry_id = ec.id OR ge.target_entry_id = ec.id)
             WHERE ge.infospace_id = :iid
               AND ec.{col_name} IS NOT NULL
               AND (ec.{col_name} <=> CAST(:vec AS vector)) <= :dist_thresh
@@ -914,11 +927,11 @@ def _entity_condition(name: str, infospace_id: int):
         EXISTS (
             SELECT 1 FROM graphedge ge
             JOIN annotation ann ON ge.annotation_id = ann.id
-            JOIN entity ec ON (ge.source_entity_id = ec.id OR ge.target_entity_id = ec.id)
+            JOIN canon_entry ec ON (ge.source_entry_id = ec.id OR ge.target_entry_id = ec.id)
             WHERE ann.asset_id = asset.id
             AND ge.infospace_id = :iid
             AND (
-                lower(ec.canonical_name) = lower(:ename)
+                lower(ec.canonical) = lower(:ename)
                 OR EXISTS (
                     SELECT 1 FROM jsonb_array_elements_text(ec.aliases::jsonb) alias_val
                     WHERE lower(alias_val) = lower(:ename)
@@ -1057,6 +1070,64 @@ def _parse_semantic(raw: str) -> SemanticClause:
         query = _strip_quotes(raw[:m.start()])
         return SemanticClause(text=query, threshold_op=m.group(1), threshold=float(m.group(2)))
     return SemanticClause(text=_strip_quotes(raw))
+
+
+def rank_bundles(
+    session: Session,
+    infospace_id: int,
+    parsed: ParsedQuery,
+    access_scope,
+    *,
+    limit: int = 10,
+) -> List[Tuple[Bundle, float]]:
+    """Rank bundles (folders) by name against a parsed query's free-text term.
+
+    Folders have no body/FTS, so they match on name (and weakly description /
+    purpose) only — a different matcher than ``AssetQuery``, converging on the
+    same node stream. A small CASE ranks the way file search does — exact >
+    prefix > word-start > substring — so a perfectly-named folder leads. Clamped
+    by ``access_scope`` exactly like ``views._build_nav`` (scope set but no
+    bundle grants → nothing visible). Bounded, indexed, limited: cheap at any
+    infospace size.
+    """
+    term = (parsed.text or "").strip()
+    if not term:
+        return []
+    if access_scope is not None and not access_scope.bundle_ids:
+        return []  # scope set, no bundle grants — no folders visible
+
+    like = f"%{term}%"
+    prefix = f"{term}%"
+    word = f"% {term}%"  # term at a word boundary inside the name
+    name_lower = func.lower(Bundle.name)
+
+    score = case(
+        (name_lower == term.lower(), 4.0),
+        (Bundle.name.ilike(prefix), 3.0),
+        (Bundle.name.ilike(word), 2.0),
+        (Bundle.name.ilike(like), 1.0),
+        else_=0.0,
+    ) + case(
+        (or_(Bundle.description.ilike(like), Bundle.purpose.ilike(like)), 0.5),
+        else_=0.0,
+    )
+
+    stmt = (
+        select(Bundle, score.label("rank"))
+        .where(Bundle.infospace_id == infospace_id)
+        .where(
+            or_(
+                Bundle.name.ilike(like),
+                Bundle.description.ilike(like),
+                Bundle.purpose.ilike(like),
+            )
+        )
+    )
+    if access_scope is not None and access_scope.bundle_ids:
+        stmt = stmt.where(Bundle.id.in_(access_scope.bundle_ids))
+    stmt = stmt.order_by(score.desc(), Bundle.name.asc()).limit(limit)
+
+    return [(b, float(rank)) for b, rank in session.exec(stmt).all()]
 
 
 def parse(raw: str) -> ParsedQuery:

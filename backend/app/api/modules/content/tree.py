@@ -1165,6 +1165,74 @@ def _recount(session: Session, bundle_ids: set[int]) -> None:
         )
 
 
+# Basic (tree/search/manager) folder counts render as "1000+" past this cap.
+BUNDLE_COUNT_CAP = 1000
+
+
+def fmt_count(n: int, cap: int = BUNDLE_COUNT_CAP) -> str:
+    """Render a (possibly capped) count: ``"1000+"`` once it exceeds ``cap``."""
+    return f"{cap}+" if n > cap else str(n)
+
+
+def bundle_counts(
+    session: Session, bundle_ids: list[int], *, cap: int | None = BUNDLE_COUNT_CAP
+) -> dict[int, tuple[int, int]]:
+    """Live ``(asset_count, child_bundle_count)`` per bundle, batched from DB truth.
+
+    Counts the ``bundle_ids`` array (asset membership) and ``parent_bundle_id``
+    (child bundles) directly, so it can't drift like the denormalized
+    ``Bundle.asset_count`` cache — recounted on move/delete/detach but NOT when
+    assets are ingested straight into a bundle.
+
+    ``cap`` picks the cost profile (the same asset predicate either way):
+      * ``cap=N`` (default) — each folder's asset count is bounded at N+1, so a
+        60k-asset folder costs O(N), not O(60k). A value > N means "more than N"
+        (``fmt_count`` renders ``N+``). For tree rendering, basic search, the
+        asset manager — anywhere counting a listing.
+      * ``cap=None`` — exact full count (O(assets)). For a detailed bundle view /
+        full exploration, where the precise number is worth the scan.
+    Child-bundle count is always exact (direct children — inherently small).
+    """
+    ids = list({int(b) for b in bundle_ids})
+    if not ids:
+        return {}
+
+    if cap is None:
+        # Exact: one grouped pass over every member of the target bundles.
+        asset_rows = session.execute(
+            text(
+                "SELECT bid, count(DISTINCT a.id) FROM asset a, unnest(a.bundle_ids) AS bid "
+                "WHERE a.bundle_ids && CAST(:ids AS int[]) AND bid = ANY(:ids) "
+                "GROUP BY bid"
+            ),
+            {"ids": ids},
+        ).fetchall()
+    else:
+        # Bounded: a LATERAL that stops at cap+1 per folder — O(cap), not O(assets).
+        asset_rows = session.execute(
+            text(
+                "SELECT t.bid, c.n FROM unnest(CAST(:ids AS int[])) AS t(bid) "
+                "CROSS JOIN LATERAL ("
+                "  SELECT count(*) AS n FROM ("
+                "    SELECT 1 FROM asset WHERE bundle_ids @> ARRAY[t.bid]::int[] LIMIT :capp"
+                "  ) s"
+                ") c"
+            ),
+            {"ids": ids, "capp": cap + 1},
+        ).fetchall()
+
+    child_rows = session.execute(
+        text(
+            "SELECT parent_bundle_id, count(*) FROM bundle "
+            "WHERE parent_bundle_id = ANY(:ids) GROUP BY parent_bundle_id"
+        ),
+        {"ids": ids},
+    ).fetchall()
+    assets = {int(r[0]): int(r[1]) for r in asset_rows}
+    children = {int(r[0]): int(r[1]) for r in child_rows}
+    return {bid: (assets.get(bid, 0), children.get(bid, 0)) for bid in ids}
+
+
 def _recount_children(session: Session, moved_bundle_ids: list[int], old_parent: int, new_parent: int) -> None:
     """Update child_bundle_count after bundle moves."""
     if not moved_bundle_ids:

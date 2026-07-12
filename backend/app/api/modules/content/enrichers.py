@@ -260,7 +260,7 @@ def enrich_geocoding(ctx: EnrichmentContext, asset_ids: list[int]):
 
     Lookup chain:
     1. **Geo canon hit-first.** If the infospace has ``default_geo_canon_id``
-       set, look up an Entity of type ``location`` whose canonical_name or
+       set, look up a CanonEntry of type ``location`` whose canonical or
        aliases match the location string AND whose ``properties.coords`` is
        populated. If hit, use those coords directly — provider call skipped.
     2. **Provider fallback.** Misses fall through to the geocoding provider.
@@ -314,7 +314,7 @@ def enrich_geocoding(ctx: EnrichmentContext, asset_ids: list[int]):
                         cached = {
                             "location_lon": float(coords[0]),
                             "location_lat": float(coords[1]),
-                            "location": ent.canonical_name,
+                            "location": ent.canonical,
                         }
             if cached is not None:
                 cached_writes.append((asset_id, cached))

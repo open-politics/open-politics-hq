@@ -79,11 +79,25 @@ def _asset_node(
     )
 
 
-def _bundle_node(bundle: Bundle) -> AssetNode:
-    """Project a Bundle row into the unified AssetNode shape."""
+def _bundle_node(
+    bundle: Bundle,
+    *,
+    score: float | None = None,
+    matches: list[AssetMatch] | None = None,
+    asset_count: int | None = None,
+    child_bundle_count: int | None = None,
+) -> AssetNode:
+    """Project a Bundle row into the unified AssetNode shape.
 
-    asset_count = bundle.asset_count or 0
-    child_bundle_count = bundle.child_bundle_count or 0
+    ``score``/``matches`` are optional match evidence — set when a folder is a
+    search hit (e.g. a name match tagged ``field='title'``), left empty for plain
+    tree listings. ``asset_count``/``child_bundle_count`` override the bundle's
+    denormalized cache with live counts (see ``tree.bundle_counts``) — pass them
+    so a freshly-ingested folder reports its true size, not a stale 0.
+    """
+
+    asset_count = asset_count if asset_count is not None else (bundle.asset_count or 0)
+    child_bundle_count = child_bundle_count if child_bundle_count is not None else (bundle.child_bundle_count or 0)
     return AssetNode(
         id=f"bundle-{bundle.id}",
         type="bundle",
@@ -94,6 +108,8 @@ def _bundle_node(bundle: Bundle) -> AssetNode:
         child_bundle_count=child_bundle_count,
         sealed=bool(bundle.sealed) if bundle.sealed is not None else None,
         tags=list(bundle.tags) if bundle.tags else None,
+        score=score,
+        matches=matches or [],
         created_at=bundle.created_at,
         updated_at=bundle.updated_at,
     )
@@ -240,6 +256,7 @@ async def render_search(
     mode: str = "text",
     parsed=None,
     access_scope=None,
+    lead_nodes: Optional[list[AssetNode]] = None,
 ) -> AsyncIterator[StreamEvent]:
     """Progressive search event stream.
 
@@ -250,9 +267,21 @@ async def render_search(
     semantic/hybrid, which must merge the full set first). Grouped sections carry
     the actual nested matches — pages/rows of a container hit that also contain
     the search text — bounded by the ``children:`` clause.
+
+    ``lead_nodes`` is a generic "emit these first" slot: a complete, un-paginated
+    batch of nodes streamed ahead of the query hits (Spotlight "top hits"). It
+    stays out of the asset keyset cursor, so ``count``/``has_more`` remain
+    query-driven. Folder name-matches are its first consumer; pinned/suggested
+    results are future ones — the view stays dumb about what leads.
     """
 
     yield SkeletonEvent(family="search")
+
+    if lead_nodes:
+        yield SectionEvent(role="primary", section=ListingSection[AssetNode](
+            items=lead_nodes, total=-1, has_more=True, cursor_next=None,
+        ))
+        await asyncio.sleep(0)
 
     limit = query._limit or 0
     # Free-text portion drives title-vs-content tagging of primary hits.
@@ -383,11 +412,13 @@ async def collect_search(
     mode: str = "text",
     parsed=None,
     access_scope=None,
+    lead_nodes: Optional[list[AssetNode]] = None,
 ) -> AssetSearch:
     """Drain render_search into an AssetSearch envelope."""
 
     events = render_search(
-        query, query_string=query_string, mode=mode, parsed=parsed, access_scope=access_scope
+        query, query_string=query_string, mode=mode, parsed=parsed,
+        access_scope=access_scope, lead_nodes=lead_nodes,
     )
     envelope = await drain(events, AssetSearch)
     envelope.meta = AssetSearchMeta(

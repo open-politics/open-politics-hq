@@ -17,14 +17,17 @@ from typing import AsyncIterator
 
 from sqlmodel import Session
 
-from app.api.modules.content.query import AssetQuery, parse as parse_aql
+from app.api.modules.content.query import AssetQuery, parse as parse_aql, rank_bundles
 from app.api.modules.content.schemas import (
+    AssetMatch,
+    AssetNode,
     AssetSearch,
     AssetSearchRequest,
     ParsedQuery,
     StreamEvent,
 )
-from app.api.modules.content.views import collect_search, render_search
+from app.api.modules.content.views import _bundle_node, collect_search, render_search
+from app.api.modules.content.tree import bundle_counts
 from app.api.modules.identity_infospace_user.access import Access
 
 logger = logging.getLogger(__name__)
@@ -102,6 +105,51 @@ def _build_search_query(
     return q
 
 
+def _folder_leads(
+    session: Session,
+    infospace_id: int,
+    body: AssetSearchRequest,
+    parsed: ParsedQuery,
+    *,
+    access: Access,
+) -> list[AssetNode]:
+    """Folder name-matches as lead nodes for the search stream.
+
+    Folders lead ONLY an unscoped, free-text, opt-in search. Concretely:
+    ``include_folders`` is set (discovery surfaces — the tree/picker; asset-only
+    callers leave it off), there's free text to match (a pure-semantic ``vector``
+    query has none), and the query is NOT scoped. A scoped query — ``bundle:``/
+    ``asset:`` refs, or ``scope_hints`` narrowing — means "search *inside* here",
+    where surfacing top-level folder name-matches is noise; the scoped asset
+    search (full AQL) takes over instead. Tagged ``field='title'`` so the
+    frontend's existing direct tier renders them among the name hits.
+    """
+    hints = body.scope_hints
+    if (
+        not body.include_folders
+        or body.mode == "vector"
+        or not parsed.has_text
+        or parsed.bundle_refs
+        or parsed.asset_refs
+        or hints.bundle_ids
+        or hints.asset_ids
+        or hints.parent_asset_id is not None
+    ):
+        return []
+    ranked = rank_bundles(session, infospace_id, parsed, access.scope, limit=10)
+    # Live counts — the denormalized Bundle.asset_count drifts for ingested folders.
+    counts = bundle_counts(session, [b.id for b, _ in ranked])
+    return [
+        _bundle_node(
+            b,
+            matches=[AssetMatch(field="title", score=None, snippet=None)],
+            asset_count=counts.get(b.id, (None, None))[0],
+            child_bundle_count=counts.get(b.id, (None, None))[1],
+        )
+        for b, _score in ranked
+    ]
+
+
 async def search_assets(
     session: Session,
     infospace_id: int,
@@ -119,6 +167,7 @@ async def search_assets(
         mode=_effective_mode(body, parsed),
         parsed=parsed,
         access_scope=access.scope,
+        lead_nodes=_folder_leads(session, infospace_id, body, parsed, access=access),
     )
 
 
@@ -139,5 +188,6 @@ async def stream_search_assets(
         mode=_effective_mode(body, parsed),
         parsed=parsed,
         access_scope=access.scope,
+        lead_nodes=_folder_leads(session, infospace_id, body, parsed, access=access),
     ):
         yield ev

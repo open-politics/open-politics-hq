@@ -433,6 +433,10 @@ class AssetSearchRequest(BaseModel):
     cursor: str | None = None
     sort: str = "relevance"
     scope_hints: AssetSearchScopeHints = Field(default_factory=AssetSearchScopeHints)
+    # Lead the results with ranked folder (bundle) name-matches — opt-in, for
+    # discovery surfaces (explore, the tree/picker). Off for asset-only callers
+    # (CSV-row drilldown, feeds, the chat search tool) so folders never intrude.
+    include_folders: bool = False
 
 
 class AssetFeedRequest(BaseModel):

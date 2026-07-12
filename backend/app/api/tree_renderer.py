@@ -31,6 +31,10 @@ def build_bundle_nodes(
         return []
 
     bids = [b.id for b in bundles]
+    # Live (asset, child-bundle) counts from DB truth — the denormalized
+    # Bundle.asset_count drifts for folders filled by ingestion (not recounted).
+    from app.api.modules.content.tree import bundle_counts
+    live_counts = bundle_counts(session, bids)
     enrichments: Dict[int, Dict[str, Any]] = {bid: {} for bid in bids}
 
     # 1. Active sources per bundle
@@ -118,6 +122,7 @@ def build_bundle_nodes(
     nodes = []
     for bundle in bundles:
         e = enrichments.get(bundle.id, {})
+        a_cnt, c_cnt = live_counts.get(bundle.id, (0, 0))
         asc = e.get("active_source_count", 0)
         ifc = e.get("input_flow_count", 0)
         ofc = e.get("output_flow_count", 0)
@@ -126,10 +131,10 @@ def build_bundle_nodes(
             id=f"bundle-{bundle.id}",
             type=TreeNodeType.BUNDLE,
             name=bundle.name,
-            has_children=(bundle.asset_count or 0) > 0 or (bundle.child_bundle_count or 0) > 0,
-            children_count=(bundle.asset_count or 0) + (bundle.child_bundle_count or 0),
-            asset_count=bundle.asset_count,
-            child_bundle_count=bundle.child_bundle_count,
+            has_children=(a_cnt > 0 or c_cnt > 0),
+            children_count=a_cnt + c_cnt,
+            asset_count=a_cnt,
+            child_bundle_count=c_cnt,
             sealed=bundle.sealed,
             parent_id=f"bundle-{bundle.parent_bundle_id}" if bundle.parent_bundle_id != 0 else None,
             updated_at=bundle.updated_at,
