@@ -54,6 +54,7 @@ export {
   getToolIcon,
   getStatusIcon,
   getStatusColorClass,
+  getStatusBorderClass,
   resolveMarkdownUrls,
   truncateText,
   isStructuredResult,

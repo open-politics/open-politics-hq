@@ -114,7 +114,7 @@ export function getStatusIcon(
 }
 
 /**
- * Get status color classes for tool execution states
+ * Get status color classes for tool execution states (filled tint — heavier).
  */
 export function getStatusColorClass(status: 'pending' | 'running' | 'completed' | 'failed'): string {
   switch (status) {
@@ -126,6 +126,24 @@ export function getStatusColorClass(status: 'pending' | 'running' | 'completed' 
       return 'bg-green-50 dark:bg-emerald-900/10 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800';
     case 'failed':
       return 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border-red-200 dark:border-red-800';
+  }
+}
+
+/**
+ * Status as a single accent-border color — no fill. Used to give a tool card a
+ * quiet, minimal left edge that signals state without the loud tinted block the
+ * filled variant produces.
+ */
+export function getStatusBorderClass(status: 'pending' | 'running' | 'completed' | 'failed'): string {
+  switch (status) {
+    case 'pending':
+      return 'border-gray-300 dark:border-gray-600';
+    case 'running':
+      return 'border-blue-400 dark:border-blue-500';
+    case 'completed':
+      return 'border-green-400/70 dark:border-green-500/50';
+    case 'failed':
+      return 'border-red-400 dark:border-red-500';
   }
 }
 

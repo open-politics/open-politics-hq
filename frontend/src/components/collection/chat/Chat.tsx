@@ -36,12 +36,14 @@ import {
   type PromptInputMessage,
 } from '@/components/ai-elements/prompt-input'
 import { useIntelligenceChat, ChatMessage, ToolExecution } from '@/hooks/useIntelligenceChat'
+import { useChatStore } from '@/zustand_stores/storeChat'
 import { useActiveJobsStore } from '@/zustand_stores/storeActiveJobs'
 import { JobProgressBanner } from './JobProgressBanner'
 import { useChatConversations } from '@/hooks/useChatConversations'
 import { ToolExecutionList } from './ToolExecutionIndicator'
 import { MessageContentWithToolResults } from './ChatMessage'
 import { AssistantMessageRenderer } from './MessageRenderer'
+import { isStagedSource } from './SourceConfirmCard'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
 import { IntelligenceChatService, EmbeddingsService, OpenAPI } from '@/client'
 import { ModelInfo } from '@/client'
@@ -111,6 +113,14 @@ interface IntelligenceChatProps {
    *  Used by the home inquiry bar's "Ask" mode (``/hq/chat?prompt=…``) so the
    *  user lands mid-answer instead of having to re-type and hit send. */
   initialPrompt?: string
+  /** Seed the chat with an existing conversation (loads its messages on mount).
+   *  Lets a relocated surface (panel ⇄ floating) pick up the same thread. */
+  initialConversationId?: number | null
+  /** Marks this instance as THE global operator companion. Only the companion
+   *  mirrors its conversationId into ``storeChat`` and runs the B4 stage-confirm
+   *  continuation — run/formula-scoped ``DockedChat`` instances must not, or they'd
+   *  clobber the companion's thread and fire spurious resumes. Default ``false``. */
+  companion?: boolean
 }
 
 type ContextDepth = 'titles' | 'previews' | 'full'
@@ -142,7 +152,7 @@ function ActiveJobBanners() {
   )
 }
 
-export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMutation, embedded = false, initialPrompt }: IntelligenceChatProps) {
+export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMutation, embedded = false, initialPrompt, initialConversationId, companion = false }: IntelligenceChatProps) {
   const [input, setInput] = useState('')
   const { selections, setSelection } = useProvidersStore()
   const selectedModel = selections.llm?.modelId || ''
@@ -328,6 +338,43 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
     run_id: runId,
     formula_id: formulaId,
   })
+
+  // B3/B4: mirror the active conversation into the shared chat store so a
+  // relocated surface picks up the thread, and resume when a staged form resolves.
+  const resolvedQueue = useChatStore(s => s.resolvedQueue)
+  const pendingReturns = useChatStore(s => s.pendingReturns)
+  const consumeResolved = useChatStore(s => s.consumeResolved)
+  const setStoreConversationId = useChatStore(s => s.setConversationId)
+
+  React.useEffect(() => {
+    if (!companion) return  // only the global companion owns the shared conversationId
+    setStoreConversationId(currentConversationId)
+  }, [companion, currentConversationId, setStoreConversationId])
+
+  // Resume the model ONCE, after EVERY staged form for this conversation is resolved
+  // (confirmed or cancelled) — so N confirmations produce a single continuation turn,
+  // not N (no chat-splitting, no resuming after the first). Never while the model is
+  // mid-turn; nothing dropped (it's a queue). While any form is still pending, we wait.
+  React.useEffect(() => {
+    if (!companion) return  // staged-form resumes belong to the operator companion only
+    if (isLoading) return
+    const mine = resolvedQueue.filter(r => r.conversationId === currentConversationId)
+    if (mine.length === 0) return
+    const stillPending = Object.values(pendingReturns).some(p => p.conversationId === currentConversationId)
+    if (stillPending) return
+    mine.forEach(r => consumeResolved(r.token))
+    const created = mine.filter(m => m.outcome?.status === 'created').length
+    const cancelled = mine.filter(m => m.outcome?.status === 'cancelled').length
+    const summary = [created ? `✓ ${created} confirmed` : '', cancelled ? `✗ ${cancelled} cancelled` : '']
+      .filter(Boolean).join(' · ') || '↩ Done'
+    const payload = JSON.stringify(mine.map(m => ({ token: m.token, ...m.outcome })))
+    // Stream the continuation like the main send. The post-confirm turn is the
+    // LONGEST one (start run → author formulas → build panels, often 8+ tool
+    // iterations); non-streaming would buffer the whole thing and the UI would sit
+    // on "Thinking…" with zero progress — the reported stall. Streaming surfaces each
+    // tool card as it lands.
+    void sendMessage(`<form_result>${payload}</form_result>`, { displayContent: summary, stream: streamEnabled })
+  }, [companion, resolvedQueue, pendingReturns, currentConversationId, isLoading])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live-update bridge — when the agent finishes a turn that mutates the
   // dashboard (formula_create/edit/delete, panel_create, observation_snapshot),
@@ -541,6 +588,16 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
       setShowConversations(false)
     }
   }
+
+  // B3: when mounted as a relocated surface, adopt the shared conversation once.
+  const adoptedConvRef = React.useRef(false)
+  React.useEffect(() => {
+    if (adoptedConvRef.current) return
+    if (initialConversationId && !currentConversationId) {
+      adoptedConvRef.current = true
+      void handleLoadConversation(initialConversationId)
+    }
+  }, [initialConversationId])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeleteConversation = async (conversationId: number) => {
     if (confirm('Are you sure you want to delete this conversation?')) {
@@ -1314,6 +1371,20 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
     handleSubmit({ text: prompt })
   }, [initialPrompt, isLoadingModels, selectedModel, activeInfospace?.id, messages.length, isLoading])
 
+  // The companion consumes a store-seeded prompt (home "Ask" bar / `/hq/chat?prompt=`),
+  // sending it into the live thread. Unlike initialPrompt this can fire more than once —
+  // any route can hand the operator a fresh question — so it clears after each send.
+  const seedPrompt = useChatStore((s) => s.seedPrompt)
+  const setSeedPrompt = useChatStore((s) => s.setSeedPrompt)
+  useEffect(() => {
+    if (!companion) return
+    const prompt = seedPrompt?.trim()
+    if (!prompt) return
+    if (isLoadingModels || !selectedModel || !activeInfospace?.id || isLoading) return
+    setSeedPrompt(null)
+    handleSubmit({ text: prompt })
+  }, [companion, seedPrompt, isLoadingModels, selectedModel, activeInfospace?.id, isLoading])  // eslint-disable-line react-hooks/exhaustive-deps
+
   const getToolIcon = (toolName: string) => {
     switch (toolName) {
       case 'search_assets': return <Search className="h-4 w-4" />
@@ -1359,16 +1430,26 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
     
     const toolExecutions = message.tool_executions || []
     const nonTaskExecutions = toolExecutions.filter(exec => exec.tool_name !== 'tasks')
-    const showToolSidebar = nonTaskExecutions.length > 0 || hasTasks
+    // Staged sources render as an always-inline confirm card in the main column,
+    // so keep them out of the desktop tool sidebar (else they'd show twice).
+    const sidebarExecutions = nonTaskExecutions.filter(exec => !isStagedSource(exec))
+    const showToolSidebar = sidebarExecutions.length > 0 || hasTasks
+
+    // Auto-expand the latest tool result only while THIS message is still being
+    // generated — it's the last message and the stream is live. Once it ends
+    // (isLoading flips false), this goes false and every card collapses, so a
+    // finished turn leaves a clean, all-closed stack.
+    const isStreamingMessage =
+      isLoading && !isUser && messages[messages.length - 1]?.id === message.id
 
     return (
       <div key={message.id} className={cn(
-        "flex gap-2 sm:gap-3 p-2 sm:p-4",
+        "flex gap-2 sm:gap-3 p-2 sm:p-4 scrollbar-hide",
         isUser ? "justify-end" : "justify-start"
       )}>
         <div className={cn(
-          "flex flex-col @xl:flex-row gap-3 w-full max-w-full overflow-hidden",
-          isUser ? "items-end @xl:items-start" : "items-start"
+          "flex flex-col @3xl:flex-row gap-3 w-full max-w-full overflow-hidden scrollbar-hide",
+          isUser ? "items-end @3xl:items-start" : "items-start"
         )}>
           <div className={cn(
             "flex gap-1.5 sm:gap-3 flex-1 min-w-0 max-w-full",
@@ -1385,8 +1466,8 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
               "rounded-lg px-2.5 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm relative group flex-1 min-w-0 overflow-hidden",
               "",
               isUser
-                ? "bg-primary text-primary-foreground min-w-0 max-w-[40vw]"
-                : "bg-muted @xl:max-w-[60vw]"
+                ? "bg-primary text-primary-foreground min-w-0 max-w-[40cqw]"
+                : "bg-muted @3xl:max-w-[60cqw]"
             )}>
             {isEditing ? (
               // Edit mode for user messages
@@ -1492,8 +1573,22 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                     onAssetClick={openAssetDetail}
                     onBundleClick={handleBundleClick}
                     hideTaskTools={hasTasks}
-                    collapseToolsOnDesktop={nonTaskExecutions.length > 0}
+                    collapseToolsOnDesktop={sidebarExecutions.length > 0}
+                    autoExpandLast={isStreamingMessage}
                   />
+                )}
+
+                {/* Tool activity — one collapsible panel. Inline on mobile (the
+                    sidebar is desktop-only); open only while this turn streams. */}
+                {!isUser && sidebarExecutions.length > 0 && (
+                  <div className="@3xl:hidden mt-2">
+                    <MessageToolPanel
+                      toolExecutions={sidebarExecutions}
+                      onAssetClick={openAssetDetail}
+                      onBundleClick={handleBundleClick}
+                      defaultOpen={isStreamingMessage}
+                    />
+                  </div>
                 )}
 
                 <div className="flex items-center justify-between mt-1 gap-1">
@@ -1543,12 +1638,14 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
           
           {/* Tool Sidebar - shown on wide containers */}
           {showToolSidebar && (
-            <div className="hidden @xl:flex @xl:max-w-[32.5vw] flex-col gap-3 min-w-0 shrink sticky top-4 self-start max-h-[calc(100vh-2rem)] overflow-y-auto overflow-x-hidden">
-              {nonTaskExecutions.length > 0 && (
+            <div className="hidden @3xl:flex @3xl:max-w-[32.5cqw] flex-col gap-3 min-w-0 shrink sticky top-4 self-start max-h-[calc(100vh-2rem)] overflow-y-auto scrollbar-hide overflow-x-hidden">
+              {sidebarExecutions.length > 0 && (
                 <MessageToolPanel
-                  toolExecutions={nonTaskExecutions}
+                  toolExecutions={sidebarExecutions}
                   onAssetClick={openAssetDetail}
                   onBundleClick={handleBundleClick}
+                  defaultOpen={isStreamingMessage}
+                  autoExpandLast={isStreamingMessage}
                 />
               )}
               {hasTasks && (
@@ -1580,10 +1677,14 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
   return (
     <div className={cn(
       // ``@container`` makes the chat its own container-query reference so the
-      // ``@xl:*`` rules in renderMessage / MessageRenderer evaluate against the
-      // chat's own width — not the viewport. In the 440px DockedChat this
-      // keeps the narrow layout (inline tool indicators, no sidebar). In the
-      // full-page workspace chat the sidebar layout activates as designed.
+      // ``@3xl:*`` breakpoints AND the ``cqw`` width caps in renderMessage /
+      // MessageRenderer evaluate against the chat's own width — not the viewport.
+      // This is what makes the layout respect the resizable detail panel: when a
+      // bundle/asset opens on the right and shrinks this column, ``cqw`` shrinks
+      // with it (a ``vw`` cap would keep sizing to the untouched viewport and let
+      // the tool sidebar crowd out the conversation). Below ``@3xl`` tools stack
+      // under the message so the chat always has precedence; in the 440px
+      // DockedChat this keeps the narrow inline layout with no sidebar.
       "@container flex gap-4 flex-1 overflow-hidden",
       embedded
         ? "h-full min-h-0 max-h-full"
@@ -1743,13 +1844,15 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
         )}
       </AnimatePresence>
 
-      {/* Main Chat Card */}
-      <Card variant="no-border" className="flex flex-col flex-1 w-full shadow-none">
+      {/* Main Chat Card. Named container (`/chat`) so the toolbar + input adapt to
+          the *panel* width, not the viewport — a narrow docked operator on a wide
+          screen gets the compact layout instead of overflowing. */}
+      <Card variant="no-border" className="@container/chat flex flex-col flex-1 w-full shadow-none !scrollbar-hide">
         <CardHeader className="flex-none border-b py-2 sm:py-2.5 px-2 sm:px-3 md:px-4">
-          {/* two rows on mobile: (1) nav+toggles+actions (2) model selector; one row on large with distinct sections */}
-          <div className="flex flex-col lg:flex-row lg:items-center gap-2 sm:gap-2.5 md:gap-2 lg:gap-3">
-            {/* Mobile Row 1: Navigation on left, Toggles + Actions on right */}
-            <div className="flex items-center gap-1.5 sm:gap-2 justify-between lg:hidden">
+          {/* compact: (1) nav+toggles+actions (2) model selector; wide: one row with distinct sections */}
+          <div className="flex flex-col @2xl/chat:flex-row @2xl/chat:items-center gap-2 sm:gap-2.5 @2xl/chat:gap-3">
+            {/* Compact Row 1: Navigation on left, Toggles + Actions on right */}
+            <div className="flex items-center gap-1.5 sm:gap-2 justify-between @2xl/chat:hidden">
               {/* Left side: History + New */}
               {!showConversations && (
                 <ButtonGroup>
@@ -1904,10 +2007,10 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
               </div>
             </div>
 
-            {/* Desktop Layout: Three distinct sections */}
+            {/* Wide Layout: Three distinct sections */}
             {/* Section 1: Navigation */}
             {!showConversations && (
-              <div className="hidden lg:block">
+              <div className="hidden @2xl/chat:block">
                 <ButtonGroup>
                   <TooltipProvider>
                     <Tooltip>
@@ -1957,15 +2060,17 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
               </div>
             )}
 
-            {/* Section 2: Model Selector - shown on desktop, row 2 on mobile */}
-            <div className="lg:flex-1 lg:flex lg:justify-center">
-              <div className="lg:hidden">
+            {/* Section 2: Model Selector — merged single select when the panel is
+                narrow, provider + model side-by-side when it's wide. */}
+            <div className="@2xl/chat:flex-1 @2xl/chat:flex @2xl/chat:justify-center">
+              <div className="@2xl/chat:hidden">
                 <ProviderSelector
                   showModels={true}
+                  merged
                   className="text-xs sm:text-sm"
                 />
               </div>
-              <div className="hidden lg:block">
+              <div className="hidden @2xl/chat:block">
                 <ProviderSelector
                   showModels={true}
                   className="text-xs sm:text-sm"
@@ -1973,8 +2078,8 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
               </div>
             </div>
 
-            {/* Section 3: Toggles + Actions (desktop only, mobile has it in row 1) */}
-            <div className="hidden lg:flex items-center gap-2 shrink-0">
+            {/* Section 3: Toggles + Actions (wide only; compact has it in row 1) */}
+            <div className="hidden @2xl/chat:flex items-center gap-2 shrink-0">
               {/* Compact Toggles */}
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted/30">
                 <TooltipProvider>
@@ -2102,9 +2207,9 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
           )}
         </CardHeader>
 
-        <CardContent className="flex-1 flex flex-col min-h-0 p-0 scrollbar-hide">
-          <Conversation className="flex-1">
-            <ConversationContent className="px-2 sm:px-4 scrollbar-hide">
+        <CardContent className="flex-1 flex flex-col min-h-0 p-0 !scrollbar-hide">
+          <Conversation className="flex-1 !scrollbar-hide">
+            <ConversationContent className="px-2 sm:px-4 !scrollbar-hide">
               {/* Task Tracker - Sticky at top of conversation */}
               <PersistentTaskTracker messages={messages} />
               
@@ -2129,44 +2234,41 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                 <ConversationEmptyState
                   icon={<Bot className="h-10 w-10 sm:h-12 sm:w-12" />}
                   title="Start a conversation with your intelligence data"
-                  description="Try asking about your documents, searching for assets, or analyzing content"
+                  description="Ask about your documents, search assets, or analyze content"
                 >
-                  <div className="mt-4 space-y-3 text-xs sm:text-sm text-muted-foreground">
+                  <div className="mt-4 mx-auto w-full max-w-sm space-y-4 text-xs sm:text-sm text-muted-foreground">
                     <div>
-                      <p className="mb-1 font-medium">Try asking:</p>
-                      <ul className="text-left space-y-1">
-                        <li>• "What are the main themes in recent documents?"</li>
-                        <li>• "Search for assets about climate policy"</li>
-                        <li className="hidden sm:list-item">• "Analyze sentiment in the latest articles"</li>
-                        <li className="hidden sm:list-item">• "Create a summary report of key findings"</li>
+                      <p className="mb-1.5 font-medium text-foreground/70">Try asking</p>
+                      <ul className="space-y-1 text-left">
+                        {[
+                          'What are the main themes in recent documents?',
+                          'Search for assets about climate policy',
+                          'Analyze sentiment in the latest articles',
+                          'Create a summary report of key findings',
+                        ].map((q) => (
+                          <li key={q} className="flex gap-1.5">
+                            <span className="select-none text-muted-foreground/40">•</span>
+                            <span className="min-w-0">&ldquo;{q}&rdquo;</span>
+                          </li>
+                        ))}
                       </ul>
                     </div>
-                    <div className="pt-2 border-t border-border/50">
-                      <p className="mb-2 font-medium">Keyboard shortcuts:</p>
-                      <div className="flex flex-col gap-1.5 text-xs">
-                        <div className="flex items-center gap-2">
-                          <Kbd>@</Kbd>
-                          <span>add context assets</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Kbd>#word</Kbd>
-                          <span>or</span>
-                          <Kbd>#"phrase"</Kbd>
-                          <span>auto vector search in your information space</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Kbd>/</Kbd>
-                          <span>focus input</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Kbd>Ctrl+N</Kbd>
-                          <span>new chat</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Kbd>Ctrl+H</Kbd>
-                          <span>toggle history</span>
-                        </div>
-                      </div>
+                    {/* Aligned two-column grid — the key column stays put so wrapped
+                        descriptions don't stagger (the old flow overlapped at width). */}
+                    <div className="border-t border-border/50 pt-3">
+                      <p className="mb-2 font-medium text-foreground/70">Shortcuts</p>
+                      <dl className="grid grid-cols-[auto_1fr] items-center gap-x-2.5 gap-y-1.5 text-left">
+                        <dt><Kbd>@</Kbd></dt>
+                        <dd className="min-w-0">add context</dd>
+                        <dt className="flex items-center gap-1"><Kbd>#word</Kbd><Kbd>#"phrase"</Kbd></dt>
+                        <dd className="min-w-0">vector search</dd>
+                        <dt><Kbd>/</Kbd></dt>
+                        <dd className="min-w-0">focus input</dd>
+                        <dt><Kbd>Ctrl+N</Kbd></dt>
+                        <dd className="min-w-0">new chat</dd>
+                        <dt><Kbd>Ctrl+H</Kbd></dt>
+                        <dd className="min-w-0">toggle history</dd>
+                      </dl>
                     </div>
                   </div>
                 </ConversationEmptyState>
@@ -2181,7 +2283,7 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                         executions={activeToolExecutions}
                         compact={false}
                         onAssetClick={openAssetDetail}
-                        onBundleClick={() => { }}
+                        onBundleClick={handleBundleClick}
                       />
                     </div>
                   )}
@@ -2380,9 +2482,11 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                 <PromptInput onSubmit={handleSubmit}>
                   <PromptInputBody className="text-left">
                     <div className="relative w-full">
-                      {/* Keyboard shortcuts hint - desktop only, hidden after first typed text */}
+                      {/* In-box shortcut hint — only when the panel is wide enough that
+                          it won't collide with the placeholder (narrow panels rely on
+                          the empty-state list instead). Hidden once you start typing. */}
                       {input.trim().length === 0 && (
-                        <div className="hidden sm:flex absolute top-2 right-2 items-center gap-2 mr-1 text-xs text-muted-foreground pointer-events-none z-10">
+                        <div className="hidden @2xl/chat:flex absolute top-2 right-2 items-center gap-2 mr-1 text-xs text-muted-foreground pointer-events-none z-10">
                           <div className="flex items-center gap-1">
                             <Kbd>@</Kbd>
                             <span className="text-[10px]">context</span>

@@ -1,12 +1,14 @@
 'use client'
 
 import { useState, useCallback, useRef } from 'react'
+import { usePathname } from 'next/navigation'
 import { IntelligenceChatService } from '@/client'
 import { ChatRequest, ChatResponse, ToolCallRequest } from '@/client'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
 import { useProvidersStore } from '@/zustand_stores/storeProviders'
 import { toast } from 'sonner'
 import { connectSSE } from '@/lib/sse'
+import { directiveFromExecution, dispatchDirective } from '@/components/collection/chat/directives/dispatchDirective'
 
 export interface ToolExecution {
   id: string
@@ -78,7 +80,23 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
   const [activeToolExecutions, setActiveToolExecutions] = useState<ToolExecution[]>([])
   const { activeInfospace } = useInfospaceStore()
   const { apiKeys } = useProvidersStore()
+  const pathname = usePathname()  // so the operator knows which page the user is on
   const abortControllerRef = useRef<AbortController | null>(null)
+  // Fire each tool result's ui_directive exactly once, even though streaming
+  // REPLACES the whole executions array on every chunk. Keyed by execution id.
+  const dispatchedDirectiveIds = useRef<Set<string>>(new Set())
+
+  const maybeDispatchDirectives = useCallback((execs: ToolExecution[]) => {
+    for (const ex of execs) {
+      if (ex.status !== 'completed') continue
+      if (dispatchedDirectiveIds.current.has(ex.id)) continue
+      const directive = directiveFromExecution(ex)
+      if (directive) {
+        dispatchedDirectiveIds.current.add(ex.id)
+        dispatchDirective(directive)
+      }
+    }
+  }, [])
 
   const sendMessage = useCallback(async (
     content: string,
@@ -153,6 +171,7 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
         agent: (customOptions as any)?.agent ?? (options as any).agent,
         run_id: (customOptions as any)?.run_id ?? (options as any).run_id,
         formula_id: (customOptions as any)?.formula_id ?? (options as any).formula_id,
+        current_route: pathname || undefined,
       } as ChatRequest
       
       if (chatRequest.stream) {
@@ -174,10 +193,21 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
             signal: controller.signal,
             onEvent: (event) => {
               if (event.type === 'error') {
-                try {
-                  const err = JSON.parse(event.data)
-                  console.error('[useIntelligenceChat] SSE error:', err.detail)
-                } catch { /* ignore parse errors */ }
+                // Surface the failure instead of swallowing it. A silent `return`
+                // here leaves the SSE stream open and `isLoading` stuck on
+                // "Thinking…" forever (the stall seen after a staged-form resume).
+                // We render the error inline, then abort so the stream closes and
+                // the `finally` clears loading — visible and recoverable.
+                let detail = 'The operator hit an error and stopped.'
+                try { detail = JSON.parse(event.data)?.detail || detail } catch { /* keep default */ }
+                console.error('[useIntelligenceChat] SSE error:', detail)
+                setError(detail)
+                current = { ...current, content: (current.content ? current.content + '\n\n' : '') + `⚠️ ${detail}` }
+                const snapshot = current
+                if (!messageAddedToUI) { setMessages(prev => [...prev, snapshot]); messageAddedToUI = true }
+                else { setMessages(prev => prev.map(m => m.id === snapshot.id ? snapshot : m)) }
+                toast.error(detail)
+                try { controller.abort() } catch { /* already gone */ }
                 return
               }
               if (event.type !== 'chunk') return
@@ -197,6 +227,7 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
                     timestamp: exec.timestamp ? new Date(exec.timestamp) : new Date()
                   }))
                   current = { ...current, tool_executions: enrichedExecutions }
+                  maybeDispatchDirectives(enrichedExecutions)
                   updated = true
                 }
                 if (obj.tool_calls) {
@@ -259,6 +290,7 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
               timestamp: exec.timestamp ? new Date(exec.timestamp) : new Date()
             } as ToolExecution))
           : undefined
+        if (enrichedExecutions) maybeDispatchDirectives(enrichedExecutions)
 
         const assistantMessage: ChatMessage = {
           id: `assistant-${Date.now()}`,
@@ -422,6 +454,7 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
 
   const clearMessages = useCallback(() => {
     setMessages([])
+    dispatchedDirectiveIds.current.clear()
     setError(null)
     setActiveToolExecutions([])
   }, [])

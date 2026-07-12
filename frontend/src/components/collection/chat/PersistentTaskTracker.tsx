@@ -73,7 +73,9 @@ function extractTasksFromMessages(messages: ChatMessage[]): Task[] {
  * Sticky Task Tracker for Chat Header
  */
 export function PersistentTaskTracker({ messages }: PersistentTaskTrackerProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  // Folded by default — the header (count + progress bar) is enough at a glance;
+  // expand for the full task list.
+  const [isExpanded, setIsExpanded] = useState(false);
   const tasks = extractTasksFromMessages(messages);
 
   // Group tasks by status

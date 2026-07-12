@@ -11,7 +11,7 @@ export type ConversationProps = ComponentProps<typeof StickToBottom>;
 
 export const Conversation = ({ className, ...props }: ConversationProps) => (
   <StickToBottom
-    className={cn("relative flex-1 overflow-y-auto scrollbar-hide", className)}
+    className={cn("relative flex-1 overflow-y-auto !scrollbar-hide", className)}
     initial="smooth"
     resize="smooth"
     role="log"
@@ -27,7 +27,7 @@ export const ConversationContent = ({
   className,
   ...props
 }: ConversationContentProps) => (
-  <StickToBottom.Content className={cn("p-4 scrollbar-hide", className)} {...props} />
+  <StickToBottom.Content className={cn("p-4", className)} {...props} />
 );
 
 export type ConversationEmptyStateProps = ComponentProps<"div"> & {
@@ -46,7 +46,7 @@ export const ConversationEmptyState = ({
 }: ConversationEmptyStateProps) => (
   <div
     className={cn(
-      "flex size-full flex-col items-center justify-center gap-3 p-8 text-center",
+      "flex size-full flex-col items-center justify-center gap-3 p-8 text-center !scrollbar-hide",
       className
     )}
     {...props}

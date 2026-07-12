@@ -28,11 +28,15 @@ import {
   ExternalLink,
   Link as LinkIcon,
   XCircle,
-  Repeat
+  Repeat,
+  Loader2,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
-import { useDock } from '@/zustand_stores/storeDock';
+import { SourceForm } from '@/components/collection/intake/sources/SourceForm';
 import { SearchResultViewer, SearchResultData } from '@/components/collection/intake/shared/ResultViewer';
 import { SearchResultIngestor } from '@/components/collection/intake/shared/ResultIngestor';
+import { useIngestionJobStatus } from '@/hooks/useIngestionJobStatus';
 import { cn } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 
@@ -48,14 +52,155 @@ export interface SearchWebResult {
  * The current ``web_research`` MCP tool nests its search payload under
  * ``result.search`` (and may also carry ``result.ingestion``). The legacy
  * ``search_web`` returned the search fields at the top level. Unwrap so the
- * same renderer handles both shapes — alias-registered for both tool names.
+ * same renderer handles every shape — alias-registered for both tool names:
+ *   • nested search (+ optional ingestion)  → web_research with a query
+ *   • flat search                           → legacy search_web
+ *   • ingestion only, no search             → web_research(ingest_urls=…)
  */
 function _unwrap(result: any): { search: any; ingestion: any | null } {
-  if (!result || typeof result !== 'object') return { search: result, ingestion: null };
+  if (!result || typeof result !== 'object') return { search: null, ingestion: null };
+  const ingestion = (result.ingestion && typeof result.ingestion === 'object') ? result.ingestion : null;
+  // Nested shape (web_research with a search).
   if (result.search && typeof result.search === 'object' && Array.isArray(result.search.results)) {
-    return { search: result.search, ingestion: result.ingestion ?? null };
+    return { search: result.search, ingestion };
   }
-  return { search: result, ingestion: null };
+  // Legacy flat shape (search_web): results at the top level.
+  if (Array.isArray(result.results)) {
+    return { search: result, ingestion };
+  }
+  // No search payload — e.g. ingest-only web_research. Keep ``search`` null so the
+  // renderer shows just the ingestion indicator instead of an empty search header.
+  return { search: null, ingestion };
+}
+
+/**
+ * Live, status-aware ingestion summary.
+ *
+ * The async-intake rework means a ``web_research`` ingestion returns
+ * ``{status:"queued", job_id, urls_processed, bundle_id}`` — work is *minted*,
+ * not finished. The stored tool result is a frozen snapshot, so on its own it
+ * would read "queued" forever. We therefore attach to the ``IngestionJob`` by
+ * id (``useIngestionJobStatus``) and let the indicator advance on its own:
+ * queued → processing (with progress) → ingested / failed. Polling stops the
+ * moment the job settles. Older synchronous shapes (``ingested`` /
+ * ``assets_created`` / ``asset_ids``) and snapshots with no ``job_id`` render
+ * statically from whatever the payload carried. The destination bundle is
+ * clickable so the user can jump straight to where the documents land.
+ */
+function IngestionIndicator({
+  ingestion,
+  onBundleClick,
+}: {
+  ingestion: any;
+  onBundleClick?: (bundleId: number) => void;
+}) {
+  const obj = (ingestion && typeof ingestion === 'object') ? ingestion : null;
+  const snapshotStatus = String(obj?.status ?? '').toLowerCase();
+  const jobId: number | undefined =
+    typeof obj?.job_id === 'number'
+      ? obj.job_id
+      : (Array.isArray(obj?.ingestion_job_ids) && typeof obj.ingestion_job_ids[0] === 'number'
+          ? obj.ingestion_job_ids[0]
+          : undefined);
+
+  // Only poll while the snapshot says the work isn't finished — a terminal
+  // snapshot (or one with no job to follow) renders statically. Hook is called
+  // unconditionally (rules-of-hooks) and no-ops when disabled / jobId is null.
+  const observe =
+    !!obj &&
+    snapshotStatus !== 'noop' &&
+    !['completed', 'failed', 'cancelled'].includes(snapshotStatus);
+  const liveJob = useIngestionJobStatus(jobId ?? null, { enabled: observe });
+
+  if (!obj || snapshotStatus === 'noop') return null;
+
+  // Effective state: prefer the live job once we have it, else the snapshot.
+  // The snapshot's synthetic "queued" maps onto the active band below.
+  const effStatus = (liveJob?.status ?? snapshotStatus) as string;
+  const isFailed = ['failed', 'cancelled'].includes(effStatus);
+  const isDone = effStatus === 'completed';
+  const isActive = !isFailed && !isDone;
+
+  const total =
+    liveJob?.total_files ??
+    obj.urls_processed ??
+    obj.ingested ??
+    obj.assets_created ??
+    (Array.isArray(obj.assets) ? obj.assets.length : undefined) ??
+    (Array.isArray(obj.asset_ids) ? obj.asset_ids.length : undefined) ??
+    0;
+  const processed =
+    liveJob?.processed_files ??
+    obj.ingested ??
+    obj.assets_created ??
+    (isDone ? total : 0);
+  const failed = liveJob?.failed_files ?? obj.failed ?? obj.urls_failed ?? 0;
+  const bundleId: number | null = obj.bundle_id ?? liveJob?.root_bundle_id ?? null;
+  const hasFailures = failed > 0;
+
+  const noun = (n: number) => (n === 1 ? 'URL' : 'URLs');
+
+  // Icon + tone per phase. Done-with-failures and outright failure both warn.
+  const Icon = isActive ? Loader2 : isFailed ? AlertCircle : hasFailures ? AlertCircle : CheckCircle2;
+  const tone = isActive
+    ? 'bg-blue-50/60 dark:bg-blue-950/20 border-blue-200/70 dark:border-blue-900/50'
+    : isFailed
+      ? 'bg-red-50/60 dark:bg-red-950/20 border-red-200/70 dark:border-red-900/50'
+      : hasFailures
+        ? 'bg-yellow-50/60 dark:bg-yellow-950/20 border-yellow-200/70 dark:border-yellow-900/50'
+        : 'bg-green-50/60 dark:bg-green-950/20 border-green-200/70 dark:border-green-900/50';
+  const iconTone = isActive
+    ? 'text-blue-600 dark:text-blue-400 animate-spin'
+    : isFailed
+      ? 'text-red-600 dark:text-red-400'
+      : hasFailures
+        ? 'text-yellow-600 dark:text-yellow-400'
+        : 'text-green-600 dark:text-green-400';
+
+  // Lead text per phase.
+  let lead: React.ReactNode;
+  if (isFailed) {
+    lead = <>Ingestion {effStatus === 'cancelled' ? 'cancelled' : 'failed'}</>;
+  } else if (isDone) {
+    lead = <>Ingested <span className="font-medium">{processed}</span> {noun(processed)}</>;
+  } else if (liveJob && processed > 0 && total > 0) {
+    // Mid-flight with progress.
+    lead = <>Ingesting <span className="font-medium">{processed}/{total}</span> {noun(total)}</>;
+  } else {
+    lead = <>Queued <span className="font-medium">{total}</span> {noun(total)}</>;
+  }
+
+  return (
+    <div className={cn("flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[11px] min-w-0", tone)}>
+      <Icon className={cn("h-3.5 w-3.5 shrink-0", iconTone)} />
+      <span className="min-w-0 flex-1 truncate text-foreground/90">
+        {lead}
+        {bundleId != null && !isFailed && (
+          <>
+            {' '}into{' '}
+            {onBundleClick ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onBundleClick(bundleId); }}
+                className="font-medium text-primary hover:underline"
+              >
+                bundle #{bundleId}
+              </button>
+            ) : (
+              <span className="font-medium">bundle #{bundleId}</span>
+            )}
+          </>
+        )}
+        {hasFailures && !isFailed && <span className="text-red-500"> · {failed} failed</span>}
+        {isFailed && liveJob?.error_message && (
+          <span className="text-red-500/90"> · {liveJob.error_message}</span>
+        )}
+      </span>
+      {jobId != null && (
+        <span className="shrink-0 text-muted-foreground tabular-nums">job #{jobId}</span>
+      )}
+    </div>
+  );
 }
 
 export const SearchWebRenderer = {
@@ -67,6 +212,9 @@ export const SearchWebRenderer = {
     if (Array.isArray(result.results) && 'provider' in result) return true;
     // Nested shape (web_research)
     if (result.search && typeof result.search === 'object' && Array.isArray(result.search.results)) return true;
+    // Ingest-only / search+ingest — claim it so the ingestion indicator renders
+    // instead of the result falling back to a raw-JSON "Operation completed" card.
+    if (result.ingestion && typeof result.ingestion === 'object') return true;
     // Error / noop status pings from web_research
     if (result.status === 'failed' || result.status === 'noop' || result.error) return true;
     return false;
@@ -78,13 +226,16 @@ export const SearchWebRenderer = {
     return `Found ${search.total_found ?? search.results.length} results from ${search.provider ?? 'web'}`;
   },
 
-  render: function Render({ result, compact }: ToolResultRenderProps) {
+  render: function Render({ result, compact, onBundleClick }: ToolResultRenderProps) {
     const { search, ingestion } = _unwrap(result);
     const searchResult = (search ?? {}) as SearchWebResult;
+    const hasSearch = !!search && Array.isArray((search as any).results);
     const selection = useSelection();
     const [viewingResult, setViewingResult] = useState<SearchResultData | null>(null);
     const [showIngestor, setShowIngestor] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    // Turn this search into a recurring source — confirmed inline, right here.
+    const [showRecurrent, setShowRecurrent] = useState(false);
 
     // Handle error cases — error metadata lives at the top of the original result,
     // not the unwrapped search object, so check the raw payload too.
@@ -108,9 +259,20 @@ export const SearchWebRenderer = {
       );
     }
     
+    // Ingest-only web_research (no query) — there's no search payload to show,
+    // just the ingestion indicator. Same in compact and full so it stays tidy
+    // wherever it renders (inline card or side panel).
+    if (!hasSearch && ingestion) {
+      return (
+        <div className="p-3 min-w-0 overflow-hidden">
+          <IngestionIndicator ingestion={ingestion} onBundleClick={onBundleClick} />
+        </div>
+      );
+    }
+
     const results = searchResult.results || [];
     const hasResults = results.length > 0;
-    
+
     // Filter results based on search
     const filteredResults = results.filter(r => 
       !searchTerm || 
@@ -209,20 +371,11 @@ export const SearchWebRenderer = {
               </Button>
               {searchResult.query && (
                 <Button
-                  variant="outline"
+                  variant={showRecurrent ? 'default' : 'outline'}
                   size="sm"
                   className="h-7 px-2 text-[10px] shrink-0"
-                  title="Turn this search into a recurrent source"
-                  onClick={() => useDock.getState().openSourceForm({
-                    init: {
-                      kind: 'web_search',
-                      name: searchResult.query,
-                      config: { query: searchResult.query },
-                      startStep: 'stream',
-                      lockKind: true,
-                      layout: 'stepped',
-                    },
-                  })}
+                  title="Turn this search into a recurring source"
+                  onClick={() => setShowRecurrent((s) => !s)}
                 >
                   <Repeat className="h-3 w-3 mr-1" />
                   Recurrent
@@ -239,6 +392,25 @@ export const SearchWebRenderer = {
                 </Button>
               )}
             </div>
+          )}
+
+          {/* Recurrent source — confirmed inline, no dock detour. Seeded from this
+              search; kind locked to web_search. */}
+          {showRecurrent && searchResult.query && (
+            <SourceForm
+              init={{
+                kind: 'web_search',
+                name: searchResult.query,
+                config: { query: searchResult.query },
+                streamEnabled: true,
+                lockKind: true,
+              }}
+              mode="inline"
+              fullscreen={false}
+              escalate={() => {}}
+              close={() => setShowRecurrent(false)}
+              onSuccess={() => setShowRecurrent(false)}
+            />
           )}
 
           {/* Results list — plain overflow-y-auto so the scroll container is
@@ -381,23 +553,11 @@ export const SearchWebRenderer = {
             </div>
           )}
 
-          {/* Ingestion summary — only present when web_research auto-ingested */}
+          {/* Ingestion indicator — present when web_research auto-ingested alongside
+              the search. Status-aware (queued vs done), see IngestionIndicator. */}
           {ingestion && (
-            <div className="pt-2 mt-2 border-t flex items-center gap-2 text-[10px] text-muted-foreground">
-              <Download className="h-3 w-3" />
-              <span>
-                Ingested{' '}
-                <span className="font-medium text-foreground">
-                  {ingestion.ingested ?? ingestion.assets?.length ?? 0}
-                </span>{' '}
-                {(ingestion.ingested ?? ingestion.assets?.length ?? 0) === 1 ? 'asset' : 'assets'}
-                {ingestion.bundle_id != null && (
-                  <> into bundle <span className="font-medium text-foreground">{ingestion.bundle_id}</span></>
-                )}
-                {ingestion.failed != null && ingestion.failed > 0 && (
-                  <> · <span className="text-red-500">{ingestion.failed} failed</span></>
-                )}
-              </span>
+            <div className="pt-2 mt-2 border-t">
+              <IngestionIndicator ingestion={ingestion} onBundleClick={onBundleClick} />
             </div>
           )}
         </div>

@@ -32,7 +32,7 @@ import {
 import { ToolExecution } from '@/hooks/useIntelligenceChat'
 import { cn } from '@/lib/utils'
 import { toolResultRegistry, ToolResultDisplay, initializeToolRenderers } from './toolcalls'
-import { getStatusIcon, getStatusColorClass, formatToolName } from './toolcalls/shared/utils'
+import { getStatusIcon, getStatusBorderClass, formatToolName } from './toolcalls/shared/utils'
 import { StructuredToolResponse } from './StructuredToolResponse'
 
 // Ensure renderers are initialized (defensive - should already happen via import)
@@ -87,11 +87,11 @@ export function ToolExecutionIndicator({ execution, compact = false, onAssetClic
     return (
       // min-w-0 + overflow-hidden so the rendered card content is bounded by the
       // host width and can wrap/clip instead of pushing the chat bubble wider.
-      <div className=" border bg-background/50 overflow-hidden min-w-0">
+      <div className="rounded-sm border border-border/50 overflow-hidden min-w-0">
         <div
           className={cn(
-            "flex items-center gap-2 p-2 min-w-0",
-            hasResult && "cursor-pointer  transition"
+            "flex items-center gap-2 p-1.5 min-w-0",
+            hasResult && "cursor-pointer transition-colors hover:bg-muted/40"
           )}
           onClick={hasResult ? () => setIsExpanded(!isExpanded) : undefined}
           role={hasResult ? "button" : undefined}
@@ -168,8 +168,9 @@ export function ToolExecutionIndicator({ execution, compact = false, onAssetClic
   return (
     // min-w-0 + overflow-hidden so the host gives the renderer a bounded width
     // to wrap inside (long URLs / titles otherwise push the card past the
-    // surrounding chat bubble).
-    <div className={cn(" border-l-2 bg-card transition-all duration-200 min-w-0 overflow-hidden", getStatusColorClass(execution.status))}>
+    // surrounding chat bubble). A quiet status-colored left edge replaces the
+    // old filled tint — state at a glance without the loud block.
+    <div className={cn("border-l-2 transition-colors min-w-0 overflow-hidden", getStatusBorderClass(execution.status))}>
       <div className="min-w-0">
         <div
           className={cn(

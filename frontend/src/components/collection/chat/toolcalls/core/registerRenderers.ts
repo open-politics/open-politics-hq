@@ -23,6 +23,7 @@ import { ListRunsRenderer } from '../renderers/ListRunsRenderer';
 import { WorkingMemoryRenderer } from '../renderers/WorkingMemoryRenderer';
 import { TasksRenderer } from '../renderers/TasksRenderer';
 import { AnalysisHubRenderer } from '../renderers/AnalysisHubRenderer';
+import { ObserveRenderer } from '../renderers/ObserveRenderer';
 
 let isInitialized = false;
 
@@ -49,7 +50,9 @@ export function initializeToolRenderers(): void {
   toolResultRegistry.register(GetRunDashboardRenderer);
   toolResultRegistry.register(ListRunsRenderer);
   toolResultRegistry.register(AnalysisHubRenderer);
-  
+  // Live inline watcher for run/job progress (observe results).
+  toolResultRegistry.register(ObserveRenderer);
+
   // Operation tools (minimal, confirmatory)
   toolResultRegistry.register(OrganizeRenderer);
   toolResultRegistry.register(AssetCrudRenderer);
