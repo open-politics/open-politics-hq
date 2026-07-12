@@ -32,7 +32,7 @@ export interface SourceFormInit {
   layout?: 'compact' | 'stepped';
 }
 
-export function useSourceForm(init?: SourceFormInit, onSuccess?: () => void) {
+export function useSourceForm(init?: SourceFormInit, onSuccess?: (result: any) => void) {
   const { createSource, updateSource } = useSourceStore();
   const { activeInfospace } = useInfospaceStore();
   const { bundles, fetchBundles } = useBundleStore();
@@ -99,7 +99,7 @@ export function useSourceForm(init?: SourceFormInit, onSuccess?: () => void) {
         : await createSource(sourceData);
       if (result) {
         toast.success(`Source "${result.name}" ${isEditing ? 'updated' : 'created'}.`);
-        onSuccess?.();
+        onSuccess?.(result);
         return true;
       }
       return false;

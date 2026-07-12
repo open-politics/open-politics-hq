@@ -20,7 +20,8 @@ export type DockKey =
   | 'bundleDetail'
   | 'discover'
   | 'sourceForm'
-  | 'composer';
+  | 'composer'
+  | 'runDashboard';
 
 interface DockEntry {
   key: DockKey;
@@ -59,6 +60,8 @@ interface DockState {
   openDiscover: (opts?: { method?: 'search' | 'feed'; query?: string }) => void;
   openSourceForm: (opts?: { init?: any }) => void;
   openComposer: (opts?: { assetId?: number; mode?: 'create' | 'edit' }) => void;
+  /** Open a chat-started annotation run beside the chat (co-presence). */
+  openRunDashboard: (runId: number) => void;
 
   // Row navigation for asset detail (lateral — does not grow the drill stack).
   setNavAssetIds: (ids: number[]) => void;
@@ -91,6 +94,7 @@ export const useDock = create<DockState>((set, get) => ({
   openSourceForm: (opts = {}) => get().open({ key: 'sourceForm', init: opts.init }),
   openComposer: (opts = {}) =>
     get().open({ key: 'composer', init: { assetId: opts.assetId, mode: opts.mode ?? (opts.assetId ? 'edit' : 'create') } }),
+  openRunDashboard: (runId) => get().open({ key: 'runDashboard', init: { runId } }),
 
   setNavAssetIds: (ids) => set({ navIds: ids }),
   navigateAdjacent: (direction) => {

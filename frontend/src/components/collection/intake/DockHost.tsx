@@ -8,6 +8,8 @@ import BundleDetailView from '@/components/collection/assets/Views/BundleDetailV
 import ArticleComposer from '@/components/collection/assets/Composer/ArticleComposer';
 import { DiscoverPanel } from './discover/DiscoverPanel';
 import { SourceForm } from './sources/SourceForm';
+import { RunDock } from '@/components/collection/chat/observe/RunDock';
+import { useChatStore } from '@/zustand_stores/storeChat';
 
 /**
  * Renders whatever the dock store currently holds. The dock owns NO chrome row of
@@ -62,13 +64,31 @@ export function DockHost() {
     case 'discover':
       body = <DiscoverPanel init={entry.init} {...contentProps} />;
       break;
-    case 'sourceForm':
-      body = <SourceForm init={entry.init} {...contentProps} />;
+    case 'sourceForm': {
+      // Stage-then-confirm: if the chat staged this form (carries a return token),
+      // resolve it on commit/cancel so the model resumes with the outcome.
+      const returnToken = (entry.init as any)?.__returnToken as string | undefined;
+      const finish = (status: string) => {
+        if (returnToken) useChatStore.getState().resolveReturn(returnToken, { status });
+        close();
+      };
+      body = (
+        <SourceForm
+          init={entry.init}
+          {...contentProps}
+          close={() => finish('cancelled')}
+          onSuccess={() => finish('created')}
+        />
+      );
       break;
+    }
     case 'composer':
       body = <ArticleComposer init={entry.init} {...contentProps} />;
       break;
+    case 'runDashboard':
+      body = <RunDock runId={entry.init.runId} onBack={back} onClose={close} />;
+      break;
   }
 
-  return <div className="flex h-full min-h-0 flex-col overflow-hidden border-l bg-background">{body}</div>;
+  return <div className="flex h-full min-h-0 flex-col overflow-hidden border-l bg-background/60">{body}</div>;
 }
