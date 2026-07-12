@@ -47,6 +47,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { scrollBundleIntoView } from '@/lib/bundles/reveal';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { toast } from 'sonner';
 import {
@@ -482,29 +483,11 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
       return next;
     });
     // Pulling a single source into view: once the tree has had a beat to unfold
-    // (ancestor chain + the bundle itself), sit the bundle at the top third of
-    // the tree's scroll area so its just-opened children have room below —
-    // 'nearest' would only nudge a bottom bundle to the edge and clip them.
+    // (ancestor chain + the bundle itself), sit the bundle a third down so its
+    // just-opened children have room below.
     if (adding) {
       const bundleId = sources.find((s) => s.id === sourceId)?.output_bundle_id;
-      if (bundleId != null) {
-        setTimeout(() => {
-          const el = document.querySelector(`[data-bundle-id="${bundleId}"]`);
-          if (!el) return;
-          // Closest scrollable ancestor = the tree's scroll container.
-          let scroller = el.parentElement;
-          while (scroller && scroller.scrollHeight <= scroller.clientHeight) {
-            scroller = scroller.parentElement;
-          }
-          if (!scroller) { el.scrollIntoView({ block: 'start', behavior: 'smooth' }); return; }
-          const scRect = scroller.getBoundingClientRect();
-          const elRect = el.getBoundingClientRect();
-          // Target scrollTop that lands the row a third down (browser clamps to
-          // max, so a bottom bundle rises as far as the content allows).
-          const target = scroller.scrollTop + (elRect.top - scRect.top) - scRect.height / 3;
-          scroller.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
-        }, 350);
-      }
+      if (bundleId != null) scrollBundleIntoView(bundleId);
     }
   }, [pinnedSourceIds, sources]);
 

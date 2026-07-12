@@ -236,7 +236,7 @@ export default function AssetMetaHeader({
   const hasExternalLink = externalUrl && (externalUrl.startsWith('http://') || externalUrl.startsWith('https://'));
   
   return (
-    <div className={cn("border-b ", className)}>
+    <div className={cn(" ", className)}>
       {/* Main Meta: toolbar row; title edit is full-width below so it does not shrink in flex */}
       <div className={cn(compactMode ? "px-3 py-1.5" : "px-3 py-1.5", "flex flex-col gap-1")}>
         {/* Row 1 — breadcrumb path + close */}

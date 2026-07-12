@@ -81,9 +81,9 @@ function HighlightedTextContent({
             key={i}
             data-search-hit={ord}
             className={cn(
-              'rounded bg-yellow-200 px-0.5 dark:bg-yellow-800/70',
+              'rounded bg-yellow-200 px-0.5 dark:bg-yellow-400',
               activeHitIndex === ord &&
-                'ring-2 ring-primary ring-offset-1 ring-offset-background dark:ring-offset-background'
+                'ring-1 ring-primary ring-offset-2 ring-offset-background dark:ring-offset-background'
             )}
           >
             {part}
@@ -306,11 +306,11 @@ export const PdfAssetContent = React.memo<PdfAssetContentProps>(
             {(fullText || textDraft?.active) && (
             <div
               className={cn(
-                'border rounded-lg overflow-hidden bg-background flex flex-col min-h-0 relative',
+                'overflow-hidden flex flex-col min-h-0 relative',
                 layout === 'side-by-side' ? 'flex-1 min-w-0 basis-1/2' : 'min-h-0 flex-1'
               )}
             >
-              <div className="flex items-center gap-2 p-2 border-b bg-muted/30">
+              <div className="flex items-center gap-2 p-2 justify-between">
                 <div className="relative flex-1 max-w-xs">
                   <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -322,7 +322,7 @@ export const PdfAssetContent = React.memo<PdfAssetContentProps>(
                       e.preventDefault();
                       setTextSearchHitIndex((i) => (i + 1) % textMatchCount);
                     }}
-                    className="pl-8 h-8 text-sm"
+                    className="pl-8 h-8 text-sm "
                     aria-description={
                       textMatchCount > 0
                         ? `Match ${textSearchHitIndex + 1} of ${textMatchCount}. Enter for next.`

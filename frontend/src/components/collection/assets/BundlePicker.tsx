@@ -19,6 +19,12 @@ interface BundlePickerProps {
   newName?: string;
   onNewNameChange?: (name: string) => void;
   className?: string;
+  /** Show the "No bundle (root)" choice. Default true. Set false where root
+   *  isn't a valid target (e.g. a live run's watch-list — you can't watch root). */
+  allowRoot?: boolean;
+  /** Trigger label when nothing is selected. Default "No bundle (root)". Use for
+   *  adder-mode pickers (value stays undefined) e.g. "Add a bundle to watch…". */
+  placeholder?: string;
 }
 
 interface Row {
@@ -60,7 +66,7 @@ const ACTIVE = 'bg-muted font-medium';
  * create a new one (name it), or none/root. Purpose-built rather than reusing the
  * full AssetSelector so it stays light enough to drop into a form field.
  */
-export function BundlePicker({ bundles, value, onChange, newName, onNewNameChange, className }: BundlePickerProps) {
+export function BundlePicker({ bundles, value, onChange, newName, onNewNameChange, className, allowRoot = true, placeholder }: BundlePickerProps) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
 
@@ -74,7 +80,7 @@ export function BundlePicker({ bundles, value, onChange, newName, onNewNameChang
 
   const selected = value != null ? bundles.find((b) => b.id === value) : undefined;
   const creatingNew = value == null && !!newName?.trim();
-  const label = selected ? selected.name : creatingNew ? `New: ${newName}` : 'No bundle (root)';
+  const label = selected ? selected.name : creatingNew ? `New: ${newName}` : (placeholder ?? 'No bundle (root)');
 
   const pickExisting = (id: number) => {
     onChange(id);
@@ -112,11 +118,13 @@ export function BundlePicker({ bundles, value, onChange, newName, onNewNameChang
         </div>
 
         <div className="max-h-60 overflow-y-auto p-1">
-          <button type="button" className={cn(ROW, value == null && !creatingNew && ACTIVE)} onClick={pickRoot}>
-            <Slash className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="flex-1 truncate text-left">No bundle (root)</span>
-            {value == null && !creatingNew && <Check className="size-3.5 shrink-0" />}
-          </button>
+          {allowRoot && (
+            <button type="button" className={cn(ROW, value == null && !creatingNew && ACTIVE)} onClick={pickRoot}>
+              <Slash className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="flex-1 truncate text-left">No bundle (root)</span>
+              {value == null && !creatingNew && <Check className="size-3.5 shrink-0" />}
+            </button>
+          )}
 
           {filtered.map(({ bundle, depth }) => (
             <button

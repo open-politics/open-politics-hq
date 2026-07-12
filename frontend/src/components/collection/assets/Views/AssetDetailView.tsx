@@ -717,7 +717,7 @@ const AssetDetailView = ({
               <HighlightedText 
                 text={text} 
                 spans={textSpans}
-                highlightClassName="bg-yellow-200 dark:bg-yellow-800/70 px-1 text-yellow-900 dark:text-yellow-100 z-[1001]"
+                highlightClassName="bg-yellow-200 dark:bg-yellow-600/70 px-1 text-yellow-900 dark:text-yellow-100 z-[1001]"
               />
             ) : (
               text
@@ -1096,7 +1096,7 @@ const WebContent = ({ asset, hasChildren, childAssets, setActiveTab, handleChild
                   <HighlightedText 
                     text={asset.text_content} 
                     spans={webTextSpans}
-                    highlightClassName="bg-yellow-200 dark:bg-yellow-800/70 px-0.5 text-yellow-900 dark:text-yellow-100"
+                    highlightClassName="bg-yellow-200 dark:bg-yellow-600/70 px-0.5 text-yellow-900 dark:text-yellow-100"
                   />
                 </div>
               ) : (
@@ -2155,7 +2155,7 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
                         }
                       }}
                       size="sm"
-                      className="absolute top-2 left-1/2 z-10 -translate-x-1/2 gap-0.5 rounded-md border bg-background/80 p-0.5 shadow-sm backdrop-blur"
+                      className="absolute top-2 left-3.5 z-10 gap-0.5 bg-background/80 p-0.5 shadow-sm backdrop-blur"
                     >
                       <ToggleGroupItem value="content" aria-label={contentLabel} className="gap-1.5 px-2">
                         <FileText className="h-4 w-4" />

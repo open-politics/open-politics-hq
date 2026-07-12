@@ -2,6 +2,8 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Input } from '@/components/ui/input';
+import { TopbarSlot } from '@/components/layout/TopbarSlot';
+import { Popover, PopoverTrigger, PopoverContent, PopoverAnchor } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
@@ -41,7 +43,7 @@ import {
   FolderPlus,
   Crosshair,
   Check,
-  SquaresIntersect,
+  FolderOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict } from 'date-fns';
@@ -51,6 +53,7 @@ import { useFeedAssets } from '@/components/collection/assets/Feed/useFeedAssets
 import { useAssetDetail } from '@/components/collection/assets/Views/AssetDetailProvider';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useTreeStore } from '@/zustand_stores/storeTree';
+import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { AssetCard } from '@/components/collection/assets/Cards';
 import {
   getAssetKindConfig,
@@ -137,6 +140,16 @@ const PILL_COLORS: Record<string, { bg: string; text: string; ring: string }> = 
 
 function QueryPillChip({ pill, onRemove }: { pill: QueryPill; onRemove: () => void }) {
   const colors = PILL_COLORS[pill.type] || PILL_COLORS.text;
+  const bundles = useBundleStore((s) => s.bundles);
+  // Bundle pills scope by id (bundle:<id>); show the folder name instead of the
+  // raw id. Handles a comma list and falls back to the id / a legacy name value.
+  const display = pill.type === 'bundle'
+    ? pill.value.split(',').map((v) => {
+        const t = v.trim();
+        if (!/^\d+$/.test(t)) return t;
+        return bundles.find((b) => b.id === parseInt(t, 10))?.name ?? t;
+      }).join(', ')
+    : pill.value;
   return (
     <span
       className={cn(
@@ -146,7 +159,7 @@ function QueryPillChip({ pill, onRemove }: { pill: QueryPill; onRemove: () => vo
       )}
     >
       <span className="opacity-50 font-normal">{pill.label}</span>
-      <span className="max-w-[200px] truncate">{pill.value}</span>
+      <span className="max-w-[200px] truncate">{display}</span>
       <button
         type="button"
         onClick={onRemove}
@@ -423,6 +436,12 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
   const { openDetailOverlay } = useAssetDetail();
   const infospaceId = activeInfospace?.id ?? 0;
 
+  // Keep the flat bundle list warm so bundle:<id> scope pills resolve to names.
+  const fetchBundles = useBundleStore((s) => s.fetchBundles);
+  useEffect(() => {
+    if (infospaceId) fetchBundles(infospaceId);
+  }, [infospaceId, fetchBundles]);
+
   // Query state — seeded from initialQuery so a query handed in via the URL
   // (e.g. from the home inquiry bar) auto-streams on landing.
   const [query, setQuery] = useState(initialQuery);
@@ -443,6 +462,9 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
   const [showHelpers, setShowHelpers] = useState(false);
   const [bundleDialogOpen, setBundleDialogOpen] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
+  // Which trigger opened the picker — `bundle:` scopes to bundle entities (only
+  // bundles shown), `asset:`/`@` scopes to assets.
+  const [pickerMode, setPickerMode] = useState<'bundle' | 'asset'>('bundle');
   const [pickerSelection, setPickerSelection] = useState<Set<string>>(new Set());
   const pickerItemsRef = useRef<Map<string, AssetTreeItem>>(new Map());
   const lastPickerEnterId = useRef<string | null>(null);
@@ -480,7 +502,8 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
     [pills],
   );
 
-  // Results
+  // Results — assets. Explore explores assets; bundle scoping is the picker's
+  // job (bundle:<id>), so folder hits don't belong in the results list.
   const results: ExplorerResult[] = useMemo(() => {
     if (isSearching) {
       return querySearch.results.map((r) => ({
@@ -588,7 +611,11 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
     setQuery(value);
     const cursorPos = e.target.selectionStart ?? value.length;
     const before = value.slice(0, cursorPos);
-    if (before.endsWith('bundle:') || before.endsWith('asset:')) {
+    if (before.endsWith('bundle:')) {
+      setPickerMode('bundle');
+      setShowPicker(true);
+    } else if (before.endsWith('asset:') || before.endsWith('@')) {
+      setPickerMode('asset');
       setShowPicker(true);
     }
   }, []);
@@ -608,27 +635,39 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
     return { name: node.name, isBundle: node.type === 'bundle' || node.type === 'virtual_folder' };
   }, []);
 
-  // Confirm current picker selection → insert grouped tokens into query
-  // e.g. bundle:"Emails","Documents" asset:"report.pdf","scan.png"
-  const confirmPickerSelection = useCallback(() => {
-    const bundleNames: string[] = [];
+  // Confirm current picker selection → insert scope tokens into the query.
+  // Bundles scope by id (bundle:<id>) — unambiguous for nested/same-named
+  // folders, where bundle:"name" resolves arbitrarily or not at all. The pill
+  // resolves the id back to a name for display. Assets keep title-scoping.
+  // e.g. bundle:42 bundle:71 asset:"report.pdf","scan.png"
+  const confirmPickerSelection = useCallback(async () => {
+    const bundleIds: number[] = [];
     const assetNames: string[] = [];
-    pickerSelection.forEach((id) => {
-      const resolved = resolvePickerItem(id);
-      if (!resolved) return;
-      if (resolved.isBundle) bundleNames.push(resolved.name);
-      else assetNames.push(resolved.name);
-    });
-    const tokens: string[] = [];
-    if (bundleNames.length > 0) {
-      tokens.push('bundle:' + bundleNames.map((n) => `"${n}"`).join(','));
+    for (const id of pickerSelection) {
+      if (id.startsWith('bundle-')) {
+        const bid = parseInt(id.slice(7), 10);
+        if (!Number.isNaN(bid)) bundleIds.push(bid);
+        continue;
+      }
+      // Assets scope by title — resolve from the picked item, or fetch by id for
+      // picks made in search results (never cached in the browsed tree).
+      let resolved = resolvePickerItem(id);
+      if (!resolved && id.startsWith('asset-')) {
+        try {
+          const a = await useTreeStore.getState().getFullAsset(parseInt(id.slice(6), 10));
+          if (a?.title) resolved = { name: a.title, isBundle: false };
+        } catch { /* skip unresolved */ }
+      }
+      if (resolved && !resolved.isBundle) assetNames.push(resolved.name);
     }
+    const tokens: string[] = [];
+    for (const bid of bundleIds) tokens.push(`bundle:${bid}`);
     if (assetNames.length > 0) {
       tokens.push('asset:' + assetNames.map((n) => `"${n}"`).join(','));
     }
     if (tokens.length === 0) return;
     setQuery((q) => {
-      const cleaned = q.replace(/\s*(bundle|asset):$/, '').trimEnd();
+      const cleaned = q.replace(/\s*(bundle:|asset:|@)$/, '').trimEnd();
       const joined = tokens.join(' ');
       return cleaned ? `${cleaned} ${joined}` : joined;
     });
@@ -636,10 +675,15 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
     inputRef.current?.focus();
   }, [pickerSelection, resolvePickerItem]);
 
-  // Picker: checkbox toggle
+  // Picker: checkbox toggle. Scope wants the entity itself, so in bundle mode we
+  // keep only bundle ids — AssetSelector also cascades a bundle's descendant
+  // asset ids into the set (the AssetManager/Dock bulk-select behaviour), which
+  // we don't want here. Asset mode keeps asset ids (so picking a bundle there
+  // scopes to its assets, which is the wanted behaviour for `asset:`).
   const handlePickerSelectionChange = useCallback((selectedIds: Set<string>) => {
-    setPickerSelection(selectedIds);
-  }, []);
+    const wanted = pickerMode === 'bundle' ? 'bundle-' : 'asset-';
+    setPickerSelection(new Set([...selectedIds].filter((id) => id.startsWith(wanted))));
+  }, [pickerMode]);
 
   // Picker: single-click on asset → toggle selection
   const handlePickerItemClick = useCallback((item: AssetTreeItem) => {
@@ -723,8 +767,13 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
       {/* ── Search header ── */}
       <div className="flex-none border-b bg-background/95 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80">
         <div className="px-4 pt-4 pb-2.5 space-y-2">
-          {/* Search input */}
-          <div className="relative group">
+          {/* Search input → app top bar. The key handler rides on the wrapper so
+              arrow/enter still drive the in-page result list (state is shared). */}
+          <TopbarSlot>
+          <div className="flex w-full items-center gap-2">
+            <Popover open={showPicker} onOpenChange={setShowPicker}>
+              <PopoverAnchor asChild>
+              <div className="relative group flex-1 min-w-0" onKeyDown={handleKeyDown}>
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60 group-focus-within:text-foreground/60 transition-colors" />
             <Input
               ref={inputRef}
@@ -732,10 +781,13 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
               onChange={handleQueryChange}
               placeholder='Search assets — kind: entity: after: bundle: ~semantic "phrase"'
               className={cn(
-                'pl-10 pr-10 h-11 text-[15px] font-mono bg-muted/30 border-muted-foreground/10',
-                'focus:bg-background focus:ring-2 focus:ring-primary/20 focus:border-primary/30',
-                'transition-all duration-200 rounded-lg',
+                "pl-10 pr-4 h-9 bg-background/70 backdrop-blur-sm border border-blue-200/60 focus:border-blue-400",
+                "outline-none rounded-md font-mono text-base placeholder:text-muted-foreground/70",
+                "transition-all duration-150",
+                "focus:bg-background/80"
               )}
+         
+         
               autoFocus
             />
             {query && (
@@ -748,48 +800,142 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
               </button>
             )}
 
-            {/* Inline asset/bundle picker — triggered by typing bundle: or asset: */}
-            {showPicker && (
-              <div
-                ref={pickerRef}
-                className="relative left-0 right-0 top-full mt-1 z-50 flex flex-col border border-border rounded-lg shadow-lg overflow-hidden bg-popover"
-              >
-                <div className="h-[300px] min-h-0 overflow-hidden">
-                  <AssetSelector
-                    selectedItems={pickerSelection}
-                    onSelectionChange={handlePickerSelectionChange}
-                    onItemView={handlePickerItemClick}
-                    onItemDoubleClick={handlePickerItemEnter}
-                    autoFocusSearch
-                    compact
-                  />
-                </div>
-                {pickerSelection.size > 0 && (
-                  <div className="flex items-center gap-2 px-3 py-2 border-t border-border bg-muted/30">
-                    <span className="text-xs text-muted-foreground flex-1">
-                      <span className="font-semibold text-foreground">{pickerSelection.size}</span> selected
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 text-[11px] px-2"
-                      onClick={() => setPickerSelection(new Set())}
-                    >
-                      Clear
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="h-6 text-[11px] px-3 gap-1"
-                      onClick={confirmPickerSelection}
-                    >
-                      <Check className="h-3 w-3" />
-                      Apply
-                    </Button>
-                  </div>
-                )}
               </div>
-            )}
+              </PopoverAnchor>
+              <PopoverContent
+                align="start"
+                sideOffset={6}
+                onInteractOutside={(e) => { if (inputRef.current?.contains(e.target as Node)) e.preventDefault(); }}
+                className="w-[min(680px,calc(100vw-1.5rem))] p-0 overflow-hidden"
+              >
+                <div ref={pickerRef} className="flex flex-col">
+                  <div className="h-[300px] min-h-0 overflow-hidden">
+                    <AssetSelector
+                      selectedItems={pickerSelection}
+                      onSelectionChange={handlePickerSelectionChange}
+                      onItemView={handlePickerItemClick}
+                      onItemDoubleClick={handlePickerItemEnter}
+                      bundlesOnly={pickerMode === 'bundle'}
+                      autoFocusSearch
+                      compact
+                    />
+                  </div>
+                  {pickerSelection.size > 0 && (
+                    <div className="flex items-center gap-2 px-3 py-2 border-t border-border bg-muted/30">
+                      <span className="text-xs text-muted-foreground flex-1">
+                        <span className="font-semibold text-foreground">{pickerSelection.size}</span> selected
+                      </span>
+                      <Button variant="ghost" size="sm" className="h-6 text-[11px] px-2" onClick={() => setPickerSelection(new Set())}>
+                        Clear
+                      </Button>
+                      <Button size="sm" className="h-6 text-[11px] px-3 gap-1" onClick={confirmPickerSelection}>
+                        <Check className="h-3 w-3" />
+                        Apply
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-muted-foreground" onClick={refresh} disabled={isLoading}>
+                  <RefreshCw className={cn('h-4 w-4', isLoading && 'animate-spin')} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Refresh</TooltipContent>
+            </Tooltip>
+
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button type="button" variant="outline" size="sm" className="h-9 shrink-0 gap-1.5">
+                  <SlidersHorizontal className="h-4 w-4 opacity-70" />
+                  <span className="hidden sm:inline">Settings</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" sideOffset={6} className="w-64 p-2">
+                <div className="px-1 pb-2">
+                  <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">View</p>
+                  <div className="flex items-center overflow-hidden rounded-md border border-border/40 bg-muted/20">
+                    {([['results', Rows3], ['grid', LayoutGrid], ['list', LayoutList]] as [LayoutMode, typeof Rows3][]).map(([mode, ModeIcon]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setLayout(mode)}
+                        className={cn(
+                          'flex h-7 flex-1 items-center justify-center gap-1.5 text-[11px] capitalize text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground',
+                          layout === mode && 'bg-muted/80 text-foreground',
+                        )}
+                      >
+                        <ModeIcon className="h-3.5 w-3.5" />
+                        {mode}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="my-1 border-t border-border/40" />
+
+                <div className="px-1 py-1">
+                  <p className="mb-1 px-1.5 text-[11px] font-medium text-muted-foreground">Sort</p>
+                  {SORT_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setUserSort(opt.value as SortOption)}
+                      className="flex w-full items-center gap-2 rounded-sm px-1.5 py-1.5 text-xs transition-colors hover:bg-muted/60"
+                    >
+                      <span className="flex-1 text-left">{opt.label}</span>
+                      {sortOption === opt.value && <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" strokeWidth={2.5} />}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="my-1 border-t border-border/40" />
+
+                <div className="px-1 py-1">
+                  <p className="mb-1 px-1.5 text-[11px] font-medium text-muted-foreground">Nested results</p>
+                  {(() => {
+                    const cur = getChildrenFromQuery(query) || 'default';
+                    const row = (key: string, patch: string, title: string, isSelected: boolean) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setQuery((q) => setChildrenInQuery(q, patch))}
+                        className="flex w-full items-center gap-2 rounded-sm px-1.5 py-1.5 text-xs transition-colors hover:bg-muted/60"
+                      >
+                        <span className="flex-1 text-left">{title}</span>
+                        {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" strokeWidth={2.5} />}
+                      </button>
+                    );
+                    return (
+                      <>
+                        {row('std', '', 'Standard', cur === 'default')}
+                        {row('off', 'none', 'Off', cur === 'none')}
+                        {row('10', '10', 'Up to 10', cur === '10')}
+                        {row('30', '30', 'Up to 30', cur === '30')}
+                        {row('all', 'all', 'All', cur === 'all')}
+                      </>
+                    );
+                  })()}
+                </div>
+
+                <div className="my-1 border-t border-border/40" />
+
+                <button
+                  type="button"
+                  onClick={() => setShowHelpers(!showHelpers)}
+                  className="flex w-full items-center gap-2 rounded-sm px-1.5 py-1.5 text-xs transition-colors hover:bg-muted/60"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5 opacity-70" />
+                  <span className="flex-1 text-left">Filters &amp; syntax</span>
+                  {showHelpers && <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" strokeWidth={2.5} />}
+                </button>
+              </PopoverContent>
+            </Popover>
           </div>
+          </TopbarSlot>
 
           {/* Pills */}
           {pills.length > 0 && (
@@ -809,104 +955,16 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className={cn(explorerToolbarBtn, 'shrink-0', showHelpers && explorerToolbarBtnActive)}
-                    onClick={() => setShowHelpers(!showHelpers)}
-                  >
-                    <SlidersHorizontal className="h-3.5 w-3.5 opacity-70" />
-                    Helpers
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="text-xs max-w-[240px]">
-                  Filters and query syntax reference
-                </TooltipContent>
-              </Tooltip>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className={cn(explorerToolbarBtn, 'shrink-0', showPicker && explorerToolbarBtnActive)}
+                    className={cn(explorerToolbarBtn, 'h-7 w-7 p-0 shrink-0', showPicker && explorerToolbarBtnActive)}
                     onClick={() => setShowPicker((prev) => !prev)}
                   >
-                    <SquaresIntersect className="h-3.5 w-3.5 opacity-70" />
-                    Scope
+                    <FolderOpen className="h-3.5 w-3.5 opacity-70" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="text-xs max-w-[260px]">
-                  Limit the query to specific bundles or assets
+                  Scope to specific bundles or assets
                 </TooltipContent>
               </Tooltip>
-
-              <div className="shrink-0">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className={cn(
-                        explorerToolbarBtn,
-                        'gap-1.5 shrink-0 w-auto max-w-[min(100%,14rem)]',
-                        getChildrenFromQuery(query) !== '' && explorerToolbarBtnActive,
-                      )}
-                    >
-                      <Rows3 className="h-3.5 w-3.5 shrink-0 opacity-70" />
-                      <span className="whitespace-nowrap truncate">
-                        <span className="text-foreground">Nested</span>
-                        <span className="text-muted-foreground/80">
-                          {' · '}
-                          {nestedResultsTriggerSuffix(query)}
-                        </span>
-                      </span>
-                      <ChevronDown className="h-3 w-3 shrink-0 opacity-40" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56 p-1">
-                    <div className="px-2.5 py-2 border-b border-border/50 mb-0.5">
-                      <p className="text-[11px] font-medium leading-snug text-foreground">Nested results</p>
-                      <p className="text-[10px] text-muted-foreground leading-relaxed mt-1">
-                        Extra hits inside the same parent asset (e.g. PDF pages or sections).
-                      </p>
-                    </div>
-                    {(() => {
-                      const cur = getChildrenFromQuery(query) || 'default';
-                      const row = (
-                        key: string,
-                        patch: string,
-                        title: string,
-                        hint: string,
-                        isSelected: boolean,
-                      ) => (
-                        <DropdownMenuItem
-                          key={key}
-                          className="cursor-pointer rounded-sm px-2.5 py-2 text-xs focus:bg-muted/80 items-start gap-2"
-                          onSelect={() => setQuery((q) => setChildrenInQuery(q, patch))}
-                        >
-                          <span className="flex-1 min-w-0 space-y-0.5 pr-1">
-                            <span className="font-medium text-foreground leading-tight block">{title}</span>
-                            <span className="text-[10px] text-muted-foreground leading-snug block">{hint}</span>
-                          </span>
-                          {isSelected && (
-                            <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground mt-0.5" strokeWidth={2.5} />
-                          )}
-                        </DropdownMenuItem>
-                      );
-                      return (
-                        <>
-                          {row('std', '', 'Standard', 'Up to 3 nested hits per parent', cur === 'default')}
-                          {row('off', 'none', 'Off', 'Parent rows only', cur === 'none')}
-                          <DropdownMenuSeparator className="my-1" />
-                          {row('10', '10', 'Up to 10', 'Per parent asset', cur === '10')}
-                          {row('30', '30', 'Up to 30', 'Per parent asset', cur === '30')}
-                          {row('all', 'all', 'All', 'Every nested match', cur === 'all')}
-                        </>
-                      );
-                    })()}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
             </div>
 
             <div className="flex shrink-0 justify-center px-2">
@@ -963,71 +1021,6 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
                 </span>
               );
             })()}
-
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" variant="ghost" size="sm" className={cn(explorerToolbarBtn, 'shrink-0')}>
-                  <SlidersHorizontal className="h-3.5 w-3.5 opacity-70" />
-                  {SORT_OPTIONS.find((o) => o.value === sortOption)?.label || 'Sort'}
-                  <ChevronDown className="h-3 w-3 opacity-40 shrink-0" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52 p-1">
-                <div className="px-2.5 py-1.5 border-b border-border/50 mb-0.5">
-                  <p className="text-[11px] font-medium text-foreground">Sort</p>
-                </div>
-                {SORT_OPTIONS.map((opt) => (
-                  <DropdownMenuItem
-                    key={opt.value}
-                    className="cursor-pointer rounded-sm px-2.5 py-2 text-xs focus:bg-muted/80 gap-2"
-                    onSelect={() => setUserSort(opt.value as SortOption)}
-                  >
-                    <span className="flex-1">{opt.label}</span>
-                    {sortOption === opt.value && (
-                      <Check className="h-3.5 w-3.5 shrink-0 text-muted-foreground" strokeWidth={2.5} />
-                    )}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <div className="flex items-center rounded-md border border-border/30 overflow-hidden bg-muted/20">
-              {([['results', Rows3], ['grid', LayoutGrid], ['list', LayoutList]] as [LayoutMode, typeof Rows3][]).map(([mode, ModeIcon]) => (
-                <Tooltip key={mode}>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className={cn(
-                        'h-7 w-7 p-0 rounded-none border-0 text-muted-foreground hover:text-foreground hover:bg-muted/60',
-                        layout === mode && 'bg-muted/80 text-foreground',
-                      )}
-                      onClick={() => setLayout(mode)}
-                    >
-                      <ModeIcon className="h-3.5 w-3.5 opacity-80" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">{mode.charAt(0).toUpperCase() + mode.slice(1)} view</TooltipContent>
-                </Tooltip>
-              ))}
-            </div>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className={cn(explorerToolbarBtn, 'h-7 w-7 p-0 shrink-0')}
-                  onClick={refresh}
-                  disabled={isLoading}
-                >
-                  <RefreshCw className={cn('h-3.5 w-3.5 opacity-70', isLoading && 'animate-spin')} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Refresh</TooltipContent>
-            </Tooltip>
             </div>
           </div>
         </div>

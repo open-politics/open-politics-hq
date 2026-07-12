@@ -38,6 +38,7 @@ import {
   Unlock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { bundlePathLabel } from '@/lib/bundles/paths';
 import {
   Tooltip,
   TooltipContent,
@@ -103,6 +104,8 @@ export interface AssetTreeItem {
   isSelected: boolean;
   parentId?: string;
   isContainer?: boolean;
+  /** Breadcrumb of ancestor folders ("Finance / 2024"), shown on folder search hits. */
+  pathLabel?: string;
 }
 
 // Asset icon/badge helpers are imported from './assetKindConfig'
@@ -236,6 +239,7 @@ export default function AssetSelector({
     sealBundle,
     unsealBundle,
     bundles,
+    fetchBundles,
   } = useBundleStore();
 
   // Poll for active ingestion jobs
@@ -282,7 +286,6 @@ export default function AssetSelector({
 
   // Unified search via AQL /query endpoint
   const {
-    nameMatches,
     results: queryResults,
     childResults: queryChildResults,
     isLoading: isSearching,
@@ -292,6 +295,7 @@ export default function AssetSelector({
     query: aqlQuery,
     limit: 50,
     enabled: aqlQuery.length > 0,
+    includeFolders: true,
   });
   const isSearchActive = aqlQuery.length > 0;
 
@@ -563,6 +567,13 @@ export default function AssetSelector({
       }
     }
   }, [activeInfospace?.id, filterByBundleId, pathPrefix, fetchRootTree, fetchChildren]);
+
+  // The flat bundle list (used for name-search matches + ancestor reveal) lives
+  // in a separate store from the lazy tree — load it for the active infospace so
+  // bundle name searches aren't silently empty.
+  useEffect(() => {
+    if (activeInfospace?.id) fetchBundles(activeInfospace.id);
+  }, [activeInfospace?.id, fetchBundles]);
 
   // NEW: Restore expanded state after data loads - fixes issue where bundles appear open but have no children
   // Optimized to only run when necessary
@@ -859,39 +870,50 @@ export default function AssetSelector({
     return sortItemsRecursively(tree);
   }, [rootNodes, childrenCache, expandedItems, selectedItems, sortOption, filterByBundleId, pathPrefix, convertAssetNodeToTreeItem]);
   
-  // Convert query results to AssetTreeItems — tiered
+  // Convert query results to AssetTreeItems — tiered.
+  // Folder/bundle name matches now arrive ranked from the search stream itself
+  // (type==='bundle', tagged field:'title' by the backend). We hydrate each from
+  // the flat bundle cache for rendering + selection + breadcrumb path — the
+  // client no longer ranks or filters folders, it just shapes the server's hits.
   const searchNameBundleItems = useMemo(() => {
-    if (!isSearchActive || nameMatches.bundles.length === 0) return [];
-    return nameMatches.bundles.map((b): AssetTreeItem => ({
-      id: `bundle-${b.id}`,
-      type: 'folder',
-      name: b.name,
-      level: 0,
-      isExpanded: false,
-      isSelected: selectedItems.has(`bundle-${b.id}`),
-      isContainer: true,
-      bundle: b as any,
-    }));
-  }, [isSearchActive, nameMatches.bundles, selectedItems]);
+    if (!isSearchActive) return [];
+    const byId = new Map(bundles.map((b) => [b.id, b]));
+    return queryResults
+      .filter((r) => r.type === 'bundle')
+      .map((r): AssetTreeItem => {
+        const id = r.asset.id;
+        const b = byId.get(id);
+        return {
+          id: `bundle-${id}`,
+          type: 'folder',
+          name: b?.name ?? r.asset.title,
+          level: 0,
+          isExpanded: false,
+          isSelected: selectedItems.has(`bundle-${id}`),
+          isContainer: true,
+          bundle: (b ?? ({ id, name: r.asset.title } as any)) as BundleRead,
+          pathLabel: bundlePathLabel(id, byId),
+        };
+      });
+  }, [isSearchActive, queryResults, bundles, selectedItems]);
 
-  // Title tier: hits where the search text is in the asset title (backend-tagged).
-  // Picker is a "find by name" surface, so these lead. Dedupe is implicit — the
-  // backend tags each hit title XOR body.
+  // Title tier: assets where the search text is in the title (backend-tagged).
+  // Picker is a "find by name" surface, so these lead alongside folder hits.
   const searchNameAssetItems = useMemo(() => {
     if (!isSearchActive) return [];
     return queryResults
-      .filter(r => r.field === 'title')
+      .filter(r => r.type === 'asset' && r.field === 'title')
       .map(r => {
         const treeItem = convertAssetNodeToTreeItem(assetReadToAssetNode(r.asset), 0);
         return { ...treeItem, asset: r.asset };
       });
   }, [isSearchActive, queryResults, assetReadToAssetNode, convertAssetNodeToTreeItem]);
 
-  // Content tier: everything that matched on body text (carries snippet + %).
+  // Content tier: assets that matched on body text (carries snippet + %).
   const searchContentItems = useMemo(() => {
     if (!isSearchActive) return [];
     return queryResults
-      .filter(r => r.field !== 'title')
+      .filter(r => r.type === 'asset' && r.field !== 'title')
       .map(r => {
         const treeItem = convertAssetNodeToTreeItem(assetReadToAssetNode(r.asset), 0);
         return { ...treeItem, asset: r.asset };
@@ -1671,11 +1693,17 @@ export default function AssetSelector({
                 ) : (
                   <>
                     <span className="min-w-0 flex-1 truncate text-sm font-normal">{item.name}</span>
+                    {/* Breadcrumb of where this folder lives — disambiguates nested same-named hits. */}
+                    {item.pathLabel && (
+                      <span className="shrink-0 max-w-[45%] truncate text-[11px] text-muted-foreground/70" title={item.pathLabel}>
+                        {item.pathLabel}
+                      </span>
+                    )}
                     {/* Dataset ingestion progress indicator */}
                     {isJobActive && jobInfo && (
                       <div className="flex min-w-0 max-w-[40%] items-center gap-1.5 overflow-hidden">
                         <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-500" />
-                        <span className="truncate text-xs text-muted-foreground">
+                        <span className="truncate text-xs text-muted-foreground mr-4">
                           {jobInfo.stage_message || (typeof jobInfo.cursor_state?.message === 'string' ? jobInfo.cursor_state.message : '') || `${jobInfo.status}...`}
                         </span>
                         {jobInfo.progress_pct !== undefined && jobInfo.progress_pct > 0 && (
@@ -1974,7 +2002,7 @@ export default function AssetSelector({
                 {isJobActive && jobInfo && (
                   <div className="flex min-w-0 max-w-[40%] items-center gap-1.5 overflow-hidden">
                     <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-500" />
-                    <span className="truncate text-xs text-muted-foreground">
+                    <span className="truncate text-xs text-muted-foreground mr-4">
                       {jobInfo.stage_message || (typeof jobInfo.cursor_state?.message === 'string' ? jobInfo.cursor_state.message : '') || `${jobInfo.status}...`}
                     </span>
                     {jobInfo.progress_pct !== undefined && jobInfo.progress_pct > 0 && (
@@ -2493,9 +2521,9 @@ export default function AssetSelector({
             ) : isSearchActive ? (
               /* ── Tiered search results ── */
               (() => {
-                const hasNameMatches = searchNameBundleItems.length > 0 || searchNameAssetItems.length > 0;
-                const hasContentResults = searchContentItems.length > 0;
-                const hasChildResults = queryChildResults.length > 0;
+                const hasNameMatches = searchNameBundleItems.length > 0 || (!bundlesOnly && searchNameAssetItems.length > 0);
+                const hasContentResults = !bundlesOnly && searchContentItems.length > 0;
+                const hasChildResults = !bundlesOnly && queryChildResults.length > 0;
                 const hasAnyResults = hasNameMatches || hasContentResults || hasChildResults;
 
                 if (isSearching && !hasAnyResults) {
@@ -2529,7 +2557,7 @@ export default function AssetSelector({
                         </div>
                         <div className="space-y-0.5">
                           {searchNameBundleItems.map(item => renderTreeItem(item))}
-                          {searchNameAssetItems.map(item => renderTreeItem(item))}
+                          {!bundlesOnly && searchNameAssetItems.map(item => renderTreeItem(item))}
                         </div>
                       </div>
                     )}

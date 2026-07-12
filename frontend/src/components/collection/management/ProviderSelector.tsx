@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ButtonGroup } from "@/components/ui/button-group"
 import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import { UtilsService } from '@/client';
@@ -20,9 +20,12 @@ interface ProviderSelectorProps {
    *  Use 'annotation' when embedded in the annotation runner so the selection
    *  is stored independently from the chat/general LLM selection. */
   capability?: 'llm' | 'annotation';
+  /** Collapse provider + model into ONE select (models grouped by provider).
+   *  For tight widths (mobile) where two side-by-side selects overflow. */
+  merged?: boolean;
 }
 
-export default function ProviderSelector({ showModels = true, className = '', capability = 'llm' }: ProviderSelectorProps) {
+export default function ProviderSelector({ showModels = true, className = '', capability = 'llm', merged = false }: ProviderSelectorProps) {
   const {
     selections,
     setSelection,
@@ -125,6 +128,42 @@ export default function ProviderSelector({ showModels = true, className = '', ca
     // This ensures the useEffect picks up the change and loads the correct models
     setSelection(capability, { providerId: providerName, modelId: undefined });
   };
+
+  // Merged: one select, models grouped by provider. The value carries both
+  // (`provider::model`) so picking a model sets the provider too.
+  if (merged && showModels) {
+    const value = selectedProvider && selectedModel ? `${selectedProvider}::${selectedModel}` : '';
+    const handleMergedChange = (v: string) => {
+      const sep = v.indexOf('::');
+      if (sep < 0) return;
+      setSelection(capability, { providerId: v.slice(0, sep), modelId: v.slice(sep + 2) });
+    };
+    const providersWithModels = providers.filter((p) => p.models.length > 0);
+    return (
+      <div className={`flex w-full min-w-0 ${className}`}>
+        <Select value={value} onValueChange={handleMergedChange}>
+          <SelectTrigger className="h-8 w-full min-w-0">
+            <SelectValue placeholder="Select model" />
+          </SelectTrigger>
+          <SelectContent>
+            {providersWithModels.map((provider) => (
+              <SelectGroup key={provider.name}>
+                <SelectLabel className="text-[11px] capitalize text-muted-foreground">{provider.name}</SelectLabel>
+                {provider.models.map((model) => (
+                  <SelectItem key={`${provider.name}::${model}`} value={`${provider.name}::${model}`}>
+                    {model}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            ))}
+            {providersWithModels.length === 0 && (
+              <div className="p-2 text-center text-xs text-muted-foreground">No models available.</div>
+            )}
+          </SelectContent>
+        </Select>
+      </div>
+    );
+  }
 
   return (
     <div className={`flex flex-row gap-2 ${className}`}>

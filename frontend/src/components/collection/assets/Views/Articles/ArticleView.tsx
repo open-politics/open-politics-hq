@@ -43,7 +43,7 @@ export default function ArticleView({
           <HighlightedText 
             text={content} 
             spans={textSpans}
-            highlightClassName="bg-yellow-200 dark:bg-yellow-800/70 px-0.5 text-yellow-900 dark:text-yellow-100"
+            highlightClassName="bg-yellow-200 dark:bg-yellow-600/70 px-0.5 text-yellow-900 dark:text-yellow-100"
           />
         </div>
       );
