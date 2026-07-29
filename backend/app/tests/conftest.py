@@ -102,7 +102,7 @@ def infospace_factory(client, headers):
 
 @pytest.fixture
 def builder_must_not_commit(monkeypatch):
-    """Assert AssetBuilder.build() / .load() / .build_batch() / .build_children()
+    """Assert AssetBuilder.build() / .persist() / .build_batch() / .build_children()
     never commit internally. Opt-in per test.
 
     HQ v2 invariant: L2 primitives flush, never commit. The caller (route,
@@ -113,7 +113,7 @@ def builder_must_not_commit(monkeypatch):
     Usage:
         def test_something(session, user_id, workspace, builder_must_not_commit):
             builder = AssetBuilder(session, user_id, workspace)
-            asset = await builder.build()          # ← fixture watches this
+            outcome = await builder.build()        # ← fixture watches this
             session.commit()                        # ← OK: caller's commit
     """
     from app.api.modules.content.asset_builder import AssetBuilder
@@ -140,7 +140,7 @@ def builder_must_not_commit(monkeypatch):
 
         monkeypatch.setattr(AssetBuilder, method_name, traced)
 
-    for name in ("build", "build_outcome", "load", "build_batch", "build_children"):
+    for name in ("build", "persist", "build_batch", "build_children"):
         _wrap_terminal(name)
 
     yield

@@ -1,8 +1,8 @@
 """Tests for modules/content/views.py — render generators + collect drains.
 
-Each render_X should emit a canonical StreamEvent sequence. collect_X is
-implemented via drain(render_X, envelope_type) and must be event-for-event
-equivalent to its render sibling.
+Each view (tree / flat) emits a canonical StreamEvent sequence. collect() is
+implemented via drain(events, envelope_type) and must be event-for-event
+equivalent to its stream sibling.
 """
 from __future__ import annotations
 
@@ -23,13 +23,12 @@ from app.api.modules.content.schemas import (
     SectionEvent,
     SkeletonEvent,
 )
+from app.api.modules.content.schemas import AssetFeedMeta, AssetSearchMeta
 from app.api.modules.content.views import (
-    collect_feed,
-    collect_search,
-    collect_tree,
-    render_feed,
-    render_search,
-    render_tree,
+    _compute_tree_meta,
+    collect,
+    flat,
+    tree,
 )
 
 
@@ -130,7 +129,7 @@ def test_render_tree_event_order(db):
 
     q = AssetQuery(db, iid).scope(None).top_level_only().paginate(limit=10)
 
-    events = asyncio.run(_collect_events(render_tree(q)))
+    events = asyncio.run(_collect_events(tree(q)))
     names = [e.name for e in events]
     assert names[0] == "skeleton"
     assert names[1] == "nav"
@@ -154,7 +153,7 @@ def test_collect_tree_equivalent_to_drain(db):
     db.commit()
 
     q = AssetQuery(db, iid).scope(None).top_level_only().paginate(limit=10)
-    envelope = asyncio.run(collect_tree(q))
+    envelope = asyncio.run(collect(tree(q), AssetTree, meta=_compute_tree_meta(q.session, q.infospace_id, None)))
 
     assert isinstance(envelope, AssetTree)
     assert envelope.section.total >= 2  # count resolved
@@ -171,7 +170,7 @@ def test_render_search_primary_role(db):
 
     q = AssetQuery(db, iid).scope(None).text("climate").paginate(limit=10)
 
-    events = asyncio.run(_collect_events(render_search(q, query_string="climate", mode="text")))
+    events = asyncio.run(_collect_events(flat(q, grouped=True, mode="text")))
     section_evs = [e for e in events if isinstance(e, SectionEvent)]
     assert section_evs[0].role == "primary"
     assert section_evs[0].section.total == -1
@@ -187,7 +186,7 @@ def test_collect_search_envelope(db):
     db.commit()
 
     q = AssetQuery(db, iid).scope(None).text("alpha").sort("relevance").paginate(limit=20)
-    envelope = asyncio.run(collect_search(q, query_string="alpha", mode="text"))
+    envelope = asyncio.run(collect(flat(q, grouped=True, mode="text"), AssetSearch, meta=AssetSearchMeta(query="alpha", mode="text")))
 
     assert isinstance(envelope, AssetSearch)
     assert envelope.meta.query == "alpha"
@@ -208,7 +207,7 @@ def test_search_ranks_title_match_above_content_match(db):
     db.commit()
 
     q = AssetQuery(db, iid).scope(None).text("budget report").sort("relevance").paginate(limit=10)
-    scored = q.execute_scored()
+    scored = q.rows()
     ids = [a.id for a, _rank, _hl in scored]
 
     assert title_hit in ids and content_hit in ids
@@ -224,7 +223,7 @@ def test_aql_kind_filter_compiles_from_query_string(db):
     db.commit()
 
     q = AssetQuery.from_aql(db, iid, parse_aql("budget kind:article"))
-    ids = [a.id for a in q.execute()]
+    ids = [a.id for a in q.assets()]
 
     assert art in ids
     assert csv not in ids
@@ -240,7 +239,7 @@ def test_search_streams_primary_in_batches(db):
 
     q = AssetQuery(db, iid).scope(None).text("budget").sort("relevance").paginate(limit=50)
     events = asyncio.run(_collect_events(
-        render_search(q, query_string="budget", mode="text", parsed=parse_aql("budget"))
+        flat(q, grouped=True, mode="text", parsed=parse_aql("budget"))
     ))
     primary = [e for e in events if isinstance(e, SectionEvent) and e.role == "primary"]
 
@@ -262,7 +261,7 @@ def test_search_emits_real_child_matches(db):
 
     q = AssetQuery(db, iid).scope(None).text("budget").sort("relevance").paginate(limit=10)
     events = asyncio.run(_collect_events(
-        render_search(q, query_string="budget", mode="text", parsed=parse_aql("budget"))
+        flat(q, grouped=True, mode="text", parsed=parse_aql("budget"))
     ))
     grouped = [e for e in events if isinstance(e, SectionEvent) and e.role == "grouped"]
 
@@ -283,7 +282,7 @@ def test_search_tags_title_vs_content_hits(db):
 
     q = AssetQuery(db, iid).scope(None).text("budget").sort("relevance").paginate(limit=10)
     events = asyncio.run(_collect_events(
-        render_search(q, query_string="budget", mode="text", parsed=parse_aql("budget"))
+        flat(q, grouped=True, mode="text", parsed=parse_aql("budget"))
     ))
     nodes = {}
     for e in events:
@@ -308,7 +307,7 @@ def test_search_children_none_suppresses_grouping(db):
 
     q = AssetQuery(db, iid).scope(None).text("budget").sort("relevance").paginate(limit=10)
     events = asyncio.run(_collect_events(
-        render_search(q, query_string="budget children:none", mode="text",
+        flat(q, grouped=True, mode="text",
                       parsed=parse_aql("budget children:none"))
     ))
     grouped = [e for e in events if isinstance(e, SectionEvent) and e.role == "grouped"]
@@ -322,7 +321,7 @@ def test_render_feed_event_order(db):
     db.commit()
 
     q = AssetQuery(db, iid).scope(None).top_level_only().paginate(limit=10)
-    events = asyncio.run(_collect_events(render_feed(q)))
+    events = asyncio.run(_collect_events(flat(q)))
     names = [e.name for e in events]
     assert names[0] == "skeleton"
     assert names[-1] == "done"
@@ -335,6 +334,114 @@ def test_collect_feed_envelope(db):
     db.commit()
 
     q = AssetQuery(db, iid).scope(None).top_level_only().paginate(limit=10)
-    envelope = asyncio.run(collect_feed(q))
+    envelope = asyncio.run(collect(flat(q), AssetFeed, meta=AssetFeedMeta()))
     assert isinstance(envelope, AssetFeed)
     assert envelope.section.total >= 1
+
+
+# ─── Result-tree: participating skeleton + pruned nav ─────────────────────────
+
+
+def _nested_bundle(db, infospace_id: int, user_id: int, name: str, parent_bundle_id: int = 0) -> int:
+    result = db.execute(
+        text(
+            "INSERT INTO bundle (name, infospace_id, user_id, parent_bundle_id, sealed, "
+            "asset_count, child_bundle_count, version, uuid, tags, created_at, updated_at) "
+            "VALUES (:name, :iid, :uid, :pid, false, 0, 0, '1.0', "
+            "gen_random_uuid()::text, '[]'::json, now(), now()) RETURNING id"
+        ),
+        {"name": name, "iid": infospace_id, "uid": user_id, "pid": parent_bundle_id},
+    )
+    return int(result.scalar())
+
+
+def test_matched_bundle_ids_and_ancestors(db):
+    """containers() collects the folders a result set lives in; ancestor_ids
+    completes each path to root. Together = the participating skeleton."""
+    from app.api.modules.content.query import parse as parse_aql
+    from app.api.modules.content.tree import ancestor_ids
+
+    uid = _user(db, "part")
+    iid = _infospace(db, uid, "views-part")
+    parent = _nested_bundle(db, iid, uid, "parent")
+    child = _nested_bundle(db, iid, uid, "child", parent_bundle_id=parent)
+    other = _nested_bundle(db, iid, uid, "unrelated")
+    _asset(db, iid, uid, "target report", bundle_ids=[child])   # bundled match, nested
+    _asset(db, iid, uid, "target loose")                        # loose match
+    _asset(db, iid, uid, "noise", bundle_ids=[other])           # non-match in another folder
+    db.commit()
+
+    q = AssetQuery.from_aql(db, iid, parse_aql("target")).scope(None)
+    leaves = q.containers()
+    assert leaves == {child}                       # only the folder holding a match; loose (0) dropped
+
+    skeleton = ancestor_ids(db, leaves)
+    assert skeleton == {child, parent}             # path completed to root; 'unrelated' excluded
+
+
+def test_participating_bundles_includes_folder_name_hit(db):
+    """A folder that matches by name joins the skeleton even with no matching
+    contents, plus its ancestors."""
+    from app.api.modules.content.query import parse as parse_aql
+    from app.api.modules.content.views import participating_bundles
+
+    uid = _user(db, "partn")
+    iid = _infospace(db, uid, "views-partn")
+    parent = _nested_bundle(db, iid, uid, "Finance")
+    _nested_bundle(db, iid, uid, "Budget 2024", parent_bundle_id=parent)  # name hit, empty
+    db.commit()
+
+    participating, name_hits = asyncio.run(participating_bundles(db, iid, parse_aql("Budget"), None))
+    # the name-matched folder + its ancestor chain are in the skeleton …
+    assert parent in participating
+    # … and the folder that matched by name is flagged (its ancestor is not)
+    assert name_hits and parent not in name_hits
+
+
+def test_result_tree_prunes_nav_and_places_matches(db):
+    """render_tree with `participating`: nav is pruned to the skeleton, loose
+    matches land at root, bundled matches do NOT (they live under their folder)."""
+    from app.api.modules.content.query import parse as parse_aql
+    from app.api.modules.content.views import participating_bundles
+
+    uid = _user(db, "rtree")
+    iid = _infospace(db, uid, "views-rtree")
+    parent = _nested_bundle(db, iid, uid, "parent")
+    child = _nested_bundle(db, iid, uid, "child", parent_bundle_id=parent)
+    _nested_bundle(db, iid, uid, "unrelated")
+    _asset(db, iid, uid, "target report", bundle_ids=[child])
+    _asset(db, iid, uid, "target loose")
+    db.commit()
+
+    parsed = parse_aql("target")
+    # root result-query: loose (unbundled) matches only
+    q = AssetQuery.from_aql(db, iid, parsed).scope(None).no_bundles().sort("created_at_desc").paginate(limit=50)
+    participating, name_hits = asyncio.run(participating_bundles(db, iid, parsed, None))
+
+    events = asyncio.run(_collect_events(
+        tree(q, access_scope=None, participating=participating, name_hits=name_hits)))
+
+    nav_ev = next(e for e in events if isinstance(e, NavEvent))
+    nav_ids = {b.id for b in nav_ev.nav.bundles}
+    assert nav_ids == participating           # nav pruned to the skeleton
+    assert child in nav_ids and parent in nav_ids
+
+    section_ev = next(e for e in events if isinstance(e, SectionEvent))
+    titles = {n.name for n in section_ev.section.items}
+    assert "target loose" in titles           # loose match at root
+    assert "target report" not in titles      # bundled match lives under its folder, not root
+
+
+def test_tree_no_query_is_unchanged_browse(db):
+    """No query → participating is None → full nav (browse), byte-identical path."""
+    uid = _user(db, "browse")
+    iid = _infospace(db, uid, "views-browse")
+    _nested_bundle(db, iid, uid, "a")
+    _nested_bundle(db, iid, uid, "b")
+    _asset(db, iid, uid, "loose")
+    db.commit()
+
+    q = AssetQuery(db, iid).scope(None).top_level_only().no_bundles().paginate(limit=10)
+    events = asyncio.run(_collect_events(tree(q, access_scope=None, participating=None)))
+    nav_ev = next(e for e in events if isinstance(e, NavEvent))
+    assert len({b.id for b in nav_ev.nav.bundles}) >= 2   # full registry, unpruned

@@ -1,7 +1,7 @@
 """Re-poll an unchanged corpus → ZERO writes (the supersede / re-update storm regression).
 
 The acquire spine (``content.tasks.ingestion.intake_items``) runs the stage-1 source_token
-guard, then ``build_outcome`` → ``decide`` for the survivors. Polling a source whose items
+guard, then ``persist`` → ``decide`` for the survivors. Polling a source whose items
 haven't changed must produce NO creates / supersedes / updates — and must not even touch the
 existing rows (no ``updated_at`` churn). This is the integration gate for the identity layer;
 ``decide()`` itself is unit-tested in ``test_decide.py``.

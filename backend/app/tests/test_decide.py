@@ -1,7 +1,7 @@
 """Unit tests for the identity/policy decision — ``content.asset_builder.decide``.
 
 ``decide`` is the ONE place the skip|supersede|update × content_hash matrix lives
-(``build_outcome`` and ``reconcile_children`` both call it). It's pure — no DB, no
+(``persist`` and ``reconcile_children`` both call it). It's pure — no DB, no
 session, no worker — so this fully covers the matrix that used to interleave across
 three branches and produce the supersede / re-update storms. The integration-level
 guarantee (re-poll an unchanged corpus → zero writes) is a separate task-level test.

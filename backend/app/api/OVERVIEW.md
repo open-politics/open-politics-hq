@@ -169,7 +169,17 @@ embedding             terminal (depends_on=ocr, self-chained)
 | `source.polled` | `source_polling` | `trigger_source_poll_flows` (flow) |
 | `annotation_run.created` / `.completed` | annotation service / annotate task | `process_annotation_run` / `resume_waiting_flows` |
 
-**Dedup is two-stage and what makes monitoring free:** stage 1 = `source_token` guard before fetch (a re-poll skips unchanged items at enumeration cost); stage 2 = `content_hash` via `decide()` (an unchanged item is a zero-write no-op). Identity = `source_identifier` (URL, guid, path, `archive://<id>/<relpath>` position).
+**Dedup is a three-tier ladder, and it is what makes monitoring free.** Identity = `source_identifier` (the URL wherever one exists — feeds key on the article link, not an opaque guid, so a story reached by RSS and by search is one asset; also path, `archive://<id>/<relpath>` position).
+
+| Tier | Question | Cost | On |
+|---|---|---|---|
+| 1 identity | seen this `source_identifier`? | one indexed lookup, **DB-enforced** by `ux_asset_live_identity` | always |
+| 2 drift token | did the cheap change signal move? | one query per 200-item chunk | when the source emits one |
+| 3 content hash | did the bytes change? | fetch + one `content_hash()` | **only when the Source declares `on_drift`** |
+
+Tier 3 is opt-in. With it off — the default — a known identifier never reaches `fetch()`: no network, no hash, no write. Turning it on is what buys versioning (`supersede`) or in-place refresh (`update`). Monitoring is therefore a Source with a poll interval and `on_drift` set, not a feature.
+
+`ux_asset_live_identity` is `UNIQUE (infospace_id, source_identifier) WHERE parent_asset_id IS NULL AND is_superseded = false`. Both predicates are load-bearing: superseded versions accumulate freely behind the one live row, and children reuse identifiers by design. A losing racer's insert rolls back to a savepoint and re-decides, so a concurrent poll collapses into an ordinary match instead of a duplicate.
 
 **The Source contract:** a `Source` row IS monitoring config — `kind` is a registered source kind, `details` is that source's read-config **verbatim**, destination is the `output_bundle_id` column, cursor is `cursor_state`. Minting a poll job is copying those fields onto an `IngestionJob`. There is no translation anywhere.
 
@@ -358,7 +368,7 @@ Per-asset ownership (no parent→child copying). `merge_facets()` bypasses ORM; 
 | Stale reset | `reset_stale_processing` (3600s) | assets stuck after worker crash |
 | `task_acks_late` + `reject_on_worker_lost` | celery_app | lost work on worker death |
 
-Beat runs as a single instance; workers replicate freely (all downstream work is idempotent via claims + the two-stage dedup).
+Beat runs as a single instance; workers replicate freely (all downstream work is idempotent via claims + the dedup ladder, with asset identity enforced by a DB constraint rather than by convention — this claim used to be aspirational, and ~20% of newly created assets were duplicates because of it). Content work runs on its own `-Q processing` pool so a long ingest cannot starve annotate/embed.
 
 ---
 
@@ -400,7 +410,7 @@ Beat runs as a single instance; workers replicate freely (all downstream work is
 | Path | Implementation | Scale behavior |
 |---|---|---|
 | Huge directory import | streaming `os.walk` read + `_INGEST_CHUNK` commits + per-chunk `job_progress` | bounded memory; live progress; crash-safe via guard+decide idempotency |
-| Re-polls | stage-1 `source_token` guard + stage-2 `decide()` | O(changed), zero-write for unchanged corpora |
+| Re-polls | tier-1 identity + tier-2 `source_token` guard, then `decide()` | O(changed), zero-write for unchanged corpora (measured 0.018 ms/item) |
 | Processing | atomic claim + self-chain + `MAX_CHAIN_DEPTH` | idempotent, no queue flooding |
 | Enrichment | GIN `enrichment_resolved @>` gates + read/write phase separation | index-only candidate scans; no DB hold during external I/O |
 | Orphan cleanup | `NOT EXISTS` antijoin | safe on 500k-asset infospaces (the `NOT IN` version melted them) |
