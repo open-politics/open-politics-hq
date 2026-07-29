@@ -162,6 +162,7 @@ class FormulaQuery:
         fields: list[str] | None = None,
         cursor: str | int | None = None,
         limit: int = 100,
+        include_failed: bool = False,
     ) -> "RowsView":
         """Pack as paginated annotation rows with asset hierarchy.
 
@@ -169,7 +170,12 @@ class FormulaQuery:
         right now; the existing :meth:`AnnotationQuery.results` ships
         the full annotation value. Wire-side projection lands as a
         follow-up optimization (see ``docs/internal/RE_EVALUATION.md``).
+
+        Errored annotations are excluded by default so a failed-heavy run
+        doesn't spend the whole page budget on rows the table then hides.
         """
+        if not include_failed:
+            self.aq.exclude_failed()
         self.aq.paginate(cursor=cursor, limit=limit)
         page = self.aq.results()
         return RowsView(

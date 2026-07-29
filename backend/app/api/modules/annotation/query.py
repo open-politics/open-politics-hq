@@ -323,6 +323,7 @@ class AnnotationQuery:
         self._merge_maps: list[MergeMap] = []
         self._limit: int = 100
         self._cursor: int | None = None
+        self._exclude_failed: bool = False
         # Package-share scope. ``None`` = full infospace access (owner / collaborator).
         # A ``PackageScope`` (even an empty one) restricts visibility to its grants.
         self._package_scope = None
@@ -347,6 +348,13 @@ class AnnotationQuery:
 
     def merge(self, mm: MergeMap) -> AnnotationQuery:
         self._merge_maps.append(mm)
+        return self
+
+    def exclude_failed(self, on: bool = True) -> AnnotationQuery:
+        """Drop errored annotations (``status = failed``) from every
+        materialization — so a failed-heavy run's page isn't spent on rows a
+        display would hide. Off by default; ret/error views opt back in."""
+        self._exclude_failed = on
         return self
 
     def scope(self, package_scope) -> AnnotationQuery:
@@ -414,6 +422,10 @@ class AnnotationQuery:
         if self._asset_ids:
             clauses.append(f"{alias}.asset_id = ANY(:asset_ids)")
             params["asset_ids"] = self._asset_ids
+
+        if self._exclude_failed:
+            # Case-insensitive: status is stored as the enum name (FAILED/SUCCESS).
+            clauses.append(f"LOWER({alias}.status::text) <> 'failed'")
 
         # Package scope — single source of truth for all three materializations.
         # results(), aggregate(), graph() all build their SQL on top of _base_where,

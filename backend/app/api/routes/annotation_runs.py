@@ -736,6 +736,10 @@ class RowsParams(BaseModel):
 
     cursor: str | int | None = None
     limit: int = 100
+    # Errored annotations are hidden by default so they don't consume the page
+    # budget (a failed-heavy run would otherwise show an empty table). Set true to
+    # include them (the table's "show failed" toggle).
+    include_failed: bool = False
 
 
 class GraphParams(BaseModel):
@@ -884,6 +888,7 @@ def _build_view_phases(session, access, run_id: int, body: "ViewRequest") -> dic
             fields=body.fields,
             cursor=body.rows.cursor,
             limit=body.rows.limit,
+            include_failed=body.rows.include_failed,
         )
 
     if body.aggregate is not None:
@@ -973,6 +978,7 @@ async def view_run_stream(
                 fields=body.fields,
                 cursor=body.rows.cursor,
                 limit=body.rows.limit,
+                include_failed=body.rows.include_failed,
             )
             yield ServerSentEvent(data=rows_payload.model_dump(), event="rows")
 
