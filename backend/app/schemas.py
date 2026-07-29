@@ -96,15 +96,11 @@ class SearchResult:
     raw_data: Optional[Dict[str, Any]] = None
     
     def __post_init__(self):
-        self.content_hash = self._generate_content_hash()
+        # No content_hash here. A search result is not an asset; the hash it used to
+        # stamp (title|url|content[:500]) was a fourth formula that nothing read —
+        # web_search's fetch hands the text to AssetBuilder, which derives the one hash.
         self.domain = self._extract_domain()
-    
-    def _generate_content_hash(self) -> str:
-        import hashlib
-        from urllib.parse import urlparse
-        content_for_hash = f"{self.title}|{self.url}|{self.content[:500]}"
-        return hashlib.md5(content_for_hash.encode()).hexdigest()
-    
+
     def _extract_domain(self) -> str:
         from urllib.parse import urlparse
         try:
@@ -1168,6 +1164,7 @@ class ChatRequest(SQLModel):
     tools_enabled: bool = True  # Enable/disable tool calls (default: True for backward compatibility)
     max_tool_iterations: Optional[int] = None  # Cap on the agentic tool loop per turn (default 20, up to 100); browse→load→act workflows raise it
     current_route: Optional[str] = None  # The page the user is on (e.g. "/hq/infospaces/annotation-runner") — lets the operator ground navigation in where you already are
+    current_focus: Optional[Dict[str, Any]] = None  # The entity the user has open/focused, e.g. {"kind":"run","id":4752,"name":"Epstein Files — Live Monitor"} — lets the operator act on "this run/bundle" without asking which
     tools: Optional[List[Dict[str, Any]]] = None  # Tools to use for the chat
     response_format: Optional[Dict[str, Any]] = None  # JSON schema for structured output
     api_keys: Optional[Dict[str, str]] = None  # Runtime API keys for providers (e.g., {"tavily": "key", "openai": "key"})

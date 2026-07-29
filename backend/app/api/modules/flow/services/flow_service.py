@@ -41,6 +41,30 @@ from app.api.modules.flow.services.filter_service import FilterService, FilterEx
 logger = logging.getLogger(__name__)
 
 
+def _route_conditions(step_config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Normalize a ROUTE step's conditional branches to ``[{if, bundle_id}, ...]``.
+
+    The flow editor writes ``branches: [{bundle_id, condition, label}]`` while this
+    service only ever read ``conditions: [{if, bundle_id}]`` — so every conditional
+    ROUTE authored in the UI silently fell through to the unconditional branch and
+    routed everything to the same bundle. Accept both shapes rather than migrating
+    stored flows: the editor's is the one users actually have.
+
+    A branch with a null condition is the editor's "Default" — an unconditional
+    catch-all, kept in order so earlier branches win.
+    """
+    if step_config.get("conditions"):
+        return step_config["conditions"]
+    out: List[Dict[str, Any]] = []
+    for branch in step_config.get("branches") or []:
+        target = branch.get("bundle_id")
+        if not target:
+            continue
+        cond = branch.get("condition")
+        out.append({"if": cond, "bundle_id": target} if cond else {"else": True, "bundle_id": target})
+    return out
+
+
 class FlowService:
     """
     Service for managing Flows and their executions.
@@ -991,8 +1015,8 @@ class FlowService:
         """Execute a ROUTE step - move/copy assets to bundles."""
         bundle_id = step_config.get("bundle_id")
         bundle_ids = step_config.get("bundle_ids", [])
-        conditions = step_config.get("conditions", [])
-        
+        conditions = _route_conditions(step_config)
+
         if bundle_id:
             bundle_ids = [bundle_id]
 

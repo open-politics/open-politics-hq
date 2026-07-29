@@ -31,9 +31,12 @@ collapse. Used by every ``collect_X`` to mirror its ``render_X`` sibling.
 """
 
 import json
+import logging
 from typing import Any, AsyncIterator, TypeVar
 
 from fastapi.sse import EventSourceResponse, ServerSentEvent, format_sse_event
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -125,16 +128,21 @@ async def drain(events: AsyncIterator[Any], envelope_type: type[T]) -> T:
         elif isinstance(ev, NavEvent):
             nav = ev.nav
         elif isinstance(ev, CountEvent):
-            if ev.at_parent is None:
-                if primary is not None:
-                    primary.total = ev.total
-                    primary.has_more = bool(primary.cursor_next)
+            # A deferred count resolves the pending total of the section carrying
+            # this at_parent — one rule, by identity: the primary/level section
+            # (at_parent None for root/flat, the parent node id for a child level)
+            # or, failing that, a grouped nested-match section. An unmatched count
+            # means emitter and drain disagree on identity — surface it, don't drop
+            # it silently (that silent drop hid a child-level `total` regression).
+            target = (
+                primary if (primary is not None and primary.at_parent == ev.at_parent)
+                else next((s for s in grouped if s.at_parent == ev.at_parent), None)
+            )
+            if target is not None:
+                target.total = ev.total
+                target.has_more = bool(target.cursor_next)
             else:
-                for section in grouped:
-                    if section.at_parent == ev.at_parent:
-                        section.total = ev.total
-                        section.has_more = bool(section.cursor_next)
-                        break
+                logger.warning("drain: CountEvent(at_parent=%r) matched no section", ev.at_parent)
         elif isinstance(ev, AggregateSectionEvent):
             aggregate = ev
         elif isinstance(ev, GraphSectionEvent):
@@ -147,9 +155,9 @@ async def drain(events: AsyncIterator[Any], envelope_type: type[T]) -> T:
 
     if envelope_type is AssetTree:
         if primary is None:
-            raise ValueError("render_tree drained without a primary section")
+            raise ValueError("tree drained without a primary section")
         if nav is None:
-            raise ValueError("render_tree drained without a nav event")
+            raise ValueError("tree drained without a nav event")
         return AssetTree(
             nav=nav,
             section=primary,
@@ -159,7 +167,7 @@ async def drain(events: AsyncIterator[Any], envelope_type: type[T]) -> T:
     if envelope_type is AssetSearch:
         from app.api.modules.content.schemas import AssetSearchMeta
         if primary is None:
-            raise ValueError("render_search drained without a primary section")
+            raise ValueError("flat drained without a primary section")
         return AssetSearch(
             primary=primary,
             grouped=grouped,
@@ -168,7 +176,7 @@ async def drain(events: AsyncIterator[Any], envelope_type: type[T]) -> T:
 
     if envelope_type is AssetFeed:
         if primary is None:
-            raise ValueError("render_feed drained without a primary section")
+            raise ValueError("flat drained without a primary section")
         return AssetFeed(section=primary, meta=None)  # type: ignore[return-value]
 
     # Annotation-domain envelopes — caller passes the concrete envelope class.

@@ -356,7 +356,7 @@ class FilterService:
         if not _expression_to_asset_query(filter_expression, q, annotation_run_ids):
             return None
 
-        return [a.id for a in q.execute()]
+        return [a.id for a in q.assets()]
     
     def create_from_config(self, config: Dict[str, Any]) -> FilterExpression:
         """Create a filter expression from configuration dictionary."""

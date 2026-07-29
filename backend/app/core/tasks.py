@@ -680,7 +680,12 @@ def task(
             r = _get_redis()
             slot = -1
             if r:
-                slot = acquire_slot(r, name, infospace_id, max_concurrency, timeout)
+                # TTL must OUTLIVE the task, not equal it. At timeout == the task's own
+                # deadline, a task running right up to its limit has its slot expire
+                # while it is still executing — the dispatcher then sees a free slot and
+                # over-admits. The TTL is only a crash-safety net (the slot is released
+                # explicitly in `finally`), so erring long costs nothing.
+                slot = acquire_slot(r, name, infospace_id, max_concurrency, timeout * 2 + 60)
                 if slot < 0:
                     # No slot available — direct invocations re-queue, others bail
                     if batch_ids is not None and _chain_depth == 0:
