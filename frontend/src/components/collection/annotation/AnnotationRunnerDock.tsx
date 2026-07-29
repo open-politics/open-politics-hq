@@ -637,7 +637,7 @@ export default function AnnotationRunnerDock({
       <div className={cn(
         "fixed flex flex-col bg-card/95 backdrop-blur-lg text-card-foreground shadow-2xl z-40 transition-all duration-300 ease-in-out rounded-md border",
         isMinimized 
-          ? "bottom-0.5 right-4 w-12 h-12 shadow-2xl ring-1 ring-primary/20"
+          ? "bottom-0.5 left-1/2 w-12 h-12 shadow-2xl ring-1 ring-primary/20"
           : isExpanded 
             ? "bottom-0.5 left-1/2 transform -translate-x-1/2 w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[1500px] max-w-[95vw] shadow-lg hover:shadow-xl"
             : "bottom-0.5 left-1/2 transform -translate-x-1/2 w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[700px] sm:max-w-[700px] shadow-2xl ring-1 ring-primary/20"

@@ -10,7 +10,8 @@ import { useInfospaceStore } from "@/zustand_stores/storeInfospace";
 import { useAnnotationSystem } from "@/hooks/useAnnotationSystem";
 import { useStream, type StreamEvent } from "@/hooks/useStream";
 import { useAssetStore } from "@/zustand_stores/storeAssets";
-import { AnnotationsService } from "@/client";
+import { AnnotationsService, RunsService } from "@/client";
+import { useSurfaceCommands } from "@/hooks/useSurfaceCommands";
 import { adaptEnhancedAnnotationToFormattedAnnotation } from "@/lib/annotations/adapters";
 import { FormattedAnnotation, AnnotationRunParams } from "@/lib/annotations/types";
 import { runPollIntervalMs } from "@/lib/annotations/pollIntervals";
@@ -55,6 +56,23 @@ export default function AnnotationRunnerPage() {
       setActiveRun(run);
     }
   }, [runs, setActiveRun]);
+
+  // The operator's `runner:open` verb — select a run to open its dashboard, whether
+  // or not it's in the loaded list yet (fetches it), and even when we're already on
+  // the runner (the ?runId deep-link above only fires on first mount). This is what
+  // lets the operator open an EXISTING run and then build its dashboard on it.
+  useSurfaceCommands('runner', {
+    open: async (p) => {
+      const id = Number(p?.run_id ?? p?.runId);
+      if (!Number.isFinite(id)) return;
+      let run = runs.find((r) => r.id === id) ?? null;
+      if (!run && activeInfospace?.id) {
+        try { run = await RunsService.getRun({ infospaceId: activeInfospace.id, runId: id }); }
+        catch { /* not found / no access — leave selection unchanged */ }
+      }
+      if (run) setActiveRun(run);
+    },
+  });
 
   const [runResults, setRunResults] = useState<FormattedAnnotation[]>([]);
   const [isLoadingResults, setIsLoadingResults] = useState(false);

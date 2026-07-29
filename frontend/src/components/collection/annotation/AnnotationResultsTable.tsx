@@ -253,6 +253,14 @@ export function AnnotationResultsTable({
   const gvs = getGlobalVariableSplitting();
   const runWideAliasesByField = gvs?.valueAliasesByField ?? {};
 
+  // Failed-row visibility: hidden by default. Also excluded at the FETCH (below) so
+  // errored rows don't consume the page budget — a failed-heavy run would otherwise
+  // show an empty table. The toolbar toggle opts them back in. Declared here so the
+  // fetch can read it.
+  const [showFailed, setShowFailed] = useState<boolean>(
+    panelConfig.settings?.tableConfig?.showFailed ?? false,
+  );
+
   const { data: viewData, isLoading, error: viewError, refetch } = useAnnotationView({
     infospaceId,
     runId,
@@ -263,7 +271,7 @@ export function AnnotationResultsTable({
     merge_maps: panelConfig.merge_maps,
     ...(isAggregateMode
       ? { aggregate: {} }
-      : { rows: { limit: pageSize, cursor: typeof cursor === 'number' ? cursor : undefined } }),
+      : { rows: ({ limit: pageSize, cursor: typeof cursor === 'number' ? cursor : undefined, include_failed: showFailed } as any) }),
     enabled: !!runId && !!infospaceId,
   });
 
@@ -344,11 +352,6 @@ export function AnnotationResultsTable({
   );
   const [fieldRangeCache, setFieldRangeCache] = useState<FieldRangeCache>(
     initialTableConfig?.fieldRangeCache || {},
-  );
-  // Failed-row visibility: hidden by default. The toolbar surfaces the count
-  // and lets the user opt in (e.g. to use the "…" menu retry).
-  const [showFailed, setShowFailed] = useState<boolean>(
-    initialTableConfig?.showFailed ?? false,
   );
   // Field layout — persisted to panel_config.unfold_fields so the choice
   // survives panel reload (same pattern as density/sort). Unfolded by default:

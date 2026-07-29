@@ -54,6 +54,7 @@ import { Label } from "@/components/ui/label";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useAnnotationRunStore, PanelViewConfig } from '@/zustand_stores/useAnnotationRunStore';
+import { useSurfaceCommands } from '@/hooks/useSurfaceCommands';
 import AnnotationRunnerHeader from './AnnotationRunnerHeader';
 import { FormulaWorkspace } from './formulas/FormulaWorkspace';
 import { DockedChat } from '@/components/collection/chat/DockedChat';
@@ -266,6 +267,124 @@ export default function AnnotationRunner({
   useEffect(() => {
     setActiveRun(activeRun); // This handles both activeRun and null cases
   }, [activeRun, setActiveRun]);
+
+  // ── Operator drive verbs (the `dashboard:*` surface commands) ──────────────
+  // Coarse and self-contained: addPanel creates AND configures a panel in one shot
+  // (via a before/after id diff) so the operator never juggles internal panel ids.
+  // Filters + axes ONLY — never formulas. The empty inline `formula` stub addPanel
+  // creates is left untouched; we only ever set `panel_config` (axes) and
+  // `formula.filter`, spreading the current value so nothing else is clobbered.
+  // Gated on `dashboardConfig` so a buffered directive flushes only once a run's
+  // dashboard is actually loaded (run.start navigates here with ?runId=).
+  const ARRAY_AXIS_ROLES = new Set(['y', 'label', 'columns']);
+  const normalizeAxis = (axis: Record<string, any>) => {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(axis)) {
+      out[k] = ARRAY_AXIS_ROLES.has(k) && typeof v === 'string' ? [v] : v;
+    }
+    return out;
+  };
+  const normalizeFilter = (filter: any): { logic: 'and' | 'or'; conditions: any[] } => {
+    if (typeof filter === 'string') {
+      try { filter = JSON.parse(filter); } catch { return { logic: 'and', conditions: [] }; }
+    }
+    if (Array.isArray(filter)) return { logic: 'and', conditions: filter };
+    return { logic: filter?.logic === 'or' ? 'or' : 'and', conditions: Array.isArray(filter?.conditions) ? filter.conditions : [] };
+  };
+  const findPanelByRef = (panels: any[], p: any) => {
+    if (p?.index != null) return panels[Number(p.index)];
+    if (p?.name != null) {
+      const n = String(p.name).toLowerCase();
+      return panels.find((x) => String(x.name).toLowerCase() === n);
+    }
+    return undefined;
+  };
+  const applyPanelUpdates = (panelId: string, p: any) => {
+    const panel = useAnnotationRunStore.getState().dashboardConfig?.panels.find((x: any) => x.id === panelId);
+    if (!panel) return;
+    const updates: any = {};
+    if (p?.description != null) updates.description = String(p.description);
+    if (p?.axis && typeof p.axis === 'object') updates.panel_config = { ...(panel as any).panel_config, ...normalizeAxis(p.axis) };
+    if (p?.filter) {
+      const runSchemaId = (activeRun as any)?.target_schema_ids?.[0] ?? null;
+      updates.formula = {
+        ...(panel as any).formula,
+        filter: normalizeFilter(p.filter),
+        // Bind the schema so the filter editor + compile resolve field paths.
+        schema_id: (panel as any).formula?.schema_id ?? runSchemaId,
+      };
+      // Drop any stale UI filter state so the header reconstructs (and SHOWS) the new
+      // filter from formula.filter, instead of an empty saved stub winning.
+      updates.settings = { ...((panel as any).settings ?? {}), filterUIState: undefined };
+    }
+    if (p?.size && typeof p.size === 'object') updates.grid_position = p.size; // updatePanel clamps + merges
+    if (Object.keys(updates).length) useAnnotationRunStore.getState().updatePanel(panelId, updates);
+  };
+  const persistDashboard = () => {
+    const iid = activeInfospace?.id, rid = activeRun?.id;
+    if (iid && rid) void useAnnotationRunStore.getState().saveDashboardToBackend(iid, rid);
+  };
+
+  // Per-type default sizes (24-col grid). The operator shouldn't hand-size panels;
+  // these are the house standards and compactLayout() arranges positions afterwards.
+  const PANEL_SIZE: Record<string, { w: number; h: number }> = {
+    pie: { w: 8, h: 6 }, chart: { w: 16, h: 6 }, table: { w: 24, h: 6 },
+    graph: { w: 24, h: 12 }, map: { w: 16, h: 6 }, scatter: { w: 12, h: 8 }, measurements: { w: 8, h: 6 },
+  };
+  // Create one panel and fully configure it (size + axes + filter) via the before/after
+  // id diff, so the caller never needs the internal panel id.
+  const createConfiguredPanel = (spec: any) => {
+    const type = String(spec?.type ?? 'table');
+    const before = new Set((useAnnotationRunStore.getState().dashboardConfig?.panels ?? []).map((x: any) => x.id));
+    useAnnotationRunStore.getState().addPanel({ type: type as any, name: String(spec?.name ?? 'Panel'), description: spec?.description });
+    const created = (useAnnotationRunStore.getState().dashboardConfig?.panels ?? []).find((x: any) => !before.has(x.id));
+    if (!created) return;
+    // A graph needs a source; default to the common relation array when omitted.
+    if (type === 'graph' && (spec?.axis == null || spec.axis.source == null)) {
+      spec = { ...spec, axis: { ...(spec?.axis ?? {}), source: 'document.triplets[*]' } };
+    }
+    // A map needs a location; default to the top-level location field when omitted.
+    if (type === 'map' && (spec?.axis == null || spec.axis.position == null)) {
+      spec = { ...spec, axis: { ...(spec?.axis ?? {}), position: 'document.location' } };
+    }
+    // Pie: exclude empty slice values by default (blanks otherwise dominate).
+    if (type === 'pie' && spec?.axis?.slice_by && spec?.filter == null) {
+      spec = { ...spec, filter: { logic: 'and', conditions: [{ path: spec.axis.slice_by, operator: 'ne', value: '' }] } };
+    }
+    // Chart/timeline: x defaults to the top-level timestamp (the operator shouldn't
+    // have to ask); numerical score axes read 1–10 when explicit y measures are set
+    // (a count chart keeps its auto range).
+    if (type === 'chart') {
+      const ax = { ...(spec?.axis ?? {}) };
+      if (ax.x == null) ax.x = 'document.timestamp';
+      const hasY = Array.isArray(ax.y) ? ax.y.length > 0 : ax.y != null;
+      if (hasY && ax.y_min == null && ax.y_max == null) { ax.y_min = 1; ax.y_max = 10; }
+      spec = { ...spec, axis: ax };
+    }
+    const size = (spec?.size && typeof spec.size === 'object') ? spec.size : (PANEL_SIZE[type] ?? { w: 12, h: 8 });
+    applyPanelUpdates(created.id, { ...spec, size });
+  };
+
+  useSurfaceCommands('dashboard', {
+    addPanel: (p) => { createConfiguredPanel(p); persistDashboard(); },
+    // Batch: create ALL panels in one gesture, then pack them into a tidy layout.
+    addPanels: (p) => {
+      const specs = Array.isArray(p?.panels) ? p.panels : [];
+      specs.forEach(createConfiguredPanel);
+      useAnnotationRunStore.getState().compactLayout();
+      persistDashboard();
+    },
+    setPanel: (p) => {
+      const panel = findPanelByRef(useAnnotationRunStore.getState().dashboardConfig?.panels ?? [], p);
+      if (!panel) return;
+      applyPanelUpdates(panel.id, p);
+      persistDashboard();
+    },
+    removePanel: (p) => {
+      const panel = findPanelByRef(useAnnotationRunStore.getState().dashboardConfig?.panels ?? [], p);
+      if (panel) { useAnnotationRunStore.getState().removePanel(panel.id); persistDashboard(); }
+    },
+  }, { enabled: !!dashboardConfig });
 
   // Auto-add initial table panel as soon as any rows land — no need to wait
   // for terminal status. Panels self-refresh via polling + per-row commits,

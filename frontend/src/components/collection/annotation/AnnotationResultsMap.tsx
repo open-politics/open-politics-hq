@@ -531,7 +531,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   }, [locationField, resetGeocode]);
 
   // Seed already-resolved coords on mount / when the field changes.
-  const { entities: seededEntities, refetch: refetchSeed } = useGeocodedEntities({
+  const { entities: seededEntities, refetch: refetchSeed, isLoading: seedLoading } = useGeocodedEntities({
     infospaceId,
     runId,
     fieldPath: locationField ?? null,
@@ -590,6 +590,21 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     setTimeout(() => { void refetch(); }, 8000);
   }, [locationField, infospaceId, runId, kickGeocode]);
 
+  // Auto-geocode: when a map has a location field but nothing is geocoded yet, kick
+  // it once automatically (the task no-ops harmlessly if there's nothing to resolve),
+  // so a fresh map fills in without the user hunting for a button.
+  const autoGeocodedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!locationField || !runId || !infospaceId) return;
+    if (seedLoading) return;                 // existing coords still loading
+    if (seededEntities.length > 0) return;   // already geocoded
+    if (isGeocoding) return;                  // a geocode is already running
+    const key = `${runId}:${locationField}`;
+    if (autoGeocodedRef.current.has(key)) return;
+    autoGeocodedRef.current.add(key);
+    void handleKickGeocode();
+  }, [locationField, runId, infospaceId, seedLoading, seededEntities.length, isGeocoding, handleKickGeocode]);
+
   // ── Misc state ───────────────────────────────────────────────────────────
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -602,7 +617,8 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   const [mapLoaded, setMapLoaded] = useState(false);
   const [styleVersion, setStyleVersion] = useState(0);
   const [isGlobeView, setIsGlobeView] = useState(false);
-  const [locationsPanelOpen, setLocationsPanelOpen] = useState(false);
+  // Default the locations list open so the geocoded places are visible alongside the map.
+  const [locationsPanelOpen, setLocationsPanelOpen] = useState(true);
   const [locationsSearch, setLocationsSearch] = useState('');
   const { theme: pageTheme } = useTheme();
 

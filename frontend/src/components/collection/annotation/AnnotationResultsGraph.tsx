@@ -1345,25 +1345,6 @@ export default function AnnotationResultsGraph({
   // AND the formula has no group path. Drives the empty-state teacher.
   const needsTripletPick = !cfg?.source && !(panelConfig.formula?.group?.[0]?.path);
 
-  if (graphSchemas.length === 0) {
-    return (
-      <div className="h-full flex flex-col">
-        <PanelHeaderSlot>{null}</PanelHeaderSlot>
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center text-muted-foreground max-w-md">
-            <Info className="mx-auto h-12 w-12 mb-4 opacity-50" />
-            <h3 className="text-lg font-medium mb-2">No graph-shaped fields in this run</h3>
-            <p className="text-sm">
-              Graph panels render schemas whose output contract carries a
-              triplet field (subject / predicate / object). Add such a field to
-              an existing schema or pick a different run.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const selectedNodeDetails = selectedNodeId ? getNodeDetails(selectedNodeId) : null;
 
   // ---- Arrow-nav candidate lists. The search query (``searchTerm``) acts
@@ -2130,6 +2111,28 @@ export default function AnnotationResultsGraph({
       documents,
     };
   }, [selectedBundle, nodes, results, assetsMap]);
+
+  // Empty state lives *below* every hook. An early return above them would
+  // change the hook count between renders (the run's schemas arrive async),
+  // which React rejects outright.
+  if (graphSchemas.length === 0) {
+    return (
+      <div className="h-full flex flex-col">
+        <PanelHeaderSlot>{null}</PanelHeaderSlot>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center text-muted-foreground max-w-md">
+            <Info className="mx-auto h-12 w-12 mb-4 opacity-50" />
+            <h3 className="text-lg font-medium mb-2">No graph-shaped fields in this run</h3>
+            <p className="text-sm">
+              Graph panels render schemas whose output contract carries a
+              triplet field (subject / predicate / object). Add such a field to
+              an existing schema or pick a different run.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div ref={fullscreenRootRef} className={`h-full flex flex-col ${isFullscreen ? 'bg-background' : ''}`}>
