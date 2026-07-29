@@ -17,7 +17,7 @@ import { ToolResultRenderProps } from '../shared/types';
 import { Badge } from '@/components/ui/badge';
 import { SchemePreview } from '@/components/collection/annotation/schemaCreation/SchemePreview';
 import type { AnnotationSchemaRead } from '@/client';
-import { CheckCircle2, Eye, FilePlus, FilePen, Trash2, CircleSlash } from 'lucide-react';
+import { CheckCircle2, Eye, FilePlus, FilePen, Trash2, CircleSlash, PlusSquare, SlidersHorizontal, FlaskConical, Search } from 'lucide-react';
 
 interface AnalysisHubSchema {
   id: number;
@@ -79,19 +79,36 @@ function SchemasList({ schemas }: { schemas: AnalysisHubSchema[] }) {
 }
 
 function RunsList({ runs }: { runs: AnalysisHubRun[] }) {
+  const [q, setQ] = React.useState('');
   if (runs.length === 0) {
     return (
       <div className="text-xs text-muted-foreground">No annotation runs yet.</div>
     );
   }
+  const term = q.trim().toLowerCase();
+  const filtered = term
+    ? runs.filter((r) => (r.name ?? '').toLowerCase().includes(term) || String(r.id).includes(term))
+    : runs;
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span>Runs</span>
         <Badge variant="secondary" className="h-5">{runs.length}</Badge>
       </div>
+      {/* Search so a long list stays scannable instead of many rows. */}
+      {runs.length > 6 && (
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search runs by name or #id…"
+            className="w-full rounded-md border bg-background py-1.5 pl-7 pr-2 text-xs outline-none focus:ring-1 focus:ring-primary"
+          />
+        </div>
+      )}
       <div className="space-y-1">
-        {runs.map((r) => (
+        {filtered.map((r) => (
           <div key={r.id} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
             <span className="font-medium flex-1 truncate">{r.name}</span>
             {r.status && <Badge variant="outline" className="text-xs">{r.status}</Badge>}
@@ -102,6 +119,9 @@ function RunsList({ runs }: { runs: AnalysisHubRun[] }) {
           </div>
         ))}
       </div>
+      {term && filtered.length === 0 && (
+        <div className="text-xs text-muted-foreground">No runs match “{q}”.</div>
+      )}
     </div>
   );
 }
@@ -153,7 +173,7 @@ function SchemaConfirmation({ result }: { result: SingleSchemaResult }) {
   const name = result.name ?? `Schema #${id}`;
 
   return (
-    <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 text-sm">
+    <div className="flex items-center gap-2 rounded-md border bg-card px-3.5 py-2.5 text-sm">
       <Icon className="h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
       <span className="flex-1 truncate">
         {verb} schema <strong>{name}</strong>
@@ -166,6 +186,107 @@ function SchemaConfirmation({ result }: { result: SingleSchemaResult }) {
         <span className="text-xs text-muted-foreground">{result.field_count} fields</span>
       )}
       {id != null && <Badge variant="outline" className="text-xs">#{id}</Badge>}
+    </div>
+  );
+}
+
+// ── Dashboard edits (panel.add / panel.set / panel.remove) ──────────────────
+// These act on the run OPEN in the Annotation Runner (the operator navigates there);
+// the real dashboard renders on the page, so the chat only needs a small confirmation
+// — not an inline dashboard, not a JSON dump.
+
+type PanelVerb = 'added' | 'updated' | 'removed';
+
+function dashboardEdit(result: any): { verb: PanelVerb; payload: any } | null {
+  const d = result?.ui_directive;
+  const list = Array.isArray(d) ? d : d ? [d] : [];
+  const pd = list.find((x: any) => typeof x?.command === 'string' && x.command.startsWith('dashboard:'));
+  if (!pd) return null;
+  const verbByCommand: Record<string, PanelVerb> = {
+    'dashboard:addPanel': 'added',
+    'dashboard:setPanel': 'updated',
+    'dashboard:removePanel': 'removed',
+  };
+  const verb = verbByCommand[pd.command];
+  return verb ? { verb, payload: pd.payload ?? {} } : null;
+}
+
+function PanelConfirmation({ verb, payload }: { verb: PanelVerb; payload: any }) {
+  const name = payload?.name ?? (payload?.index != null ? `panel #${payload.index}` : 'panel');
+  const type = typeof payload?.type === 'string' ? payload.type : undefined;
+  // A short hint of what was configured — kept subtle.
+  const bits: string[] = [];
+  if (payload?.axis && typeof payload.axis === 'object') {
+    const roles = Object.entries(payload.axis)
+      .filter(([, v]) => v != null && (Array.isArray(v) ? v.length > 0 : true))
+      .map(([k]) => k);
+    if (roles.length) bits.push(roles.join(' · '));
+  }
+  if (payload?.filter) bits.push('filtered');
+
+  const Icon = verb === 'added' ? PlusSquare : verb === 'removed' ? Trash2 : SlidersHorizontal;
+  const head = verb === 'added' ? `Added ${type ? `${type} ` : ''}panel` : verb === 'removed' ? 'Removed panel' : 'Updated panel';
+  const tone = verb === 'removed' ? 'text-muted-foreground' : 'text-primary';
+
+  return (
+    <div className="flex items-center gap-2 rounded-md border bg-card px-3.5 py-2.5 text-sm">
+      <Icon className={`h-4 w-4 shrink-0 ${tone}`} />
+      <span className="flex-1 truncate">
+        {head} <strong>{name}</strong>
+        {verb !== 'removed' && bits.length > 0 && (
+          <span className="text-xs text-muted-foreground"> · {bits.join(' · ')}</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function dashboardBatch(result: any): any[] | null {
+  const d = result?.ui_directive;
+  const list = Array.isArray(d) ? d : d ? [d] : [];
+  const pd = list.find((x: any) => x?.command === 'dashboard:addPanels');
+  return pd ? (Array.isArray(pd.payload?.panels) ? pd.payload.panels : []) : null;
+}
+
+function BatchPanelConfirmation({ panels }: { panels: any[] }) {
+  return (
+    <div className="space-y-1.5 rounded-md border bg-card p-2.5 text-sm">
+      <div className="mb-0.5 flex items-center gap-2">
+        <PlusSquare className="h-4 w-4 shrink-0 text-primary" />
+        <span>Added <strong>{panels.length}</strong> panel{panels.length === 1 ? '' : 's'}</span>
+      </div>
+      <div className="space-y-0.5">
+        {panels.map((p, i) => (
+          <div key={i} className="flex items-center gap-2 text-xs">
+            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{p?.type}</span>
+            <span className="truncate">{p?.name}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Run start (navigates to the runner) — a small confirmation, not JSON ─────
+
+function isRunStart(result: any): boolean {
+  return !!result && typeof result === 'object'
+    && typeof result.run_id === 'number'
+    && result.model_name !== undefined
+    && result.annotations === undefined;
+}
+
+function RunStartConfirmation({ result }: { result: any }) {
+  const name = result.run_name ?? `Run #${result.run_id}`;
+  return (
+    <div className="flex items-center gap-2 rounded-md border bg-card px-3.5 py-2.5 text-sm">
+      <FlaskConical className="h-4 w-4 shrink-0 text-primary" />
+      <span className="flex-1 truncate">
+        Started run <strong>{name}</strong>
+        {result.live && <span className="text-xs text-muted-foreground"> · live</span>}
+        <span className="text-xs text-muted-foreground"> · opened on the runner</span>
+      </span>
+      {result.run_id != null && <Badge variant="outline" className="text-xs">#{result.run_id}</Badge>}
     </div>
   );
 }
@@ -185,6 +306,9 @@ export const AnalysisHubRenderer: ToolResultRenderer = {
 
   canHandle: (result: any) => {
     if (!result || typeof result !== 'object') return false;
+    if (dashboardBatch(result)) return true;
+    if (dashboardEdit(result)) return true;
+    if (isRunStart(result)) return true;
     // Opt out of run.dashboard shape — GetRunDashboardRenderer handles that
     if (result.run_id !== undefined && result.annotations !== undefined) return false;
     if (Array.isArray(result.schemas) || Array.isArray(result.runs)) return true;
@@ -192,6 +316,15 @@ export const AnalysisHubRenderer: ToolResultRenderer = {
   },
 
   getSummary: (result: any) => {
+    const batch = dashboardBatch(result);
+    if (batch) return `added ${batch.length} panels`;
+    const edit = dashboardEdit(result);
+    if (edit) {
+      const p = edit.payload;
+      const name = p?.name ?? (p?.index != null ? `#${p.index}` : 'panel');
+      return `${edit.verb} panel ${name}`;
+    }
+    if (isRunStart(result)) return `started run ${result.run_name ?? `#${result.run_id}`}`;
     if (Array.isArray(result?.schemas)) return `${result.schemas.length} schemas`;
     if (Array.isArray(result?.runs)) return `${result.runs.length} runs`;
     if (isSingleSchemaResult(result)) {
@@ -203,6 +336,17 @@ export const AnalysisHubRenderer: ToolResultRenderer = {
   },
 
   render: ({ result }: ToolResultRenderProps) => {
+    const batch = dashboardBatch(result);
+    if (batch) {
+      return <BatchPanelConfirmation panels={batch} />;
+    }
+    const edit = dashboardEdit(result);
+    if (edit) {
+      return <PanelConfirmation verb={edit.verb} payload={edit.payload} />;
+    }
+    if (isRunStart(result)) {
+      return <RunStartConfirmation result={result} />;
+    }
     if (Array.isArray(result?.schemas)) {
       return <SchemasList schemas={result.schemas as AnalysisHubSchema[]} />;
     }

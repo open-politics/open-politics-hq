@@ -6,9 +6,13 @@
  */
 export interface UIDirective {
   /**
-   * Registry command id: 'navigate' | 'open_form' | 'observe' | 'stage_sources'
-   * (+ future). 'stage_sources' registers the pending return but draws nothing —
-   * its tool renders an inline confirm card in the chat (see SourceConfirmCard).
+   * Registry command id. Global commands: 'navigate' | 'open_form' | 'open_item' |
+   * 'observe' | 'stage_sources'. Surface commands take the form 'namespace:action'
+   * (e.g. 'assets:reveal') and are handled only while that page is mounted — a
+   * surface command that arrives just after a `navigate` is buffered and flushed
+   * when the page registers. 'stage_sources' registers the pending return but draws
+   * nothing — its tool renders an inline confirm card in the chat (see
+   * SourceConfirmCard).
    */
   command: string
   payload?: Record<string, unknown>

@@ -15,6 +15,8 @@
 import React, { useMemo } from 'react'
 import { ToolExecution } from '@/hooks/useIntelligenceChat'
 import { SourceConfirmCard, isStagedSource } from './SourceConfirmCard'
+import { SchemaConfirmCard, isStagedSchema } from './SchemaConfirmCard'
+import { SearchModeCard, isStagedSearchMode } from './SearchModeCard'
 import { Response } from '@/components/ai-elements/response'
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning'
 
@@ -247,6 +249,20 @@ export function AssistantMessageRenderer({
                 return (
                   <div key={`tool-${section.toolExecution.id}`} className="my-2 min-w-0">
                     <SourceConfirmCard execution={section.toolExecution} />
+                  </div>
+                )
+              }
+              if (isStagedSchema(section.toolExecution)) {
+                return (
+                  <div key={`tool-${section.toolExecution.id}`} className="my-2 min-w-0">
+                    <SchemaConfirmCard execution={section.toolExecution} />
+                  </div>
+                )
+              }
+              if (isStagedSearchMode(section.toolExecution)) {
+                return (
+                  <div key={`tool-${section.toolExecution.id}`} className="my-2 min-w-0">
+                    <SearchModeCard execution={section.toolExecution} />
                   </div>
                 )
               }

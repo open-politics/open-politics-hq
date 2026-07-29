@@ -24,6 +24,8 @@ import { WorkingMemoryRenderer } from '../renderers/WorkingMemoryRenderer';
 import { TasksRenderer } from '../renderers/TasksRenderer';
 import { AnalysisHubRenderer } from '../renderers/AnalysisHubRenderer';
 import { ObserveRenderer } from '../renderers/ObserveRenderer';
+import { LoadRenderer } from '../renderers/LoadRenderer';
+import { CatalogueRenderer } from '../renderers/CatalogueRenderer';
 
 let isInitialized = false;
 
@@ -52,6 +54,9 @@ export function initializeToolRenderers(): void {
   toolResultRegistry.register(AnalysisHubRenderer);
   // Live inline watcher for run/job progress (observe results).
   toolResultRegistry.register(ObserveRenderer);
+  // Meta plumbing — one quiet line.
+  toolResultRegistry.register(LoadRenderer);
+  toolResultRegistry.register(CatalogueRenderer);
 
   // Operation tools (minimal, confirmatory)
   toolResultRegistry.register(OrganizeRenderer);

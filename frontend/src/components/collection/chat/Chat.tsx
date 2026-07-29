@@ -44,6 +44,8 @@ import { ToolExecutionList } from './ToolExecutionIndicator'
 import { MessageContentWithToolResults } from './ChatMessage'
 import { AssistantMessageRenderer } from './MessageRenderer'
 import { isStagedSource } from './SourceConfirmCard'
+import { isStagedSchema } from './SchemaConfirmCard'
+import { isStagedSearchMode } from './SearchModeCard'
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
 import { IntelligenceChatService, EmbeddingsService, OpenAPI } from '@/client'
 import { ModelInfo } from '@/client'
@@ -65,6 +67,14 @@ import {
   ButtonGroupText,
 } from '@/components/ui/button-group'
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -77,6 +87,41 @@ import { useTreeStore } from '@/zustand_stores/storeTree'
 import { PersistentTaskTracker } from './PersistentTaskTracker'
 import { MessageToolPanel } from './MessageToolPanel'
 import { MessageTaskPanel } from './MessageTaskPanel'
+
+function CompactCompanionMenu({
+  messages,
+  copiedItems,
+  onCopyChat,
+}: {
+  messages: ChatMessage[]
+  copiedItems: Set<string>
+  onCopyChat: () => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" title="Settings">
+          <Settings className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-72">
+        <DropdownMenuLabel className="text-xs text-muted-foreground">Model</DropdownMenuLabel>
+        <div className="px-2 pb-2" onPointerDown={(e) => e.stopPropagation()}>
+          <ProviderSelector showModels merged className="text-xs" />
+        </div>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem disabled={messages.length === 0} onClick={onCopyChat}>
+          {copiedItems.has('chat-all') ? (
+            <Check className="h-4 w-4" />
+          ) : (
+            <Copy className="h-4 w-4" />
+          )}
+          Copy chat
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 interface IntelligenceChatProps {
   className?: string
@@ -1432,7 +1477,7 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
     const nonTaskExecutions = toolExecutions.filter(exec => exec.tool_name !== 'tasks')
     // Staged sources render as an always-inline confirm card in the main column,
     // so keep them out of the desktop tool sidebar (else they'd show twice).
-    const sidebarExecutions = nonTaskExecutions.filter(exec => !isStagedSource(exec))
+    const sidebarExecutions = nonTaskExecutions.filter(exec => !isStagedSource(exec) && !isStagedSchema(exec) && !isStagedSearchMode(exec))
     const showToolSidebar = sidebarExecutions.length > 0 || hasTasks
 
     // Auto-expand the latest tool result only while THIS message is still being
@@ -1674,6 +1719,8 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
     )
   }
 
+  const compactToolbar = companion && embedded
+
   return (
     <div className={cn(
       // ``@container`` makes the chat its own container-query reference so the
@@ -1848,7 +1895,7 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
           the *panel* width, not the viewport — a narrow docked operator on a wide
           screen gets the compact layout instead of overflowing. */}
       <Card variant="no-border" className="@container/chat flex flex-col flex-1 w-full shadow-none !scrollbar-hide">
-        <CardHeader className="flex-none border-b py-2 sm:py-2.5 px-2 sm:px-3 md:px-4">
+        <CardHeader className="flex-none py-2 sm:py-2.5 px-2 sm:px-3 md:px-4">
           {/* compact: (1) nav+toggles+actions (2) model selector; wide: one row with distinct sections */}
           <div className="flex flex-col @2xl/chat:flex-row @2xl/chat:items-center gap-2 sm:gap-2.5 @2xl/chat:gap-3">
             {/* Compact Row 1: Navigation on left, Toggles + Actions on right */}
@@ -1861,13 +1908,13 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                       <TooltipTrigger asChild>
                         <Button
                           variant="outline"
-                          size="sm"
+                          size={compactToolbar ? 'icon' : 'sm'}
                           onClick={() => setShowConversations(true)}
-                          className="h-8 px-3 gap-1.5"
+                          className={cn(compactToolbar ? 'h-8 w-8' : 'h-8 px-3 gap-1.5')}
                           title="Show conversations"
                         >
                           <History className="h-4 w-4" />
-                          <span className="hidden sm:inline text-xs">History</span>
+                          {!compactToolbar && <span className="hidden sm:inline text-xs">History</span>}
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>
@@ -1884,12 +1931,12 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                       <TooltipTrigger asChild>
                         <Button
                           variant="outline"
-                          size="sm"
+                          size={compactToolbar ? 'icon' : 'sm'}
                           onClick={handleStartNewChat}
-                          className="h-8 px-3 gap-1.5"
+                          className={cn(compactToolbar ? 'h-8 w-8' : 'h-8 px-3 gap-1.5')}
                         >
                           <Plus className="h-4 w-4" />
-                          <span className="hidden sm:inline text-xs">New</span>
+                          {!compactToolbar && <span className="hidden sm:inline text-xs">New</span>}
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>
@@ -1905,6 +1952,8 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
 
               {/* Right side: Toggles + Actions */}
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+              {!compactToolbar && (
+              <>
               {/* Compact Toggles */}
               <div className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-md bg-muted/30">
                 <TooltipProvider>
@@ -1973,8 +2022,17 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                   </Tooltip>
                 </TooltipProvider>
               </div>
+              </>
+              )}
 
                 {/* Action Buttons */}
+                {compactToolbar ? (
+                  <CompactCompanionMenu
+                    messages={messages}
+                    copiedItems={copiedItems}
+                    onCopyChat={() => copyToClipboard(formatAllMessagesForCopy(messages), 'chat-all')}
+                  />
+                ) : (
                 <ButtonGroup>
                   <Button
                     variant="ghost"
@@ -2004,6 +2062,7 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                     <Settings className="h-4 w-4" />
                   </Button>
                 </ButtonGroup>
+                )}
               </div>
             </div>
 
@@ -2017,13 +2076,13 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                       <TooltipTrigger asChild>
                         <Button
                           variant="outline"
-                          size="sm"
+                          size={compactToolbar ? 'icon' : 'sm'}
                           onClick={() => setShowConversations(true)}
-                          className="h-8 px-3 gap-1.5"
+                          className={cn(compactToolbar ? 'h-8 w-8' : 'h-8 px-3 gap-1.5')}
                           title="Show conversations"
                         >
                           <History className="h-4 w-4" />
-                          <span className="text-xs">History</span>
+                          {!compactToolbar && <span className="text-xs">History</span>}
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>
@@ -2040,12 +2099,12 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                       <TooltipTrigger asChild>
                         <Button
                           variant="outline"
-                          size="sm"
+                          size={compactToolbar ? 'icon' : 'sm'}
                           onClick={handleStartNewChat}
-                          className="h-8 px-3 gap-1.5"
+                          className={cn(compactToolbar ? 'h-8 w-8' : 'h-8 px-3 gap-1.5')}
                         >
                           <Plus className="h-4 w-4" />
-                          <span className="text-xs">New</span>
+                          {!compactToolbar && <span className="text-xs">New</span>}
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>
@@ -2062,6 +2121,7 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
 
             {/* Section 2: Model Selector — merged single select when the panel is
                 narrow, provider + model side-by-side when it's wide. */}
+            {!compactToolbar && (
             <div className="@2xl/chat:flex-1 @2xl/chat:flex @2xl/chat:justify-center">
               <div className="@2xl/chat:hidden">
                 <ProviderSelector
@@ -2077,9 +2137,12 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                 />
               </div>
             </div>
+            )}
 
             {/* Section 3: Toggles + Actions (wide only; compact has it in row 1) */}
             <div className="hidden @2xl/chat:flex items-center gap-2 shrink-0">
+              {!compactToolbar && (
+              <>
               {/* Compact Toggles */}
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted/30">
                 <TooltipProvider>
@@ -2149,8 +2212,17 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                   </Tooltip>
                 </TooltipProvider>
               </div>
+              </>
+              )}
 
               {/* Action Buttons */}
+              {compactToolbar ? (
+                <CompactCompanionMenu
+                  messages={messages}
+                  copiedItems={copiedItems}
+                  onCopyChat={() => copyToClipboard(formatAllMessagesForCopy(messages), 'chat-all')}
+                />
+              ) : (
               <ButtonGroup>
                 <Button
                   variant="ghost"
@@ -2180,11 +2252,12 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                   <Settings className="h-4 w-4" />
                 </Button>
               </ButtonGroup>
+              )}
             </div>
           </div>
 
           {/* Expandable Settings */}
-          {showSettings && (
+          {showSettings && !compactToolbar && (
             <div className="mt-3 pt-3 border-t border-border">
               <div className="flex items-center gap-3">
                 <div className="flex-1 max-w-[200px]">

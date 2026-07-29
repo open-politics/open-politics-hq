@@ -8,7 +8,8 @@ import { useInfospaceStore } from '@/zustand_stores/storeInfospace'
 import { useProvidersStore } from '@/zustand_stores/storeProviders'
 import { toast } from 'sonner'
 import { connectSSE } from '@/lib/sse'
-import { directiveFromExecution, dispatchDirective } from '@/components/collection/chat/directives/dispatchDirective'
+import { directivesFromExecution, dispatchDirective } from '@/components/collection/chat/directives/dispatchDirective'
+import { useOperatorContext } from '@/components/collection/chat/useOperatorContext'
 
 export interface ToolExecution {
   id: string
@@ -81,6 +82,11 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
   const { activeInfospace } = useInfospaceStore()
   const { apiKeys } = useProvidersStore()
   const pathname = usePathname()  // so the operator knows which page the user is on
+  const operatorContext = useOperatorContext()  // + the focused entity ("this run/bundle")
+  // Kept in a ref so send-time reads the CURRENT page/focus — sendMessage's deps don't
+  // include these (they change on navigation/selection, not on message state).
+  const contextRef = useRef({ route: pathname, focus: operatorContext?.focus })
+  contextRef.current = { route: pathname, focus: operatorContext?.focus }
   const abortControllerRef = useRef<AbortController | null>(null)
   // Fire each tool result's ui_directive exactly once, even though streaming
   // REPLACES the whole executions array on every chunk. Keyed by execution id.
@@ -90,10 +96,10 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
     for (const ex of execs) {
       if (ex.status !== 'completed') continue
       if (dispatchedDirectiveIds.current.has(ex.id)) continue
-      const directive = directiveFromExecution(ex)
-      if (directive) {
+      const directives = directivesFromExecution(ex)
+      if (directives.length > 0) {
         dispatchedDirectiveIds.current.add(ex.id)
-        dispatchDirective(directive)
+        for (const directive of directives) dispatchDirective(directive)
       }
     }
   }, [])
@@ -171,7 +177,8 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
         agent: (customOptions as any)?.agent ?? (options as any).agent,
         run_id: (customOptions as any)?.run_id ?? (options as any).run_id,
         formula_id: (customOptions as any)?.formula_id ?? (options as any).formula_id,
-        current_route: pathname || undefined,
+        current_route: contextRef.current.route || undefined,
+        current_focus: contextRef.current.focus ?? undefined,
       } as ChatRequest
       
       if (chatRequest.stream) {
