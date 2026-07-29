@@ -552,6 +552,7 @@ export type AssetTreeBundleSkeleton = {
     name: string;
     parent_id?: (number | null);
     tags?: (Array<(string)> | null);
+    name_hit?: boolean;
 };
 
 export type AssetTreeMeta = {
@@ -1222,6 +1223,9 @@ export type ChatRequest = {
     tools_enabled?: boolean;
     max_tool_iterations?: (number | null);
     current_route?: (string | null);
+    current_focus?: ({
+    [key: string]: unknown;
+} | null);
     tools?: (Array<{
     [key: string]: unknown;
 }> | null);
@@ -6927,6 +6931,10 @@ export type GetInfospaceTreeData = {
     infospaceId: number;
     limit?: number;
     packageToken?: (string | null);
+    /**
+     * AQL filter — turns the browse tree into a result-tree
+     */
+    q?: (string | null);
     xPackageToken?: (string | null);
 };
 
@@ -6937,6 +6945,10 @@ export type GetInfospaceTreeStreamData = {
     infospaceId: number;
     limit?: number;
     packageToken?: (string | null);
+    /**
+     * AQL filter — turns the browse tree into a result-tree
+     */
+    q?: (string | null);
     xPackageToken?: (string | null);
 };
 
@@ -6950,6 +6962,10 @@ export type GetTreeChildrenData = {
      * Parent node id (bundle-*, asset-*)
      */
     parentId: string;
+    /**
+     * AQL filter — lists only matching members (result-tree)
+     */
+    q?: (string | null);
     skip?: number;
     xPackageToken?: (string | null);
 };
@@ -6964,6 +6980,10 @@ export type GetTreeChildrenStreamData = {
      * Parent node id (bundle-*, asset-*)
      */
     parentId: string;
+    /**
+     * AQL filter — lists only matching members (result-tree)
+     */
+    q?: (string | null);
     skip?: number;
     xPackageToken?: (string | null);
 };

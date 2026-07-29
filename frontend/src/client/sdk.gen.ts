@@ -1524,8 +1524,13 @@ export class AssetsService {
     
     /**
      * Batch Create Assets
-     * Batch create assets. Single pattern for CSV rows, PDF pages, directory imports, RSS articles.
-     * Uses AssetBuilder.build_batch — flushes every 500, single commit at the end.
+     * Batch create assets — the bulk path for intrinsic parts (CSV rows, PDF pages).
+     *
+     * Identity-bearing ROOT rows are routed through the builder's identity path instead of
+     * the bulk insert, so a repeated POST is idempotent and cannot violate
+     * ``ux_asset_live_identity``. Children keep the bulk path: siblings legitimately share
+     * an identifier (a page's images, an archive's members), and the unique index is scoped
+     * to roots precisely so that stays legal.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
@@ -1557,8 +1562,13 @@ export class AssetsService {
     
     /**
      * Batch Create Assets
-     * Batch create assets. Single pattern for CSV rows, PDF pages, directory imports, RSS articles.
-     * Uses AssetBuilder.build_batch — flushes every 500, single commit at the end.
+     * Batch create assets — the bulk path for intrinsic parts (CSV rows, PDF pages).
+     *
+     * Identity-bearing ROOT rows are routed through the builder's identity path instead of
+     * the bulk insert, so a repeated POST is idempotent and cannot violate
+     * ``ux_asset_live_identity``. Children keep the bulk path: siblings legitimately share
+     * an identifier (a page's images, an archive's members), and the unique index is scoped
+     * to roots precisely so that stays legal.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.requestBody
@@ -11702,13 +11712,15 @@ export class TreeNavigationService {
      * Get Infospace Tree
      * Root-level tree: flat bundle nav + top-level assets (JSON envelope).
      *
-     * For a progressive SSE stream, call ``GET /tree/stream`` with the same
-     * query params. The client indexes ``nav.bundles`` by id in O(1) and
-     * rebuilds hierarchy from ``parent_id`` in one O(n) pass.
+     * With ``q`` this becomes a *result-tree*: the nav is pruned to the folders that
+     * contain matches (``participating_bundles``) and the level section lists the
+     * matching loose assets. Without ``q`` it is the browse tree. For a progressive
+     * SSE stream, call ``GET /tree/stream`` with the same params.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.limit
      * @param data.cursor
+     * @param data.q AQL filter — turns the browse tree into a result-tree
      * @param data.packageToken
      * @param data.xPackageToken
      * @returns AssetTree Successful Response
@@ -11727,6 +11739,7 @@ export class TreeNavigationService {
             query: {
                 limit: data.limit,
                 cursor: data.cursor,
+                q: data.q,
                 package_token: data.packageToken
             },
             errors: {
@@ -11737,11 +11750,12 @@ export class TreeNavigationService {
     
     /**
      * Get Infospace Tree Stream
-     * Native SSE stream of the root tree.
+     * Native SSE stream of the root tree (browse, or a result-tree when ``q`` is set).
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.limit
      * @param data.cursor
+     * @param data.q AQL filter — turns the browse tree into a result-tree
      * @param data.packageToken
      * @param data.xPackageToken
      * @returns unknown Successful Response
@@ -11760,6 +11774,7 @@ export class TreeNavigationService {
             query: {
                 limit: data.limit,
                 cursor: data.cursor,
+                q: data.q,
                 package_token: data.packageToken
             },
             errors: {
@@ -11777,12 +11792,14 @@ export class TreeNavigationService {
      * child *bundles* (sub-folders) arrive via ``nav``.
      * * ``asset-N``  — container parts (``parent_asset_id = N``).
      *
+     * With ``q`` the members are AQL-filtered (expanding a folder in a result-tree).
      * For a progressive SSE stream, call ``GET /tree/children/stream``.
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.parentId Parent node id (bundle-*, asset-*)
      * @param data.skip
      * @param data.limit
+     * @param data.q AQL filter — lists only matching members (result-tree)
      * @param data.packageToken
      * @param data.xPackageToken
      * @returns AssetTree Successful Response
@@ -11802,6 +11819,7 @@ export class TreeNavigationService {
                 parent_id: data.parentId,
                 skip: data.skip,
                 limit: data.limit,
+                q: data.q,
                 package_token: data.packageToken
             },
             errors: {
@@ -11812,12 +11830,13 @@ export class TreeNavigationService {
     
     /**
      * Get Tree Children Stream
-     * Native SSE stream of tree children.
+     * Native SSE stream of tree children (all members, or matching ones when ``q`` is set).
      * @param data The data for the request.
      * @param data.infospaceId
      * @param data.parentId Parent node id (bundle-*, asset-*)
      * @param data.skip
      * @param data.limit
+     * @param data.q AQL filter — lists only matching members (result-tree)
      * @param data.packageToken
      * @param data.xPackageToken
      * @returns unknown Successful Response
@@ -11837,6 +11856,7 @@ export class TreeNavigationService {
                 parent_id: data.parentId,
                 skip: data.skip,
                 limit: data.limit,
+                q: data.q,
                 package_token: data.packageToken
             },
             errors: {
