@@ -173,11 +173,12 @@ async def create_asset(
         if asset_in.text_content is not None:
             builder.with_text(asset_in.text_content)
         if asset_in.blob_path:
-            builder.with_blob(asset_in.blob_path)
+            # AssetCreate.content_hash is documented "For deduplication" — it is a KEY,
+            # not a content assertion, so it only rides along when it describes bytes
+            # the builder cannot see. For text the builder derives its own.
+            builder.with_blob(asset_in.blob_path, asset_in.content_hash)
         if asset_in.source_identifier:
             builder.with_source(asset_in.source_identifier)
-        if asset_in.content_hash:
-            builder.with_content_hash(asset_in.content_hash)
         if asset_in.event_timestamp:
             builder.with_timestamp(asset_in.event_timestamp)
         if asset_in.facets:
@@ -203,7 +204,7 @@ async def create_asset(
         else:
             builder.no_dedup()
 
-        asset = await builder.build()
+        asset = (await builder.build()).asset
         session.commit()
         session.refresh(asset)
 
@@ -231,9 +232,13 @@ async def batch_create_assets(
     infospace_id: int,
     request: BatchAssetCreateRequest,
 ) -> List[AssetRead]:
-    """
-    Batch create assets. Single pattern for CSV rows, PDF pages, directory imports, RSS articles.
-    Uses AssetBuilder.build_batch — flushes every 500, single commit at the end.
+    """Batch create assets — the bulk path for intrinsic parts (CSV rows, PDF pages).
+
+    Identity-bearing ROOT rows are routed through the builder's identity path instead of
+    the bulk insert, so a repeated POST is idempotent and cannot violate
+    ``ux_asset_live_identity``. Children keep the bulk path: siblings legitimately share
+    an identifier (a page's images, an archive's members), and the unique index is scoped
+    to roots precisely so that stays legal.
     """
     if not request.assets:
         return []
@@ -256,8 +261,24 @@ async def batch_create_assets(
         assets.append(Asset(**{k: v for k, v in data.items() if k in valid}))
 
     from app.api.modules.content.asset_builder import AssetBuilder
-    builder = AssetBuilder(session, access.user_id, infospace_id)
-    created = await builder.build_batch(assets)
+
+    created: List[Asset] = []
+    bulk: List[Asset] = []
+    for a in assets:
+        if a.parent_asset_id is None and a.source_identifier:
+            created.append((await (
+                AssetBuilder(session, access.user_id, infospace_id)
+                .dedup_on(source_identifier=a.source_identifier)
+                .on_match("skip")
+                .persist(a)
+            )).asset)
+        else:
+            bulk.append(a)
+            created.append(a)
+
+    if bulk:
+        await AssetBuilder(session, access.user_id, infospace_id).build_batch(bulk)
+
     session.commit()
     for a in created:
         session.refresh(a)
@@ -357,7 +378,7 @@ async def compose_article(
         if composition.event_timestamp:
             builder = builder.with_timestamp(composition.event_timestamp)
 
-        article = await builder.build()
+        article = (await builder.build()).asset
 
         # Create embed-reference child assets (stub refs to other assets)
         if composition.embedded_assets:
@@ -752,7 +773,7 @@ def list_assets(
         .paginate(cursor=None, limit=limit)
     )
     total_count = q.count()
-    assets = q.execute()
+    assets = q.assets()
 
     return AssetsOut(
         data=[AssetRead.model_validate(asset) for asset in assets],

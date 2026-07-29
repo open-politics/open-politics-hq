@@ -9,7 +9,6 @@ Enrichment system: @enricher decorator and enricher functions.
 Six enrichers: ocr, geocoding, hash, language_detection, quality_score, embedding.
 """
 
-import hashlib
 import io
 import logging
 import time
@@ -374,7 +373,10 @@ def enrich_geocoding(ctx: EnrichmentContext, asset_ids: list[int]):
           capability="storage", batch=50, queue="processing",
           triggers=["asset.processed"])
 def enrich_hash(ctx: EnrichmentContext, asset_ids: list[int]):
-    """Compute SHA-256 for assets with blob_path but no content_hash."""
+    """Backfill content_hash for blob-backed roots, via the ONE derivation.
+
+    This used to compute sha256 while every ingest path wrote md5 — two algorithms
+    in one column, so ``decide()`` could never trust a hash it hadn't written itself."""
     # Phase 1: Load
     work: list[tuple[int, str]] = []
     with ctx.session() as session:
@@ -394,18 +396,14 @@ def enrich_hash(ctx: EnrichmentContext, asset_ids: list[int]):
 
     async def _compute():
         import asyncio
+        from app.api.modules.content.asset_builder import content_hash
         from app.api.modules.content.utils.storage_access import read_to_path
         for asset_id, blob_path in work:
             try:
                 path, is_temp = await read_to_path(storage, blob_path)
                 try:
-                    def _sha256(p):
-                        h = hashlib.sha256()
-                        with open(p, "rb") as f:
-                            while chunk := f.read(65536):
-                                h.update(chunk)
-                        return h.hexdigest()
-                    computed = await asyncio.to_thread(_sha256, path)
+                    # Path input → streamed in chunks; never reads the blob into RAM.
+                    computed = await asyncio.to_thread(content_hash, path)
                     hashes.append((asset_id, computed))
                 finally:
                     if is_temp:

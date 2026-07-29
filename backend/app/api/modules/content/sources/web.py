@@ -16,9 +16,9 @@ from urllib.parse import urlparse
 
 from app.api.modules.content.contexts import SourceContext
 from app.api.modules.content.models import AssetKind
+from app.api.modules.content.asset_builder import content_hash
 from app.api.modules.content.sources import (
-    FetchedContent, Preview, RawItem, content_hash,
-    source_type, stage_blob,
+    FetchedContent, Preview, RawItem, source_type, stage_blob,
 )
 
 
@@ -68,11 +68,8 @@ class WebPage:
         mimetype/head so detect_kind names the kind. ``locator`` is always kept, so a
         future ``scrape_full`` knob could override the passthrough."""
         if item.text:
-            return FetchedContent(
-                text_content=item.text,
-                content_hash=content_hash(item.text),
-                metadata=item.metadata,
-            )
+            # Pass-through; the builder derives the hash from the text.
+            return FetchedContent(text_content=item.text, metadata=item.metadata)
         url = item.locator
         ct = (item.metadata or {}).get("_ct") or await _head_content_type(url)
         if ct is None or ct in _HTML_CTS:
@@ -137,6 +134,7 @@ async def _download(url: str) -> bytes:
 
 
 def _blob_name(url: str, ct: str) -> str:
-    """Stable storage path for a downloaded web file: managed/web/<url-hash>/<name>."""
+    """Stable storage path for a downloaded web file: managed/web/<url-hash>/<name>.
+    Reuses the one derivation as a path-safe key — not an identity, just a stable name."""
     base = (urlparse(url).path.rsplit("/", 1)[-1] or "download").split("?")[0]
     return f"managed/web/{content_hash(url)[:16]}/{base}"

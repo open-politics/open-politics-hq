@@ -16,7 +16,6 @@ Identity = entry guid/link; change-token = the entry's updated/published date
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
@@ -33,6 +32,50 @@ from app.api.modules.content.sources import (
 from app.api.modules.content.utils.feed_parse import parse_feed, _entry_content
 
 logger = logging.getLogger(__name__)
+
+
+def entries_to_items(
+    feed_title: str, entries: List[Dict[str, Any]], feed_url: Optional[str] = None,
+) -> List[RawItem]:
+    """Parsed feed entries → RawItems. THE feed→item mapping, shared by the watched
+    ``rss`` source and the one-shot ``RSS_FEED`` content type, so a feed ingested either
+    way yields byte-identical assets. Previously each side built its own, disagreeing on
+    metadata keys and match policy."""
+    items: List[RawItem] = []
+    for entry in entries:
+        identity = entry["identity"]
+        pub = entry["published"]
+        ts: Optional[datetime] = None
+        if pub:
+            try:
+                ts = dateutil.parser.parse(pub)
+            except Exception:
+                ts = None
+        # Drift token: the entry's publish/revision date if present (bumps when the feed
+        # revises the entry), else None (= "no drift signal" → dedup on identity alone).
+        # NOT a content hash — feed bodies wiggle (ads, relative timestamps), which would
+        # spuriously re-ingest every entry every poll.
+        items.append(RawItem(
+            source_identifier=identity,
+            kind=AssetKind.ARTICLE,
+            title=entry["title"],
+            source_token=pub or None,
+            locator=entry["link"] or identity,
+            text=entry["content"],   # RSS content arrives inline — free during read
+            event_timestamp=ts,
+            metadata={
+                "author": entry["author"],
+                "summary": entry["summary"],
+                "rss_link": entry["link"],
+                "rss_tags": entry["tags"],
+                "rss_images": entry["images"],
+                "rss_feed_url": feed_url,
+                "feed_title": feed_title,
+                "content_format": "html",
+                "content_source": "rss_feed",
+            },
+        ))
+    return items
 
 
 # ── The source ─────────────────────────────────────────────────────────────────
@@ -59,43 +102,8 @@ class RSSFeed:
         max_items = int(config.get("max_items", 50))
 
         feed_title, entries = parse_feed(feed_url)
-        for entry in entries[:max_items]:
-            guid = entry["guid"]
-            content = entry["content"]
-            pub = entry["published"]
-            ts: Optional[datetime] = None
-            if pub:
-                try:
-                    ts = dateutil.parser.parse(pub)
-                except Exception:
-                    ts = None
-            # Drift token: the entry's publish/revision date if present (bumps when the
-            # feed revises the entry), else None (= "no drift signal" → dedup on guid
-            # identity alone). NOT a content hash — feed bodies wiggle (ads, relative
-            # timestamps), which would spuriously re-ingest every entry every poll.
-            token = pub or None
-
-            yield RawItem(
-                source_identifier=guid,
-                kind=AssetKind.ARTICLE,
-                title=entry["title"],
-                source_token=token,
-                locator=entry["link"],
-                text=content,  # RSS content arrives inline — free during read
-                event_timestamp=ts,
-                metadata={
-                    "guid": guid,
-                    "author": entry["author"],
-                    "summary": entry["summary"],
-                    "rss_link": entry["link"],
-                    "rss_tags": entry["tags"],
-                    "rss_images": entry["images"],
-                    "rss_feed_url": feed_url,
-                    "feed_title": feed_title,
-                    "content_format": "html",
-                    "content_source": "rss_feed",
-                },
-            )
+        for item in entries_to_items(feed_title, entries[:max_items], feed_url):
+            yield item
 
     async def view(self, item: RawItem, ctx: SourceContext) -> Preview:
         images = item.metadata.get("rss_images") or []
@@ -108,14 +116,10 @@ class RSSFeed:
         )
 
     async def fetch(self, item: RawItem, ctx: SourceContext) -> FetchedContent:
-        # RSS content is inline (read already has it); fetch just packages it and
-        # stamps a content hash so AssetBuilder can detect a real content change.
-        text = item.text or ""
+        # RSS content is inline (read already has it), so fetch is a pass-through.
+        # No hash here — the builder derives it from the text via the one derivation.
         return FetchedContent(
-            text_content=text,
-            content_hash=hashlib.md5(
-                f"{item.source_identifier}|{text[:1000]}".encode("utf-8", "ignore")
-            ).hexdigest(),
+            text_content=item.text or "",
             event_timestamp=item.event_timestamp,
             metadata=item.metadata,
         )

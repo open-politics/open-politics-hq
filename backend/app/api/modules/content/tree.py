@@ -7,7 +7,7 @@ structure and every operation on it. Composable verbs:
 
   walk      subtree_ids (bundles) · asset_descendants (assets)   — recursive CTE
   weigh     impact                                               — deletion preview, counts only
-  member    attach · detach                                      — bundle membership (ROOT-normalizing)
+  member    place · attach · detach                              — bundle membership (ROOT-normalizing)
   mutate    create_bundle · copy · move · delete                 — structural changes
   purge     purge                                                — hard-destroy assets + their subtree
 
@@ -98,7 +98,7 @@ def copy(
 
     # Recount: destination + all newly created bundles
     recount_ids = {to} | new_bundle_ids
-    _recount(session, recount_ids)
+    recount(session, recount_ids)
 
     dest_name = _node_name(session, to, is_bundle=True)
     return TreeResult(
@@ -485,7 +485,7 @@ def move(
         recount_ids.add(out_of)
     if to != ROOT:
         recount_ids.add(to)
-    _recount(session, recount_ids)
+    recount(session, recount_ids)
     _recount_children(session, bundle_ids, out_of, to)
 
     return TreeResult(
@@ -609,7 +609,7 @@ def delete(
         recount_ids.add(out_of)
     # Any bundle that had shared assets unlinked
     # (their recount is handled by detach already affecting the DB)
-    _recount(session, recount_ids)
+    recount(session, recount_ids)
 
     total_unlinked = len(unlinked_assets) + len(direct_survived)
     message = f"Deleted {destroyed_bundle_count} bundles, {destroyed_asset_count} assets. {total_unlinked} assets unlinked."
@@ -696,6 +696,31 @@ def subtree_ids(session: Session, roots: set[int]) -> set[int]:
             SELECT id FROM tree
         """),
         {"bids": list(roots)},
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def ancestor_ids(session: Session, leaves: set[int]) -> set[int]:
+    """Recursive CTE: given bundle IDs, return them plus all ancestors.
+
+    The up-direction sibling of ``subtree_ids`` — walks ``parent_bundle_id`` toward
+    the root instead of ``id`` toward the leaves. The search-tree folder skeleton is
+    ``ancestor_ids(query.containers())``: every folder on a path to a match,
+    so the tree reveals only the branches that actually contain results.
+    """
+    if not leaves:
+        return set()
+    rows = session.execute(
+        text("""
+            WITH RECURSIVE up AS (
+                SELECT id, parent_bundle_id FROM bundle WHERE id = ANY(:ids)
+                UNION ALL
+                SELECT b.id, b.parent_bundle_id
+                FROM bundle b JOIN up ON up.parent_bundle_id = b.id
+            )
+            SELECT id FROM up
+        """),
+        {"ids": list(leaves)},
     ).fetchall()
     return {r[0] for r in rows}
 
@@ -807,6 +832,27 @@ def attach(session: Session, asset_ids: list[int], bundle_id: int) -> int:
         {"bid": bundle_id, "ids": asset_ids},
     )
     return result.rowcount
+
+
+def place(session: Session, asset_ids: list[int], bundle_ids: list[int] | None) -> set[int]:
+    """Put assets in bundles: membership plus the count refresh that must follow it.
+
+    ``attach`` is the raw membership write; this is the operation callers actually mean,
+    and it exists so "placed an asset" is one thing rather than an attach every caller has
+    to remember to pair with a ``recount``. Idempotent — re-placing costs one no-op UPDATE
+    and no recount. ROOT (0) is not a membership, so it is skipped.
+
+    Returns the bundles whose membership actually changed.
+
+    Two callers, because an asset is recognized as already-present at two different
+    depths: the ingest spine's tier-1 guard (identifier already live — never reaches the
+    builder) and ``AssetBuilder._place`` (the builder matched on content). Placement is
+    membership, not identity, so both must do it.
+    """
+    changed = {bid for bid in (bundle_ids or []) if bid and attach(session, asset_ids, bid)}
+    if changed:
+        recount(session, changed)
+    return changed
 
 
 def _array_append_from_bundle(session: Session, source_bundle_id: int, target_bundle_id: int) -> int:
@@ -1151,7 +1197,7 @@ def _destroy_bundles(session: Session, bundle_ids: set[int]) -> int:
     return result.rowcount
 
 
-def _recount(session: Session, bundle_ids: set[int]) -> None:
+def recount(session: Session, bundle_ids: set[int]) -> None:
     """Recount asset_count for given bundles from DB truth."""
     for bid in bundle_ids:
         session.execute(

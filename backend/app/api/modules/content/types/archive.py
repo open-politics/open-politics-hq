@@ -26,7 +26,6 @@ from __future__ import annotations
 import asyncio
 import bz2
 import gzip
-import hashlib
 import io
 import logging
 import os
@@ -35,6 +34,7 @@ import zipfile
 from contextlib import closing
 from typing import Any, Iterator, List, Optional, Tuple
 
+from app.api.modules.content.asset_builder import content_hash
 from app.api.modules.content.models import Asset, AssetKind, Bundle, ProcessingStatus
 from app.api.modules.content.types import content_type
 
@@ -146,7 +146,7 @@ class Archive:
 
                 data = await asyncio.to_thread(read_bytes)
                 budget.consume(len(data))
-                digest = hashlib.md5(data).hexdigest()
+                digest = content_hash(data)
                 folder = os.path.dirname(relpath).replace("\\", "/")
                 leaf = os.path.basename(relpath) or relpath
                 target = ensure_path_bundles(context.session, bundle_id, folder,
@@ -167,7 +167,7 @@ class Archive:
                 if kind is AssetKind.ARCHIVE:
                     # Keep the nested artifact (READY — its contents are handled right
                     # here), then expand it in THIS call unless a guard says stop.
-                    status = await _build_member(context, kind, leaf, blob=blob, content_hash=digest,
+                    status = await _build_member(context, kind, leaf, blob=blob, digest=digest,
                                                  bundle_id=target, status=ProcessingStatus.READY,
                                                  position=position)
                     created, skipped = _tally(status, created, skipped)
@@ -184,7 +184,7 @@ class Archive:
                 else:
                     pstatus = (ProcessingStatus.PENDING if needs_processing(kind)
                                else ProcessingStatus.READY)
-                    status = await _build_member(context, kind, leaf, blob=blob, content_hash=digest,
+                    status = await _build_member(context, kind, leaf, blob=blob, digest=digest,
                                                  bundle_id=target, status=pstatus, position=position)
                     created, skipped = _tally(status, created, skipped)
 
@@ -222,7 +222,7 @@ def _find_or_create_bundle(context, name: str, parent_id: int) -> int:
     ).id
 
 
-async def _build_member(context, kind: AssetKind, title: str, *, blob: str, content_hash: str,
+async def _build_member(context, kind: AssetKind, title: str, *, blob: str, digest: str,
                         bundle_id: int, status: ProcessingStatus, position: str) -> str:
     """Build one archive member as a bundle member (parent_asset_id NULL — a standalone
     document, not an intrinsic part). Dedup on its **position** (``archive://<id>/<relpath>``
@@ -235,12 +235,12 @@ async def _build_member(context, kind: AssetKind, title: str, *, blob: str, cont
         AssetBuilder(context.session, context.user_id, context.infospace_id)
         .as_kind(kind).with_title(title)
         .with_source(position).dedup_on(source_identifier=position).on_match("skip")
-        .with_blob(blob).with_content_hash(content_hash)
+        .with_blob(blob, digest)
         .with_processing_status(status)
         .with_metadata(archive_member=True)
         .into_bundle(bundle_id)
     )
-    return (await builder.build_outcome()).status
+    return (await builder.build()).status
 
 
 def _iter_archive(src: Any, name_hint: str) -> Iterator[Tuple[str, Optional[int], Any]]:

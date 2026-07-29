@@ -21,8 +21,6 @@ with ``@source_type("<kind>")``. The registry indexes it; nothing else changes.
 
 from __future__ import annotations
 
-import hashlib
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, AsyncIterator, Dict, List, Optional, Protocol, Type, runtime_checkable
@@ -118,12 +116,11 @@ def registered_source_kinds() -> List[str]:
 
 
 # ── Shared helpers (what ≥2 source classes reach for) ──────────────────────────
-
-def content_hash(data) -> str:
-    """md5 of text or bytes — the deep-dedup content key."""
-    if isinstance(data, str):
-        data = data.encode("utf-8", "ignore")
-    return hashlib.md5(data).hexdigest()
+#
+# Note there is no hashing helper here. A source realizes *content*, not digests —
+# `AssetBuilder.content_hash()` is the one derivation, and the builder applies it.
+# The single exception is a source that stages a blob: it holds bytes the builder
+# never sees, so it imports that same function rather than growing a second one.
 
 
 async def stage_blob(

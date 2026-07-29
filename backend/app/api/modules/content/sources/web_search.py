@@ -14,7 +14,7 @@ import dateutil.parser
 from app.api.modules.content.contexts import SourceContext
 from app.api.modules.content.models import AssetKind
 from app.api.modules.content.sources import (
-    FetchedContent, Preview, RawItem, content_hash, source_type,
+    FetchedContent, Preview, RawItem, source_type,
 )
 
 
@@ -67,7 +67,8 @@ class WebSearch:
                        extra={"score": item.metadata.get("search_score")})
 
     async def fetch(self, item: RawItem, ctx: SourceContext) -> FetchedContent:
+        # Pass-through: read already carried the body. The builder derives the hash.
         return FetchedContent(
-            text_content=item.text, content_hash=content_hash(item.text or ""),
+            text_content=item.text,
             event_timestamp=item.event_timestamp, metadata=item.metadata,
         )

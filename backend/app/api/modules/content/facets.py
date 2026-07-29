@@ -36,9 +36,6 @@ FACET_QUALITY_SCORE = "quality_score"
 FACET_FILE_SIZE = "file_size"  # bytes
 FACET_MIME_TYPE = "mime_type"
 
-# Content hash (first-class Asset column; used for change detection)
-CONTENT_HASH_FIELD = "content_hash"
-
 
 def get_facet(facets: Optional[Dict[str, Any]], key: str) -> Any:
     """Get a facet value from asset.facets (flat dict)."""

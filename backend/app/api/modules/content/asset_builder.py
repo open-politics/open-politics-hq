@@ -1,65 +1,105 @@
 """
-Asset Builder — pure fluent blueprint + identity + policy + flush pipeline.
+Asset Builder — whether an asset row should exist, and writing it exactly once.
 
 This module contains NO source-type knowledge. Every `from_rss_entry`,
-`from_search_result`, `from_file`, `from_url`, `for_csv_row`, etc. has
-been moved to the handler or processor that owns the domain. The builder
-exposes only:
+`from_search_result`, `from_file`, `from_url`, `for_csv_row`, etc. lives in the
+handler or processor that owns the domain. The boundary with its neighbours:
 
-  • Blueprint setters (`as_kind`, `with_title`, `with_text`, `with_source`,
-    `with_blob`, `with_metadata`, `with_facets`, `with_timestamp`,
-    `as_child_of`, `with_part_index`, `as_stub`, `with_processing_status`,
-    `with_content_hash`, `with_depth`) — configure the asset's fields.
+  content_hash()   what the bytes are
+  AssetBuilder     whether this row should exist — and writing it exactly once
+  content.tree     where it sits, how it moves, when it dies
 
-  • Identity (`dedup_on`, `no_dedup`) — declare what "match" means.
+What this module exposes:
 
-  • Policy (`on_match`, `supersedes`) — declare what happens on match.
+  • `content_hash()` — THE content derivation, module-level, over text / bytes / a
+    streamed Path. Nothing else in the codebase computes a content hash; sources hand
+    over content, never digests (a blob caller is the one exception, since it holds
+    bytes the builder never sees, and it passes them via `with_blob(path, digest)`).
+    CI-grep enforced: `hashlib` appears nowhere else under `content/`.
 
-  • Terminals (`find_match`, `build`, `load`, `build_batch`, `build_children`)
-    — run the pipeline and flush. NEVER commit. Callers own the transaction.
+  • `decide()` — THE identity/policy verdict.
 
-See docs/plans/hq-v2/PRIMITIVES.md §1 for the full contract. Composition
-examples in the v2 handlers (`content/handlers/*.py`).
+  • `AssetBuilder` — fluent setters populate `self.row`, the actual Asset that will be
+    inserted. Identity (`dedup_on`, `no_dedup`) and policy (`on_match`, `supersedes`)
+    are the only state that is not the row.
+
+  • Terminals: `persist(row)` is the one write path; `build()` runs it over the row the
+    setters populated; `build_batch` / `build_children` are the dedup-free bulk inserts
+    for intrinsic parts. NEVER commit — callers own the transaction.
+
+  • Plural compositions built on the above: `persist_children` / `reconcile_children`
+    (reconcile a container's re-extracted parts so their annotations survive).
+
+See docs/plans/hq-v2/PRIMITIVES.md §1 for the full contract.
 """
 
 import hashlib
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-from sqlalchemy import update
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.models import Asset, AssetKind, ProcessingStatus
-from app.schemas import AssetCreate
 from app.api.modules.content.tree import purge
 
 logger = logging.getLogger(__name__)
 
 
-# Sentinel for dedup_on "not configured yet" (distinct from explicitly setting
-# a key to None, which is meaningless, and from no_dedup(), which disables dedup).
-_UNSET: Any = object()
-
 MatchPolicy = Literal["skip", "supersede", "update"]
 
+# Must stay textually in lockstep with ux_asset_live_identity's predicate
+# (alembic z1_asset_live_identity). Postgres infers an ON CONFLICT target by matching
+# the index predicate; a mismatch raises at runtime rather than silently misbehaving.
+_IDENTITY_INDEX = "ux_asset_live_identity"
 
-def derive_content_hash(
-    source_identifier: Optional[str], text_content: Optional[str],
-) -> Optional[str]:
-    """Stable content key from ``source_identifier`` + a text prefix — the ONE
-    derivation, shared by *build* (when no hash was supplied) and by *reconcile*
-    (to compare an existing child against a freshly-extracted blueprint). Returns
-    None only when both inputs are empty."""
-    if not source_identifier and not text_content:
+# The columns dedup_on() will match on. Anything else is a caller typo, not a key.
+_IDENTITY_KEYS = frozenset({"source_identifier", "content_hash", "title"})
+
+
+_HASH_CHUNK = 1024 * 1024   # 1 MiB — streaming reads for Path inputs
+
+
+def content_hash(data: "str | bytes | Path | None") -> Optional[str]:
+    """THE content derivation. Nothing else in the codebase computes a content hash.
+
+    Three input shapes, because that is every shape a caller can hold:
+
+      ``str``    realized text        → hashed directly
+      ``bytes``  an in-memory blob    → hashed directly
+      ``Path``   a file on disk       → streamed in 1 MiB chunks (never fully read)
+
+    md5 of the content and nothing else — no identifier salt, no truncation. It is a
+    dedup key, not a security boundary, and it is the fastest digest available
+    (measured 898 MB/s vs sha256's 551). Deliberately matches Postgres's built-in
+    ``md5(text)`` so a backfill is one SQL statement rather than a Python loop.
+
+    Returns None for empty content, so "no content" and "content that happens to be
+    empty" cannot be confused — ``decide()`` relies on a missing hash never reading as
+    "unchanged".
+    """
+    if data is None:
         return None
-    parts: List[str] = []
-    if source_identifier:
-        parts.append(source_identifier)
-    if text_content:
-        parts.append(text_content[:1000])
-    return hashlib.md5("|".join(parts).encode("utf-8", errors="ignore")).hexdigest()
+    h = hashlib.md5()
+    if isinstance(data, Path):
+        with open(data, "rb") as f:
+            for chunk in iter(lambda: f.read(_HASH_CHUNK), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    if isinstance(data, str):
+        if not data:
+            return None
+        # utf-8 to match PG's md5(text) under a UTF8 database encoding.
+        h.update(data.encode("utf-8", errors="ignore"))
+        return h.hexdigest()
+    if not data:
+        return None
+    h.update(data)
+    return h.hexdigest()
 
 
 Verdict = Literal["create", "skip", "unchanged", "supersede", "update"]
@@ -69,7 +109,7 @@ def decide(
     match: Optional["Asset"], incoming_hash: Optional[str], policy: MatchPolicy,
 ) -> Verdict:
     """The ONE identity/policy decision — the stage-2 (content) verdict shared by
-    ``build_outcome`` and ``reconcile_children`` so the skip|supersede|update ×
+    ``persist`` and ``reconcile_children`` so the skip|supersede|update ×
     content_hash matrix lives in a single auditable place instead of interleaving across
     three branches (the supersede / re-update storm class).
 
@@ -94,67 +134,14 @@ def decide(
 
 
 @dataclass
-class AssetBlueprint:
-    """Intermediate representation of an asset being built.
-
-    Every field here corresponds to exactly one fluent setter on AssetBuilder.
-    No enrichment queues, no child-builder lists — handlers own that logic.
-    """
-
-    # Required context
-    user_id: int
-    infospace_id: int
-
-    # Identity
-    kind: Optional[AssetKind] = None
-    title: Optional[str] = None
-    stub: bool = False
-
-    # Content
-    text_content: Optional[str] = None
-    blob_path: Optional[str] = None
-    source_identifier: Optional[str] = None
-    content_hash: Optional[str] = None
-
-    # Provenance — set by sources (root assets): source_token = cheap drift
-    # change-token, source_id = the Source that produced it.
-    source_token: Optional[str] = None
-    source_id: Optional[int] = None
-
-    # Placement — destination bundle(s); None → ROOT via the column server_default.
-    bundle_ids: Optional[List[int]] = None
-
-    # Hierarchy
-    parent_asset_id: Optional[int] = None
-    part_index: Optional[int] = None
-
-    # Metadata
-    file_info: Dict[str, Any] = field(default_factory=dict)
-    facets: Dict[str, Any] = field(default_factory=dict)
-    event_timestamp: Optional[datetime] = None
-    processing_status: Optional[ProcessingStatus] = None
-
-    # Ingestion depth (used by some handlers to signal child-extraction strategy)
-    ingestion_depth: int = 0
-
-    # Identity + policy (driven by .dedup_on() / .no_dedup() / .on_match() / .supersedes())
-    dedup_source_identifier: Any = field(default=_UNSET)
-    dedup_content_hash: Any = field(default=_UNSET)
-    dedup_title: Any = field(default=_UNSET)
-    dedup_disabled: bool = False
-    match_policy: MatchPolicy = "skip"
-    supersede_target: Optional["Asset"] = None
-
-
-@dataclass
 class BuildOutcome:
-    """What ``build_outcome()`` did: the asset plus the identity/policy verdict.
+    """What the build did: the asset plus the identity/policy verdict.
 
     Lets the ingestion loop count created vs skipped vs superseded accurately.
     The historical bug was callers counting ``len(assets)``, so dedup skips
     inflated ``IngestionJob.processed_files`` / ``Source.total_items_ingested``.
     ``status`` is the single authority for that decision — computed in
-    ``build_outcome()`` and nowhere else.
+    ``persist()`` and nowhere else.
     """
 
     asset: "Asset"
@@ -162,10 +149,18 @@ class BuildOutcome:
 
 
 class AssetBuilder:
-    """Fluent blueprint + identity + policy + flush.
+    """Fluent row construction + identity + policy + one guarded write.
 
     Every asset in the system is created through this builder. Handlers and
     processors compose setters — no `from_X` entry points on this class.
+
+    The setters populate ``self.row`` — the actual ``Asset`` that will be inserted —
+    rather than a parallel blueprint. There used to be an ``AssetBlueprint`` dataclass
+    mirroring fifteen Asset columns, plus a ``_blueprint_to_asset`` translator to copy
+    them across: two declarations and a copy step per field, and a whole second code
+    path (``load``) for callers who already held a row. A partially-populated Asset is
+    legal (SQLModel table models skip construction-time validation) and is not attached
+    to the session until ``_insert_guarded``, so it can simply BE the row.
 
     Flush, never commit. The caller (route, @task, poll handler) owns the
     transaction boundary. Enforced by the flush-never-commit pytest fixture.
@@ -173,137 +168,142 @@ class AssetBuilder:
 
     def __init__(self, session: Session, user_id: int, infospace_id: int):
         self.session = session
-        self.blueprint = AssetBlueprint(
-            user_id=user_id, infospace_id=infospace_id,
-        )
+        self.row = Asset(user_id=user_id, infospace_id=infospace_id)
+        # The only state that is NOT the row: how to match it, and what to do on a match.
+        # `_keys` empty == identity undeclared; presence IS declaration, which is why
+        # there is no _UNSET sentinel any more.
+        self._keys: Dict[str, Any] = {}
+        self._dedup_disabled = False
+        self._policy: MatchPolicy = "skip"
+        self._supersede_target: Optional[Asset] = None
 
     # ═══════════════════════════════════════════════════════════════
     # BLUEPRINT SETTERS
     # ═══════════════════════════════════════════════════════════════
 
     def as_kind(self, kind: AssetKind) -> "AssetBuilder":
-        self.blueprint.kind = kind
+        self.row.kind = kind
         return self
 
     def with_title(self, title: str) -> "AssetBuilder":
-        self.blueprint.title = title
+        self.row.title = title
         return self
 
     def with_text(self, text: str) -> "AssetBuilder":
         """Set text_content. Replaces any prior value."""
-        self.blueprint.text_content = text
+        self.row.text_content = text
         return self
 
     def with_source(self, identifier: str) -> "AssetBuilder":
         """Set source_identifier (URL, feed entry id, file path, etc.)."""
-        self.blueprint.source_identifier = identifier
+        self.row.source_identifier = identifier
         return self
 
-    def with_blob(self, path: str) -> "AssetBuilder":
-        """Set blob_path. Caller uploaded to storage themselves."""
-        self.blueprint.blob_path = path
+    def with_blob(self, path: str, digest: Optional[str] = None) -> "AssetBuilder":
+        """Point the asset at storage the caller already wrote, with its digest.
+
+        ``digest`` is the ONLY way to hand the builder a content hash, and that is
+        deliberate: a blob caller holds bytes the builder never sees, so it must hash
+        them itself. Text callers hand over text and the builder derives — which is why
+        there is no ``with_content_hash``. The invalid state (a hand-rolled text hash
+        disagreeing with the one derivation) is now unrepresentable rather than
+        caught by an assertion after the fact.
+        """
+        self.row.blob_path = path
+        if digest is not None:
+            self.row.content_hash = digest
         return self
 
     def with_source_token(self, token: str) -> "AssetBuilder":
         """Set source_token — the cheap drift change-token (etag / mtime / pubdate).
         Root assets only; a changed token is what drives re-fetch + supersede."""
-        self.blueprint.source_token = token
+        self.row.source_token = token
         return self
 
     def with_source_id(self, source_id: int) -> "AssetBuilder":
         """Link the asset to the Source that produced it (monitoring / provenance).
         Distinct from ``with_source()``, which sets the source_identifier dedup key."""
-        self.blueprint.source_id = source_id
+        self.row.source_id = source_id
         return self
 
     def into_bundle(self, bundle_id: int) -> "AssetBuilder":
-        """Place the built asset in ``bundle_id`` (sets bundle_ids=[id]). Omit to
-        leave it at ROOT — the column's non-empty server_default handles that."""
-        self.blueprint.bundle_ids = [bundle_id]
+        """Place the asset in ``bundle_id``. Omit to leave it at ROOT — the column's
+        non-empty server_default handles that, which is why an unplaced row reads as
+        ``None`` here and only becomes ``{0}`` once Postgres writes it."""
+        self.row.bundle_ids = [bundle_id]
         return self
 
     def with_metadata(self, **kwargs) -> "AssetBuilder":
-        """Merge into blueprint.file_info (ingestion/processing metadata)."""
-        self.blueprint.file_info.update(kwargs)
+        """Merge into file_info (ingestion/processing metadata)."""
+        self.row.file_info = {**(self.row.file_info or {}), **kwargs}
         return self
 
     def with_facets(self, **kwargs) -> "AssetBuilder":
-        """Merge into blueprint.facets (enricher-style discoverable properties).
+        """Merge into facets (enricher-style discoverable properties).
         Scalars and flat lists only (per content/facets.py invariant)."""
-        self.blueprint.facets.update(kwargs)
+        self.row.facets = {**(self.row.facets or {}), **kwargs}
         return self
 
     def with_timestamp(self, ts: datetime) -> "AssetBuilder":
-        self.blueprint.event_timestamp = ts
+        self.row.event_timestamp = ts
         return self
 
     def as_child_of(self, parent_id: int, part_index: Optional[int] = None) -> "AssetBuilder":
-        self.blueprint.parent_asset_id = parent_id
+        self.row.parent_asset_id = parent_id
         if part_index is not None:
-            self.blueprint.part_index = part_index
+            self.row.part_index = part_index
         return self
 
     def with_part_index(self, part_index: int) -> "AssetBuilder":
-        self.blueprint.part_index = part_index
+        self.row.part_index = part_index
         return self
 
     def as_stub(self, stub: bool = True) -> "AssetBuilder":
-        self.blueprint.stub = stub
+        self.row.stub = stub
         if stub:
             # Stubs don't need processing
-            self.blueprint.processing_status = ProcessingStatus.READY
+            self.row.processing_status = ProcessingStatus.READY
         return self
 
     def with_processing_status(self, status: ProcessingStatus) -> "AssetBuilder":
-        self.blueprint.processing_status = status
-        return self
-
-    def with_content_hash(self, content_hash: str) -> "AssetBuilder":
-        """Set blueprint.content_hash. Persisted on the asset row."""
-        self.blueprint.content_hash = content_hash
-        return self
-
-    def with_depth(self, depth: int) -> "AssetBuilder":
-        """Ingestion depth for link extraction (handler-interpreted).
-        0 = no extraction, 1 = stub references, 2 = recursive fetch."""
-        self.blueprint.ingestion_depth = depth
+        self.row.processing_status = status
         return self
 
     # ═══════════════════════════════════════════════════════════════
     # IDENTITY (dedup_on, no_dedup)
     # ═══════════════════════════════════════════════════════════════
 
-    def dedup_on(
-        self,
-        *,
-        source_identifier: Optional[str] = _UNSET,
-        content_hash: Optional[str] = _UNSET,
-        title: Optional[str] = _UNSET,
-    ) -> "AssetBuilder":
-        """Configure identity fields for find_match + on_match.
+    def dedup_on(self, **keys: Any) -> "AssetBuilder":
+        """Declare what "already have this" means: ``dedup_on(source_identifier=url)``.
 
-        Pass all fields that uniquely identify this asset for this caller.
-        At least one of {source_identifier, content_hash, title} must be set;
-        find_match runs an AND across supplied keys.
+        Accepts any of ``source_identifier`` / ``content_hash`` / ``title``; several are
+        AND-ed. A dict rather than three sentinel-defaulted parameters, so "declared"
+        simply means "present" — which is why there is no ``_UNSET`` any more.
 
-        Calling dedup_on() clears any prior no_dedup() flag; calling it twice
-        merges keys (last write wins per key).
+        An empty key is rejected. Passing None would render as ``<column> IS NULL`` and
+        match every identity-less row in the infospace, so a source that yielded a blank
+        identifier would silently merge its item into an unrelated asset rather than
+        create one. "I have no identity" is ``no_dedup()``, and it must be said out loud.
         """
-        if source_identifier is not _UNSET:
-            self.blueprint.dedup_source_identifier = source_identifier
-        if content_hash is not _UNSET:
-            self.blueprint.dedup_content_hash = content_hash
-        if title is not _UNSET:
-            self.blueprint.dedup_title = title
-        self.blueprint.dedup_disabled = False
+        for name, value in keys.items():
+            if name not in _IDENTITY_KEYS:
+                raise ValueError(
+                    f"dedup_on: unknown identity key {name!r}; expected one of "
+                    f"{sorted(_IDENTITY_KEYS)}"
+                )
+            if not value:
+                raise ValueError(
+                    f"dedup_on({name}={value!r}) is not an identity — an empty key matches "
+                    f"every row with a NULL {name}. Use .no_dedup() to always create."
+                )
+        self._keys.update(keys)
+        self._dedup_disabled = False
         return self
 
     def no_dedup(self) -> "AssetBuilder":
         """Disable dedup explicitly — this build always creates a new row."""
-        self.blueprint.dedup_disabled = True
-        self.blueprint.dedup_source_identifier = _UNSET
-        self.blueprint.dedup_content_hash = _UNSET
-        self.blueprint.dedup_title = _UNSET
+        self._keys.clear()
+        self._dedup_disabled = True
         return self
 
     # ═══════════════════════════════════════════════════════════════
@@ -320,109 +320,133 @@ class AssetBuilder:
         """
         if policy not in ("skip", "supersede", "update"):
             raise ValueError(f"on_match policy must be skip|supersede|update, got {policy!r}")
-        self.blueprint.match_policy = policy
+        self._policy = policy
         return self
 
     def supersedes(self, old_asset: Asset) -> "AssetBuilder":
         """Explicit supersede target — caller has already resolved the match.
-        Builder skips find_match; on_match is forced to 'supersede'."""
+        Builder skips the identity query; on_match is forced to 'supersede'."""
         if old_asset is None:
             raise ValueError("supersedes() requires a non-None Asset")
-        self.blueprint.supersede_target = old_asset
-        self.blueprint.match_policy = "supersede"
+        self._supersede_target = old_asset
+        self._policy = "supersede"
         return self
 
     # ═══════════════════════════════════════════════════════════════
     # TERMINALS
     # ═══════════════════════════════════════════════════════════════
 
-    async def find_match(self) -> Optional[Asset]:
-        """Run the identity query without creating anything. Returns the
-        existing Asset matching the configured dedup keys, or None.
+    def find_match(self) -> Optional[Asset]:
+        """The live ROOT matching the caller's declared identity keys, or None.
 
-        Uses the composite index ix_asset_source_active_roots when source_id
-        or content_hash is the dominant key. Returns the most recent (by
-        created_at DESC) non-superseded row matching all configured keys.
+        Root-scoped, which is exactly what ``ux_asset_live_identity`` covers — children
+        legitimately reuse identifiers (archive members carry their position,
+        ``reconcile_children`` matches on ``source_identifier``), so an unscoped query
+        could return a child and shadow a real root ingest.
 
-        When .supersedes(old) has been called, returns old directly.
+        Distinct from ``_identity_owner()``, which asks the question the DB constraint
+        asks. This one answers the CALLER's question, and the two need not agree — a
+        caller may dedup on ``content_hash`` while carrying a ``source_identifier``.
+
+        ``supersedes(old)`` short-circuits to ``old``.
         """
-        if self.blueprint.supersede_target is not None:
-            return self.blueprint.supersede_target
-
-        if self.blueprint.dedup_disabled:
+        if self._supersede_target is not None:
+            return self._supersede_target
+        if self._dedup_disabled or not self._keys:
             return None
+        return self.session.exec(
+            select(Asset)
+            .where(
+                Asset.infospace_id == self.row.infospace_id,
+                Asset.is_superseded == False,  # noqa: E712
+                Asset.parent_asset_id.is_(None),
+                *(getattr(Asset, k) == v for k, v in self._keys.items()),
+            )
+            # id breaks created_at ties, so "which row matched" is never timing-dependent.
+            # Only reachable for the non-unique keys — source_identifier can match at
+            # most one live root.
+            .order_by(Asset.created_at.desc(), Asset.id.desc())
+            .limit(1)
+        ).first()
 
-        stmt = select(Asset).where(
-            Asset.infospace_id == self.blueprint.infospace_id,
-            Asset.is_superseded == False,  # noqa: E712
+    async def build(self) -> BuildOutcome:
+        """Persist the row the fluent setters populated, and report what happened.
+
+        A constructor in front of ``persist()`` — a fluent chain is simply one way to
+        produce the row that ``persist`` reconciles. Flush-never-commit; the caller's
+        transaction is the asset's unit of atomicity.
+        """
+        return await self.persist(self.row)
+
+    async def persist(self, row: Asset) -> BuildOutcome:
+        """THE terminal. Reconcile ``row`` against identity + policy, write, and report.
+
+        Every asset this class writes goes through here — whether the caller described it
+        with the fluent setters (``build()``) or handed over a row it had already
+        extracted (``persist`` directly, from a processor or importer).
+
+        This used to be two pipelines. ``load()`` was added for "importers and processors
+        that already built the row", and the cheap way to add it was to copy the pipeline
+        and adjust — so the copies aged apart. The loaded path had reimplemented the
+        ``decide()`` matrix inline, never refreshed ``source_token`` on unchanged content
+        (a re-fetch every poll, the exact storm ``unchanged`` exists to kill), never
+        placed the asset in its bundle, replaced ``file_info`` instead of merging it, and
+        reported a bare Asset so callers could not count outcomes. One pipeline means one
+        branch to be right about.
+
+        Identity and policy stay on the BUILDER (``dedup_on`` / ``on_match``) — they are
+        configuration, not row data. Everything the asset IS lives on the row.
+
+        Flush-never-commit; the caller owns the transaction.
+        """
+        self._finalize(row)
+
+        # Negative space: identity is DECLARED, never inferred. Silently treating "no
+        # keys" as "no dedup" is how a forgotten dedup_on() used to become duplicate
+        # rows. It now fails worse than that: find_match returns None, the insert
+        # collides with ux_asset_live_identity, and the re-find still finds nothing —
+        # surfacing far from the actual mistake. Say which it is, here.
+        assert self._dedup_disabled or self._supersede_target is not None or self._keys, (
+            "declare identity before building: .dedup_on(source_identifier=…) to dedup, "
+            "or .no_dedup() if this build must always create a new row"
         )
-
-        has_key = False
-        if self.blueprint.dedup_source_identifier is not _UNSET:
-            stmt = stmt.where(
-                Asset.source_identifier == self.blueprint.dedup_source_identifier
-            )
-            has_key = True
-        if self.blueprint.dedup_content_hash is not _UNSET:
-            stmt = stmt.where(Asset.content_hash == self.blueprint.dedup_content_hash)
-            has_key = True
-        if self.blueprint.dedup_title is not _UNSET:
-            stmt = stmt.where(Asset.title == self.blueprint.dedup_title)
-            has_key = True
-
-        if not has_key:
-            logger.warning(
-                "AssetBuilder.find_match called with no identity keys configured; "
-                "returning None. Did you forget dedup_on() or no_dedup()?"
-            )
-            return None
-
-        stmt = stmt.order_by(Asset.created_at.desc()).limit(1)
-        return self.session.exec(stmt).first()
-
-    async def build(self) -> Asset:
-        """Execute the fluent blueprint and return the resulting Asset.
-
-        Thin wrapper over ``build_outcome()`` for the common case where the
-        caller just wants the asset. When you need to know whether the asset
-        was created / skipped / superseded / updated (the ingestion loop counts
-        these), call ``build_outcome()`` instead.
-
-        Flush-never-commit. The caller's transaction is the asset's unit of
-        atomicity. Use in handlers, routes, @task bodies.
-        """
-        return (await self.build_outcome()).asset
-
-    async def build_outcome(self) -> BuildOutcome:
-        """Execute the fluent blueprint — validate, dedup, apply policy, flush —
-        and report what happened.
-
-        The single decision site for created vs skipped vs superseded vs
-        updated; ``build()`` is the asset-only wrapper. Flush-never-commit.
-        """
-        if not self.blueprint.kind:
-            raise ValueError("AssetBuilder.build(): kind must be set (.as_kind(...))")
-        if not self.blueprint.title:
-            raise ValueError("AssetBuilder.build(): title must be set (.with_title(...))")
 
         # Identity + policy — the single decision (see ``decide`` above). The storm-prone
         # skip|supersede|update × content_hash matrix lives there, not interleaved here.
-        match = await self.find_match()
-        incoming_hash = self.blueprint.content_hash or self._derived_content_hash()
-        verdict = decide(match, incoming_hash, self.blueprint.match_policy)
+        match = self.find_match()
+        incoming_hash = row.content_hash
+        verdict = decide(match, incoming_hash, self._policy)
 
         if verdict == "create":
-            new_asset = self._blueprint_to_asset()
-            self.session.add(new_asset)
-            self.session.flush()
-            logger.info(
-                "Created asset id=%s (%s) %s",
-                new_asset.id, new_asset.kind.value if new_asset.kind else "?", new_asset.title,
-            )
-            return BuildOutcome(new_asset, "created")
+            new_asset = self._insert_guarded(row)
+            if new_asset is not None:
+                logger.info(
+                    "Created asset id=%s (%s) %s",
+                    new_asset.id, new_asset.kind.value if new_asset.kind else "?", new_asset.title,
+                )
+                return BuildOutcome(new_asset, "created")
+            # The identity is taken. Resolve the owner by the INDEX's key, not by the
+            # caller's dedup keys — the constraint told us precisely which row exists,
+            # and the two need not agree: a caller may dedup on content_hash while still
+            # carrying a source_identifier (POST /assets does exactly that), in which
+            # case re-running find_match looks for the wrong thing and finds nothing.
+            match = self._identity_owner(row)
+            if match is None:
+                # Not an assert: this is a race outcome, not a broken self-model. Under
+                # READ COMMITTED the winner is committed when our insert is rejected, but
+                # a third writer can supersede or purge it before this read — narrow, and
+                # legal. The supersede branch below resolves the identical situation the
+                # same way; treating one as impossible and the other as expected is how a
+                # rare race becomes a 500.
+                raise RuntimeError(
+                    f"identity {row.source_identifier!r} was taken by a concurrent writer "
+                    "and released again before it could be resolved; retry the build"
+                )
+            verdict = decide(match, incoming_hash, self._policy)
 
         if verdict == "skip":
             logger.debug("Matched asset id=%s, policy=skip, returning existing", match.id)
+            self._place(match, row)
             return BuildOutcome(match, "skipped")
 
         if verdict == "unchanged":
@@ -430,87 +454,53 @@ class AssetBuilder:
             # did not. Refresh the stored token so the next poll's stage-1 guard skips without
             # a re-fetch; write nothing else. Idempotent, and applies to supersede AND update
             # policies — the latent supersede-side re-fetch storm dies here too.
-            if (
-                self.blueprint.source_token is not None
-                and match.source_token != self.blueprint.source_token
-            ):
-                match.source_token = self.blueprint.source_token
+            if row.source_token is not None and match.source_token != row.source_token:
+                match.source_token = row.source_token
                 self.session.add(match)
                 self.session.flush()
+            self._place(match, row)
             return BuildOutcome(match, "skipped")
 
         if verdict == "supersede":
             self._do_supersede(match)
-            new_asset = self._blueprint_to_asset()
+            new_asset = row
             new_asset.previous_asset_id = match.id
-            self.session.add(new_asset)
-            self.session.flush()
+            # A child version stays a child. reconcile_children hands its blueprints
+            # straight here, and without this a supersede-mode reconcile would insert the
+            # new version at ROOT — detaching it from its container (and, for a
+            # root-shaped identifier, colliding with ux_asset_live_identity).
+            if new_asset.parent_asset_id is None:
+                new_asset.parent_asset_id = match.parent_asset_id
+            inserted = self._insert_guarded(new_asset)
+            if inserted is None:
+                # Superseding freed the identity, and a concurrent writer took it before
+                # we could. Our supersede stands (the old version is correctly retired);
+                # theirs is now the live row, so hand that back rather than failing.
+                owner = self._identity_owner(row)
+                if owner is None:
+                    raise RuntimeError(
+                        f"identity {self.row.source_identifier!r} taken during "
+                        f"supersede of asset {match.id}, but no live root owns it"
+                    )
+                logger.info(
+                    "Superseded id=%s; a concurrent writer won the identity — returning id=%s",
+                    match.id, owner.id,
+                )
+                return BuildOutcome(owner, "superseded")
             logger.info(
                 "Superseded id=%s with new id=%s (%s)",
                 match.id, new_asset.id, new_asset.title,
             )
             return BuildOutcome(new_asset, "superseded")
 
-        # verdict == "update" — mutate the match in place with non-None blueprint fields
+        # verdict == "update" — mutate the match in place from the row's non-None fields
         # (incl. source_token, so next poll's guard sees it as current — no re-update storm).
-        self._apply_blueprint_to(match)
+        self._apply_to(match, row)
         self.session.add(match)
         self.session.flush()
+        self._place(match, row)
         logger.info("Updated asset id=%s in place", match.id)
         return BuildOutcome(match, "updated")
-
-    async def load(self, asset: Asset) -> Asset:
-        """Accept a pre-constructed Asset and run it through the identity/policy
-        pipeline. For importers and processors that already built the row.
-
-        When .dedup_on() is configured: find_match runs, match_policy applies.
-        Otherwise the asset is flushed as-is. Caller owns the transaction."""
-        match = await self.find_match()
-
-        if match is None:
-            if asset.user_id is None:
-                asset.user_id = self.blueprint.user_id
-            if asset.infospace_id is None:
-                asset.infospace_id = self.blueprint.infospace_id
-            self.session.add(asset)
-            self.session.flush()
-            return asset
-
-        policy = self.blueprint.match_policy
-        if policy == "skip":
-            return match
-        if policy == "supersede":
-            if (
-                match.content_hash
-                and asset.content_hash
-                and match.content_hash == asset.content_hash
-            ):
-                logger.debug(
-                    "load(): matched asset id=%s, content_hash identical, skipping supersede",
-                    match.id,
-                )
-                return match
-            self._do_supersede(match)
-            asset.previous_asset_id = match.id
-            if asset.user_id is None:
-                asset.user_id = self.blueprint.user_id
-            if asset.infospace_id is None:
-                asset.infospace_id = self.blueprint.infospace_id
-            self.session.add(asset)
-            self.session.flush()
-            return asset
-        if policy == "update":
-            for attr in ("title", "text_content", "blob_path", "file_info",
-                         "facets", "event_timestamp", "processing_status",
-                         "content_hash"):
-                val = getattr(asset, attr, None)
-                if val is not None:
-                    setattr(match, attr, val)
-            self.session.add(match)
-            self.session.flush()
-            return match
-
-        raise ValueError(f"Unknown match_policy {policy!r}")
 
     async def build_batch(self, assets: List[Asset]) -> List[Asset]:
         """Bulk insert a list of pre-constructed Asset objects.
@@ -520,13 +510,13 @@ class AssetBuilder:
         CHUNK_SIZE = 500
         for i, asset in enumerate(assets):
             if asset.user_id is None:
-                asset.user_id = self.blueprint.user_id
+                asset.user_id = self.row.user_id
             if asset.infospace_id is None:
-                asset.infospace_id = self.blueprint.infospace_id
-            elif asset.infospace_id != self.blueprint.infospace_id:
+                asset.infospace_id = self.row.infospace_id
+            elif asset.infospace_id != self.row.infospace_id:
                 raise ValueError(
                     f"build_batch asset[{i}] infospace_id={asset.infospace_id} "
-                    f"does not match builder's {self.blueprint.infospace_id}"
+                    f"does not match builder's {self.row.infospace_id}"
                 )
             self.session.add(asset)
             if (i + 1) % CHUNK_SIZE == 0:
@@ -559,7 +549,7 @@ class AssetBuilder:
             if child.content_hash is None:
                 # Stamp a stable identity hash so a later reprocess can tell which
                 # children are unchanged (kept) vs changed (updated in place).
-                child.content_hash = derive_content_hash(child.source_identifier, child.text_content)
+                child.content_hash = content_hash(child.text_content)
         return await self.build_batch(children)
 
     # ═══════════════════════════════════════════════════════════════
@@ -573,93 +563,179 @@ class AssetBuilder:
         Invariant enforced by CI grep. If you want to mark a row superseded
         elsewhere, call .supersedes(old).build() instead.
         """
+        # NB: supersede is NOT root-only. reconcile_children(on_change="supersede") versions
+        # individual children so their annotations stay attached to the version they were
+        # made against. The unique index is scoped to roots precisely so that stays legal.
         old_asset.is_superseded = True
         self.session.add(old_asset)
+        self.session.flush()   # the flag must be visible to the CTE below
 
-        self.session.exec(
-            update(Asset)
-            .where(Asset.parent_asset_id == old_asset.id)
-            .values(parent_is_superseded=True)
-        )
+        # Cascade to the WHOLE subtree, not just direct children. A one-level UPDATE
+        # left grandchildren (archive → csv → rows, pdf → pages) with
+        # parent_is_superseded = false, so they stayed eligible for the OCR / hash /
+        # embed watcher indexes — every one of which filters on that flag — and kept
+        # being enriched on behalf of a version nobody can reach any more.
+        cascaded = self.session.execute(
+            text("""
+                WITH RECURSIVE tree AS (
+                    SELECT id FROM asset WHERE parent_asset_id = :root
+                    UNION ALL
+                    SELECT a.id FROM asset a JOIN tree ON a.parent_asset_id = tree.id
+                )
+                UPDATE asset SET parent_is_superseded = true
+                WHERE id IN (SELECT id FROM tree) AND parent_is_superseded = false
+            """),
+            {"root": old_asset.id},
+        ).rowcount
 
         self.session.flush()
         logger.info(
-            "Superseded asset id=%s (%s) — children cascaded parent_is_superseded=True",
-            old_asset.id, old_asset.title,
+            "Superseded asset id=%s (%s) — %d descendant(s) cascaded parent_is_superseded=True",
+            old_asset.id, old_asset.title, cascaded,
         )
 
-    def _blueprint_to_asset(self) -> Asset:
-        """Construct an Asset row from the fluent blueprint."""
-        # Compute content_hash if not explicitly set.
-        content_hash = self.blueprint.content_hash or self._derived_content_hash()
+    def _identity_owner(self, row: Asset) -> Optional[Asset]:
+        """The live root holding ``row``'s ``source_identifier``, if any.
 
-        # Annotate with ingested_at for observability (idempotent — overwrites on rebuild).
-        file_info = dict(self.blueprint.file_info or {})
-        file_info.setdefault("ingested_at", datetime.now(timezone.utc).isoformat())
+        Deliberately independent of ``dedup_on()``: this asks the question the DB
+        constraint asks, so it is the only correct way to resolve a unique violation.
+        ``find_match`` answers the *caller's* question, which may be a different one —
+        a caller can dedup on ``content_hash`` while carrying a ``source_identifier``.
+        """
+        if not row.source_identifier:
+            return None
+        return self.session.exec(
+            select(Asset).where(
+                Asset.infospace_id == row.infospace_id,
+                Asset.source_identifier == row.source_identifier,
+                Asset.is_superseded == False,  # noqa: E712
+                Asset.parent_asset_id.is_(None),
+            )
+        ).first()
 
-        # Status default — keep caller's choice if set, else READY.
-        status = self.blueprint.processing_status or ProcessingStatus.READY
+    def _insert_guarded(self, asset: Asset) -> Optional[Asset]:
+        """THE insert. Every row this class writes goes through here.
 
-        asset = Asset(
-            title=self.blueprint.title,
-            kind=self.blueprint.kind,
-            stub=self.blueprint.stub,
-            user_id=self.blueprint.user_id,
-            infospace_id=self.blueprint.infospace_id,
-            text_content=self.blueprint.text_content,
-            blob_path=self.blueprint.blob_path,
-            source_identifier=self.blueprint.source_identifier,
-            facets=self.blueprint.facets or None,
-            file_info=file_info or None,
-            event_timestamp=self.blueprint.event_timestamp,
-            parent_asset_id=self.blueprint.parent_asset_id,
-            part_index=self.blueprint.part_index,
-            processing_status=status,
-            content_hash=content_hash,
-            source_token=self.blueprint.source_token,
-            source_id=self.blueprint.source_id,
-        )
-        # Only emit bundle_ids when placed — else the column's ARRAY[0] (ROOT)
-        # server_default stands; passing None would violate the NOT-NULL constraint.
-        if self.blueprint.bundle_ids is not None:
-            asset.bundle_ids = self.blueprint.bundle_ids
+        Returns the asset, or None when ``ux_asset_live_identity`` says someone else
+        already owns this identity. Any other IntegrityError is re-raised — swallowing
+        an unrelated constraint would turn a real bug into a silent skip.
+
+        A SAVEPOINT around the ordinary ORM insert. The savepoint is the point: a bare
+        ``except IntegrityError`` would poison the whole transaction, and in the ingest
+        spine the transaction is a 200-item chunk — one collision would discard 199
+        good items. Rolling back to a savepoint discards only this row.
+
+        Measured, per insert (500 inserts, local socket):
+
+            plain ORM add/flush, no conflict safety   1.94 ms
+            savepoint + ORM add/flush                 2.20 ms   ← this
+            ON CONFLICT DO NOTHING + RETURNING       13.00 ms
+
+        The statement-level ``ON CONFLICT`` this replaced looked cheaper on paper — one
+        statement, no savepoint round-trips — but SQLAlchemy's ORM-enabled-insert path
+        costs ~6x more per call than a plain flush, which swamps the two extra round
+        trips. Conflicts are rare (a genuine race); paying 0.26 ms on every insert to
+        make them free is the right trade, paying 11 ms is not.
+        """
+        try:
+            with self.session.begin_nested():
+                self.session.add(asset)
+                self.session.flush()
+        except IntegrityError as exc:
+            if _IDENTITY_INDEX not in str(getattr(exc, "orig", exc)):
+                raise
+            return None
         return asset
 
-    def _apply_blueprint_to(self, asset: Asset) -> None:
-        """Mutate an existing Asset with blueprint fields (for update policy).
-        Only overwrites fields the blueprint set (non-None)."""
-        if self.blueprint.title is not None:
-            asset.title = self.blueprint.title
-        if self.blueprint.text_content is not None:
-            asset.text_content = self.blueprint.text_content
-        if self.blueprint.blob_path is not None:
-            asset.blob_path = self.blueprint.blob_path
-        if self.blueprint.file_info:
-            merged = dict(asset.file_info or {})
-            merged.update(self.blueprint.file_info)
-            asset.file_info = merged
-        if self.blueprint.facets:
-            merged_facets = dict(asset.facets or {})
-            merged_facets.update(self.blueprint.facets)
-            asset.facets = merged_facets
-        if self.blueprint.event_timestamp is not None:
-            asset.event_timestamp = self.blueprint.event_timestamp
-        if self.blueprint.processing_status is not None:
-            asset.processing_status = self.blueprint.processing_status
-        if self.blueprint.content_hash is not None:
-            asset.content_hash = self.blueprint.content_hash
-        if self.blueprint.source_token is not None:
-            # Advance the drift token so a re-poll's guard sees this item as current
-            # (else an in-place update would re-fire every poll).
-            asset.source_token = self.blueprint.source_token
-        asset.updated_at = datetime.now(timezone.utc)
+    def _place(self, match: Asset, row: Asset) -> None:
+        """Give ``match`` — an asset we recognized rather than created — the bundle
+        membership ``row`` asked for.
 
-    def _derived_content_hash(self) -> Optional[str]:
-        """Fallback content hash when the caller didn't supply one — delegates to the
-        shared ``derive_content_hash`` so build and reconcile stay in lockstep."""
-        return derive_content_hash(
-            self.blueprint.source_identifier, self.blueprint.text_content,
+        Identity is content; placement is membership. Without this, enforcing uniqueness
+        would silently starve the second of two sources feeding one feed into different
+        bundles: it would match the existing asset, skip, and never place it. One asset,
+        N bundles — which is exactly what the ``bundle_ids`` array is for.
+
+        The intent is read off ``row``, the thing the caller described, NOT off
+        ``self.row``. They are the same object for ``build()``, and different for every
+        direct ``persist(row)`` caller — which is how ``POST /assets`` came to drop the
+        placement on an idempotent re-post: the builder's own untouched row said "no
+        bundles" and won over the row that actually carried them.
+
+        Unplaced reads as ``None`` here and only becomes ``{0}`` once Postgres applies the
+        server_default at INSERT, so "no placement intent" and "deliberately at ROOT" stay
+        distinguishable at the moment it matters.
+
+        The same rule the ingest spine applies at its tier-1 guard, which skips before a
+        builder is ever constructed — both go through ``tree.place``, so "placed an asset"
+        has one definition.
+        """
+        if match.id is None:
+            return
+        from app.api.modules.content.tree import place
+
+        place(self.session, [match.id], row.bundle_ids)
+
+    def _finalize(self, row: Asset) -> None:
+        """Terminal-time defaults, applied to EVERY path.
+
+        These used to live in ``_blueprint_to_asset``, which only the fluent path ran —
+        so a directly-persisted row was inserted with ``content_hash = None`` and no
+        ``ingested_at`` even though ``persist`` had just derived the hash for the verdict
+        and thrown it away. Deferred to here rather than done in the setters because the
+        hash depends on whatever text the caller ends up supplying.
+        """
+        if not row.kind:
+            raise ValueError("AssetBuilder: kind must be set (.as_kind(...))")
+        if not row.title:
+            raise ValueError("AssetBuilder: title must be set (.with_title(...))")
+
+        # Root-only drift tokens — the model declares this (models.py: "Set only on root
+        # assets ... children are re-derived by processing, not fetched").
+        assert row.parent_asset_id is None or row.source_token is None, (
+            "source_token is a root-asset drift signal; children are re-derived, not fetched"
         )
+
+        row.user_id = row.user_id or self.row.user_id
+        row.infospace_id = row.infospace_id or self.row.infospace_id
+        # A hash can only reach the row via with_blob(digest=…) or a caller's own row, so
+        # deriving here can never disagree with a hand-rolled one — that state is
+        # unrepresentable now rather than assert-guarded.
+        row.content_hash = row.content_hash or content_hash(row.text_content)
+        row.processing_status = row.processing_status or ProcessingStatus.READY
+        # ingested_at for observability; an existing value wins (idempotent on rebuild).
+        row.file_info = {"ingested_at": datetime.now(timezone.utc).isoformat(),
+                         **(row.file_info or {})}
+
+    @staticmethod
+    def _apply_to(match: Asset, row: Asset) -> None:
+        """Fold ``row``'s content onto an existing ``match``, KEEPING its row id — so
+        annotations referencing that id survive. The one in-place update.
+
+        Used by the ``update`` policy AND by ``reconcile_children`` when a container is
+        reprocessed. Those were two functions (``_apply_to`` and ``_update_in_place``)
+        doing the same job with different field lists: one remembered ``facets`` and
+        ``source_token``, the other ``part_index``, ``modalities`` and clearing the
+        ``orphaned`` tag. Each was missing what the other had. This is the union.
+
+        The JSONB bags MERGE rather than replace — an update carries what this pass
+        learned, not the whole history, and clobbering ``file_info`` would drop every
+        earlier enrichment.
+        """
+        for attr in ("title", "text_content", "blob_path", "content_hash",
+                     "event_timestamp", "processing_status", "part_index",
+                     "modalities", "source_token"):
+            value = getattr(row, attr, None)
+            if value is not None:
+                setattr(match, attr, value)
+        if row.facets:
+            match.facets = {**(match.facets or {}), **row.facets}
+        # ``orphaned`` is cleared unconditionally: reaching here means the child
+        # reappeared in a re-extract, so a stale tag from a previous pass must not stick.
+        merged = {**(match.file_info or {}), **(row.file_info or {})}
+        merged.pop("orphaned", None)
+        match.file_info = merged
+        match.updated_at = datetime.now(timezone.utc)
 
 
 # Asset lifecycle operations (multi-row) — former asset_ops.py, folded in.
@@ -709,11 +785,9 @@ async def transfer_assets(
             if src.text_content is not None:
                 builder.with_text(src.text_content)
             if src.blob_path:
-                builder.with_blob(src.blob_path)
+                builder.with_blob(src.blob_path, src.content_hash)
             if src.source_identifier:
                 builder.with_source(src.source_identifier)
-            if src.content_hash:
-                builder.with_content_hash(src.content_hash)
             if src.event_timestamp:
                 builder.with_timestamp(src.event_timestamp)
             if src.facets:
@@ -724,12 +798,19 @@ async def transfer_assets(
                 builder.as_stub(True)
             if src.processing_status is not None:
                 builder.with_processing_status(src.processing_status)
-            if src.content_hash:
+            # Identity first, content second. The copy carries src.source_identifier,
+            # so deduping only on content_hash would let a transfer insert a second live
+            # root for an identifier the target infospace already holds — a direct
+            # violation of ux_asset_live_identity. Fall back to the content hash when the
+            # source has no identifier (pasted text, generated assets).
+            if src.source_identifier:
+                builder.dedup_on(source_identifier=src.source_identifier).on_match("skip")
+            elif src.content_hash:
                 builder.dedup_on(content_hash=src.content_hash).on_match("skip")
             else:
                 builder.no_dedup()
 
-            new_asset = await builder.build()
+            new_asset = (await builder.build()).asset
             transferred.append(new_asset)
     else:
         for src in sources:
@@ -779,8 +860,8 @@ async def reconcile_children(
     blueprints → ``orphan_action``: ``mark_orphaned`` tags+keeps it (annotations
     survive, row flagged), ``delete`` cascades it away.
 
-    Blueprints carry no precomputed hash, so we derive one (``derive_content_hash`` —
-    the same derivation ``build_children`` stamps) to compare against the child.
+    Blueprints carry no precomputed hash, so we derive one (``content_hash`` — the same
+    derivation ``build_children`` stamps) to compare against the child.
 
     Flush-only; caller commits. Returns
     ``{"inserted","kept","updated","superseded","orphaned"}``.
@@ -822,16 +903,15 @@ async def reconcile_children(
             to_insert.append(blueprint)
             continue
 
-        bp_hash = blueprint.content_hash or derive_content_hash(
-            blueprint.source_identifier, blueprint.text_content,
-        )
-        verdict = decide(match, bp_hash, on_change)  # the same matrix as build_outcome
+        bp_hash = blueprint.content_hash or content_hash(blueprint.text_content)
+        verdict = decide(match, bp_hash, on_change)  # the same matrix persist() uses
         if verdict == "unchanged":
             stats["kept"] += 1
             continue
 
         if verdict == "update":
-            _update_in_place(match, blueprint, bp_hash)
+            blueprint.content_hash = bp_hash
+            AssetBuilder._apply_to(match, blueprint)
             session.add(match)
             stats["updated"] += 1
         else:  # "supersede"
@@ -839,7 +919,7 @@ async def reconcile_children(
             await (
                 AssetBuilder(session, user_id, infospace_id)
                 .supersedes(match)
-                .load(blueprint)
+                .persist(blueprint)
             )
             stats["superseded"] += 1
 
@@ -861,28 +941,6 @@ async def reconcile_children(
     return stats
 
 
-def _update_in_place(match: Asset, blueprint: Asset, content_hash: Optional[str]) -> None:
-    """Copy a freshly-extracted blueprint's content onto an existing child, KEEPING its
-    row id — so the annotations referencing that id survive the reprocess. ``file_info``
-    is merged (and any prior ``orphaned`` tag cleared, since the child reappeared)."""
-    match.title = blueprint.title
-    match.text_content = blueprint.text_content
-    match.blob_path = blueprint.blob_path
-    match.content_hash = content_hash
-    if blueprint.part_index is not None:
-        match.part_index = blueprint.part_index
-    if blueprint.event_timestamp is not None:
-        match.event_timestamp = blueprint.event_timestamp
-    if getattr(blueprint, "modalities", None):
-        match.modalities = blueprint.modalities
-    if blueprint.processing_status is not None:
-        match.processing_status = blueprint.processing_status
-    merged = {**(match.file_info or {}), **(blueprint.file_info or {})}
-    merged.pop("orphaned", None)
-    match.file_info = merged
-    match.updated_at = datetime.now(timezone.utc)
-
-
 async def persist_children(
     session: Session,
     parent_id: int,
@@ -892,30 +950,23 @@ async def persist_children(
     infospace_id: int,
     match_key: MatchKey = "part_index",
 ) -> List[Asset]:
-    """Persist a processor's freshly-extracted children, choosing the mode from STATE:
+    """Persist a processor's freshly-extracted children against whatever is already there.
 
-      • parent has no live children yet (first process) → **build** (bulk insert).
-      • parent already has live children (a reprocess)   → **reconcile in place**
-        (matched updated by id so annotations survive; vanished → orphaned; new → inserted).
+    Matched children are updated BY ID so their annotations survive; children that
+    vanished from the extract are tagged orphaned; new ones are inserted. Returns the
+    parent's live (non-orphaned) children for the caller to emit ``asset.processed`` on.
+    Flush-only; caller commits.
 
-    The processor never decides build-vs-reconcile — it hands over what it extracted and
-    this picks. Returns the parent's live (non-orphaned) children for the caller to emit
-    ``asset.processed`` on. Flush-only; caller commits.
+    This used to branch on "does the parent already have children?" — bulk-build on the
+    first process, reconcile on a reprocess. The branch was redundant: with no existing
+    children every blueprint matches nothing, lands in ``to_insert``, and reconcile calls
+    the same ``build_children``. It bought one saved SELECT at the price of a
+    state-dependent code path, which is a bug surface, not an optimization.
     """
-    has_existing = session.exec(
-        select(Asset.id)
-        .where(Asset.parent_asset_id == parent_id)
-        .where(Asset.is_superseded == False)  # noqa: E712
-        .limit(1)
-    ).first()
-
-    if has_existing is None:
-        await AssetBuilder(session, user_id, infospace_id).build_children(parent_id, children)
-    else:
-        await reconcile_children(
-            session, parent_id, children, user_id=user_id, infospace_id=infospace_id,
-            match_key=match_key, on_change="update", orphan_action="mark_orphaned",
-        )
+    await reconcile_children(
+        session, parent_id, children, user_id=user_id, infospace_id=infospace_id,
+        match_key=match_key, on_change="update", orphan_action="mark_orphaned",
+    )
 
     live = session.exec(
         select(Asset)

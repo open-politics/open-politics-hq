@@ -17,17 +17,15 @@ from typing import AsyncIterator
 
 from sqlmodel import Session
 
-from app.api.modules.content.query import AssetQuery, parse as parse_aql, rank_bundles
+from app.api.modules.content.query import AssetQuery, parse as parse_aql
 from app.api.modules.content.schemas import (
-    AssetMatch,
-    AssetNode,
     AssetSearch,
+    AssetSearchMeta,
     AssetSearchRequest,
     ParsedQuery,
     StreamEvent,
 )
-from app.api.modules.content.views import _bundle_node, collect_search, render_search
-from app.api.modules.content.tree import bundle_counts
+from app.api.modules.content.views import collect, flat
 from app.api.modules.identity_infospace_user.access import Access
 
 logger = logging.getLogger(__name__)
@@ -93,8 +91,16 @@ def _build_search_query(
     # Structured scope_hints layer on as additional filters (helper panel, semantic search).
     if hints.kinds:
         q.kinds(hints.kinds)
-    if hints.bundle_ids and len(hints.bundle_ids) == 1:
-        q.bundle(hints.bundle_ids[0])
+    if hints.bundle_ids:
+        # A bundle scope-hint includes its whole subtree (same as an AQL ``bundle:``
+        # ref and access grants). Applied as a scope so it both filters the final
+        # rows and pre-filters the semantic vector search (recall stays in-scope).
+        from app.api.modules.content.tree import subtree_ids
+        from app.api.modules.identity_infospace_user.access import PackageScope
+        sub = tuple(subtree_ids(session, set(hints.bundle_ids)))
+        hint_scope = PackageScope(bundle_ids=sub)
+        q.scope(hint_scope)
+        q._semantic_scope = hint_scope
     if hints.asset_ids:
         q.ids(list(hints.asset_ids))
     if hints.date_from or hints.date_to:
@@ -103,51 +109,6 @@ def _build_search_query(
     q.sort(body.sort or "relevance")
     q.paginate(cursor=body.cursor, limit=body.limit)
     return q
-
-
-def _folder_leads(
-    session: Session,
-    infospace_id: int,
-    body: AssetSearchRequest,
-    parsed: ParsedQuery,
-    *,
-    access: Access,
-) -> list[AssetNode]:
-    """Folder name-matches as lead nodes for the search stream.
-
-    Folders lead ONLY an unscoped, free-text, opt-in search. Concretely:
-    ``include_folders`` is set (discovery surfaces — the tree/picker; asset-only
-    callers leave it off), there's free text to match (a pure-semantic ``vector``
-    query has none), and the query is NOT scoped. A scoped query — ``bundle:``/
-    ``asset:`` refs, or ``scope_hints`` narrowing — means "search *inside* here",
-    where surfacing top-level folder name-matches is noise; the scoped asset
-    search (full AQL) takes over instead. Tagged ``field='title'`` so the
-    frontend's existing direct tier renders them among the name hits.
-    """
-    hints = body.scope_hints
-    if (
-        not body.include_folders
-        or body.mode == "vector"
-        or not parsed.has_text
-        or parsed.bundle_refs
-        or parsed.asset_refs
-        or hints.bundle_ids
-        or hints.asset_ids
-        or hints.parent_asset_id is not None
-    ):
-        return []
-    ranked = rank_bundles(session, infospace_id, parsed, access.scope, limit=10)
-    # Live counts — the denormalized Bundle.asset_count drifts for ingested folders.
-    counts = bundle_counts(session, [b.id for b, _ in ranked])
-    return [
-        _bundle_node(
-            b,
-            matches=[AssetMatch(field="title", score=None, snippet=None)],
-            asset_count=counts.get(b.id, (None, None))[0],
-            child_bundle_count=counts.get(b.id, (None, None))[1],
-        )
-        for b, _score in ranked
-    ]
 
 
 async def search_assets(
@@ -160,14 +121,12 @@ async def search_assets(
     """Drained ``AssetSearch`` envelope. Use when caller wants JSON."""
 
     parsed = parse_aql(body.q or "")
+    mode = _effective_mode(body, parsed)
     query = _build_search_query(session, infospace_id, body, parsed, access=access)
-    return await collect_search(
-        query,
-        query_string=body.q,
-        mode=_effective_mode(body, parsed),
-        parsed=parsed,
-        access_scope=access.scope,
-        lead_nodes=_folder_leads(session, infospace_id, body, parsed, access=access),
+    events = flat(query, grouped=True, parsed=parsed, mode=mode, access_scope=access.scope)
+    return await collect(
+        events, AssetSearch,
+        meta=AssetSearchMeta(query=body.q, parsed=parsed, mode=mode),
     )
 
 
@@ -181,13 +140,7 @@ async def stream_search_assets(
     """Progressive ``StreamEvent`` generator. Use behind ``EventSourceResponse``."""
 
     parsed = parse_aql(body.q or "")
+    mode = _effective_mode(body, parsed)
     query = _build_search_query(session, infospace_id, body, parsed, access=access)
-    async for ev in render_search(
-        query,
-        query_string=body.q,
-        mode=_effective_mode(body, parsed),
-        parsed=parsed,
-        access_scope=access.scope,
-        lead_nodes=_folder_leads(session, infospace_id, body, parsed, access=access),
-    ):
+    async for ev in flat(query, grouped=True, parsed=parsed, mode=mode, access_scope=access.scope):
         yield ev

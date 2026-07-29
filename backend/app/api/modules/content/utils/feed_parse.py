@@ -20,16 +20,25 @@ logger = logging.getLogger(__name__)
 def parse_feed(source: Any) -> Tuple[str, List[Dict[str, Any]]]:
     """Parse an RSS/Atom feed (a URL, bytes, or str — feedparser accepts all three)
     → ``(feed_title, entries)``. Each entry is a plain dict:
-    ``guid / title / link / content / summary / author / published / tags / images``."""
+    ``identity / title / link / content / summary / author / published / tags / images``.
+
+    ``identity`` is the dedup key the ingest spine keys on — the article URL, so it
+    agrees with every other network source."""
     feed = feedparser.parse(source)
     title = feed.feed.get("title", "RSS Feed")
     out: List[Dict[str, Any]] = []
     for e in feed.entries:
-        guid = e.get("id") or e.get("link", "")
-        if not guid:
+        # Identity prefers the LINK over the feed's declared id. Every other network
+        # source (web, web_search, crawl) keys on the URL, so preferring an opaque guid
+        # here would give the same article two identities and defeat cross-source dedup —
+        # measured: 25k assets with non-URL identities, 41 articles duplicated that way.
+        # A guid is marginally more stable within one feed, but drift is the source_token's
+        # job, not identity's. Fall back to the id when a feed omits the link.
+        identity = e.get("link") or e.get("id", "")
+        if not identity:
             continue
         out.append({
-            "guid": guid,
+            "identity": identity,
             "title": e.get("title", "RSS Item"),
             "link": e.get("link", ""),
             "content": _entry_content(e),

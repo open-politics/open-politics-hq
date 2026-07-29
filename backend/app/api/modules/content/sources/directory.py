@@ -18,16 +18,16 @@ being written) and surfaces sidecar/versioning hints in metadata for the build l
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import time
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict
 
+from app.api.modules.content.asset_builder import content_hash
 from app.api.modules.content.contexts import SourceContext
 from app.api.modules.content.sources import (
-    FetchedContent, Preview, RawItem, content_hash, source_type, stage_blob,
+    FetchedContent, Preview, RawItem, source_type, stage_blob,
 )
 
 
@@ -50,7 +50,10 @@ class FileDirectory:
         dataset = config.get("dataset_name") or root.name
         copy_mode = bool(config.get("copy_mode", False))
         exts = set(config.get("file_extensions") or importable_extensions())
-        resume_after = cursor.get("last_processed_path")
+        # Set by the spine after each committed chunk. os.walk is ordered deterministically
+        # below precisely so this resume point is meaningful — a job reclaimed after its
+        # worker died picks up where it stopped instead of re-walking 150k files.
+        resume_after = cursor.get("last_item")
         inbox = bool(config.get("inbox_mode", False))
         stable_before = time.time() - int(config.get("stable_seconds", 30))
         base = Path(ctx.settings.LOCAL_STORAGE_BASE_PATH).resolve()
@@ -99,12 +102,15 @@ class FileDirectory:
 
     async def fetch(self, item: RawItem, ctx: SourceContext) -> FetchedContent:
         blob_path = item.metadata["blob_path"]
+        # A blob caller hashes for itself: it holds the bytes the builder never sees.
+        # Both modes go through the one derivation — bytes in copy mode, a streamed
+        # Path when the file is referenced in place.
         if item.metadata.get("copy_mode"):
             data = await asyncio.to_thread(_read_bytes, item.locator)
             await stage_blob(ctx, data, blob_path, filename=item.title)
             digest = content_hash(data)
         else:
-            digest = await asyncio.to_thread(_hash_file, item.locator)  # referenced in place
+            digest = await asyncio.to_thread(content_hash, Path(item.locator))
         return FetchedContent(blob_path=blob_path, content_hash=digest,
                               metadata={"file_size": item.metadata.get("file_size")})
 
@@ -114,14 +120,6 @@ class FileDirectory:
 def _read_bytes(path: str) -> bytes:
     with open(path, "rb") as f:
         return f.read()
-
-
-def _hash_file(path: str) -> str:
-    h = hashlib.md5()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _inbox_hints(abs_path: str) -> Dict[str, Any]:

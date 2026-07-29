@@ -17,7 +17,7 @@ import asyncio
 import logging
 from typing import AsyncIterator, Optional
 
-from sqlalchemy import and_, func, text
+from sqlalchemy import and_, func
 from sqlmodel import select
 
 from app.api.modules.content.models import Asset, Bundle
@@ -40,6 +40,7 @@ from app.api.modules.content.schemas import (
     SectionEvent,
     SkeletonEvent,
     StreamEvent,
+    TOTAL_PENDING,
 )
 from app.core.cursor import encode_cursor
 from app.core.sse import drain
@@ -115,15 +116,31 @@ def _bundle_node(
     )
 
 
-def _build_nav(session, infospace_id: int, access_scope) -> AssetTreeNav:
-    """Flat bundle registry. Scoped; client rebuilds hierarchy in O(n)."""
+def _build_nav(
+    session, infospace_id: int, access_scope, *,
+    only: Optional[set[int]] = None, name_hits: Optional[set[int]] = None,
+) -> AssetTreeNav:
+    """Flat bundle registry. Scoped; client rebuilds hierarchy in O(n).
 
+    ``only`` prunes the registry to a participating subset — the search-tree
+    skeleton (``views.participating_bundles``). ``None`` ships every visible
+    bundle (browse). An empty ``only`` set means "a query with no folder hits" →
+    an empty registry (results, if any, are all loose at root). ``name_hits`` flags
+    the folders whose name matched (client browses those unfiltered).
+    """
+
+    if only is not None and not only:
+        return AssetTreeNav(bundles=[])
+
+    hits = name_hits or set()
     stmt = select(Bundle).where(Bundle.infospace_id == infospace_id)
     if access_scope is not None and access_scope.bundle_ids:
         stmt = stmt.where(Bundle.id.in_(access_scope.bundle_ids))
     elif access_scope is not None and not access_scope.bundle_ids:
         # Scope set but no bundle grants — no bundles visible in nav.
         return AssetTreeNav(bundles=[])
+    if only is not None:
+        stmt = stmt.where(Bundle.id.in_(only))
 
     bundles = session.exec(stmt.order_by(Bundle.name.asc())).all()
     return AssetTreeNav(
@@ -133,6 +150,7 @@ def _build_nav(session, infospace_id: int, access_scope) -> AssetTreeNav:
                 name=b.name,
                 parent_id=(b.parent_bundle_id if b.parent_bundle_id else None),
                 tags=b.tags or [],
+                name_hit=b.id in hits,
             )
             for b in bundles
         ]
@@ -165,48 +183,155 @@ def _cursor_for_asset(asset: Asset, sort: str) -> str:
     )
 
 
-# ─── render_tree ────────────────────────────────────────────────────────────
+# ─── Emitters — the shared yields every listing composition is built from ─────
+#
+# One query, one node shape, a handful of yields. tree / flat below are each just a
+# composition of these; the only things that
+# vary are which fire and how the query's rows are projected. No listing family
+# owns its own skeleton / section / count / done scaffolding.
 
 
-async def render_tree(
+def emit_skeleton(family: str) -> SkeletonEvent:
+    return SkeletonEvent(family=family)
+
+
+def emit_nav(
+    session, infospace_id: int, access_scope, *,
+    only: Optional[set[int]] = None, name_hits: Optional[set[int]] = None,
+) -> NavEvent:
+    """Flat bundle registry; ``only`` prunes it to the participating skeleton,
+    ``name_hits`` flags the name-matched folders."""
+    return NavEvent(nav=_build_nav(session, infospace_id, access_scope, only=only, name_hits=name_hits))
+
+
+def emit_count(total: int, *, at_parent: Optional[str] = None) -> CountEvent:
+    return CountEvent(total=total, at_parent=at_parent)
+
+
+def emit_done() -> DoneEvent:
+    return DoneEvent()
+
+
+def _page_cursor(assets: list, sort: str, limit: int) -> Optional[str]:
+    """Next-page keyset cursor — set only when the page came back full."""
+    if assets and limit and len(assets) >= limit:
+        return _cursor_for_asset(assets[-1], sort)
+    return None
+
+
+def _project(query):
+    """The row projector: ``(asset, rank, headline) → AssetNode``, tagging title vs
+    body. One projector for every listing — ``_match_node`` yields a plain node when
+    there's no text/score (browse/feed) and folds the resolved semantic score in via
+    the rank (``rows`` merges it), so there's nothing else to attach.
+    """
+    text_q = query._text_query or ""
+    def project(asset, rank, headline):
+        return _match_node(asset, rank, headline, query_text=text_q)
+    return project
+
+
+async def emit_section(
+    query,
+    *,
+    role: str,
+    project,
+    at_parent: Optional[str] = None,
+    batch_size: Optional[int] = None,
+    mode: str = "text",
+    collect: Optional[list] = None,
+) -> AsyncIterator[SectionEvent]:
+    """Emit ``query``'s current page as one section — or, with ``batch_size``,
+    several progressive batches (one row of lookahead, so only the final section
+    carries ``has_more`` / ``cursor_next``).
+
+    ``batch_size=None`` → a single materialized section (tree / feed levels).
+    vector/hybrid materialize-and-merge (``rows`` re-sorts by the blended score);
+    text/filter stream off a server-side cursor. The query must already be
+    ``resolve``d (the ``flat``/``tree`` compositions do it up front). ``collect``
+    (when given) gathers the emitted assets for a follow-on stage (grouped children).
+    """
+    limit = query._limit or 0
+
+    if batch_size is None:
+        page = query.rows()
+        assets = [a for a, _, _ in page]
+        if collect is not None:
+            collect.extend(assets)
+        cursor = _page_cursor(assets, query._sort, limit)
+        yield SectionEvent(role=role, section=ListingSection[AssetNode](
+            at_parent=at_parent,
+            items=[project(a, r, h) for a, r, h in page],
+            total=-1,
+            has_more=bool(cursor),
+            cursor_next=cursor,
+        ))
+        return
+
+    if mode in ("vector", "hybrid"):
+        scored_full = query.rows()
+        batch_iter = (scored_full[i:i + batch_size] for i in range(0, len(scored_full), batch_size))
+    else:
+        batch_iter = query.stream(batch_size)
+
+    assets = []
+    prev: Optional[list] = None
+    for batch in batch_iter:
+        if prev is not None:
+            yield SectionEvent(role=role, section=ListingSection[AssetNode](
+                at_parent=at_parent,
+                items=[project(a, r, h) for a, r, h in prev],
+                total=TOTAL_PENDING, has_more=True, cursor_next=None,
+            ))
+            await asyncio.sleep(0)
+        prev = batch
+        assets.extend(a for a, _, _ in batch)
+
+    if collect is not None:
+        collect.extend(assets)
+    cursor = _page_cursor(assets, query._sort, limit)
+    yield SectionEvent(role=role, section=ListingSection[AssetNode](
+        at_parent=at_parent,
+        items=[project(a, r, h) for a, r, h in (prev or [])],
+        total=-1, has_more=bool(cursor), cursor_next=cursor,
+    ))
+
+
+# ─── tree ─────────────────────────────────────────────────────────────────────
+
+
+# A tree level's total is a display figure (pagination uses has_more + cursor), so
+# cap it: count(cap=N) stops scanning at N+1, turning an O(matches) count on a huge
+# folder into O(cap). A total > this ceiling means "more than N" — render as "N+".
+LEVEL_COUNT_CAP = 10_000
+
+
+async def tree(
     query: AssetQuery,
     *,
     level_parent: Optional[str] = None,
     access_scope=None,
+    participating: Optional[set[int]] = None,
+    name_hits: Optional[set[int]] = None,
 ) -> AsyncIterator[StreamEvent]:
-    """Progressive tree event stream.
+    """The tree arrangement: skeleton → nav → section(level) → count → done.
 
-    Emits: skeleton → nav → section(role='level') → count → done.
+    A browse listing when the query carries no filters; a search-tree when it does
+    — ``participating`` prunes the nav to the folders that contain matches, and the
+    level section lists the matching assets at this position. ``participating`` is a
+    root-level concern (``None`` at child levels, which reuse the root skeleton);
+    ``name_hits`` flags the name-matched folders in the nav.
     """
-
-    yield SkeletonEvent(family="tree")
-
-    nav = _build_nav(query.session, query.infospace_id, access_scope)
-    yield NavEvent(nav=nav)
-
-    assets = query.execute()
-    nodes = [_asset_node(a) for a in assets]
-    next_cursor = (
-        _cursor_for_asset(assets[-1], query._sort)
-        if assets and len(assets) >= (query._limit or 0)
-        else None
-    )
-    section = ListingSection[AssetNode](
-        at_parent=level_parent,
-        items=nodes,
-        total=-1,
-        has_more=bool(next_cursor),
-        cursor_next=next_cursor,
-    )
-    yield SectionEvent(role="level", section=section)
-
-    total = query.count()
-    yield CountEvent(total=total)
-
-    yield DoneEvent()
+    yield emit_skeleton("tree")
+    await query.resolve()
+    yield emit_nav(query.session, query.infospace_id, access_scope, only=participating, name_hits=name_hits)
+    async for ev in emit_section(query, role="level", project=_project(query), at_parent=level_parent):
+        yield ev
+    yield emit_count(query.count(cap=LEVEL_COUNT_CAP), at_parent=level_parent)
+    yield emit_done()
 
 
-# ─── render_search ──────────────────────────────────────────────────────────
+# ─── flat ─────────────────────────────────────────────────────────────────────
 
 
 # Primary results stream in small batches so the list visibly fills in rather
@@ -249,198 +374,149 @@ def _match_node(asset: Asset, rank, headline, *, query_text: str = "") -> AssetN
     return _asset_node(asset, score=rank, matches=matches)
 
 
-async def render_search(
+async def flat(
     query: AssetQuery,
     *,
-    query_string: str = "",
-    mode: str = "text",
+    grouped: bool = False,
     parsed=None,
+    mode: str = "text",
     access_scope=None,
-    lead_nodes: Optional[list[AssetNode]] = None,
 ) -> AsyncIterator[StreamEvent]:
-    """Progressive search event stream.
+    """The flat arrangement — a paged listing. Search results (``grouped=True``) or
+    the recent-assets feed (``grouped=False``).
 
-    Emits:
-        skeleton → section(role='primary')+ → count → section(role='grouped')* → done
+    Emits: skeleton → section(role='primary')+ → count → section(role='grouped')* → done.
 
-    Primary lands in small batches (cursor-streamed for text/filter; chunked for
-    semantic/hybrid, which must merge the full set first). Grouped sections carry
-    the actual nested matches — pages/rows of a container hit that also contain
-    the search text — bounded by the ``children:`` clause.
-
-    ``lead_nodes`` is a generic "emit these first" slot: a complete, un-paginated
-    batch of nodes streamed ahead of the query hits (Spotlight "top hits"). It
-    stays out of the asset keyset cursor, so ``count``/``has_more`` remain
-    query-driven. Folder name-matches are its first consumer; pinned/suggested
-    results are future ones — the view stays dumb about what leads.
+    Search batches the primary for progressive fill (cursor-streamed for text/filter;
+    chunked for semantic/hybrid, which merge the full set first) and appends the
+    per-container nested matches bounded by the ``children:`` clause. The feed emits a
+    single primary section and no grouped sections.
     """
+    yield emit_skeleton("search" if grouped else "feed")
+    await query.resolve()
 
-    yield SkeletonEvent(family="search")
+    primary_assets: list = []
+    async for ev in emit_section(
+        query, role="primary", project=_project(query),
+        batch_size=(PRIMARY_BATCH_SIZE if grouped else None), mode=mode, collect=primary_assets,
+    ):
+        yield ev
 
-    if lead_nodes:
-        yield SectionEvent(role="primary", section=ListingSection[AssetNode](
-            items=lead_nodes, total=-1, has_more=True, cursor_next=None,
+    yield emit_count(query.count())
+
+    if grouped:
+        async for ev in emit_grouped(query, parsed, access_scope, primary_assets):
+            yield ev
+
+    yield emit_done()
+
+
+async def emit_grouped(query, parsed, access_scope, primary_assets) -> AsyncIterator[SectionEvent]:
+    """Per-container nested matches — pages/rows of a container hit that also
+    contain the search text, bounded by the ``children:`` clause. Search-only:
+    the tree reveals the same nesting by expansion instead. Only meaningful with
+    free text (a ``kind:``/``date:`` filter has no "match inside a child" notion).
+    """
+    child_limit = _resolve_child_limit(parsed)
+    has_text = bool(getattr(parsed, "has_text", False)) and bool(getattr(parsed, "text", ""))
+    if not (primary_assets and child_limit > 0 and has_text):
+        return
+    containers = [a for a in primary_assets if a.is_container][:MAX_CHILD_PARENTS]
+    for parent in containers:
+        child_q = (
+            AssetQuery(query.session, query.infospace_id)
+            .scope(access_scope)
+            .exclude_superseded()
+            .parent_asset(parent.id)
+            .text(parsed.text, mode="fts")
+            .sort("relevance")
+            .paginate(limit=child_limit)
+        )
+        child_rows = child_q.rows()
+        if not child_rows:
+            continue
+        total_children = child_q.count()
+        yield SectionEvent(role="grouped", section=ListingSection[AssetNode](
+            at_parent=f"asset-{parent.id}",
+            items=[_match_node(c, r, h) for c, r, h in child_rows],
+            total=total_children,
+            has_more=total_children > len(child_rows),
         ))
         await asyncio.sleep(0)
 
-    limit = query._limit or 0
-    # Free-text portion drives title-vs-content tagging of primary hits.
-    primary_text = (getattr(parsed, "text", "") or "") if parsed is not None else query_string
 
-    if mode in ("vector", "hybrid"):
-        # Semantic merge needs the whole set; materialise then chunk.
-        scored_full = await query.execute_scored_async()
-        batch_iter = (
-            scored_full[i:i + PRIMARY_BATCH_SIZE]
-            for i in range(0, len(scored_full), PRIMARY_BATCH_SIZE)
-        )
-    else:
-        # Text / filter: stream rows off a server-side cursor.
-        batch_iter = query.execute_scored_stream(PRIMARY_BATCH_SIZE)
-
-    # One-batch lookahead so only the final batch carries has_more / cursor_next.
-    primary_assets: list[Asset] = []
-    prev_batch: Optional[list] = None
-    for batch in batch_iter:
-        if prev_batch is not None:
-            yield SectionEvent(role="primary", section=ListingSection[AssetNode](
-                items=[_match_node(a, r, h, query_text=primary_text) for a, r, h in prev_batch],
-                total=-1, has_more=True, cursor_next=None,
-            ))
-            await asyncio.sleep(0)
-        prev_batch = batch
-        primary_assets.extend(a for a, _, _ in batch)
-
-    next_cursor = (
-        _cursor_for_asset(primary_assets[-1], query._sort)
-        if primary_assets and limit > 0 and len(primary_assets) >= limit
-        else None
-    )
-    yield SectionEvent(role="primary", section=ListingSection[AssetNode](
-        items=[_match_node(a, r, h, query_text=primary_text) for a, r, h in (prev_batch or [])],
-        total=-1, has_more=bool(next_cursor), cursor_next=next_cursor,
-    ))
-
-    yield CountEvent(total=query.count())
-
-    # Grouped: actual nested matches per container hit. Only meaningful when
-    # there's search text to find inside the children (a kind:/date: filter has
-    # no "match inside a child" notion). One small indexed query per parent.
-    child_limit = _resolve_child_limit(parsed)
-    has_text = bool(getattr(parsed, "has_text", False)) and bool(getattr(parsed, "text", ""))
-    if primary_assets and child_limit > 0 and has_text:
-        containers = [a for a in primary_assets if a.is_container][:MAX_CHILD_PARENTS]
-        for parent in containers:
-            child_q = (
-                AssetQuery(query.session, query.infospace_id)
-                .scope(access_scope)
-                .exclude_superseded()
-                .parent_asset(parent.id)
-                .text(parsed.text, mode="fts")
-                .sort("relevance")
-                .paginate(limit=child_limit)
-            )
-            child_rows = child_q.execute_scored()
-            if not child_rows:
-                continue
-            total_children = child_q.count()
-            yield SectionEvent(role="grouped", section=ListingSection[AssetNode](
-                at_parent=f"asset-{parent.id}",
-                items=[_match_node(c, r, h) for c, r, h in child_rows],
-                total=total_children,
-                has_more=total_children > len(child_rows),
-            ))
-            await asyncio.sleep(0)
-
-    yield DoneEvent()
+# ─── collect (one generic drain for every envelope) ─────────────────────────
 
 
-# ─── render_feed ────────────────────────────────────────────────────────────
+async def collect(events, envelope_type, *, meta=None):
+    """Drain a render stream into its JSON envelope; attach caller-supplied ``meta``.
 
-
-async def render_feed(query: AssetQuery) -> AsyncIterator[StreamEvent]:
-    """Progressive feed event stream.
-
-    Emits: skeleton → section(role='primary') → count → done.
+    One drain for tree/search/feed — the family-specific meta (``_compute_tree_meta``,
+    ``AssetSearchMeta``, ``AssetFeedMeta``) is built by the route/caller and passed in.
     """
-
-    yield SkeletonEvent(family="feed")
-
-    assets = query.execute()
-    nodes = [_asset_node(a) for a in assets]
-    next_cursor = (
-        _cursor_for_asset(assets[-1], query._sort)
-        if assets and len(assets) >= (query._limit or 0)
-        else None
-    )
-    section = ListingSection[AssetNode](
-        items=nodes,
-        total=-1,
-        has_more=bool(next_cursor),
-        cursor_next=next_cursor,
-    )
-    yield SectionEvent(role="primary", section=section)
-
-    total = query.count()
-    yield CountEvent(total=total)
-
-    yield DoneEvent()
-
-
-# ─── collect_* (JSON envelope path) ─────────────────────────────────────────
-
-
-async def collect_tree(
-    query: AssetQuery,
-    *,
-    level_parent: Optional[str] = None,
-    access_scope=None,
-) -> AssetTree:
-    """Drain render_tree into an AssetTree envelope."""
-
-    events = render_tree(query, level_parent=level_parent, access_scope=access_scope)
-    envelope = await drain(events, AssetTree)
-    # Pad in tree meta counts (cheap; run after drain completes).
-    envelope.meta = _compute_tree_meta(query.session, query.infospace_id, access_scope)
+    envelope = await drain(events, envelope_type)
+    if meta is not None:
+        envelope.meta = meta
     return envelope
 
 
-async def collect_search(
-    query: AssetQuery,
-    *,
-    query_string: str = "",
-    mode: str = "text",
-    parsed=None,
-    access_scope=None,
-    lead_nodes: Optional[list[AssetNode]] = None,
-) -> AssetSearch:
-    """Drain render_search into an AssetSearch envelope."""
+async def participating_bundles(session, infospace_id: int, parsed, access_scope) -> tuple[set[int], set[int]]:
+    """The search-tree folder skeleton, and which of its folders are name-hits.
 
-    events = render_search(
-        query, query_string=query_string, mode=mode, parsed=parsed,
-        access_scope=access_scope, lead_nodes=lead_nodes,
+    Returns ``(participating, name_hits)`` where::
+
+        participating = ancestors( matched-asset bundle_ids ∪ name-matched folders )
+        name_hits     = the folders whose *name* matched (a subset, un-ancestored)
+
+    ``participating`` is a peer of ``count`` — computed once at the root, bounded by
+    the number of bundles (not the match count), so it stays cheap at any size. Async
+    because a ``~semantic`` clause resolves via embedding+pgvector before its
+    bundle_ids can be collected. An empty ``participating`` → an empty nav (all
+    matches, if any, are loose at root).
+    """
+    from app.api.modules.content.query import (
+        AssetQuery as _AssetQuery,
+        bundles_matching,
+        _resolve_bundle_ids,
     )
-    envelope = await drain(events, AssetSearch)
-    envelope.meta = AssetSearchMeta(
-        query=query_string,
-        parsed=parsed,
-        mode=mode,
-    )
-    return envelope
+    from app.api.modules.content.tree import ancestor_ids, subtree_ids
 
+    q = _AssetQuery.from_aql(session, infospace_id, parsed).scope(access_scope)
+    await q.resolve()
+    asset_leaves = q.containers()
 
-async def collect_feed(query: AssetQuery) -> AssetFeed:
-    """Drain render_feed into an AssetFeed envelope."""
+    # An explicit ``bundle:`` scope confines the result-tree to those bundles' subtree.
+    # Two things leak past the asset WHERE otherwise: a folder name-hit (``bundles_matching``
+    # ranks by NAME across the whole infospace) and a multi-homed matching asset (its
+    # *other* bundles ride along in ``containers()``). Clamp both leaf sources to the
+    # scoped subtree; the ancestor walk below still adds the path *above* the scope, so a
+    # scoped child folder renders under its parents. ``subtree_ids`` keeps in-scope
+    # descendants (a matching sub-folder) and drops the rest.
+    group_scopes = [
+        set(_resolve_bundle_ids(session, infospace_id, g.bundle_refs))
+        for g in parsed.groups_or_self
+    ]
 
-    events = render_feed(query)
-    envelope = await drain(events, AssetFeed)
-    envelope.meta = AssetFeedMeta()
-    return envelope
+    name_hits: set[int] = set()
+    for g, g_scope in zip(parsed.groups_or_self, group_scopes):
+        g_hits = {b.id for b, _ in bundles_matching(session, infospace_id, g, access_scope)}
+        if g_scope:
+            g_hits &= subtree_ids(session, g_scope)
+        name_hits |= g_hits
+
+    # Only clamp asset containers when *every* OR group is bundle-scoped — an unscoped
+    # group legitimately matches assets anywhere and must not be pruned.
+    if group_scopes and all(group_scopes):
+        asset_leaves &= subtree_ids(session, set().union(*group_scopes))
+
+    participating = ancestor_ids(session, asset_leaves | name_hits)
+    return participating, name_hits
 
 
 def _compute_tree_meta(session, infospace_id: int, access_scope) -> AssetTreeMeta:
-    """Compute tree-level counts (bundles, top-level assets). ``vfolders`` is held at
-    0 — folders are real bundles now; the field is removed with the cutover client regen."""
+    """Compute tree-level browse counts (visible bundles, loose top-level assets).
+    ``vfolders`` is held at 0 — folders are real bundles now; the field is removed
+    with the cutover client regen."""
 
     bundle_count_stmt = select(func.count(Bundle.id)).where(Bundle.infospace_id == infospace_id)
     if access_scope is not None and access_scope.bundle_ids:
@@ -449,14 +525,18 @@ def _compute_tree_meta(session, infospace_id: int, access_scope) -> AssetTreeMet
         bundle_count_stmt = bundle_count_stmt.where(and_(False))
     bundle_count = session.exec(bundle_count_stmt).one() or 0
 
-    asset_count_stmt = (
-        select(func.count(Asset.id))
-        .where(Asset.infospace_id == infospace_id)
-        .where(Asset.parent_asset_id.is_(None))
-        # Only count assets that aren't in any real bundle — matches the
-        # set that _root_query returns via .no_bundles().
-        .where(text("bundle_ids <@ ARRAY[0]::int[]"))
+    # Loose top-level assets, counted through the SAME scoped predicate _root_query
+    # lists (scope + no_bundles + top_level + exclude_superseded) — reusing the
+    # AssetQuery primitive rather than a hand-rolled select that drifts. This also
+    # closes an access leak: a bundle-only PackageScope makes 0 loose assets visible,
+    # so the count must be scoped too (bundles already are, above).
+    asset_count = (
+        AssetQuery(session, infospace_id)
+        .scope(access_scope)
+        .top_level_only()
+        .no_bundles()
+        .exclude_superseded()
+        .count()
     )
-    asset_count = session.exec(asset_count_stmt).one() or 0
 
     return AssetTreeMeta(bundles=bundle_count, assets=asset_count, vfolders=0)

@@ -69,17 +69,32 @@ class ParsedQuery:
     run_ids: list[int] = field(default_factory=list)
     # Children display: None = default (3/parent), 0 = hide, N = up to N/parent
     children_limit: int | None = None
+    # Compound OR — top-level DNF groups. Populated only for `a OR b` queries;
+    # empty for a simple query (which IS its own single group, via groups_or_self).
+    groups: list["ParsedQuery"] = field(default_factory=list)
+
+    @property
+    def groups_or_self(self) -> list["ParsedQuery"]:
+        """The OR-groups to union — the groups for a compound query, else ``[self]``.
+        One iteration handles both: a simple query is a union of one group."""
+        return self.groups or [self]
 
     @property
     def has_text(self) -> bool:
+        if self.groups:
+            return any(g.has_text for g in self.groups)
         return bool(self.text.strip())
 
     @property
     def has_semantic(self) -> bool:
+        if self.groups:
+            return any(g.has_semantic for g in self.groups)
         return self.semantic is not None or self.entity_semantic is not None
 
     @property
     def has_filters(self) -> bool:
+        if self.groups:
+            return any(g.has_filters for g in self.groups)
         return bool(
             self.kinds or self.excluded_kinds or self.date_after or self.date_before
             or self.bundle_refs or self.asset_refs or self.entities or self.entity_negations
@@ -92,6 +107,8 @@ class ParsedQuery:
 
     def to_dict(self) -> dict:
         """Parsed structure for frontend pill rendering."""
+        if self.groups:
+            return {"groups": [g.to_dict() for g in self.groups]}
         d: dict = {}
         if self.text:
             d["text"] = self.text
@@ -209,16 +226,24 @@ class AssetNode(BaseModel):
 # ─── Generic section ────────────────────────────────────────────────────────
 
 
+# ListingSection.total sentinel — the count is deferred and resolves via a later
+# CountEvent that drain (core/sse) folds back into this section by matching
+# at_parent. Distinct from a real 0; never None.
+TOTAL_PENDING = -1
+
+
 class ListingSection(BaseModel, Generic[T]):
     """One page of items in a listing. Generic over item type.
 
-    total=-1 during the first event of a progressive listing (count pending);
-    >=0 once count resolves. Never None, never 0 as a sentinel.
+    ``total`` is ``TOTAL_PENDING`` (-1) on the first event of a progressive listing
+    (count still running) and >=0 once its ``CountEvent`` resolves it. It is a
+    display figure only — **pagination is driven by ``has_more`` + ``cursor_next``,
+    never by ``total``** (so a bounded/capped total is safe). Never None.
     """
 
     at_parent: str | None = None
     items: list[T]
-    total: int
+    total: int = TOTAL_PENDING
     has_more: bool = False
     cursor_next: str | None = None
 
@@ -231,6 +256,11 @@ class AssetTreeBundleSkeleton(BaseModel):
     name: str
     parent_id: int | None = None
     tags: list[str] | None = None
+    # Result-tree only: this folder's *name* matched the query (a "you found this
+    # folder" hit). The client expands it unfiltered — showing the whole bundle —
+    # rather than only its query-matching members. Absent/False for browse + skeleton
+    # folders (which exist merely to place a matched asset).
+    name_hit: bool = False
 
 
 class AssetTreeNav(BaseModel):

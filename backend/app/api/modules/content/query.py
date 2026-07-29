@@ -23,7 +23,7 @@ import re
 from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from sqlalchemy import and_, case, or_, column as sa_column, func, text
+from sqlalchemy import and_, bindparam, case, or_, column as sa_column, func, text
 from sqlmodel import Session, select
 
 from app.api.modules.content.facets import build_facet_filter
@@ -32,6 +32,19 @@ from app.api.modules.content.utils.watcher_filters import non_superseded_filter
 from app.api.modules.content.schemas import AnnotationFilter, ParsedQuery, SemanticClause
 
 logger = logging.getLogger(__name__)
+
+
+def _u(sql: str, **params):
+    """A raw ``text()`` clause whose binds are unique — safe to repeat or OR together.
+
+    Every ``:name`` in *sql* binds to a uniquely-renamed compiled param, so the same
+    clause type can appear in multiple positions of one statement — the OR groups of
+    a compound query, or a ``tag:a,b`` loop — without two clauses colliding on a
+    shared bind name (a collision silently collapses both to one value). Placeholders
+    repeated *within* a single clause still share their value. This is what makes a
+    condition genuinely composable, so ``_where()`` can AND/OR it freely.
+    """
+    return text(sql).bindparams(*[bindparam(k, value=v, unique=True) for k, v in params.items()])
 
 
 class AssetQuery:
@@ -46,7 +59,7 @@ class AssetQuery:
             .bundle(bundle_id=42)
             .sort("relevance")
             .paginate(cursor=None, limit=25)
-            .execute()
+            .rows()            # or .assets() / .count() / .containers()
         )
 
     Or via AQL:
@@ -73,6 +86,20 @@ class AssetQuery:
         self._cursor_value: Any = None  # last row's sort-column value (keyset pagination)
         self._limit: int = 25
         self._offset: int = 0
+        # Deferred (async) clauses — semantic / entity-semantic — resolve to plain
+        # id-set conditions + a per-asset score map via resolve(). Kept here so
+        # every read path (assets, rows, count, containers) sees the same resolved
+        # predicate. See resolve().
+        self._semantic_scores: Dict[int, float] = {}
+        self._deferred_resolved: bool = False
+        # Compound OR — DNF sub-queries, one per top-level OR group. Empty for a
+        # simple query. _where() ORs them; resolve() resolves each. See from_aql.
+        self._groups: List["AssetQuery"] = []
+        # Subtree-expanded bundle/asset scope to pre-filter the semantic vector
+        # search by. Set by from_aql / search hints; passed to search_by_text in
+        # resolve() so a bundle-scoped ~semantic search keeps recall inside the scope
+        # (the pre-filter is applied in SQL, not as a post-filter that starves top-k).
+        self._semantic_scope = None
 
     # ─── Text search ───
 
@@ -84,9 +111,9 @@ class AssetQuery:
         self._text_query = q
         if mode == "fts":
             try:
-                fts_cond = text(
-                    "text_search_vector @@ websearch_to_tsquery('english', :q)"
-                ).bindparams(q=q)
+                fts_cond = _u(
+                    "text_search_vector @@ websearch_to_tsquery('english', :q)", q=q
+                )
                 # Also match title via ILIKE for assets where text_content may not contain the title
                 title_pat = f"%{_strip_fts_operators(q)}%"
                 self._conditions.append(or_(fts_cond, Asset.title.ilike(title_pat)))
@@ -130,21 +157,15 @@ class AssetQuery:
         facet_filter = build_facet_filter(language=language, **facets_kwargs)
         if facet_filter:
             self._conditions.append(
-                text("metadata @> :facets::jsonb").bindparams(
-                    facets=json.dumps(facet_filter)
-                )
+                _u("metadata @> :facets::jsonb", facets=json.dumps(facet_filter))
             )
         if quality_score_gte is not None:
             self._conditions.append(
-                text("(metadata->>'quality_score')::float >= :quality_gte").bindparams(
-                    quality_gte=quality_score_gte
-                )
+                _u("(metadata->>'quality_score')::float >= :quality_gte", quality_gte=quality_score_gte)
             )
         if quality_score_lte is not None:
             self._conditions.append(
-                text("(metadata->>'quality_score')::float <= :quality_lte").bindparams(
-                    quality_lte=quality_score_lte
-                )
+                _u("(metadata->>'quality_score')::float <= :quality_lte", quality_lte=quality_score_lte)
             )
         return self
 
@@ -152,9 +173,7 @@ class AssetQuery:
         """Filter assets whose fragments JSONB contain the given structure."""
         if fragment_filter:
             self._conditions.append(
-                text("fragments @> :frag::jsonb").bindparams(
-                    frag=json.dumps(fragment_filter)
-                )
+                _u("fragments @> :frag::jsonb", frag=json.dumps(fragment_filter))
             )
         return self
 
@@ -210,7 +229,7 @@ class AssetQuery:
         self._bundle_id = bundle_id
         if bundle_id is not None:
             self._conditions.append(
-                text("bundle_ids @> ARRAY[:bid]::int[]").bindparams(bid=bundle_id)
+                _u("bundle_ids @> ARRAY[:bid]::int[]", bid=bundle_id)
             )
         return self
 
@@ -239,9 +258,7 @@ class AssetQuery:
         clauses = []
         if package_scope.bundle_ids:
             clauses.append(
-                text("bundle_ids && CAST(:scope_bids AS int[])").bindparams(
-                    scope_bids=list(package_scope.bundle_ids)
-                )
+                _u("bundle_ids && CAST(:scope_bids AS int[])", scope_bids=list(package_scope.bundle_ids))
             )
         if package_scope.asset_ids:
             clauses.append(Asset.id.in_(package_scope.asset_ids))
@@ -303,7 +320,7 @@ class AssetQuery:
         """Filter by asset tags (JSON array contains any of the given values)."""
         for tag in values:
             self._conditions.append(
-                text("CAST(tags AS jsonb) @> CAST(:tag_val AS jsonb)").bindparams(tag_val=json.dumps([tag]))
+                _u("CAST(tags AS jsonb) @> CAST(:tag_val AS jsonb)", tag_val=json.dumps([tag]))
             )
         return self
 
@@ -430,7 +447,7 @@ class AssetQuery:
         if negated:
             exists_sql = f"NOT {exists_sql}"
 
-        self._conditions.append(text(exists_sql).bindparams(**params))
+        self._conditions.append(_u(exists_sql, **params))
         return self
 
     # ─── Sorting & pagination ───
@@ -500,7 +517,7 @@ class AssetQuery:
         each weighted so a title match outranks a content-only match.
 
         Single source of truth: used by both the ORDER BY and the returned score,
-        so the hybrid-merge re-sort (execute_scored_async) stays consistent.
+        so the hybrid-merge re-sort (the rows() merge) stays consistent.
         """
         tsq = func.websearch_to_tsquery('english', self._text_query)
         content_rank = func.ts_rank(sa_column('text_search_vector'), tsq)
@@ -594,9 +611,25 @@ class AssetQuery:
             return value
         return value
 
+    def _where(self):
+        """The effective WHERE predicate — the single accessor every read uses.
+
+        Simple query: ``AND`` of the accumulated ``_conditions``. Compound (OR):
+        ``and_(shared, or_(group_1, … group_n))`` — the shared invariants plus any
+        caller refinements (access scope, structural bundle/no_bundles, hint
+        filters, sort/paginate) AND across a union of the per-group predicates.
+        Every read (assets/rows/stream/count/containers) goes through here, so
+        compound support landed in one place. Centralizes what used to be
+        ``and_(*self._conditions)`` copy-pasted across five reads.
+        """
+        base = and_(*self._conditions)
+        if self._groups:
+            return and_(base, or_(*(g._where() for g in self._groups)))
+        return base
+
     def _build_base_select(self):
         """Build base select with all conditions."""
-        stmt = select(Asset).where(and_(*self._conditions))
+        stmt = select(Asset).where(self._where())
         return self._apply_sort_and_pagination(stmt)
 
     def count(self, cap: int | None = None) -> int:
@@ -611,29 +644,28 @@ class AssetQuery:
         cost profiles.
         """
         if cap is None:
-            stmt = select(func.count(Asset.id)).where(and_(*self._conditions))
+            stmt = select(func.count(Asset.id)).where(self._where())
             return self.session.exec(stmt).one() or 0
-        inner = select(Asset.id).where(and_(*self._conditions)).limit(cap + 1)
+        inner = select(Asset.id).where(self._where()).limit(cap + 1)
         stmt = select(func.count()).select_from(inner.subquery())
         return self.session.exec(stmt).one() or 0
 
-    def count_by_parent(self) -> dict[int, int]:
-        """Return {parent_asset_id: count} for matching children.
+    def containers(self) -> set[int]:
+        """Distinct real bundle ids across the matching assets — "which folders the
+        results live in" (ignores limit/offset).
 
-        Cheap GROUP BY on indexed columns — no row fetch.
-        Ignores limit/offset/cursor.
+        Aggregate sibling of ``count``: where ``count`` answers "how many results",
+        this answers "where do they live". The leaf bundles whose ancestor chain
+        forms the search-tree skeleton (see ``views._skeleton``). ROOT sentinel
+        ``0`` (unbundled) dropped. Call after ``resolve`` so a ``~semantic`` clause
+        is already a condition.
         """
-        stmt = (
-            select(Asset.parent_asset_id, func.count(Asset.id))
-            .where(and_(*self._conditions))
-            .group_by(Asset.parent_asset_id)
-        )
-        return {pid: cnt for pid, cnt in self.session.exec(stmt).all() if pid is not None}
+        stmt = select(func.unnest(Asset.bundle_ids)).where(self._where()).distinct()
+        return {b for b in self.session.exec(stmt).all() if b and b != 0}
 
-    def execute(self) -> List[Asset]:
-        """Execute and return list of Asset."""
-        stmt = self._build_base_select()
-        return list(self.session.exec(stmt).all())
+    def assets(self) -> List[Asset]:
+        """The matching assets, no scores. Call ``resolve`` first if the query carries semantic."""
+        return list(self.session.exec(self._build_base_select()).all())
 
     def _scored_select(self):
         """Build the (Asset, rank, headline) select for FTS, sorted + paginated."""
@@ -645,28 +677,50 @@ class AssetQuery:
             tsq,
             'MaxFragments=3,MaxWords=35,StartSel=<mark>,StopSel=</mark>',
         ).label('headline')
-        stmt = select(Asset, rank_col, headline_col).where(and_(*self._conditions))
+        stmt = select(Asset, rank_col, headline_col).where(self._where())
         return self._apply_sort_and_pagination(stmt)
 
-    def execute_scored(self) -> List[Tuple[Asset, Optional[float], Optional[str]]]:
-        """Execute returning (asset, rank, headline) tuples.
+    def rows(self) -> List[Tuple[Asset, Optional[float], Optional[str]]]:
+        """The current page as (asset, score, snippet) — materialized.
 
-        When FTS is active, includes ts_rank score and ts_headline snippet.
-        Otherwise rank and headline are None.
+        ``score`` is the FTS ``ts_rank`` (with a ``ts_headline`` snippet) for text
+        queries, ``None`` for pure filters. When ``resolve`` has populated
+        ``_semantic_scores``, the semantic/hybrid blend is merged in (and re-sorted
+        for relevance). Call ``resolve`` first if the query carries a ``~semantic``
+        clause. Folds the old ``execute_scored`` + ``execute_scored_async``.
         """
         if self._text_query:
-            rows = list(self.session.exec(self._scored_select()).all())
-            return [(row[0], float(row[1]), row[2]) for row in rows]
+            raw = list(self.session.exec(self._scored_select()).all())
+            result: List[Tuple[Asset, Optional[float], Optional[str]]] = [
+                (row[0], float(row[1]), row[2]) for row in raw
+            ]
         else:
-            return [(a, None, None) for a in self.execute()]
+            result = [(a, None, None) for a in self.assets()]
 
-    def execute_scored_stream(
+        if not self._semantic_scores:
+            return result
+
+        # Blend FTS rank + semantic similarity (hybrid), or similarity alone.
+        merged: List[Tuple[Asset, Optional[float], Optional[str]]] = []
+        for asset, fts_rank, highlight in result:
+            sem = self._semantic_scores.get(asset.id)
+            if fts_rank is not None and sem is not None:
+                merged.append((asset, fts_rank * 0.4 + sem * 0.6, highlight))
+            elif sem is not None:
+                merged.append((asset, sem, highlight))
+            else:
+                merged.append((asset, fts_rank, highlight))
+        if self._sort == "relevance":
+            merged.sort(key=lambda t: t[1] or 0, reverse=True)
+        return merged
+
+    def stream(
         self, batch_size: int = 5
     ) -> Iterator[List[Tuple[Asset, Optional[float], Optional[str]]]]:
         """Yield (asset, rank, headline) in small batches off a server-side cursor.
 
         Text/filter only — semantic & hybrid need the whole set to merge and
-        re-sort scores, so those callers stay on ``execute_scored_async``. With
+        re-sort scores, so those callers use ``rows`` (after ``resolve``). With
         ``stream_results`` Postgres hands rows back (and runs ``ts_headline`` per
         row) incrementally once the ORDER BY is resolved, so the UI fills in
         progressively instead of waiting for the entire page to materialise.
@@ -691,31 +745,32 @@ class AssetQuery:
         if batch:
             yield batch
 
-    async def execute_async(self) -> List[Asset]:
-        """Execute with async semantic search when semantic() was used."""
-        if self._semantic_query:
-            try:
-                from app.api.modules.embedding.similarity import search_by_text
+    async def resolve(self) -> None:
+        """Resolve the deferred (async) clauses — ``semantic`` and ``entity_semantic``
+        — into plain WHERE conditions on ``_conditions``, capturing per-asset
+        semantic scores in ``_semantic_scores``.
 
-                hits = await search_by_text(
-                    self.session, self.infospace_id, self._semantic_query,
-                    limit=self._semantic_top_k,
-                    asset_kinds=self._kinds if self._kinds else None,
-                    bundle_id=self._bundle_id,
-                )
-                asset_ids = list({h.asset_id for h in hits})
-                if not asset_ids:
-                    return []
-                self._conditions.append(Asset.id.in_(asset_ids))
-            except Exception as e:
-                logger.warning("Semantic search failed: %s", e)
+        This is the seam that lets semantic compose like any other clause: after it
+        runs, ``_conditions`` is pure SQL, so the same predicate is OR-able (compound
+        queries), countable (``count``), and tree-aggregatable (``containers``).
+        Idempotent — the embed+pgvector work happens once. It is the ONE async step:
+        callers with a ``~semantic`` clause (views' ``flat``/``tree``, ``_skeleton``,
+        MCP, bundle_populate) ``await resolve()`` before a sync read; pure text/filter
+        callers never need it.
+        """
+        if self._deferred_resolved:
+            return
+        self._deferred_resolved = True
 
-        stmt = self._build_base_select()
-        return list(self.session.exec(stmt).all())
-
-    async def execute_scored_async(self) -> List[Tuple[Asset, Optional[float], Optional[str]]]:
-        """Execute with semantic/entity-semantic search support, returning (asset, rank, headline) tuples."""
-        semantic_scores: Dict[int, float] = {}
+        # Compound (OR): resolve each group's deferred clauses into its own
+        # conditions, then merge the per-asset semantic scores up (best wins) so
+        # rows() can blend a hybrid rank across the union.
+        if self._groups:
+            for g in self._groups:
+                await g.resolve()
+                for aid, s in g._semantic_scores.items():
+                    self._semantic_scores[aid] = max(self._semantic_scores.get(aid, 0.0), s)
+            return
 
         # ── Entity semantic: embed query → search Entity → filter via GraphEdge ──
         if self._entity_semantic_query:
@@ -739,6 +794,7 @@ class AssetQuery:
                     limit=self._semantic_top_k,
                     asset_kinds=self._kinds if self._kinds else None,
                     bundle_id=self._bundle_id,
+                    scope=self._semantic_scope,
                     distance_threshold=dist_threshold,
                 )
 
@@ -749,36 +805,14 @@ class AssetQuery:
 
                 # Capture similarity scores per asset (best chunk wins)
                 for h in hits:
-                    semantic_scores[h.asset_id] = max(semantic_scores.get(h.asset_id, 0), h.similarity)
+                    self._semantic_scores[h.asset_id] = max(self._semantic_scores.get(h.asset_id, 0), h.similarity)
 
-                asset_ids = list(semantic_scores.keys())
-                if not asset_ids:
-                    return []
-                self._conditions.append(Asset.id.in_(asset_ids))
+                asset_ids = list(self._semantic_scores.keys())
+                # No semantic hits → the clause matched nothing. Force empty rather
+                # than short-circuit so count / containers stay consistent.
+                self._conditions.append(Asset.id.in_(asset_ids) if asset_ids else text("FALSE"))
             except Exception as e:
                 logger.warning("Semantic search failed: %s", e)
-
-        rows = self.execute_scored()
-
-        # Merge semantic similarity into scores
-        if semantic_scores:
-            merged = []
-            for asset, fts_rank, highlight in rows:
-                sem = semantic_scores.get(asset.id)
-                if fts_rank is not None and sem is not None:
-                    # Hybrid: blend FTS rank + semantic similarity
-                    merged.append((asset, fts_rank * 0.4 + sem * 0.6, highlight))
-                elif sem is not None:
-                    # Pure semantic — use similarity as score
-                    merged.append((asset, sem, highlight))
-                else:
-                    merged.append((asset, fts_rank, highlight))
-            # Re-sort by merged score when sorting by relevance
-            if self._sort == "relevance":
-                merged.sort(key=lambda t: t[1] or 0, reverse=True)
-            return merged
-
-        return rows
 
     async def _resolve_entity_semantic(self) -> None:
         """Embed entity query text, search Entity embeddings, filter assets via GraphEdge."""
@@ -841,7 +875,15 @@ class AssetQuery:
         parsed: "ParsedQuery",
         parent_asset_id: Optional[int] = None,
     ) -> AssetQuery:
-        """Build an AssetQuery from a ParsedQuery (AQL parse result)."""
+        """Build an AssetQuery from a ParsedQuery (AQL parse result).
+
+        A compound (top-level ``OR``) parse dispatches to ``_from_aql_compound``,
+        which compiles each group through this same method (single-group fast
+        path) and unions them. A simple parse builds the flat query below.
+        """
+        if parsed.groups:
+            return cls._from_aql_compound(session, infospace_id, parsed, parent_asset_id)
+
         q = cls(session, infospace_id)
 
         if parsed.text:
@@ -867,15 +909,24 @@ class AssetQuery:
                 before=_parse_date(parsed.date_before, end=True),
             )
 
-        # Scope: bundles + assets combined with OR (same semantics as PackageScope)
+        # Scope: bundles + assets combined with OR (same semantics as PackageScope).
+        # A ``bundle:`` ref includes its whole subtree — selecting a folder searches
+        # everything under it, not just its direct members. This matches how access
+        # grants expand (``access.py`` runs the same ``subtree_ids``) and how the
+        # result-tree skeleton (``participating_bundles``) already clamps.
         if parsed.bundle_refs or parsed.asset_refs:
             from app.api.modules.identity_infospace_user.access import PackageScope
+            from app.api.modules.content.tree import subtree_ids
             bundle_ids = _resolve_bundle_ids(session, infospace_id, parsed.bundle_refs)
+            if bundle_ids:
+                bundle_ids = list(subtree_ids(session, set(bundle_ids)))
             asset_ids = _resolve_asset_ids(session, infospace_id, parsed.asset_refs)
-            q.scope(PackageScope(
+            scope = PackageScope(
                 bundle_ids=tuple(bundle_ids or ()),
                 asset_ids=tuple(asset_ids or ()),
-            ))
+            )
+            q.scope(scope)
+            q._semantic_scope = scope  # same scope pre-filters a ~semantic clause
 
         if parsed.entities:
             q.entities(parsed.entities)
@@ -913,6 +964,32 @@ class AssetQuery:
 
         return q
 
+    @classmethod
+    def _from_aql_compound(
+        cls,
+        session: Session,
+        infospace_id: int,
+        parsed: "ParsedQuery",
+        parent_asset_id: Optional[int] = None,
+    ) -> AssetQuery:
+        """Compile a compound (OR) ParsedQuery into a union query.
+
+        Each top-level OR group is compiled by ``from_aql`` itself — the group has
+        no nested groups, so it takes the single-group fast path and comes back a
+        self-contained, superseded-excluded, per-group-top-level sub-query (a group
+        scoping ``asset:`` drills in; its siblings stay top-level — the same rule a
+        simple query follows). The parent holds only the infospace clamp plus
+        whatever refinements callers append (``.scope(access)``, ``.no_bundles()``,
+        ``.bundle(N)``, hint filters, sort/paginate); ``_where`` ANDs those across
+        ``or_(groups)`` and ``resolve`` resolves each group.
+        """
+        q = cls(session, infospace_id)
+        q._groups = [
+            cls.from_aql(session, infospace_id, g, parent_asset_id=parent_asset_id)
+            for g in parsed.groups
+        ]
+        return q
+
 
 # ─── Helpers ───
 
@@ -923,7 +1000,7 @@ def _strip_fts_operators(q: str) -> str:
 
 def _entity_condition(name: str, infospace_id: int):
     """Build a condition matching assets connected to an entity (graph OR text fallback)."""
-    graph_exists = text("""
+    graph_exists = _u("""
         EXISTS (
             SELECT 1 FROM graphedge ge
             JOIN annotation ann ON ge.annotation_id = ann.id
@@ -938,7 +1015,7 @@ def _entity_condition(name: str, infospace_id: int):
                 )
             )
         )
-    """).bindparams(iid=infospace_id, ename=name)
+    """, iid=infospace_id, ename=name)
 
     text_fallback = or_(
         Asset.title.ilike(f"%{name}%"),
@@ -1072,7 +1149,7 @@ def _parse_semantic(raw: str) -> SemanticClause:
     return SemanticClause(text=_strip_quotes(raw))
 
 
-def rank_bundles(
+def bundles_matching(
     session: Session,
     infospace_id: int,
     parsed: ParsedQuery,
@@ -1130,8 +1207,48 @@ def rank_bundles(
     return [(b, float(rank)) for b, rank in session.exec(stmt).all()]
 
 
+def _split_or_groups(raw: str) -> list[str]:
+    """Quote-aware split into top-level OR groups.
+
+    Splits on a standalone uppercase ``OR`` token or ``|`` (space-delimited); a
+    quoted ``"OR"`` or lowercase ``or`` is preserved (it stays free text, where
+    websearch_to_tsquery treats ``or`` as a boolean). Returns a single element —
+    the whole string — when there is no top-level OR.
+    """
+    if not raw or not raw.strip():
+        return [raw]
+    groups: list[str] = []
+    current: list[str] = []
+    for tok in _tokenize(raw.strip()):
+        if tok in ("OR", "|"):
+            if current:
+                groups.append(" ".join(current))
+                current = []
+        else:
+            current.append(tok)
+    if current:
+        groups.append(" ".join(current))
+    return groups or [raw]
+
+
 def parse(raw: str) -> ParsedQuery:
-    """Parse a query string into structured filters."""
+    """Parse an AQL string into a ParsedQuery.
+
+    Top-level ``OR`` / ``|`` splits into DNF groups (``a bundle:1 OR b bundle:2``
+    → two groups, unioned at query time); each group is parsed independently and
+    stored in ``ParsedQuery.groups``. A simple query (no top-level OR) parses flat
+    into the fields directly — it is its own single group via ``groups_or_self``.
+    """
+    groups = _split_or_groups(raw)
+    if len(groups) > 1:
+        q = ParsedQuery()
+        q.groups = [_parse_single(g) for g in groups]
+        return q
+    return _parse_single(groups[0])
+
+
+def _parse_single(raw: str) -> ParsedQuery:
+    """Parse a single (non-compound) query string into structured filters."""
     q = ParsedQuery()
     if not raw or not raw.strip():
         return q

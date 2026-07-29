@@ -44,12 +44,11 @@ def populate_bundle_from_query(ctx: TaskContext, bundle_ids: list[int]):
 
             aq = AssetQuery.from_aql(session, bundle.infospace_id, parsed).unlimited()
 
+            # Semantic clauses resolve (embed + pgvector) into plain conditions first;
+            # then the sync read sees the same predicate. Pure filters skip resolve.
             if parsed.has_semantic:
-                rows = run_async_in_celery(aq.execute_scored_async)
-                asset_ids = [asset.id for asset, _, _ in rows]
-            else:
-                assets = aq.execute()
-                asset_ids = [a.id for a in assets]
+                run_async_in_celery(aq.resolve)
+            asset_ids = [a.id for a in aq.assets()]
 
             if not asset_ids:
                 continue

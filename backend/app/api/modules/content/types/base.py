@@ -9,7 +9,6 @@ A content type reads like a definition of what it *is* and what it *does*:
         async def process(self, context, asset): ...    # extract children (optional)
         def preview(self, asset, children=None): ...     # tree-UI preview (optional)
         async def materialize(self, asset, session, storage): ...  # children→file (optional)
-        def identity(self, asset): ...                    # non-default dedup key (optional)
 
 Negative-space: a capability the class doesn't implement simply isn't a method —
 there are no ``processor=None`` flags to thread through. The decorator introspects
@@ -23,7 +22,7 @@ without a cycle through the package ``__init__`` (which imports them to register
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import (
     Any, Awaitable, Callable, Dict, FrozenSet, Iterable, List, Optional, Tuple, Type,
 )
@@ -64,7 +63,6 @@ class ContentTypeDescriptor:
     processor: Optional[Callable[[Any, Asset], Awaitable[List[Asset]]]] = None
     preview: Optional[Callable[..., Dict[str, Any]]] = None
     materializer: Optional[Callable[..., Awaitable[Asset]]] = None
-    identity: Optional[Callable[[Asset], Optional[str]]] = None
 
     # ── Transitional: legacy fields for kinds not yet on the class form ──
     # Removed in the final cleanup once every type is a @content_type class.
@@ -94,9 +92,9 @@ def content_type(
     reprocess: str = "delete_and_recreate",
 ):
     """Declare a content type. The decorated class's methods are its behaviour;
-    whichever of ``metadata`` / ``process`` / ``preview`` / ``materialize`` /
-    ``identity`` it defines get bound onto the descriptor. ``importable`` defaults
-    to "has extensions"."""
+    whichever of ``metadata`` / ``process`` / ``preview`` / ``materialize`` it
+    defines get bound onto the descriptor. ``importable`` defaults to
+    "has extensions"."""
 
     exts = frozenset(extensions)
     mts = frozenset(mimetypes)
@@ -120,7 +118,6 @@ def content_type(
             processor=getattr(impl, "process", None),
             preview=getattr(impl, "preview", None),
             materializer=getattr(impl, "materialize", None),
-            identity=getattr(impl, "identity", None),
         ))
         return cls
 

@@ -25,13 +25,14 @@ from sqlmodel import Session
 
 from app.api import dependency_injection
 from app.api.modules.content.models import Asset, AssetKind, Bundle
-from app.api.modules.content.query import AssetQuery
-from app.api.modules.content.schemas import AssetFeed, AssetTree
+from app.api.modules.content.query import AssetQuery, parse as parse_aql
+from app.api.modules.content.schemas import AssetFeed, AssetFeedMeta, AssetTree
 from app.api.modules.content.views import (
-    collect_feed,
-    collect_tree,
-    render_feed,
-    render_tree,
+    _compute_tree_meta,
+    collect,
+    flat,
+    participating_bundles,
+    tree,
 )
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, DeleteAccess, Requires, ViewAccess,
@@ -45,13 +46,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _root_query(db: Session, infospace_id: int, scope, *, limit: int, cursor: Optional[str]) -> AssetQuery:
+def _root_query(db: Session, infospace_id: int, scope, *, limit: int, cursor: Optional[str], parsed) -> AssetQuery:
+    """Root-level assets: the loose (unbundled) top-level set, optionally AQL-filtered.
+
+    ``from_aql`` is the single query-assembly seam — it applies text/semantic/kind/
+    date/entity/annotation/tag/scope + top-level + exclude-superseded; the structural
+    ``.no_bundles()`` (loose only — bundled matches surface under their folders) and
+    sort/pagination compose on top. An empty ``parsed`` == today's browse root.
+    """
     return (
-        AssetQuery(db, infospace_id)
+        AssetQuery.from_aql(db, infospace_id, parsed)
         .scope(scope)
-        .top_level_only()
         .no_bundles()
-        .exclude_superseded()
         .sort("created_at_desc")
         .paginate(cursor=cursor, limit=limit, max_limit=500)
     )
@@ -66,18 +72,25 @@ async def get_infospace_tree(
     infospace_id: int,
     limit: int = Query(100, ge=1, le=500),
     cursor: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, description="AQL filter — turns the browse tree into a result-tree"),
     access: Access = ViewAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ):
     """Root-level tree: flat bundle nav + top-level assets (JSON envelope).
 
-    For a progressive SSE stream, call ``GET /tree/stream`` with the same
-    query params. The client indexes ``nav.bundles`` by id in O(1) and
-    rebuilds hierarchy from ``parent_id`` in one O(n) pass.
+    With ``q`` this becomes a *result-tree*: the nav is pruned to the folders that
+    contain matches (``participating_bundles``) and the level section lists the
+    matching loose assets. Without ``q`` it is the browse tree. For a progressive
+    SSE stream, call ``GET /tree/stream`` with the same params.
     """
     scope = access.scope
-    query = _root_query(db, infospace_id, scope, limit=limit, cursor=cursor)
-    return await collect_tree(query, access_scope=scope)
+    parsed = parse_aql(q or "")
+    query = _root_query(db, infospace_id, scope, limit=limit, cursor=cursor, parsed=parsed)
+    participating, name_hits = (
+        await participating_bundles(db, infospace_id, parsed, scope) if (q or "").strip() else (None, None)
+    )
+    events = tree(query, access_scope=scope, participating=participating, name_hits=name_hits)
+    return await collect(events, AssetTree, meta=_compute_tree_meta(db, infospace_id, scope))
 
 
 @router.get("/infospaces/{infospace_id}/tree/stream", response_class=EventSourceResponse)
@@ -86,13 +99,18 @@ async def get_infospace_tree_stream(
     infospace_id: int,
     limit: int = Query(100, ge=1, le=500),
     cursor: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, description="AQL filter — turns the browse tree into a result-tree"),
     access: Access = ViewAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ):
-    """Native SSE stream of the root tree."""
+    """Native SSE stream of the root tree (browse, or a result-tree when ``q`` is set)."""
     scope = access.scope
-    query = _root_query(db, infospace_id, scope, limit=limit, cursor=cursor)
-    async for ev in render_tree(query, access_scope=scope):
+    parsed = parse_aql(q or "")
+    query = _root_query(db, infospace_id, scope, limit=limit, cursor=cursor, parsed=parsed)
+    participating, name_hits = (
+        await participating_bundles(db, infospace_id, parsed, scope) if (q or "").strip() else (None, None)
+    )
+    async for ev in tree(query, access_scope=scope, participating=participating, name_hits=name_hits):
         yield ServerSentEvent(data=ev, event=ev.name)
 
 
@@ -100,14 +118,17 @@ async def get_infospace_tree_stream(
 
 
 def _children_query(
-    db: Session, infospace_id: int, parent_id: str, skip: int, limit: int, access: Access,
+    db: Session, infospace_id: int, parent_id: str, skip: int, limit: int, access: Access, parsed,
 ) -> AssetQuery:
     """Resolve a parent node id to the AssetQuery for its children.
 
     ``bundle-N`` → member root-assets (child *bundles* come via ``nav``);
-    ``asset-N`` → container parts (``parent_asset_id = N``). Validates existence
-    + scope; raises HTTPException on invalid input. Folders are real bundles now,
-    so there is no ``vfolder`` node type.
+    ``asset-N`` → container parts (``parent_asset_id = N``). With ``parsed`` the
+    members are AQL-filtered — the same result-tree filter as the root, scoped to
+    this node's position (``from_aql`` supplies the filter + top-level/parent
+    handling; ``.bundle(N)`` is the position). Validates existence + scope; raises
+    HTTPException on invalid input. Children never recompute ``participating`` — the
+    folder skeleton is a root-level concern.
     """
     scope = access.scope
     try:
@@ -122,11 +143,9 @@ def _children_query(
         if scope and scope.bundle_ids and bundle.id not in scope.bundle_ids:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
         query = (
-            AssetQuery(db, infospace_id)
+            AssetQuery.from_aql(db, infospace_id, parsed)
             .scope(scope)
             .bundle(parent_numeric_id)
-            .top_level_only()
-            .exclude_superseded()
             .sort("created_at_desc")
             .paginate(limit=limit, max_limit=500)
         )
@@ -139,9 +158,8 @@ def _children_query(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
         access.require_in_scope("asset_ids", parent_numeric_id)
         query = (
-            AssetQuery(db, infospace_id)
+            AssetQuery.from_aql(db, infospace_id, parsed, parent_asset_id=parent_numeric_id)
             .scope(scope)
-            .parent_asset(parent_numeric_id)
             .sort("part_index")
             .paginate(limit=limit, max_limit=500)
         )
@@ -158,6 +176,7 @@ async def get_tree_children(
     parent_id: str = Query(..., description="Parent node id (bundle-*, asset-*)"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    q: Optional[str] = Query(None, description="AQL filter — lists only matching members (result-tree)"),
     access: Access = ViewAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ):
@@ -168,11 +187,14 @@ async def get_tree_children(
         child *bundles* (sub-folders) arrive via ``nav``.
       * ``asset-N``  — container parts (``parent_asset_id = N``).
 
+    With ``q`` the members are AQL-filtered (expanding a folder in a result-tree).
     For a progressive SSE stream, call ``GET /tree/children/stream``.
     """
     scope = access.scope
-    query = _children_query(db, infospace_id, parent_id, skip, limit, access)
-    return await collect_tree(query, level_parent=parent_id, access_scope=scope)
+    parsed = parse_aql(q or "")
+    query = _children_query(db, infospace_id, parent_id, skip, limit, access, parsed)
+    events = tree(query, level_parent=parent_id, access_scope=scope)
+    return await collect(events, AssetTree, meta=_compute_tree_meta(db, infospace_id, scope))
 
 
 @router.get("/infospaces/{infospace_id}/tree/children/stream", response_class=EventSourceResponse)
@@ -182,13 +204,15 @@ async def get_tree_children_stream(
     parent_id: str = Query(..., description="Parent node id (bundle-*, asset-*)"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
+    q: Optional[str] = Query(None, description="AQL filter — lists only matching members (result-tree)"),
     access: Access = ViewAccess,
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ):
-    """Native SSE stream of tree children."""
+    """Native SSE stream of tree children (all members, or matching ones when ``q`` is set)."""
     scope = access.scope
-    query = _children_query(db, infospace_id, parent_id, skip, limit, access)
-    async for ev in render_tree(query, level_parent=parent_id, access_scope=scope):
+    parsed = parse_aql(q or "")
+    query = _children_query(db, infospace_id, parent_id, skip, limit, access, parsed)
+    async for ev in tree(query, level_parent=parent_id, access_scope=scope):
         yield ServerSentEvent(data=ev, event=ev.name)
 
 
@@ -268,7 +292,7 @@ async def get_feed_assets(
         sort_order=sort_order, bundle_id=bundle_id,
         cursor=cursor,
     )
-    return await collect_feed(query)
+    return await collect(flat(query), AssetFeed, meta=AssetFeedMeta())
 
 
 @router.get("/infospaces/{infospace_id}/tree/feed/stream", response_class=EventSourceResponse)
@@ -292,7 +316,7 @@ async def get_feed_assets_stream(
         sort_order=sort_order, bundle_id=bundle_id,
         cursor=cursor,
     )
-    async for ev in render_feed(query):
+    async for ev in flat(query):
         yield ServerSentEvent(data=ev, event=ev.name)
 
 
@@ -320,7 +344,7 @@ def batch_get_assets(
         AssetQuery(db, infospace_id)
         .scope(access.scope)
         .ids(request.asset_ids)
-        .execute()
+        .assets()
     )
     asset_map = {a.id: a for a in assets}
     return [AssetRead.model_validate(asset_map[aid]) for aid in request.asset_ids if aid in asset_map]
