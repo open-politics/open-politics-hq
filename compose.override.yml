@@ -33,6 +33,12 @@ services:
       - ./backend/:/app
       - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
 
+  celery_worker_processing:
+    restart: "no"
+    volumes:
+      - ./backend/:/app
+      - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
+
   celery_beat:
     restart: "no"
     volumes:

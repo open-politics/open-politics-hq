@@ -33,11 +33,35 @@ jobs:
             echo ""
             echo "All supersede cascades must route through AssetBuilder._do_supersede."
             echo "To mark a row superseded, call:"
-            echo "    await AssetBuilder(session, uid, iid).supersedes(old).load(new_asset)"
-            echo "or, for the non-replacement case, add an action to asset_ops.py."
+            echo "    await AssetBuilder(session, uid, iid).supersedes(old).persist(new_row)"
+            echo "or reconcile_children(on_change='supersede') to version a container's parts."
             exit 1
           fi
           echo "ok: single supersede cascade"
+
+      - name: Single content derivation — only asset_builder.py may hash under content/
+        # Same shape as the supersede rule. content_hash used to have SEVEN
+        # implementations across four semantics and two algorithms (md5 keyed by
+        # source_identifier, md5 of content, md5 of bytes, sha256 of blob) all writing
+        # one column — so decide() could never trust a hash it had not written itself.
+        # A source hands over CONTENT; the builder derives. Blob callers import the one
+        # function rather than growing a second.
+        run: |
+          MATCHES=$(grep -rn "hashlib" app/api/modules/content --include='*.py' \
+            | grep -v "__pycache__" \
+            | grep -v "asset_builder.py" \
+            | grep -v "^\s*#" \
+            || true)
+          if [ -n "$MATCHES" ]; then
+            echo "FAIL: hashing outside asset_builder.py under content/:"
+            echo "$MATCHES"
+            echo ""
+            echo "There is exactly one content derivation. Use it:"
+            echo "    from app.api.modules.content.asset_builder import content_hash"
+            echo "    content_hash(text) | content_hash(data) | content_hash(Path(p))"
+            exit 1
+          fi
+          echo "ok: single content derivation"
 
   unit-tests:
     name: Unit tests
@@ -91,6 +115,7 @@ jobs:
           app/tests/test_filters.py
           app/tests/test_task_decorator.py
           app/tests/test_access_control.py
+          app/tests/test_decide.py
 
   functional-tests:
     name: Functional tests
@@ -177,3 +202,6 @@ jobs:
           app/tests/test_user_operations.py
           app/tests/test_processing_pipeline.py
           app/tests/test_feature_workflows.py
+          app/tests/test_asset_builder_identity.py
+          app/tests/test_intake_repoll.py
+          app/tests/test_reconcile_children.py

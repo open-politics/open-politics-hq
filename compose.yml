@@ -82,7 +82,37 @@ services:
       - backend
     env_file:
       - .env
-    command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info", "-P", "prefork", "--concurrency=${CELERY_CONCURRENCY:-4}"]
+    # -Q matters: this pool used to serve ALL five queues, so four concurrent ingest
+    # jobs (the `ingest` task's max_concurrency) saturated it and starved annotate /
+    # embed / the beat dispatcher behind hour-long ingests. Heavy content work now has
+    # its own pool below; this one keeps the interactive and LLM queues responsive.
+    command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info",
+              "-P", "prefork", "--concurrency=${CELERY_CONCURRENCY:-4}",
+              "-Q", "default,llm,embedding,external_api"]
+    # Source bind is dev-only (compose.override.yml).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  celery_worker_processing:
+    image: '${DOCKER_IMAGE_BACKEND:-backend}:${TAG-latest}'
+    build:
+      context: ./backend
+      args:
+        INSTALL_DEV: ${INSTALL_DEV-false}
+    restart: always
+    networks:
+      - default
+    depends_on:
+      - db
+      - redis
+      - backend
+    env_file:
+      - .env
+    # Ingestion and content processing only. Long, bursty, and safe to queue behind
+    # itself — isolating it is what keeps a 150k-file import from blocking annotation.
+    command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info",
+              "-P", "prefork", "--concurrency=${CELERY_PROCESSING_CONCURRENCY:-4}",
+              "-Q", "processing"]
     # Source bind is dev-only (compose.override.yml).
     extra_hosts:
       - "host.docker.internal:host-gateway"
