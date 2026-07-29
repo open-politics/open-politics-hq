@@ -2155,7 +2155,7 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
                         }
                       }}
                       size="sm"
-                      className="absolute top-2 left-3.5 z-10 gap-0.5 bg-background/80 p-0.5 shadow-sm backdrop-blur"
+                      className="absolute top-2 left-1/4 z-10 gap-0.5 bg-background/80 p-0.5 shadow-sm backdrop-blur"
                     >
                       <ToggleGroupItem value="content" aria-label={contentLabel} className="gap-1.5 px-2">
                         <FileText className="h-4 w-4" />

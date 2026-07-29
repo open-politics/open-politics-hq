@@ -19,10 +19,15 @@ import {
   Pencil,
   Check,
   X,
+  RadioTower,
 } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
+import { useSourceStore } from '@/zustand_stores/storeSources';
 import { useDock } from '@/zustand_stores/storeDock';
+import { sourceFormInit } from '@/lib/sources/sourceForm';
+import { KIND_ICONS, healthOf, DOT } from '@/components/collection/intake/sources/SourceList';
+import { cn } from '@/lib/utils';
 import { DetailBreadcrumb, useBundlePath } from './DetailBreadcrumb';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { toast } from 'sonner';
@@ -112,8 +117,18 @@ export default function BundleDetailView({
   // Breadcrumb: this bundle's ancestor chain (from the bundle store), clickable
   // to navigate up. Always derivable from parent_bundle_id — no context needed.
   const openBundle = useDock((s) => s.openBundle);
+  const openSourceForm = useDock((s) => s.openSourceForm);
   const bundlePath = useBundlePath(selectedBundleId);
   const breadcrumbSegments = bundlePath.filter((c) => c.id !== selectedBundleId);
+
+  // Sources that stream into this bundle (their configured output). Clicking one
+  // opens the source form to edit it — the reverse of "where does this source go?"
+  const { sources, fetchSources } = useSourceStore();
+  useEffect(() => { if (activeInfospace?.id) fetchSources(); }, [activeInfospace?.id, fetchSources]);
+  const feedingSources = useMemo(
+    () => (selectedBundleId ? sources.filter((s) => s.output_bundle_id === selectedBundleId) : []),
+    [sources, selectedBundleId],
+  );
 
   // Inline editing of the bundle's name + description (direct in the header,
   // not an overlay). updateBundle (store) toasts on its own.
@@ -344,6 +359,32 @@ export default function BundleDetailView({
             )}
           </div>
         </div>
+
+        {/* Row 2.5 — sources streaming into this bundle. Each chip forwards to
+            the source form (edit mask); the breadcrumb back button returns here. */}
+        {feedingSources.length > 0 && (
+          <div className="mt-1.5 flex w-full min-w-0 flex-wrap items-center gap-1.5">
+            <span className="flex shrink-0 items-center gap-1 text-[11px] uppercase tracking-wide text-muted-foreground/70">
+              <RadioTower className="h-3 w-3" /> Fed by
+            </span>
+            {feedingSources.map((s) => {
+              const Icon = KIND_ICONS[s.kind] ?? RadioTower;
+              const health = healthOf(s);
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => openSourceForm({ init: sourceFormInit(s) })}
+                  title={`Edit source “${s.name}”`}
+                  className="group flex min-w-0 items-center gap-1.5 rounded-full border bg-muted/40 px-2 py-0.5 text-xs transition-colors hover:border-blue-400/60 hover:bg-blue-500/10"
+                >
+                  <span className={cn('size-1.5 shrink-0 rounded-full', DOT[health])} title={health} />
+                  <Icon className="size-3 shrink-0 text-muted-foreground group-hover:text-blue-500" />
+                  <span className="max-w-[140px] truncate">{s.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Row 3 — description (editable) */}
         {editing ? (

@@ -60,15 +60,13 @@ import { useTreeStore } from '@/zustand_stores/storeTree';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useDebounce } from '@/hooks/useDebounce';
 import { Checkbox } from '@/components/ui/checkbox';
-import { useAssetQuery } from '@/hooks/useAssetQuery';
-import type { ChildResultGroup } from '@/hooks/useAssetQuery';
+import { useAssetTree } from './useAssetTree';
 import { useIngestionJobs } from '@/hooks/useIngestionJobs';
 import { 
   getAssetIcon, 
   formatAssetKind, 
   getAssetBadgeClass 
 } from './assetKindConfig';
-import { RelevanceBadge } from './RelevanceBadge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -156,6 +154,13 @@ interface AssetSelectorProps {
     initialSearchTerm?: string;
     onSearchTermChange?: (searchTerm: string) => void;
     autoFocusSearch?: boolean;
+    /**
+     * Controlled AQL query. When provided, the selector renders the *result-tree*
+     * for it (matches nested in their bundle folders) and hides its own search box —
+     * the parent (e.g. the explorer) owns the search input. When omitted, the
+     * built-in search box drives the tree.
+     */
+    query?: string;
     // Compact mode - hides header and reduces padding for inline usage
     compact?: boolean;
     // Filter to show only children of a specific bundle (for bundle detail view)
@@ -202,6 +207,7 @@ export default function AssetSelector({
     initialSearchTerm = '',
     onSearchTermChange,
     autoFocusSearch = false,
+    query: controlledQuery,
     compact = false,
     filterByBundleId = null,
     pathPrefix = null,
@@ -213,18 +219,11 @@ export default function AssetSelector({
     openBundleIds,
 }: AssetSelectorProps) {
   const { activeInfospace } = useInfospaceStore();
-  
-  // NEW: Use tree store for efficient loading
-  const {
-    rootNodes,
-    childrenCache,
-    hasMoreChildren,
-    isLoadingRoot,
-    isLoadingChildren,
-    fetchRootTree,
-    fetchChildren,
-  } = useTreeStore();
-  
+
+  // Tree structure comes from useAssetTree (declared below, once the effective query
+  // is known): the browse cache when there's no query, the isolated result-tree slice
+  // when there is. Mutation / full-asset caches stay on useTreeStore directly.
+
   // Still need asset/bundle stores for mutations
   const {
     updateAsset,
@@ -250,7 +249,7 @@ export default function AssetSelector({
       // Refresh tree when a job completes
       console.log('[AssetSelector] Ingestion job completed:', job.id);
       await useTreeStore.getState().clearCache();
-      await fetchRootTree();
+      await useTreeStore.getState().fetchRootTree();
       toast.success(`Dataset ingestion completed: ${job.processed_files} files processed`);
     },
   });
@@ -284,20 +283,23 @@ export default function AssetSelector({
     return useSemanticMode && isSemanticAvailable ? `~${term}` : term;
   }, [debouncedSearchTerm, useSemanticMode, isSemanticAvailable]);
 
-  // Unified search via AQL /query endpoint
+  // Effective query: the controlled prop (parent owns search) or the built-in
+  // search box. Non-empty → the result-tree; empty → browse. Search is no longer a
+  // separate flat-tier render — it's the same tree, filtered.
+  const effectiveQuery = (controlledQuery !== undefined ? controlledQuery : aqlQuery) || '';
+  const isSearchActive = effectiveQuery.trim().length > 0;
+
+  // One tree source, two modes (same interface either way).
   const {
-    results: queryResults,
-    childResults: queryChildResults,
-    isLoading: isSearching,
-    error: searchError,
-  } = useAssetQuery({
-    infospaceId: activeInfospace?.id || 0,
-    query: aqlQuery,
-    limit: 50,
-    enabled: aqlQuery.length > 0,
-    includeFolders: true,
-  });
-  const isSearchActive = aqlQuery.length > 0;
+    rootNodes,
+    childrenCache,
+    hasMoreChildren,
+    isLoadingRoot,
+    isLoadingChildren,
+    fetchRootTree,
+    fetchChildren,
+  } = useAssetTree(effectiveQuery);
+  const isSearching = isSearchActive && isLoadingRoot;
 
   // Store preference in localStorage
   useEffect(() => {
@@ -345,7 +347,6 @@ export default function AssetSelector({
   const wheelResetTimeout = useRef<NodeJS.Timeout | null>(null);
   const lastWheelTime = useRef<number>(0);
 
-  const fetchingRef = useRef(false);
   const previousRootNodesRef = useRef<AssetNode[]>([]);
   const previousChildrenCacheRef = useRef<Map<string, AssetNode[]>>(new Map());
 
@@ -543,30 +544,23 @@ export default function AssetSelector({
     }
   }, [isRefreshing, pullOffset, handleRefresh]);
 
-  // NEW: Fetch tree data when infospace changes (single efficient call!)
-  // If filterByBundleId is provided, fetch children of that bundle instead
+  // Fetch tree data when the infospace, bundle filter, or effective query changes.
+  // fetchRootTree/fetchChildren come from useAssetTree — bound to the current mode
+  // (browse cache vs result-tree slice), so a query change refetches the right tree.
+  // No local in-flight guard: the browse store dedups, the search store replaces its
+  // slice per query (superseded streams no-op via a query guard).
   useEffect(() => {
-    if (activeInfospace?.id && !fetchingRef.current) {
-      fetchingRef.current = true;
-      
-      if (filterByBundleId !== null) {
-        // Fetch children of bundle or virtual folder (when pathPrefix set)
-        const rootNodeId = pathPrefix != null && pathPrefix !== ''
-          ? `vfolder-${filterByBundleId}__${encodeURIComponent(pathPrefix)}`
-          : `bundle-${filterByBundleId}`;
-        console.log('[AssetSelector] Fetching children for:', rootNodeId);
-        fetchChildren(rootNodeId).finally(() => {
-          fetchingRef.current = false;
-        });
-      } else {
-        // Fetch root tree
-        console.log('[AssetSelector] Fetching tree for infospace:', activeInfospace.id);
-        fetchRootTree().finally(() => {
-          fetchingRef.current = false;
-        });
-      }
+    if (!activeInfospace?.id) return;
+    if (filterByBundleId !== null) {
+      // Browse a specific bundle / virtual folder (bundle detail view).
+      const rootNodeId = pathPrefix != null && pathPrefix !== ''
+        ? `vfolder-${filterByBundleId}__${encodeURIComponent(pathPrefix)}`
+        : `bundle-${filterByBundleId}`;
+      fetchChildren(rootNodeId);
+    } else {
+      fetchRootTree();
     }
-  }, [activeInfospace?.id, filterByBundleId, pathPrefix, fetchRootTree, fetchChildren]);
+  }, [activeInfospace?.id, filterByBundleId, pathPrefix, effectiveQuery, fetchRootTree, fetchChildren]);
 
   // The flat bundle list (used for name-search matches + ancestor reveal) lives
   // in a separate store from the lazy tree — load it for the active infospace so
@@ -639,19 +633,6 @@ export default function AssetSelector({
     return Array.from(kinds).sort();
   }, [rootNodes, childrenCache]);
 
-  // Map asset_id → relevance % for the badge. Title hits carry no score (a name
-  // match isn't a fuzzy score), so they're left out and render no %.
-  const searchScoreMap = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const r of queryResults) {
-      if (r.field !== 'title' && r.score != null && !map.has(r.asset.id)) {
-        map.set(r.asset.id, r.score * 100);
-      }
-    }
-    return map;
-  }, [queryResults]);
-
-  // OLD N+1 FETCHING LOGIC - REMOVED! 🎉
 
   // Inline editing handlers
   const handleEditItem = useCallback((item: AssetTreeItem) => {
@@ -764,25 +745,6 @@ export default function AssetSelector({
     };
   }, [expandedItems, selectedItems, childrenCache, activeInfospace, bundlesOnly]);
 
-  // Helper: Convert AssetRead to AssetNode so search results can flow through the same tree renderer.
-  const assetReadToAssetNode = useCallback((asset: AssetRead): AssetNode => {
-    return {
-      id: `asset-${asset.id}`,
-      type: 'asset' as const,
-      name: asset.title || 'Untitled',
-      kind: asset.kind,
-      has_children: !!asset.is_container,
-      stub: asset.stub || false,
-      processing_status: asset.processing_status,
-      parent_asset_id: asset.parent_asset_id ?? null,
-      part_index: asset.part_index ?? null,
-      tags: asset.tags ?? null,
-      updated_at: asset.updated_at,
-      created_at: asset.created_at,
-      facets: asset.facets ?? null,
-    };
-  }, []);
-
   // Generate hierarchical asset tree
   // Project AssetNodes into AssetTreeItems. Memoized to avoid churn during search/refresh.
   const assetTree = useMemo(() => {
@@ -870,66 +832,11 @@ export default function AssetSelector({
     return sortItemsRecursively(tree);
   }, [rootNodes, childrenCache, expandedItems, selectedItems, sortOption, filterByBundleId, pathPrefix, convertAssetNodeToTreeItem]);
   
-  // Convert query results to AssetTreeItems — tiered.
-  // Folder/bundle name matches now arrive ranked from the search stream itself
-  // (type==='bundle', tagged field:'title' by the backend). We hydrate each from
-  // the flat bundle cache for rendering + selection + breadcrumb path — the
-  // client no longer ranks or filters folders, it just shapes the server's hits.
-  const searchNameBundleItems = useMemo(() => {
-    if (!isSearchActive) return [];
-    const byId = new Map(bundles.map((b) => [b.id, b]));
-    return queryResults
-      .filter((r) => r.type === 'bundle')
-      .map((r): AssetTreeItem => {
-        const id = r.asset.id;
-        const b = byId.get(id);
-        return {
-          id: `bundle-${id}`,
-          type: 'folder',
-          name: b?.name ?? r.asset.title,
-          level: 0,
-          isExpanded: false,
-          isSelected: selectedItems.has(`bundle-${id}`),
-          isContainer: true,
-          bundle: (b ?? ({ id, name: r.asset.title } as any)) as BundleRead,
-          pathLabel: bundlePathLabel(id, byId),
-        };
-      });
-  }, [isSearchActive, queryResults, bundles, selectedItems]);
-
-  // Title tier: assets where the search text is in the title (backend-tagged).
-  // Picker is a "find by name" surface, so these lead alongside folder hits.
-  const searchNameAssetItems = useMemo(() => {
-    if (!isSearchActive) return [];
-    return queryResults
-      .filter(r => r.type === 'asset' && r.field === 'title')
-      .map(r => {
-        const treeItem = convertAssetNodeToTreeItem(assetReadToAssetNode(r.asset), 0);
-        return { ...treeItem, asset: r.asset };
-      });
-  }, [isSearchActive, queryResults, assetReadToAssetNode, convertAssetNodeToTreeItem]);
-
-  // Content tier: assets that matched on body text (carries snippet + %).
-  const searchContentItems = useMemo(() => {
-    if (!isSearchActive) return [];
-    return queryResults
-      .filter(r => r.type === 'asset' && r.field !== 'title')
-      .map(r => {
-        const treeItem = convertAssetNodeToTreeItem(assetReadToAssetNode(r.asset), 0);
-        return { ...treeItem, asset: r.asset };
-      });
-  }, [isSearchActive, queryResults, assetReadToAssetNode, convertAssetNodeToTreeItem]);
-
-  // Filter tree based on search and type
+  // Client-side kind filter over the tree. The tree is already the right *set* —
+  // the full hierarchy when browsing, the result-tree (matches nested in their
+  // folders) when searching — so this only applies the asset-kind chip, uniformly
+  // across both modes. Folders are kept so the skeleton stays intact.
   const filteredTree = useMemo(() => {
-    // When search is active, the tiered results (searchNameBundleItems, searchNameAssetItems,
-    // searchContentItems, queryChildResults) are rendered directly in JSX — filteredTree
-    // only governs the non-search tree view.
-    if (isSearchActive) {
-      return assetTree; // unused in search mode, but keep stable reference
-    }
-
-    // No search active - use client-side filtering on tree
     const filterItems = (items: AssetTreeItem[]): AssetTreeItem[] => {
       return items.reduce((acc: AssetTreeItem[], item) => {
         const filteredChildren = item.children ? filterItems(item.children) : undefined;
@@ -949,7 +856,7 @@ export default function AssetSelector({
       }, []);
     };
     return filterItems(assetTree);
-  }, [assetTree, assetTypeFilter, isSearchActive]);
+  }, [assetTree, assetTypeFilter]);
 
   // NEW: Lazy load children when expanding nodes - optimized
   const toggleExpanded = useCallback(async (itemId: string) => {
@@ -1973,14 +1880,6 @@ export default function AssetSelector({
           </div>
           <Checkbox checked={item.isSelected} onCheckedChange={() => toggleSelected(item.id, true)} onClick={(e) => e.stopPropagation()} className="h-4 w-4 rounded-sm shrink-0 border-secondart data-[state=checked]:bg-secondart data-[state=checked]:text-secondart-foreground" />
           {renderItemBadge?.(item)}
-          {/* Relevance score badge - between checkbox and icon (works for both semantic and text search) */}
-          {item.asset && searchScoreMap.has(item.asset.id) && (
-            <RelevanceBadge 
-              score={searchScoreMap.get(item.asset.id)!} 
-              size="sm"
-              className="shrink-0"
-            />
-          )}
           {item.asset?.kind && (
             <div className="w-4 h-4 flex items-center justify-center shrink-0">
               {getAssetIcon(item.asset.kind, 'h-4 w-4')}
@@ -2223,6 +2122,8 @@ export default function AssetSelector({
             destructive actions through renderSelectionActions.
         */}
         <div className="@container flex-none min-w-0 bg-background">
+          {/* Built-in search row — hidden when a parent controls the query (it owns the search box). */}
+          {controlledQuery === undefined && (
           <div className={cn("flex min-w-0 items-center", compact ? "py-1.5" : "py-2")}>
             <InputGroup className="h-8 min-w-0 flex-grow !border-none !shadow-none">
               <InputGroupAddon className="gap-1.5">
@@ -2392,6 +2293,7 @@ export default function AssetSelector({
               </InputGroupAddon>
             </InputGroup>
           </div>
+          )}
 
           {/* Selection strip — self-contained count + clear; parents add bulk actions via the slot */}
           {selectedItems.size > 0 && (
@@ -2518,110 +2420,13 @@ export default function AssetSelector({
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 <span className="ml-2 text-muted-foreground">Loading...</span>
               </div>
-            ) : isSearchActive ? (
-              /* ── Tiered search results ── */
-              (() => {
-                const hasNameMatches = searchNameBundleItems.length > 0 || (!bundlesOnly && searchNameAssetItems.length > 0);
-                const hasContentResults = !bundlesOnly && searchContentItems.length > 0;
-                const hasChildResults = !bundlesOnly && queryChildResults.length > 0;
-                const hasAnyResults = hasNameMatches || hasContentResults || hasChildResults;
-
-                if (isSearching && !hasAnyResults) {
-                  return (
-                    <div className="flex items-center justify-center h-32">
-                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                      <span className="ml-2 text-muted-foreground">Searching...</span>
-                    </div>
-                  );
-                }
-
-                if (!hasAnyResults) {
-                  return (
-                    <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
-                      <FolderOpen className="h-8 w-8 mb-2 opacity-50" />
-                      <h3 className="text-lg font-medium mb-2">No results</h3>
-                      <p className="text-sm text-center">
-                        No items match &quot;{debouncedSearchTerm}&quot;
-                      </p>
-                    </div>
-                  );
-                }
-
-                return (
-                  <div ref={containerRef} className="mt-2 min-w-0 max-w-full w-full overflow-hidden px-2 md:px-0">
-                    {/* Tier 1: Title matches (bundles by name + title hits) */}
-                    {hasNameMatches && (
-                      <div className="mb-1">
-                        <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                          Title matches
-                        </div>
-                        <div className="space-y-0.5">
-                          {searchNameBundleItems.map(item => renderTreeItem(item))}
-                          {!bundlesOnly && searchNameAssetItems.map(item => renderTreeItem(item))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Tier 2: Content matches (FTS/semantic, top-level only) */}
-                    {hasContentResults && (
-                      <div className="mb-1">
-                        {hasNameMatches && (
-                          <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                            Content matches
-                          </div>
-                        )}
-                        <div className="space-y-0.5">
-                          {searchContentItems.map(item => renderTreeItem(item))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Tier 3: Child/page matches (collapsed groups) */}
-                    {hasChildResults && (
-                      <div className="mb-1">
-                        <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                          Page matches
-                        </div>
-                        <div className="space-y-0.5">
-                          {queryChildResults.map(group => {
-                            const isExpanded = expandedItems.has(`child-group-${group.parent_asset_id}`);
-                            return (
-                              <div key={`child-group-${group.parent_asset_id}`}>
-                                <button
-                                  className="flex items-center gap-1.5 w-full px-2 py-1 text-xs text-muted-foreground hover:bg-accent/50 rounded-sm"
-                                  onClick={() => {
-                                    const key = `child-group-${group.parent_asset_id}`;
-                                    const next = new Set(expandedItems);
-                                    if (next.has(key)) next.delete(key); else next.add(key);
-                                    setExpandedItems(next);
-                                  }}
-                                >
-                                  {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                                  <Layers className="h-3 w-3" />
-                                  <span className="truncate">{group.parent_title}</span>
-                                  <Badge variant="secondary" className="ml-auto text-[9px] px-1 py-0">
-                                    {group.matches.length} page{group.matches.length !== 1 ? 's' : ''}
-                                  </Badge>
-                                </button>
-                                {isExpanded && group.matches.map(m => {
-                                  const treeNode = assetReadToAssetNode(m.asset);
-                                  const treeItem = convertAssetNodeToTreeItem(treeNode, 1);
-                                  return renderTreeItem({ ...treeItem, asset: m.asset });
-                                })}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()
             ) : filteredTree.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-32 text-muted-foreground">
                 <FolderOpen className="h-8 w-8 mb-2 opacity-50" />
-                <h3 className="text-lg font-medium mb-2">No items found</h3>
-                <p className="text-sm text-center">No items available.</p>
+                <h3 className="text-lg font-medium mb-2">{isSearchActive ? 'No results' : 'No items found'}</h3>
+                <p className="text-sm text-center">
+                  {isSearchActive ? 'No items match your search.' : 'No items available.'}
+                </p>
               </div>
             ) : (
               <div ref={containerRef} className="min-w-0 max-w-full space-y-0.5 w-full overflow-hidden px-2 md:px-0">

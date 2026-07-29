@@ -14,6 +14,8 @@ import { create } from 'zustand';
 import { toast } from 'sonner';
 import { TreeNavigationService, AssetRead, BundleRead } from '@/client';
 import type { AssetNode, AssetTree } from '@/client';
+import { request } from '@/client/core/request';
+import { OpenAPI } from '@/client/core/OpenAPI';
 import { connectSSE } from '@/lib/sse';
 import { useInfospaceStore } from './storeInfospace';
 
@@ -21,6 +23,45 @@ interface FetchChildrenResult {
   children: AssetNode[];
   hasMore: boolean;
 }
+
+/** Flat participating-bundle registry entry (the result-tree skeleton). */
+interface NavBundle {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  tags?: string[] | null;
+  /** This folder's *name* matched — expand it unfiltered (browse the whole bundle). */
+  name_hit?: boolean;
+}
+
+/**
+ * A transient, query-scoped result-tree, kept entirely separate from the browse
+ * cache so a search never pollutes it. Same node shape the browse tree uses —
+ * ``nav`` is the participating skeleton (computed once at the root), ``rootNodes``
+ * are the loose matches at root, ``childrenCache`` the matching members per folder.
+ */
+interface SearchSlice {
+  query: string;
+  nav: NavBundle[];
+  rootNodes: AssetNode[];
+  childrenCache: Map<string, AssetNode[]>;
+  hasMoreChildren: Map<string, boolean>;
+  isLoadingRoot: boolean;
+  isLoadingChildren: Set<string>;
+  /** Bundle ids to expand *unfiltered* (name-hit folders + everything under them). */
+  nameHits: Set<number>;
+}
+
+/** Synthesize a bundle AssetNode from a nav skeleton entry (browse + search share this shape). */
+const navToBundleNode = (b: NavBundle): AssetNode => ({
+  id: `bundle-${b.id}`,
+  type: 'bundle',
+  name: b.name,
+  has_children: true,
+  children_count: null,
+  tags: b.tags ?? null,
+  updated_at: new Date().toISOString(),
+});
 
 interface TreeState {
   // Tree structure (minimal data)
@@ -44,9 +85,19 @@ interface TreeState {
   error: string | null;
   lastFetchedInfospaceId: number | null;
 
+  // Result-tree — the active query-scoped search slice (null when browsing)
+  search: SearchSlice | null;
+
   // Actions
   fetchRootTree: () => Promise<void>;
   fetchChildren: (parentId: string, skip?: number, limit?: number) => Promise<FetchChildrenResult>;
+  // Result-tree fetchers — mirror the browse pair but hit /tree(/children)?q= and
+  // write to the isolated `search` slice. Root computes the participating skeleton
+  // once; children are pure paginated member queries (child folders come from the
+  // root skeleton, never recomputed).
+  fetchSearchTree: (query: string) => Promise<void>;
+  fetchSearchChildren: (parentId: string, query: string, skip?: number) => Promise<void>;
+  clearSearchTree: () => void;
   getFullAsset: (assetId: number) => Promise<AssetRead>;
   getFullBundle: (bundleId: number) => Promise<BundleRead>;
   batchGetAssets: (assetIds: number[]) => Promise<AssetRead[]>;
@@ -69,7 +120,8 @@ export const useTreeStore = create<TreeState>((set, get) => ({
   isCounting: false,
   error: null,
   lastFetchedInfospaceId: null,
-  
+  search: null,
+
   /**
    * Fetch the root tree structure via SSE (progressive: nodes fast, counts later)
    */
@@ -479,6 +531,157 @@ export const useTreeStore = create<TreeState>((set, get) => ({
     }
   },
   
+  /**
+   * Fetch the result-tree root via SSE (/tree/stream?q=). Emits the participating
+   * folder skeleton (nav) + loose matches at root. Replaces the slice for a new
+   * query. Mirrors fetchRootTree but writes to `search`, never the browse cache.
+   */
+  fetchSearchTree: async (query: string) => {
+    const { activeInfospace } = useInfospaceStore.getState();
+    if (!activeInfospace?.id || !query.trim()) return;
+
+    // Fresh slice for this query — a new query is a new tree.
+    set({
+      search: {
+        query,
+        nav: [],
+        rootNodes: [],
+        childrenCache: new Map(),
+        hasMoreChildren: new Map(),
+        isLoadingRoot: true,
+        isLoadingChildren: new Set(),
+        nameHits: new Set(),
+      },
+    });
+
+    const params = new URLSearchParams({ q: query, limit: '100' });
+    const url = `/api/v1/infospaces/${activeInfospace.id}/tree/stream?${params.toString()}`;
+
+    let navBundles: NavBundle[] = [];
+    let looseAssets: AssetNode[] = [];
+
+    // Only mutate the slice while it still belongs to this query (a newer search
+    // may have replaced it mid-stream).
+    const patch = (fn: (s: SearchSlice) => SearchSlice) =>
+      set((state) => (state.search && state.search.query === query ? { search: fn(state.search) } : {}));
+
+    const commit = () => {
+      const known = new Set(navBundles.map((b) => b.id));
+      // Only participating ROOT bundles at top level; nested ones surface on expand.
+      const rootBundleNodes = navBundles
+        .filter((b) => b.parent_id == null || b.parent_id === 0 || !known.has(b.parent_id))
+        .map(navToBundleNode);
+      const nameHits = new Set(navBundles.filter((b) => b.name_hit).map((b) => b.id));
+      patch((s) => ({ ...s, nav: navBundles, rootNodes: [...rootBundleNodes, ...looseAssets], nameHits }));
+    };
+
+    try {
+      await connectSSE({
+        url,
+        method: 'GET',
+        onEvent: (event) => {
+          if (event.type === 'error') {
+            patch((s) => ({ ...s, isLoadingRoot: false }));
+            return;
+          }
+          let payload: any;
+          try { payload = JSON.parse(event.data); } catch { return; }
+
+          if (event.type === 'nav') {
+            navBundles = (payload.nav?.bundles ?? []) as NavBundle[];
+            commit();
+          }
+          if (event.type === 'section') {
+            looseAssets = (payload.section?.items ?? []) as AssetNode[];
+            commit();
+            patch((s) => ({ ...s, isLoadingRoot: false }));
+          }
+          if (event.type === 'done') {
+            patch((s) => ({ ...s, isLoadingRoot: false }));
+          }
+        },
+        onError: () => patch((s) => ({ ...s, isLoadingRoot: false })),
+      });
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      patch((s) => ({ ...s, isLoadingRoot: false }));
+    }
+  },
+
+  /**
+   * Fetch matching members of a result-tree node (/tree/children?q=). Child
+   * *folders* come from the root skeleton (`search.nav`), so this never recomputes
+   * participating — it only pages the matching assets under `parentId`.
+   */
+  fetchSearchChildren: async (parentId: string, query: string, skip: number = 0) => {
+    const { activeInfospace } = useInfospaceStore.getState();
+    if (!activeInfospace?.id) return;
+
+    const mark = (loading: boolean) =>
+      set((state) => {
+        if (!state.search || state.search.query !== query) return {};
+        const next = new Set(state.search.isLoadingChildren);
+        if (loading) next.add(parentId); else next.delete(parentId);
+        return { search: { ...state.search, isLoadingChildren: next } };
+      });
+
+    mark(true);
+    // A name-hit folder (or anything under one) is browsed UNFILTERED — the folder
+    // itself is the match, so we show its whole contents, not just query-matches.
+    const bundleId = parentId.startsWith('bundle-') ? Number(parentId.slice(7)) : null;
+    const unfiltered = bundleId != null && (get().search?.nameHits.has(bundleId) ?? false);
+    try {
+      // Raw request (not the generated service) so the `q` param works without a
+      // client regen — the tree/children route gained it server-side.
+      const tree = await request<AssetTree>(OpenAPI, {
+        method: 'GET',
+        url: '/api/v1/infospaces/{infospace_id}/tree/children',
+        path: { infospace_id: activeInfospace.id },
+        query: { parent_id: parentId, skip, limit: 50, ...(unfiltered ? {} : { q: query }) },
+      });
+      const memberAssets = (tree.section?.items ?? []) as AssetNode[];
+      const hasMore = !!tree.section?.has_more;
+      // Unfiltered expansion carries the full nav; filtered uses the participating skeleton.
+      const respNav = (tree.nav?.bundles ?? []) as NavBundle[];
+
+      set((state) => {
+        if (!state.search || state.search.query !== query) return {};
+        const s = state.search;
+        const m = parentId.match(/^bundle-(\d+)$/);
+        let childBundles: AssetNode[] = [];
+        let nameHits = s.nameHits;
+        if (skip === 0 && m) {
+          const pid = Number(m[1]);
+          if (unfiltered) {
+            // Browse: real child folders from the response nav; they inherit name-hit
+            // so drilling deeper stays unfiltered (the whole subtree browses).
+            const kids = respNav.filter((b) => b.parent_id === pid);
+            childBundles = kids.map(navToBundleNode);
+            nameHits = new Set(nameHits);
+            kids.forEach((b) => nameHits.add(b.id));
+          } else {
+            // Filtered: participating child folders only.
+            childBundles = s.nav.filter((b) => b.parent_id === pid).map(navToBundleNode);
+          }
+        }
+        const page = skip === 0 ? [...childBundles, ...memberAssets] : memberAssets;
+
+        const childrenCache = new Map(s.childrenCache);
+        childrenCache.set(parentId, skip === 0 ? page : [...(childrenCache.get(parentId) ?? []), ...page]);
+        const hasMoreChildren = new Map(s.hasMoreChildren);
+        hasMoreChildren.set(parentId, hasMore);
+        const isLoadingChildren = new Set(s.isLoadingChildren);
+        isLoadingChildren.delete(parentId);
+        return { search: { ...s, nameHits, childrenCache, hasMoreChildren, isLoadingChildren } };
+      });
+    } catch (err) {
+      console.error('[TreeStore] Failed to fetch search children:', err);
+      mark(false);
+    }
+  },
+
+  clearSearchTree: () => set({ search: null }),
+
   /**
    * Clear all caches (useful after mutations)
    */

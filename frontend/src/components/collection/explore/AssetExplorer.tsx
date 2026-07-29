@@ -29,6 +29,7 @@ import {
   LayoutGrid,
   LayoutList,
   Rows3,
+  FolderTree,
   Loader2,
   RefreshCw,
   ChevronDown,
@@ -51,9 +52,11 @@ import { useDebounce } from '@/hooks/useDebounce';
 import { useAssetQuery, type ChildResultGroup } from '@/hooks/useAssetQuery';
 import { useFeedAssets } from '@/components/collection/assets/Feed/useFeedAssets';
 import { useAssetDetail } from '@/components/collection/assets/Views/AssetDetailProvider';
+import { useSurfaceCommands } from '@/hooks/useSurfaceCommands';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useTreeStore } from '@/zustand_stores/storeTree';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
+import { useExploreState } from '@/zustand_stores/storeExplore';
 import { AssetCard } from '@/components/collection/assets/Cards';
 import {
   getAssetKindConfig,
@@ -85,13 +88,17 @@ import type { AssetTreeItem } from '@/components/collection/assets/AssetSelector
 // ---------------------------------------------------------------------------
 
 type SortOption = 'relevance' | 'created_at_desc' | 'created_at_asc' | 'title';
-type LayoutMode = 'results' | 'grid' | 'list';
+type LayoutMode = 'results' | 'grid' | 'list' | 'tree';
 
 interface ExplorerResult {
   asset: AssetRead;
   score?: number;
   highlight?: string | null;
 }
+
+// Stable no-op selection for the read-only tree view (viewing, not picking).
+const EMPTY_TREE_SELECTION = new Set<string>();
+const noopSelection = () => {};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -139,6 +146,19 @@ const PILL_COLORS: Record<string, { bg: string; text: string; ring: string }> = 
 };
 
 function QueryPillChip({ pill, onRemove }: { pill: QueryPill; onRemove: () => void }) {
+  // OR operator — a compact divider between union groups, not a filter chip.
+  if (pill.type === 'or') {
+    return (
+      <button
+        type="button"
+        onClick={onRemove}
+        title="Remove OR"
+        className="inline-flex items-center px-1.5 py-1 text-[10px] font-bold tracking-wide text-muted-foreground/70 hover:text-foreground transition-colors"
+      >
+        OR
+      </button>
+    );
+  }
   const colors = PILL_COLORS[pill.type] || PILL_COLORS.text;
   const bundles = useBundleStore((s) => s.bundles);
   // Bundle pills scope by id (bundle:<id>); show the folder name instead of the
@@ -433,7 +453,7 @@ function CreateBundleDialog({
 
 export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: string } = {}) {
   const { activeInfospace } = useInfospaceStore();
-  const { openDetailOverlay } = useAssetDetail();
+  const { openDetailOverlay, openBundleDetail } = useAssetDetail();
   const infospaceId = activeInfospace?.id ?? 0;
 
   // Keep the flat bundle list warm so bundle:<id> scope pills resolve to names.
@@ -448,6 +468,18 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
   const debouncedQuery = useDebounce(query, 300);
   const isSearching = debouncedQuery.trim().length > 0;
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Re-seed when the URL `?q=` changes — the operator can navigate here with a new
+  // query while the explorer is already mounted, and `useState` only captured the
+  // first value. Non-empty guard so a plain visit doesn't wipe a typed query.
+  useEffect(() => {
+    if (initialQuery) setQuery(initialQuery);
+  }, [initialQuery]);
+
+  // Mirror the live query so the operator (focus context) can read what's in the bar —
+  // to drive the query bar when the explorer is open, and to bundle the current results.
+  const setExploreQuery = useExploreState((s) => s.setQuery);
+  useEffect(() => { setExploreQuery(query); }, [query, setExploreQuery]);
 
   // UI state
   // Sort is derived, not state-switched: a null userSort tracks the sensible
@@ -564,6 +596,15 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
   const isCounting = isSearching ? querySearch.isCounting : false;
 
   // Handlers
+  // The operator's `explore:open` verb — open a result in THIS page's overlay (the
+  // AssetDetail context), not the global dock. That's why open is a surface verb here.
+  useSurfaceCommands('explore', {
+    open: (p) => {
+      if (p?.bundle_id != null) openBundleDetail(Number(p.bundle_id));
+      else if (p?.asset_id != null) { setActiveAssetId(Number(p.asset_id)); openDetailOverlay(Number(p.asset_id)); }
+    },
+  });
+
   const handleAssetClick = useCallback(
     (asset: AssetRead) => { setActiveAssetId(asset.id); openDetailOverlay(asset.id); },
     [openDetailOverlay],
@@ -858,7 +899,7 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
                 <div className="px-1 pb-2">
                   <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">View</p>
                   <div className="flex items-center overflow-hidden rounded-md border border-border/40 bg-muted/20">
-                    {([['results', Rows3], ['grid', LayoutGrid], ['list', LayoutList]] as [LayoutMode, typeof Rows3][]).map(([mode, ModeIcon]) => (
+                    {([['results', Rows3], ['tree', FolderTree], ['grid', LayoutGrid], ['list', LayoutList]] as [LayoutMode, typeof Rows3][]).map(([mode, ModeIcon]) => (
                       <button
                         key={mode}
                         type="button"
@@ -1127,7 +1168,19 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
           </ScrollArea>
         )}
 
-        {/* Results */}
+        {/* Results — the tree layout hands off to AssetSelector (the shared result-tree
+            renderer), driven by the same query; other layouts render the flat results. */}
+        {layout === 'tree' ? (
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <AssetSelector
+              query={debouncedQuery}
+              selectedItems={EMPTY_TREE_SELECTION}
+              onSelectionChange={noopSelection}
+              onItemView={(item) => { if (item.asset) handleAssetClick(item.asset); }}
+              compact
+            />
+          </div>
+        ) : (
         <ScrollArea className="min-h-0 flex-1">
           <div className="p-4">
             {/* Loading */}
@@ -1314,6 +1367,7 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
             )}
           </div>
         </ScrollArea>
+        )}
       </div>
 
       {/* Bundle creation dialog */}

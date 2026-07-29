@@ -45,9 +45,11 @@ import {
   Unlock,
   ScanEye,
   Plus,
+  Spline,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { scrollBundleIntoView } from '@/lib/bundles/reveal';
+import { useSurfaceCommands } from '@/hooks/useSurfaceCommands';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { toast } from 'sonner';
 import {
@@ -440,10 +442,13 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   // pins trace just the ones you care about. The set drawn is the union when
   // all-on, else the pinned set, kept in source-list order so the overlay's lane
   // assignment lines up with the rail. Reveal ids unfold each target's ancestors.
-  const { sources } = useSourceStore();
+  const { sources, fetchSources } = useSourceStore();
   const sourceStreamsWrapRef = useRef<HTMLDivElement>(null);
   const [streamsAllOn, setStreamsAllOn] = useState(false);
   const [pinnedSourceIds, setPinnedSourceIds] = useState<Set<number>>(new Set());
+  // Operator-driven reveals (the `assets:reveal` surface command) — additive to the
+  // source-stream reveals so the operator can unfold to any bundle on its own.
+  const [operatorRevealIds, setOperatorRevealIds] = useState<number[]>([]);
 
   const activeSourceIds = useMemo(() => {
     if (streamsAllOn) return new Set(sources.filter((s) => s.output_bundle_id != null).map((s) => s.id));
@@ -474,6 +479,31 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     return Array.from(ids);
   }, [sources, pinnedSourceIds]);
 
+  // Merge operator reveals into the ancestor-unfold set (revealBundleIds) and the
+  // open-the-target set (openBundleIds) that AssetSelector diffs. Additive to streams.
+  const revealBundleIdsAll = useMemo(
+    () => Array.from(new Set([...revealBundleIds, ...operatorRevealIds])),
+    [revealBundleIds, operatorRevealIds],
+  );
+  const openBundleIdsAll = useMemo(
+    () => Array.from(new Set([...openBundleIds, ...operatorRevealIds])),
+    [openBundleIds, operatorRevealIds],
+  );
+
+  // The operator's `assets:reveal` verb: unfold the tree to a bundle (ancestors + the
+  // bundle itself) and scroll it into view. Additive, so repeated reveals stack.
+  const revealBundle = useCallback((bundleId: number) => {
+    if (!Number.isFinite(bundleId)) return;
+    setOperatorRevealIds((prev) => (prev.includes(bundleId) ? prev : [...prev, bundleId]));
+    scrollBundleIntoView(bundleId);
+  }, []);
+
+  // Sideview opening is handled globally by `open_item` (→ useDock); `reveal` unfolds
+  // the tree so the user sees the bundle in context after the operator navigates here.
+  useSurfaceCommands('assets', {
+    reveal: (p) => revealBundle(Number(p?.bundle_id ?? p?.id)),
+  });
+
   const handleToggleSourceStream = useCallback((sourceId: number) => {
     const adding = !pinnedSourceIds.has(sourceId);
     setPinnedSourceIds((prev) => {
@@ -497,6 +527,44 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     activeSourceIds,
     onTogglePinned: handleToggleSourceStream,
   }), [streamsAllOn, activeSourceIds, handleToggleSourceStream]);
+
+  // Keep the source list warm so a bundle's menu knows whether anything streams
+  // into it — even before the rail is ever opened.
+  useEffect(() => { if (activeInfospace?.id) fetchSources(); }, [activeInfospace?.id, fetchSources]);
+
+  // ─── Reverse trace (bundle → its sources) ───
+  // The forward path pins a source and lights the line to its output bundle.
+  // The reverse is the same wire read backwards: a bundle's menu pins EVERY
+  // source that outputs into it. Since a source feeds exactly one bundle, these
+  // sets never overlap, so the pinned set stays a clean union.
+  const sourcesForBundle = useCallback(
+    (bundleId: number) => sources.filter((s) => s.output_bundle_id === bundleId),
+    [sources],
+  );
+
+  // A bundle is "lit" when all of its feeding sources are pinned (the reverse
+  // toggle's own state — independent of the global all-on mode).
+  const isBundleStreamLit = useCallback((bundleId: number) => {
+    const feeders = sourcesForBundle(bundleId);
+    return feeders.length > 0 && feeders.every((s) => pinnedSourceIds.has(s.id));
+  }, [sourcesForBundle, pinnedSourceIds]);
+
+  const handleToggleBundleStreams = useCallback((bundleId: number) => {
+    const feederIds = sourcesForBundle(bundleId).map((s) => s.id);
+    if (feederIds.length === 0) return;
+    const lit = feederIds.every((id) => pinnedSourceIds.has(id));
+    setPinnedSourceIds((prev) => {
+      const next = new Set(prev);
+      feederIds.forEach((id) => (lit ? next.delete(id) : next.add(id)));
+      return next;
+    });
+    // Lighting up needs the rail open (the streams anchor to its source rows) and
+    // the bundle scrolled into view so the connectors actually land on-screen.
+    if (!lit) {
+      setShowSourcesRail(true);
+      scrollBundleIntoView(bundleId);
+    }
+  }, [sourcesForBundle, pinnedSourceIds]);
 
   // On desktop the dock lives inline as our third column, so the app-wide layout
   // dock stands down while we're mounted. Mobile keeps using the layout sheet.
@@ -1295,21 +1363,53 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
 
   const renderItemBadge = useCallback((item: AssetTreeItem) => {
     const isFav = isItemFavorited(item);
-    if (isFav) {
-      return (
-        <Star
-          className="h-3.5 w-3.5 shrink-0 cursor-pointer fill-yellow-400 text-yellow-500"
-          onClick={(e) => { e.stopPropagation(); handleToggleFavorite(item); }}
-        />
-      );
-    }
-    return (
+    const star = isFav ? (
+      <Star
+        className="h-3.5 w-3.5 shrink-0 cursor-pointer fill-yellow-400 text-yellow-500"
+        onClick={(e) => { e.stopPropagation(); handleToggleFavorite(item); }}
+      />
+    ) : (
       <Star
         className="h-3.5 w-3.5 shrink-0 cursor-pointer text-muted-foreground/40 invisible group-hover:visible hover:text-yellow-500"
         onClick={(e) => { e.stopPropagation(); handleToggleFavorite(item); }}
       />
     );
-  }, [isItemFavorited, handleToggleFavorite]);
+
+    // Only bundles can be fed — assets keep the bare star.
+    if (item.type !== 'folder' || !item.bundle) return star;
+
+    // Live-fed marker: a bundle that sources stream into gets a blue radio-tower
+    // count (the same icon as the Sources button), clickable to trace those
+    // sources — the reverse wire, one click from the row (desktop only, where the
+    // overlay is drawn). It lives in a FIXED-WIDTH slot beside the star that is
+    // reserved on every bundle row, so the name starts at the same x whether or
+    // not anything feeds the bundle.
+    const feeders = sourcesForBundle(item.bundle.id);
+    return (
+      <>
+        {star}
+        <span className="flex h-3.5 w-7 shrink-0 items-center justify-start">
+          {feeders.length > 0 && (
+            <button
+              type="button"
+              onClick={!isMobile ? (e) => { e.stopPropagation(); handleToggleBundleStreams(item.bundle!.id); } : undefined}
+              title={`${feeders.length} source${feeders.length !== 1 ? 's' : ''} stream into this bundle${!isMobile ? ' — click to trace' : ''}`}
+              className={cn(
+                'flex shrink-0 items-center gap-0.5 rounded-full px-1 text-[10px] font-medium leading-none tabular-nums transition-colors',
+                isBundleStreamLit(item.bundle.id)
+                  ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400'
+                  : 'text-blue-500/80 hover:bg-blue-500/10',
+                isMobile && 'pointer-events-none',
+              )}
+            >
+              <RadioTower className="h-3 w-3" />
+              {feeders.length}
+            </button>
+          )}
+        </span>
+      </>
+    );
+  }, [isItemFavorited, handleToggleFavorite, sourcesForBundle, isBundleStreamLit, handleToggleBundleStreams, isMobile]);
 
   const renderItemActions = (item: AssetTreeItem) => (
     <DropdownMenu>
@@ -1334,6 +1434,15 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
               <DropdownMenuItem onClick={() => handleUnsealBundle(item.bundle!)}><Unlock className="mr-2 h-4 w-4" /> Unseal</DropdownMenuItem>
             ) : (
               <DropdownMenuItem onClick={() => handleSealBundle(item.bundle!)}><Lock className="mr-2 h-4 w-4" /> Seal</DropdownMenuItem>
+            )}
+            {!isMobile && sourcesForBundle(item.bundle.id).length > 0 && (
+              <DropdownMenuItem
+                onClick={() => handleToggleBundleStreams(item.bundle!.id)}
+                className={cn(isBundleStreamLit(item.bundle.id) && 'text-blue-600 dark:text-blue-400')}
+              >
+                <Spline className="mr-2 h-4 w-4" />
+                {isBundleStreamLit(item.bundle.id) ? 'Hide feeding sources' : 'Trace feeding sources'}
+              </DropdownMenuItem>
             )}
           </>
         )}
@@ -1411,6 +1520,15 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
               <Lock className="mr-2 h-4 w-4" /> Seal
             </button>
           )}
+          {!isMobile && sourcesForBundle(item.bundle.id).length > 0 && (
+            <button
+              className={cn(ctxBtn, isBundleStreamLit(item.bundle.id) && 'text-blue-600 dark:text-blue-400')}
+              onClick={() => handleToggleBundleStreams(item.bundle!.id)}
+            >
+              <Spline className="mr-2 h-4 w-4" />
+              {isBundleStreamLit(item.bundle.id) ? 'Hide feeding sources' : 'Trace feeding sources'}
+            </button>
+          )}
           <button className={ctxBtn} onClick={() => handleToggleFavorite(item)}>
             <Star className={cn("mr-2 h-4 w-4", isItemFavorited(item) && "fill-yellow-400 text-yellow-500")} />
             {isItemFavorited(item) ? 'Unfavorite' : 'Favorite'}
@@ -1485,8 +1603,8 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
               <ButtonGroup>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button size="sm" className="h-8 gap-1 px-3 text-xs rounded-xs">
-                      <Plus className="h-3.5 w-3.5" /> Add <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+                    <Button size="sm" variant="outline" className="h-8 gap-1 px-3 text-xs rounded-xs">
+                      <Plus className="h-3.5 w-3.5" /> New/ Upload <ChevronDown className="h-3.5 w-3.5 opacity-70" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-52">
@@ -1538,12 +1656,23 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
             </div>
           ) : (
             /* Desktop — C5: Add hub · Web Search · Sources ┆ Write · Folder */
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <ButtonGroup>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={cn('h-7 px-2 text-[11px]', showSourcesRail && 'bg-muted')}
+                  onClick={() => setShowSourcesRail((s) => !s)}
+                >
+                  <RadioTower className="mr-1 h-3 w-3" /> Sources
+                </Button>
+              </ButtonGroup>
+
               <ButtonGroup>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button size="sm" className="h-8 gap-1 px-3 text-xs">
-                      <Plus className="h-3.5 w-3.5" /> Add <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+                      <Plus className="h-3.5 w-3.5" /> New/ Upload <ChevronDown className="h-3.5 w-3.5 opacity-70" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-52">
@@ -1565,24 +1694,26 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={() => openDiscover()}>
-                  <Search className="mr-1.5 h-3.5 w-3.5" /> Web Search
-                </Button>
-                <Button variant="ghost" size="sm" className={cn('h-8 px-2.5 text-xs', showSourcesRail && 'bg-muted')} onClick={() => setShowSourcesRail((s) => !s)}>
-                  <RadioTower className="mr-1.5 h-3.5 w-3.5" /> Sources
-                </Button>
               </ButtonGroup>
 
               <input type="file" id="import-file-input" style={{ display: 'none' }} onChange={handleImportFile} accept=".zip,.json" />
 
-              <ButtonGroup>
-                <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleCreateArticle}>
-                  <FileText className="mr-1.5 h-3.5 w-3.5" /> Write
-                </Button>
-                <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleCreateEmptyBundle}>
-                  <FolderPlus className="mr-1.5 h-3.5 w-3.5" /> Folder
-                </Button>
-              </ButtonGroup>
+              <div className="ml-auto flex items-center gap-2">
+                <ButtonGroup>
+                  <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={() => openDiscover()}>
+                    <Search className="mr-1.5 h-3.5 w-3.5" /> Web Search
+                  </Button>
+                </ButtonGroup>
+
+                <ButtonGroup>
+                  <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleCreateArticle}>
+                    <FileText className="mr-1.5 h-3.5 w-3.5" /> Write
+                  </Button>
+                  <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={handleCreateEmptyBundle}>
+                    <FolderPlus className="mr-1.5 h-3.5 w-3.5" /> Folder
+                  </Button>
+                </ButtonGroup>
+              </div>
             </div>
           )}
         </div>
@@ -1675,8 +1806,8 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                       renderItemBadge={renderItemBadge}
                       renderSelectionActions={renderSelectionActions}
                       onSearchTermChange={setSearchTermFromSelector}
-                      revealBundleIds={revealBundleIds}
-                      openBundleIds={openBundleIds}
+                      revealBundleIds={revealBundleIdsAll}
+                      openBundleIds={openBundleIdsAll}
                     />
                   </div>
                 </ResizablePanel>

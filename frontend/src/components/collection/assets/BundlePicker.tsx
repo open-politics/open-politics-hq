@@ -117,7 +117,7 @@ export function BundlePicker({ bundles, value, onChange, newName, onNewNameChang
           />
         </div>
 
-        <div className="max-h-60 overflow-y-auto p-1">
+        <div className="max-h-60 overflow-y-auto scrollbar-hide p-1">
           {allowRoot && (
             <button type="button" className={cn(ROW, value == null && !creatingNew && ACTIVE)} onClick={pickRoot}>
               <Slash className="size-3.5 shrink-0 text-muted-foreground" />
