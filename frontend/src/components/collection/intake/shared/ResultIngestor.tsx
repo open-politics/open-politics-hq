@@ -12,28 +12,19 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { 
   FileText, 
-  FolderPlus,
   AlertCircle,
   Loader2,
   Check
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { BundlePicker } from '@/components/collection/assets/BundlePicker';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useActiveJobsStore } from '@/zustand_stores/storeActiveJobs';
-import { AssetsService, BundlesService } from '@/client';
+import { AssetsService } from '@/client';
 import { SearchResultData } from './ResultViewer';
 
 interface SearchResultIngestorProps {
@@ -60,8 +51,7 @@ export function SearchResultIngestor({
   const { bundles, fetchBundles, createBundle } = useBundleStore();
   const addActiveJob = useActiveJobsStore((s) => s.addJob);
   
-  const [destination, setDestination] = useState<'none' | 'existing' | 'new'>('none');
-  const [selectedBundleId, setSelectedBundleId] = useState<number | null>(null);
+  const [targetBundleId, setTargetBundleId] = useState<number | undefined>(undefined);
   const [newBundleName, setNewBundleName] = useState('');
   const [isIngesting, setIsIngesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,22 +66,11 @@ export function SearchResultIngestor({
   // Reset form when dialog closes
   useEffect(() => {
     if (!open) {
-      setDestination('none');
-      setSelectedBundleId(null);
+      setTargetBundleId(undefined);
       setNewBundleName('');
       setError(null);
     }
   }, [open]);
-
-  const validateForm = (): string | null => {
-    if (destination === 'existing' && !selectedBundleId) {
-      return 'Please select a bundle';
-    }
-    if (destination === 'new' && !newBundleName.trim()) {
-      return 'Please enter a bundle name';
-    }
-    return null;
-  };
 
   const handleIngest = async () => {
     if (!activeInfospace?.id) {
@@ -99,35 +78,27 @@ export function SearchResultIngestor({
       return;
     }
 
-    const validationError = validateForm();
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-
     setIsIngesting(true);
     setError(null);
 
     try {
-      let targetBundleId: number | undefined = undefined;
+      let resolvedBundleId = targetBundleId;
 
-      // Create new bundle if needed
-      if (destination === 'new' && newBundleName.trim()) {
+      // Create new bundle when a new-name value is provided in the picker.
+      if (newBundleName.trim()) {
         const newBundle = await createBundle({
           name: newBundleName.trim(),
           description: `Created from chat search results`,
           asset_ids: []
         });
         if (newBundle) {
-          targetBundleId = newBundle.id;
+          resolvedBundleId = newBundle.id;
           toast.success(`Created bundle: ${newBundle.name}`);
         }
-      } else if (destination === 'existing' && selectedBundleId) {
-        targetBundleId = selectedBundleId;
       }
 
       // Ingest — backend splits inline-vs-scrape per content length.
-      const { inlineCount, scrapeJobId, scrapeUrlCount } = await ingestResults(results, targetBundleId);
+      const { inlineCount, scrapeJobId, scrapeUrlCount } = await ingestResults(results, resolvedBundleId);
 
       if (scrapeJobId && activeInfospace?.id) {
         // Push to the chat-wide active-jobs store so the Chat parent renders
@@ -146,7 +117,7 @@ export function SearchResultIngestor({
       if (scrapeUrlCount > 0) summary.push(`${scrapeUrlCount} queued for scraping`);
       toast.success(
         summary.length
-          ? `Search results: ${summary.join(', ')}${targetBundleId ? ' (bundle)' : ''}`
+          ? `Search results: ${summary.join(', ')}${resolvedBundleId ? ' (bundle)' : ''}`
           : 'No assets created',
       );
       onSuccess?.();
@@ -215,7 +186,7 @@ export function SearchResultIngestor({
           {/* Results Preview */}
           <div className="space-y-2">
             <Label className="text-sm font-medium">Selected Results</Label>
-            <div className="max-h-32 overflow-y-auto space-y-1 p-2 border rounded-md">
+            <div className="max-h-32 overflow-y-auto scrollbar-hide space-y-1 p-2 border rounded-md">
               {results.map((result, idx) => (
                 <div key={idx} className="text-xs truncate flex items-center gap-2">
                   <FileText className="h-3 w-3 shrink-0" />
@@ -226,72 +197,28 @@ export function SearchResultIngestor({
           </div>
 
           {/* Bundle Destination */}
-          <div className="space-y-3">
+          <div className="space-y-2">
             <Label className="text-sm font-medium">Bundle Destination</Label>
-            <RadioGroup value={destination} onValueChange={(value: any) => setDestination(value)}>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="none" id="dest-none" />
-                <Label htmlFor="dest-none" className="font-normal cursor-pointer">
-                  No bundle (add to infospace)
-                </Label>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem 
-                  value="existing" 
-                  id="dest-existing" 
-                  disabled={!bundles || bundles.length === 0}
-                />
-                <Label 
-                  htmlFor="dest-existing" 
-                  className={`font-normal cursor-pointer ${(!bundles || bundles.length === 0) ? 'text-muted-foreground' : ''}`}
-                >
-                  Add to existing bundle
-                </Label>
-              </div>
-
-              {destination === 'existing' && (
-                <div className="pl-6">
-                  <Select
-                    value={selectedBundleId?.toString()}
-                    onValueChange={(value) => setSelectedBundleId(parseInt(value))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a bundle..." />
-                    </SelectTrigger>
-                    <SelectContent className="max-h-80 overflow-y-auto">
-                      {bundles.map((bundle) => (
-                        <SelectItem key={bundle.id} value={bundle.id.toString()}>
-                          <div className="flex items-center gap-2">
-                            <span>{bundle.name}</span>
-                            <Badge variant="outline" className="text-xs">
-                              {bundle.asset_count} assets
-                            </Badge>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+            <BundlePicker
+              bundles={bundles}
+              value={targetBundleId}
+              onChange={setTargetBundleId}
+              newName={newBundleName}
+              onNewNameChange={setNewBundleName}
+              placeholder="No bundle (add to infospace)"
+            />
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              {targetBundleId != null ? (
+                <>
+                  <span>Target:</span>
+                  <Badge variant="outline">
+                    {bundles.find((bundle) => bundle.id === targetBundleId)?.name ?? 'Selected bundle'}
+                  </Badge>
+                </>
+              ) : (
+                <span>Select an existing bundle, create one inline, or keep results at the infospace root.</span>
               )}
-
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="new" id="dest-new" />
-                <Label htmlFor="dest-new" className="font-normal cursor-pointer">
-                  Create new bundle
-                </Label>
-              </div>
-
-              {destination === 'new' && (
-                <div className="pl-6">
-                  <Input
-                    placeholder="Enter bundle name..."
-                    value={newBundleName}
-                    onChange={(e) => setNewBundleName(e.target.value)}
-                  />
-                </div>
-              )}
-            </RadioGroup>
+            </div>
           </div>
 
           {/* Error Display */}

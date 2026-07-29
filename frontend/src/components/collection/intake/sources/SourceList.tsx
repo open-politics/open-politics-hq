@@ -8,25 +8,25 @@ import {
 import { cn } from '@/lib/utils';
 import { formatDistanceToNowStrict } from 'date-fns';
 import type { SourceRead } from '@/client';
-import type { SourceKind } from '@/lib/annotations/types';
+import { sourceFormInit } from '@/lib/sources/sourceForm';
 import { useSourceStore } from '@/zustand_stores/storeSources';
 import { useBundleStore } from '@/zustand_stores/storeBundles';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useDock } from '@/zustand_stores/storeDock';
 import type { SurfaceContentProps } from '../types';
 
-const KIND_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+export const KIND_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   rss: Rss, web_search: Search, web: Globe, crawl: Globe, upload: FileText, directory: FolderOpen,
 };
 
-type Health = 'active' | 'paused' | 'error' | 'warning';
-function healthOf(s: SourceRead): Health {
+export type Health = 'active' | 'paused' | 'error' | 'warning';
+export function healthOf(s: SourceRead): Health {
   // WARNING (e.g. output bundle deleted) is attention-needed but not a poll failure.
   if (s.status?.toLowerCase() === 'warning') return 'warning';
   if ((s.consecutive_failures ?? 0) > 0 || s.error_message) return 'error';
   return s.is_active ? 'active' : 'paused';
 }
-const DOT: Record<Health, string> = {
+export const DOT: Record<Health, string> = {
   active: 'bg-emerald-500',
   paused: 'bg-muted-foreground/40',
   error: 'bg-red-500',
@@ -108,20 +108,7 @@ export function SourceRow({ source, bundleName, streams }: { source: SourceRead;
           <Button
             variant="ghost" size="icon" className="size-6"
             title="Manage — config, schedule, output bundle"
-            onClick={() => openSourceForm({
-              init: {
-                sourceId: source.id,
-                kind: source.kind as SourceKind,
-                name: source.name,
-                config: source.details ?? {},
-                streamEnabled: source.is_active,
-                pollInterval: source.poll_interval_seconds,
-                bundleId: source.output_bundle_id ?? undefined,
-                lockKind: true,
-                startStep: 'config',
-                layout: 'stepped',
-              },
-            })}
+            onClick={() => openSourceForm({ init: sourceFormInit(source) })}
           >
             <Settings2 className="size-3.5" />
           </Button>
@@ -169,7 +156,7 @@ export function SourceList({ mode, streams }: SurfaceContentProps & { streams?: 
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1">
+      <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1 scrollbar-hide">
         {isLoading && sources.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> Loading…

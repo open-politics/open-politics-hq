@@ -167,19 +167,6 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
       isActive: true,
       colorClass: "sidebar-sky",
     },
-    {
-      title: "Graphs",
-      url: "/hq/infospaces/graphs",
-      icon: Network,
-      isActive: true,
-      colorClass: "sidebar-teal",
-      items: [
-        { title: "Graph View", url: "/hq/infospaces/graphs?tab=view" },
-        { title: "Canons", url: "/hq/infospaces/graphs?tab=canons" },
-        { title: "Connections", url: "/hq/infospaces/graphs?tab=connections" },
-        { title: "All graphs", url: "/hq/infospaces/graphs?tab=graphs" },
-      ],
-    }
   ], [])
   
   const navMain = React.useMemo(() => [

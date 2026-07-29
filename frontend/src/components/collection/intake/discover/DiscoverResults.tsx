@@ -46,7 +46,7 @@ export function DiscoverResults({
         <div className="flex items-center gap-1">
           {onPromote && (
             <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onPromote} title="Make recurrent source">
-              <Repeat className="mr-1 size-3.5" /> Make recurrent
+              <Repeat className="mr-1 size-3.5" /> Make Source
             </Button>
           )}
           <Button size="sm" className="h-7 px-2 text-xs" onClick={onIngest} disabled={selected.size === 0}>

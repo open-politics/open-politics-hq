@@ -51,6 +51,7 @@
  *
  *  Space between tokens  →  AND
  *  Comma within a value  →  OR (kind:pdf,email = pdf OR email)
+ *  Top-level OR / |      →  union of groups (bundle:1 a OR bundle:2 b — lowercase 'or' stays FTS)
  *  - prefix              →  NOT / exclude
  *  ~ prefix              →  semantic similarity
  *  "quotes"              →  exact phrase (text) or literal value (filters)
@@ -102,7 +103,8 @@ export type PillType =
   | 'tag'
   | 'annotation'
   | 'run'
-  | 'children';
+  | 'children'
+  | 'or';
 
 export interface QueryPill {
   type: PillType;
@@ -201,7 +203,7 @@ export const QUERY_EXAMPLES = [
 
 // ─── Client-side pill parser ───
 
-const PREFIX_RE = /^(-)?([a-z]+):(.+)$/s;
+const PREFIX_RE = /^(-)?([a-z]+):([\s\S]+)$/;
 const THRESHOLD_RE = /([><]=?)([\d.]+)$/;
 
 /**
@@ -249,6 +251,13 @@ export function parseQueryToPills(query: string): QueryPill[] {
       } else if (prefix === 'children') {
         pills.push({ type: 'children', label: 'Children', value: stripQuotes(rest), negated: false, raw: token });
       }
+      continue;
+    }
+
+    // Top-level OR operator — uppercase OR or |. Lowercase 'or' stays FTS text,
+    // and a quoted "OR" keeps its quotes so it never matches here.
+    if (token === 'OR' || token === '|') {
+      pills.push({ type: 'or', label: 'OR', value: 'OR', negated: false, raw: token });
       continue;
     }
 
