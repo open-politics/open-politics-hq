@@ -41,6 +41,7 @@ class OperationDescriptor:
     needs: tuple[str, ...] = ()              # provider capabilities to surface / provision
     posture: str = "show"                    # "show" (act-then-show) | "confirm" (stage-then-confirm)
     summary: str = ""                        # one-line, for browse + model-facing projection
+    hidden: bool = False                     # keep out of the operator's catalogue (not-ready surfaces, e.g. formulas)
 
 
 _operation_registry: dict[str, OperationDescriptor] = {}
@@ -77,6 +78,7 @@ def make_operation(mcp) -> Callable:
         posture: str = "show",
         summary: str = "",
         tags: list[str] | None = None,
+        hidden: bool = False,
     ) -> Callable:
         def decorator(fn: Callable) -> Callable:
             name = fn.__name__
@@ -87,6 +89,7 @@ def make_operation(mcp) -> Callable:
                 needs=tuple(needs),
                 posture=posture,
                 summary=summary,
+                hidden=hidden,
             )
             # Delegate registration to FastMCP; our metadata rides the registry.
             # ``meta=`` is a best-effort pass-through (some FastMCP versions
@@ -113,7 +116,7 @@ SETS: dict[str, tuple[str, ...]] = {
     "web_intake": ("web_research", "library_hub"),
     "monitor": ("library_hub", "sources_hub", "analysis_hub"),  # bundle → recurring source → live run
     "structure": ("analysis_hub",),
-    "visualize": ("analysis_hub", "formula_create", "panel_create", "formula_preview"),
+    "visualize": ("analysis_hub",),  # panels via analysis_hub(panel.*); formulas are not operator-facing
 }
 
 
@@ -196,8 +199,8 @@ SCENARIOS: dict[str, Scenario] = {
                 reflect="Sources confirmed. Now code exactly what the question needs — tight, "
                         "one field per question (see the schemas doc).",
                 calls=(
-                    _call("analysis_hub", "author the coding schema (pass schema_fields, not raw JSON)",
-                          operation="schema.create", schema_name="<Topic> coding",
+                    _call("analysis_hub", "co-author the coding schema INLINE — the user shapes & confirms it",
+                          operation="schema.stage", schema_name="<Topic> coding",
                           schema_fields=[{"name": "sentiment", "type": "enum",
                                           "options": ["negative", "neutral", "positive"],
                                           "description": "overall stance of the item toward <topic>"}]),
@@ -233,8 +236,8 @@ SCENARIOS: dict[str, Scenario] = {
                         "`outlet` field + a `framing_lean` enum — NOT in separate bundles. "
                         "Extract facts; don't bake the verdict into the field.",
                 calls=(
-                    _call("analysis_hub", "code outlet + framing on every item",
-                          operation="schema.create", schema_name="<Topic> framing",
+                    _call("analysis_hub", "co-author the outlet + framing schema INLINE — user confirms it",
+                          operation="schema.stage", schema_name="<Topic> framing",
                           schema_fields=[
                               {"name": "outlet", "type": "text", "description": "publishing outlet"},
                               {"name": "framing_lean", "type": "enum",
@@ -281,8 +284,9 @@ def render_scenario_playbook(sc: Scenario) -> str:
         f"## Playbook — {sc.name}",
         "Work the phases in order. Within a phase, fire the calls as one parallel batch "
         "where the inputs allow, filling every <placeholder> with the specifics. At a "
-        "reflection stop, PAUSE — review what came back, then continue. Only sources are "
-        "staged for confirmation; everything else executes when you call it.",
+        "reflection stop, PAUSE — review what came back, then continue. Sources and "
+        "schemas are staged for inline confirmation (you get a <form_result> when the "
+        "user commits); everything else executes when you call it.",
     ]
     for i, ph in enumerate(sc.phases, 1):
         lines.append("")
@@ -356,6 +360,8 @@ def browse(access, session, infospace_id: int, path: str | None = None) -> list[
 
     entries: list[dict] = []
     for name, d in _operation_registry.items():
+        if d.hidden:
+            continue  # not operator-facing (e.g. the not-ready formula layer)
         if path and not d.path.startswith(path):
             continue
         if not access.has_all(*d.requires):
@@ -496,6 +502,31 @@ HOT_CORE_TOOLS: list[dict] = [
                 "handle": {"type": "string", "description": "exact tool-result handle, if you have one"},
                 "path": {"type": "string", "description": "optional dotted path into the payload to slice (e.g. 'items.0.url')"},
             },
+        },
+    },
+    {
+        "type": "mcp",
+        "name": "navigate",
+        "description": (
+            "Take the user to an HQ page in the main view — you (the operator) stay with "
+            "them; only the page behind you changes. Use it to bring them where the work "
+            "is: after finding assets, open the Asset Manager; open the Content Explorer to "
+            "query the corpus; the Annotation Runner to review runs. "
+            "destination is one of: home | assets | explore | runs | schemas | "
+            "packages | flows | enrichment | infospaces. For 'explore' "
+            "you can pass an AQL `query` to pre-run (e.g. 'kind:pdf ~corruption after:2023'). "
+            "For 'runs' pass a `run_id` to OPEN that run's dashboard directly — the "
+            "lightweight way to show a run (no data fetch)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "destination": {"type": "string", "description": "which page to open (see the list above)"},
+                "query": {"type": "string", "description": "explore only: an AQL query to pre-run (text, ~semantic, kind:, tag:, bundle:, after:/before:, entity:, annotation:)"},
+                "run_id": {"type": "integer", "description": "runs only: open this run's dashboard on the Annotation Runner"},
+                "ask_mode": {"type": "boolean", "description": "explore only: instead of searching directly, show the user a Text-vs-Semantic chooser for this query. Use ONLY when semantic search could plausibly yield more (conceptual/topical asks) — not for exact terms/names."},
+            },
+            "required": ["destination"],
         },
     },
 ]

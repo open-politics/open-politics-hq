@@ -308,6 +308,7 @@ async def intelligence_chat(
             run_id=request.run_id,
             formula_id=request.formula_id,
             current_route=request.current_route,
+            current_focus=request.current_focus,
             **kwargs,
         )
 
@@ -399,6 +400,7 @@ async def intelligence_chat_stream(
             run_id=request.run_id,
             formula_id=request.formula_id,
             current_route=request.current_route,
+            current_focus=request.current_focus,
             **kwargs,
         ):
             final_response = response

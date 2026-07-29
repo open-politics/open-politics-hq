@@ -28,6 +28,39 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _enumerate_schema_paths(contract, prefix: str = "", leaves=None, arrays=None, depth: int = 0):
+    """Walk an annotation schema's output_contract into dotted field paths.
+
+    Leaves are usable panel-axis paths (``document.summary``,
+    ``document.triplets.subject_name``); ``arrays`` collects array-of-object
+    containers (``document.triplets``) — the operator appends ``[*]`` for a graph
+    source or explode. Bounded depth so a pathological schema can't runaway.
+    """
+    leaves = leaves if leaves is not None else []
+    arrays = arrays if arrays is not None else []
+    if not isinstance(contract, dict) or depth > 6:
+        return leaves, arrays
+    props = contract.get("properties")
+    if isinstance(props, dict):
+        for name, sub in props.items():
+            if not isinstance(sub, dict):
+                continue
+            path = f"{prefix}.{name}" if prefix else name
+            st = sub.get("type")
+            if st == "object":
+                _enumerate_schema_paths(sub, path, leaves, arrays, depth + 1)
+            elif st == "array":
+                items = sub.get("items") if isinstance(sub.get("items"), dict) else {}
+                if items.get("type") == "object" and isinstance(items.get("properties"), dict):
+                    arrays.append(path)
+                    _enumerate_schema_paths(items, path, leaves, arrays, depth + 1)
+                else:
+                    leaves.append(path)  # array of scalars
+            else:
+                leaves.append(path)
+    return leaves, arrays
+
+
 def create_mcp_context_token(user_id: int, infospace_id: int) -> str:
     """Creates a short-lived JWT to securely pass context to the MCP server."""
     expire = datetime.now(timezone.utc) + timedelta(
@@ -183,6 +216,7 @@ class IntelligenceConversationService:
         run_id: Optional[int] = None,
         formula_id: Optional[str] = None,
         current_route: Optional[str] = None,
+        current_focus: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """
@@ -300,7 +334,7 @@ class IntelligenceConversationService:
 
         infospace = self.session.get(Infospace, infospace_id)
         if is_operator:
-            system_context = self._build_operator_context(infospace, active_scenario, current_route)
+            system_context = self._build_operator_context(infospace, active_scenario, current_route, current_focus)
         elif agent == "dossier":
             system_context = self._build_dossier_agent_context(infospace, run_id)
         elif agent == "formula":
@@ -329,6 +363,8 @@ class IntelligenceConversationService:
                     return self._op_load(args, schema_by_name)
                 if name == "inspect":
                     return self._op_inspect(args, messages)
+                if name == "navigate":
+                    return self._op_navigate(args)
                 return await self.execute_tool_call(
                     name, args, user_id, infospace_id, api_keys, conversation_id
                 )
@@ -742,6 +778,77 @@ General principles:
                 "structured_content": {"kind": "load", "loaded": loaded, "unknown": unknown},
                 "_load_tools": schemas}
 
+    def _op_navigate(self, args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Operator hot-core: route the main view to an HQ page (act-then-show).
+
+        Pure UI — no backend side effect. It just emits a ``navigate`` UI directive that
+        the frontend command bus turns into a client-side ``router.push``; the floating
+        operator stays put on top. Destinations are a curated allow-list so the model
+        can't route to an arbitrary/invalid path.
+        """
+        routes = {
+            "home": "/hq",
+            "assets": "/hq/infospaces/asset-manager",
+            "asset-manager": "/hq/infospaces/asset-manager",
+            "explore": "/hq/infospaces/explore",
+            "runs": "/hq/infospaces/annotation-runner",
+            "annotation-runner": "/hq/infospaces/annotation-runner",
+            "schemas": "/hq/infospaces/annotation-schemes",
+            "packages": "/hq/infospaces/packages",
+            "flows": "/hq/infospaces/flows",
+            "enrichment": "/hq/infospaces/enrichment",
+            "infospaces": "/hq/infospaces/infospace-manager",
+            "infospace-manager": "/hq/infospaces/infospace-manager",
+        }
+        dest = str((args or {}).get("destination", "")).strip().lower()
+        to = routes.get(dest)
+        if not to:
+            opts = sorted(set(routes.keys()))
+            return {"content": f"❌ Unknown destination '{dest}'. Options: {opts}",
+                    "structured_content": {"error": "unknown_destination", "options": opts}}
+        # Optional pre-seed: an AQL query for the Content Explorer. It rides in the URL
+        # (?q=…) so it survives a full page load; the explore page auto-runs it on land.
+        query = (args or {}).get("query")
+        run_id = (args or {}).get("run_id")
+        # Stage a text-vs-semantic chooser instead of searching directly — only when the
+        # operator judges semantic could yield more. The inline form runs the search with
+        # the picked mode. Default is text; semantic prefixes the query with `~`.
+        if (args or {}).get("ask_mode") and dest == "explore" and query:
+            import uuid as _uuid
+            token = f"searchmode-{_uuid.uuid4().hex[:12]}"
+            return {"content": f"⏸ How should I search for `{query}` — text or semantic? Choose below.",
+                    "structured_content": {"staged": True, "ui_directive": {
+                        "command": "stage_search_mode",
+                        "payload": {"query": str(query), "path": to},
+                        "await_return": True, "return_token": token,
+                    }}}
+        seeded = ""
+        ui_directive: Any = {"command": "navigate", "payload": {"to": to}}
+        if query and dest == "explore":
+            from urllib.parse import quote
+            to = f"{to}?q={quote(str(query))}"
+            seeded = f" with query `{query}`"
+            ui_directive = {"command": "navigate", "payload": {"to": to}}
+        # Open a specific run's dashboard on the Annotation Runner — the LIGHTWEIGHT,
+        # reliable way to "open a run" (no heavy data fetch). navigate lands the page;
+        # runner:open selects the run (fetching it if needed, even if already there).
+        if run_id is not None and dest in ("runs", "annotation-runner"):
+            try:
+                rid = int(run_id)
+                to = f"{to}?runId={rid}"
+                seeded = f" (run #{rid})"
+                ui_directive = [
+                    {"command": "navigate", "payload": {"to": to}},
+                    {"command": "runner:open", "payload": {"run_id": rid}},
+                ]
+            except (ValueError, TypeError):
+                pass
+        return {"content": f"→ Opened {dest} in the main view{seeded}.",
+                "structured_content": {
+                    "destination": dest, "path": to,
+                    "ui_directive": ui_directive,
+                }}
+
     def _op_inspect(self, args: Optional[Dict[str, Any]], messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Operator hot-core: pull the FULL payload of a prior tool result into context.
 
@@ -807,7 +914,8 @@ General principles:
                                        "truncated": truncated, "value": value}}
 
     def _build_operator_context(self, infospace: Infospace, active_scenario=None,
-                                current_route: Optional[str] = None) -> str:
+                                current_route: Optional[str] = None,
+                                current_focus: Optional[Dict[str, Any]] = None) -> str:
         """The ONE operator persona: the static manual (prompts/operator.md, a
         cacheable prefix) + a small volatile workspace block + (if a scenario is
         active) a concise journey header. The full playbook lives in history (the
@@ -827,7 +935,45 @@ General principles:
                 "(catalogue path='docs/<slug>') before a multi-step build."
             )
         where = f" · user is on {route}" if route else ""
-        ctx = manual + f"\n\n<workspace>\"{safe_name}\" — current: {now}{where}</workspace>"
+        # The entity the user has open/focused. Grounds "this run/dashboard/bundle" so
+        # the operator acts on it directly instead of re-listing and asking which.
+        focus_note = ""
+        if isinstance(current_focus, dict) and str(current_focus.get("kind")) == "explore":
+            # The Content Explorer is the open surface — searching means driving the
+            # query bar (navigate), not a workspace_hub search that dumps rows in chat.
+            q = str(current_focus.get("query") or "").strip().replace("{", "{{").replace("}", "}}")
+            if q:
+                focus_note = (
+                    f" · the Content Explorer is OPEN showing query `{q}`. To search, SET THE QUERY "
+                    f"BAR via navigate(destination=\"explore\", query=…) — do NOT run a workspace_hub "
+                    f"search. Default to plain TEXT search (no ~). To bundle these results: load "
+                    f"library_hub → collection.create(source_query=\"{q}\")."
+                )
+            else:
+                focus_note = (
+                    " · the Content Explorer is OPEN. Search by setting the query bar: "
+                    "navigate(destination=\"explore\", query=…) with plain TEXT (no ~) — do NOT run a "
+                    "workspace_hub search."
+                )
+        elif isinstance(current_focus, dict) and current_focus.get("id") is not None:
+            raw_kind = str(current_focus.get("kind") or "item")
+            kind = raw_kind.replace("{", "{{").replace("}", "}}")
+            fid = current_focus.get("id")
+            fname = str(current_focus.get("name") or "").replace("{", "{{").replace("}", "}}")
+            label = f'{kind} #{fid}' + (f' "{fname}"' if fname else "")
+            focus_note = (
+                f" · the user has {label} OPEN and in focus — when they say \"this {kind}\" "
+                f"(or \"this run/dashboard/bundle/analysis\") they mean {label}. Act on it directly; "
+                f"do NOT list options and ask which one."
+            )
+            # For a run, fold its schema fields (+ which have data) in so the operator can
+            # pick panel axes WITHOUT a round-trip to run.dashboard.
+            if raw_kind == "run":
+                try:
+                    focus_note += self._focus_schema_fields(infospace, int(fid))
+                except (ValueError, TypeError):
+                    pass
+        ctx = manual + f"\n\n<workspace>\"{safe_name}\" — current: {now}{where}{focus_note}</workspace>"
         if active_scenario is not None:
             phases = " → ".join(f"{i}·{p.label}" for i, p in enumerate(active_scenario.phases, 1))
             ctx += (
@@ -838,6 +984,72 @@ General principles:
                 f"\n</active-scenario>"
             )
         return ctx
+
+    def _focus_schema_fields(self, infospace: Infospace, run_id: int) -> str:
+        """A compact list of the run's schema field paths, for the operator to pick
+        panel axes from without a round-trip. Empty string if unavailable."""
+        try:
+            from app.models import AnnotationRun
+            run = self.session.get(AnnotationRun, run_id)
+            if not run or run.infospace_id != infospace.id:
+                return ""
+            leaves: list[str] = []
+            arrays: list[str] = []
+            for sch in (getattr(run, "target_schemas", None) or []):
+                _enumerate_schema_paths(getattr(sch, "output_contract", None) or {}, "", leaves, arrays)
+            paths = list(dict.fromkeys(leaves))        # dedup, keep order
+            groups = list(dict.fromkeys(arrays))
+            if not paths:
+                return ""
+            shown = ", ".join(paths[:40])
+            more = f" (+{len(paths) - 40} more)" if len(paths) > 40 else ""
+            note = f" Its schema fields — use these for panel axes: {shown}{more}."
+            if groups:
+                note += f" Array groups (graph source / explode / nested tables): {', '.join(g + '[*]' for g in groups[:8])}."
+            # Which TOP-LEVEL fields actually have data (sampled) — so panels aren't built
+            # on empty fields (a common cause of blank panels).
+            populated = self._focus_populated_fields(run_id)
+            if populated:
+                note += (
+                    f" Top-level fields WITH DATA (prefer these for axes/pie): "
+                    f"{', '.join('document.' + p for p in sorted(populated)[:20])}."
+                )
+            # No braces in field paths, but guard against .format() downstream anyway.
+            return note.replace("{", "{{").replace("}", "}}")
+        except Exception as e:
+            logger.debug(f"_focus_schema_fields failed for run {run_id}: {e}")
+            return ""
+
+    def _focus_populated_fields(self, run_id: int) -> set:
+        """Top-level `document.*` field names that carry data in a sample of the run's
+        (non-failed) annotations — so the operator prefers fields that render."""
+        try:
+            from sqlmodel import text as _text
+            rows = self.session.exec(_text(
+                "SELECT value FROM annotation WHERE run_id = :rid "
+                "AND LOWER(status::text) <> 'failed' LIMIT 25"
+            ).bindparams(rid=run_id)).all()
+            populated: set = set()
+            for r in rows:
+                val = r[0]
+                if isinstance(val, str):
+                    try:
+                        val = json.loads(val)
+                    except (ValueError, TypeError):
+                        val = None
+                # Values are usually stored unwrapped (fields at the root); some wrap in
+                # a `document` object. Handle both — the `document.` path prefix is logical.
+                doc = val
+                if isinstance(val, dict) and isinstance(val.get("document"), dict):
+                    doc = val["document"]
+                if isinstance(doc, dict):
+                    for k, v in doc.items():
+                        if v not in (None, "", [], {}):
+                            populated.add(k)
+            return populated
+        except Exception as e:
+            logger.debug(f"_focus_populated_fields failed for run {run_id}: {e}")
+            return set()
 
     async def get_available_models(
         self,

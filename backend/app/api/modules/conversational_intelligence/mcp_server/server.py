@@ -789,7 +789,13 @@ async def workspace_hub(
                             "children_count": sum(
                                 _bundle_counts(services["session"], [target_bundle_id]).get(target_bundle_id, (0, 0))
                             ),
-                        }]
+                        }],
+                        # Co-presence: open the bundle in the sideview AND unfold the
+                        # asset tree to it (the `assets:reveal` verb no-ops off-surface).
+                        "ui_directive": [
+                            {"command": "open_item", "payload": {"bundle_id": target_bundle_id}},
+                            {"command": "assets:reveal", "payload": {"bundle_id": target_bundle_id}},
+                        ],
                     }
                 )
 
@@ -810,6 +816,10 @@ async def workspace_hub(
 
             await ctx.info(f"Opening asset {target_asset_id}: {asset.title}")
 
+            # The bundle this asset lives in (first real membership; 0 = root) — carried
+            # so the sideview breadcrumb walks back up to the folder.
+            from_bundle_id = next((b for b in (asset.bundle_ids or []) if b and b != 0), None)
+
             # Return navigate-like structure with auto_open flag
             # This lets the existing ConversationalAssetExplorer render it AND auto-open
             return ToolResult(
@@ -825,7 +835,10 @@ async def workspace_hub(
                         "type": "asset",
                         "name": asset.title,
                         "kind": asset.kind.value if asset.kind else "text",
-                    }]
+                    }],
+                    # Co-presence: open the asset in the sideview beside the chat, with its
+                    # bundle context so the breadcrumb leads back to the folder.
+                    "ui_directive": {"command": "open_item", "payload": {"asset_id": target_asset_id, "from_bundle_id": from_bundle_id}},
                 }
             )
         
@@ -896,7 +909,7 @@ async def _navigate_tree_root(services: Dict, ctx: Context) -> ToolResult:
         .exclude_superseded()
         .sort("created_at_desc")
         .paginate(limit=100)  # bounded root listing, matching the display root
-        .execute()
+        .assets()
     )
     
     await ctx.info(f"Found {len(root_assets)} root assets")
@@ -1036,7 +1049,7 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
                 .paginate(limit=remaining_limit)
             )
             aq._offset = asset_skip
-            bundle_assets = list(aq.execute())
+            bundle_assets = list(aq.assets())
         
         # Build nodes
         children_nodes = build_bundle_children_nodes(bundle, child_bundles, bundle_assets, services["session"])
@@ -1054,7 +1067,7 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
                     .bundle(entity.id)
                     .top_level_only()
                     .paginate(limit=50)
-                    .execute()
+                    .assets()
                 )
                 children_nodes[i] = enrich_node_with_preview(node, entity, child_assets_list)
             else:
@@ -1107,7 +1120,7 @@ async def _navigate_tree_expand(services: Dict, ctx: Context, node_id: str,
             .paginate(limit=effective_asset_limit)
         )
         aq._offset = offset
-        child_assets = list(aq.execute())
+        child_assets = list(aq.assets())
         
         # Build nodes
         children_nodes = build_asset_children_nodes(asset, child_assets)
@@ -1242,7 +1255,7 @@ async def _search_bundles(services: Dict, ctx: Context, query: Optional[str], li
     """Search bundles (folders) by name — ranked, no document search.
 
     The targeted 'bundles only' search: workspace_hub(mode='search',
-    resource='bundles', query='...'). Reuses the same rank_bundles primitive the
+    resource='bundles', query='...'). Reuses the same bundles_matching primitive the
     basic search and the explore stream use.
     """
     if not query:
@@ -1250,9 +1263,9 @@ async def _search_bundles(services: Dict, ctx: Context, query: Optional[str], li
             content=[TextContent(type="text", text="Provide a query to search bundles.")],
             structured_content={"error": "missing_query"},
         )
-    from app.api.modules.content.query import rank_bundles, parse as _parse_aql
+    from app.api.modules.content.query import bundles_matching, parse as _parse_aql
     from app.api.modules.content.tree import bundle_counts, fmt_count
-    ranked = rank_bundles(services["session"], services["infospace_id"], _parse_aql(query), None, limit=limit)
+    ranked = bundles_matching(services["session"], services["infospace_id"], _parse_aql(query), None, limit=limit)
     # Capped live counts — cheap on huge folders, and can't drift like the cache.
     counts = bundle_counts(services["session"], [b.id for b, _ in ranked])
     items = [{
@@ -1346,6 +1359,11 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
                 aq.bundle(bundle_id)
             if parent_asset_id is not None:
                 aq.parent_asset(parent_asset_id)
+            else:
+                # Surface the parent DOCUMENT, not its PDF pages / CSV rows — the parent
+                # carries the full text, so no matches are lost. Drilling into a parent
+                # (parent_asset_id set) still returns its children.
+                aq.top_level_only()
             return aq
 
         def _sem_aq(q: str, n: int) -> AssetQuery:
@@ -1359,27 +1377,33 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
                 aq.kinds(asset_kinds_enum)
             if bundle_id is not None:
                 aq.bundle(bundle_id)
+            if parent_asset_id is None:
+                aq.top_level_only()  # parent documents, not pages
             return aq
 
         if search_method == "text":
-            assets = _text_aq(query, limit).execute()
+            assets = _text_aq(query, limit).assets()
         elif search_method == "semantic":
             try:
-                assets = await _sem_aq(query, limit).execute_async()
+                aq = _sem_aq(query, limit)
+                await aq.resolve()
+                assets = aq.assets()
             except Exception as e:
                 # A failed pgvector query leaves the session's transaction in an
                 # aborted state — every subsequent query in this MCP call would
                 # fail with InFailedSqlTransaction unless we roll back first.
                 services["session"].rollback()
                 await ctx.info(f"Semantic search failed, falling back to text: {e}")
-                assets = _text_aq(query, limit).execute()
+                assets = _text_aq(query, limit).assets()
         elif search_method == "hybrid":
             # Run text first, then semantic. Sequencing avoids cross-task session
             # corruption (SQLAlchemy sessions aren't safe under concurrent use)
             # and lets us roll back the semantic failure before the text path runs.
-            text_list = _text_aq(query, max(1, limit // 2)).execute()
+            text_list = _text_aq(query, max(1, limit // 2)).assets()
             try:
-                sem_list = await _sem_aq(query, max(1, limit // 2)).execute_async()
+                aq = _sem_aq(query, max(1, limit // 2))
+                await aq.resolve()
+                sem_list = aq.assets()
             except Exception as e:
                 services["session"].rollback()
                 await ctx.info(f"Semantic leg of hybrid search failed: {e}")
@@ -1397,9 +1421,9 @@ async def _navigate_assets(services: Dict, ctx: Context, mode: str, depth: str,
         # basic both-types search (gating — semantic/hybrid, bundle-only, scoped —
         # is decided there).
         if include_folders:
-            from app.api.modules.content.query import rank_bundles, parse as _parse_aql
+            from app.api.modules.content.query import bundles_matching, parse as _parse_aql
             from app.api.modules.content.tree import bundle_counts, fmt_count
-            ranked_bundles = rank_bundles(
+            ranked_bundles = bundles_matching(
                 services["session"], services["infospace_id"], _parse_aql(query), None, limit=limit
             )
             # Live counts — the denormalized Bundle.asset_count drifts for ingested folders.
@@ -1867,7 +1891,8 @@ async def library_hub(
     bundle_id: Annotated[Optional[int], "Collection ID"] = None,
     asset_ids: Annotated[Optional[List[int]], "Assets to include"] = None,
     name: Annotated[Optional[str], "Collection name"] = None,
-    
+    source_query: Annotated[Optional[str], "collection.create: an AQL query to MATERIALIZE the bundle from — matching assets are added in the background and the bundle stays query-backed (e.g. 'kind:pdf ~corruption after:2023')."] = None,
+
     # Shared
     parent_asset_id: Annotated[Optional[int], "Parent asset ID"] = None,
     data: Annotated[Optional[Dict[str, Any]], "Legacy: raw data payload (deprecated)"] = None,
@@ -1881,6 +1906,7 @@ async def library_hub(
     • Create CSV Dataset: library_hub(operation="asset.create", kind="csv", title="Survey Data", columns=["Name", "Age", "City"])
     • Add CSV Row: library_hub(operation="asset.create", kind="csv_row", row_data={"Name": "Alice", "Age": 30}, parent_asset_id=123)
     • Create Collection: library_hub(operation="collection.create", name="Research", asset_ids=[1,2])
+    • Bundle from a query: library_hub(operation="collection.create", name="PDF corruption", source_query="kind:pdf ~corruption after:2023") — fills in the background
     • Add to Collection: library_hub(operation="collection.add", bundle_id=5, asset_ids=[10])
     </quick_start>
     """
@@ -1937,7 +1963,7 @@ async def library_hub(
                     return await _asset_delete(services, ctx, effective_data)
             
             if operation == "collection.create":
-                return await _organize_create(services, ctx, name, description, asset_ids)
+                return await _organize_create(services, ctx, name, description, asset_ids, source_query)
             if operation == "collection.add":
                 return await _organize_add(services, ctx, bundle_id, asset_ids)
             if operation == "collection.remove":
@@ -1960,9 +1986,12 @@ async def library_hub(
             )
 
 
-async def _organize_create(services: Dict, ctx: Context, name: Optional[str], 
-                          description: Optional[str], asset_ids: Optional[List[int]]) -> ToolResult:
-    """Create a new bundle."""
+async def _organize_create(services: Dict, ctx: Context, name: Optional[str],
+                          description: Optional[str], asset_ids: Optional[List[int]],
+                          source_query: Optional[str] = None) -> ToolResult:
+    """Create a new bundle. With ``source_query`` the bundle is query-backed —
+    matching assets are materialized in the background (same as the Content Explorer's
+    "new bundle from results")."""
     if not name:
         return ToolResult(
             content=[TextContent(type="text", text="❌ Missing required parameter: name\n\nExample:\n  organize(operation='create', name='Climate Reports', asset_ids=[1,2,3])\n\nBundle name should describe the collection's purpose or topic")],
@@ -1972,9 +2001,10 @@ async def _organize_create(services: Dict, ctx: Context, name: Optional[str],
                 "hint": "Provide a descriptive name for the new collection"
             }
         )
-    
+
     from app.api.modules.content.tree import create_bundle
 
+    extra = {"bundle_metadata": {"source_query": source_query}} if source_query else {}
     bundle = create_bundle(
         services["session"],
         infospace_id=services["infospace_id"],
@@ -1982,9 +2012,15 @@ async def _organize_create(services: Dict, ctx: Context, name: Optional[str],
         asset_ids=asset_ids,
         name=name,
         description=description,
+        **extra,
     )
     services["session"].commit()
     services["session"].refresh(bundle)
+
+    # Materialize matching assets in the background when a query was given.
+    if source_query:
+        from app.api.modules.content.tasks.bundle_populate import populate_bundle_from_query
+        populate_bundle_from_query.delay([bundle.id], services["infospace_id"])
 
     assets_added = len(asset_ids or [])
     await ctx.info(f"Created bundle #{bundle.id} with {assets_added} assets")
@@ -1992,16 +2028,24 @@ async def _organize_create(services: Dict, ctx: Context, name: Optional[str],
     summary = f"✅ Created bundle '{bundle.name}' (ID: {bundle.id})"
     if assets_added:
         summary += f"\n   Added {assets_added} assets"
+    if source_query:
+        summary += f"\n   Populating from query `{source_query}` in the background"
+
+    structured: Dict[str, Any] = {
+        "operation": "create",
+        "bundle_id": bundle.id,
+        "bundle_name": bundle.name,
+        "assets_added": assets_added,
+        "status": "success",
+    }
+    # Query-backed bundles fill over time — open the bundle so the user watches it land.
+    if source_query:
+        structured["source_query"] = source_query
+        structured["ui_directive"] = {"command": "open_item", "payload": {"bundle_id": bundle.id}}
 
     return ToolResult(
         content=[TextContent(type="text", text=summary)],
-        structured_content={
-            "operation": "create",
-            "bundle_id": bundle.id,
-            "bundle_name": bundle.name,
-            "assets_added": assets_added,
-            "status": "success"
-        }
+        structured_content=structured,
     )
 
 
@@ -2544,7 +2588,7 @@ async def _analysis_delete_schema(
            summary="Author annotation schemas; start and list annotation runs; open dashboards; share.")
 async def analysis_hub(
     ctx: Context,
-    operation: Annotated[str, "schema.list, schema.get, schema.create, schema.update, schema.delete, run.start, run.list, run.dashboard, run.share"] = "schema.list",
+    operation: Annotated[str, "schema.list, schema.get, schema.stage (co-author a schema inline in chat — PREFERRED), schema.create, schema.update, schema.delete, run.start, run.list, run.dashboard, run.share, panel.add, panel.set, panel.remove (build the dashboard on the open run)"] = "schema.list",
     schema_name: Annotated[Optional[str], "Schema name — required for schema.create, optional rename for schema.update"] = None,
     output_contract: Annotated[Optional[Dict[str, Any]], "Full JSON Schema output_contract — same shape as schema.list returns. Use the hierarchical {type, properties: {document: {type, properties: {...}, required: [...]}}, required: ['document']} convention. For schema.create, prefer the simpler schema_fields instead."] = None,
     schema_fields: Annotated[Optional[Any], "EASY way to create a schema: a list (or JSON string) of fields [{name, type, description, options?, entity_type?, array?}]. Types: text, number, integer, boolean, enum (with options), entity (with entity_type, array:true for many). Converted to output_contract for you — prefer this over hand-writing output_contract."] = None,
@@ -2560,6 +2604,7 @@ async def analysis_hub(
     run_name: Annotated[Optional[str], "Optional friendly name for run.start"] = None,
     custom_instructions: Annotated[Optional[str], "Optional extra guidance for run.start"] = None,
     status: Annotated[Optional[str], "Filter for run.list: pending/running/completed/failed/completed_with_errors"] = None,
+    run_query: Annotated[Optional[str], "run.list: search — only runs whose name contains this text (case-insensitive). Use this instead of paging through every run."] = None,
     limit: Annotated[int, "Pagination for run.list"] = 20,
     offset: Annotated[int, "Pagination for run.list"] = 0,
     run_id: Annotated[Optional[int], "Required for run.dashboard/run.share"] = None,
@@ -2568,6 +2613,15 @@ async def analysis_hub(
     live: Annotated[bool, "run.start: keep the run LIVE — HQ re-annotates new content in scope as it arrives"] = False,
     source_bundle_id: Annotated[Optional[int], "run.start: the bundle a live run watches (its subtree). Use instead of asset_ids to watch a whole bundle, even an empty one."] = None,
     follow_on_version_change: Annotated[bool, "run.start: re-annotate when an asset's content version changes"] = False,
+    # Panel authoring (operates on the run currently OPEN in the Annotation Runner — navigate there first; run.start does)
+    panel_type: Annotated[Optional[str], "panel.add: table | chart | pie | map | scatter | measurements"] = None,
+    panel_name: Annotated[Optional[str], "panel.add: the new panel's title. panel.set/panel.remove: the title of the panel to target."] = None,
+    panel_description: Annotated[Optional[str], "panel.add/panel.set: a short description"] = None,
+    panel_index: Annotated[Optional[int], "panel.set/panel.remove: target a panel by 0-based position instead of name"] = None,
+    panel_axis: Annotated[Optional[Dict[str, Any]], "panel.add/panel.set: role→field map for the panel kind. chart: {x, y, color, mark}; pie: {slice_by, value, facet}; map: {position, color, label}; table: {columns}; scatter: {x, y, color, size}. Fields are dotted paths like 'document.sentiment'."] = None,
+    panel_filter: Annotated[Optional[Any], "panel.add/panel.set: a FilterSet {logic:'and'|'or', conditions:[{path, operator, value}]} (or just the conditions list). Narrows the panel's data. Do NOT author formulas."] = None,
+    panel_size: Annotated[Optional[Dict[str, int]], "panel.add/panel.set: grid size/position {w, h, x?, y?}. Usually omit — sizes are standardized per panel kind and the layout is auto-arranged."] = None,
+    panels: Annotated[Optional[List[Dict[str, Any]]], "panel.add (BATCH — strongly preferred): build the WHOLE dashboard in ONE call. A list of {type, name, description?, axis, filter?} — one per panel. Sizes + layout are automatic; do not set them."] = None,
 ) -> ToolResult:
     """
     Unified analysis control panel: schemas CRUD, runs, dashboards, sharing.
@@ -2580,13 +2634,17 @@ async def analysis_hub(
     <operations>
     • schema.list .................. Browse schemas (summary — use schema.get before editing).
     • schema.get ................... schema_id. Returns one schema with the full, untruncated output_contract.
-    • schema.create ................ schema_name + output_contract (full JSON Schema).
+    • schema.stage ................. schema_name + schema_fields. Renders a lean field editor INLINE in the chat, seeded with your proposed fields, for the user to shape and confirm — then resumes. PREFER this when building a schema *with* a user; it lands the same schema as schema.create.
+    • schema.create ................ schema_name + output_contract (full JSON Schema). Immediate — use when no confirmation is wanted.
     • schema.update ................ schema_id + any of: schema_name/output_contract/schema_description/schema_instructions/schema_version/field_specific_justification_configs/is_active. Only provided fields change. output_contract change on a schema with annotations needs allow_breaking=true.
     • schema.delete ................ schema_id. Soft-deactivates when annotations exist; use hard_delete=true to drop the schema and annotations.
     • run.start .................... Provide schema_id + asset_ids (optionally run_name/custom_instructions).
-    • run.list ..................... Optional filters schema_id/status plus pagination.
-    • run.dashboard ................ Provide run_id to fetch structured results.
+    • run.list ..................... Optional filters schema_id/status, run_query (search by name), plus pagination. Prefer run_query to find a run by name instead of paging.
+    • run.dashboard ................ run_id. OPENS that run on the Annotation Runner (so you can build its dashboard with panel.add/set) and returns its results. Use this to reopen an existing run before adding panels.
     • run.share .................... Provide run_id (plus optional share_name/expiration_days) for a public link.
+    • panel.add .................... BATCH (preferred): pass `panels`=[{type, name, axis, filter?}, …] to build the whole dashboard in ONE call — sizes + layout are automatic. Or a single panel via panel_type+panel_name+panel_axis. Adds to the run OPEN in the Annotation Runner. Set axes + filters; never formulas, never sizes.
+    • panel.set .................... panel_name or panel_index + any of panel_axis/panel_filter/panel_size/panel_description. Reconfigures an existing panel.
+    • panel.remove ................. panel_name or panel_index. Removes a panel.
 
     Round-trip edit pattern (3 calls, under any iteration cap):
       schema.list → schema.get(schema_id=...) → schema.update(schema_id=..., output_contract=...)
@@ -2594,7 +2652,8 @@ async def analysis_hub(
     with get_services() as services:
         access = _gate(services)
 
-        if operation in ("schema.create", "schema.update", "schema.delete"):
+        if operation in ("schema.create", "schema.stage", "schema.update", "schema.delete",
+                         "panel.add", "panel.set", "panel.remove"):
             _require(access, Capability.ORGANIZE)
         elif operation == "run.start":
             _require(access, Capability.COMPUTE)
@@ -2611,6 +2670,45 @@ async def analysis_hub(
                     structured_content={"error": "missing_schema_id"},
                 )
             return await _analysis_get_schema(services, ctx, schema_id)
+
+        if operation == "schema.stage":
+            # Stage-then-confirm (the PREFERRED way to author a schema with a user):
+            # render a lean field editor *inline in the chat* (command=stage_schema)
+            # seeded with the proposed fields. The user shapes and confirms it, and a
+            # <form_result> resumes us. Creation happens on confirm (frontend), so
+            # nothing is written here.
+            if not schema_name:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ schema.stage requires schema_name")],
+                    structured_content={"error": "missing_schema_name"},
+                )
+            try:
+                staged_fields = (json.loads(schema_fields) if isinstance(schema_fields, str) else schema_fields) or []
+            except (ValueError, TypeError) as e:
+                return ToolResult(
+                    content=[TextContent(type="text", text=f"❌ schema_fields must be a list of field objects: {e}")],
+                    structured_content={"error": "invalid_schema_fields", "detail": str(e)},
+                )
+            import uuid as _uuid
+            token = f"schema-{_uuid.uuid4().hex[:12]}"
+            n = len(staged_fields) if isinstance(staged_fields, list) else 0
+            return ToolResult(
+                content=[TextContent(type="text", text=f"⏸ Prepared schema '{schema_name}' ({n} field{'' if n == 1 else 's'}) — shape and confirm it below and I'll continue.")],
+                structured_content={
+                    "staged": True,
+                    "ui_directive": {
+                        "command": "stage_schema",
+                        "payload": {
+                            "name": schema_name,
+                            "description": schema_description or "",
+                            "instructions": schema_instructions or None,
+                            "fields": staged_fields,
+                        },
+                        "await_return": True,
+                        "return_token": token,
+                    },
+                },
+            )
 
         if operation == "schema.create":
             # Accept the natural field-list form and convert it to output_contract.
@@ -2698,6 +2796,7 @@ async def analysis_hub(
                 ctx=ctx,
                 schema_id=schema_id,
                 status=status,
+                name=run_query,
                 limit=limit,
                 offset=offset
             )
@@ -2722,6 +2821,97 @@ async def analysis_hub(
                 run_id=run_id,
                 name=share_name,
                 expiration_days=expiration_days
+            )
+
+        # Panel authoring is UI-driven: these emit a `dashboard:*` directive that the
+        # Annotation Runner applies to the OPEN run's dashboard (and persists). No
+        # backend write here — and no formulas: only axes (panel_config) + a filter.
+        if operation in ("panel.add", "panel.set", "panel.remove"):
+            # Model tool-args sometimes arrive JSON-encoded as strings — especially the
+            # Any-typed panel_filter (unlike Dict-typed panel_axis, which is coerced for
+            # us). Parse them so axis/filter/size reach the frontend as real objects.
+            def _coerce_json(v):
+                if isinstance(v, str):
+                    try:
+                        return json.loads(v)
+                    except (ValueError, TypeError):
+                        return v
+                return v
+            panel_axis = _coerce_json(panel_axis)
+            panel_filter = _coerce_json(panel_filter)
+            panel_size = _coerce_json(panel_size)
+
+        if operation == "panel.add" and panels:
+            # Batch: build the whole dashboard in one call → one directive that
+            # creates + configures + auto-arranges every panel.
+            specs_raw = _coerce_json(panels) or []
+            clean: List[Dict[str, Any]] = []
+            for sp in specs_raw:
+                if not isinstance(sp, dict) or not sp.get("type") or not sp.get("name"):
+                    continue
+                sp = dict(sp)
+                for k in ("axis", "filter", "size"):
+                    if k in sp:
+                        sp[k] = _coerce_json(sp[k])
+                clean.append(sp)
+            if not clean:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ panel.add batch needs a `panels` list of {type, name, ...}")],
+                    structured_content={"error": "empty_panels"},
+                )
+            names = ", ".join(f"{s['type']} '{s['name']}'" for s in clean)
+            return ToolResult(
+                content=[TextContent(type="text", text=f"➕ Added {len(clean)} panels: {names}.")],
+                structured_content={
+                    "panels": clean,
+                    "ui_directive": {"command": "dashboard:addPanels", "payload": {"panels": clean}},
+                },
+            )
+
+        if operation == "panel.add":
+            if not panel_type or not panel_name:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ panel.add requires panel_type and panel_name")],
+                    structured_content={"error": "missing_panel_params"},
+                )
+            add_payload: Dict[str, Any] = {"type": panel_type, "name": panel_name}
+            if panel_description is not None: add_payload["description"] = panel_description
+            if panel_axis: add_payload["axis"] = panel_axis
+            if panel_filter is not None: add_payload["filter"] = panel_filter
+            if panel_size: add_payload["size"] = panel_size
+            return ToolResult(
+                content=[TextContent(type="text", text=f"➕ Added a {panel_type} panel '{panel_name}' to the dashboard.")],
+                structured_content={
+                    "panel": add_payload,
+                    "ui_directive": {"command": "dashboard:addPanel", "payload": add_payload},
+                },
+            )
+
+        if operation in ("panel.set", "panel.remove"):
+            if panel_name is None and panel_index is None:
+                return ToolResult(
+                    content=[TextContent(type="text", text=f"❌ {operation} requires panel_name or panel_index")],
+                    structured_content={"error": "missing_panel_target"},
+                )
+            set_payload: Dict[str, Any] = {}
+            if panel_name is not None: set_payload["name"] = panel_name
+            if panel_index is not None: set_payload["index"] = panel_index
+            target = panel_name if panel_name is not None else f"#{panel_index}"
+            if operation == "panel.remove":
+                return ToolResult(
+                    content=[TextContent(type="text", text=f"🗑 Removed panel '{target}'.")],
+                    structured_content={"ui_directive": {"command": "dashboard:removePanel", "payload": set_payload}},
+                )
+            if panel_description is not None: set_payload["description"] = panel_description
+            if panel_axis: set_payload["axis"] = panel_axis
+            if panel_filter is not None: set_payload["filter"] = panel_filter
+            if panel_size: set_payload["size"] = panel_size
+            return ToolResult(
+                content=[TextContent(type="text", text=f"🛠 Reconfigured panel '{target}'.")],
+                structured_content={
+                    "panel": set_payload,
+                    "ui_directive": {"command": "dashboard:setPanel", "payload": set_payload},
+                },
             )
 
         return ToolResult(
@@ -2853,11 +3043,14 @@ async def _analysis_start_run(
                 "source_bundle_id": source_bundle_id,
                 "status": run.status.value,
                 "created_at": run.created_at.isoformat() if run.created_at else None,
-                # Co-presence: open the started run beside the chat (dock).
-                "ui_directive": {
-                    "command": "open_form",
-                    "payload": {"key": "runDashboard", "init": {"runId": run.id}},
-                },
+                # Co-presence: open the run on the full Annotation Runner page and select
+                # it there (navigate lands the page; runner:open selects the run even if
+                # we're already on the runner or it isn't in the loaded list yet), so its
+                # dashboard + the panel-building verbs operate on it.
+                "ui_directive": [
+                    {"command": "navigate", "payload": {"to": f"/hq/infospaces/annotation-runner?runId={run.id}"}},
+                    {"command": "runner:open", "payload": {"run_id": run.id}},
+                ],
             }
         )
 
@@ -3366,11 +3559,12 @@ async def _analysis_list_runs(
     status: Optional[str],
     limit: int,
     offset: int,
+    name: Optional[str] = None,
 ) -> ToolResult:
     from sqlmodel import select, and_
     from app.models import AnnotationRun, RunStatus
-    
-    await ctx.info(f"Listing runs (schema_id={schema_id}, status={status})")
+
+    await ctx.info(f"Listing runs (schema_id={schema_id}, status={status}, name={name})")
     
     query_conditions = [AnnotationRun.infospace_id == services["infospace_id"]]
     
@@ -3395,8 +3589,11 @@ async def _analysis_list_runs(
                 structured_content={"error": "invalid_status", "valid_statuses": ["pending", "running", "completed", "failed", "completed_with_errors"]}
             )
     
+    if name and name.strip():
+        query = query.where(AnnotationRun.name.ilike(f"%{name.strip()}%"))
+
     query = query.order_by(AnnotationRun.created_at.desc()).offset(offset).limit(limit)
-    
+
     runs = services["session"].exec(query).all()
     
     await ctx.info(f"Found {len(runs)} runs")
@@ -3607,8 +3804,15 @@ async def _analysis_get_dashboard(
             "assets": asset_data,
             "views_config": run.views_config,
             "status_counts": status_counts,
+            # Co-presence: open THIS run on the Annotation Runner and select it, so the
+            # dashboard shows and panel.add/panel.set operate on it (works for an
+            # existing run whether or not we're already on the runner page).
+            "ui_directive": [
+                {"command": "navigate", "payload": {"to": f"/hq/infospaces/annotation-runner?runId={run.id}"}},
+                {"command": "runner:open", "payload": {"run_id": run.id}},
+            ],
         }
-        
+
         return ToolResult(
             content=[TextContent(type="text", text="\n".join(summary_lines))],
             structured_content=structured_result
@@ -3711,7 +3915,7 @@ async def _asset_create_csv_container(services: Dict, ctx: Context, builder, dat
         .with_processing_status(ProcessingStatus.READY)
         .no_dedup()
         .build()
-    )
+    ).asset
     services["session"].commit()  # v2: builder flushes only; caller owns tx
     services["session"].refresh(asset)
 
@@ -3800,7 +4004,7 @@ async def _asset_create_csv_row(services: Dict, ctx: Context, builder, data: Dic
     )
     if parent_asset_id:
         builder = builder.as_child_of(parent_asset_id).with_part_index(next_part_index)
-    asset = await builder.build()
+    asset = (await builder.build()).asset
     services["session"].commit()  # v2: builder flushes only; caller owns tx
     services["session"].refresh(asset)
 
@@ -3854,7 +4058,7 @@ async def _asset_create_article(services: Dict, ctx: Context, builder, data: Dic
         .with_processing_status(ProcessingStatus.READY)
         .no_dedup()
         .build()
-    )
+    ).asset
     services["session"].commit()  # v2: builder flushes only; caller owns tx
     services["session"].refresh(asset)
 
@@ -3897,7 +4101,7 @@ async def _asset_create_web(services: Dict, ctx: Context, builder, data: Dict[st
             .dedup_on(source_identifier=url)
             .on_match("skip")
             .build()
-        )
+        ).asset
         services["session"].commit()  # v2: builder flushes only; caller owns tx
         services["session"].refresh(asset)
         return ToolResult(
@@ -3952,7 +4156,7 @@ async def _asset_create_text(services: Dict, ctx: Context, builder, data: Dict[s
         .with_processing_status(ProcessingStatus.READY)
         .no_dedup()
         .build()
-    )
+    ).asset
     services["session"].commit()  # v2: builder flushes only; caller owns tx
     services["session"].refresh(asset)
 
@@ -4670,7 +4874,7 @@ def _save_dashboard(run: Any, dashboard: dict) -> None:
     run.views_config = [dashboard]
 
 
-@operation(path="visualize/formula/introspect", tags=["dossier", "formula", "introspection"],
+@operation(path="visualize/formula/introspect", hidden=True, tags=["dossier", "formula", "introspection"],
            summary="Discover a run schema's paths, axes, entity vocabularies, and row-shapes.")
 async def formula_introspect_schema(
     ctx: Context,
@@ -4814,7 +5018,7 @@ def _truncate_sample(value: Any, max_chars: int = 800) -> Any:
     return value if isinstance(value, (dict, list)) else s
 
 
-@operation(path="visualize/formula/create", requires=(Capability.ORGANIZE,), tags=["dossier", "formula", "create"],
+@operation(path="visualize/formula/create", requires=(Capability.ORGANIZE,), hidden=True, tags=["dossier", "formula", "create"],
            summary="Author a new Formula (PanelProjection) on a run's dashboard.")
 async def formula_create(
     ctx: Context,
@@ -4886,7 +5090,7 @@ async def formula_create(
         )
 
 
-@operation(path="visualize/formula/edit", requires=(Capability.ORGANIZE,), tags=["dossier", "formula", "edit"],
+@operation(path="visualize/formula/edit", requires=(Capability.ORGANIZE,), hidden=True, tags=["dossier", "formula", "edit"],
            summary="Merge a partial PanelProjection onto an existing formula.")
 async def formula_edit(
     ctx: Context,
@@ -4957,7 +5161,7 @@ async def formula_edit(
         )
 
 
-@operation(path="visualize/formula/preview", tags=["dossier", "formula", "preview"],
+@operation(path="visualize/formula/preview", hidden=True, tags=["dossier", "formula", "preview"],
            summary="Run a formula and return a sample of output rows with provenance.")
 async def formula_preview(
     ctx: Context,
@@ -5023,7 +5227,7 @@ async def formula_preview(
         )
 
 
-@operation(path="visualize/formula/list", tags=["dossier", "formula", "list"],
+@operation(path="visualize/formula/list", hidden=True, tags=["dossier", "formula", "list"],
            summary="List saved formulas on a run's dashboard.")
 async def formula_list(
     ctx: Context,
@@ -5064,7 +5268,7 @@ async def formula_list(
         )
 
 
-@operation(path="visualize/panel/create", requires=(Capability.ORGANIZE,), tags=["dossier", "panel", "create"],
+@operation(path="visualize/panel/create", requires=(Capability.ORGANIZE,), hidden=True, tags=["dossier", "panel", "create"],
            summary="Drop a dashboard panel bound to a formula.")
 async def panel_create(
     ctx: Context,
@@ -5171,7 +5375,7 @@ async def panel_layout(
         )
 
 
-@operation(path="visualize/observation/snapshot", requires=(Capability.ORGANIZE,), tags=["dossier", "snapshot"],
+@operation(path="visualize/observation/snapshot", requires=(Capability.ORGANIZE,), hidden=True, tags=["dossier", "snapshot"],
            summary="Freeze a formula's current output as an immutable Observation.")
 async def observation_snapshot(
     ctx: Context,
