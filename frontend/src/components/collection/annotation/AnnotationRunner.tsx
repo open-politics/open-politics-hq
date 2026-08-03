@@ -761,7 +761,7 @@ export default function AnnotationRunner({
   return (
     <AssetDetailContext.Provider value={assetDetailBridge}>
     <div className="flex-1 flex flex-col overflow-auto">
-      <div className={cn("flex-1 space-y-2", focusMode ? "p-0" : "p-1.5 md:p-4")}>
+      <div className={cn("flex-1 space-y-0.5", focusMode ? "p-0.25" : "p-1.5 md:p-2 md:p-0")}>
         <AnnotationRunnerHeader
           activeRun={activeRun}
           dashboardConfig={dashboardConfig}
@@ -895,7 +895,7 @@ export default function AnnotationRunner({
                 // would create a link-mode loop once link mode ships.
                 const projected = (dashboardConfig?.panels ?? []).map((p) =>
                   p.id === targetPanelId
-                    ? { ...p, incoming_scopes: [...p.incoming_scopes, scope] }
+                    ? { ...p, scopes_in: [...(p.scopes_in ?? []), scope] }
                     : p,
                 );
                 const validation = validateScopeGraph(projected);

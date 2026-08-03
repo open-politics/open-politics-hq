@@ -5,6 +5,7 @@ import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { PanelRenderer } from '@/components/collection/annotation/PanelRenderer';
 import { FormattedAnnotation, AnnotationResultStatus } from '@/lib/annotations/types';
+import { EMPTY_SCHEMA_MAP } from '@/lib/annotations/fieldPaths';
 import { AnnotationSchemaRead, AssetRead, AssetKind } from '@/client';
 import { PanelViewConfig } from '@/zustand_stores/useAnnotationRunStore';
 import type { PanelConfig } from '@/lib/annotations/types';
@@ -168,6 +169,10 @@ const SharedAnnotationRunDashboard: React.FC<SharedAnnotationRunDashboardProps> 
       user_id: 0,
       infospace_id: 0,
       is_active: true,
+      // The shared-run payload's `target_schemas` doesn't carry the resolved
+      // schema_map yet, so entity/vocabulary-aware panels degrade to empty
+      // here. Fix belongs upstream: ship the full AnnotationSchemaRead.
+      schema_map: EMPTY_SCHEMA_MAP,
     }));
   }, [runData.target_schemas]);
 

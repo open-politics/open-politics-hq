@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { SchemePreview } from '@/components/collection/annotation/schemaCreation/SchemePreview';
 import type { AnnotationSchemaRead } from '@/client';
 import { CheckCircle2, Eye, FilePlus, FilePen, Trash2, CircleSlash, PlusSquare, SlidersHorizontal, FlaskConical, Search } from 'lucide-react';
+import { EMPTY_SCHEMA_MAP } from '@/lib/annotations/fieldPaths';
 
 interface AnalysisHubSchema {
   id: number;
@@ -53,6 +54,8 @@ const toAnnotationSchemaRead = (s: AnalysisHubSchema): AnnotationSchemaRead => (
   updated_at: s.created_at ?? '',
   is_active: true,
   field_specific_justification_configs: null,
+  // The hub tool result carries output_contract but not the resolved map.
+  schema_map: EMPTY_SCHEMA_MAP,
 });
 
 function SchemasList({ schemas }: { schemas: AnalysisHubSchema[] }) {

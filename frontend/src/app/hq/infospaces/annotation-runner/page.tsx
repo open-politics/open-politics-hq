@@ -315,6 +315,8 @@ export default function AnnotationRunnerPage() {
         {runError && <p className="text-red-500 mt-4 text-center">{runError}</p>}
       </div>
       
+      {/* Always mounted (except focus mode) so shortcuts keep working while a
+          run is open. The dock self-hides by default when a run is selected. */}
       {!focusMode && (
         <AnnotationRunnerDock
           allAssets={assets}

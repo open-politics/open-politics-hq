@@ -243,7 +243,7 @@ export interface PanelViewConfig {
 
 /**
  * Formula — a run-scoped, named, structured-question artifact (the
- * intelligence layer's third primitive — see docs/intelligence/HOW_TO.md).
+ * intelligence layer's third primitive — see docs/INTELLIGENCE.md).
  *
  * Lives in `DashboardConfig.formulas[]` (JSON on `AnnotationRun.views_config`,
  * no DB table). Carries the six verbs as flat fields — ``group``, ``measures``,
@@ -335,7 +335,12 @@ function migratePanelIfNeeded(panel: any): PanelConfig {
     return {
       ...rest,
       aggregation: panel.aggregation || {},
-      incoming_scopes: panel.incoming_scopes || [],
+      // Scopes written before the store was fixed landed in the deprecated
+      // `incoming_scopes`, which nothing reads. Fold them forward so those
+      // dashboards keep their cross-panel filters instead of silently losing
+      // them; `scopes_in` wins when both are populated.
+      scopes_in: (panel.scopes_in?.length ? panel.scopes_in : panel.incoming_scopes) || [],
+      incoming_scopes: [],
       merge_maps: panel.merge_maps || [],
       settings: panel.settings || {},
     } as PanelConfig;
@@ -1028,11 +1033,18 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
         },
 
         // --- Scope management ---
+        //
+        // These write ``scopes_in`` — the field every renderer reads and the
+        // field that reaches ``/view`` as ``ViewRequest.incoming_scopes``.
+        // They used to write the deprecated ``panel.incoming_scopes``, which
+        // nothing read, so a pushed scope silently never filtered anything.
+        // Worse, ``addPanel`` only initializes ``scopes_in``, so pushing onto
+        // a freshly-created panel threw on an undefined array.
         addScope: (targetPanelId, scope) => {
             set(produce((state: AnnotationRunState) => {
                 const panel = state.dashboardConfig?.panels.find(p => p.id === targetPanelId);
                 if (panel) {
-                    panel.incoming_scopes.push(scope);
+                    (panel.scopes_in ??= []).push(scope);
                     state.isDashboardDirty = true;
                 }
             }));
@@ -1042,7 +1054,7 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
             set(produce((state: AnnotationRunState) => {
                 const panel = state.dashboardConfig?.panels.find(p => p.id === targetPanelId);
                 if (panel) {
-                    panel.incoming_scopes = panel.incoming_scopes.filter(s => s.id !== scopeId);
+                    panel.scopes_in = (panel.scopes_in ?? []).filter(s => s.id !== scopeId);
                     state.isDashboardDirty = true;
                 }
             }));
@@ -1052,7 +1064,7 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
             set(produce((state: AnnotationRunState) => {
                 const panel = state.dashboardConfig?.panels.find(p => p.id === targetPanelId);
                 if (panel) {
-                    const scope = panel.incoming_scopes.find(s => s.id === scopeId);
+                    const scope = (panel.scopes_in ?? []).find(s => s.id === scopeId);
                     if (scope) Object.assign(scope, updates);
                     state.isDashboardDirty = true;
                 }
@@ -1063,7 +1075,7 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
             set(produce((state: AnnotationRunState) => {
                 if (!state.dashboardConfig) return;
                 for (const panel of state.dashboardConfig.panels) {
-                    for (const scope of panel.incoming_scopes) {
+                    for (const scope of panel.scopes_in ?? []) {
                         if (scope.source_panel_id === sourcePanelId && scope.mode === 'link') {
                             scope.filter = newFilter;
                             scope.label = newLabel;

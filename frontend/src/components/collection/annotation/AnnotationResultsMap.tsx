@@ -8,7 +8,7 @@ import { useTheme } from 'next-themes';
 import { AnnotationSchemaRead, AssetRead } from '@/client';
 import { PanelConfig, AnnotationResultRow } from '@/lib/annotations/types';
 import type { MapVizConfig } from '@/lib/annotations/types';
-import { getAnnotationFieldValue, getAnnotationFieldValuesExploded, getTargetKeysForScheme, formatFieldNameForDisplay } from '@/lib/annotations/utils';
+import { getAnnotationFieldValue, getAnnotationFieldValuesExploded, getTargetKeysForScheme, formatFieldNameForDisplay, placeNameOf } from '@/lib/annotations/utils';
 import { inferRangeFromValues, readDeclaredRange } from './cellRenderers/NumberCell';
 import { useAnnotationView } from '@/hooks/useAnnotationView';
 import { createScopeFromSelection } from '@/lib/annotations/scopes';
@@ -120,7 +120,12 @@ function findCommonArrayPrefix(a: string, b: string): string | null {
   return null;
 }
 
-const _normalizeMatch = (s: any): string => String(s ?? '').trim().toLowerCase();
+/** Marker-key form of a location value. `String(value)` was wrong the moment a
+ *  place became an entity: `{name: "Valletta", type: "Location"}` stringifies
+ *  to `"[object Object]"`, which matches no marker, so every label and every
+ *  colour silently dropped off an entity-typed map. */
+const _normalizeMatch = (s: any): string =>
+  (placeNameOf(s)[0] ?? (typeof s === 'string' ? s : '')).trim().toLowerCase();
 
 /**
  * Pull every label value belonging to *this* marker's location from a single
@@ -653,23 +658,11 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     const parts = parsePath(locationField);
     const unwrapped = parts[0] === 'document' ? parts.slice(1) : null;
 
+    // One implementation of "what place is this value", shared with the label
+    // matcher above and mirroring the geocode task's — three copies of this
+    // walk existed and one of them was wrong.
     const emitLeaf = (node: any, out: string[]) => {
-      if (typeof node === 'string') {
-        const s = node.trim().toLowerCase();
-        if (s) out.push(s);
-        return;
-      }
-      if (node && typeof node === 'object' && !Array.isArray(node)) {
-        const name = (node as any).name;
-        if (typeof name === 'string') {
-          const s = name.trim().toLowerCase();
-          if (s) out.push(s);
-        }
-        return;
-      }
-      if (Array.isArray(node)) {
-        for (const item of node) emitLeaf(item, out);
-      }
+      for (const name of placeNameOf(node)) out.push(name.toLowerCase());
     };
 
     const extract = (value: any, path: string[]): string[] => {

@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef, ChangeEvent } from 'react';
+import React, { useState, useEffect, useMemo, useRef, ChangeEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { PlusCircle, Edit, Blocks, Trash2, Eye, Search, XCircle, Loader2, Microscope, ListTree, AlertTriangle, Upload, Download, LayoutGrid, List } from 'lucide-react';
+import { PlusCircle, Edit, Blocks, Trash2, Eye, Search, XCircle, Loader2, Microscope, Upload, Download, LayoutGrid, List, Columns3, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { AnnotationSchemaRead } from '@/client';
 import AnnotationSchemaEditor from './AnnotationSchemaEditor';
 import { useAnnotationSystem } from '@/hooks/useAnnotationSystem';
@@ -19,9 +19,36 @@ import { adaptSchemaReadToSchemaFormData as transformApiToFormData } from '@/lib
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useIsMobile } from '@/hooks/use-mobile';
 import AnnotationSchemaCard from './AnnotationSchemaCard';
 import { SchemePreview } from './schemaCreation/SchemePreview';
+
+type SortColumn = 'name' | 'fields' | 'annotations' | 'updated_at';
+type SortDirection = 'asc' | 'desc';
+
+type ColumnKey = 'description' | 'fields' | 'annotations' | 'updated_at';
+
+const COLUMN_DEFS: { key: ColumnKey; label: string }[] = [
+  { key: 'description', label: 'Description' },
+  { key: 'fields', label: 'Fields' },
+  { key: 'annotations', label: 'Annotations' },
+  { key: 'updated_at', label: 'Last Updated' },
+];
+
+const DEFAULT_COLUMN_VISIBILITY: Record<ColumnKey, boolean> = {
+  description: true,
+  fields: true,
+  annotations: true,
+  updated_at: true,
+};
 
 /** Count actual fields inside all sections of an output_contract */
 function countSchemaFields(outputContract: any): number {
@@ -68,6 +95,9 @@ const AnnotationSchemaManager: React.FC = () => {
     const [isDeleting, setIsDeleting] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
     const [viewMode, setViewMode] = useState<'grid' | 'list'>(isMobile ? 'grid' : 'list');
+    const [columnVisibility, setColumnVisibility] = useState<Record<ColumnKey, boolean>>(DEFAULT_COLUMN_VISIBILITY);
+    const [sortColumn, setSortColumn] = useState<SortColumn>('updated_at');
+    const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [selectedSchemaIds, setSelectedSchemaIds] = useState<Set<number>>(new Set());
     const [exportDialogState, setExportDialogState] = useState<ExportDialogState>({
@@ -326,10 +356,57 @@ const AnnotationSchemaManager: React.FC = () => {
       });
     };
 
-    const filteredSchemas = schemas.filter(schema =>
-        schema.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        schema.description?.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredSchemas = useMemo(() => {
+        const term = searchTerm.toLowerCase();
+        return schemas.filter(schema =>
+            schema.name.toLowerCase().includes(term) ||
+            schema.description?.toLowerCase().includes(term)
+        );
+    }, [schemas, searchTerm]);
+
+    const sortedSchemas = useMemo(() => {
+        return [...filteredSchemas].sort((a, b) => {
+            let cmp = 0;
+            switch (sortColumn) {
+                case 'name':
+                    cmp = a.name.localeCompare(b.name);
+                    break;
+                case 'fields':
+                    cmp = countSchemaFields(a.output_contract) - countSchemaFields(b.output_contract);
+                    break;
+                case 'annotations':
+                    cmp = ((a as any).annotation_count ?? 0) - ((b as any).annotation_count ?? 0);
+                    break;
+                case 'updated_at':
+                default: {
+                    const timeA = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+                    const timeB = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+                    cmp = timeA - timeB;
+                    break;
+                }
+            }
+            return sortDirection === 'asc' ? cmp : -cmp;
+        });
+    }, [filteredSchemas, sortColumn, sortDirection]);
+
+    const handleSort = (column: SortColumn) => {
+        if (sortColumn === column) {
+            setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
+        } else {
+            setSortColumn(column);
+            setSortDirection(column === 'name' ? 'asc' : 'desc');
+        }
+    };
+
+    const SortIcon = ({ column }: { column: SortColumn }) => {
+        if (sortColumn !== column) return <ArrowUpDown className="ml-1 h-3 w-3 opacity-40" />;
+        return sortDirection === 'asc'
+            ? <ArrowUp className="ml-1 h-3 w-3" />
+            : <ArrowDown className="ml-1 h-3 w-3" />;
+    };
+
+    const visibleOptionalCount = COLUMN_DEFS.filter(c => columnVisibility[c.key]).length;
+    const tableColSpan = 3 + visibleOptionalCount; // checkbox + name + actions + optionals
 
     const numSelected = selectedSchemaIds.size;
     const numFiltered = filteredSchemas.length;
@@ -375,6 +452,31 @@ const AnnotationSchemaManager: React.FC = () => {
                    />
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                    {viewMode === 'list' && !isMobile && (
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="outline" size="sm" className="h-10 gap-1.5">
+                                    <Columns3 className="h-4 w-4" />
+                                    Columns
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-[180px]">
+                                <DropdownMenuLabel>Toggle columns</DropdownMenuLabel>
+                                <DropdownMenuSeparator />
+                                {COLUMN_DEFS.map(({ key, label }) => (
+                                    <DropdownMenuCheckboxItem
+                                        key={key}
+                                        checked={columnVisibility[key]}
+                                        onCheckedChange={(checked) =>
+                                            setColumnVisibility(prev => ({ ...prev, [key]: !!checked }))
+                                        }
+                                    >
+                                        {label}
+                                    </DropdownMenuCheckboxItem>
+                                ))}
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    )}
                     <Checkbox
                         id="show-archived"
                         checked={showArchived}
@@ -457,26 +559,70 @@ const AnnotationSchemaManager: React.FC = () => {
                                          disabled={numFiltered === 0}
                                       />
                                   </TableHead>
-                                  <TableHead className="w-[250px]">Name</TableHead>
-                                  <TableHead>Description</TableHead>
-                                  <TableHead className="w-[100px] text-center">Fields</TableHead>
-                                  <TableHead className="w-[120px] text-center">Annotations</TableHead>
-                                  <TableHead className="w-[150px]">Last Updated</TableHead>
+                                  <TableHead className="w-[250px]">
+                                      <button
+                                          type="button"
+                                          className="inline-flex items-center font-medium hover:text-foreground"
+                                          onClick={() => handleSort('name')}
+                                      >
+                                          Name
+                                          <SortIcon column="name" />
+                                      </button>
+                                  </TableHead>
+                                  {columnVisibility.description && (
+                                      <TableHead>Description</TableHead>
+                                  )}
+                                  {columnVisibility.fields && (
+                                      <TableHead className="w-[100px] text-center">
+                                          <button
+                                              type="button"
+                                              className="inline-flex items-center justify-center font-medium hover:text-foreground w-full"
+                                              onClick={() => handleSort('fields')}
+                                          >
+                                              Fields
+                                              <SortIcon column="fields" />
+                                          </button>
+                                      </TableHead>
+                                  )}
+                                  {columnVisibility.annotations && (
+                                      <TableHead className="w-[120px] text-center">
+                                          <button
+                                              type="button"
+                                              className="inline-flex items-center justify-center font-medium hover:text-foreground w-full"
+                                              onClick={() => handleSort('annotations')}
+                                          >
+                                              Annotations
+                                              <SortIcon column="annotations" />
+                                          </button>
+                                      </TableHead>
+                                  )}
+                                  {columnVisibility.updated_at && (
+                                      <TableHead className="w-[150px]">
+                                          <button
+                                              type="button"
+                                              className="inline-flex items-center font-medium hover:text-foreground"
+                                              onClick={() => handleSort('updated_at')}
+                                          >
+                                              Last Updated
+                                              <SortIcon column="updated_at" />
+                                          </button>
+                                      </TableHead>
+                                  )}
                                   <TableHead className="w-[150px] text-right pr-4">Actions</TableHead>
                               </TableRow>
                           </TableHeader>
                           <TableBody className="">
                             <TableRow>
                                 {/* Clickable row for creating a new schema */}
-                                <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                                <TableCell colSpan={tableColSpan} className="h-24 text-center text-muted-foreground">
                                     <Button onClick={() => handleOpenEditor('create')} className="h-8 px-3 text-xs font-medium">
                                         <PlusCircle className="h-4 w-4 mr-1.5" />
                                         Create Schema
                                     </Button>
                                 </TableCell>
                             </TableRow>
-                              {filteredSchemas.length > 0 ? (
-                                  filteredSchemas.map((schema) => (
+                              {sortedSchemas.length > 0 ? (
+                                  sortedSchemas.map((schema) => (
                                       <TableRow 
                                           key={schema.id}
                                           data-state={selectedSchemaIds.has(schema.id) ? "selected" : ""}
@@ -496,12 +642,20 @@ const AnnotationSchemaManager: React.FC = () => {
                                             {schema.name}
                                             {!schema.is_active && <Badge variant="outline" className="ml-2">Archived</Badge>}
                                           </TableCell>
-                                          <TableCell className="text-muted-foreground text-sm max-w-sm truncate" title={schema.description || undefined}>{schema.description || '-'}</TableCell>
-                                          <TableCell className="text-center text-sm">{countSchemaFields(schema.output_contract)}</TableCell>
-                                          <TableCell className="text-center text-sm">{(schema as any).annotation_count ?? '-'}</TableCell>
-                                          <TableCell className="text-muted-foreground text-xs">
-                                              {schema.updated_at ? formatDistanceToNowStrict(new Date(schema.updated_at), { addSuffix: true }) : '-'}
-                                          </TableCell>
+                                          {columnVisibility.description && (
+                                              <TableCell className="text-muted-foreground text-sm max-w-sm truncate" title={schema.description || undefined}>{schema.description || '-'}</TableCell>
+                                          )}
+                                          {columnVisibility.fields && (
+                                              <TableCell className="text-center text-sm">{countSchemaFields(schema.output_contract)}</TableCell>
+                                          )}
+                                          {columnVisibility.annotations && (
+                                              <TableCell className="text-center text-sm">{(schema as any).annotation_count ?? '-'}</TableCell>
+                                          )}
+                                          {columnVisibility.updated_at && (
+                                              <TableCell className="text-muted-foreground text-xs">
+                                                  {schema.updated_at ? formatDistanceToNowStrict(new Date(schema.updated_at), { addSuffix: true }) : '-'}
+                                              </TableCell>
+                                          )}
                                           <TableCell className="text-right pr-4">
                                               <div className="flex justify-end items-center gap-1" onClick={(e) => e.stopPropagation()}>
                                                   {/* Primary actions group */}
@@ -560,7 +714,7 @@ const AnnotationSchemaManager: React.FC = () => {
                                   ))
                               ) : (
                                   <TableRow>
-                                      <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                                      <TableCell colSpan={tableColSpan} className="h-24 text-center text-muted-foreground">
                                           {schemas.length === 0 ? "No annotation schemas created yet." : "No schemas match your search."} 
                                       </TableCell>
                                   </TableRow>
@@ -588,7 +742,7 @@ const AnnotationSchemaManager: React.FC = () => {
                                 </div>
                             </CardHeader>
                         </Card>
-                        {filteredSchemas.map(schema => (
+                        {sortedSchemas.map(schema => (
                             <SchemaCard
                                 key={schema.id}
                                 schema={schema}
@@ -601,7 +755,7 @@ const AnnotationSchemaManager: React.FC = () => {
                             />
                         ))}
                     </div>
-                     {filteredSchemas.length === 0 && (
+                     {sortedSchemas.length === 0 && (
                         <div className="col-span-full h-48 flex items-center justify-center text-muted-foreground">
                              {schemas.length === 0 ? "No annotation schemas created yet." : "No schemas match your search."}
                         </div>

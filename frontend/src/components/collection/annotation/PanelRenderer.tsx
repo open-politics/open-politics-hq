@@ -664,7 +664,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
     <div
       className={cn(
         "flex flex-col relative group transition-all duration-200 h-full rounded-sm w-full overflow-y-auto",
-        "border",
+        "bg-background/60 and backdrop-blur-sm",
         isDragging && "opacity-50 scale-95 rotate-1",
       )}
       onDragOver={handleDragOver}

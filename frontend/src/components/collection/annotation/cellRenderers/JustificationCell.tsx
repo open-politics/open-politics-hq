@@ -12,7 +12,7 @@ import {
 
 /* Per-row justification on `array<object>` items lands as a typed object
  * `{reasoning, text_spans: [...]}` (canonical shape per §4.9 of
- * graph_canon_relationships). The ObjectCell fallback rendered it as `{2}`
+ * the inline-justifications work). The ObjectCell fallback rendered it as `{2}`
  * which carried no signal. This cell renders a small inspectable `?` button
  * that previews the reasoning + first text snippet on hover, and surfaces the
  * full justification side-panel on click via the row's onSelect handler. */

@@ -181,8 +181,14 @@ const ROLE_ACCEPTS: Record<string, FieldShape[]> = {
   // measure / numeric
   value:           ['number', 'boolean', 'enum_string'],
   size:            ['number'],
-  // map
-  position:        ['string', 'object'],  // geo coords / addresses
+  // map — a place is a NAME, and under the observation model that name almost
+  // always arrives as an entity typed `Location`, singly (`document.at`) or as
+  // a roster (`document.places[*]`). Accepting only `string`/`object` locked
+  // the map out of every v2 schema: the geocode task has resolved entity dicts
+  // and lists of them since it was written (`geocode.py:_emit_leaf`), and
+  // `schema_map` already publishes those paths in `place_paths`. The picker was
+  // the only thing that would not let you reach them.
+  position:        ['string', 'array_string', 'entity', 'array_entity', 'object'],
   label:           ['string', 'number', 'enum_string', 'date', 'entity', 'array_string', 'array_entity'],
   // table — keep wide; the renderer handles any shape
   columns:         ['string', 'number', 'boolean', 'date', 'enum_string', 'array_string', 'array_string_enum', 'array_number', 'entity', 'array_entity', 'object', 'array_object', 'triplet'],
@@ -372,28 +378,18 @@ function RolesSection({
         </>
       );
     case 'graph':
-      return (
-        <>
-          {/* Triplet field — when set, source/target/predicate auto-derive
-              from the triplet item's subject_name/object_name/predicate
-              keys. Manual slots stay only for non-triplet (entity-pair)
-              graph shapes. */}
-          {renderSlot(tripletSource ? 'Triplet field' : 'Source entity', 'source', {
-            hint: tripletSource
-              ? 'Triplet detected — source / target / predicate auto-derived from this field.'
-              : 'For entity-pair graphs (no triplet field). Pick the source entity field.',
-          })}
-          {!tripletSource && (
-            <>
-              {renderSlot('Target entity', 'target', { hint: 'The other side of each edge.' })}
-              {renderSlot('Edge label', 'edge_label', { hint: 'Optional. Field whose values label each edge.' })}
-            </>
-          )}
-          {renderSlot('Edge weight (numeric)', 'edge_weight_field', {
-            hint: 'Optional. Defaults to count of co-occurrences.',
-          })}
-        </>
-      );
+      // Deliberately empty. A graph has no axes in the sense the other panels
+      // do — no fixed role list, N projections rather than one field, and the
+      // roles that matter live INSIDE a projection. What this branch used to
+      // write was `cfg.source`, which `resolve_projections` treats as a
+      // pre-projections fallback and ignores whenever derivation succeeds; it
+      // also labelled a roster a "triplet". A control that is both ignored and
+      // wrong is worse than none.
+      //
+      // The replacement is two surfaces in the panel's own toolbar:
+      // `GraphAxesPopover` (three axes across four frames) and
+      // `GraphLayersPopover` (the resolved layers, read off the wire).
+      return null;
     case 'measurements':
       return (
         <div className="text-[11px] text-muted-foreground italic">

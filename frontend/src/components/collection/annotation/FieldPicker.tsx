@@ -243,7 +243,7 @@ export function FieldPicker({
             </Button>
           )}
         </div>
-        <div className="max-h-72 overflow-y-auto border rounded bg-background p-1">
+        <div className="max-h-72 overflow-y-auto rounded bg-background p-1">
           {paths.length === 0 ? (
             <div className="text-xs text-muted-foreground p-2 text-center italic">
               {emptyMessage}

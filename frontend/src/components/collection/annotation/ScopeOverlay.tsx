@@ -27,10 +27,13 @@ interface ScopeOverlayProps {
 
 export function ScopeBadge({ panelConfig, allPanels, onRemoveScope }: ScopeOverlayProps) {
   const [isOpen, setIsOpen] = useState(false);
-  // Post-P2 field is ``scopes_in``; legacy ``incoming_scopes`` may still
-  // surface on cached panels until the next refresh. Read both, default
-  // to empty so the component is null-safe.
-  const scopes = panelConfig.scopes_in ?? panelConfig.incoming_scopes ?? [];
+  // ``scopes_in`` is the field. Legacy ``incoming_scopes`` may still surface
+  // on cached panels until they migrate, so fall back on *emptiness* rather
+  // than on nullishness — `??` short-circuits on a truthy empty array, which
+  // hid every legacy scope this badge exists to show.
+  const scopes = panelConfig.scopes_in?.length
+    ? panelConfig.scopes_in
+    : (panelConfig.incoming_scopes ?? []);
 
   if (scopes.length === 0) return null;
 

@@ -12,7 +12,7 @@ import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { AnnotationSchemaRead, AssetRead, KnowledgeGraphRead, SimilarPairRead } from '@/client';
-import { FormattedAnnotation, TimeAxisConfig, PanelConfig, GraphVizConfig } from '@/lib/annotations/types';
+import { FormattedAnnotation, TimeAxisConfig, PanelConfig, GraphVizConfig, GraphProjection } from '@/lib/annotations/types';
 import { KnowledgeGraphsService, AnnotationsService, EntitiesService } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
@@ -31,8 +31,9 @@ import {
 import { isTimestampField, isLocationField, parseTimestampValue } from '@/lib/annotations/fieldDetection';
 import { inferFieldRange } from '@/components/collection/annotation/cellRenderers';
 import type { GraphEdits } from '@/lib/annotations/types';
-import { ForceGraph, type ForceGraphHandle, GraphNode, GraphEdge, aggregatorResponseToGraphData, GraphViewConfig, defaultGraphViewConfig, GraphSettingsPopover, GraphFilterPanel, edgeFieldRange, bundleEdges, bundleIdForEdge, bundleIdForPair, type BundledEdge } from '@/components/collection/graph';
+import { ForceGraph, type ForceGraphHandle, GraphNode, GraphEdge, type Clock, viewGraphToGraphData, GraphViewConfig, defaultGraphViewConfig, GraphSettingsPopover, GraphFilterPanel, edgeFieldRange, bundleEdges, bundleIdForEdge, bundleIdForPair, type BundledEdge } from '@/components/collection/graph';
 import { useFullscreen } from '@/components/collection/graph/forcegraph/useFullscreen';
+import { ZoomToolbar } from '@/components/collection/graph/forcegraph/ZoomToolbar';
 import { NodeDetailHUD, type EvidenceItem as HUDEvidenceItem, type DocumentBadge as HUDDocBadge, type AssetFieldRow as HUDAssetFieldRow, type EligibleField as HUDEligibleField } from '@/components/collection/graph/forcegraph/NodeDetailHUD';
 import { NodeProjectionDossier } from '@/components/collection/graph/forcegraph/NodeProjectionDossier';
 import { EdgeBundleHUD, type EdgeBundleEvidenceItem, type EdgeBundleDocChip } from '@/components/collection/graph/forcegraph/EdgeBundleHUD';
@@ -42,6 +43,15 @@ import { PinBoard as PinBoardOverlay } from '@/components/collection/graph/force
 import { useCanonEntityLookup } from '@/hooks/useCanonEntityLookup';
 import { resolveEntityColor } from '@/lib/annotations/colors';
 import { PanelHeaderSlot } from './panels/PanelHeaderSlot';
+import { GraphQueryBar } from './panels/GraphQueryBar';
+import { GraphAxesPopover, type FrameCoverage } from './panels/GraphAxesPopover';
+import { GraphLayersPopover, type GraphLayer, type LayerShow, type LayerView } from './panels/GraphLayersPopover';
+import { budgetToAnchors, defaultAxisBudget, type AxisBudget } from '@/components/collection/graph/forcegraph/axes';
+import { TopNodesList } from '@/components/collection/graph/forcegraph/TopNodesList';
+import { TimeScrubber, filterByCursor } from '@/components/collection/graph/forcegraph/TimeScrubber';
+import { GraphHUD, RegionToggles, defaultHudConfig, type HudConfig } from '@/components/collection/graph/hud';
+import { negatedValues, setNegatedValues } from '@/lib/query/graph_query_language';
+import { useSurfaceCommands } from '@/hooks/useSurfaceCommands';
 import { EmptyStateCard } from './panels/EmptyStateCard';
 import { ValueAliasManager } from './panels/ValueAliasManager';
 import { EvidenceDrawer } from './panels/EvidenceDrawer';
@@ -327,7 +337,62 @@ export default function AnnotationResultsGraph({
   // Graph data fetch — uses the new Formula-based useAnnotationView signature.
   // triplet_field is omitted when the formula already encodes the group path
   // (the backend uses formula.group[0].path as its own default).
+  // Projections are authoritative when present; `triplet_field` stays in the
+  // request as the legacy fallback so an unconfigured panel is byte-identical
+  // to before. The backend resolves node roles from the schema map, so a
+  // projection only has to name its array to work.
+  const projections = useMemo(
+    () => (cfg?.projections ?? []) as GraphProjection[],
+    [cfg?.projections],
+  );
+
+  const axisBudget: AxisBudget = useMemo(
+    () => ({ ...defaultAxisBudget, ...((cfg as any)?.axes ?? {}) }),
+    [(cfg as any)?.axes],
+  );
+  const setAxisBudget = useCallback((next: AxisBudget) => {
+    onUpdatePanel({ panel_config: { ...cfg, axes: next } as any });
+  }, [onUpdatePanel, cfg]);
+
+  const layerView: LayerView = useMemo(
+    () => ((cfg as any)?.layer_view ?? {}) as LayerView,
+    [(cfg as any)?.layer_view],
+  );
+  const setLayerView = useCallback((next: LayerView) => {
+    onUpdatePanel({ panel_config: { ...cfg, layer_view: next } as any });
+  }, [onUpdatePanel, cfg]);
+
+  // GQL. Persisted on panel_config so a query survives reload, travels with a
+  // shared dashboard, and — the point — is writable by the companion.
+  const graphQuery: string = cfg?.q ?? '';
+  const setGraphQuery = useCallback((q: string) => {
+    onUpdatePanel({ panel_config: { ...cfg, q: q || null } as GraphVizConfig });
+  }, [onUpdatePanel, cfg]);
+
+  /** "Show me this node's neighbourhood" — as a query, not as a list.
+   *
+   *  Replaces the connection list the node HUD used to render along its bottom
+   *  edge. A traversal is strictly the better answer: it is visible, editable,
+   *  survives reload, travels with a shared dashboard, and composes with every
+   *  other token — `from:"X" hops:1 type:Organization after:2016` is one more
+   *  keystroke, and was inexpressible in a list of chips.
+   *
+   *  Replaces any existing `from:`/`hops:` rather than appending, because two
+   *  `from:` tokens INTERSECT (the co-presence semantic) and silently turning
+   *  "the neighbourhood of X" into "reachable from both X and Y" on a second
+   *  click would be the kind of surprise that makes people stop trusting the
+   *  bar. Everything else in the query is preserved. */
+  const focusSubgraph = useCallback((label: string) => {
+    if (!label) return;
+    const kept = graphQuery
+      .split(/\s+/)
+      .filter(t => t && !/^-?(from|hops):/i.test(t));
+    setGraphQuery([...kept, `from:"${label}"`, 'hops:1'].join(' '));
+  }, [graphQuery, setGraphQuery]);
+
   const graphQueryConfig = useMemo(() => ({
+    projections,
+    q: graphQuery || null,
     triplet_field: tripletFieldStr,
     dedup: 'normalized' as const,
     edge_weight_field: edgeWeightFieldStr ?? null,
@@ -336,7 +401,12 @@ export default function AnnotationResultsGraph({
     edge_group_by: edgeGroupByStr ?? null,
     null_policy: cfg?.null_policy ?? 'skip',
     forward_properties: cfg?.forward_properties ?? [],
-  }), [tripletFieldStr, edgeWeightFieldStr, edgeWeightMode, nodeGroupByStr, edgeGroupByStr, cfg?.null_policy, cfg?.forward_properties]);
+    // The document rung — annotation-scoped, so it sits beside the projections
+    // rather than inside one. "This filing is about Malta, dated 2014" places
+    // and dates everything the filing mentions, weakly.
+    doc_place: (cfg as any)?.doc_place ?? null,
+    doc_time: (cfg as any)?.doc_time ?? null,
+  }), [projections, graphQuery, tripletFieldStr, edgeWeightFieldStr, edgeWeightMode, nodeGroupByStr, edgeGroupByStr, cfg?.null_policy, cfg?.forward_properties, (cfg as any)?.doc_place, (cfg as any)?.doc_time]);
 
   const { data: viewData, isLoading: isViewLoading, refetch: refetchView } = useAnnotationView({
     infospaceId,
@@ -348,6 +418,15 @@ export default function AnnotationResultsGraph({
     graph: graphQueryConfig,
     enabled: !!runId && !!infospaceId,
   });
+
+  // What the ENGINE actually ran — resolved layers and per-frame coverage,
+  // returned with the graph phase. Read rather than re-derived: a
+  // configuration surface that recomputes what it is configuring drifts from
+  // the thing in play, which is exactly how the axis popover ended up writing
+  // a field the engine ignores.
+  const graphMeta = (viewData?.graph as any)?.meta ?? {};
+  const layers: GraphLayer[] = graphMeta.layers ?? [];
+  const frameCoverage: FrameCoverage | undefined = graphMeta.frames;
 
   // Separate rows fetch — the graph response carries only ``annotation_ids``
   // per node, not asset ids. To populate the node detail panel's "Appears
@@ -404,6 +483,22 @@ export default function AnnotationResultsGraph({
   const onGraphEditsChange = useCallback((edits: GraphEdits) => {
     onUpdatePanel({ panel_config: { ...cfg, edits } as any });
   }, [onUpdatePanel, cfg]);
+
+  // Projections live on panel_config, so a source set survives reload and
+  // travels with a shared dashboard.
+  // `linked` and `off` both remove a layer from the canvas; only `off` stops
+  // the fetch. Nodes carry `source_paths`, so hiding by layer is a render
+  // filter over data that is already there — which is what lets a linked layer
+  // keep counting for degree and keep routing a traversal.
+  const hiddenLayerPaths = useMemo(() => new Set(
+    Object.entries(layerView)
+      .filter(([, show]) => show === 'linked' || show === 'pane')
+      .map(([path]) => path),
+  ), [layerView]);
+
+  const handleProjectionsChange = useCallback((next: GraphProjection[]) => {
+    onUpdatePanel({ panel_config: { ...cfg, projections: next } as any });
+  }, [onUpdatePanel, cfg]);
   const { activeInfospace } = useInfospaceStore();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -446,9 +541,31 @@ export default function AnnotationResultsGraph({
     persistedGraphConfig ? { ...defaultGraphViewConfig, ...persistedGraphConfig } : defaultGraphViewConfig
   );
   
-  // Filter state
-  const [hiddenEntityTypes, setHiddenEntityTypes] = useState<Set<string>>(new Set());
-  const [hiddenPredicates, setHiddenPredicates] = useState<Set<string>>(new Set());
+  // Time cursor. Deliberately NOT persisted to panel_config: where you happen
+  // to be scrubbing is a viewing gesture, unlike a query or a source set.
+  const [timeCursor, setTimeCursor] = useState<string | null>(null);
+
+  // ── Filter state IS the query ────────────────────────────────────────────
+  //
+  // These used to be component `useState` Sets: a second, invisible filter
+  // that shadowed the query string. Two sources of truth for "what's shown" —
+  // the chips were lost on remount, absent from a shared dashboard, and
+  // unreachable by the companion, which can only write GQL.
+  //
+  // Now a chip click rewrites `q`. Hiding a type and typing `-type:Person`
+  // are the same act, and the bar always shows what is actually filtered.
+  const hiddenEntityTypes = useMemo(
+    () => negatedValues(graphQuery, 'type'), [graphQuery],
+  );
+  const hiddenPredicates = useMemo(
+    () => negatedValues(graphQuery, 'predicate'), [graphQuery],
+  );
+  const setHiddenEntityTypes = useCallback((next: Set<string>) => {
+    setGraphQuery(setNegatedValues(graphQuery, 'type', next));
+  }, [graphQuery, setGraphQuery]);
+  const setHiddenPredicates = useCallback((next: Set<string>) => {
+    setGraphQuery(setNegatedValues(graphQuery, 'predicate', next));
+  }, [graphQuery, setGraphQuery]);
 
   // Imperative ref for the renderer — used by the settings popover's
   // "Re-run layout" button and could be wired to search-zoom in future.
@@ -467,7 +584,7 @@ export default function AnnotationResultsGraph({
   // and ``graphEdits``), the same array identity survives view-mode flips,
   // so the simulation re-mounts in the new mode seeded with existing
   // positions instead of respawning from random.
-  const { nodes, edges, graphData } = useMemo<{
+  const { nodes: rawNodes, edges: rawEdges, graphData } = useMemo<{
     nodes: GraphNode[];
     edges: GraphEdge[];
     graphData: GraphData | null;
@@ -475,20 +592,8 @@ export default function AnnotationResultsGraph({
     if (!viewData?.graph) return { nodes: [], edges: [], graphData: null };
 
     const viewGraph = viewData.graph;
-    let graphNodes: GraphNode[] = viewGraph.nodes.map(n => ({
-      id: n.id,
-      label: n.name,
-      type: n.type,
-      frequency: n.frequency,
-      annotationIds: n.source_annotation_ids,
-    }));
-    let graphEdges: GraphEdge[] = viewGraph.edges.map((e, i) => ({
-      id: `edge-${i}`,
-      sourceId: e.source,
-      targetId: e.target,
-      predicate: e.predicate,
-      weight: e.weight,
-    }));
+    // One tested mapper owns the wire contract — see `graphAdapters.ts`.
+    let { nodes: graphNodes, edges: graphEdges } = viewGraphToGraphData(viewGraph);
 
     if (graphEdits) {
       const deletedNodeIds = new Set(graphEdits.deletedNodes.map(n => n.nodeId));
@@ -543,6 +648,58 @@ export default function AnnotationResultsGraph({
   // canvas reads bundles; ``edges`` (the individual members) stays
   // authoritative for node-focus, evidence, curate, dedup, and export. Click
   // a bundle → ``EdgeBundleHUD`` unrolls the per-predicate breakdown.
+  // Time filtering is applied to the SAME arrays every downstream consumer
+  // reads (bundles, HUDs, curate, export), so a scrubbed graph is consistent
+  // everywhere rather than only on the canvas.
+  // Which clock the scrubber runs on. Read here rather than from
+  // `resolvedHudConfig` (declared further down) because the filter and the bars
+  // must be handed the SAME value — they used to disagree, the bars preferring
+  // `a0`/`a1` per item while the filter read `t0`/`t1` unconditionally.
+  const barsClock: Clock = (cfg as any)?.hud?.bars?.clock ?? defaultHudConfig.bars.clock;
+  const setBarsClock = useCallback((next: Clock) => {
+    const hud = (cfg as any)?.hud ?? {};
+    onUpdatePanel({
+      panel_config: {
+        ...cfg,
+        hud: { ...hud, bars: { ...defaultHudConfig.bars, ...hud.bars, clock: next } },
+      } as GraphVizConfig,
+    });
+  }, [cfg, onUpdatePanel]);
+
+  const { nodes, edges } = useMemo(() => {
+    const t = filterByCursor(rawNodes, rawEdges, timeCursor, barsClock);
+    if (hiddenLayerPaths.size === 0) return t;
+    // A node is hidden only when EVERY layer that produced it is hidden — the
+    // same entity is usually named by several sections, and dropping it
+    // because one of them is in pane mode would delete half the graph.
+    // EDGES are what make a layer visible. Each carries exactly one source
+    // path, so hiding `observations` drops its role edges and the graph
+    // visibly changes. Nodes are named by three or four layers each — filtering
+    // only those made the whole control a no-op, because almost nothing is
+    // produced by one layer alone.
+    const keptEdges = t.edges.filter(e =>
+      !(e.sourcePaths ?? []).every(p => hiddenLayerPaths.has(p)));
+
+    const keptNodes = t.nodes.filter(n => {
+      const from = n.sourcePaths ?? [];
+      return from.length === 0 || from.some(p => !hiddenLayerPaths.has(p));
+    });
+    const kept = new Set(keptNodes.map(n => n.id));
+    return {
+      nodes: keptNodes,
+      edges: keptEdges.filter(e => kept.has(e.sourceId) && kept.has(e.targetId)),
+    };
+  }, [rawNodes, rawEdges, timeCursor, barsClock, hiddenLayerPaths]);
+
+  // The budget IS the anchors. `anchors.ts` has resolved three dimensions all
+  // along — `AnchorSpec.axis`, `anchorTarget(…, 'z')`, `forceZ` — and the only
+  // writer of `config.anchors` never emitted `axis`, so the block was
+  // unreachable by clicking. This is the writer that does.
+  const graphConfigWithAxes = useMemo<GraphViewConfig>(() => ({
+    ...graphConfig,
+    anchors: budgetToAnchors(axisBudget, graphConfig.clusterStrength ?? 0.4),
+  }), [graphConfig, axisBudget]);
+
   const bundledEdges = useMemo(() => bundleEdges(edges), [edges]);
   const bundlesById = useMemo(
     () => new Map(bundledEdges.map(b => [b.id, b])),
@@ -874,6 +1031,22 @@ export default function AnnotationResultsGraph({
     onSettingsChange?.({ graphViewConfig: newConfig });
   }, [onSettingsChange]);
 
+  // Companion integration. The operator writes a GQL string into the bar
+  // rather than mutating hidden state — the user sees exactly what was written
+  // and can edit it, same contract as the content explorer's search command.
+  // `focus` drills into one node by name so "show me Merkel's neighbourhood"
+  // becomes a query the user can then widen or narrow themselves.
+  useSurfaceCommands('graph', {
+    query: (p) => setGraphQuery(String(p?.q ?? '')),
+    focus: (p) => {
+      const name = String(p?.name ?? '').trim();
+      if (!name) return;
+      const hops = Number(p?.hops ?? 1);
+      setGraphQuery(`from:"${name}" hops:${Number.isFinite(hops) ? hops : 1}`);
+    },
+    clearQuery: () => setGraphQuery(''),
+  });
+
   // Search suggestions based on node labels
   const searchSuggestions = useMemo(() => {
     if (!searchTerm || !nodes.length) return [];
@@ -978,6 +1151,66 @@ export default function AnnotationResultsGraph({
       setSelectedNodeId(node.id);
     }, 300);
   }, [showDetailPanel]);
+
+  // ── HUD (occurrences + evidence) ────────────────────────────────────────
+  //
+  // Selecting from a list is the reverse of the usual direction: you fix the
+  // items pane, click a row, and the canvas follows. That is the whole reason
+  // a pane can be unlinked from the lens.
+  const handleNodeSelectById = useCallback((nodeId: string) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (node) handleNodeSelect(node);
+  }, [nodes, handleNodeSelect]);
+
+  const hudConfig = useMemo(
+    () => (cfg as any)?.hud ?? undefined,
+    [cfg],
+  );
+  const handleHudConfigChange = useCallback((next: HudConfig) => {
+    onUpdatePanel({ panel_config: { ...cfg, hud: next } as GraphVizConfig });
+  }, [onUpdatePanel, cfg]);
+  // Fully resolved, for the controls. `GraphHUD` merges defaults itself so a
+  // panel that has never been configured renders; the toggles need the same
+  // merged view to show what is actually on rather than what was persisted.
+  const resolvedHudConfig: HudConfig = useMemo(() => ({
+    ...defaultHudConfig,
+    ...hudConfig,
+    items: { ...defaultHudConfig.items, ...hudConfig?.items },
+    evidence: { ...defaultHudConfig.evidence, ...hudConfig?.evidence },
+    bars: { ...defaultHudConfig.bars, ...hudConfig?.bars },
+    lanes: { ...defaultHudConfig.lanes, ...hudConfig?.lanes },
+  }), [hudConfig]);
+
+  // Region mode: a spatial gesture is a query edit, not a private viewport
+  // state. Writing `near:` into `q` is what makes clicking a place scope the
+  // canvas, the items and the evidence together — and makes the gesture
+  // survive reload, travel with a shared dashboard, and be reachable by the
+  // companion, none of which a map's own selection would be.
+  const activePlace = useMemo(() => {
+    const m = /(?:^|\s)near:"?([^"<\s]+)"?/.exec(graphQuery);
+    return m ? m[1] : null;
+  }, [graphQuery]);
+
+  // Scoping to an interest is the first step of the whole method: narrow to a
+  // `why`, and the occurrences, evidence, map and bars all follow.
+  const handleScopeToInterest = useCallback((interest: string) => {
+    const stripped = graphQuery.replace(/(?:^|\s)serves:"?[^"\s]+"?/gi, '').trim();
+    const quoted = /[\s,]/.test(interest) ? `"${interest}"` : interest;
+    const already = new RegExp(`serves:"?${interest.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"?`, 'i')
+      .test(graphQuery);
+    setGraphQuery(already ? stripped : `${stripped ? `${stripped} ` : ''}serves:${quoted}`);
+  }, [graphQuery, setGraphQuery]);
+
+  const handleScopeToPlace = useCallback((place: string, radiusKm: number) => {
+    const stripped = graphQuery.replace(/(?:^|\s)near:"?[^"<\s]+"?(?:<\d+(?:km|mi)?)?/gi, '').trim();
+    const quoted = /[\s,]/.test(place) ? `"${place}"` : place;
+    // Clicking the active place again clears it — the same toggle semantics as
+    // every other chip, so nothing needs a separate "clear" affordance.
+    const next = activePlace?.toLowerCase() === place.toLowerCase()
+      ? stripped
+      : `${stripped ? `${stripped} ` : ''}near:${quoted}<${radiusKm}km`;
+    setGraphQuery(next);
+  }, [graphQuery, activePlace, setGraphQuery]);
 
   // Open the edge-bundle inspector for a (focal, peer) pair — fired from the
   // node HUD's peer-grouped connection rows. Closes the node HUD (clears the
@@ -1341,9 +1574,16 @@ export default function AnnotationResultsGraph({
   // is declared. The placement ordering matters because the memo depends on
   // it; pulling the declaration up here would cause a TDZ reference error.
 
-  // needsTripletPick: true when the panel_config has no source field configured
-  // AND the formula has no group path. Drives the empty-state teacher.
-  const needsTripletPick = !cfg?.source && !(panelConfig.formula?.group?.[0]?.path);
+  // An empty graph has two very different causes, and telling the user the
+  // wrong one is worse than saying nothing.
+  //
+  // The old test was "no `source` and no group path" → "pick a triplet field",
+  // which on a v2 schema is advice for a control that no longer exists and a
+  // field the engine ignores. What actually decides it is whether the ENGINE
+  // resolved any layers: none means the schema declares nothing graphable
+  // (real, and not fixable from this panel); some-but-empty means the layers
+  // ran and the rows were blank, which is a corpus problem.
+  const nothingGraphable = layers.length === 0;
 
   const selectedNodeDetails = selectedNodeId ? getNodeDetails(selectedNodeId) : null;
 
@@ -1488,6 +1728,16 @@ export default function AnnotationResultsGraph({
     if (ids.length === 0) return null;
     return new Set(ids);
   }, [pinBoard.showLens, activePinPage]);
+
+  // What a pane means by "the selection": the focused node, plus anything
+  // pinned. Panes set to `follow: 'lens'` ignore this entirely.
+  const hudFocusIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (selectedNodeId) ids.add(selectedNodeId);
+    if (pinNodeIds) for (const id of pinNodeIds) ids.add(id);
+    return ids;
+  }, [selectedNodeId, pinNodeIds]);
+
 
   const pinNetworkEdges: Set<string> | null = useMemo(() => {
     if (!pinNodeIds || pinNodeIds.size < 2) return null;
@@ -2188,7 +2438,7 @@ export default function AnnotationResultsGraph({
 
       {/* Toolbar */}
       {!focusMode && (
-      <div className="flex flex-wrap items-center gap-2 px-2 py-1.5 border-b bg-muted/20">
+      <div className="flex flex-wrap items-center gap-2 px-2 py-1.5 ">
         {/* View Mode Toggle (2D / 3D). Persisted via graphViewConfig.viewMode.
             3D is dynamic-imported — Three.js (~600 KB) doesn't ship until
             the user flips this for the first time on the page. */}
@@ -2323,6 +2573,26 @@ export default function AnnotationResultsGraph({
           })()}
         </ButtonGroup>
 
+        {/* WHERE things sit — three axes across four frames. The panel's
+            primary control; "which field is the source" was never the
+            question an investigator has. */}
+        <GraphAxesPopover
+          budget={axisBudget}
+          onChange={setAxisBudget}
+          coverage={frameCoverage}
+          viewMode={graphConfig.viewMode}
+          onViewModeChange={(v) => handleGraphConfigChange({ ...graphConfig, viewMode: v })}
+        />
+
+        {/* WHAT the graph is made of — the resolved layers, in the model's own
+            four tiers. Read off the wire, never re-derived. */}
+        <GraphLayersPopover
+          layers={layers}
+          view={layerView}
+          onViewChange={setLayerView}
+          legacyField={tripletFieldStr}
+        />
+
         {/* Graph Settings */}
         <GraphSettingsPopover
           config={graphConfig}
@@ -2332,6 +2602,16 @@ export default function AnnotationResultsGraph({
           edgeFieldDataRange={edgeFieldRange(edges, graphConfig.edgeWidthField)}
           onReheatSimulation={() => forceGraphRef.current?.reheatSimulation()}
         />
+
+        {/* Best-connected nodes. Was a strip floating over the middle of the
+            canvas; it is the same data, out of the graph's way. */}
+        {nodes.length > 0 && (
+          <TopNodesList
+            nodes={nodes}
+            edges={edges}
+            onNodeClick={handleNodeSelect}
+          />
+        )}
 
         {/* Filter Panel */}
         {nodes.length > 0 && (
@@ -2396,12 +2676,76 @@ export default function AnnotationResultsGraph({
         </div>
       )}
 
-      {/* Empty-state teacher when triplet role is unfilled */}
-      {!isLoading && !error && nodes.length === 0 && needsTripletPick && (
+      {/* Empty graph — and which emptiness it is. */}
+      {!isLoading && !error && nodes.length === 0 && (
         <div className="flex-1 p-4">
-          <EmptyStateCard
-            reason={{ kind: 'role_unfilled', roleLabel: 'Triplet field' }}
-            className="h-full"
+          {nothingGraphable ? (
+            <EmptyStateCard
+              reason={{ kind: 'role_unfilled', roleLabel: 'Graph-capable field' }}
+              className="h-full"
+            />
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
+              <p className="text-sm font-medium">Nothing to draw</p>
+              <p className="max-w-sm text-xs text-muted-foreground">
+                {layers.length} layer{layers.length === 1 ? '' : 's'} ran and
+                produced no nodes — the sections are declared and the rows are
+                empty. Open Layers to see which.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Graph query — filtering, shape predicates, traversal. Above the
+          canvas because it governs what the canvas contains. */}
+      {!focusMode && (
+        <div className="px-2 pb-1">
+          {/* Query and view controls share one row. The canvas's top-left is
+              the corner node info, docs and pins all want; zoom and randomise
+              are the least contextual things that were competing for it. */}
+          <div className="flex items-start gap-1.5">
+            <GraphQueryBar
+              value={graphQuery}
+              onChange={setGraphQuery}
+              nodeCount={nodes.length}
+              edgeCount={edges.length}
+              nodeCap={panelConfig.formula ? 1000 : null}
+              className="min-w-0 flex-1"
+            />
+            <RegionToggles
+              viewConfig={graphConfig}
+              onViewConfigChange={handleGraphConfigChange}
+              hudConfig={resolvedHudConfig}
+              onHudConfigChange={handleHudConfigChange}
+            />
+            <ZoomToolbar
+              placement="inline"
+              handle={{
+                current: {
+                  setZoom: (s, d) => forceGraphRef.current?.setZoom(s, d),
+                  zoomToFit: (d, p) => forceGraphRef.current?.zoomToFit(d, p),
+                  resetView: (d) => forceGraphRef.current?.resetView(d),
+                  getZoom: () => forceGraphRef.current?.getZoom() ?? 1,
+                },
+              }}
+              hideStepButtons={graphConfig.viewMode === '3d'}
+              config={graphConfig}
+              onConfigChange={handleGraphConfigChange}
+              onReheatSimulation={() => forceGraphRef.current?.reheatSimulation()}
+            />
+          </div>
+          {/* Timeline. Reads the intervals already on the payload, so scrubbing
+              is a client-side predicate with no refetch. */}
+          <TimeScrubber
+            nodes={rawNodes}
+            edges={rawEdges}
+            cursor={timeCursor}
+            onCursorChange={setTimeCursor}
+            clock={barsClock}
+            onClockChange={setBarsClock}
+            placement={hudConfig?.bars?.placement ?? 'inline'}
+            className="mt-1"
           />
         </div>
       )}
@@ -2412,8 +2756,10 @@ export default function AnnotationResultsGraph({
           <div className="relative h-full w-full overflow-hidden">
             <ForceGraph
               ref={forceGraphRef}
+              viewControls="external"
               nodes={nodes}
               edges={renderEdges}
+              timeCursor={timeCursor}
               highlightedNodeId={selectedNodeId}
               connectedNodeIds={effectiveConnectedNodeIds}
               highlightedEdgeId={highlightedBundleEdgeId}
@@ -2434,7 +2780,7 @@ export default function AnnotationResultsGraph({
               onBackgroundClick={clearSelection}
               autoResize={true}
               chrome={focusMode ? 'minimal' : 'full'}
-              config={graphConfig}
+              config={graphConfigWithAxes}
               onConfigChange={handleGraphConfigChange}
               colorOverrides={schemaColorOverrides}
               typeIcons={schemaTypeIcons}
@@ -2442,16 +2788,39 @@ export default function AnnotationResultsGraph({
               hiddenEntityTypes={hiddenEntityTypes}
               hiddenPredicates={hiddenPredicates}
               onToggleEntityType={(type) => {
-                setHiddenEntityTypes(prev => {
-                  const next = new Set(prev);
-                  if (next.has(type)) next.delete(type);
-                  else next.add(type);
-                  return next;
-                });
+                // No functional setter: the truth is the query string, not a
+                // Set, so there is no previous state to fold over.
+                const next = new Set(hiddenEntityTypes);
+                if (next.has(type)) next.delete(type);
+                else next.add(type);
+                setHiddenEntityTypes(next);
               }}
-              legendHidden={showDetailPanel && hudOwner !== null}
               focusedEntityNames={focusedEntityNames}
             />
+
+            {/* The HUD — occurrences and their evidence, over the canvas.
+                Two readings of the SAME graph, so they overlay rather than
+                sitting in sibling dashboard panels: separate panels would
+                invite them to drift out of sync, which is the one thing they
+                must never do. Derived entirely from nodes/edges already in
+                memory — no fetch, so the list cannot disagree with the canvas.
+                Hidden in focus mode along with the rest of the chrome. */}
+            {!focusMode && (
+              <GraphHUD
+                nodes={nodes}
+                edges={renderEdges}
+                config={hudConfig}
+                onConfigChange={handleHudConfigChange}
+                focusIds={hudFocusIds}
+                selectedNodeId={selectedNodeId}
+                onSelectNode={handleNodeSelectById}
+                timeCursor={timeCursor}
+                showRegions={graphConfig.mapMode === 'region'}
+                activePlace={activePlace}
+                onScopeToPlace={handleScopeToPlace}
+                onScopeToInterest={handleScopeToInterest}
+              />
+            )}
 
             {/* Pin board — bottom-left overlay. Multi-page persistent
                 collection of pinned nodes. The active page's pinned ids
@@ -2720,7 +3089,7 @@ export default function AnnotationResultsGraph({
                 focus mode. ===== */}
             {!focusMode && (
             <div
-              className="absolute bottom-[4.5rem] left-1/2 -translate-x-1/2 z-30 !bg-background/90"
+              className="absolute bottom-1/5 left-1/2 -translate-x-1/2 z-30 !bg-background/90 rounded-full"
               style={{ pointerEvents: 'auto' }}
             >
               <div className="relative">
@@ -2798,7 +3167,6 @@ export default function AnnotationResultsGraph({
                 nodes={nodes}
                 documents={hudDocuments}
                 evidence={hudEvidence}
-                searchTerm={searchTerm}
                 highlightedEdgeId={activeEdgeId}
                 eligibleFields={eligibleFields}
                 visibleFieldUids={effectiveHudVisibleFields}
@@ -2816,8 +3184,6 @@ export default function AnnotationResultsGraph({
                 onTogglePin={selectedNodeId ? () => handleTogglePin(selectedNodeId) : undefined}
                 pinEvidencePeerIds={pinEvidencePeerIds}
                 onPeerClick={handleNodeSelect}
-                onConnectionClick={(peerId) => { if (selectedNodeId) openBundleForPeer(selectedNodeId, peerId); }}
-                colorOverrides={schemaColorOverrides}
                 onAssetClick={openDetailOverlay}
                 onEdgeHover={(edgeId, peerId) =>
                   setHoveredEvidence(edgeId && peerId ? { edgeId, peerId } : null)
@@ -2829,6 +3195,7 @@ export default function AnnotationResultsGraph({
                   onClick: swapHudOwner,
                 } : undefined}
                 lenses={activeLenses}
+                onFocusSubgraph={() => focusSubgraph(selectedNodeDetails.label)}
                 onClose={clearSelection}
               />
             )}
@@ -2887,7 +3254,6 @@ export default function AnnotationResultsGraph({
                 nodes={nodes}
                 documents={pinSubnetScope.documents}
                 evidence={pinSubnetScope.evidence}
-                searchTerm={searchTerm}
                 highlightedEdgeId={activeEdgeId}
                 eligibleFields={eligibleFields}
                 visibleFieldUids={effectiveHudVisibleFields}

@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye, ChevronRight, Microscope, Terminal, Minimize2, Image as ImageIcon, Radio, Folder, X, Library } from 'lucide-react';
+import { FileText, Play, Loader2, ListChecks, ChevronUp, ChevronDown, Plus, Settings2, XCircle, Eye, EyeOff, ChevronRight, Microscope, Terminal, Minimize2, Image as ImageIcon, Radio, Folder, X, Library } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { format } from 'date-fns';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -121,6 +121,14 @@ interface AnnotationRunnerDockProps {
   onClearRun: () => void;
 }
 
+/** Visibility modes for the runner dock.
+ *  - open:    full create/config panel
+ *  - closed:  peek bar (collapsed but visible)
+ *  - mini:    compact icon button
+ *  - hidden:  nothing on screen; shortcuts still live
+ */
+type DockMode = 'open' | 'closed' | 'mini' | 'hidden';
+
 export default function AnnotationRunnerDock({
   allAssets,
   allSchemes,
@@ -133,8 +141,10 @@ export default function AnnotationRunnerDock({
   onClearRun,
 }: AnnotationRunnerDockProps) {
   
-  const [isExpanded, setIsExpanded] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
+  // Default hidden when a run is already selected; otherwise peek bar.
+  const [dockMode, setDockMode] = useState<DockMode>(() =>
+    activeRunId != null ? 'hidden' : 'closed'
+  );
   const [selectedAssetItems, setSelectedAssetItems] = useState<Set<string>>(new Set());
   const [selectedSchemeIds, setSelectedSchemeIds] = useState<Set<number>>(new Set());
   const [newRunName, setNewRunName] = useState<string>('');
@@ -172,8 +182,8 @@ export default function AnnotationRunnerDock({
   // watch-list picker is populated. Refetch when the dock opens so bundles
   // created elsewhere this session show up.
   useEffect(() => {
-    if (isExpanded && activeInfospace?.id) fetchBundles(activeInfospace.id);
-  }, [isExpanded, activeInfospace?.id, fetchBundles]);
+    if (dockMode === 'open' && activeInfospace?.id) fetchBundles(activeInfospace.id);
+  }, [dockMode, activeInfospace?.id, fetchBundles]);
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem();
   const { apiKeys, selections, setApiKey } = useProvidersStore();
   const selectedProvider = selections.annotation?.providerId || null;
@@ -324,7 +334,7 @@ export default function AnnotationRunnerDock({
     };
 
     await onCreateRun(runParams);
-    setIsExpanded(false);
+    setDockMode('hidden');
     setNewRunName('');
     setNewRunDescription('');
     // Reset scope state so the next run starts clean (no accidental duplicate
@@ -491,12 +501,11 @@ export default function AnnotationRunnerDock({
     return `${key.slice(0, 4)}****${key.slice(-4)}`;
   }, []);
 
-  // Drive dock open/closed/minimized from the run lifecycle:
-  //   selecting a run → minimize (give panels the screen)
-  //   clearing a run  → close to the peek bar (or open if no runs exist)
-  //   first load with zero runs → open (so a new user sees the controls)
-  // Only fires on transitions of activeRunId, plus once after the first load
-  // settles, so manual Ctrl+O/Ctrl+M toggles aren't fought.
+  // Drive dock mode from the run lifecycle (only on transitions, so manual
+  // Ctrl+O / Ctrl+M / Ctrl+H aren't fought):
+  //   selecting a run → hidden
+  //   clearing a run  → closed peek (or open if no runs exist)
+  //   first load with zero runs → open
   const prevActiveRunIdRef = useRef<number | null | undefined>(undefined);
   const hasObservedLoadRef = useRef(false);
   const initialDefaultAppliedRef = useRef(false);
@@ -512,11 +521,9 @@ export default function AnnotationRunnerDock({
       initialDefaultAppliedRef.current = true;
       prevActiveRunIdRef.current = activeRunId;
       if (activeRunId != null) {
-        setIsMinimized(true);
-        setIsExpanded(false);
+        setDockMode('hidden');
       } else if (allRuns.length === 0) {
-        setIsExpanded(true);
-        setIsMinimized(false);
+        setDockMode('open');
       }
       return;
     }
@@ -526,32 +533,33 @@ export default function AnnotationRunnerDock({
     prevActiveRunIdRef.current = activeRunId;
 
     if (prev == null && activeRunId != null) {
-      setIsMinimized(true);
-      setIsExpanded(false);
+      setDockMode('hidden');
     } else if (prev != null && activeRunId == null) {
-      if (allRuns.length === 0) {
-        setIsExpanded(true);
-        setIsMinimized(false);
-      } else {
-        setIsExpanded(false);
-        setIsMinimized(false);
-      }
+      setDockMode(allRuns.length === 0 ? 'open' : 'closed');
     }
   }, [activeRunId, allRuns.length, isLoadingRuns]);
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+O to toggle dock
+      // Ctrl+O — open (from any mode); if already open, collapse to peek
       if (e.key === 'o' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
         e.preventDefault();
-        setIsExpanded(!isExpanded);
+        setDockMode((m) => (m === 'open' ? 'closed' : 'open'));
       }
-      
-      // Ctrl+M to minimize/restore dock
+
+      // Ctrl+M — compact mini icon (toggle with closed peek)
       if (e.key === 'm' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
         e.preventDefault();
-        setIsMinimized(!isMinimized);
+        setDockMode((m) => (m === 'mini' ? 'closed' : 'mini'));
+      }
+
+      // Ctrl+H — completely hide (only while a run is selected; otherwise the
+      // dock is the only entry point and must stay reachable)
+      if (e.key === 'h' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        if (!activeRunId) return;
+        e.preventDefault();
+        setDockMode('hidden');
       }
       
       // Ctrl+N to clear/new run
@@ -630,37 +638,42 @@ export default function AnnotationRunnerDock({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isExpanded, isMinimized, activeRunId, onClearRun, sortedRuns, onSelectRun, handleRunClick, isCreatingRun, selectedAssetItems.size, selectedSchemeIds.size, isAiConfigured, isLive, liveBundleIds.length]);
+  }, [activeRunId, onClearRun, sortedRuns, onSelectRun, handleRunClick, isCreatingRun, selectedAssetItems.size, selectedSchemeIds.size, isAiConfigured, isLive, liveBundleIds.length]);
+
+  // Hidden: no chrome. Shortcuts above still fire because we stay mounted.
+  if (dockMode === 'hidden') {
+    return null;
+  }
 
   return (
     <TooltipProvider>
       <div className={cn(
-        "fixed flex flex-col bg-card/95 backdrop-blur-lg text-card-foreground shadow-2xl z-40 transition-all duration-300 ease-in-out rounded-md border",
-        isMinimized 
-          ? "bottom-0.5 left-1/2 w-12 h-12 shadow-2xl ring-1 ring-primary/20"
-          : isExpanded 
-            ? "bottom-0.5 left-1/2 transform -translate-x-1/2 w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[1500px] max-w-[95vw] shadow-lg hover:shadow-xl"
-            : "bottom-0.5 left-1/2 transform -translate-x-1/2 w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[700px] sm:max-w-[700px] shadow-2xl ring-1 ring-primary/20"
+        "fixed flex flex-col bg-card/95 backdrop-blur-lg text-card-foreground shadow-2xl z-40 transition-all duration-300 ease-in-out rounded-md",
+        dockMode === 'mini'
+          ? "bottom-2 left-12 w-12 h-12 shadow-2xl ring-1 ring-primary/20"
+          : dockMode === 'open'
+            ? "bottom-2 left-1/2 transform -translate-x-1/2 w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[1500px] max-w-[95vw] shadow-lg hover:shadow-xl border border-border/50 rounded-md"
+            : "bottom-2 left-1/2 transform -translate-x-1/2 w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[700px] sm:max-w-[700px] shadow-2xl ring-1 ring-primary/20"
       )}>
         <div className="flex items-center justify-center sm:justify-between px-2 sm:px-4 py-0.5 cursor-pointer hover:bg-muted/30 transition-colors rounded-none " onClick={() => {
-          if (isMinimized) {
-            setIsMinimized(false);
+          if (dockMode === 'mini') {
+            setDockMode('closed');
           } else {
-            setIsExpanded(!isExpanded);
+            setDockMode((m) => (m === 'open' ? 'closed' : 'open'));
           }
         }}>
-          {/* Mobile or Minimized: Just show icon */}
+          {/* Mobile or Mini: Just show icon */}
           <div className={cn(
             "flex items-center justify-center w-full h-full",
-            isMinimized ? "sm:flex" : "sm:hidden"
+            dockMode === 'mini' ? "sm:flex" : "sm:hidden"
           )}>
-            <div className={cn("p-1.5 mt-1 flex items-center justify-center rounded bg-blue-50/20 dark:bg-transparent border border-blue-200 dark:border-blue-800 shadow-sm", isMinimized ? 'mt-0' : 'mt-0')}>
+            <div className={cn("p-1.5 mt-1 flex items-center justify-center rounded bg-blue-50/20 dark:bg-transparent shadow-sm", dockMode === 'mini' ? 'mt-0' : 'mt-0')}>
               <Terminal className="h-7 w-7 text-blue-700 dark:text-blue-400" />
             </div>
           </div>
           
-          {/* Desktop: Full layout (when not minimized) */}
-          {!isMinimized && (
+          {/* Desktop: Full layout (when not mini) */}
+          {dockMode !== 'mini' && (
             <>
               <div className="hidden sm:flex items-center gap-3 flex-1 min-w-0 md:pt-1">
                 <div className="p-2 flex items-center gap-2">
@@ -670,12 +683,12 @@ export default function AnnotationRunnerDock({
                 <div className="min-w-0 flex-1">
                   <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate ">Annotation Runner</h3>
                   <p className="text-xs text-gray-600 dark:text-gray-400 truncate pb-1">
-                    {isExpanded ? 'Configure and start runs' : 'Click to expand and run an analysis'}
+                    {dockMode === 'open' ? 'Configure and start runs' : 'Click to expand and run an analysis'}
                   </p>
                 </div>
                 
-                {/* Keyboard shortcuts section - only show when expanded */}
-                {isExpanded && (
+                {/* Keyboard shortcuts section - only show when open */}
+                {dockMode === 'open' && (
                   <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/50 border border-border/50">
                     <div className="flex items-center gap-1.5">
                       <span className="text-[11px] text-muted-foreground font-medium">Toggle</span>
@@ -710,12 +723,21 @@ export default function AnnotationRunnerDock({
                       <TooltipContent side="bottom" className="p-3">
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 text-xs">
-                            <span className="text-muted-foreground w-20">Minimize</span>
+                            <span className="text-muted-foreground w-20">Mini</span>
                             <KbdGroup>
                               <Kbd>Ctrl</Kbd>
                               <Kbd>M</Kbd>
                             </KbdGroup>
                           </div>
+                          {activeRunId && (
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="text-muted-foreground w-20">Hide</span>
+                              <KbdGroup>
+                                <Kbd>Ctrl</Kbd>
+                                <Kbd>H</Kbd>
+                              </KbdGroup>
+                            </div>
+                          )}
                           <div className="flex items-center gap-2 text-xs">
                             <span className="text-muted-foreground w-20">Prev Run</span>
                             <KbdGroup>
@@ -762,22 +784,39 @@ export default function AnnotationRunnerDock({
                       variant="ghost" 
                       size="icon" 
                       className="h-8 w-8 p-0 hover:bg-muted/50" 
-                      onClick={(e) => { e.stopPropagation(); setIsMinimized(true); }}
+                      onClick={(e) => { e.stopPropagation(); setDockMode('mini'); }}
                     >
                       <Minimize2 className="h-4 w-4" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="top">
-                    <p className="text-xs">Minimize (Ctrl+M)</p>
+                    <p className="text-xs">Mini (Ctrl+M)</p>
                   </TooltipContent>
                 </Tooltip>
+                {activeRunId && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="h-8 w-8 p-0 hover:bg-muted/50" 
+                        onClick={(e) => { e.stopPropagation(); setDockMode('hidden'); }}
+                      >
+                        <EyeOff className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      <p className="text-xs">Hide (Ctrl+H)</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
                 <Button 
                   variant="ghost" 
                   size="icon" 
                   className="h-8 w-8 p-0 hover:bg-muted/50" 
-                  onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
+                  onClick={(e) => { e.stopPropagation(); setDockMode((m) => (m === 'open' ? 'closed' : 'open')); }}
                 >
-                  {isExpanded ? (
+                  {dockMode === 'open' ? (
                     <ChevronDown className="h-4 w-4" />
                   ) : (
                     <ChevronUp className="h-4 w-4" />
@@ -788,7 +827,7 @@ export default function AnnotationRunnerDock({
           )}
         </div>
 
-        {isExpanded && !isMinimized && (
+        {dockMode === 'open' && (
           <div className="p-3 sm:p-4 max-h-[70vh] sm:max-h-[75vh] overflow-y-auto">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
               <div className="space-y-1.5 min-w-0">

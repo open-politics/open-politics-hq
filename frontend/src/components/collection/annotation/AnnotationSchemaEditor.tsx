@@ -17,6 +17,7 @@ import {
   JsonSchemaType,
   TypeOption,
   EntityFieldConfig,
+  refTargets,
 } from "@/lib/annotations/types";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -35,7 +36,7 @@ import { HexColorPicker } from "react-colorful";
 import { IconPickerDialog } from "@/components/collection/utilities/icons/IconPickerOverlay";
 import { IconRenderer } from "@/components/collection/utilities/icons/icon-picker";
 import { resolveEntityColor } from "@/lib/annotations/colors";
-import { AnnotationSchemaRead, AnnotationSchemaUpdate, type CanonRead } from "@/client";
+import { AnnotationSchemaRead, AnnotationSchemaUpdate, AnnotationSchemasService, type CanonRead, type TemplateOut } from "@/client";
 import { adaptSchemaReadToSchemaFormData, adaptSchemaFormDataToSchemaCreate } from "@/lib/annotations/adapters";
 import { useToast } from "@/components/ui/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -54,6 +55,21 @@ import { useCanons } from "@/hooks/useCanons";
 
 function isValidFieldName(name: string): boolean {
   return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
+}
+
+/** Does this field state its own shape, so a ref gives it only a vocabulary?
+ *
+ *  Mirrors `adapters.resolveFieldRef`. A ref means one of two things and the
+ *  editor has to show which: an entity-shaped field pointing at a roster
+ *  borrows its *population* and keeps its own cardinality (`speaker` is ONE
+ *  actor drawn from `actors`), while anything else is the older alias form —
+ *  "make this field be whatever that one is" — and does inherit the shape.
+ *  Presenting both as "type inherited" is what made the first form
+ *  unauthorable: picking a roster silently turned a single role into a copy
+ *  of the whole list. */
+function refKeepsOwnShape(field: AdvancedSchemeField): boolean {
+  return field.type === "entity"
+    || (field.type === "array" && field.items?.type === "entity");
 }
 
 function getTypeValue(field: AdvancedSchemeField): string {
@@ -678,8 +694,8 @@ function collectFieldLinks(structure: SchemaSection[], selectedId: string | null
   const links: FieldLink[] = [];
   const walk = (fields: AdvancedSchemeField[], section: SchemaSection) => {
     for (const f of fields) {
-      if (f.ref?.target) {
-        const targetId = resolveFieldIdByNamePath(section.fields, f.ref.target.split('.'));
+      for (const t of refTargets(f.ref)) {
+        const targetId = resolveFieldIdByNamePath(section.fields, t.split('.'));
         if (targetId && targetId !== f.id) {
           links.push({
             id: `${f.id}->${targetId}`,
@@ -998,6 +1014,100 @@ const TemplatePopover: React.FC<{
 };
 
 // =============================================================================
+// Schema templates — whole starting points, served from the backend
+//
+// Distinct from `TemplatePopover` above, which inserts ONE field. This picks a
+// complete observation-model schema: named sets plus the statements about them.
+//
+// Fetched rather than duplicated. `annotation/templates.py` is the single
+// definition the REST route, the companion and this picker all read, so a
+// schema you start here and one the companion proposes are the same artifact.
+// The editor and the companion have each grown their own contract emitter
+// before and drifted — companion-authored entity fields silently lacked
+// `x-entityField` and could not produce a graph at all.
+// =============================================================================
+
+const TIER_HINT: Record<string, string> = {
+  minimal: 'Actors and one kind of act. Already a working graph.',
+  standard: 'Adds places, standing relations, and a quote per row.',
+  full: 'Adds objects, interests, entity properties and numbered evidence.',
+};
+
+const SchemaTemplateBar: React.FC<{
+  onPick: (t: TemplateOut) => void;
+  disabled?: boolean;
+}> = ({ onPick, disabled }) => {
+  const { activeInfospace } = useInfospaceStore();
+  const [open, setOpen] = useState(false);
+  const [templates, setTemplates] = useState<TemplateOut[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || templates || !activeInfospace?.id) return;
+    let cancelled = false;
+    AnnotationSchemasService.listSchemaTemplates({
+      infospaceId: activeInfospace.id, expand: true,
+    })
+      .then(res => { if (!cancelled) setTemplates(res); })
+      .catch(e => { if (!cancelled) setError(e?.message ?? 'Could not load templates'); });
+    return () => { cancelled = true; };
+  }, [open, templates, activeInfospace?.id]);
+
+  return (
+    <div className="flex items-center gap-2 border-b bg-muted/20 px-3 py-1.5">
+      <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+        Start from
+      </span>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            disabled={disabled}
+            className="h-6 px-2 flex items-center gap-1 text-[11px] rounded-md border border-border/60 hover:bg-muted/60 transition-colors disabled:opacity-40"
+          >
+            <Library className="h-3 w-3 text-sky-500" />
+            a template
+            <ChevronDown className="h-3 w-3 opacity-60" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[420px] p-1.5" align="start" onWheel={e => e.stopPropagation()}>
+          {error && (
+            <div className="px-2 py-3 text-[11px] text-destructive">{error}</div>
+          )}
+          {!error && !templates && (
+            <div className="px-2 py-3 text-[11px] text-muted-foreground">Loading…</div>
+          )}
+          <div className="space-y-0.5 max-h-[50vh] overflow-y-auto">
+            {(templates ?? []).map(t => (
+              <button
+                key={t.id}
+                type="button"
+                className="w-full rounded-md px-2 py-1.5 text-left hover:bg-accent transition-colors"
+                onClick={() => { onPick(t); setOpen(false); }}
+              >
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs font-medium">{t.label}</span>
+                  <span className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                    {t.tier}
+                  </span>
+                </div>
+                <div className="text-[10px] text-muted-foreground leading-snug">{t.hint}</div>
+                <div className="text-[9px] text-muted-foreground/70 leading-snug mt-0.5">
+                  {TIER_HINT[t.tier] ?? ''}
+                </div>
+              </button>
+            ))}
+          </div>
+        </PopoverContent>
+      </Popover>
+      <span className="text-[10px] text-muted-foreground">
+        — or build it field by field below.
+      </span>
+    </div>
+  );
+};
+
+// =============================================================================
 // Section group label — used inside canvas
 // =============================================================================
 
@@ -1074,7 +1184,7 @@ const FieldCanvas: React.FC<{
             <DataTypePicker
               value={getTypeValue(field)}
               onValueChange={(value) => onUpdateField(computeTypeChangeUpdate(field, value))}
-              disabled={disabled || !!field.ref}
+              disabled={disabled || (!!field.ref && !refKeepsOwnShape(field))}
               align="end"
             />
           </div>
@@ -1170,12 +1280,14 @@ const FieldTypeSurface: React.FC<{
   onAddNested: (field?: AdvancedSchemeField) => void;
   disabled: boolean;
 }> = ({ field, section, fieldPath, structure, onUpdateField, onSelectNode, onAddNested, disabled }) => {
-  // Ref'd fields inherit type-specific config from target — show explanation only
-  if (field.ref) {
+  // An alias inherits the target's whole definition, so there is nothing here
+  // to configure. An entity role only borrows the vocabulary — it keeps its own
+  // type and entity config, and both stay editable below.
+  if (field.ref && !refKeepsOwnShape(field)) {
     return (
       <div className="rounded-md border border-cyan-200/70 dark:border-cyan-900/50 bg-cyan-50/30 dark:bg-cyan-950/15 px-4 py-3 text-[12px]">
         <div className="flex items-center gap-1.5 text-cyan-700 dark:text-cyan-300 font-medium mb-1">
-          <Link2 className="h-3.5 w-3.5" /> Inherited from <code className="font-mono">{field.ref.target}</code>
+          <Link2 className="h-3.5 w-3.5" /> Inherited from <code className="font-mono">{refTargets(field.ref).join(' + ')}</code>
         </div>
         <p className="text-muted-foreground leading-relaxed">
           Type, allowed values, and entity vocabulary come from the target field. Description above is the only override.
@@ -1611,7 +1723,7 @@ const NestedChildRow: React.FC<{
   onRemove: () => void;
   disabled: boolean;
 }> = ({ child, onSelect, onUpdate, onRemove, disabled }) => {
-  const sub = child.description?.trim() || (child.ref ? `→ ${child.ref.target}` : "");
+  const sub = child.description?.trim() || (child.ref ? `→ ${refTargets(child.ref).join(' + ')}` : "");
   return (
     <div
       className="group flex items-center gap-3 px-3 py-2 hover:bg-muted/30 cursor-pointer transition-colors"
@@ -1755,41 +1867,67 @@ const RefRow: React.FC<{
       return score(a) - score(b);
     });
 
-  if (field.ref) {
-    return (
-      <div>
-        <SectionLabel>Inheritance</SectionLabel>
-        <div className="flex items-center gap-2 mt-1">
-          <Link2 className="h-3.5 w-3.5 text-cyan-700 dark:text-cyan-400 shrink-0" />
-          <span className="text-xs flex-1 truncate">
-            <span className="text-muted-foreground">references </span>
-            <code className="text-[11px] bg-muted px-1 py-0.5 rounded font-mono">{field.ref.target}</code>
-          </span>
+  const current = refTargets(field.ref);
+  const dropOne = (name: string) => {
+    const next = current.filter(t => t !== name);
+    onFieldUpdate({ ref: next.length ? { targets: next } : undefined });
+  };
+
+  return (
+    <div>
+      <SectionLabel>Inheritance</SectionLabel>
+      <p className="text-[11px] text-muted-foreground -mt-1 mb-2">
+        Reuse another top-level field's vocabulary instead of redefining it — the
+        same name in both fields becomes one node. Pick several and this field
+        draws from all of them.
+      </p>
+
+      {/* Current targets stay visible next to the picker, so a second roster
+          can be added. A `via` is an intermediary OR a routing account; the
+          panel used to replace the whole panel the moment one was chosen, and
+          a union could not be expressed at all. */}
+      {current.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1">
+          {current.map(t => (
+            <span
+              key={t}
+              className="flex items-center gap-1 rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-mono"
+            >
+              <Link2 className="h-3 w-3 text-cyan-700 dark:text-cyan-400" />
+              {t}
+              {!disabled && (
+                <button
+                  type="button"
+                  onClick={() => dropOne(t)}
+                  className="rounded-full hover:bg-background/60"
+                  title={`Stop drawing from ${t}`}
+                >
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              )}
+            </span>
+          ))}
           {!disabled && (
             <button
               type="button"
               onClick={() => onFieldUpdate({ ref: undefined })}
-              className="h-6 px-2 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground rounded-md hover:bg-muted/50 transition-colors"
-              title="Break reference — restore independent type configuration"
+              className="flex h-6 items-center gap-1 rounded-md px-2 text-[11px] text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+              title="Break every reference — restore independent type configuration"
             >
               <Unlink className="h-3 w-3" />
               Break
             </button>
           )}
         </div>
-        <p className="text-[11px] text-muted-foreground mt-1.5">
-          Type, allowed values, and entity vocabulary inherited from the target. Description is the only override.
+      )}
+      {current.length > 0 && (
+        <p className="mb-2 text-[11px] leading-snug text-muted-foreground">
+          {refKeepsOwnShape(field)
+            ? "Same population — one node per name across every field listed. This field keeps its own type and cardinality."
+            : "Type, allowed values and entity vocabulary come from the first target. Description is the only override."}
         </p>
-      </div>
-    );
-  }
+      )}
 
-  return (
-    <div>
-      <SectionLabel>Inheritance</SectionLabel>
-      <p className="text-[11px] text-muted-foreground -mt-1 mb-2">
-        Reuse another top-level field's vocabulary instead of redefining it. Keeps the canon clean.
-      </p>
       {disabled || candidates.length === 0 ? (
         <div className="text-[11px] text-muted-foreground italic">
           {disabled ? "—" : "No top-level fields to reference yet."}
@@ -1802,7 +1940,7 @@ const RefRow: React.FC<{
               className="h-7 text-[11px] gap-1 border-dashed text-muted-foreground hover:text-foreground"
             >
               <Link2 className="h-3 w-3" />
-              Use vocabulary from another field
+              {current.length ? "Add another population" : "Use vocabulary from another field"}
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-72 p-1" align="start" onWheel={(e) => e.stopPropagation()}>
@@ -1820,8 +1958,21 @@ const RefRow: React.FC<{
                   key={cand.id}
                   type="button"
                   className="w-full flex items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent transition-colors"
-                  onClick={() => { onFieldUpdate({ ref: { target: cand.name } }); setPickerOpen(false); }}
+                  onClick={() => {
+                    // Toggle, not replace. A role can draw from several
+                    // rosters — a `via` that is an intermediary OR a routing
+                    // account — and the only way to say so is to pick both.
+                    const cur = refTargets(field.ref);
+                    const next = cur.includes(cand.name)
+                      ? cur.filter(t => t !== cand.name)
+                      : [...cur, cand.name];
+                    onFieldUpdate({ ref: next.length ? { targets: next } : undefined });
+                  }}
                 >
+                  <Check className={cn(
+                    "h-3 w-3 shrink-0 mt-1",
+                    refTargets(field.ref).includes(cand.name) ? "opacity-100 text-cyan-600" : "opacity-0",
+                  )} />
                   <span className={cn("text-[10px] px-1.5 py-0.5 rounded-full font-mono shrink-0 mt-0.5", getTypeChipClass(cand))}>
                     {getCompactTypeLabel(cand)}
                   </span>
@@ -2124,6 +2275,42 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
     }
   };
 
+  /** Seed the whole editor from a template.
+   *
+   *  Runs the template's contract through the **same** adapter that loads a
+   *  saved schema for editing, so a template is not a special kind of schema —
+   *  it is a schema you have not saved yet, and everything downstream (the nav
+   *  tree, the canvas, validation, the `x-*` emitters) sees exactly what it
+   *  would see for any other. The name is left for the user: a template is a
+   *  starting point, and naming it is the first act of making it theirs.
+   */
+  const handlePickTemplate = (t: TemplateOut) => {
+    if (!t.output_contract) return;
+    try {
+      const adapted = adaptSchemaReadToSchemaFormData({
+        name: '', description: t.hint, output_contract: t.output_contract,
+      } as any);
+      setFormData(prev => ({
+        ...adapted,
+        // Keep whatever the user has already typed — replacing a name they
+        // chose with a template's would be the picker overruling them.
+        name: prev.name || '',
+        description: prev.description || adapted.description || '',
+      }));
+      setSelectedNodeId(adapted.structure[0]?.fields[0]?.id ?? null);
+      toast({
+        title: `Started from “${t.label}”`,
+        description: `${t.tier} tier. Shape it however you need — nothing here is fixed.`,
+      });
+    } catch {
+      toast({
+        title: 'Could not load that template',
+        description: 'Its contract did not parse. Build the schema by hand instead.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const toggleNavExpanded = (id: string) => {
     setNavExpanded(prev => {
       const next = new Set(prev);
@@ -2261,6 +2448,10 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>{formErrors.submit as string}</AlertDescription>
             </Alert>
+          )}
+
+          {mode === "create" && (
+            <SchemaTemplateBar onPick={handlePickTemplate} disabled={isDisabled} />
           )}
 
           <div className="flex-1 min-h-0 flex">

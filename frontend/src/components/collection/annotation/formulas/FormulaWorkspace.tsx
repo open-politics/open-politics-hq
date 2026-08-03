@@ -10,7 +10,7 @@
  *
  * Replaces the legacy three-column workspace (Configure | Observe |
  * Summarize, ~1200 lines of verb-section forms). The new shape is a
- * paper-style math-line list — see ``docs/intelligence/HOW_TO.md`` § Editor
+ * paper-style math-line list — see ``docs/INTELLIGENCE.md`` § Editor
  * and ``lib/annotations/formulaMath.ts`` for the rendering grammar.
  *
  * Mounted as a fixed overlay (z-50) and closed via the close button. The
