@@ -3,7 +3,7 @@
 Re-export hub: imports from domain schemas where available.
 Identity and conversational_intelligence schemas live in their domains.
 Remaining schemas (content, annotation, flow, search, sharing, auth) will be
-extracted to domain schemas in a follow-up. See docs/internal/BACKEND_ARCHITECTURE_HANDOVER.md.
+extracted to domain schemas in a follow-up. See `backend/app/api/OVERVIEW.md`.
 Existing code uses: from app.schemas import *
 """
 
@@ -41,12 +41,21 @@ from app.api.modules.identity_infospace_user.schemas import (
 
 from datetime import datetime, timezone
 import enum
+import logging
 from enum import Enum
 from typing import Any, Dict, List, Optional, Literal, Union, Set
 from dataclasses import dataclass
 
 from sqlmodel import SQLModel, Field
 from pydantic import BaseModel, computed_field, ConfigDict, field_validator
+
+from app.api.modules.annotation.schema_map import (
+    SchemaMap,
+    SchemaRefCycleError,
+    schema_map_for,
+)
+
+logger = logging.getLogger(__name__)
 
 from .models import (
     AssetKind,
@@ -446,6 +455,31 @@ class AnnotationSchemaRead(AnnotationSchemaBase):
     field_specific_justification_configs: Optional[Dict[str, FieldJustificationConfig]] = None
     annotation_count: Optional[int] = None
     is_active: bool
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def schema_map(self) -> SchemaMap:
+        """The contract's resolved meaning — shapes, entity paths, ``x-ref``
+        vocabularies, canon ties, time/place candidates.
+
+        Computed, never stored: it is a pure function of ``output_contract``,
+        so there is no invalidation to get wrong when a schema is edited.
+        Serving it means the frontend picker, the graph projection, and the
+        companion all read one answer instead of re-deriving three.
+
+        A contract with a cyclic ``x-ref`` yields an empty map rather than
+        500-ing the read — the editor already blocks cycles on save, so one
+        reaching this point is corrupt data, and a schema listing must not go
+        down because a single row is malformed.
+        """
+        try:
+            return schema_map_for(self.output_contract)
+        except SchemaRefCycleError:
+            logger.warning(
+                "AnnotationSchemaRead: cyclic x-ref in schema %s — serving empty map",
+                getattr(self, "id", "?"),
+            )
+            return SchemaMap()
 
 class AnnotationSchemasOut(SQLModel):
     data: List[AnnotationSchemaRead]
@@ -1180,7 +1214,7 @@ class ChatRequest(SQLModel):
     # 'intelligence' (default) is the workspace-wide research chat with the
     # workspace_hub / library_hub / analysis_hub tool family. 'dossier' selects
     # the M7 DossierAgent — formula authoring + observation snapshots, scoped
-    # to a single run. See ``docs/intelligence/HOW_TO.md`` § DossierAgent.
+    # to a single run. See ``docs/INTELLIGENCE.md`` § DossierAgent.
     agent: Optional[str] = None  # 'operator' (browse-all catalogue) | 'intelligence' (legacy default) | 'dossier' | 'formula'
     # When agent='dossier'|'formula', the run the agent operates against. The
     # agent's tools take run_id explicitly; this lets the system prompt scope

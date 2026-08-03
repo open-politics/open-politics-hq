@@ -1,7 +1,7 @@
 """A tiny safe expression language for formula derives.
 
 Used by ``PanelProjection.derives`` (the intelligence-layer post-aggregate
-verb — see ``docs/intelligence/HOW_TO.md`` § Six verbs). Each ``DeriveSpec``
+verb — see ``docs/INTELLIGENCE.md`` § Six verbs). Each ``DeriveSpec``
 declares a name and an expression; the expression is evaluated against a
 namespace built from the row's scalars, weight, roles, derived values, and
 any cross-formula references.

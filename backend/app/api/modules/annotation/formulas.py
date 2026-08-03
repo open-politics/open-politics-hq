@@ -14,7 +14,7 @@ times within a single composed evaluation (rate-of-rates, lean-of-lean).
 Cross-request persistence is intentionally not implemented — composition
 runs synchronously inside one ``AnnotationQuery.projection()`` call.
 
-See ``docs/intelligence/HOW_TO.md`` § Composition for the user-facing
+See ``docs/INTELLIGENCE.md`` § Composition for the user-facing
 picture and ``docs/plans/intelligence-primitive/02_formula_grammar.md``
 for the implementation plan.
 """

@@ -30,6 +30,8 @@ from app.core.task_utils import (
 )
 from app.core.tasks import TaskContext, task
 from app.core.config import settings
+from app.api.modules.annotation.contract_resolution import resolve_for_annotation_run
+from app.api.modules.annotation.schema_map import infer_shape
 from app.api.modules.content.types import get_content_type_registry
 
 if TYPE_CHECKING:
@@ -634,6 +636,35 @@ def safe_log_content(content: Any, max_length: int = 500, max_depth: int = 3) ->
     except Exception as e:
         return f"[Error sanitizing content: {e}]"
 
+def document_dateline(asset: Any) -> str:
+    """The document's own date, stated to the model. Empty when we don't know it.
+
+    A model cannot resolve *"Wednesday"* or *"last spring"* without knowing when
+    the document is from, and it is not something to guess at — the asset
+    already carries the timestamp. Two runs in a row wrote ``"Wednesday"`` into
+    a date field; the prompt fix told the model to leave such fields **empty**,
+    which is correct but throws the information away. Stating the date instead
+    converts a whole class of relative references into calendar dates.
+
+    It is the same value the graph's time ladder falls back to
+    (``stream._attach_doc_anchors``), so a resolved date and an inherited one
+    can never disagree about which day the document is from.
+    """
+    ts = getattr(asset, "event_timestamp", None)
+    if not ts:
+        return ""
+    try:
+        day = ts.date().isoformat()
+    except AttributeError:
+        return ""
+    return (
+        f"Document date: {day}\n"
+        f"Relative references in the text — \"Wednesday\", \"last month\", "
+        f"\"earlier this year\" — are relative to this date. Resolve them to "
+        f"calendar dates.\n"
+    )
+
+
 async def assemble_multimodal_context(
     parent_asset: Asset,
     run_config: dict,
@@ -724,7 +755,13 @@ async def assemble_multimodal_context(
         # Parent is a document/text asset - use existing logic
         text_content_header = f"Parent Document (UUID: {parent_asset_uuid_str})\n---\n"
         text_content = f"{text_content_header}{parent_asset.text_content or ''}"
-    
+
+    # Prepended to every branch, because an image of a filing is as dated as the
+    # filing. What the model does with it is up to the schema — a contract with
+    # no date field simply ignores two lines.
+    text_content = f"{document_dateline(parent_asset)}{text_content}"
+
+
     # Determine if any per_modality processing is expected by the schema to guide media inclusion.
     # This is a simplified check based on run_config flags. A more advanced check could inspect schema_structure.
     # For now, we rely on explicit run_config flags like include_images, include_audio.
@@ -1592,7 +1629,12 @@ async def _run_phase_b_loop(
 
         # Entity reference — show declared entity_type + the closed name enum
         # if present (typeConstrained=true on the source field).
-        if prop.get("x-entityField") is True:
+        #
+        # Shape comes from ``schema_map.infer_shape`` so this renderer can't
+        # drift from the recognizer curation and the graph projection use.
+        shape = infer_shape(prop)
+
+        if shape == "entity":
             etype = prop.get("x-entityType") or ""
             ename_enum = prop.get("x-entityEnum") or []
             type_label = f"entity[{etype}]" if etype else "entity"
@@ -1615,7 +1657,7 @@ async def _run_phase_b_loop(
             return lines
 
         # Array of entity references (array_entity).
-        if prop.get("type") == "array" and isinstance(prop.get("items"), dict) and prop["items"].get("x-entityField") is True:
+        if shape == "array_entity":
             items = prop["items"]
             etype = items.get("x-entityType") or ""
             ename_enum = items.get("x-entityEnum") or []
@@ -2784,7 +2826,24 @@ async def _process_annotation_run_async(
                     logger.error(f"Task: Schema {schema.id} ({schema.name}) for Run {run.id} output_contract is not a valid object schema with properties. Got: {list(optimized_contract.keys())[:10]}")
                     errors_run_level.append(f"Schema {schema.id} ({schema.name}) output_contract missing 'type: object' or 'properties'.")
                     continue
-                
+
+                # Canon injection. Resolve ONCE per schema per run, here — every
+                # downstream consumer (the Pydantic builder, the Phase A/B split,
+                # the prompt renderer) reads from the contract, so one rewrite
+                # upstream constrains all three. Runs with no canon binding get
+                # their contract back unchanged.
+                optimized_contract, canon_report = resolve_for_annotation_run(
+                    session, run, optimized_contract,
+                )
+                if canon_report.active:
+                    logger.info(
+                        f"Task: Schema {schema.id} canon injection — "
+                        f"{canon_report.injected_types} types, "
+                        f"~{canon_report.est_tokens_per_asset} tokens/asset"
+                    )
+                for w in canon_report.warnings:
+                    errors_run_level.append(f"Schema {schema.id} canon binding: {w}")
+
                 schema_structure = detect_schema_structure(optimized_contract)
                 
                 # Validate that schema_structure found document_fields
@@ -3169,14 +3228,22 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
                         logger.error(f"Task: Schema {schema.id} has invalid hierarchical structure during retry. Skipping.")
                         errors.append(f"Schema {schema.id} invalid structure during retry.")
                         continue
-                    
-                    schema_structure = detect_schema_structure(schema.output_contract)
-                    
+
+                    # Same canon injection as the original pass — a retry must
+                    # extract against the identical effective contract, or the
+                    # retried annotations come back with a different vocabulary
+                    # than their siblings.
+                    retry_contract, _retry_canon_report = resolve_for_annotation_run(
+                        session, run, schema.output_contract,
+                    )
+
+                    schema_structure = detect_schema_structure(retry_contract)
+
                     # Create output model (reuse from original processing)
                     try:
                         OutputModelClass = create_pydantic_model_from_json_schema(
                             model_name=f"RetryOutput_{schema.name.replace(' ', '_')}_{schema.id}",
-                            json_schema=schema.output_contract,
+                            json_schema=retry_contract,
                             justifications_enabled=run_config.get("justifications_enabled", True),
                         )
                     except Exception as e_model:
@@ -3211,7 +3278,7 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
                     # this, retries silently fall back to single-shot and re-truncate
                     # on the same schemas that needed Phase B in the first place.
                     scalar_subset_contract, list_fields_for_phase_b = split_schema_for_extraction(
-                        schema.output_contract
+                        retry_contract
                     )
                     phase_a_output_model_class = None
                     if list_fields_for_phase_b:

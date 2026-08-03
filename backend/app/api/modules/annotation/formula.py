@@ -10,7 +10,7 @@ relation-shape → panel-type mapping. There is no ``compile_formula`` /
 ``materialize`` bifurcation any more — the engine consumes a Formula
 directly.
 
-Key facts (see ``docs/intelligence/HOW_TO.md``):
+Key facts (see ``docs/INTELLIGENCE.md``):
 
 - A **Dimension** is any field path: a value, an entity (a tag — the engine
   does no resolution; merge maps normalise, canons persist out-of-band), a

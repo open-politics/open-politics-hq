@@ -7,8 +7,8 @@ output relation, and pins down the schema(s) it was computed against. From
 then on, the snapshot is read-only: editing the source Formula does not
 mutate prior Observations.
 
-See ``docs/intelligence/HOW_TO.md`` § Observations and
-``docs/plans/intelligence-primitive/03_observations_and_dossier.md`` for
+See ``docs/INTELLIGENCE.md`` § Observations and
+``docs/INTELLIGENCE.md`` for
 the picture.
 
 The persistence layer is JSON-in-DashboardConfig. v1 keeps it light; when

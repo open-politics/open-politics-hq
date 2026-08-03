@@ -186,19 +186,116 @@ class FormulaQuery:
             fields=list(fields) if fields else [],
         )
 
+    def _graph_source(
+        self,
+        *,
+        projections: list[Any] | None,
+        triplet_field: str | None,
+        dedup: str,
+        q: str | None,
+        edge_weight_field: str | None = None,
+        edge_weight_mode: str = "count",
+        forward_properties: list[Any] | None = None,
+        node_group_by: str | None = None,
+        edge_group_by: str | None = None,
+        null_policy: str = "skip",
+        doc_place: str | None = None,
+        doc_time: str | None = None,
+    ) -> tuple[Any, Any]:
+        """Build ``(source, parsed_gql)`` — the one place a graph is configured.
+
+        Both ``graph_view`` (JSON) and ``graph_stream_view`` (SSE) go through
+        here, so the two endpoints cannot disagree about what the graph *is*.
+        They used to: the SSE path called ``AnnotationQuery.graph_stream``
+        directly and silently dropped ``projections`` and ``q`` entirely.
+
+        ``triplet_field`` falls back to ``formula.group[0].path`` — the legacy
+        single-array contract — and is only required when no projections are
+        declared.
+        """
+        from app.api.modules.graph import gql as gql_mod
+        from app.api.modules.graph.stream import AnnotationGraphSource
+
+        tf = triplet_field
+        if tf is None and self.formula.group:
+            tf = self.formula.group[0].path
+        if not projections and not tf:
+            # A schema written in the observation model graphs itself: with no
+            # projections declared, ``resolve_projections`` derives the whole
+            # set from the schema map. This guard predates that and refused the
+            # case it was built for — the same shape of bug as every other
+            # "rule that was right before a branch existed" in this module, and
+            # it only stayed hidden because the panel always sends a legacy
+            # ``triplet_field`` alongside.
+            #
+            # Raising is still right when nothing is derivable, because then the
+            # caller really has asked for a graph of nothing.
+            from app.api.modules.annotation.panel_config import derive_projections
+            try:
+                smap = AnnotationGraphSource(query=self.aq)._schema_map()
+            except Exception:  # noqa: BLE001 — a probe must not sink the view
+                smap = None
+            if not derive_projections(smap):
+                raise ValueError(
+                    "graph view requires projections, triplet_field, or "
+                    "formula.group[0].path — and this run's schema declares no "
+                    "graphable section to derive them from"
+                )
+
+        # One parse, both tiers. Row scope rides into the read query; the
+        # graph-shape and traversal tiers run on the assembled result, because
+        # degree and unioned intervals only exist after aggregation.
+        parsed = gql_mod.parse(q)
+
+        # An unconfigured panel gets the document rung derived too — see
+        # ``panel_config.derive_doc_anchors``. An explicit setting always wins.
+        if doc_place is None and doc_time is None and not projections:
+            from app.api.modules.annotation.panel_config import derive_doc_anchors
+            try:
+                smap = None
+                src_probe = AnnotationGraphSource(query=self.aq)
+                smap = src_probe._schema_map()
+            except Exception:  # noqa: BLE001 — a graph must render without one
+                smap = None
+            derived = derive_doc_anchors(smap)
+            doc_place, doc_time = derived["doc_place"], derived["doc_time"]
+
+        source = AnnotationGraphSource(
+            query=self.aq,
+            projections=list(projections or []),
+            triplet_field=tf,
+            dedup=dedup,
+            edge_weight_field=edge_weight_field,
+            edge_weight_mode=edge_weight_mode,
+            forward_properties=list(forward_properties or []),
+            node_group_by=node_group_by,
+            edge_group_by=edge_group_by,
+            null_policy=null_policy,
+            doc_place=doc_place,
+            doc_time=doc_time,
+            gql=parsed if not parsed.is_empty else None,
+        )
+        return source, parsed
+
     def graph_view(
         self,
         *,
+        projections: list[Any] | None = None,
         triplet_field: str | None = None,
         dedup: str = "exact",
         top_n_nodes: int | None = None,
         top_n_edges: int | None = None,
+        q: str | None = None,
+        edge_weight_field: str | None = None,
+        edge_weight_mode: str = "count",
+        forward_properties: list[Any] | None = None,
+        node_group_by: str | None = None,
+        edge_group_by: str | None = None,
+        null_policy: str = "skip",
+        doc_place: str | None = None,
+        doc_time: str | None = None,
     ) -> GraphResultData:
-        """Pack as nodes + edges via the streaming graph source.
-
-        ``triplet_field`` falls back to ``formula.group[0].path`` when
-        omitted (the graph engine's contract: first entity-shaped dim
-        identifies the triplet array on the annotation).
+        """Pack as nodes + edges via the streaming graph source (JSON path).
 
         Bridges the streaming source (``AnnotationGraphSource`` +
         ``collect_graph``) to the JSON /view endpoint. The route runs
@@ -211,26 +308,26 @@ class FormulaQuery:
         dotted paths like ``document.triplets[*]`` and the ``[*]`` suffix
         are normalized; the deprecated method couldn't handle either.
         """
-        tf = triplet_field
-        if tf is None and self.formula.group:
-            tf = self.formula.group[0].path
-        if not tf:
-            raise ValueError(
-                "graph view requires triplet_field or formula.group[0].path"
-            )
-
         import asyncio
-        from app.api.modules.graph.stream import (
-            AnnotationGraphSource,
-            collect_graph,
-        )
 
-        source = AnnotationGraphSource(
-            query=self.aq,
-            triplet_field=tf,
+        from app.api.modules.graph import gql as gql_mod
+        from app.api.modules.graph.stream import collect_graph
+
+        source, parsed = self._graph_source(
+            projections=projections,
+            triplet_field=triplet_field,
             dedup=dedup,
+            q=q,
+            edge_weight_field=edge_weight_field,
+            edge_weight_mode=edge_weight_mode,
+            forward_properties=forward_properties,
+            node_group_by=node_group_by,
+            edge_group_by=edge_group_by,
+            null_policy=null_policy,
+            doc_place=doc_place,
+            doc_time=doc_time,
         )
-        return asyncio.run(
+        result = asyncio.run(
             collect_graph(
                 self.aq._session,
                 self.aq._infospace_id,
@@ -239,6 +336,87 @@ class FormulaQuery:
                 top_n_edges=top_n_edges,
             )
         )
+        if parsed.has_post:
+            nodes, edges = gql_mod.apply_to_graph(parsed, result.nodes, result.edges)
+            result = GraphResultData(nodes=nodes, edges=edges)
+        return result
+
+    async def graph_stream_view(
+        self,
+        *,
+        projections: list[Any] | None = None,
+        triplet_field: str | None = None,
+        dedup: str = "exact",
+        top_n_nodes: int | None = None,
+        top_n_edges: int | None = None,
+        chunk_size: int = 500,
+        q: str | None = None,
+        edge_weight_field: str | None = None,
+        edge_weight_mode: str = "count",
+        forward_properties: list[Any] | None = None,
+        node_group_by: str | None = None,
+        edge_group_by: str | None = None,
+        null_policy: str = "skip",
+        doc_place: str | None = None,
+        doc_time: str | None = None,
+    ):
+        """Chunked async iterator over the same graph ``graph_view`` returns.
+
+        Yields ``GraphChunk``s. Identical configuration to ``graph_view``
+        — same ``_graph_source``, so the SSE and JSON endpoints cannot return
+        different graphs for the same request body.
+
+        **The post-aggregation tiers force a full drain.** ``degree``, ``near``
+        and ``hops`` are properties of the *assembled* graph, so they cannot be
+        applied to a chunk in isolation. When ``q`` carries any of them we
+        accumulate, filter, and re-chunk. Nothing is lost by this:
+        ``stream_graph`` already aggregates globally and emits every chunk at
+        the tail (see its docstring), so "progressive" today means frame size,
+        not partial-data latency.
+        """
+        from app.api.modules.graph import gql as gql_mod
+        from app.api.modules.graph.schemas import GraphChunkData
+        from app.api.modules.graph.stream import stream_graph
+
+        source, parsed = self._graph_source(
+            projections=projections,
+            triplet_field=triplet_field,
+            dedup=dedup,
+            q=q,
+            edge_weight_field=edge_weight_field,
+            edge_weight_mode=edge_weight_mode,
+            forward_properties=forward_properties,
+            node_group_by=node_group_by,
+            edge_group_by=edge_group_by,
+            null_policy=null_policy,
+            doc_place=doc_place,
+            doc_time=doc_time,
+        )
+        chunks = stream_graph(
+            self.aq._session,
+            self.aq._infospace_id,
+            source,
+            top_n_nodes=top_n_nodes,
+            top_n_edges=top_n_edges,
+            chunk_size=chunk_size,
+        )
+
+        if not parsed.has_post:
+            async for chunk in chunks:
+                yield chunk
+            return
+
+        nodes: list[Any] = []
+        edges: list[Any] = []
+        async for chunk in chunks:
+            nodes.extend(chunk.nodes)
+            edges.extend(chunk.edges)
+        nodes, edges = gql_mod.apply_to_graph(parsed, nodes, edges)
+
+        size = max(chunk_size, 1)
+        while nodes or edges:
+            yield GraphChunkData(nodes=nodes[:size], edges=edges[:size])
+            nodes, edges = nodes[size:], edges[size:]
 
 
 # ─── Phase response models ──────────────────────────────────────────────────
@@ -304,8 +482,30 @@ def _node_to_dict(n: Any) -> dict[str, Any]:
         "entity_id": n.entity_id,
         "canonical_entity_id": n.entity_id,
         "group_value": n.group_value,
+        # The semantic vector, separate from whatever `node_group_by` put in
+        # `group_value` — the convergence residual reads this one and nothing
+        # else. See `GraphNodeData.profile`.
+        "profile": getattr(n, "profile", None),
         "properties": n.properties,
         "evidence": getattr(n, "evidence", []),
+        # Time / space / provenance — what the slider, the geo anchor and the
+        # per-projection legend read.
+        "t0": getattr(n, "t0", None),
+        "t1": getattr(n, "t1", None),
+        "a0": getattr(n, "a0", None),
+        "a1": getattr(n, "a1", None),
+        # Entity vs occurrence — the renderer treats them oppositely, so this
+        # has to be on the wire, not re-derived from a heuristic client-side.
+        "kind": getattr(n, "kind", "entity"),
+        "node_type": getattr(n, "node_type", None),
+        "magnitude": getattr(n, "magnitude", None),
+        "place": getattr(n, "place", None),
+        "place_to": getattr(n, "place_to", None),
+        "places": [p.model_dump(by_alias=True) for p in getattr(n, "places", [])],
+        "lat": getattr(n, "lat", None),
+        "lon": getattr(n, "lon", None),
+        "source_paths": getattr(n, "source_paths", []),
+        "roles": getattr(n, "roles", []),
     }
 
 
@@ -315,9 +515,15 @@ def _edge_to_dict(e: Any) -> dict[str, Any]:
         "source": e.source,
         "target": e.target,
         "predicate": e.predicate,
+        "role": getattr(e, "role", None),
         "weight": e.weight,
         "computed_weight": e.computed_weight,
         "group_value": e.group_value,
         "properties": e.properties,
         "evidence": getattr(e, "evidence", []),
+        "t0": getattr(e, "t0", None),
+        "t1": getattr(e, "t1", None),
+        "a0": getattr(e, "a0", None),
+        "a1": getattr(e, "a1", None),
+        "source_paths": getattr(e, "source_paths", []),
     }

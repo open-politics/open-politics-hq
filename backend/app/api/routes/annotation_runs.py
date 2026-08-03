@@ -16,7 +16,10 @@ from app.models import (
     Annotation,
     Asset,
     AnnotationSchema,
+    Infospace,
 )
+from app.api.modules.annotation.contract_resolution import FieldInjection
+from app.api.modules.annotation.panel_config import Projection
 from app.schemas import (
     AnnotationRunRead,
     AnnotationRunCreate,
@@ -746,12 +749,24 @@ class GraphParams(BaseModel):
     """Per-phase params for the graph view.
 
     ``triplet_field`` falls back to ``formula.group[0].path`` when omitted
-    (per the FormulaQuery.graph_view contract). The other knobs are
-    bounded-memory graph_stream params; the JSON endpoint collects all
-    chunks bounded by the ``top_n_*`` caps.
+    (per the FormulaQuery.graph_view contract).
+
+    **Every field applies to both endpoints.** ``/view`` and ``/view/stream``
+    both configure through ``_graph_kwargs`` → ``FormulaQuery._graph_source``,
+    so the same body yields the same graph either way; the JSON endpoint just
+    collects the chunks. Only ``chunk_size`` is streaming-specific, and it
+    controls SSE frame size rather than what the graph contains.
     """
 
+    projections: list[Projection] = Field(default_factory=list)
+    """Authoritative source of graph atoms. Empty falls back to
+    ``triplet_field`` / ``formula.group[0].path`` — the legacy single-triplet
+    shape — so panels authored before projections keep working."""
     triplet_field: str | None = None
+    q: str | None = Field(
+        default=None,
+        description="GQL — see modules/graph/gql.py. Filters, hops, traversal.",
+    )
     dedup: Literal["exact", "normalized"] = "exact"
     top_n_nodes: int | None = None
     top_n_edges: int | None = None
@@ -763,6 +778,11 @@ class GraphParams(BaseModel):
     node_group_by: str | None = None
     edge_group_by: str | None = None
     null_policy: Literal["skip", "zero"] = "skip"
+    doc_place: str | None = None
+    doc_time: str | None = None
+    """The document rung of the place / time ladders — see ``GraphConfig``.
+    Annotation-scoped, so they are configured here rather than on a
+    projection: what a filing is *about* applies to everything it mentions."""
 
 
 class ViewRequest(BaseModel):
@@ -804,6 +824,22 @@ class ViewRowsPhase(BaseModel):
 class ViewGraphPhase(BaseModel):
     nodes: list[dict]
     edges: list[dict]
+    meta: dict = Field(default_factory=dict)
+    """What the engine actually ran, so the panel does not have to guess.
+
+    Two things, and both were previously unknowable from the client:
+
+    ``layers``
+        the RESOLVED projections — path, what each row is about, the node roles
+        that were inferred, which bindings are set, and how many nodes and edges
+        each one contributed. A panel that re-derives this from the schema map
+        drifts from what the engine did; a panel that cannot see it at all shows
+        a configuration surface for a set it is only guessing at.
+
+    ``frames``
+        per-frame coverage. Which of time · geo · interest · event can actually
+        position this graph, so the axis control can grey out a plane before it
+        is chosen rather than after."""
 
 
 def _resolve_family(session, infospace_id: int, run_id: int) -> list[int]:
@@ -895,19 +931,88 @@ def _build_view_phases(session, access, run_id: int, body: "ViewRequest") -> dic
         result["aggregate"] = fq.aggregate_view()
 
     if body.graph is not None:
-        gp = body.graph
-        gr = fq.graph_view(
-            triplet_field=gp.triplet_field,
-            dedup=gp.dedup,
-            top_n_nodes=gp.top_n_nodes,
-            top_n_edges=gp.top_n_edges,
-        )
+        gr = fq.graph_view(**_graph_kwargs(body.graph))
         result["graph"] = ViewGraphPhase(
             nodes=[_node_to_dict(n) for n in gr.nodes],
             edges=[_edge_to_dict(e) for e in gr.edges],
+            meta=_graph_meta(fq, body.graph, gr),
         )
 
     return result
+
+
+def _graph_meta(fq, gp: "GraphParams", gr) -> dict:
+    """Resolved layers + frame coverage for one graph phase.
+
+    Computed from the *same* source object the packer used, so what the panel
+    displays and what the engine ran cannot drift — the failure this replaces
+    was a configuration surface describing a projection set nobody had checked
+    against the one in play.
+    """
+    from app.api.modules.graph.stream import frame_coverage
+
+    layers: list[dict] = []
+    try:
+        # `_graph_kwargs` carries the packer's caps too; `_graph_source` takes
+        # only the configuration half. Filtered by the signature rather than by
+        # a second hand-maintained list, which is what would drift.
+        import inspect
+        accepted = set(inspect.signature(fq._graph_source).parameters)
+        source, _ = fq._graph_source(
+            **{k: v for k, v in _graph_kwargs(gp).items() if k in accepted})
+        source._resolve()
+        node_counts: dict[str, int] = {}
+        for n in gr.nodes:
+            for path in (n.source_paths or []):
+                node_counts[path] = node_counts.get(path, 0) + 1
+        edge_counts: dict[str, int] = {}
+        for e in gr.edges:
+            for path in (getattr(e, "source_paths", None) or []):
+                edge_counts[path] = edge_counts.get(path, 0) + 1
+
+        for p in source.projections:
+            bound = [k for k in ("node_type_path", "node_name", "time", "place",
+                                 "activity", "weight", "evidence", "properties")
+                     if getattr(p, k, None)]
+            layers.append({
+                "path": p.path,
+                "about": p.about,
+                "node_kind": p.node_kind,
+                "roles": [r.label or r.path or "" for r in p.nodes],
+                "bound": bound,
+                "nodes": node_counts.get(p.path, 0),
+                "edges": edge_counts.get(p.path, 0),
+            })
+    except Exception:  # noqa: BLE001 — meta is never worth failing a view over
+        logger.warning("graph meta: could not resolve layers", exc_info=True)
+
+    return {"layers": layers, "frames": frame_coverage(gr.nodes, gr.edges)}
+
+
+def _graph_kwargs(gp: "GraphParams") -> dict:
+    """Every :class:`GraphParams` knob, as packer kwargs.
+
+    One helper so the JSON and SSE endpoints configure the graph from the
+    *same* fields. They used to diverge: the SSE path built its source by hand
+    and dropped ``projections`` and ``q`` on the floor, while the JSON path
+    ignored the aggregation knobs. Same body, two different graphs.
+    """
+    return {
+        "projections": list(gp.projections),
+        "triplet_field": gp.triplet_field,
+        "q": gp.q,
+        "dedup": gp.dedup,
+        "top_n_nodes": gp.top_n_nodes,
+        "top_n_edges": gp.top_n_edges,
+        "edge_weight_field": gp.edge_weight_field,
+        "edge_weight_mode": gp.edge_weight_mode,
+        "forward_properties": list(gp.forward_properties or []),
+        "node_group_by": gp.node_group_by,
+        "edge_group_by": gp.edge_group_by,
+        "null_policy": gp.null_policy,
+        "doc_place": gp.doc_place,
+        "doc_time": gp.doc_time,
+    }
 
 
 def _validated_view_body(body: ViewRequest) -> ViewRequest:
@@ -957,16 +1062,21 @@ async def view_run_stream(
 
     - ``rows`` — single event with the paginated row page
     - ``aggregate`` — single event with buckets
-    - ``graph_chunk`` — emitted for each chunk as ``graph_stream`` produces
-      them; frontends that want progressive rendering accumulate these
+    - ``graph_chunk`` — one per chunk; frontends that want progressive
+      rendering accumulate these
     - ``graph`` — final single event carrying the full (bounded) graph, so
       clients that only listen for ``graph`` still get a correct answer
 
     Rows and aggregate run inside ``to_thread`` because the underlying
     ``AnnotationQuery`` methods do sync DB I/O. Graph iterates in pure
-    async over ``graph_stream`` — its sync session reads happen inline but
-    ``async for`` yields control on each chunk, so keepalives and peer
-    backpressure work correctly.
+    async over ``FormulaQuery.graph_stream_view`` — its sync session reads
+    happen inline but ``async for`` yields control on each chunk, so
+    keepalives and peer backpressure work correctly.
+
+    The graph phase goes through the **same** ``_graph_kwargs`` +
+    ``FormulaQuery`` path as ``POST /view``. Do not reach past it into
+    ``AnnotationQuery.graph_stream``: that is how this endpoint previously
+    came to drop ``projections`` and ``q`` silently.
     """
     try:
         fq = _build_formula_query(session, access, run_id, body)
@@ -987,33 +1097,14 @@ async def view_run_stream(
             rel = await asyncio.to_thread(fq.aggregate_view)
             yield ServerSentEvent(data=rel.model_dump(), event="aggregate")
 
-        # graph — progressive chunks via graph_stream, then a final full payload.
-        # Streaming bypasses FormulaQuery.graph_view (which collects); we read
-        # the configured AQ directly so each chunk can yield to the client.
+        # graph — chunks, then a final full payload. Same packer the JSON
+        # endpoint uses (``_graph_kwargs`` + ``FormulaQuery``), so the two
+        # cannot return different graphs for the same body.
         if body.graph is not None:
-            gp = body.graph
-            triplet_field = gp.triplet_field
-            if triplet_field is None and body.formula.group:
-                triplet_field = body.formula.group[0].path
-            if not triplet_field:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="graph view requires triplet_field or formula.group[0].path",
-                )
             accumulated_nodes: list[dict] = []
             accumulated_edges: list[dict] = []
-            async for chunk in fq.aq.graph_stream(
-                triplet_field,
-                dedup=gp.dedup,
-                top_n_nodes=gp.top_n_nodes,
-                top_n_edges=gp.top_n_edges,
-                chunk_size=gp.chunk_size,
-                edge_weight_field=gp.edge_weight_field,
-                edge_weight_mode=gp.edge_weight_mode,
-                forward_properties=list(gp.forward_properties or []),
-                node_group_by=gp.node_group_by,
-                edge_group_by=gp.edge_group_by,
-                null_policy=gp.null_policy,
+            async for chunk in fq.graph_stream_view(
+                chunk_size=body.graph.chunk_size, **_graph_kwargs(body.graph),
             ):
                 chunk_nodes = [_node_to_dict(n) for n in chunk.nodes]
                 chunk_edges = [_edge_to_dict(e) for e in chunk.edges]
@@ -1119,6 +1210,141 @@ async def distinct_values(
 
 # Row/asset/node/edge dict helpers moved to formula_query.py — single
 # source of truth for the wire shapes those phase responses emit.
+
+
+# ─── Canon binding preflight ─────────────────────────────────────────────
+#
+# Canon injection changes every prompt of a run: the type vocabulary the model
+# may use, and the property slots it is asked to fill. Both are cheap in tokens
+# — entity *names* are deliberately never injected (see
+# `contract_resolution`) — so this is an inspection surface first and a cost
+# guard second: what will this binding actually do, and did any of it land
+# nowhere? Same resolution path the task will run, no run required, nothing
+# written.
+
+
+class PreviewBindingsRequest(BaseModel):
+    """What a prospective run would inject. Deliberately run-less so the launch
+    dialog and the companion can both ask before committing."""
+
+    schema_ids: list[int]
+    canon_bindings: Dict[str, Any] = Field(default_factory=dict)
+    canon_ids: list[int] = Field(default_factory=list)
+    asset_count: Optional[int] = Field(
+        default=None,
+        description="Assets the run would cover; enables a total projection.",
+    )
+
+
+class SchemaBindingPreview(BaseModel):
+    schema_id: int
+    schema_name: str
+    fields: list[FieldInjection] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    est_tokens_per_asset: int = 0
+
+
+class PreviewBindingsResponse(BaseModel):
+    schemas: list[SchemaBindingPreview] = Field(default_factory=list)
+    injected_types: int = 0
+    injected_properties: int = 0
+    est_tokens_per_asset: int = 0
+    projected_total_tokens: Optional[int] = None
+    blocking: bool = Field(
+        default=False,
+        description="A type list large enough to suggest an uncurated canon — "
+                    "the UI should ask for an explicit acknowledgement.",
+    )
+    summary: str = ""
+    warnings: list[str] = Field(default_factory=list)
+
+
+def _binding_summary(resp: PreviewBindingsResponse, asset_count: Optional[int]) -> str:
+    if not resp.est_tokens_per_asset:
+        return "No canon vocabulary is injected — prompts are unchanged."
+    parts = []
+    if resp.injected_types:
+        parts.append(f"{resp.injected_types} entity type{'s' if resp.injected_types != 1 else ''}")
+    if resp.injected_properties:
+        parts.append(
+            f"{resp.injected_properties} property slot"
+            f"{'s' if resp.injected_properties != 1 else ''}"
+        )
+    what = " and ".join(parts) or "canon vocabulary"
+    out = f"This run adds {what} to every prompt (≈{resp.est_tokens_per_asset:,} tokens/asset"
+    if asset_count and resp.projected_total_tokens:
+        out += f" × {asset_count:,} assets ≈ {resp.projected_total_tokens:,} tokens"
+    return out + ")."
+
+
+@router.post("/preview-bindings", response_model=PreviewBindingsResponse)
+async def preview_bindings(
+    *,
+    access: Access = Requires(scope=None),
+    session: SessionDep,
+    body: PreviewBindingsRequest,
+):
+    """Resolve a prospective run's canon bindings and report what they cost.
+
+    Runs the *same* ``resolve_for_run`` the annotate task will run, so the
+    number shown is the number charged — no parallel estimator to drift. Creates
+    nothing and dispatches nothing.
+    """
+    def _run() -> PreviewBindingsResponse:
+        from app.api.modules.annotation.contract_resolution import (
+            TYPES_COST_WARN,
+            resolve_for_run,
+        )
+        from app.api.modules.annotation.schema_map import (
+            SchemaRefCycleError,
+            schema_map_for,
+        )
+
+        infospace = session.get(Infospace, access.infospace_id)
+        default_canon_id = getattr(infospace, "default_canon_id", None)
+
+        previews: list[SchemaBindingPreview] = []
+        all_warnings: list[str] = []
+
+        for sid in body.schema_ids:
+            schema = session.get(AnnotationSchema, sid)
+            if not schema or schema.infospace_id != access.infospace_id:
+                all_warnings.append(f"schema {sid}: not found in this infospace")
+                continue
+            try:
+                smap = schema_map_for(schema.output_contract)
+            except SchemaRefCycleError as e:
+                all_warnings.append(f"schema {sid}: cyclic x-ref ({e})")
+                continue
+            _contract, report = resolve_for_run(
+                session, schema.output_contract, smap,
+                run_bindings=body.canon_bindings,
+                run_canon_ids=body.canon_ids,
+                default_canon_id=default_canon_id,
+            )
+            previews.append(SchemaBindingPreview(
+                schema_id=sid,
+                schema_name=schema.name,
+                fields=list(report.fields),
+                warnings=list(report.warnings),
+                est_tokens_per_asset=report.est_tokens_per_asset,
+            ))
+            all_warnings.extend(f"{schema.name}: {w}" for w in report.warnings)
+
+        resp = PreviewBindingsResponse(
+            schemas=previews,
+            injected_types=sum(len(f.types) for p in previews for f in p.fields),
+            injected_properties=sum(len(f.properties) for p in previews for f in p.fields),
+            est_tokens_per_asset=sum(p.est_tokens_per_asset for p in previews),
+            warnings=all_warnings,
+        )
+        if body.asset_count and resp.est_tokens_per_asset:
+            resp.projected_total_tokens = resp.est_tokens_per_asset * body.asset_count
+        resp.blocking = resp.injected_types > TYPES_COST_WARN
+        resp.summary = _binding_summary(resp, body.asset_count)
+        return resp
+
+    return await asyncio.to_thread(_run)
 
 
 # ─── User-initiated actions ──────────────────────────────────────────────
@@ -1243,11 +1469,20 @@ def get_geocoded_entities(
 
     # Match entries case-insensitively by canonical. Only return
     # those with resolved coords — skip the unresolved/unseen ones.
+    # Type matched through `norm_type`, which exists for exactly this failure:
+    # "extraction cannot guarantee casing — `Person` and `person` used to
+    # resolve to two separate populations". A literal `== "location"` reproduced
+    # it here, so any entry written as `Location` — by a curated import, by a
+    # hand-seeded canon, by anything but this one action — was invisible and the
+    # map came back empty with no error. The graph never had the problem because
+    # `_attach_coords` does not filter on type at all.
+    from app.api.modules.graph.resolution import norm_type
+
     lowered = [s.lower() for s in strings]
     entities = session.exec(
         select(CanonEntry).where(
             CanonEntry.infospace_id == access.infospace_id,
-            CanonEntry.type == "location",
+            func.lower(func.trim(CanonEntry.type)) == norm_type("location"),
             func.lower(CanonEntry.canonical).in_(lowered),
         )
     ).all()
@@ -1271,7 +1506,7 @@ def get_geocoded_entities(
 #
 # Observation snapshots — immutable frozen outputs of formulas. Persisted as
 # JSON entries on ``AnnotationRun.views_config['observations']``. See
-# ``docs/intelligence/HOW_TO.md`` § Observations.
+# ``docs/INTELLIGENCE.md`` § Observations.
 
 from app.api.modules.annotation import snapshots as _snapshots
 from app.api.modules.annotation.formulas import resolve_formula as _resolve_formula

@@ -2,6 +2,8 @@
 import copy
 import logging
 from typing import Any, Dict, Optional
+
+from pydantic import BaseModel
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -202,6 +204,58 @@ def create_annotation_schema(
     except Exception as e:
         logger.exception(f"Route: Unexpected error creating schema: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+class TemplateOut(BaseModel):
+    """One pickable starting point, with the contract and projections it makes."""
+
+    id: str
+    label: str
+    tier: str
+    hint: str
+    archetypes: list[str] = []
+    output_contract: dict[str, Any] | None = None
+    projections: list[dict[str, Any]] | None = None
+    #: The document rung — annotation-scoped, so it rides beside the
+    #: projections rather than inside them. See ``GraphConfig.doc_place``.
+    doc_place: str | None = None
+    doc_time: str | None = None
+
+
+@router.get("/templates", response_model=list[TemplateOut])
+def list_schema_templates(
+    *,
+    access: Access = Requires(scope=None),
+    expand: bool = False,
+):
+    """Schema templates — the observation model as something to start from.
+
+    **Served rather than duplicated.** The editor and the companion have each
+    grown their own contract emitter and have drifted before (A2: companion
+    schemas silently lacked ``x-entityField`` and could not graph at all).
+    Building from one definition is what keeps a companion-authored schema and
+    a hand-authored one the same artifact.
+
+    ``expand=true`` returns each template's full ``output_contract`` **and its
+    projections**. Both, because a contract alone is half a template: the
+    bindings — which array is time-bound, what the place is, what each row is
+    *about* — are where the difficulty actually lives, and a template that
+    skipped them would hand back a good schema and a blank graph.
+    """
+    from app.api.modules.annotation.templates import (
+        build_contract, build_doc_anchors, build_projections, list_templates,
+    )
+
+    return [
+        TemplateOut(
+            id=t.id, label=t.label, tier=t.tier, hint=t.hint,
+            archetypes=list(t.archetypes),
+            output_contract=build_contract(t.tier, t.archetypes) if expand else None,
+            projections=build_projections(t.tier, t.archetypes) if expand else None,
+            **(build_doc_anchors(t.tier) if expand else {}),
+        )
+        for t in list_templates()
+    ]
+
 
 @router.get("", response_model=AnnotationSchemasOut)
 @router.get("/", response_model=AnnotationSchemasOut)

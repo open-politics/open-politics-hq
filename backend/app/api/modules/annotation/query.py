@@ -126,7 +126,7 @@ class OutputRow(BaseModel):
 class OutputRelation(BaseModel):
     """A Formula's aggregate-mode answer (grouped buckets keyed by group
     dims, with measures and optional derives). No per-row provenance in
-    pure aggregate mode by design — see ``docs/intelligence/HOW_TO.md``.
+    pure aggregate mode by design — see ``docs/INTELLIGENCE.md``.
 
     Rows-shape and graph-shape responses are packed by their own view
     phases (rows view → :class:`AnnotationRow`/asset-hierarchy; graph
@@ -957,7 +957,7 @@ class AnnotationQuery:
         queries that share the WHERE and merge by group key, so the
         author writes one formula and the engine does the right thing.
 
-        See ``docs/intelligence/HOW_TO.md`` § "One SQL GROUP BY".
+        See ``docs/INTELLIGENCE.md`` § "One SQL GROUP BY".
         """
         # Save state so multiple ``relation()`` calls on the same AQ don't
         # compound conditions / merge_maps. The body extends self in place
