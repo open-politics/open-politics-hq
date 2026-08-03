@@ -29,35 +29,23 @@ from app.api.modules.graph.models import (
 from app.api.modules.graph.resolution import resolve_entities_batch
 from app.models import Annotation, Infospace
 from app.api.modules.annotation.models import AnnotationRun, AnnotationSchema
+from app.api.modules.annotation.schema_map import (
+    SchemaMap,
+    iter_entity_refs,
+    schema_map_for,
+)
 from app.core.tasks import TaskContext, task
 from app.core.task_utils import run_async_in_celery
 
 logger = logging.getLogger(__name__)
 
+#: Type recorded when neither the schema nor the model supplies one. Both the
+#: triplet path and the entity-field path must use it, or the same entity splits
+#: into two canon entries depending on which field named it.
+UNTYPED = "UNKNOWN"
+
 
 # ─── Graph-shape recognition (schema-driven, multi-graph-field) ──────────────
-
-
-def _is_triplet_subschema(schema_node: dict) -> bool:
-    """A JSON Schema node is "graph-shaped" when it's an array whose items
-    are objects with at least subject_name, predicate, and object_name keys.
-    Property name is irrelevant — multi-graph-field schemas key by user-facing
-    name, legacy schemas key under "triplets". Both are caught by shape.
-    """
-    if not isinstance(schema_node, dict):
-        return False
-    if schema_node.get("type") != "array":
-        return False
-    items = schema_node.get("items")
-    if not isinstance(items, dict):
-        return False
-    item_props = items.get("properties")
-    if not isinstance(item_props, dict):
-        return False
-    keys = set(item_props.keys())
-    has_subject = "subject_name" in keys or "subject" in keys
-    has_object = "object_name" in keys or "object" in keys
-    return has_subject and has_object and "predicate" in keys
 
 
 def _find_graph_field_paths(output_contract: Optional[dict]) -> List[str]:
@@ -65,25 +53,23 @@ def _find_graph_field_paths(output_contract: Optional[dict]) -> List[str]:
     graph-shaped subschema. Paths are rooted under the section name, e.g.
     ``"document.loose_relationships"`` or ``"document.triplets"``.
 
+    Reads ``SchemaMap.triplet_paths`` and strips the ``[*]`` marker the map
+    carries on array nodes — this function's contract is the bare array path,
+    which is what ``_walk_value_path`` navigates.
+
     For v1 we walk only the document section (where graph fields almost
-    exclusively live). per_image / per_audio / per_video sections are wrapped
-    in arrays whose items host the per-modality fields — extending the walk
-    to those sections is a follow-up if and when graph fields land there.
+    exclusively live). ``_walk_value_path`` splits on dots and has no notion of
+    array indices, so a ``per_image[*].x`` path could not be navigated even if
+    we returned it; per-modality graph fields stay a follow-up.
     """
     if not isinstance(output_contract, dict):
         return []
-    section_props = (
-        output_contract.get("properties", {})
-        .get("document", {})
-        .get("properties", {})
-    )
-    if not isinstance(section_props, dict):
-        return []
-    paths: List[str] = []
-    for key, node in section_props.items():
-        if _is_triplet_subschema(node):
-            paths.append(f"document.{key}")
-    return paths
+    smap = schema_map_for(output_contract)
+    return [
+        node.path.removesuffix("[*]")
+        for node in smap.fields
+        if node.shape == "triplet" and node.section == "document"
+    ]
 
 
 def _walk_value_path(value: Any, path: str) -> Any:
@@ -108,30 +94,6 @@ def _extract_triplets_at_path(value: dict, path: str) -> List[Dict]:
     return []
 
 
-def _has_graph_structure(value: dict) -> bool:
-    """Check if annotation value contains graph-like structure.
-
-    Used as a fast-path skip when no schema is available. Recognizes the
-    legacy ``"triplets"`` key plus ``"nodes"``/``"edges"`` shapes. The
-    schema-aware path in curate_annotation_batch is more accurate when the
-    schema is loadable; this fallback handles unschemed values.
-    """
-    if not value or not isinstance(value, dict):
-        return False
-    doc = value.get("document") or value
-    if isinstance(doc, dict):
-        if "nodes" in doc or "edges" in doc or "triplets" in doc:
-            return True
-        # Any graph-shaped value (multi-field schema, post-migration).
-        for v in doc.values():
-            if isinstance(v, list) and v and isinstance(v[0], dict):
-                if "predicate" in v[0] and (
-                    "subject_name" in v[0] or "subject" in v[0]
-                ):
-                    return True
-    return False
-
-
 def _extract_triplets(data: Any) -> List[Dict]:
     """Extract triplets from the legacy ``"triplets"`` key under document.
 
@@ -148,13 +110,68 @@ def _extract_triplets(data: Any) -> List[Dict]:
 
 
 def _extract_entities_list(data: Any) -> List[Dict]:
-    """Extract entities list from annotation value, handling document nesting."""
+    """Extract entities list from annotation value, handling document nesting.
+
+    Only feeds the legacy ``source_id``/``target_id`` indirection in
+    ``_triplet_to_entity_pairs`` — it keys on a literal ``"entities"`` key by
+    convention. Schema-declared entity fields go through
+    :func:`_extract_entity_mentions`, which is driven by the SchemaMap instead
+    of a hardcoded key.
+    """
     if isinstance(data, dict):
         if "entities" in data and isinstance(data["entities"], list):
             return data["entities"]
         if "document" in data and isinstance(data["document"], dict):
             return data["document"].get("entities", [])
     return []
+
+
+def _extract_entity_mentions(
+    value: dict, smap: SchemaMap,
+) -> List[Tuple[str, str, str]]:
+    """Every entity mention in *value* at a schema-declared entity path.
+
+    Returns ``(name, type, fragment_path)`` — the fragment path carries real
+    array indices (``document.observations[2].statement_by``) so each mention
+    gets its own ``FragmentCuration`` row and its own idempotency key.
+
+    **Type coercion is the anchor's job.** A mention arriving as
+    ``Merkel/Person`` on a field that declares ``Politician`` is coerced to the
+    declared type, because a field's declared vocabulary is what "linked" means
+    — otherwise one human splits into two canon entries (and
+    ``find_by_alias`` matches ``type`` exactly, so the split would be
+    permanent). An undeclared type on an unconstrained field passes through for
+    resolution to deal with.
+    """
+    out: List[Tuple[str, str, str]] = []
+    for path in smap.entity_paths:
+        node = smap.get(path)
+        for name, raw_type, frag in iter_entity_refs(value, path):
+            out.append((name, _coerce_entity_type(raw_type, node), frag))
+    return out
+
+
+def _coerce_entity_type(raw_type: str, node: Optional[Any]) -> str:
+    """Fold a mention's emitted type into its field's declared vocabulary."""
+    if node is None:
+        return raw_type or UNTYPED
+    declared = [t for t in ([node.entity_type] if node.entity_type else [])
+                + list(node.alternate_types) if t]
+    if not declared:
+        # Nothing declared: keep what the model said, else fall back to the
+        # same sentinel the triplet path uses. Diverging here would split one
+        # entity across ``""`` and ``UNKNOWN`` depending on which field named
+        # it — precisely the fragmentation C1 exists to remove.
+        return raw_type or UNTYPED
+    if raw_type:
+        for t in declared:
+            if t.strip().lower() == raw_type.strip().lower():
+                return t
+        if not node.type_constrained:
+            # Field explicitly allows the model to invent a type — keep it as
+            # an audit signal rather than flattening it.
+            return raw_type
+    return declared[0]
 
 
 def _find_entity_name_by_id(entity_id: Any, entities: List[Dict]) -> Optional[str]:
@@ -184,22 +201,25 @@ def _triplet_to_entity_pairs(
     GraphEdge / FragmentCuration rows.
     """
     pairs: List[Tuple[str, str]] = []
+    # ``.get(k, default)`` only fires the default on a *missing* key — an
+    # emitted-but-empty ``subject_type`` would otherwise slip through as ``""``
+    # and split from the UNKNOWN population. ``or UNTYPED`` covers both.
     if "subject_name" in triplet and triplet.get("subject_name"):
-        sub_type = triplet.get("subject_type", "UNKNOWN")
+        sub_type = triplet.get("subject_type") or UNTYPED
         pairs.append((str(triplet["subject_name"]).strip(), sub_type))
     elif "source_id" in triplet and entities:
         name = _find_entity_name_by_id(triplet["source_id"], entities)
         if name:
             etype = _find_entity_type_by_id(triplet["source_id"], entities)
-            pairs.append((str(name).strip(), etype))
+            pairs.append((str(name).strip(), etype or UNTYPED))
     if "object_name" in triplet and triplet.get("object_name"):
-        obj_type = triplet.get("object_type", "UNKNOWN")
+        obj_type = triplet.get("object_type") or UNTYPED
         pairs.append((str(triplet["object_name"]).strip(), obj_type))
     elif "target_id" in triplet and entities:
         name = _find_entity_name_by_id(triplet["target_id"], entities)
         if name:
             etype = _find_entity_type_by_id(triplet["target_id"], entities)
-            pairs.append((str(name).strip(), etype))
+            pairs.append((str(name).strip(), etype or UNTYPED))
     return pairs
 
 
@@ -424,17 +444,29 @@ async def curate_annotation_batch(
     graph_id_override: Optional[int] = None,
     curated_by: Optional[int] = None,
 ) -> dict:
-    """Core curation: extract triplets from every graph-shaped field in the
-    annotation's schema, resolve entities into the target canon, create
-    FragmentCuration + GraphEdge (tagged with the source field path),
-    reactivate tombstone relationships.
+    """Core curation: resolve every entity the annotation names into the
+    target canon, and materialise the relationships between them.
+
+    Two kinds of field contribute, both discovered from the schema via
+    ``SchemaMap`` — never from hardcoded key conventions:
+
+    - **Graph fields** (triplet-shaped arrays) → ``FragmentCuration`` with
+      ``source_entry_id``/``target_entry_id`` + a ``GraphEdge`` tagged with its
+      ``source_field_path``, so multi-graph-field schemas can split or unify
+      them via ``edge_group_by`` at inspection time. Tombstone relationships
+      for the pair reactivate.
+    - **Entity fields** (``entity`` / ``array_entity``, at any nesting depth) →
+      ``FragmentCuration`` with ``entry_id``. A mention is a membership
+      statement, not a relationship, so it gets no edge. What it buys is the
+      canon entry: a name appearing only in a roster, or only in a nested
+      row's entity leaf, still resolves, dedupes, and becomes geocodable.
+
+    Both kinds feed **one** ``resolve_entities_batch`` call per annotation, so
+    a name that appears in a roster *and* in a triplet resolves to a single
+    ``CanonEntry`` — which is what later makes it a single graph node.
 
     Caller owns the transaction. Used by both the route (synchronous,
     user-selected fragments) and the ``@task`` (bulk, flow-driven).
-
-    Multi-graph-field schemas produce multiple edge groups per annotation,
-    each tagged with its ``source_field_path`` so panels can split or unify
-    them via ``edge_group_by`` at inspection time.
     """
     curated = 0
     skipped = 0
@@ -445,9 +477,6 @@ async def curate_annotation_batch(
         try:
             ann = session.get(Annotation, ann_id)
             if not ann or not ann.value:
-                skipped += 1
-                continue
-            if not _has_graph_structure(ann.value):
                 skipped += 1
                 continue
 
@@ -468,19 +497,30 @@ async def curate_annotation_batch(
             field_triplet_groups = _resolve_graph_field_paths(
                 session, ann.schema_id, ann.value, schema_path_cache,
             )
-            if not field_triplet_groups:
+
+            # Schema-declared entity fields are curatable in their own right —
+            # a roster or a nested row's entity leaf resolves into the canon
+            # whether or not the annotation carries any triplets. This is what
+            # makes "entities tied to a canon" give in-pipeline dedup.
+            schema = session.get(AnnotationSchema, ann.schema_id) if ann.schema_id else None
+            smap = schema_map_for(schema.output_contract) if schema else SchemaMap()
+            entity_mentions = _extract_entity_mentions(ann.value, smap)
+
+            if not field_triplet_groups and not entity_mentions:
                 skipped += 1
                 continue
 
             entities = _extract_entities_list(ann.value)
 
-            # Aggregate (name, type) pairs across ALL graph fields on this
-            # annotation so resolve_entities_batch makes one canon-resolution
-            # pass per annotation regardless of how many graph fields fire.
+            # Aggregate (name, type) pairs across ALL graph fields AND all
+            # entity fields on this annotation so resolve_entities_batch makes
+            # one canon-resolution pass per annotation regardless of how many
+            # fields fire.
             all_entity_pairs: List[Tuple[str, str]] = []
             for _path, triplets in field_triplet_groups:
                 for t in triplets:
                     all_entity_pairs.extend(_triplet_to_entity_pairs(t, entities))
+            all_entity_pairs.extend((name, etype) for name, etype, _ in entity_mentions)
 
             unique_pairs = list(dict.fromkeys(all_entity_pairs))
             if not unique_pairs:
@@ -580,11 +620,39 @@ async def curate_annotation_batch(
 
                     ann_curated += 1
 
+            # Entity-field mentions: one FragmentCuration per mention, bound
+            # through ``entry_id`` (the single-entry slot the model already
+            # documents for exactly this case). No GraphEdge — a mention is a
+            # membership statement, not a relationship. What it buys is the
+            # canon entry itself, so a name appearing only in a roster or only
+            # in a nested row still resolves, dedupes, and can be geocoded.
+            ann_entities = 0
+            for name, etype, fragment_path in entity_mentions:
+                if fragment_path in curated_paths:
+                    continue  # already curated — per-mention idempotency
+                norm_name = merge_normalize.get(name.strip().lower(), name)
+                norm_type = merge_type_override.get(norm_name.strip().lower(), etype)
+                entry = resolution_map.get((norm_name, norm_type))
+                if not entry:
+                    continue  # unsettled in resolve-into-canon mode; staged above
+                assert entry.canon_id == canon_id, (
+                    f"entity {entry.id} canon mismatch: {entry.canon_id} vs {canon_id}"
+                )
+                session.add(FragmentCuration(
+                    annotation_id=ann_id,
+                    fragment_path=fragment_path,
+                    status="curated",
+                    entry_id=entry.id,
+                    curated_by=curated_by or ann.user_id,
+                ))
+                ann_entities += 1
+
             session.flush()
-            curated += ann_curated
+            curated += ann_curated + ann_entities
             logger.info(
-                "curate_annotation_batch: curated annotation %d (%d edges across %d fields)",
-                ann_id, ann_curated, len(field_triplet_groups),
+                "curate_annotation_batch: curated annotation %d "
+                "(%d edges across %d graph fields, %d entity mentions)",
+                ann_id, ann_curated, len(field_triplet_groups), ann_entities,
             )
         except Exception as e:
             logger.warning("curate_annotation_batch: failed for annotation %d: %s", ann_id, e, exc_info=True)

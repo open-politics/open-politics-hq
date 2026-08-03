@@ -26,6 +26,24 @@ from app.api.modules.graph.models import CanonEntry
 logger = logging.getLogger(__name__)
 
 
+def norm_type(entity_type: Optional[str]) -> str:
+    """Normalize an entity type for use as a *matching* key.
+
+    ``CanonEntry.type`` is the resolution key, so its casing decides identity.
+    Extraction cannot guarantee casing — the model picks it, and a multi-type
+    field offers several spellings — so ``Person`` and ``person`` used to
+    resolve to two separate populations for the same entity. Worse than a
+    duplicate: because the type gates every lookup, no later alias or embedding
+    match could ever reunite them.
+
+    The stored value keeps its original casing (display), exactly like
+    ``canonical`` does for names; only comparisons normalize. Every lookup that
+    filters on type must go through this — SQL predicates pair it with
+    ``LOWER(TRIM(type))``, in-memory dicts key on it.
+    """
+    return (entity_type or "").strip().lower()
+
+
 def find_by_alias(
     session: Session,
     canon_id: int,
@@ -36,6 +54,15 @@ def find_by_alias(
     """Find a CanonEntry in a canon by exact ``canonical`` or alias match.
 
     Uses SQL-level matching for scalability (no in-memory scan).
+
+    Both halves of the key are compared case- and whitespace-insensitively.
+    The type used to be compared raw while the name was normalized, so
+    ``Person`` / ``person`` resolved to two different populations for the same
+    human — and because the type is the matching key, that split was permanent:
+    no later alias or embedding match could reunite them. Extraction has no way
+    to guarantee casing (the model picks it, and multi-type fields offer several
+    spellings), so normalizing here is the only place that can hold the
+    invariant.
     """
     normalized_name = raw_name.strip().lower()
     if not normalized_name:
@@ -44,14 +71,14 @@ def find_by_alias(
     exclude_clause = "AND id != :exclude_id" if exclude_entry_id is not None else ""
     params: Dict[str, Any] = {
         "cid": canon_id,
-        "etype": entity_type,
+        "etype": norm_type(entity_type),
         "name": normalized_name,
     }
     if exclude_entry_id is not None:
         params["exclude_id"] = exclude_entry_id
     exact_sql = text(f"""
         SELECT id FROM canon_entry
-        WHERE canon_id = :cid AND type = :etype {exclude_clause}
+        WHERE canon_id = :cid AND LOWER(TRIM(type)) = :etype {exclude_clause}
         AND (
             LOWER(TRIM(canonical)) = :name
             OR EXISTS (
@@ -89,14 +116,14 @@ def _find_by_embedding_sql(
     vec_str = "[" + ",".join(str(x) for x in vec) + "]"
     params: Dict[str, Any] = {
         "cid": canon_id,
-        "etype": entity_type,
+        "etype": norm_type(entity_type),
         "vec": vec_str,
         "thresh": 1.0 - similarity_threshold,
     }
     sql = text(f"""
         SELECT id, ({col_name} <=> CAST(:vec AS vector)) AS dist
         FROM canon_entry
-        WHERE canon_id = :cid AND type = :etype
+        WHERE canon_id = :cid AND LOWER(TRIM(type)) = :etype
           AND {col_name} IS NOT NULL
         ORDER BY {col_name} <=> CAST(:vec AS vector)
         LIMIT 1
@@ -130,14 +157,14 @@ def find_similar_entries_sql(
     vec_str = "[" + ",".join(str(x) for x in vec) + "]"
     sql = text(f"""
         SELECT id FROM canon_entry
-        WHERE canon_id = :cid AND type = :etype
+        WHERE canon_id = :cid AND LOWER(TRIM(type)) = :etype
           AND {col_name} IS NOT NULL
           AND ({col_name} <=> CAST(:vec AS vector)) <= :dist
         ORDER BY {col_name} <=> CAST(:vec AS vector)
         LIMIT :lim
     """)
     rows = session.execute(sql, {
-        "cid": canon_id, "etype": entity_type, "vec": vec_str,
+        "cid": canon_id, "etype": norm_type(entity_type), "vec": vec_str,
         "dist": 1.0 - similarity_threshold, "lim": limit,
     }).fetchall()
     return [r[0] for r in rows]
@@ -187,7 +214,7 @@ async def find_by_embedding(
     exclude_clause = "AND id != :exclude_id" if exclude_entry_id is not None else ""
     params: Dict[str, Any] = {
         "cid": canon_id,
-        "etype": entity_type,
+        "etype": norm_type(entity_type),
         "vec": vec_str,
         "thresh": 1.0 - similarity_threshold,
     }
@@ -197,7 +224,7 @@ async def find_by_embedding(
     sql = text(f"""
         SELECT id, ({col_name} <=> CAST(:vec AS vector)) AS dist
         FROM canon_entry
-        WHERE canon_id = :cid AND type = :etype {exclude_clause}
+        WHERE canon_id = :cid AND LOWER(TRIM(type)) = :etype {exclude_clause}
           AND {col_name} IS NOT NULL
         ORDER BY {col_name} <=> CAST(:vec AS vector)
         LIMIT 1
@@ -279,8 +306,12 @@ async def resolve_entities_batch(
     if not entities:
         return result
 
-    entity_types = list({et for _, et in entities})
+    from sqlalchemy import func as sa_func
+
+    entity_types = list({norm_type(et) for _, et in entities})
     # Lightweight projection: only columns needed for alias lookup (no embeddings).
+    # Candidate load and lookup key both normalize the type — a raw ``IN`` here
+    # would load only the exact-cased rows and then miss them anyway.
     alias_stmt = sa_select(
         CanonEntry.id,
         CanonEntry.canonical,
@@ -288,21 +319,22 @@ async def resolve_entities_batch(
         CanonEntry.aliases,
     ).where(
         CanonEntry.canon_id == canon_id,
-        CanonEntry.type.in_(entity_types),
+        sa_func.lower(sa_func.trim(CanonEntry.type)).in_(entity_types),
     )
     alias_rows = session.execute(alias_stmt).all()
 
-    # In-memory exact alias lookup: (entity_type, normalized_name) -> entry_id
+    # In-memory exact alias lookup: (norm_type, normalized_name) -> entry_id
     alias_lookup: Dict[Tuple[str, str], int] = {}
     for row in alias_rows:
         entry_id, canonical, row_entity_type, aliases = row
+        row_type = norm_type(row_entity_type)
         canon_norm = (canonical or "").strip().lower()
         if canon_norm:
-            alias_lookup[(row_entity_type, canon_norm)] = entry_id
+            alias_lookup[(row_type, canon_norm)] = entry_id
         for alias in (aliases or []):
             alias_norm = (str(alias)).strip().lower()
             if alias_norm:
-                alias_lookup[(row_entity_type, alias_norm)] = entry_id
+                alias_lookup[(row_type, alias_norm)] = entry_id
 
     raw_names = [e[0] for e in entities]
     raw_embeddings: Optional[List[List[float]]] = None
@@ -320,8 +352,9 @@ async def resolve_entities_batch(
 
     for raw_name, entity_type in entities:
         norm = (raw_name or "").strip().lower()
-        if norm and (entity_type, norm) in alias_lookup:
-            matched_id = alias_lookup[(entity_type, norm)]
+        key = (norm_type(entity_type), norm)
+        if norm and key in alias_lookup:
+            matched_id = alias_lookup[key]
             result[(raw_name, entity_type)] = session.get(CanonEntry, matched_id)
             continue
         existing = find_by_alias(session, canon_id, raw_name, entity_type)
@@ -410,14 +443,15 @@ class CanonResolver:
 
     def resolve(self, name: str, entity_type: str) -> Optional[int]:
         """Return the CanonEntry id for ``(name, entity_type)`` or
-        ``None`` if unresolved. Match is case-insensitive, trim-tolerant.
+        ``None`` if unresolved. Both halves match case-insensitively,
+        trim-tolerant — see :func:`norm_type`.
         """
         if not name:
             return None
         norm = name.strip().lower()
         if not norm:
             return None
-        return self._lookup.get((entity_type, norm))
+        return self._lookup.get((norm_type(entity_type), norm))
 
     def entry(self, entry_id: int) -> Optional["CanonEntry"]:
         """Return the cached CanonEntry for an id, or ``None`` if not loaded."""
@@ -448,7 +482,7 @@ def build_canon_resolver(
     thousands of entries; a single canon's slice is small enough to load
     into memory without paging.
     """
-    from sqlalchemy import select as sa_select
+    from sqlalchemy import func as sa_func, select as sa_select
 
     stmt = sa_select(
         CanonEntry.id,
@@ -457,19 +491,24 @@ def build_canon_resolver(
         CanonEntry.aliases,
     ).where(CanonEntry.canon_id == canon_id)
     if entity_types:
-        stmt = stmt.where(CanonEntry.type.in_(entity_types))
+        stmt = stmt.where(
+            sa_func.lower(sa_func.trim(CanonEntry.type)).in_(
+                [norm_type(t) for t in entity_types]
+            )
+        )
 
     rows = session.execute(stmt).all()
 
     lookup: Dict[Tuple[str, str], int] = {}
     for entry_id, canonical, entity_type, aliases in rows:
+        row_type = norm_type(entity_type)
         canon_norm = (canonical or "").strip().lower()
         if canon_norm:
-            lookup[(entity_type, canon_norm)] = entry_id
+            lookup[(row_type, canon_norm)] = entry_id
         for alias in aliases or []:
             alias_norm = str(alias).strip().lower()
             if alias_norm:
-                lookup[(entity_type, alias_norm)] = entry_id
+                lookup[(row_type, alias_norm)] = entry_id
 
     # Lazy entry-by-id cache: hydrate when callers ask. Avoids loading
     # full CanonEntry rows (with embeddings) up front.

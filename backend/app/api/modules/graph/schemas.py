@@ -9,6 +9,39 @@ from pydantic import BaseModel, ConfigDict, Field
 # ── Graph data items (shared by ephemeral annotation graph + persistent graph) ──
 
 
+class NodePlace(BaseModel):
+    """One place a node is, over one interval, from one rung of the ladder.
+
+    A node's location is a list because that is what the world is: a company
+    holds a registered office, a head office and a tax residence
+    simultaneously, in three countries. Anchoring on the one you care about is
+    the question you are asking, and the gap between two of them is often the
+    finding.
+
+    ``source`` is the rung — ``row`` is a stated site (strongest, hard-pinnable),
+    ``attribute`` is a seat (softer), ``doc`` and ``asset`` are weaker still.
+    They must never render alike: "this filing is about Malta" carries nothing
+    like the authority of "the meeting was in Valletta".
+    """
+
+    place: str
+    lat: float | None = None
+    lon: float | None = None
+    #: The interval this place holds over. Open ``to`` means "still current".
+    from_: str | None = Field(default=None, alias="from")
+    to: str | None = None
+    #: What kind of place — ``registered_office``, ``head_office``. Null for a
+    #: plain site.
+    kind: str | None = None
+    source: Literal["row", "attribute", "doc", "asset", "canon"] = "row"
+    #: Which end of a trajectory this is. ``None`` for a point. A movement is
+    #: at neither endpoint — it spans them — so both ends live here and resolve
+    #: their own coordinates through the same path as any other place.
+    end: Literal["from", "to"] | None = None
+
+    model_config = ConfigDict(frozen=True, populate_by_name=True)
+
+
 class GraphNodeData(BaseModel):
     """One node in a graph projection (entity with frequency).
 
@@ -28,10 +61,80 @@ class GraphNodeData(BaseModel):
     name: str
     type: str
     frequency: int
+    #: What kind of node this is. ``entity`` comes from a named set — it
+    #: persists, is named, and participates repeatedly. ``occurrence`` is minted
+    #: from a statement row that is *about itself*: it came to be, and it is
+    #: identified by its participants and its when rather than by a name of its
+    #: own. The renderer treats them oppositely — entities are the labelled
+    #: nouns, occurrences are the numerous connective tissue.
+    kind: Literal["entity", "occurrence"] = "entity"
+    #: Occurrences only: the declared kind of act — ``Payment``, ``Meeting``.
+    #: Mirrors into ``type`` so ``type:Payment`` filters with no new grammar.
+    node_type: str | None = None
+    #: What the document said this act was worth — an amount, a percentage, a
+    #: 1–10 salience. Deliberately separate from ``frequency`` (how often we
+    #: saw it): conflating them makes "mentioned often" look like "large".
+    #: **Not a measurement.** A model-emitted scale is uncalibrated and not
+    #: comparable across documents, so it ranks within a run and nothing more.
+    magnitude: float | None = None
     source_annotation_ids: list[int] = Field(default_factory=list)
     entity_id: int | None = None
-    group_value: str | None = None
+    group_value: str | list[str] | dict[str, float] | None = None
+    """Clustering key — **presentation**. A scalar is one label; a list is
+    multi-label; a ``{label: weight}`` map is a *vector*. The affinity anchor
+    reads all three shapes.
+
+    Whatever ``node_group_by`` asked for lands here, so its meaning changes
+    with the panel's configuration. Read :attr:`profile` for the semantic
+    vector; see the note there for why the two are separate fields."""
+    profile: dict[str, float] | None = None
+    """Signed affinity vector — **data**, and only ever a semantic one.
+
+    Written by :func:`stream.attach_neighbour_profiles` for the
+    ``neighbours:<Type>`` form: ``{opacity: 8.2, oversight: -3.0}``, an
+    aggregate over ``node → occurrence → <Type>`` weighted by each act's
+    magnitude and signed by whether the act served or opposed.
+
+    Separate from :attr:`group_value` because that slot is whatever the panel
+    asked to group by, and the convergence residual will cosine any dict it is
+    handed. With ``node_group_by: "roles"`` the slot holds a role histogram
+    (``{via: 340, employer: 12}``), and cosining two of those produces a
+    confident number about nothing. One slot, two meanings, three consumers —
+    so the meanings get a field each."""
     properties: dict[str, Any] = Field(default_factory=dict)
+    # ── Time ──
+    # Existence interval, unioned across every atom that named this node.
+    # ``t1 = None`` with a ``t0`` present means open-ended — the node exists
+    # from ``t0`` onward, which is what a bare timestamp declares. A time
+    # slider filters on these client-side; no refetch.
+    t0: str | None = None
+    t1: str | None = None
+    # Activity interval — the histogram source when a projection binds
+    # ``activity`` separately from ``time``. Falls back to t0/t1 when unbound.
+    a0: str | None = None
+    a1: str | None = None
+    # ── Space ──
+    #: Raw location string from the projection's ``place`` binding — the
+    #: ``at``, or the origin of a trajectory.
+    place: str | None = None
+    #: The far end of a trajectory, when the projection bound
+    #: ``place {start, end}``. A movement is at neither endpoint; it spans
+    #: them, and both are needed to draw the arc.
+    place_to: str | None = None
+    #: Every place this node is, with its interval, kind and ladder rung.
+    #: ``place``/``lat``/``lon`` above mirror the first entry so callers written
+    #: against the scalar shape keep working.
+    places: list[NodePlace] = Field(default_factory=list)
+    #: Geo anchor, joined from ``CanonEntry.properties.coords`` when the name
+    #: resolves in the run's canon. Null for nodes that never geocoded.
+    lat: float | None = None
+    lon: float | None = None
+    # ── Provenance ──
+    #: Which projections produced this node — lets a panel split or unify by
+    #: field the way ``GraphEdge.source_field_path`` does for curated edges.
+    source_paths: list[str] = Field(default_factory=list)
+    #: Role labels this node appeared under ("speaker", "subject", …).
+    roles: list[str] = Field(default_factory=list)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -54,11 +157,28 @@ class GraphEdgeData(BaseModel):
     source: str
     target: str
     predicate: str
+    #: The role this edge's target plays in its source occurrence — ``payer``,
+    #: ``via``, ``on_board``. A property of the *edge*, never of the node: the
+    #: same bank is ``via`` in 340 payments and ``employer`` in 12 employments
+    #: while staying one node. "Facilitator" is therefore a measured view
+    #: (degree restricted to a role), never a declared type.
+    role: str | None = None
     weight: int
     computed_weight: float | None = None
     group_value: str | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
     evidence: list[dict[str, Any]] = Field(default_factory=list)
+    #: Existence interval, unioned across contributing atoms. ``t1 = None``
+    #: with ``t0`` set means open-ended (a bare timestamp: from here onward).
+    #: This is what pops an edge in and out of the graph on the time slider.
+    t0: str | None = None
+    t1: str | None = None
+    #: Activity interval — separate histogram source when a projection binds
+    #: ``activity`` distinctly from ``time``.
+    a0: str | None = None
+    a1: str | None = None
+    #: Which projections contributed to this edge.
+    source_paths: list[str] = Field(default_factory=list)
 
 
 class GraphResultData(BaseModel):
