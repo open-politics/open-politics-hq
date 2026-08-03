@@ -1,0 +1,962 @@
+{
+  "type": "object",
+  "description": "NAMING. Use one spelling for one real-world thing, everywhere in your output. If the document says \"A. Rossi\", \"Rossi\" and \"Alessandro Rossi\", pick the fullest form and use exactly that in every field.\n\nROSTERS ARE THE VOCABULARY. Every person, organisation, place or thing you name anywhere must also appear in its own list. Other fields refer to those names.\n\nONE ROW PER HAPPENING. If something happened twice, emit two rows — even when the participants and the wording are identical. Never merge two into one row with a wider date range.\n\nWHO DID IT, TO WHOM, THROUGH WHOM. `by` is the one acting. `to` is who or what it was done to. `via` is who or what it ran through — an intermediary, an account, a vehicle. Fill `via` whenever the document names one; it is often the most important field in the row.\n\nDATES AND PLACES BELONG TO THE ROW THEY DESCRIBE. Do not copy the document's own date onto every row. A row with no date of its own leaves the field empty.\n\nPLACE NAMES, NEVER COORDINATES. Give place names exactly as the document writes them. Never produce latitudes, longitudes or coordinates.\n\nDATES ARE ABSOLUTE. Every date field takes a calendar date — 2016-04-22, or 2016-04 if that is all the text gives. The document's own date is stated at the top of the text: resolve \"Wednesday\", \"yesterday\" and \"last month\" against it and write the calendar date you arrive at. Where the reference is genuinely vague — \"recently\", \"in the spring\", \"back then\" — leave the field empty. An empty date costs nothing and inherits the document's; a guessed one is a fabrication that looks like a fact.\n\nNAMES COME FROM THE DOCUMENT. Use only identifiers, exhibit labels and event names the document itself provides. Never invent one. An invented event name invents a story.\n\nQUOTE, DO NOT PARAPHRASE. A justification must contain the document's own words for the part that supports the claim. If you cannot quote it, do not claim it.\n\nLEAVE IT OUT. An empty field is the correct answer when the document does not say. Do not infer, do not fill in something plausible, and do not write \"unknown\" or \"N/A\".",
+  "properties": {
+    "document": {
+      "type": "object",
+      "properties": {
+        "actors": {
+          "type": "array",
+          "description": "Everyone and every organisation named anywhere in this document. Other fields refer to these by name.",
+          "items": {
+            "type": "object",
+            "x-entityField": true,
+            "x-entityType": "Person",
+            "x-entityTypeConstrained": true,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "x-entityTypeDeclared": "Person"
+              },
+              "additional_types": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "x-entityAlternateTypes": [
+              "Organization",
+              "State"
+            ]
+          }
+        },
+        "places": {
+          "type": "array",
+          "description": "Every place named anywhere in this document.",
+          "items": {
+            "type": "object",
+            "x-entityField": true,
+            "x-entityType": "Location",
+            "x-entityTypeConstrained": true,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "x-entityTypeDeclared": "Location"
+              },
+              "additional_types": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        "interests": {
+          "type": "array",
+          "description": "Goals and motives an act can further or work against. Only list one when the document supports attributing it — an unsupported motive is worse than none.\n\nName the goal, not the actor pursuing it: \"regulatory approval\", not \"the ministry's interest\". Two documents describing one goal should produce the same words, which is what lets them be compared at all.",
+          "items": {
+            "type": "object",
+            "x-entityField": true,
+            "x-entityType": "Interest",
+            "x-entityTypeConstrained": true,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "x-entityTypeDeclared": "Interest"
+              },
+              "additional_types": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "name"
+            ]
+          }
+        },
+        "instruments": {
+          "type": "array",
+          "description": "Nameable things that are USED rather than acting — accounts, vessels, aircraft, properties, documents. What recurs here is often the mechanism.",
+          "items": {
+            "type": "object",
+            "x-entityField": true,
+            "x-entityType": "Account",
+            "x-entityTypeConstrained": true,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "x-entityTypeDeclared": "Account"
+              },
+              "additional_types": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "x-entityAlternateTypes": [
+              "Vessel",
+              "Aircraft",
+              "Document",
+              "Property"
+            ]
+          }
+        },
+        "events": {
+          "type": "array",
+          "description": "Named happenings this document refers to — a case, an election, a merger, a release. Many rows can belong to one event, and that is how scattered facts are shown to be one story.\n\nONLY happenings the document gives a NAME. The test: could you search for it and find the same thing? \"Case 15-cv-07433\", \"the Panama Papers\", \"the 2016 election\" are names. A generic description of what occurred — \"a confirmation hearing\", \"the meeting\", \"an investigation\" — is NOT a name, however reasonable it reads. If the document names none, leave this empty; that is the correct answer and it is common. An invented event name invents a story.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The name the document uses, exactly."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "case",
+                  "election",
+                  "merger",
+                  "investigation",
+                  "release",
+                  "summit",
+                  "conflict",
+                  "reform",
+                  "scandal",
+                  "programme"
+                ],
+                "description": "What sort of happening it is."
+              },
+              "when": {
+                "type": "string",
+                "format": "date",
+                "description": "When it began, as a calendar date."
+              },
+              "until": {
+                "type": "string",
+                "format": "date",
+                "description": "When it ended, as a calendar date. Empty if ongoing."
+              },
+              "within": {
+                "type": "object",
+                "x-entityField": true,
+                "x-entityType": "Event",
+                "x-entityTypeConstrained": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "x-entityTypeDeclared": "Event"
+                  },
+                  "additional_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "description": "The larger named happening this one is part of — a hearing inside a case, a raid inside an operation. Only when the document says so. Name it exactly as it appears in this list.",
+                "x-ref": "events"
+              },
+              "follows": {
+                "type": "object",
+                "x-entityField": true,
+                "x-entityType": "Event",
+                "x-entityTypeConstrained": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "x-entityTypeDeclared": "Event"
+                  },
+                  "additional_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "description": "The happening this one came after, when the document presents them in sequence. Not the same as an earlier date: a filing follows a complaint even when both are dated the same day. Sequence only — never say one caused another.",
+                "x-ref": "events"
+              },
+              "at": {
+                "type": "object",
+                "x-entityField": true,
+                "x-entityType": "Location",
+                "x-entityTypeConstrained": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "x-entityTypeDeclared": "Location"
+                  },
+                  "additional_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "description": "Where it took place.",
+                "x-ref": "places"
+              }
+            },
+            "include_justification": true
+          }
+        },
+        "observations": {
+          "type": "array",
+          "description": "What happened, as THIS document reports it. One row per act.\n\nTestimony, filings and public claims. Two clocks. For a statement, `by` is the speaker and `concerns` is who or what it is about. Two dates matter and they are usually different: `when` it was said, and `covers_from`/`covers_until` for the period it is about. Record `modality` exactly — denying, not recalling and declining to answer are not asserting.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "statement",
+                  "testimony",
+                  "filing",
+                  "publication",
+                  "ruling"
+                ],
+                "description": "What sort of act this row records. Pick the closest."
+              },
+              "by": {
+                "type": "array",
+                "description": "Who did it — the actor or actors acting.",
+                "items": {
+                  "type": "object",
+                  "x-entityField": true,
+                  "x-entityType": "Person",
+                  "x-entityTypeConstrained": true,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "x-entityTypeDeclared": "Person"
+                    },
+                    "additional_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "x-entityAlternateTypes": [
+                    "Organization",
+                    "State"
+                  ],
+                  "x-ref": "actors"
+                }
+              },
+              "with": {
+                "type": "array",
+                "description": "Who else took part, as a participant rather than an agent.",
+                "items": {
+                  "type": "object",
+                  "x-entityField": true,
+                  "x-entityType": "Person",
+                  "x-entityTypeConstrained": true,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "x-entityTypeDeclared": "Person"
+                    },
+                    "additional_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "x-entityAlternateTypes": [
+                    "Organization",
+                    "State"
+                  ],
+                  "x-ref": "actors"
+                }
+              },
+              "to": {
+                "type": "array",
+                "description": "Who or what it was done to — the recipient or target.",
+                "items": {
+                  "type": "object",
+                  "x-entityField": true,
+                  "x-entityType": "Person",
+                  "x-entityTypeConstrained": true,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "x-entityTypeDeclared": "Person"
+                    },
+                    "additional_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "x-entityAlternateTypes": [
+                    "Organization",
+                    "State",
+                    "Account",
+                    "Vessel",
+                    "Aircraft",
+                    "Document",
+                    "Property"
+                  ],
+                  "x-ref": [
+                    "actors",
+                    "instruments"
+                  ]
+                }
+              },
+              "via": {
+                "type": "array",
+                "description": "Who or what it ran through — an intermediary, a bank, an account, a vehicle. Fill this whenever the document names one.",
+                "items": {
+                  "type": "object",
+                  "x-entityField": true,
+                  "x-entityType": "Organization",
+                  "x-entityTypeConstrained": true,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "x-entityTypeDeclared": "Organization"
+                    },
+                    "additional_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "x-entityAlternateTypes": [
+                    "Person",
+                    "Account",
+                    "Vessel",
+                    "Aircraft",
+                    "Document",
+                    "Property"
+                  ],
+                  "x-ref": [
+                    "actors",
+                    "instruments"
+                  ]
+                }
+              },
+              "at": {
+                "type": "object",
+                "x-entityField": true,
+                "x-entityType": "Location",
+                "x-entityTypeConstrained": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "x-entityTypeDeclared": "Location"
+                  },
+                  "additional_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "description": "Where it happened.",
+                "x-ref": "places"
+              },
+              "when": {
+                "type": "string",
+                "format": "date",
+                "description": "When it happened, as a calendar date. A weekday or a relative time resolves against the document date given at the top of the text; if it cannot be resolved, leave this empty and the document's own date is used, which is better than a guess."
+              },
+              "until": {
+                "type": "string",
+                "format": "date",
+                "description": "When it ended, if it spanned time."
+              },
+              "covers_from": {
+                "type": "string",
+                "format": "date",
+                "description": "Start of the period this row is ABOUT — often years before it was recorded. Only when the text says so; a vague \"back then\" is not a date."
+              },
+              "covers_until": {
+                "type": "string",
+                "format": "date",
+                "description": "End of that period. Leave empty for a single moment."
+              },
+              "modality": {
+                "type": "string",
+                "enum": [
+                  "done",
+                  "attempted",
+                  "planned",
+                  "asserted",
+                  "denied",
+                  "alleged",
+                  "reported",
+                  "unrecalled",
+                  "declined"
+                ],
+                "description": "How the act stands — done, only attempted, merely alleged, denied. Record it exactly as the document has it."
+              },
+              "magnitude": {
+                "type": "number",
+                "description": "What it was worth — an amount, a percentage, a count. As stated; do not convert."
+              },
+              "id": {
+                "type": "string",
+                "description": "A reference number the DOCUMENT gives THIS row. Usually there is none; leave it empty then. Never invent one."
+              },
+              "serves": {
+                "type": "array",
+                "description": "Interests this act furthers. Only when the document supports it — an unsupported motive is worse than none, and every entry here must be backed by the justification.",
+                "items": {
+                  "type": "object",
+                  "x-entityField": true,
+                  "x-entityType": "Interest",
+                  "x-entityTypeConstrained": true,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "x-entityTypeDeclared": "Interest"
+                    },
+                    "additional_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "x-ref": "interests"
+                }
+              },
+              "opposes": {
+                "type": "array",
+                "description": "Interests this act works AGAINST — blocks, delays, undermines or is directed at frustrating. Same bar as `serves`: only when the document supports it, and the justification must carry the words. An act can do both at once, and when it does, say both.",
+                "items": {
+                  "type": "object",
+                  "x-entityField": true,
+                  "x-entityType": "Interest",
+                  "x-entityTypeConstrained": true,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "x-entityTypeDeclared": "Interest"
+                    },
+                    "additional_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "x-ref": "interests"
+                }
+              },
+              "concerns": {
+                "type": "array",
+                "description": "What the row is about, when that differs from who it was done to.",
+                "items": {
+                  "type": "object",
+                  "x-entityField": true,
+                  "x-entityType": "Person",
+                  "x-entityTypeConstrained": true,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "x-entityTypeDeclared": "Person"
+                    },
+                    "additional_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "x-entityAlternateTypes": [
+                    "Organization",
+                    "State",
+                    "Account",
+                    "Vessel",
+                    "Aircraft",
+                    "Document",
+                    "Property",
+                    "Location"
+                  ],
+                  "x-ref": [
+                    "actors",
+                    "instruments",
+                    "places"
+                  ]
+                }
+              },
+              "cites": {
+                "type": "array",
+                "description": "Exhibits or documents this row relies on, exactly as the text labels them — \"Exhibit C\", \"Document 1320-37\".",
+                "items": {
+                  "type": "object",
+                  "x-entityField": true,
+                  "x-entityType": "Evidence",
+                  "x-entityTypeConstrained": true,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "x-entityTypeDeclared": "Evidence"
+                    },
+                    "additional_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              },
+              "during": {
+                "type": "array",
+                "description": "The named happening this belongs to, exactly as the document names it. Leave empty if it names none.",
+                "items": {
+                  "type": "object",
+                  "x-entityField": true,
+                  "x-entityType": "Event",
+                  "x-entityTypeConstrained": true,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "x-entityTypeDeclared": "Event"
+                    },
+                    "additional_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              }
+            },
+            "include_justification": true
+          }
+        },
+        "attributes": {
+          "type": "array",
+          "description": "A property OF one thing, over a period — where it is based, what role it holds, what state it is in, what it measures. One row per property per period; if it changed, that is two rows with two date ranges, never one row averaged.\n\nRegistered offices, posts held, statuses — over intervals. One row per property per period. A company can hold a registered office, a head office and a tax residence at the same time, in different countries.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "subject": {
+                "type": "object",
+                "x-entityField": true,
+                "x-entityType": "Person",
+                "x-entityTypeConstrained": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "x-entityTypeDeclared": "Person"
+                  },
+                  "additional_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "x-entityAlternateTypes": [
+                  "Organization",
+                  "State",
+                  "Account",
+                  "Vessel",
+                  "Aircraft",
+                  "Document",
+                  "Property",
+                  "Location",
+                  "Interest"
+                ],
+                "description": "What the property is about. An actor, but also a place, an instrument or an interest.",
+                "x-ref": [
+                  "actors",
+                  "instruments",
+                  "places",
+                  "interests"
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "seat",
+                  "office",
+                  "registered_office",
+                  "head_office",
+                  "tax_residence",
+                  "branch",
+                  "role",
+                  "status",
+                  "domain"
+                ],
+                "description": "What kind of property this row states. `domain` on an interest says which sphere it belongs to — economic, political, security, legal, reputational — which is what makes one actor's warmth in trade and hostility in politics readable as one finding rather than two."
+              },
+              "place": {
+                "type": "object",
+                "x-entityField": true,
+                "x-entityType": "Location",
+                "x-entityTypeConstrained": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "x-entityTypeDeclared": "Location"
+                  },
+                  "additional_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "x-ref": "places"
+              },
+              "value": {
+                "type": "string",
+                "description": "For non-place values."
+              },
+              "magnitude": {
+                "type": "number",
+                "description": "For measurements."
+              },
+              "from": {
+                "type": "string",
+                "format": "date",
+                "description": "When it began."
+              },
+              "until": {
+                "type": "string",
+                "format": "date",
+                "description": "When it ended. Empty means current."
+              }
+            },
+            "include_justification": true
+          }
+        },
+        "relations": {
+          "type": "array",
+          "description": "Standing links between two parties — facts that hold over time rather than things that happened.\n\nThis is also where HIERARCHY goes, and it is worth filling: a place inside a larger place (`part_of`), a happening inside a larger one (`part_of`), an interest that is a component of a broader one (`subsumes`, pointing from the broader to the narrower) or that advances one without being part of it (`furthers`). Only when the document says so — an invented hierarchy reads as authoritative and is not.\n\nParty, board, coalition, counsel — a link that holds over time. Only for links that hold over time. If it happened on a date, it is an observation, not a relation.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "object",
+                "x-entityField": true,
+                "x-entityType": "Person",
+                "x-entityTypeConstrained": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "x-entityTypeDeclared": "Person"
+                  },
+                  "additional_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "x-entityAlternateTypes": [
+                  "Organization",
+                  "State",
+                  "Account",
+                  "Vessel",
+                  "Aircraft",
+                  "Document",
+                  "Property",
+                  "Location",
+                  "Interest"
+                ],
+                "x-ref": [
+                  "actors",
+                  "instruments",
+                  "places",
+                  "interests"
+                ]
+              },
+              "predicate": {
+                "type": "string",
+                "enum": [
+                  "works_for",
+                  "owns",
+                  "controls",
+                  "represents",
+                  "advises",
+                  "family_of",
+                  "member_of",
+                  "subsidiary_of",
+                  "nominee_for",
+                  "acts_for",
+                  "same_as",
+                  "cites",
+                  "supersedes",
+                  "subsumes",
+                  "furthers",
+                  "opposes",
+                  "part_of"
+                ],
+                "description": "How they are linked."
+              },
+              "to": {
+                "type": "object",
+                "x-entityField": true,
+                "x-entityType": "Person",
+                "x-entityTypeConstrained": true,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "x-entityTypeDeclared": "Person"
+                  },
+                  "additional_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "x-entityAlternateTypes": [
+                  "Organization",
+                  "State",
+                  "Account",
+                  "Vessel",
+                  "Aircraft",
+                  "Document",
+                  "Property",
+                  "Location",
+                  "Interest"
+                ],
+                "x-ref": [
+                  "actors",
+                  "instruments",
+                  "places",
+                  "interests"
+                ]
+              },
+              "from_date": {
+                "type": "string",
+                "format": "date",
+                "description": "When the link began."
+              },
+              "until": {
+                "type": "string",
+                "format": "date",
+                "description": "When it ended."
+              }
+            },
+            "include_justification": true
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "description": "Grounds the document NAMES, so that many rows can point at the same one. Grounds it does not name belong in a row's own justification.\n\nExhibits, transcript pages, filings the document names. Use this only for grounds the document itself names or numbers. Otherwise put the quote in the row's own justification field.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The label the document gives it, exactly — \"Exhibit C\", \"Document 1320-37\". Rows that rely on it name the same label in their `cites` field; that is the link."
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "deposition",
+                  "email",
+                  "filing",
+                  "log",
+                  "record",
+                  "photograph",
+                  "transcript",
+                  "report",
+                  "contract"
+                ],
+                "description": "What sort of thing it is."
+              },
+              "stance": {
+                "type": "string",
+                "enum": [
+                  "supports",
+                  "contradicts",
+                  "corrects",
+                  "retracts",
+                  "qualifies"
+                ],
+                "description": "How it bears on the matter it is offered for."
+              },
+              "locator": {
+                "type": "string",
+                "description": "Page, line, exhibit."
+              },
+              "quote": {
+                "type": "string",
+                "description": "The document's own words."
+              }
+            }
+          }
+        },
+        "at": {
+          "type": "object",
+          "x-entityField": true,
+          "x-entityType": "Location",
+          "x-entityTypeConstrained": true,
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "x-entityTypeDeclared": "Location"
+            },
+            "additional_types": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "description": "The place this document is mainly about.",
+          "x-ref": "places"
+        },
+        "dated": {
+          "type": "string",
+          "format": "date",
+          "description": "The date this document gives itself — filed, published, recorded. Not the date of the events it describes."
+        },
+        "ref": {
+          "type": "string",
+          "description": "The identifier this document gives itself — a case or docket number, a report or filing reference. Copy it exactly as written. Empty if it has none."
+        }
+      }
+    }
+  }
+}

@@ -128,15 +128,27 @@ export function createScopeFromSelection(
       conditions = [];
   }
 
-  const elementContext = panelConfig.projection.explosion || null;
+  // Explosion and grouping live on the Formula post-P3. The legacy
+  // `projection.*` bag is still read as a fallback for panels that have not
+  // been rehydrated yet — but reading it *first*, as this did, meant
+  // element_context and group_context came out null on every current panel,
+  // so a pushed scope lost both the exploded view and its parent group.
+  const elementContext =
+    panelConfig.formula?.explosion
+    ?? panelConfig.projection?.explosion
+    ?? null;
 
   // Fill group_context when the panel is actively grouped. Prefer the
-  // role-based `group_by` field_mapping (chart split role, pie small
-  // multiples); fall back to aggregation.group_by only if the gesture field
-  // itself is not the group field (avoids duplicating the condition).
+  // Formula's first group dim; fall back to the legacy role mapping, then to
+  // aggregation.group_by — and only when the gesture field is not itself the
+  // group field (avoids duplicating the condition).
+  const formulaGroupBy = panelConfig.formula?.group?.[0]?.path ?? null;
   const roleGroupBy = (panelConfig.projection?.field_mappings?.['group_by'] as string | undefined) ?? null;
   const aggGroupBy = panelConfig.aggregation?.group_by ?? null;
-  const groupField = roleGroupBy ?? (aggGroupBy && aggGroupBy !== gesture.fieldPath ? aggGroupBy : null);
+  const legacyGroupBy = roleGroupBy ?? (aggGroupBy && aggGroupBy !== gesture.fieldPath ? aggGroupBy : null);
+  const groupField =
+    (formulaGroupBy && formulaGroupBy !== gesture.fieldPath ? formulaGroupBy : null)
+    ?? legacyGroupBy;
   const group_context =
     groupField && opts?.groupValue !== undefined
       ? { field: groupField, value: opts.groupValue }
@@ -164,7 +176,7 @@ export function validateScopeGraph(panels: PanelConfig[]): { valid: boolean; cyc
   // Build adjacency: source_panel_id → [target_panel_id]
   const adj = new Map<string, string[]>();
   for (const panel of panels) {
-    for (const scope of panel.incoming_scopes) {
+    for (const scope of panel.scopes_in ?? []) {
       if (scope.mode !== 'link') continue; // pushes are snapshots, no cycle risk
       const targets = adj.get(scope.source_panel_id) || [];
       targets.push(panel.id);

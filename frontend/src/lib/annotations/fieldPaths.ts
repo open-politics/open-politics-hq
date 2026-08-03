@@ -8,7 +8,29 @@
  * array node are still emitted for display, but `getArrayNodesInPath` lets
  * the picker disable additional explode checkboxes.
  */
-import type { AnnotationSchemaRead } from '@/client';
+import type { AnnotationSchemaRead, SchemaMap } from '@/client';
+
+/**
+ * A resolved-but-empty schema map.
+ *
+ * `AnnotationSchemaRead.schema_map` is computed server-side and always present
+ * on real data. Use this only where a partial schema object is *synthesised*
+ * from some other wire type that doesn't carry a map yet (the shared-run
+ * payload's `target_schemas`, the analysis-hub tool result). Those upstream
+ * payloads should grow the full `AnnotationSchemaRead` shape; until they do,
+ * consumers of the synthesised object see no entity paths or vocabularies.
+ *
+ * Never build a map client-side to fill this in — the backend is the single
+ * authority on what a contract means (see `annotation/schema_map.py`).
+ */
+export const EMPTY_SCHEMA_MAP: SchemaMap = {
+  fields: [],
+  vocabularies: {},
+  entity_paths: [],
+  triplet_paths: [],
+  time_paths: [],
+  place_paths: [],
+};
 
 /** Coarse runtime shape of a field's values. Used to match against role `accepts`. */
 export type FieldShape =
@@ -49,127 +71,80 @@ export interface FieldPath {
   children: FieldPath[];
 }
 
-const TYPE_MAP: Record<string, FieldShape> = {
-  string: 'string',
-  number: 'number',
-  integer: 'number',
-  boolean: 'boolean',
-  object: 'object',
-  array: 'unknown', // refined by items
-};
-
-function isTripletItem(itemDef: any): boolean {
-  // Triplet items have at least subject/predicate/object keys.
-  if (!itemDef || typeof itemDef !== 'object') return false;
-  const props = itemDef.properties;
-  if (!props || typeof props !== 'object') return false;
-  const keys = new Set(Object.keys(props));
-  const hasSPO =
-    (keys.has('subject') || keys.has('subject_name')) &&
-    keys.has('predicate') &&
-    (keys.has('object') || keys.has('object_name'));
-  return hasSPO;
-}
-
-/** An entity-typed JSON Schema node carries the `x-entityField: true` extension
- * (set by the adapter when emitting a field with type='entity'). The runtime
- * value shape is always object `{ name, type?, additional_types? }`. */
-function isEntityNode(def: any): boolean {
-  if (!def || typeof def !== 'object') return false;
-  return def['x-entityField'] === true;
-}
-
-function inferNodeShape(def: any): FieldShape {
-  if (!def || typeof def !== 'object') return 'unknown';
-  const t = def.type;
-  if (t === 'graph' || isTripletItem(def?.items)) return 'triplet';
-  if (isEntityNode(def)) return 'entity';
-  if (t === 'array') {
-    const items = def.items;
-    if (!items) return 'array_string';
-    if (isEntityNode(items)) return 'array_entity';
-    if (items.type === 'object') return 'array_object';
-    if (items.type === 'number' || items.type === 'integer') return 'array_number';
-    if (items.type === 'string' && Array.isArray(items.enum)) return 'array_string_enum';
-    return 'array_string';
-  }
-  if (t === 'string') {
-    if (Array.isArray(def.enum)) return 'enum_string';
-    if (def.format === 'date' || def.format === 'date-time') return 'date';
-    return 'string';
-  }
-  if (t === 'integer' || t === 'number') return 'number';
-  if (t === 'boolean') return 'boolean';
-  if (t === 'object') return 'object';
-  return TYPE_MAP[t] ?? 'unknown';
-}
-
+/** Array-node positions in a path: `document.events[*].when` → `[1]`. */
 function collectArrayNodes(path: string): number[] {
-  // Returns the 0-based indices of path segments that end in `[*]`.
   if (!path) return [];
   const indices: number[] = [];
-  const segments = path.split('.');
-  segments.forEach((seg, i) => {
+  path.split('.').forEach((seg, i) => {
     if (seg.endsWith('[*]')) indices.push(i);
   });
   return indices;
 }
 
-function walkNode(
-  key: string,
-  def: any,
-  parentPath: string,
-  arrayChosen: boolean,
-): FieldPath {
-  const shape = inferNodeShape(def);
-  const titleFromDef = typeof def?.title === 'string' ? def.title : undefined;
-
-  // Where this node sits in the tree — the display path. `arrayChosen` means
-  // the user has toggled explode on some ancestor; when they haven't, we
-  // surface the bare dot-path with a marker segment `[*]` at the array node.
-  const dotPath = parentPath ? `${parentPath}.${key}` : key;
-
-  const isArray = def?.type === 'array' || shape === 'triplet';
-  const explodedPath = isArray ? `${dotPath}[*]` : dotPath;
-
-  const children: FieldPath[] = [];
-  // Object properties
-  if (def?.type === 'object' && def.properties && typeof def.properties === 'object') {
-    for (const [ck, cdef] of Object.entries<any>(def.properties)) {
-      children.push(walkNode(ck, cdef, dotPath, arrayChosen));
-    }
-  }
-  // Array of objects — descend into items.properties; child paths root at the
-  // array parent (no extra `[*]` injected; the array node itself carries the
-  // marker and the backend parses `prefix[*].inner`).
-  if (def?.type === 'array' && def.items?.type === 'object' && def.items.properties) {
-    // For display we use the path with `[*]` on this node so children clearly
-    // live under an explosion point.
-    for (const [ck, cdef] of Object.entries<any>(def.items.properties)) {
-      children.push(walkNode(ck, cdef, `${dotPath}[*]`, true));
-    }
-  }
-
-  return {
-    path: isArray ? explodedPath : dotPath,
-    label: titleFromDef ?? key,
-    shape,
-    format: def?.format,
-    enum: Array.isArray(def?.enum) ? def.enum : undefined,
-    description: typeof def?.description === 'string' ? def.description : undefined,
-    arrayNodeIndices: collectArrayNodes(isArray ? explodedPath : dotPath),
-    isArrayNode: isArray,
-    children,
-  };
+/** The path one level up. `a.b[*].c` → `a.b[*]`; `a` → `''`. */
+function parentPath(path: string): string {
+  const i = path.lastIndexOf('.');
+  return i < 0 ? '' : path.slice(0, i);
 }
 
-/** Walk a schema's output_contract and produce top-level field paths. */
+/**
+ * Walk a schema's field paths for the panel role pickers.
+ *
+ * **Reads the backend's `schema_map`; does not re-derive anything.** Shape
+ * recognition used to live here as a second implementation of what
+ * `annotation/schema_map.py` does, and the two had already drifted (the
+ * frontend and backend triplet detectors accepted different key aliases).
+ * The map is computed from the stored contract and served on
+ * `AnnotationSchemaRead.schema_map`, so this function's only job is to turn
+ * the flat list into the tree the pickers render.
+ *
+ * Two deliberate differences from the old local walk:
+ *
+ * - **No section wrapper node.** Fields render at top level instead of under a
+ *   `document` row nobody could select anyway.
+ * - **No entity internals.** `entities[*].name` / `.type` / `.additional_types`
+ *   are a closed system shape, so they are no longer offered. Stored panel
+ *   configs still work — they hold path strings, which resolve fine at query
+ *   time; the picker just stops suggesting them. Anything needing the name leaf
+ *   builds `<entity_path>.name` by contract.
+ *
+ * A canon-injected `properties` bag has no node of its own, so its leaves
+ * attach to the entity that carries them — hence "nearest existing ancestor"
+ * rather than "exact parent".
+ */
 export function walkOutputContract(schema: AnnotationSchemaRead | null | undefined): FieldPath[] {
-  if (!schema?.output_contract) return [];
-  const contract = schema.output_contract as any;
-  const properties = contract?.properties;
-  if (!properties || typeof properties !== 'object') return [];
-  return Object.entries<any>(properties).map(([k, def]) => walkNode(k, def, '', false));
+  const fields = schema?.schema_map?.fields;
+  if (!fields?.length) return [];
+
+  const byPath = new Map<string, FieldPath>();
+  const order: FieldPath[] = [];
+  for (const f of fields) {
+    const node: FieldPath = {
+      path: f.path,
+      label: f.label ?? f.path.split('.').pop()!.replace('[*]', ''),
+      shape: (f.shape ?? 'unknown') as FieldShape,
+      // The map encodes date-ness in `shape`; `format` was only ever read by
+      // this module's own inference, so it is derived rather than carried.
+      format: f.shape === 'date' ? 'date-time' : undefined,
+      enum: f.enum?.length ? [...f.enum] : undefined,
+      description: f.description ?? undefined,
+      arrayNodeIndices: collectArrayNodes(f.path),
+      isArrayNode: f.path.endsWith('[*]'),
+      children: [],
+    };
+    byPath.set(f.path, node);
+    order.push(node);
+  }
+
+  const roots: FieldPath[] = [];
+  for (const node of order) {
+    let parent = parentPath(node.path);
+    while (parent && !byPath.has(parent)) parent = parentPath(parent);
+    const holder = parent ? byPath.get(parent) : undefined;
+    if (holder && holder !== node) holder.children.push(node);
+    else roots.push(node);
+  }
+  return roots;
 }
 
 /** Shallow lookup — find the FieldPath descriptor for a dot-path. */

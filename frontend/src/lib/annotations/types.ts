@@ -41,7 +41,11 @@ export interface Asset {
 // --- Annotation Schema & Field Types --- //
 
 // Types for the Advanced Schema Builder, replacing the old flat structure.
-export type JsonSchemaType = 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array' | 'graph' | 'entity';
+/** `date` is not a JSON Schema type — it is `{type: "string", format: "date"}`,
+ *  carried as its own value here because the editor's whole type system is
+ *  "what kind of thing is this field", and a date is a different kind of thing
+ *  from a string. `adapters.ts` collapses it back on emit. */
+export type JsonSchemaType = 'string' | 'date' | 'number' | 'integer' | 'boolean' | 'object' | 'array' | 'graph' | 'entity';
 
 /**
  * Entity field configuration. Entity fields are first-class citizens of the
@@ -77,6 +81,10 @@ export interface EntityFieldConfig {
   /** Optional UI metadata — color and icon for rendering this entity field. */
   color?: string;
   icon?: string;
+  /** Unknown `x-*` keys on the entity OBJECT node. Entity objects are rebuilt
+   *  wholesale by `buildEntityObjectSchema`, so they need their own bucket.
+   *  See `AdvancedSchemeField.extensions`. */
+  extensions?: Record<string, unknown>;
 }
 
 /**
@@ -90,8 +98,23 @@ export interface EntityFieldConfig {
  * so the LLM never sees a `$ref` and cycles can't reach the model).
  */
 export interface FieldRef {
-  /** Dot-path to the target field in the same section. */
-  target: string;
+  /** Dot-paths to the target fields in the same section.
+   *
+   *  **A list, because one role can draw from several populations.** A
+   *  payment's `via` is an intermediary bank *or* a routing account; a claim's
+   *  `concerns` can be an actor, a place or an instrument. A single target
+   *  forced such a field either to misdescribe where its vocabulary comes from
+   *  or to declare nothing at all. Emitted as `x-ref` — a bare string when
+   *  there is one, an array when there are several. */
+  targets: string[];
+}
+
+/** `x-ref` in either form, as a list. One place that knows the wire shape. */
+export function refTargets(ref: FieldRef | undefined | null): string[] {
+  if (!ref) return [];
+  const raw = (ref as any).targets ?? (ref as any).target;
+  if (typeof raw === 'string') return raw.trim() ? [raw] : [];
+  return Array.isArray(raw) ? raw.filter(t => typeof t === 'string' && t.trim()) : [];
 }
 
 /**
@@ -147,6 +170,8 @@ export interface AdvancedSchemeField {
     minimum?: number; // For array_number / array_integer
     maximum?: number;
     description?: string;
+    /** Unknown `x-*` keys on the ITEM node. See `AdvancedSchemeField.extensions`. */
+    extensions?: Record<string, unknown>;
   };
 
   // For 'object' type
@@ -180,10 +205,30 @@ export interface AdvancedSchemeField {
   // model to fill that canon type's declared properties. Emits as `x-canon`.
   canonTie?: CanonTie;
 
-  // Intelligence-layer axis reference (M3). Emits as `x-axis` on the JSON
-  // Schema property. References a key in the schema's top-level `axes` block.
-  // The schema editor doesn't yet author this; round-trip preservation only.
+  // Intelligence-layer axis reference (M3). Superseded by `extensions`, which
+  // preserves `x-axis` generically along with every other unknown key. Kept
+  // only because nothing reads or writes it either way.
   xAxis?: string;
+
+  /**
+   * Every `x-*` key on this field's property node that no named field above
+   * consumed, preserved verbatim.
+   *
+   * **The editor rebuilds the contract from scratch on every save**
+   * (`adaptSchemaFormDataToSchemaCreate`), so a key it has no field for is
+   * destroyed the first time a schema is opened and saved — silently, with no
+   * warning and no validation error. That has been fixed narrowly three times
+   * already (`format: date`, `include_justification`, `x-ref` on items), each
+   * time for one key, each time after the loss was noticed downstream.
+   *
+   * This is the general form. A contract may carry declarations the editor does
+   * not yet author, and it will still carry them afterwards.
+   *
+   * Emitted by spreading FIRST, so a key the editor genuinely owns always wins
+   * over a stale preserved copy. `CONSUMED_EXTENSIONS` is the list of keys that
+   * never land here, and `templateRoundTrip.test.ts` asserts both directions.
+   */
+  extensions?: Record<string, unknown>;
 
   // For graph fields saved at a non-canonical JSON property key (the legacy
   // schemas all stored under "triplets" regardless of user-facing name). When
@@ -197,6 +242,11 @@ export interface SchemaSection {
   id: string; // UI identifier
   name: 'document' | 'per_image' | 'per_audio' | 'per_video';
   fields: AdvancedSchemeField[];
+  /** The section node's own prose. `document` carries guidance in templates and
+   *  it was being dropped on save along with everything else here. */
+  description?: string;
+  /** Unknown `x-*` keys on the section node. See `AdvancedSchemeField.extensions`. */
+  extensions?: Record<string, unknown>;
 }
 
 // ─── Observation snapshot (M5 — intelligence layer) ────────────────────────
@@ -254,6 +304,20 @@ export interface AnnotationSchemaFormData {
   default_thinking_budget?: number | null;
   request_justifications_globally?: boolean;
   enable_image_analysis_globally?: boolean;
+
+  /**
+   * The contract's OWN top-level `description` — the prompt preamble
+   * (`templates.py:BASE_GUIDANCE`), not the schema's DB `description` column.
+   *
+   * Two different strings that both wanted to be called "description", which is
+   * why this one was silently dropped: the editor rebuilt `output_contract`
+   * from a literal with no description key, and read `apiData.description` (the
+   * column) on the way back in. Every template-derived schema lost its guidance
+   * the first time it was opened and saved, quietly costing prompt quality.
+   */
+  contractGuidance?: string;
+  /** Unknown `x-*` keys at the contract root. See `AdvancedSchemeField.extensions`. */
+  contractExtensions?: Record<string, unknown>;
 }
 
 // --- Annotation Run & Result Types --- //
@@ -347,6 +411,12 @@ export const ADVANCED_SCHEME_TYPE_OPTIONS: TypeOption[] = [
     unlocks: ['table'],
   },
   {
+    value: 'date', label: 'Date', group: 'primitives',
+    icon: 'Calendar',
+    description: 'A calendar date — 2016-04-22, or 2016-04 where that is all the text gives. Declaring the shape is what stops a model answering "Wednesday": a plain text field asking for a date gets one about as often as the prose is lucky. Date fields are the ones the timeline, the scrubber and after:/before: can read.',
+    unlocks: ['table', 'chart', 'timeline', 'graph'],
+  },
+  {
     value: 'number', label: 'Number', group: 'primitives',
     icon: 'Hash',
     description: 'A numeric value — scores (e.g. 1-10), counts, amounts. Set min/max to constrain the range.',
@@ -392,9 +462,15 @@ export const ADVANCED_SCHEME_TYPE_OPTIONS: TypeOption[] = [
   },
   // Relational
   {
-    value: 'array_entity', label: 'Entities', group: 'relational',
+    value: 'entity', label: 'Entity (one)', group: 'relational',
     icon: 'AtSign',
-    description: 'Canon-resolved entity references. Declare what types the field holds and (optionally) a closed list of names; the same name across fields and documents resolves to one canon record. Cardinality is always "list" — a single entity is just a length-1 list.',
+    description: 'ONE canon-resolved entity — a payment\'s sender, a statement\'s speaker, the place a meeting happened. Point it at a roster with "use vocabulary from another field" and the two become the same population: the same name in three rows is one node. Use Entities (list) when a row genuinely holds several.',
+    unlocks: ['table', 'graph', 'pie'],
+  },
+  {
+    value: 'array_entity', label: 'Entities (list)', group: 'relational',
+    icon: 'AtSign',
+    description: 'Several canon-resolved entities in one field — everyone present at a meeting, every interest an act serves. Declare what types it holds and (optionally) a closed list of names; the same name across fields and documents resolves to one canon record. For a single-valued role use Entity (one).',
     unlocks: ['table', 'graph', 'pie'],
   },
   {
@@ -576,21 +652,105 @@ export interface ViewAggregatePhase {
   split_field_path?: string | null;
 }
 
-/** A graph node from triplet extraction */
+/** A graph node from a projection.
+ *
+ * Hand-maintained because the `/view` graph phase ships nodes as plain dicts,
+ * so `openapi-ts` has nothing to generate from. The authority is
+ * `annotation/formula_query.py:_node_to_dict` — keep the two in step.
+ *
+ * Everything below `source_annotation_ids` is null/empty unless a projection
+ * bound it, so an unconfigured graph panel behaves exactly as before.
+ */
 export interface ViewGraphNode {
   id: string;
   name: string;
   type: string;
   frequency: number;
   source_annotation_ids: number[];
+  /** Entity or occurrence. An entity comes from a named set — it persists and
+   *  recurs. An occurrence is minted from a statement row that is about itself:
+   *  it *happened*. The two get opposite rendering, and the item pane is a list
+   *  over the occurrences, so this has to survive the wire rather than be
+   *  re-guessed from a heuristic. */
+  kind?: 'entity' | 'occurrence';
+  /** Occurrences only: the declared kind of act — `Payment`, `Meeting`. */
+  node_type?: string | null;
+  /** What the document said this act was worth. Never a calibrated
+   *  measurement — a within-run ranking channel and nothing more. */
+  magnitude?: number | null;
+  /** Existence interval (ISO). `t1: null` with a `t0` means open-ended —
+   *  from `t0` onward, which is what a bare timestamp binding declares. */
+  t0?: string | null;
+  t1?: string | null;
+  /** Activity interval — histogram source when `activity` is bound apart
+   *  from `time`. */
+  a0?: string | null;
+  a1?: string | null;
+  /** Raw location string from the projection's `place` binding — the `at`, or
+   *  a trajectory's origin. */
+  place?: string | null;
+  /** A trajectory's far end. A movement is at neither endpoint; it spans them,
+   *  and both are needed to draw the arc. */
+  place_to?: string | null;
+  /** Every place this node is, each with its interval, kind and ladder rung.
+   *  A company holds a registered office, a head office and a tax residence at
+   *  once, in three countries — the gap between two of them is the finding, so
+   *  this is a list and `place`/`lat`/`lon` merely mirror the first entry. */
+  places?: Array<{
+    place: string;
+    lat?: number | null;
+    lon?: number | null;
+    from?: string | null;
+    to?: string | null;
+    kind?: string | null;
+    source?: 'row' | 'attribute' | 'doc' | 'asset' | 'canon';
+    end?: 'from' | 'to' | null;
+  }>;
+  /** Geo anchor, resolved server-side from the asset-facet geocoding cache or
+   *  curated canon coords. A canon is an enhancement, not a requirement. */
+  lat?: number | null;
+  lon?: number | null;
+  /** Projections that produced this node. Length > 1 is the linking payoff:
+   *  the same entity named by a roster *and* by a triplet. */
+  source_paths?: string[];
+  /** Role labels the node appeared under ("speaker", "subject", …). */
+  roles?: string[];
+  /** Inline justifications from every atom that named this node — the quotes
+   *  behind the claim. */
+  evidence?: Array<Record<string, any>>;
+  /** The row's forwarded fields, for the node the row is ABOUT. An exhibit's
+   *  stance and locator; a statement's modality. */
+  properties?: Record<string, any>;
+  /** The panel's `node_group_by` value. A `{label: weight}` map when the
+   *  binding names a computed profile (`neighbours:Interest`, `roles`), which
+   *  is the vector shape the affinity anchor clusters on. */
+  group_value?: string | string[] | Record<string, number> | null;
 }
 
-/** A graph edge from triplet extraction */
+/** A graph edge from a projection. Authority:
+ *  `annotation/formula_query.py:_edge_to_dict`. */
 export interface ViewGraphEdge {
   source: string;
   target: string;
   predicate: string;
+  /** The role the target plays in its source occurrence — `payer`, `via`,
+   *  `on_board`. Role-scoped degree is what turns "340 connections" into
+   *  "`via` in 340 payments". */
+  role?: string | null;
   weight: number;
+  computed_weight?: number | null;
+  /** The `edge_group_by` bucket — where `modality`/`stance` lands, which is
+   *  what `edgeEpistemics` paints from. */
+  group_value?: string | null;
+  /** Forwarded row properties. */
+  properties?: Record<string, any>;
+  /** Inline justifications from each contributing atom. */
+  evidence?: Array<Record<string, any>>;
+  t0?: string | null;
+  t1?: string | null;
+  a0?: string | null;
+  a1?: string | null;
+  source_paths?: string[];
 }
 
 /** Graph materialization response */
@@ -829,8 +989,53 @@ export interface TableVizConfig {
   unfold_fields?: boolean;
 }
 
+/** One node-bearing slot on a projection's row. Mirrors backend `NodeRole`.
+ *  An empty `path` means the exploded element *is* the entity (an entity
+ *  roster). */
+export interface GraphNodeRole {
+  path: string;
+  label?: string | null;
+  type_path?: string | null;
+  type_const?: string | null;
+}
+
+/** `start`+`end` is a closed interval; `at` alone is open-ended — the atom
+ *  exists from that instant onward. Mirrors backend `TimeBinding`. */
+export interface GraphTimeBinding {
+  at?: string | null;
+  start?: string | null;
+  end?: string | null;
+}
+
+/** Mirrors backend `Projection` — an array to explode plus how to read node
+ *  identity, time, place, weight and evidence off each row. A triplet field, a
+ *  nested observation row, and an entity roster are three instances of this. */
+export interface GraphProjection {
+  path: string;
+  /** Empty means "infer": every entity-shaped child of the container, resolved
+   *  server-side from the SchemaMap. */
+  nodes?: GraphNodeRole[];
+  predicate?: string | null;
+  time?: GraphTimeBinding | null;
+  place?: string | null;
+  weight?: string | null;
+  evidence?: { path: string; where?: Record<string, any> | null } | null;
+  /** Histogram source when it differs from `time`. */
+  activity?: GraphTimeBinding | null;
+  properties?: Array<{ field: string; agg: 'first' | 'sum' | 'avg' | 'max' }>;
+  label?: string | null;
+}
+
 export interface GraphVizConfig {
   kind: 'graph';
+  /** Authoritative source of graph atoms. Empty falls back to the legacy
+   *  single-triplet shape (`source` / `formula.group[0].path`), so panels
+   *  authored before projections keep rendering unchanged. */
+  projections?: GraphProjection[];
+  /** The panel's GQL string — mirrors backend `GraphConfig.q`. Persisted here
+   *  (not in component state) so it survives reload, travels with a shared
+   *  dashboard, and the companion can write it. */
+  q?: string | null;
   source?: string | null;
   target?: string | null;
   edge_label?: string | null;
@@ -839,6 +1044,15 @@ export interface GraphVizConfig {
   forward_properties: Array<{ field: string; agg: 'first' | 'sum' | 'avg' | 'max' }>;
   node_group_by?: string | null;
   edge_group_by?: string | null;
+  /** How the three spatial axes are spent across the four frames — the panel's
+   *  primary control. Mirrors backend `GraphConfig.axes`. Declared here for the
+   *  reason `q` is: typed so it survives a round-trip, travels with a shared
+   *  dashboard, and is writable by the companion. */
+  axes?: { plane: string | null; up: string | null; pin: boolean };
+  /** Per-layer participation — `canvas` · `pane` · `linked` · `off`, keyed by
+   *  projection path. Frontend-owned like `edits`; the engine resolves layers,
+   *  the panel decides what to do with each. */
+  layer_view?: Record<string, 'canvas' | 'pane' | 'linked' | 'off'>;
   null_policy: 'skip' | 'zero';
   layout: { kind: 'force_directed' | 'spatial' | 'radial' | 'hierarchical'; params?: Record<string, any> };
   dim_unmatched?: boolean;

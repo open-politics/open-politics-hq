@@ -14,6 +14,8 @@ import {
   GraphFieldConfig,
   EntityFieldConfig,
   FieldRef,
+  CanonTie,
+  refTargets,
 } from './types';
 import {
   AnnotationRead as ClientAnnotationRead,
@@ -78,23 +80,66 @@ function resolveFieldRef(
   expanding: Set<string> = new Set(),
   trail: string[] = [],
 ): AdvancedSchemeField {
-  if (!field.ref) return field;
+  const targetPaths = refTargets(field.ref);
+  if (!targetPaths.length) return field;
   if (expanding.has(field.id)) {
     throw new SchemaRefCycleError([...trail, field.name]);
   }
-  const target = findFieldByPath(sectionFields, field.ref.target.split('.'));
-  if (!target) {
-    // Broken ref — surface as a cycle-style error so the caller treats it the
-    // same way (save fails with a clear message).
-    throw new Error(`Field "${field.name}" references "${field.ref.target}" which does not exist in this schema.`);
-  }
+
   expanding.add(field.id);
   trail.push(field.name);
-  const resolvedTarget = resolveFieldRef(target, sectionFields, expanding, trail);
-  expanding.delete(field.id);
-  trail.pop();
-  // Inherit from target; override only what's overridable (description and
-  // required at the referrer level).
+  const resolved: AdvancedSchemeField[] = [];
+  try {
+    for (const path of targetPaths) {
+      const target = findFieldByPath(sectionFields, path.split('.'));
+      if (!target) {
+        // Broken ref — surface as a cycle-style error so the caller treats it
+        // the same way (save fails with a clear message).
+        throw new Error(`Field "${field.name}" references "${path}" which does not exist in this schema.`);
+      }
+      resolved.push(resolveFieldRef(target, sectionFields, expanding, trail));
+    }
+  } finally {
+    expanding.delete(field.id);
+    trail.pop();
+  }
+  // The first target is the primary — it supplies the shape for the alias
+  // form and the leading entity type. Later ones only widen the vocabulary.
+  const resolvedTarget = resolved[0];
+
+  // **A ref names a shared vocabulary, not a shared shape.**
+  //
+  // `sender` refs the `actors` roster because they draw from the same
+  // population — not because a payment has many senders. Copying the target's
+  // definition wholesale turned every single-valued role into an array of the
+  // roster, which is a different schema from the one the author wrote and a
+  // different graph from the one they asked for. Silent, too: the run
+  // succeeds, and the roles come back as lists.
+  //
+  // So when the referrer is **itself entity-shaped**, it has already said what
+  // it is and only the vocabulary is inherited. Anything else is the original
+  // alias form — "make this field be whatever `actors` is" — and still expands
+  // the target wholesale, which is exactly what a placeholder `type: 'string'`
+  // with a ref is asking for.
+  const referrerIsEntityShaped =
+    field.type === 'entity'
+    || (field.type === 'array' && field.items?.type === 'entity');
+  if (referrerIsEntityShaped) {
+    // Every target contributes; the referrer still wins on anything it states.
+    const vocab = resolved
+      .map(entityVocabularyOf)
+      .reduce<EntityFieldConfig | undefined>((acc, v) => mergeEntityVocabulary(acc, v), undefined);
+    return {
+      ...field,
+      description: field.description ?? resolvedTarget.description,
+      entityConfig: mergeEntityVocabulary(field.entityConfig, vocab),
+      items: field.items?.type === 'entity'
+        ? { ...field.items, entityConfig: mergeEntityVocabulary(field.items.entityConfig, vocab) }
+        : field.items,
+      enum: field.enum ?? (field.type === 'entity' ? undefined : resolvedTarget.enum),
+    };
+  }
+
   return {
     ...resolvedTarget,
     id: field.id,
@@ -104,6 +149,79 @@ function resolveFieldRef(
   };
 }
 
+/** The entity config a ref target contributes, scalar or roster. */
+function entityVocabularyOf(
+  target: AdvancedSchemeField,
+): EntityFieldConfig | undefined {
+  return target.entityConfig ?? target.items?.entityConfig;
+}
+
+/** Referrer wins on anything it states; the target supplies the rest.
+ *
+ *  In practice the target contributes the closed `enum` (the roster's
+ *  vocabulary) while the referrer keeps its own `entity_type` — a payment's
+ *  `sender` is an Organization even when the roster it draws from is typed
+ *  Person. */
+function mergeEntityVocabulary(
+  own: EntityFieldConfig | undefined,
+  from: EntityFieldConfig | undefined,
+): EntityFieldConfig | undefined {
+  if (!from) return own;
+  if (!own) return from;
+  return {
+    ...from,
+    ...Object.fromEntries(Object.entries(own).filter(([, v]) => v !== undefined)),
+  } as EntityFieldConfig;
+}
+
+// ─── Extension passthrough ──────────────────────────────────────────────────
+//
+// The editor rebuilds `output_contract` from scratch on every save, so any
+// `x-*` key it has no field for is destroyed the first time a schema is opened
+// and saved. Silently: no warning, no validation error, and the loss is only
+// visible downstream, sometimes months later.
+//
+// That has been patched narrowly three times — `format: date`, then
+// `include_justification`, then `x-ref` on items — each time for one key. The
+// bucket below is the general form: whatever the emitters do not write, the
+// parser keeps and the emitter puts back.
+//
+// The invariant is that these two lists are complements. A key in
+// CONSUMED_EXTENSIONS is written by an emitter and must never be preserved
+// (a stale copy would shadow an edit); a key outside it is preserved verbatim.
+// `templateRoundTrip.test.ts` asserts both directions, including the case that
+// matters most: a key nobody has heard of yet.
+
+/** Every `x-*` key an emitter in this file writes. Add to this list in the
+ *  SAME change that adds an emitter, or the key gets preserved from the old
+ *  contract *and* re-emitted, and a user edit loses to a stale value. */
+export const CONSUMED_EXTENSIONS: ReadonlySet<string> = new Set([
+  // Entity objects — `buildEntityObjectSchema`
+  'x-entityField', 'x-entityType', 'x-entityAlternateTypes', 'x-entityEnum',
+  'x-entityTypeConstrained', 'x-entityTypeDeclared', 'x-entityColor', 'x-entityIcon',
+  // Generic property nodes
+  'x-ref', 'x-canon',
+  // Triplet / graph fields — `buildJsonSchemaProperties`
+  'x-fieldName', 'x-fromSource', 'x-toSource',
+  'x-entityTypeList', 'x-entityTypeColors', 'x-entityTypeIcons',
+  'x-predicateList', 'x-predicateConstrained', 'x-predicateColors',
+  'x-predicateIcons', 'x-predicateArrows',
+]);
+
+/** Unknown `x-*` keys on one JSON Schema node, or undefined when there are
+ *  none — undefined rather than `{}` so a hand-authored schema stays byte-clean
+ *  and `authorFromScratch` keeps emitting exactly what it always did. */
+export const collectExtensions = (
+  schema: any,
+): Record<string, unknown> | undefined => {
+  if (!schema || typeof schema !== 'object') return undefined;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(schema)) {
+    if (key.startsWith('x-') && !CONSUMED_EXTENSIONS.has(key)) out[key] = schema[key];
+  }
+  return Object.keys(out).length ? out : undefined;
+};
+
 // Entity object shape — used both for scalar `entity` fields (back-compat)
 // and the items of `array_entity` fields. Returns the JSON-Schema object
 // {name, type, additional_types} with x-extensions carrying canon-resolution
@@ -112,7 +230,8 @@ function resolveFieldRef(
 const buildEntityObjectSchema = (
     ec: EntityFieldConfig | undefined,
     description: string | undefined,
-    refTargetPath?: string,
+    refTargetPath?: string | string[],
+    canonTie?: CanonTie,
 ): any => {
     const primaryType = ec?.entity_type ?? '';
     const alternates = (ec?.alternate_types || []).filter(s => typeof s === 'string' && s.trim() !== '');
@@ -145,6 +264,9 @@ const buildEntityObjectSchema = (
         if (constrained && allTypes.length > 0) typeProp.enum = allTypes;
     }
     const objectShape: any = {
+        // Preserved unknown keys go FIRST — everything below is a key this
+        // builder owns, and an owned key must always beat a stale copy.
+        ...(ec?.extensions ?? {}),
         type: 'object',
         description: description || (primaryType ? `A ${typeLabel} reference.` : 'An entity reference.'),
         'x-entityField': true,
@@ -166,6 +288,18 @@ const buildEntityObjectSchema = (
     if (ec?.color) objectShape['x-entityColor'] = ec.color;
     if (ec?.icon) objectShape['x-entityIcon'] = ec.icon;
     if (refTargetPath) objectShape['x-ref'] = refTargetPath;
+    // Canon tie. The generic field branch below emits `x-canon` onto the
+    // property node, but a scalar `entity` field never reaches that branch —
+    // it returns straight out of here — so without this its tie was silently
+    // dropped on save. The backend reads `x-canon` from either position
+    // (`schema_map._parse_canon`), so emitting it on the entity object is
+    // equivalent to the array case.
+    if (canonTie && (canonTie.canonId != null || canonTie.type)) {
+        objectShape['x-canon'] = {
+            ...(canonTie.canonId != null ? { canon_id: canonTie.canonId } : {}),
+            ...(canonTie.type ? { type: canonTie.type } : {}),
+        };
+    }
     return objectShape;
 };
 
@@ -186,6 +320,7 @@ const parseEntityConfigFromSchema = (schema: any): EntityFieldConfig => {
         typeConstrained: schema['x-entityTypeConstrained'] !== false,
         color: schema['x-entityColor'] || undefined,
         icon: schema['x-entityIcon'] || undefined,
+        extensions: collectExtensions(schema),
     };
 };
 
@@ -225,7 +360,12 @@ const buildJsonSchemaProperties = (
         if (!rawField.name) return;
         // Resolve ref. Throws on cycle / missing target — caller catches.
         const field = rawField.ref ? resolveFieldRef(rawField, root) : rawField;
-        const refTargetPath = rawField.ref?.target;
+        const refPaths = refTargets(rawField.ref);
+        // One target emits a bare string, several emit an array — both are
+        // valid `x-ref` and the bare form keeps older contracts byte-identical.
+        const refTargetPath: string | string[] | undefined =
+          refPaths.length === 0 ? undefined
+            : refPaths.length === 1 ? refPaths[0] : refPaths;
 
         // Handle graph field type - outputs triplets array
         if (field.type === 'graph' && field.graphConfig) {
@@ -371,15 +511,21 @@ const buildJsonSchemaProperties = (
             // Same shape as array_entity items; runtime value is always an
             // object for SQL-path uniformity.
             properties[rawField.name] = buildEntityObjectSchema(
-                field.entityConfig, field.description, refTargetPath,
+                field.entityConfig, field.description, refTargetPath, field.canonTie,
             );
             if (rawField.required) required.push(rawField.name);
         } else {
             // Regular field handling
             const property: any = {
+                // Preserved first; every key below is one this emitter owns.
+                ...(field.extensions ?? {}),
                 description: field.description || undefined,
-                type: field.type
+                // `date` is the editor's word for a shape JSON Schema spells in
+                // two keys. Collapse it back, or the contract carries a type no
+                // provider knows.
+                type: field.type === 'date' ? 'string' : field.type,
             };
+            if (field.type === 'date') property.format = 'date';
 
             if (rawField.required) required.push(rawField.name);
             if (field.enum && field.enum.length > 0) property.enum = field.enum;
@@ -394,11 +540,13 @@ const buildJsonSchemaProperties = (
                 if (field.items.type === 'entity') {
                     // array_entity: items are full entity-object references.
                     // Reuse the same builder that scalar `entity` fields use.
+                    // The ref belongs on the ITEM — that is the node carrying a
+                    // vocabulary, and where `schema_map` reads `x-ref`.
                     property.items = buildEntityObjectSchema(
-                        field.items.entityConfig, field.items.description, undefined,
+                        field.items.entityConfig, field.items.description, refTargetPath,
                     );
                 } else {
-                    property.items = { type: field.items.type };
+                    property.items = { ...(field.items.extensions ?? {}), type: field.items.type };
                     if (field.items.description) property.items.description = field.items.description;
                     if (field.items.type === 'object' && field.items.properties) {
                         const sub = buildJsonSchemaProperties(field.items.properties, root);
@@ -416,7 +564,20 @@ const buildJsonSchemaProperties = (
             }
             // If the field was originally a ref, preserve the target on the
             // emitted node so the parser can reconstruct the ref on reload.
-            if (refTargetPath) property['x-ref'] = refTargetPath;
+            // An entity roster already carries it on `items`, which is where
+            // `schema_map` looks for one — putting it in both places would
+            // make the same vocabulary appear to be declared twice.
+            if (refTargetPath && field.items?.type !== 'entity') property['x-ref'] = refTargetPath;
+            // Justification rides in the contract, not only in the side map:
+            // the contract is what gets exported, shared and read by the
+            // companion, and `_lift_configs_into_contract` writes the same key.
+            if (field.justification?.enabled) {
+                if (field.type === 'array' && property.items && typeof property.items === 'object') {
+                    property.items.include_justification = true;
+                } else {
+                    property.include_justification = true;
+                }
+            }
             // Canon tie — round-trip the backing canon + type so curation can
             // resolve the field's output into that canon and fill its shape.
             if (field.canonTie && (field.canonTie.canonId != null || field.canonTie.type)) {
@@ -464,16 +625,28 @@ const collectJustificationConfigs = (structure: SchemaSection[]): { [key: string
 
 
 export const adaptSchemaFormDataToSchemaCreate = (formData: AnnotationSchemaFormData): AnnotationSchemaCreate => {
+    // Built from scratch, which is why every preserved thing has to be put back
+    // explicitly. `contractGuidance` is the contract's own prompt preamble
+    // (`templates.py:BASE_GUIDANCE`) — a different string from `description`,
+    // the DB column, and it was being dropped on the first save of every
+    // template-derived schema.
     const outputContract: any = {
+        ...(formData.contractExtensions ?? {}),
         type: 'object',
+        ...(formData.contractGuidance ? { description: formData.contractGuidance } : {}),
         properties: {}
     };
 
     formData.structure.forEach(section => {
         const { properties, required } = buildJsonSchemaProperties(section.fields);
+        const sectionExtras = {
+            ...(section.extensions ?? {}),
+            ...(section.description ? { description: section.description } : {}),
+        };
 
         if (section.name === 'document') {
             outputContract.properties.document = {
+                ...sectionExtras,
                 type: 'object',
                 properties: properties,
             };
@@ -482,6 +655,7 @@ export const adaptSchemaFormDataToSchemaCreate = (formData: AnnotationSchemaForm
             }
         } else { // per_image, per_audio, etc.
              outputContract.properties[section.name] = {
+                ...sectionExtras,
                 type: 'array',
                 items: {
                     type: 'object',
@@ -513,9 +687,26 @@ const isGraphProperty = (schema: any): boolean => {
     const itemProps = schema.items?.properties;
     if (!itemProps || typeof itemProps !== 'object') return false;
     const k = new Set(Object.keys(itemProps));
-    return (k.has('subject_name') || k.has('subject')) &&
-           k.has('predicate') &&
-           (k.has('object_name') || k.has('object'));
+    const looksLikeTriplet =
+        (k.has('subject_name') || k.has('subject')) &&
+        k.has('predicate') &&
+        (k.has('object_name') || k.has('object'));
+    if (!looksLikeTriplet) return false;
+
+    // **Entity children win.** An entity object already carries `{name, type}`,
+    // which is exactly what a triplet spells out as `subject_name` +
+    // `subject_type` — so a row whose `subject`/`object` ARE entity fields is
+    // an entity-linked relation row, not a legacy triplet.
+    //
+    // Without this, the observation model's `relations[*]` — two entity roles
+    // and a predicate, which is how the model says to write a standing link —
+    // was rewritten into flat triplet strings on load, dropping both roster
+    // links. Silent, and it turned the one section that exists to *avoid*
+    // triplets back into triplets. The backend's `_infer_node_roles` makes the
+    // same check for the same reason; keep the two in step.
+    const isEntity = (p: any) => !!p && p['x-entityField'] === true;
+    if (isEntity(itemProps.subject) || isEntity(itemProps.object)) return false;
+    return true;
 };
 
 /** Reconstruct a graph field from a graph-shaped JSON Schema property. */
@@ -597,9 +788,8 @@ const parseEntityField = (
         required: required.includes(propertyKey),
         entityConfig: parseEntityConfigFromSchema(schema),
     };
-    if (typeof schema['x-ref'] === 'string') {
-        field.ref = { target: schema['x-ref'] };
-    }
+    const refs = refTargets({ targets: schema['x-ref'] } as any);
+    if (refs.length) field.ref = { targets: refs };
     return field;
 };
 
@@ -625,6 +815,11 @@ const parseJsonSchemaProperties = (properties: any = {}, required: string[] = []
                 type: typeof xc.type === 'string' ? xc.type : undefined,
             };
         }
+        // Everything else `x-*` on the property node, kept verbatim. Here, for
+        // every field kind at once, for the same reason `x-canon` is here: a
+        // per-branch copy is a per-branch omission waiting to happen.
+        const ext = collectExtensions(schema);
+        if (ext) field.extensions = ext;
         out.push(field);
     }
 
@@ -635,7 +830,14 @@ const parseRegularField = (name: string, schema: any, required: string[]): Advan
     const field: AdvancedSchemeField = {
         id: nanoid(),
         name,
-        type: schema.type,
+        // A date arrives as `{type: "string", format: "date"}` and must not
+        // come back out as a bare string. `templates.py:date_field` emits the
+        // format and `schema_map.py` reads it — `shape: "date"` is what makes a
+        // field a time candidate at all — so dropping it here silently demoted
+        // every `when`, `until` and `from` in a template the moment the schema
+        // was opened in the editor, and the model was left with prose asking it
+        // for a date. That is where "Wednesday" came from.
+        type: schema.type === 'string' && schema.format === 'date' ? 'date' : schema.type,
         description: schema.description,
         required: required.includes(name),
     };
@@ -655,8 +857,13 @@ const parseRegularField = (name: string, schema: any, required: string[]): Advan
                 entityConfig: parseEntityConfigFromSchema(schema.items),
                 description: schema.items.description || undefined,
             };
+            // For a roster-drawn role the ref lives on the ITEM, because that
+            // is the thing with a vocabulary. Read it up onto the field, which
+            // is where the editor and the emitter both look.
+            const itemRefs = refTargets({ targets: schema.items['x-ref'] } as any);
+            if (itemRefs.length) field.ref = { targets: itemRefs };
         } else {
-            field.items = { type: schema.items.type };
+            field.items = { type: schema.items.type, extensions: collectExtensions(schema.items) };
             if (schema.items.description) field.items.description = schema.items.description;
             if (schema.items.type === 'object') {
                 field.items.properties = parseJsonSchemaProperties(schema.items.properties, schema.items.required);
@@ -673,8 +880,14 @@ const parseRegularField = (name: string, schema: any, required: string[]): Advan
     }
     // Round-trip x-ref so refs survive load/save cycles. The actual definition
     // (type/enum/etc.) gets re-expanded from the target on next save.
-    if (typeof schema['x-ref'] === 'string') {
-        field.ref = { target: schema['x-ref'] };
+    const ownRefs = refTargets({ targets: schema['x-ref'] } as any);
+    if (ownRefs.length) field.ref = { targets: ownRefs };
+    // Inline `include_justification` — the shape `schema_map` reads and every
+    // template emits. Without this, loading a template into the editor drops
+    // the flag, and the run comes back with an empty evidence pane because
+    // every projection binds `evidence: {path: "justification"}`.
+    if (schema.include_justification === true || schema.items?.include_justification === true) {
+        field.justification = { ...(field.justification ?? {}), enabled: true };
     }
     return field;
 };
@@ -689,13 +902,17 @@ export const adaptSchemaReadToSchemaFormData = (apiData: ClientAnnotationSchemaR
                 structure.push({
                     id: nanoid(),
                     name: 'document',
-                    fields: parseJsonSchemaProperties(sectionSchema.properties, sectionSchema.required)
+                    fields: parseJsonSchemaProperties(sectionSchema.properties, sectionSchema.required),
+                    description: sectionSchema.description || undefined,
+                    extensions: collectExtensions(sectionSchema),
                 });
             } else if (name.startsWith('per_') && sectionSchema.type === 'array' && sectionSchema.items?.type === 'object') {
                  structure.push({
                     id: nanoid(),
                     name: name as SchemaSection['name'],
-                    fields: parseJsonSchemaProperties(sectionSchema.items.properties, sectionSchema.items.required)
+                    fields: parseJsonSchemaProperties(sectionSchema.items.properties, sectionSchema.items.required),
+                    description: sectionSchema.description || undefined,
+                    extensions: collectExtensions(sectionSchema),
                 });
             }
         });
@@ -744,6 +961,11 @@ export const adaptSchemaReadToSchemaFormData = (apiData: ClientAnnotationSchemaR
       description: apiData.description || "",
       instructions: apiData.instructions ?? undefined,
       structure: structure,
+      // The contract's own preamble, which is NOT `apiData.description` — that
+      // is the DB column, and reading it here is how the guidance came to be
+      // dropped: the two share a word and nothing else.
+      contractGuidance: outputContract?.description || undefined,
+      contractExtensions: collectExtensions(outputContract),
       // TODO: Map global settings from backend to form if they exist
     };
     return formData;

@@ -195,9 +195,12 @@ export function compileForPanel(
 
     case 'graph': {
       const c = cfg as GraphVizConfig;
-      // Triplet source = one group dim on the triplet array path; the
-      // backend's graph_stream uses formula.group[0].path as the
-      // triplet field. Edge weight defaults to count().
+      // `projections` is authoritative and carries its own paths, so a
+      // projections-only panel needs no group dim at all — the backend reads
+      // GraphParams.projections directly. Only the legacy single-array shape
+      // needs formula.group[0].path, which is what the backend falls back to
+      // when no projections are declared.
+      if (c.projections?.length) return base;
       if (c.source) {
         const dim = asDim(c.source, schema);
         return {
@@ -240,7 +243,23 @@ export function isPanelConfigured(panel: Panel): boolean {
     case 'map':         return !!(cfg as MapVizConfig).position;
     // Tables show all fields by default — no role needed to be "configured".
     case 'table':       return true;
-    case 'graph':       return !!(cfg as GraphVizConfig).source;
+    // A graph needs no configuration, and asking for some is now the bug.
+    //
+    // This used to require `projections` or the legacy `source`. Both are
+    // absent on a correctly-configured v2 panel: a schema written in the
+    // observation model **graphs itself**, and `resolve_projections` derives
+    // the whole set from the schema map. So the panel that needs the least
+    // setup was the one told to go and configure something — and the popover
+    // it pointed at no longer has a graph branch, because what that branch
+    // wrote was a field the engine ignores.
+    //
+    // Same shape as the guard in `formula_query._graph_source`, which refused
+    // to render an unconfigured panel for the same reason. A rule that was
+    // right before derivation existed.
+    //
+    // If a schema genuinely declares nothing graphable the panel renders empty
+    // and says so — which is a different message, and the true one.
+    case 'graph':       return true;
     case 'measurements': return true;
     case 'scatter':     return !!((cfg as ScatterVizConfig).x && (cfg as ScatterVizConfig).y);
   }

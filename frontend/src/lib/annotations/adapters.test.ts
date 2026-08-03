@@ -118,7 +118,7 @@ describe('Field reference (ref)', () => {
         name: 'actors', type: 'entity',
         entityConfig: { entity_type: 'Politician', enum: ['Alice', 'Bob'], typeConstrained: true },
       }),
-      fld({ name: 'sender', type: 'string', ref: { target: 'actors' }, description: 'Mail sender' }),
+      fld({ name: 'sender', type: 'string', ref: { targets: ['actors'] }, description: 'Mail sender' }),
     ]);
 
     const created = adaptSchemaFormDataToSchemaCreate(form);
@@ -140,24 +140,24 @@ describe('Field reference (ref)', () => {
         name: 'actors', type: 'entity',
         entityConfig: { entity_type: 'Politician', typeConstrained: true },
       }),
-      fld({ name: 'sender', type: 'string', ref: { target: 'actors' } }),
+      fld({ name: 'sender', type: 'string', ref: { targets: ['actors'] } }),
     ]);
     const restored = roundTrip(original);
     const sender = restored.structure[0].fields.find(f => f.name === 'sender')!;
-    expect(sender.ref?.target).toBe('actors');
+    expect(sender.ref?.targets).toEqual(['actors']);
   });
 
   test('cycle detection rejects A → B → A', () => {
     const form = docFormData([
-      fld({ name: 'a', type: 'string', ref: { target: 'b' } }),
-      fld({ name: 'b', type: 'string', ref: { target: 'a' } }),
+      fld({ name: 'a', type: 'string', ref: { targets: ['b'] } }),
+      fld({ name: 'b', type: 'string', ref: { targets: ['a'] } }),
     ]);
     expect(() => adaptSchemaFormDataToSchemaCreate(form)).toThrow(SchemaRefCycleError);
   });
 
   test('broken ref to non-existent target rejected', () => {
     const form = docFormData([
-      fld({ name: 'sender', type: 'string', ref: { target: 'nonexistent' } }),
+      fld({ name: 'sender', type: 'string', ref: { targets: ['nonexistent'] } }),
     ]);
     expect(() => adaptSchemaFormDataToSchemaCreate(form)).toThrow(/does not exist/);
   });
@@ -507,5 +507,127 @@ describe('Graph field — user-facing name + multi-graph-field', () => {
     expect(fields.find(f => f.name === 'assessments')?.type).toBe('graph');
     expect(fields.find(f => f.name === 'assessments')?.graphConfig?.relationshipSchema.predicateEnum)
       .toEqual(['gave_license_to']);
+  });
+});
+
+// =============================================================================
+// Canon tie (`x-canon`)
+//
+// The generic field branch emits `x-canon` onto the property node, but a scalar
+// `entity` field returns straight out of `buildEntityObjectSchema` and never
+// reaches it — so its canon tie was silently dropped on every save. The backend
+// reads `x-canon` from either position (`schema_map._parse_canon`).
+// =============================================================================
+
+describe('canon tie', () => {
+  test('scalar entity field emits x-canon', () => {
+    const created = adaptSchemaFormDataToSchemaCreate(docFormData([
+      fld({
+        name: 'location', type: 'entity',
+        entityConfig: { entity_type: 'Location', typeConstrained: true },
+        canonTie: { canonId: 7, type: 'location' },
+      }),
+    ]));
+    const schema = (created.output_contract as any).properties.document.properties.location;
+    expect(schema['x-entityField']).toBe(true);
+    expect(schema['x-canon']).toEqual({ canon_id: 7, type: 'location' });
+  });
+
+  test('scalar entity canon tie survives a full round-trip', () => {
+    const back = roundTrip(docFormData([
+      fld({
+        name: 'location', type: 'entity',
+        entityConfig: { entity_type: 'Location', typeConstrained: true },
+        canonTie: { canonId: 7, type: 'location' },
+      }),
+    ]));
+    const f = back.structure[0].fields[0];
+    expect(f.canonTie?.canonId).toBe(7);
+    expect(f.canonTie?.type).toBe('location');
+  });
+
+  test('array_entity keeps its tie on the array node', () => {
+    const created = adaptSchemaFormDataToSchemaCreate(docFormData([
+      fld({
+        name: 'entities', type: 'array',
+        items: { type: 'entity', entityConfig: { entity_type: 'Person', typeConstrained: true } },
+        canonTie: { canonId: 3, type: 'Person' },
+      }),
+    ]));
+    const schema = (created.output_contract as any).properties.document.properties.entities;
+    expect(schema['x-canon']).toEqual({ canon_id: 3, type: 'Person' });
+    expect(schema.items['x-entityField']).toBe(true);
+  });
+
+  test('no x-canon emitted when the field has no tie', () => {
+    const created = adaptSchemaFormDataToSchemaCreate(docFormData([
+      fld({ name: 'location', type: 'entity', entityConfig: { entity_type: 'Location' } }),
+    ]));
+    const schema = (created.output_contract as any).properties.document.properties.location;
+    expect(schema['x-canon']).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// Date fields
+//
+// `templates.py:date_field` emits `{type: "string", format: "date"}`, and
+// `schema_map.py` reads that format — `shape: "date"` is what makes a field a
+// *time candidate* at all, which is what the scrubber, the lanes and
+// `after:`/`before:` bind to.
+//
+// The editor modelled only `schema.type`, so `format` was dropped on load and
+// never re-emitted on save. Opening a template in the editor silently demoted
+// every `when`, `until` and `from` to a bare string, leaving the model with
+// nothing but prose asking it for a date. Two runs in a row answered
+// "Wednesday".
+// =============================================================================
+
+describe('Date field round-trip', () => {
+  test('format: date survives the editor', () => {
+    const form = docFormData([
+      fld({ name: 'when', type: 'date', description: 'When it happened.' }),
+    ]);
+    const created = adaptSchemaFormDataToSchemaCreate(form);
+    const when = (created.output_contract as any).properties.document.properties.when;
+    expect(when.type).toBe('string');
+    expect(when.format).toBe('date');
+
+    // …and comes back as a date, not as a string.
+    expect(roundTrip(form).structure[0].fields[0].type).toBe('date');
+  });
+
+  test('a plain string field does not acquire a format', () => {
+    const created = adaptSchemaFormDataToSchemaCreate(
+      docFormData([fld({ name: 'summary', type: 'string' })]),
+    );
+    const summary = (created.output_contract as any)
+      .properties.document.properties.summary;
+    expect(summary.type).toBe('string');
+    expect(summary.format).toBeUndefined();
+  });
+
+  test('a date inside a repeating row survives too', () => {
+    // Where it actually matters: `observations[*].when` is the binding the
+    // occurrence's t0 is read from.
+    const form = docFormData([
+      fld({
+        name: 'observations', type: 'array',
+        items: {
+          type: 'object',
+          properties: [
+            fld({ name: 'kind', type: 'string' }),
+            fld({ name: 'when', type: 'date' }),
+          ],
+        },
+      } as any),
+    ]);
+    const created = adaptSchemaFormDataToSchemaCreate(form);
+    const when = (created.output_contract as any)
+      .properties.document.properties.observations.items.properties.when;
+    expect(when).toEqual({ description: undefined, type: 'string', format: 'date' });
+
+    const back = roundTrip(form).structure[0].fields[0];
+    expect(back.items?.properties?.find(f => f.name === 'when')?.type).toBe('date');
   });
 });

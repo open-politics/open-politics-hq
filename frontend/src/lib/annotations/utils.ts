@@ -499,6 +499,43 @@ export const formatDisplayValue = (value: any, schema: AnnotationSchemaRead): st
 };
 
 /**
+ * The place name inside a value, whatever shape the value is.
+ *
+ * A place is a **name** — never coordinates, which the model is never asked
+ * for. But that name arrives in three shapes depending on how the schema
+ * declared the field: a bare string (`"Valletta"`), an entity object
+ * (`{name: "Valletta", type: "Location"}`), or an array of either. Under the
+ * observation model the entity shapes are the common case, because `at`,
+ * `places[*]` and every place role are typed entities.
+ *
+ * This is the client mirror of `geocode.py:_emit_leaf`, which has read all
+ * three since it was written. It exists here because the logic had already
+ * been written twice on the client — once correctly, inside the map's marker
+ * pairing, and once as `String(value)`, which turns an entity into
+ * `"[object Object]"` and matches nothing.
+ */
+export const placeNameOf = (value: any): string[] => {
+    const out: string[] = [];
+    const walk = (node: any) => {
+        if (typeof node === 'string') {
+            const s = node.trim();
+            if (s) out.push(s);
+            return;
+        }
+        if (Array.isArray(node)) {
+            for (const item of node) walk(item);
+            return;
+        }
+        if (node && typeof node === 'object') {
+            const name = (node as any).name;
+            if (typeof name === 'string' && name.trim()) out.push(name.trim());
+        }
+    };
+    walk(value);
+    return out;
+};
+
+/**
  * Resolve a path that contains ``[*]`` (array explosion) to the list of
  * values produced by walking each element. One ``[*]`` per path is supported
  * (matches the backend grammar in ``core/filters.py``).
