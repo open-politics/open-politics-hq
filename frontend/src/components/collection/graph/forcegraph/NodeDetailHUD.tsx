@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 import type { AnnotationSchemaRead } from '@/client';
 import type { FieldDef, FieldRangeCache } from '@/components/collection/annotation/cellRenderers/types';
 import { TypedCell } from '@/components/collection/annotation/cellRenderers';
-import { resolveEntityColor, type ColorOverrides } from '@/lib/annotations/colors';
+import { resolveEntityColor } from '@/lib/annotations/colors';
 import type { GraphNode, GraphEdge } from '../graphTypes';
 
 // =============================================================================
@@ -133,22 +133,11 @@ interface NodeDetailHUDProps {
   nodes: GraphNode[];
   documents?: DocumentBadge[];
   evidence?: EvidenceItem[];
-  /** Optional active search term. Connection chips whose peer label matches
-   *  get a highlighted ring + bumped opacity; non-matching chips dim so the
-   *  query visually surfaces relevant connections without filtering them
-   *  out of the row entirely. */
-  searchTerm?: string;
   /** Edge currently navigated via the keyboard arrow keys. The matching
    *  chip gets the same amber treatment as a search match (ring + scale)
    *  AND a stronger background to read as the "active cursor". */
   highlightedEdgeId?: string | null;
   onPeerClick?: (peerNode: GraphNode) => void;
-  /** Click on a connection row (focal mode) → inspect that whole relationship.
-   *  The parent opens the edge-bundle inspector for (focal node, peer). */
-  onConnectionClick?: (peerId: string) => void;
-  /** Entity-type colour overrides for the connection-row peer dots — same
-   *  source the canvas legend / nodes use, so colours stay consistent. */
-  colorOverrides?: ColorOverrides;
   onAssetClick?: (assetId: number) => void;
   /** Hover hook for the right-rail "Connection details" cards AND bottom
    *  connection lists. Parent uses this to drive the same edge-amber +
@@ -208,13 +197,19 @@ interface NodeDetailHUDProps {
     label: string;
     onClear: () => void;
   }>;
+  /** Write this node's neighbourhood into the panel's query — `from:"X"
+   *  hops:1`. Replaces the connection list the HUD used to render along its
+   *  bottom edge: the canvas already draws connections, and a traversal the
+   *  user can read and edit beats a list they can only scroll. Omitted by
+   *  consumers with no query bar (the read-only curated view). */
+  onFocusSubgraph?: () => void;
   onClose: () => void;
 }
 
 export const NodeDetailHUD: React.FC<NodeDetailHUDProps> = ({
   focalNode, subnet, edges, nodes, documents = [], evidence = [],
-  searchTerm = '', highlightedEdgeId = null,
-  onPeerClick, onConnectionClick, colorOverrides, onAssetClick, onEdgeHover,
+  highlightedEdgeId = null,
+  onPeerClick, onAssetClick, onEdgeHover,
   eligibleFields = [], visibleFieldUids = [], onVisibleFieldUidsChange,
   showJustifications = false, onShowJustificationsChange,
   highlightedAssetId = null, onAssetHighlightToggle,
@@ -223,6 +218,7 @@ export const NodeDetailHUD: React.FC<NodeDetailHUDProps> = ({
   pinEvidencePeerIds = null,
   swapTo,
   lenses,
+  onFocusSubgraph,
   onClose,
 }) => {
   // Mode: focused single-node (today's flow) vs. subnet (pin-set lens).
@@ -255,12 +251,35 @@ export const NodeDetailHUD: React.FC<NodeDetailHUDProps> = ({
           {mode === 'focal' && focalNode ? (
             <>
               <span className="font-semibold text-sm truncate" title={focalNode.label}>{focalNode.label}</span>
-              <span className="text-[10px] uppercase tracking-wide text-muted-foreground border-l pl-2">
-                {focalNode.type}
-              </span>
-              {(focalNode.frequency ?? 0) > 1 && (
+              {/* The type, unless the label already opens with it. An
+                  occurrence is labelled `payment · P2 → S3` and typed
+                  `payment`, so printing both read "…Shell S3payment". */}
+              {!focalNode.label?.toLowerCase().startsWith(
+                  (focalNode.type ?? '').toLowerCase()) && (
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground border-l pl-2">
+                  {focalNode.type}
+                </span>
+              )}
+              {/* Which SECTION it came from. "type: Account" told you what the
+                  thing is and not where it was declared, so an instrument and
+                  an actor that happened to share a type were indistinguishable
+                  in provenance. */}
+              {(focalNode.sourcePaths ?? []).length > 0 && (
+                <span className="text-[10px] text-muted-foreground border-l pl-2 truncate"
+                      title={(focalNode.sourcePaths ?? []).join(' · ')}>
+                  {(focalNode.sourcePaths ?? [])
+                    .map(p => p.replace(/^document\./, '').replace('[*]', ''))
+                    .join(' · ')}
+                </span>
+              )}
+              {/* `frequency` counts the ATOMS that produced a node, not how
+                  often something happened. On an entity it reads as "named this
+                  many times", which is fair; on an occurrence it is 1 + 2×roles
+                  and reads as though a single payment happened nine times.
+                  Never shown for an occurrence. */}
+              {focalNode.kind !== 'occurrence' && (focalNode.frequency ?? 0) > 1 && (
                 <span className="text-[10px] text-muted-foreground tabular-nums">
-                  · freq {focalNode.frequency}
+                  · named {focalNode.frequency}×
                 </span>
               )}
               {onTogglePin && (
@@ -374,8 +393,20 @@ export const NodeDetailHUD: React.FC<NodeDetailHUDProps> = ({
         )}
       </div>
 
-      {/* ===== TOP-RIGHT: Pin toggle + Close ===== */}
+      {/* ===== TOP-RIGHT: Focus + Close ===== */}
       <div className="absolute top-2 right-2 flex items-center gap-1" style={{ pointerEvents: 'auto' }}>
+        {onFocusSubgraph && focalNode && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 border bg-background/80 px-2 text-[11px] backdrop-blur-sm"
+            onClick={onFocusSubgraph}
+            title={`Show this node's neighbourhood — writes from:"${focalNode.label}" hops:1 into the query`}
+          >
+            <Waypoints className="h-3 w-3" />
+            Focus
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
@@ -494,46 +525,14 @@ export const NodeDetailHUD: React.FC<NodeDetailHUDProps> = ({
         );
       })()}
 
-      {/* ===== BOTTOM-RIGHT: Connection lanes — independent surface =====
-          Wider than the evidence cards (~480px) and anchored to bottom-right
-          so the lanes get horizontal room for chip readability without
-          competing with the cards above. No backdrop / border / shadow —
-          the chips carry their own visual weight; the panel itself is
-          transparent so the canvas stays readable behind empty lane gaps. */}
-      {edges.length > 0 && (
-        <div
-          className="absolute bottom-2 right-2 w-[480px] max-w-[55%] max-h-[10rem] flex flex-col gap-1 px-2 py-1"
-          style={{ pointerEvents: 'auto' }}
-        >
-          {mode === 'focal' && focalNode ? (
-            <PeerConnections
-              edges={edges}
-              nodes={nodes}
-              focalId={focalNode.id}
-              searchTerm={searchTerm}
-              highlightedEdgeId={highlightedEdgeId}
-              colorOverrides={colorOverrides}
-              onConnectionClick={onConnectionClick}
-              onEdgeHover={onEdgeHover}
-            />
-          ) : (
-            <>
-              <div className="text-[10px] font-medium text-muted-foreground px-1">
-                Connections ({edges.length})
-              </div>
-              <ConnectionLanes
-                edges={edges}
-                nodes={nodes}
-                focalId={focalNode?.id}
-                searchTerm={searchTerm}
-                highlightedEdgeId={highlightedEdgeId}
-                onPeerClick={onPeerClick}
-                onEdgeHover={onEdgeHover}
-              />
-            </>
-          )}
-        </div>
-      )}
+      {/* The bottom strip used to hold a list of this node's connections —
+          chips, lanes, a peer-grouped variant, ~450 lines of it. It was
+          answering "what is this connected to?" in a text list, three feet
+          below a canvas whose entire job is to answer that question in a
+          picture. The replacement is the Focus action in the corner: it
+          writes `from:"<label>" hops:1` into the query bar, and the graph
+          becomes the connection list. Legible, editable, shareable, and it
+          composes with every other token — which a list of chips never did. */}
     </div>
   );
 };
@@ -628,329 +627,14 @@ const EvidenceSection: React.FC<{
 };
 
 // -----------------------------------------------------------------------------
-// ConnectionLanes — predicate-grouped horizontal lanes. One row per predicate,
-// peer chips horizontal inside. Direction lives on the lane label when all
-// edges in the predicate share it, on the chip when mixed. Subnet mode (no
-// focalId) groups by (source, target) pair and renders pair chips.
-//
-// Why predicate as the spine: the original two-strip layout repeated the same
-// predicate across every chip ("communicated_with → Vance", "communicated_with
-// → Bannon", …). Lifting predicate to a lane label kills that repetition;
-// peer chips become small and dense.
+// `ConnectionLanes` and `PeerConnections` lived here — ~320 lines rendering the
+// focused node's neighbours as predicate lanes and peer rows along the bottom of
+// the canvas. They answered "what is this connected to?" in a scrolling list,
+// directly beneath a canvas that answers the same question in a picture. The
+// Focus action replaced them: it writes `from:"<label>" hops:1`, so the graph
+// itself becomes the answer — and unlike a list, that answer composes with
+// `type:`, `after:`, `serves:` and everything else in the grammar.
 // -----------------------------------------------------------------------------
-
-interface LaneEntry {
-  /** Stable key per chip — duplicates within a predicate get aggregated. */
-  key: string;
-  /** First contributing edge — used for hover/click dispatch. */
-  edge: GraphEdge;
-  /** Number of duplicate triplets (same predicate, same endpoints). */
-  count: number;
-  /** Resolved peer (focal mode) or target endpoint (subnet mode). */
-  peer: GraphNode | null;
-  /** Subnet-mode only: the source endpoint. */
-  source?: GraphNode | null;
-  /** Direction relative to focal — undefined in subnet mode. */
-  direction?: 'in' | 'out';
-}
-
-interface Lane {
-  predicate: string;
-  entries: LaneEntry[];
-  /** ``out`` / ``in`` when every entry shares it; ``mixed`` when both
-   *  appear. Subnet-mode lanes leave this undefined. */
-  uniformDirection?: 'in' | 'out' | 'mixed';
-}
-
-function buildLanes(
-  edges: GraphEdge[],
-  nodes: GraphNode[],
-  focalId: string | undefined,
-): Lane[] {
-  const nodeById = new Map(nodes.map(n => [n.id, n]));
-  // Bucket: predicate → key → LaneEntry. Key in focal mode is "<dir>:<peerId>";
-  // in subnet mode it's "<sourceId>→<targetId>".
-  const byPred = new Map<string, Map<string, LaneEntry>>();
-  for (const edge of edges) {
-    const pred = edge.predicate || '(none)';
-    let bucket = byPred.get(pred);
-    if (!bucket) { bucket = new Map(); byPred.set(pred, bucket); }
-    if (focalId != null) {
-      const direction: 'in' | 'out' = edge.sourceId === focalId ? 'out' : 'in';
-      const peerId = direction === 'out' ? edge.targetId : edge.sourceId;
-      const peer = nodeById.get(peerId) ?? null;
-      const key = `${direction}:${peerId}`;
-      const existing = bucket.get(key);
-      if (existing) existing.count += 1;
-      else bucket.set(key, { key, edge, count: 1, peer, direction });
-    } else {
-      const key = `${edge.sourceId}→${edge.targetId}`;
-      const source = nodeById.get(edge.sourceId) ?? null;
-      const peer = nodeById.get(edge.targetId) ?? null;
-      const existing = bucket.get(key);
-      if (existing) existing.count += 1;
-      else bucket.set(key, { key, edge, count: 1, peer, source });
-    }
-  }
-  const lanes: Lane[] = [];
-  for (const [predicate, bucket] of byPred) {
-    const entries = Array.from(bucket.values());
-    let uniformDirection: Lane['uniformDirection'] = undefined;
-    if (focalId != null) {
-      const dirs = new Set(entries.map(e => e.direction));
-      if (dirs.size === 1) uniformDirection = entries[0].direction;
-      else uniformDirection = 'mixed';
-    }
-    lanes.push({ predicate, entries, uniformDirection });
-  }
-  // Sort lanes: largest first, then alphabetical predicate.
-  lanes.sort((a, b) => b.entries.length - a.entries.length || a.predicate.localeCompare(b.predicate));
-  return lanes;
-}
-
-// -----------------------------------------------------------------------------
-// PeerConnections — focal-mode connection list, grouped by PEER (one row per
-// neighbour) rather than by predicate. Each row collapses every relationship
-// to that peer into a single bundle: the dominant predicate, a "+N" when more
-// than one predicate type connects them, the connection count, and a direction
-// glyph. Sorted by connection count (strongest first). Clicking a row opens the
-// edge-bundle inspector for that pair; hovering lights the pair on the canvas.
-// This is the per-node analogue of the bundled canvas edge — the list and the
-// canvas now describe connections the same way.
-// -----------------------------------------------------------------------------
-
-interface PeerGroup {
-  peerId: string;
-  peer: GraphNode | null;
-  count: number;
-  predicateCount: number;
-  dominantPredicate: string;
-  direction: 'in' | 'out' | 'mixed';
-  /** A representative member edge id — maps to the bundle for hover-highlight. */
-  repEdgeId: string;
-}
-
-function buildPeerGroups(edges: GraphEdge[], nodes: GraphNode[], focalId: string): PeerGroup[] {
-  const nodeById = new Map(nodes.map(n => [n.id, n]));
-  const groups = new Map<string, {
-    count: number; preds: Map<string, number>; out: number; inc: number; repEdgeId: string;
-  }>();
-  for (const e of edges) {
-    const isOut = e.sourceId === focalId;
-    const peerId = isOut ? e.targetId : e.sourceId;
-    let g = groups.get(peerId);
-    if (!g) { g = { count: 0, preds: new Map(), out: 0, inc: 0, repEdgeId: e.id }; groups.set(peerId, g); }
-    g.count += 1;
-    g.preds.set(e.predicate, (g.preds.get(e.predicate) ?? 0) + 1);
-    if (isOut) g.out += 1; else g.inc += 1;
-  }
-  const out: PeerGroup[] = [];
-  for (const [peerId, g] of groups) {
-    const dominantPredicate = Array.from(g.preds.entries())
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? '';
-    const direction: PeerGroup['direction'] = g.out > 0 && g.inc > 0 ? 'mixed' : g.inc > 0 ? 'in' : 'out';
-    out.push({
-      peerId, peer: nodeById.get(peerId) ?? null, count: g.count,
-      predicateCount: g.preds.size, dominantPredicate, direction, repEdgeId: g.repEdgeId,
-    });
-  }
-  out.sort((a, b) => b.count - a.count || (a.peer?.label ?? a.peerId).localeCompare(b.peer?.label ?? b.peerId));
-  return out;
-}
-
-const PeerConnections: React.FC<{
-  edges: GraphEdge[];
-  nodes: GraphNode[];
-  focalId: string;
-  searchTerm?: string;
-  highlightedEdgeId?: string | null;
-  colorOverrides?: ColorOverrides;
-  onConnectionClick?: (peerId: string) => void;
-  onEdgeHover?: (edgeId: string | null, peerId: string | null) => void;
-}> = ({ edges, nodes, focalId, searchTerm = '', highlightedEdgeId = null, colorOverrides, onConnectionClick, onEdgeHover }) => {
-  const q = searchTerm.trim().toLowerCase();
-  const groups = useMemo(() => buildPeerGroups(edges, nodes, focalId), [edges, nodes, focalId]);
-
-  if (groups.length === 0) {
-    return (
-      <>
-        <div className="text-[10px] font-medium text-muted-foreground px-1">Connections (0)</div>
-        <div className="px-1 py-0.5 text-[10px] text-muted-foreground italic">none</div>
-      </>
-    );
-  }
-
-  return (
-    <>
-      <div className="text-[10px] font-medium text-muted-foreground px-1">
-        Connections ({groups.length})
-      </div>
-      <div className="flex flex-col gap-0.5 overflow-y-auto scrollbar-hide flex-1 min-h-0 my-0.5">
-        {groups.map(g => {
-          const peerLabel = g.peer?.label || g.peerId;
-          const matches = q.length > 0 && (
-            peerLabel.toLowerCase().includes(q) || g.dominantPredicate.toLowerCase().includes(q)
-          );
-          const dimmed = q.length > 0 && !matches;
-          const isActive = highlightedEdgeId != null && highlightedEdgeId === g.repEdgeId;
-          const dirGlyph = g.direction === 'out' ? '→' : g.direction === 'in' ? '←' : '↔';
-          const color = resolveEntityColor(g.peer?.type ?? '', colorOverrides);
-          return (
-            <button
-              type="button"
-              key={g.peerId}
-              onClick={() => onConnectionClick?.(g.peerId)}
-              onMouseEnter={() => onEdgeHover?.(g.repEdgeId, g.peerId)}
-              onMouseLeave={() => onEdgeHover?.(null, null)}
-              className={cn(
-                'flex items-center gap-2 px-1.5 py-1 rounded text-[11px] text-left border transition-colors',
-                'bg-muted/50 hover:bg-muted border-border/50',
-                isActive && 'ring-1 ring-amber-500',
-                dimmed && 'opacity-35',
-              )}
-              title={`${peerLabel} — ${g.count} relationship${g.count === 1 ? '' : 's'}${g.predicateCount > 1 ? ` across ${g.predicateCount} types` : ''} · click to inspect`}
-            >
-              <span className="text-[11px] text-muted-foreground/80 shrink-0 tabular-nums w-3 text-center">{dirGlyph}</span>
-              <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
-              <span className="font-medium truncate shrink min-w-0">{peerLabel}</span>
-              <span className="text-[10px] italic text-muted-foreground truncate flex-1 min-w-0">
-                {g.dominantPredicate}{g.predicateCount > 1 ? ` +${g.predicateCount - 1}` : ''}
-              </span>
-              <span className="text-muted-foreground tabular-nums shrink-0">{g.count}</span>
-            </button>
-          );
-        })}
-      </div>
-    </>
-  );
-};
-
-const ConnectionLanes: React.FC<{
-  edges: GraphEdge[];
-  nodes: GraphNode[];
-  /** When set, peer + direction are derived from edges relative to this node.
-   *  When undefined (subnet mode), chips render as A → B pairs. */
-  focalId?: string;
-  searchTerm?: string;
-  highlightedEdgeId?: string | null;
-  onPeerClick?: (peer: GraphNode) => void;
-  onEdgeHover?: (edgeId: string | null, peerId: string | null) => void;
-}> = ({ edges, nodes, focalId, searchTerm = '', highlightedEdgeId = null, onPeerClick, onEdgeHover }) => {
-  const q = searchTerm.trim().toLowerCase();
-  const lanes = useMemo(() => buildLanes(edges, nodes, focalId), [edges, nodes, focalId]);
-
-  // Keep the navigated chip on screen as the user arrows across lanes.
-  const navChipRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    if (!highlightedEdgeId) return;
-    navChipRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-  }, [highlightedEdgeId]);
-
-  if (lanes.length === 0) {
-    return (
-      <div className="px-1 py-0.5 text-[10px] text-muted-foreground italic">none</div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-0.5 overflow-y-auto scrollbar-hide flex-1 min-h-0 my-0.5">
-      {lanes.map(lane => {
-        // Lane-level direction marker: arrow when uniform, ↔ when mixed,
-        // nothing in subnet mode.
-        const dirGlyph = lane.uniformDirection === 'out' ? '→'
-          : lane.uniformDirection === 'in' ? '←'
-          : lane.uniformDirection === 'mixed' ? '↔'
-          : null;
-        return (
-          <div key={lane.predicate} className="flex items-center gap-2 min-w-0">
-            {/* Predicate label: now anchored at 160px since the lanes panel
-                gets its own width. ``min-w-0`` + ``truncate`` lets long
-                predicates ellipsize gracefully. */}
-            <div className="shrink-0 flex items-center gap-1 basis-[160px] max-w-[180px] min-w-0 justify-end pr-1">
-              {dirGlyph && (
-                <span className="text-[11px] text-muted-foreground/80 shrink-0 tabular-nums">
-                  {dirGlyph}
-                </span>
-              )}
-              <span
-                className="text-[10px] italic text-muted-foreground truncate"
-                title={lane.predicate}
-              >
-                {lane.predicate}
-              </span>
-            </div>
-            <div className="flex-1 min-w-0 flex gap-1.5 overflow-x-auto overflow-y-visible scrollbar-hide py-1.5 -my-1">
-              {lane.entries.map(entry => {
-                const isNavigated = highlightedEdgeId === entry.edge.id;
-                // Subnet-mode chips: "A → B"; focal-mode: peer label only,
-                // arrow added inline only if the lane is mixed-direction.
-                const isSubnet = focalId == null;
-                const sourceLabel = entry.source?.label || entry.source?.id || '';
-                const peerLabel = entry.peer?.label || entry.peer?.id || '';
-                const matches = q.length > 0 && (
-                  peerLabel.toLowerCase().includes(q) ||
-                  sourceLabel.toLowerCase().includes(q) ||
-                  lane.predicate.toLowerCase().includes(q)
-                );
-                const dimmed = q.length > 0 && !matches && !isNavigated;
-                // Single chip palette across the new design — direction is
-                // already encoded on the lane label or via inline glyph, so
-                // the colour distinction (blue/emerald) of the legacy strip
-                // is no longer carrying information.
-                const baseColors = 'bg-muted/60 dark:bg-muted/40 hover:bg-muted border-border/60 text-foreground';
-                const navStyles = isNavigated
-                  ? 'ring-1 ring-amber-500 shadow-[0_0_0_2px_rgba(245,158,11,0.18)]'
-                  : matches
-                    ? 'ring-1 ring-amber-400 dark:ring-amber-500'
-                    : '';
-                const hoverPeer = entry.peer ?? entry.source ?? null;
-                return (
-                  <button
-                    type="button"
-                    key={entry.key}
-                    ref={isNavigated ? navChipRef : undefined}
-                    className={cn(
-                      'flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] border whitespace-nowrap transition-all backdrop-blur-sm shadow-sm shrink-0',
-                      baseColors,
-                      navStyles,
-                      dimmed && 'opacity-35',
-                    )}
-                    title={isSubnet
-                      ? `${sourceLabel} → ${peerLabel} (${lane.predicate})${entry.count > 1 ? ` ×${entry.count}` : ''}`
-                      : `${entry.direction === 'out' ? '→' : '←'} ${peerLabel} (${lane.predicate})${entry.count > 1 ? ` ×${entry.count}` : ''}`}
-                    onMouseEnter={() => hoverPeer && onEdgeHover?.(entry.edge.id, hoverPeer.id)}
-                    onMouseLeave={() => onEdgeHover?.(null, null)}
-                    onClick={() => hoverPeer && onPeerClick?.(hoverPeer)}
-                  >
-                    {isSubnet ? (
-                      <>
-                        <span className="font-medium max-w-[120px] truncate">{sourceLabel}</span>
-                        <span className="opacity-60">→</span>
-                        <span className="font-medium max-w-[120px] truncate">{peerLabel}</span>
-                      </>
-                    ) : (
-                      <>
-                        {lane.uniformDirection === 'mixed' && (
-                          <span className="opacity-60">{entry.direction === 'out' ? '→' : '←'}</span>
-                        )}
-                        <span className="font-medium max-w-[180px] truncate">{peerLabel}</span>
-                      </>
-                    )}
-                    {entry.count > 1 && (
-                      <span className="text-muted-foreground tabular-nums shrink-0">
-                        ×{entry.count}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-};
 
 // -----------------------------------------------------------------------------
 // FieldPickerPopover — small cog-icon trigger that opens a popover where the

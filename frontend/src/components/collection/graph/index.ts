@@ -10,6 +10,9 @@ export {
   bundleIdForEdge,
   bundleIdForPair,
   pairKey,
+  clockOf,
+  activityCoverage,
+  type Clock,
   type GraphNode,
   type GraphEdge,
   type GraphViewConfig,
@@ -27,5 +30,5 @@ export { EntitySheet } from './EntitySheet';
 export { ProposalReviewDialog } from './ProposalReviewDialog';
 export { GraphSettingsPopover } from './GraphSettingsPopover';
 export { GraphFilterPanel } from './GraphFilterPanel';
-export { aggregatorResponseToGraphData, curatedDataToGraphData, tripletsArrayToGraphData } from './graphAdapters';
+export { viewGraphToGraphData, curatedDataToGraphData, tripletsArrayToGraphData } from './graphAdapters';
 export { DEFAULT_ENTITY_TYPE_ICONS, getEntityIconPaths } from './entityTypeIcons';

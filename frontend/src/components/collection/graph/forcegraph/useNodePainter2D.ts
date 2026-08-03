@@ -21,6 +21,16 @@ import { nodeRadius, type GraphNode, type GraphViewConfig } from '../graphTypes'
 
 type Painter = (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => void;
 
+/** Occurrences render at a fixed small size rather than by degree. Their
+ *  degree is an artefact of how many participants the row had, not a measure
+ *  of importance — sizing by it would make a five-passenger flight look more
+ *  significant than a two-party payment of ten million. */
+const OCCURRENCE_R = 5;
+
+/** Zoom below which occurrence labels are suppressed entirely. They are
+ *  numerous by design; labelling them at overview zoom is illegible noise. */
+const OCCURRENCE_LABEL_SCALE = 1.6;
+
 interface PainterDeps {
   theme: ThemeTokens;
   colorOverrides?: ColorOverrides;
@@ -72,14 +82,36 @@ export function useNodePainter2D({
     const isHovered = c.hoveredNodeId === node.id;
     const deg = c.degreeMap.get(node.id) ?? 0;
     const isHighlighted = c.selection.highlightedNodeId === node.id;
-    const r = nodeRadius(deg, isHighlighted);
+
+    // ---- Entities and occurrences get OPPOSITE treatment ----
+    //
+    // An entity is a noun you recognise: labelled, sized by how connected it
+    // is, few. An occurrence is something that happened: small, uniform,
+    // numerous, and deliberately recessive — it is connective tissue, and a
+    // corpus of 400 payments must read as structure rather than as 400 shouting
+    // labels. You don't read occurrences on the canvas; you read them in the
+    // item pane, and use the canvas to choose which.
+    const isOccurrence = node.kind === 'occurrence';
+    const r = isOccurrence
+      ? (isHighlighted ? OCCURRENCE_R * 1.6 : OCCURRENCE_R)
+      : nodeRadius(deg, isHighlighted);
 
     ctx.save();
     ctx.globalAlpha = style.opacity;
 
-    // ---- Filled circle ----
+    // ---- Body: diamond for occurrences, circle for entities ----
+    // Shape carries the distinction on its own, so it survives colour-blindness
+    // and any palette the user picks.
     ctx.beginPath();
-    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+    if (isOccurrence) {
+      ctx.moveTo(node.x, node.y - r);
+      ctx.lineTo(node.x + r, node.y);
+      ctx.lineTo(node.x, node.y + r);
+      ctx.lineTo(node.x - r, node.y);
+      ctx.closePath();
+    } else {
+      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+    }
     ctx.fillStyle = style.fillColor;
     ctx.fill();
 
@@ -146,9 +178,20 @@ export function useNodePainter2D({
     // Pinned anchors render slightly larger — they're the orientation map.
     const isPinned = c.pinnedNodeIds.has(node.id);
     const isAnchor = isPinned || style.labelAlwaysVisible || isHovered;
-    const showLabel = c.config.showNodeLabels && (
+    // Occurrences stay mute until you zoom in or engage one. They are the
+    // numerous half of the graph, and labelling them at overview zoom buries
+    // the entities — which are the labels you actually navigate by.
+    // Selection and hover always win: engaging a thing must always name it.
+    const occurrenceMuted = isOccurrence
+      && !style.labelAlwaysVisible
+      && !isHovered
+      && globalScale < OCCURRENCE_LABEL_SCALE;
+    const showLabel = c.config.showNodeLabels && !occurrenceMuted && (
       isAnchor
       || (c.config.showAllLabels && globalScale >= c.config.labelMinScale)
+      // An occurrence you have zoomed into is worth naming even when
+      // ``showAllLabels`` is off — at that zoom you are reading, not scanning.
+      || (isOccurrence && globalScale >= OCCURRENCE_LABEL_SCALE)
     );
     if (showLabel) {
       // Anchors get a 1.25× boost so they read as the top tier of orientation

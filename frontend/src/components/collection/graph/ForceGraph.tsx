@@ -15,8 +15,11 @@ import { resolveEntityColor, resolvePredicateColor, type ColorOverrides } from '
 import {
   buildDegreeMap,
   buildEdgeWidthFn,
+  collapseOccurrences,
   defaultGraphViewConfig,
+  edgeEpistemics,
   edgeFieldRange as edgeFieldRangePublic,
+  inferOccurrenceView,
   nodeRadius,
   type ActiveSubNetwork,
   type GraphEdge,
@@ -25,6 +28,7 @@ import {
   type SubNetworkColor,
 } from './graphTypes';
 import { useThemeReads } from './forcegraph/useThemeReads';
+import { useGeoPaint } from './forcegraph/useGeoPaint';
 import { useForcesEffect, applyForces } from './forcegraph/useForcesEffect';
 import { useNodePainter2D } from './forcegraph/useNodePainter2D';
 import { useLinkPainter2D } from './forcegraph/useLinkPainter2D';
@@ -36,8 +40,6 @@ import { useNodeThreeObject } from './forcegraph/useNodeThreeObject';
 import { useLinkThreeObject } from './forcegraph/useLinkThreeObject';
 import { useNodePositionUpdate3D } from './forcegraph/useNodePositionUpdate3D';
 import { ZoomToolbar } from './forcegraph/ZoomToolbar';
-import { EntityTypeLegend } from './forcegraph/EntityTypeLegend';
-import { TopNodesList } from './forcegraph/TopNodesList';
 import { Controls3DHelp } from './forcegraph/Controls3DHelp';
 
 // =============================================================================
@@ -89,6 +91,9 @@ export interface ForceGraphHandle {
 export interface ForceGraphProps {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** Scrubber position, so interval-scoped place anchors resolve to where a
+   *  node actually was at that moment. */
+  timeCursor?: string | null;
   width?: number;
   height?: number;
   highlightedNodeId?: string | null;
@@ -132,14 +137,17 @@ export interface ForceGraphProps {
    *  parent can compose them differently in the future. */
   pinNetworkEdges?: Set<string>;
   chrome?: 'full' | 'minimal';
+  /** Who renders the zoom/randomise strip.
+   *
+   *  `canvas` floats it over the top-left, as before. `external` suppresses it
+   *  so a host panel can seat the same component in its own top bar and free
+   *  the corner for node info, docs and pins — see `ZoomToolbar.placement`. */
+  viewControls?: 'canvas' | 'external';
   /** Explicit override of ``config.viewMode``. Inline-preview consumers pin
    * this to ``'2d'`` so the Three.js bundle never loads on detail-view
    * routes. The toolbar toggle in run-scoped / curated views writes to
    * ``config.viewMode`` instead, leaving this undefined. */
   viewMode?: '2d' | '3d';
-  /** When true, suppresses the entity-type legend at canvas bottom — used by
-   *  consumers whose node-detail HUD occupies the same strip. */
-  legendHidden?: boolean;
   /** Relationship-as-a-lens dim cascade: when set with 1+ entity names,
    *  every node whose label matches and every edge touching such a node
    *  becomes the focused sub-network. Same dim treatment as the node-focus
@@ -264,8 +272,9 @@ function getArrowDir(
 
 export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function ForceGraph(props, fwdRef) {
   const {
-    nodes,
-    edges,
+    nodes: rawNodes,
+    edges: rawEdges,
+    timeCursor = null,
     width: propWidth = 800,
     height: propHeight = 600,
     highlightedNodeId = null,
@@ -292,8 +301,8 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
     pinNodeIds,
     pinNetworkEdges,
     chrome = 'full',
+    viewControls = 'canvas',
     viewMode: viewModeProp,
-    legendHidden = false,
     focusedEntityNames,
   } = props;
 
@@ -304,6 +313,21 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
 
   // viewMode resolution: explicit prop > config > default
   const viewMode: '2d' | '3d' = viewModeProp ?? config.viewMode ?? '2d';
+
+  // ---- Occurrence view: bipartite ⇄ collapsed ----
+  //
+  // Folded here, at the very top, so *everything* downstream — degree, the
+  // painters, the anchors, the label tiers, the sub-network lenses — sees one
+  // consistent graph. Folding later would leave degree counting occurrence
+  // edges that are no longer drawn.
+  const { nodes, edges } = useMemo(() => {
+    const mode = config.occurrenceView === 'auto'
+      ? inferOccurrenceView(rawNodes, rawEdges)
+      : config.occurrenceView;
+    return mode === 'collapsed'
+      ? collapseOccurrences(rawNodes, rawEdges)
+      : { nodes: rawNodes, edges: rawEdges };
+  }, [rawNodes, rawEdges, config.occurrenceView]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const ref2D = useRef<any>(undefined);
@@ -339,8 +363,6 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
   // types with show/hide) and the top-nodes strip collapses to a popover
   // button — so only the left toolbar + right controls remain, which can't
   // collide. Threshold is on the measured *panel* width, not the viewport.
-  const COMPACT_CHROME_WIDTH = 600;
-  const compactChrome = width < COMPACT_CHROME_WIDTH;
 
   // ---- Theme + memos ----
   const theme = useThemeReads();
@@ -361,22 +383,6 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
     return new Set(sorted.slice(0, PINNED_LABEL_TOP_N).map(n => n.id));
   }, [nodes, degreeMap]);
 
-  const entityTypeLegend = useMemo(() => {
-    const typeMap = new Map<string, number>();
-    for (const n of nodes) {
-      if (n.type) {
-        const t = n.type.toUpperCase();
-        typeMap.set(t, (typeMap.get(t) ?? 0) + 1);
-      }
-    }
-    return Array.from(typeMap.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([type, count]) => ({
-        type,
-        color: resolveEntityColor(type, colorOverrides),
-        count,
-      }));
-  }, [nodes, colorOverrides]);
 
   const hiddenTypes = hiddenEntityTypes ?? EMPTY_SET;
   const hiddenPreds = hiddenPredicates ?? EMPTY_SET;
@@ -431,7 +437,7 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
   }, []);
 
   // ---- Force config wiring ----
-  useForcesEffect(activeRef, nodes, edges, config, viewMode);
+  useForcesEffect(activeRef, nodes, edges, config, viewMode, timeCursor);
 
   // First-tick force-set + reheat. The dynamic-imported lib component
   // mounts AFTER the parent's first useEffect runs, so ``ref.current`` is
@@ -455,7 +461,7 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
       // First tick — apply our forces NOW, before the simulation cools.
       // Idempotent re: useForcesEffect (which also calls applyForces);
       // last-writer-wins semantics on d3-force's setters.
-      applyForces(activeRef.current, nodesRef.current, config, viewMode);
+      applyForces(activeRef.current, nodesRef.current, config, viewMode, timeCursor);
     } else if (tickedRef.current.ticks === 2) {
       // Reheat on tick 2 so the force values written above drive the
       // remaining cooldown ticks. Safe: state.layout is definitely set by
@@ -880,6 +886,21 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
     return base;
   }, [edgeWidthFn, subNetForEdge]);
 
+  // Epistemic stroke — a denial must not paint like an assertion. The rule is
+  // one pure function (``edgeEpistemics``) so the canvas, the item pane and
+  // any future surface cannot disagree about what a retraction looks like.
+  // 2D only: the 3D link material has no dash, and rather than fake one we
+  // leave 3D honest about not carrying the distinction.
+  // Geographic decorations painted UNDER the nodes: country outlines,
+  // trajectory arcs, divergence ghosts. Undefined when the map is off, so the
+  // lib skips the hook entirely and the geometry is never even imported.
+  const paintGeo = useGeoPaint({ nodes, config, theme, timeCursor });
+
+  const linkLineDash = useCallback(
+    (link: any) => edgeEpistemics(link as GraphEdge).dash,
+    [],
+  );
+
   // S6: curvature map for parallel edges. When two predicates connect the
   // same node pair, fan them apart so edge labels don't stack at a single
   // midpoint. Single-edge connections stay perfectly straight.
@@ -1281,6 +1302,8 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
           nodeCanvasObjectMode={() => 'replace'}
           linkCanvasObject={paintLink2D}
           linkCanvasObjectMode={() => 'after'}
+          linkLineDash={linkLineDash}
+          onRenderFramePre={paintGeo}
           onZoom={handleZoom}
           autoPauseRedraw={false}
           enableZoomInteraction={(e: MouseEvent) => !e.altKey}
@@ -1311,6 +1334,7 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
 
       {chrome === 'full' && (
         <>
+          {viewControls === 'canvas' && (
           <ZoomToolbar
             handle={{
               current: {
@@ -1340,26 +1364,13 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
             onConfigChange={onConfigChange}
             onReheatSimulation={() => activeRef.current?.d3ReheatSimulation?.()}
           />
-          <EntityTypeLegend
-            entries={entityTypeLegend}
-            hiddenTypes={hiddenTypes}
-            onToggle={onToggleEntityType}
-            hidden={legendHidden || compactChrome}
-          />
-          {/* Top-N anchor list — bottom-center, just above the legend. Hides
-              when a node is focused or any sub-network HUD is up (HUD takes
-              over) and can be dismissed for the session via the × on the
-              strip. ``legendHidden`` doubles as the subnet-HUD signal —
-              parent flips it whenever any HUD overlay is mounted. */}
-          <TopNodesList
-            nodes={nodes}
-            degreeMap={degreeMap}
-            highlightedNodeId={highlightedNodeId}
-            onNodeClick={(node) => onNodeClick?.(node)}
-            colorOverrides={colorOverrides}
-            hidden={legendHidden}
-            compact={compactChrome}
-          />
+          )}
+          {/* The entity-type legend and the top-N strip both used to float at
+              bottom-centre — over the graph, in the space the graph needs. The
+              legend was a duplicate of `GraphFilterPanel`, which every
+              interactive consumer already renders in its toolbar with the same
+              type · colour · count · toggle; the strip is now a toolbar popover
+              (`TopNodesList`). The canvas keeps its middle. */}
           {viewMode === '3d' && (
             <div className="absolute top-2 right-18 z-20" style={{ pointerEvents: 'auto' }}>
               <Controls3DHelp />

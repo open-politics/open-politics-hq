@@ -8,6 +8,7 @@ import { useEffect, type MutableRefObject } from 'react';
 // reads the simulation's ``numDimensions()`` and updates x,y[,z] accordingly.
 import * as d3 from 'd3-force-3d';
 import type { GraphNode, GraphEdge, GraphViewConfig } from '../graphTypes';
+import { anchorTarget, effectiveAnchors, resolveAnchors } from './anchors';
 
 // =============================================================================
 // useForcesEffect — wires the d3 force configuration onto react-force-graph's
@@ -44,6 +45,10 @@ export function applyForces(
   nodes: GraphNode[],
   config: GraphViewConfig,
   viewMode: '2d' | '3d',
+  /** Scrubber position. Place entries are interval-scoped, so an anchored node
+   *  moves as the cursor moves — a company sits at the seat it actually held
+   *  at that moment rather than at whichever address was seen first. */
+  timeCursor?: string | null,
 ): void {
   if (!fg || typeof fg.d3Force !== 'function') return;
   if (config.forceEngine === 'ngraph') return;
@@ -83,25 +88,49 @@ export function applyForces(
     const collisionRadius = Math.max(baseCollision, estLabelHalfWidth + 22);
     fg.d3Force('collision', d3.forceCollide().radius(collisionRadius));
 
-    if (config.clusterByType) {
-      const types = Array.from(new Set(nodes.map(n => n.type.toUpperCase()))).sort();
-      const typeAngle = new Map<string, number>();
-      types.forEach((t, i) => typeAngle.set(t, (2 * Math.PI * i) / types.length));
-      const radius = config.linkDistance * 2;
+    // ── Layout anchors ──────────────────────────────────────────────────
+    // One primitive for clustering, geography and time (see ./anchors.ts).
+    // What used to be a hardcoded circle-of-type-angles is now the `type`
+    // affinity anchor — one case among several, composable, same code path.
+    const anchors = resolveAnchors(
+      effectiveAnchors(config), nodes, config.linkDistance, timeCursor,
+    );
 
-      fg.d3Force('clusterX', d3.forceX<any>((d: any) => {
-        const angle = typeAngle.get(d.type?.toUpperCase()) ?? 0;
-        return Math.cos(angle) * radius;
-      }).strength(config.clusterStrength));
+    if (anchors.length) {
+      // Hard-pinned nodes are fixed in world space rather than pulled: the
+      // simulation must not fight a verifiable coordinate. Clearing fx/fy for
+      // everything else is what lets a node released from a pin settle again.
+      for (const n of nodes as any[]) {
+        const px = anchorTarget(anchors, n, 'x');
+        const py = anchorTarget(anchors, n, 'y');
+        const pz = anchorTarget(anchors, n, 'z');
+        n.fx = px.pinned ? px.value : null;
+        n.fy = py.pinned ? py.value : null;
+        n.fz = pz.pinned ? pz.value : null;
+      }
 
-      fg.d3Force('clusterY', d3.forceY<any>((d: any) => {
-        const angle = typeAngle.get(d.type?.toUpperCase()) ?? 0;
-        return Math.sin(angle) * radius;
-      }).strength(config.clusterStrength));
+      // Per-node target AND per-node strength — strength 0 leaves a node
+      // completely free, which is how anchored and unanchored nodes share one
+      // layout without a second force or a separate branch.
+      const axisForce = (axis: 'x' | 'y' | 'z') => {
+        const f = axis === 'x' ? d3.forceX : axis === 'y' ? d3.forceY : d3.forceZ;
+        return f<any>((d: any) => anchorTarget(anchors, d, axis).value)
+          .strength((d: any) => anchorTarget(anchors, d, axis).strength);
+      };
+      fg.d3Force('anchorX', axisForce('x'));
+      fg.d3Force('anchorY', axisForce('y'));
+      // z only in 3D — installing it in 2D flattens nothing but wastes work.
+      fg.d3Force('anchorZ', viewMode === '3d' ? axisForce('z') : null);
     } else {
-      fg.d3Force('clusterX', null);
-      fg.d3Force('clusterY', null);
+      for (const n of nodes as any[]) { n.fx = null; n.fy = null; n.fz = null; }
+      fg.d3Force('anchorX', null);
+      fg.d3Force('anchorY', null);
+      fg.d3Force('anchorZ', null);
     }
+    // Legacy force names, cleared so a config that predates anchors doesn't
+    // leave a stale cluster force installed alongside the new one.
+    fg.d3Force('clusterX', null);
+    fg.d3Force('clusterY', null);
   } catch (err) {
     if (process.env.NODE_ENV === 'development') {
       // eslint-disable-next-line no-console
@@ -116,10 +145,12 @@ export function useForcesEffect(
   edges: GraphEdge[],
   config: GraphViewConfig,
   viewMode: '2d' | '3d',
+  timeCursor?: string | null,
 ): void {
   useEffect(() => {
-    applyForces((ref as ForceGraphRef).current, nodes, config, viewMode);
+    applyForces((ref as ForceGraphRef).current, nodes, config, viewMode, timeCursor);
   }, [
+    timeCursor,
     ref,
     nodes,
     nodes.length,
@@ -130,6 +161,9 @@ export function useForcesEffect(
     config.labelFontSize,
     config.clusterByType,
     config.clusterStrength,
+    // Anchors are an array; identity is stable because the config object is
+    // only replaced on an actual edit.
+    config.anchors,
     config.forceEngine,
   ]);
 }

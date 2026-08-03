@@ -8,7 +8,12 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Settings2, RotateCcw, Zap } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { GraphViewConfig } from './graphTypes';
+import {
+  ANCHOR_HINT, ANCHOR_LABEL, effectiveAnchors,
+  type AnchorKind, type AnchorSpec,
+} from './forcegraph/anchors';
 
 interface GraphSettingsPopoverProps {
   config: GraphViewConfig;
@@ -31,6 +36,12 @@ export function GraphSettingsPopover({
   edgeFieldDataRange = null,
   onReheatSimulation,
 }: GraphSettingsPopoverProps) {
+  // `effectiveAnchors` folds the legacy `clusterByType` boolean in, so a
+  // stored config lights up the right button without a migration step.
+  const anchors: AnchorSpec[] = effectiveAnchors(config);
+  const anchorStrength =
+    anchors.find(a => a.kind !== 'geo')?.strength ?? config.clusterStrength ?? 0.3;
+
   const handleReset = () => {
     if (defaultConfig) {
       onConfigChange(defaultConfig);
@@ -50,6 +61,7 @@ export function GraphSettingsPopover({
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-72 max-h-[70vh] overflow-y-auto p-3" align="end">
+        <TooltipProvider>
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h4 className="font-semibold text-xs">Graph Settings</h4>
@@ -160,28 +172,75 @@ export function GraphSettingsPopover({
               />
             </div>
 
-            <div className="flex items-center justify-between">
-              <Label htmlFor="cluster-by-type" className="text-xs">Cluster by Type</Label>
-              <Switch
-                id="cluster-by-type"
-                checked={config.clusterByType}
-                onCheckedChange={(checked) => updateConfig({ clusterByType: checked })}
-              />
-            </div>
-
-            {config.clusterByType && (
-              <div className="space-y-0.5">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs">Cluster Strength</Label>
-                  <span className="text-[10px] text-muted-foreground">{config.clusterStrength.toFixed(1)}</span>
-                </div>
-                <Slider
-                  min={0.1} max={1.0} step={0.1}
-                  value={[config.clusterStrength]}
-                  onValueChange={([v]) => updateConfig({ clusterStrength: v })}
-                />
+            {/* Layout anchors. Clustering, geography and time are one
+                primitive (see forcegraph/anchors.ts) — so they are one control
+                rather than three unrelated toggles. Anchors compose: geo pins
+                the verifiable positions while type still clusters the rest. */}
+            <div className="space-y-1">
+              <Label className="text-xs">Anchor layout on</Label>
+              <div className="flex flex-wrap gap-1">
+                {(['type', 'field', 'geo', 'time'] as AnchorKind[]).map((kind) => {
+                  const active = anchors.some(a => a.kind === kind);
+                  return (
+                    <Tooltip key={kind}>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant={active ? 'secondary' : 'outline'}
+                          size="sm"
+                          className="h-6 px-2 text-[10px]"
+                          onClick={() => updateConfig({
+                            anchors: active
+                              ? anchors.filter(a => a.kind !== kind)
+                              : [...anchors, kind === 'geo'
+                                  ? { kind, pin: true }
+                                  : { kind, strength: anchorStrength }],
+                            // Retire the legacy flag once the new control is
+                            // touched, so the two can't disagree.
+                            clusterByType: false,
+                          })}
+                        >
+                          {ANCHOR_LABEL[kind]}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[16rem] text-xs">
+                        {ANCHOR_HINT[kind]}
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                })}
               </div>
-            )}
+              {anchors.length === 0 && (
+                <p className="text-[10px] leading-tight text-muted-foreground">
+                  Pure force layout. Anchors are a lens — switch one on when that
+                  axis is load-bearing in the data.
+                </p>
+              )}
+              {anchors.some(a => a.kind !== 'geo') && (
+                <div className="space-y-0.5 pt-0.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Anchor strength</Label>
+                    <span className="text-[10px] text-muted-foreground">
+                      {anchorStrength.toFixed(1)}
+                    </span>
+                  </div>
+                  <Slider
+                    min={0.1} max={1.0} step={0.1}
+                    value={[anchorStrength]}
+                    onValueChange={([v]) => updateConfig({
+                      anchors: anchors.map(a =>
+                        a.kind === 'geo' ? a : { ...a, strength: v }),
+                      clusterStrength: v,
+                    })}
+                  />
+                </div>
+              )}
+              {anchors.some(a => a.kind === 'geo') && (
+                <p className="text-[10px] leading-tight text-muted-foreground">
+                  Geocoded nodes are pinned to real coordinates; everything else
+                  settles around them.
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Nodes */}
@@ -443,6 +502,7 @@ export function GraphSettingsPopover({
             </div>
           </div>
         </div>
+        </TooltipProvider>
       </PopoverContent>
     </Popover>
   );

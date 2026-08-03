@@ -3,6 +3,7 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { ZoomIn, ZoomOut, Maximize2, RotateCcw, Shuffle, Sparkles, Baseline, Palette } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { defaultGraphViewConfig, type GraphViewConfig } from '../graphTypes';
 
 // =============================================================================
@@ -43,6 +44,15 @@ interface ZoomToolbarProps {
   /** Called by Randomize after writing new force values so the simulation
    *  picks them up without waiting for an unrelated reheat trigger. */
   onReheatSimulation?: () => void;
+  /** Where the strip lives.
+   *
+   *  `floating` pins it over the top-left of the canvas — the original, and
+   *  still right for a bare `ForceGraph` with no chrome around it.
+   *  `inline` drops the positioning so a panel can seat it in its own top bar.
+   *  The graph's top-left is the most valuable corner it has (node info, docs,
+   *  pins all want it), and view controls are the least contextual thing
+   *  competing for it — they belong with the query, not over the data. */
+  placement?: 'floating' | 'inline';
 }
 
 // Fields the rich-detail toggle owns. When the toggle is on, every field
@@ -76,6 +86,7 @@ export const ZoomToolbar: React.FC<ZoomToolbarProps> = ({
   config,
   onConfigChange,
   onReheatSimulation,
+  placement = 'floating',
 }) => {
   const stepZoom = (factor: number) => {
     const h = handle.current;
@@ -122,7 +133,14 @@ export const ZoomToolbar: React.FC<ZoomToolbarProps> = ({
   };
 
   return (
-    <div className="absolute top-2 left-2 bg-background/70 backdrop-blur-sm rounded-full flex flex-row gap-0 z-20 border shadow-sm overflow-hidden">
+    <div
+      className={cn(
+        'flex flex-row gap-0 overflow-hidden rounded-full border shadow-sm',
+        'bg-background/70 backdrop-blur-sm',
+        placement === 'floating' && 'absolute left-2 top-2 z-20',
+        placement === 'inline' && 'shrink-0',
+      )}
+    >
       {!hideStepButtons && (
         <>
           <Button

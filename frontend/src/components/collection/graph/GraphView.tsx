@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { AnnotationsService, EntitiesService, KnowledgeGraphsService } from '@/client';
 import { curatedDataToGraphData } from './graphAdapters';
 import { GraphFilterPanel } from './GraphFilterPanel';
+import { TopNodesList } from './forcegraph/TopNodesList';
 import { RelationshipsPanel } from './RelationshipsPanel';
 import { RelationshipDialog } from './RelationshipDialog';
 import { resolveEntityColor } from '@/lib/annotations/colors';
@@ -271,6 +272,12 @@ export function GraphView({
           onReheatSimulation={() => forceGraphRef.current?.reheatSimulation()}
         />
 
+        <TopNodesList
+          nodes={nodes}
+          edges={edges}
+          onNodeClick={handleNodeClick}
+        />
+
         <GraphFilterPanel
           entityTypes={entityTypeList}
           hiddenEntityTypes={hiddenEntityTypes}
@@ -329,7 +336,6 @@ export function GraphView({
             hiddenEntityTypes={hiddenEntityTypes}
             hiddenPredicates={hiddenPredicates}
             onToggleEntityType={handleToggleEntityType}
-            legendHidden={!!selectedNodeDetails && showDetailPanel}
           />
 
           {/* Node detail HUD (no documents / evidence on this surface) */}

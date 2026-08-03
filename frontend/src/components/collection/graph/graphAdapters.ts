@@ -1,32 +1,81 @@
 import { GraphNode, GraphEdge } from './graphTypes';
+import type { ViewGraphPhase } from '@/lib/annotations/types';
 
 /**
- * Transform backend graph aggregator response into generic GraphNode/GraphEdge format
+ * The `/view` graph phase → the renderer's node/edge shape.
+ *
+ * **This is the whole wire contract, in one place.** It used to live inline in
+ * `AnnotationResultsGraph`, next to a second, dead adapter that read keys the
+ * backend has never sent — and the two drifted exactly as you would expect: the
+ * live one silently dropped `kind`, `places`, `magnitude`, `evidence` and
+ * `role`, so occurrences, the place ladder and every quote in the corpus
+ * arrived on the wire and were discarded at the door. A field missing from the
+ * mapper is indistinguishable from a backend that never sent it, which is why
+ * this is a tested function rather than an object literal in a component.
+ *
+ * The authority on the other side is `annotation/formula_query.py:_node_to_dict`
+ * and `_edge_to_dict`. Keep the three in step.
+ *
+ * `?? null` rather than `||` throughout, so a legitimate falsy value — a zero
+ * magnitude, the equator's latitude — survives.
  */
-export function aggregatorResponseToGraphData(response: any): { nodes: GraphNode[]; edges: GraphEdge[] } {
-  const graphData = response.graph_data || response;
-  const nodes: GraphNode[] = (graphData.nodes || []).map((node: any) => ({
-    id: node.id,
-    label: node.data?.label || node.label || '',
-    type: node.data?.type || node.type || 'UNKNOWN',
-    frequency: node.data?.frequency || node.frequency,
-    sourceAssetCount: node.data?.source_asset_count || node.source_asset_count,
-    sourceAssetIds: node.data?.source_asset_ids || node.source_asset_ids,
-    properties: node.data?.properties || node.properties,
+export function viewGraphToGraphData(
+  graph: Pick<ViewGraphPhase, 'nodes' | 'edges'>,
+): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const nodes: GraphNode[] = (graph.nodes ?? []).map(n => ({
+    id: n.id,
+    label: n.name,
+    type: n.type,
+    frequency: n.frequency,
+    annotationIds: n.source_annotation_ids,
+    // Entity vs occurrence gets opposite rendering, and the item pane is a
+    // list over the occurrences. Default `entity` so a payload predating the
+    // observation model behaves exactly as it did.
+    kind: n.kind ?? 'entity',
+    nodeType: n.node_type ?? null,
+    magnitude: n.magnitude ?? null,
+    // Time / space / provenance from the projection bindings. Null unless a
+    // projection bound them, so an unconfigured panel is unchanged.
+    t0: n.t0 ?? null,
+    t1: n.t1 ?? null,
+    a0: n.a0 ?? null,
+    a1: n.a1 ?? null,
+    place: n.place ?? null,
+    placeTo: n.place_to ?? null,
+    places: n.places ?? [],
+    lat: n.lat ?? null,
+    lon: n.lon ?? null,
+    sourcePaths: n.source_paths ?? [],
+    roles: n.roles ?? [],
+    evidence: n.evidence ?? [],
+    // A row's forwarded fields, on the node the row is about — an exhibit's
+    // stance and locator, a statement's modality.
+    properties: n.properties ?? {},
+    groupValue: n.group_value ?? null,
+    // The signed affinity vector. Separate from `groupValue`, which holds
+    // whatever the panel grouped by — convergence reads this one only, so
+    // "colour by role" can no longer be cosined into a confident nothing.
+    profile: (n as { profile?: Record<string, number> | null }).profile ?? null,
   }));
 
-  const edges: GraphEdge[] = (graphData.edges || []).map((edge: any) => ({
-    id: edge.id,
-    sourceId: edge.source,
-    targetId: edge.target,
-    predicate: edge.label || edge.data?.predicate || edge.predicate || '',
-    frequency: edge.data?.frequency || edge.frequency,
-    sourceAssetCount: edge.data?.source_asset_count || edge.source_asset_count,
-    sourceAssetIds: edge.data?.source_asset_ids || edge.source_asset_ids,
-    weight: edge.data?.weight || edge.weight,
-    confidence: edge.data?.confidence || edge.confidence,
-    context: edge.data?.context || edge.context,
-    properties: edge.data?.properties || edge.properties,
+  const edges: GraphEdge[] = (graph.edges ?? []).map((e, i) => ({
+    id: `edge-${i}`,
+    sourceId: e.source,
+    targetId: e.target,
+    predicate: e.predicate,
+    role: e.role ?? null,
+    weight: e.weight,
+    // `edgeEpistemics` reads modality/stance from the forwarded properties and
+    // falls back to the grouping value. Without these a denial paints like an
+    // assertion, which manufactures the opposite claim.
+    properties: e.properties ?? {},
+    groupValue: e.group_value ?? null,
+    t0: e.t0 ?? null,
+    t1: e.t1 ?? null,
+    a0: e.a0 ?? null,
+    a1: e.a1 ?? null,
+    sourcePaths: e.source_paths ?? [],
+    evidence: e.evidence ?? [],
   }));
 
   return { nodes, edges };
