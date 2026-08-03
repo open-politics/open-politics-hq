@@ -14,49 +14,13 @@ from app.api.modules.graph.tasks.curation import (
     _extract_triplets,
     _extract_triplets_at_path,
     _find_graph_field_paths,
-    _has_graph_structure,
-    _is_triplet_subschema,
     _walk_value_path,
 )
 
-
-# ─── _is_triplet_subschema ──────────────────────────────────────────────────
-
-
-def test_triplet_subschema_recognized_at_any_property_name():
-    """The recognizer keys off shape, not the property name. A schema with
-    `subject_name`/`predicate`/`object_name` items is triplet-shaped whether
-    it's called ``triplets`` or ``loose_relationships`` or anything else."""
-    schema = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "subject_name": {"type": "string"},
-                "predicate": {"type": "string"},
-                "object_name": {"type": "string"},
-            },
-        },
-    }
-    assert _is_triplet_subschema(schema) is True
-
-
-def test_non_triplet_array_rejected():
-    """An array of strings or arbitrary objects is NOT triplet-shaped."""
-    assert _is_triplet_subschema({"type": "array", "items": {"type": "string"}}) is False
-    assert _is_triplet_subschema({
-        "type": "array",
-        "items": {"type": "object", "properties": {"name": {"type": "string"}}},
-    }) is False
-
-
-def test_object_root_not_triplet():
-    """A non-array root, even with subject/predicate/object children, is not
-    a triplet-shape (triplets are arrays)."""
-    assert _is_triplet_subschema({
-        "type": "object",
-        "properties": {"subject_name": {}, "predicate": {}, "object_name": {}},
-    }) is False
+# Triplet-*shape* recognition moved to ``schema_map.infer_shape`` (one detector,
+# shared with the frontend's copy) — see ``test_schema_map.py``. What stays here
+# is the curation-specific half: which paths this module hands to
+# ``_walk_value_path``, and how values are pulled out of them.
 
 
 # ─── _find_graph_field_paths ────────────────────────────────────────────────
@@ -173,31 +137,11 @@ def test_extract_triplets_at_path_returns_empty_when_field_absent():
     assert _extract_triplets_at_path(value, "document.loose_relationships") == []
 
 
-# ─── _has_graph_structure (recognizer fallback) ─────────────────────────────
-
-
-def test_has_graph_structure_recognizes_legacy_triplets():
-    assert _has_graph_structure({"document": {"triplets": []}}) is True
-
-
-def test_has_graph_structure_recognizes_multi_graph_field_value():
-    """Even without a schema, a value with at least one triplet-shaped array
-    under document is recognized as having graph structure (so curation
-    doesn't skip it on the legacy `_has_graph_structure` fast-path)."""
-    value = {
-        "document": {
-            "summary": "irrelevant",
-            "licensing_assessments": [
-                {"subject_name": "A", "predicate": "gave_license_to", "object_name": "B"},
-            ],
-        },
-    }
-    assert _has_graph_structure(value) is True
-
-
-def test_has_graph_structure_false_for_unrelated_arrays():
-    value = {"document": {"tags": ["a", "b"], "scores": [1, 2]}}
-    assert _has_graph_structure(value) is False
+# ``_has_graph_structure`` is gone. It was a value-shape pre-gate that skipped
+# any annotation without a triplet array — which silently excluded every
+# entity-only annotation once entity fields became curatable. The flow now
+# skips on "neither triplets nor entity mentions were found", which is the
+# actual condition; see ``test_curation_entity_fields.py``.
 
 
 # ─── _extract_triplets (legacy fallback) ────────────────────────────────────

@@ -69,6 +69,38 @@ def _schema(db, iid: int, uid: int, name: str = "s") -> int:
     return int(result.scalar())
 
 
+def _schema_with(db, iid: int, uid: int, contract: dict, name: str = "s") -> int:
+    """A schema carrying a real ``output_contract``.
+
+    Role inference reads the contract, so any test of it needs more than the
+    ``'{}'`` the plain ``_schema`` helper writes.
+    """
+    import json as _json
+    result = db.execute(
+        text(
+            "INSERT INTO annotationschema (name, description, output_contract, instructions, "
+            "infospace_id, user_id, version, is_active, uuid, created_at, updated_at) "
+            "VALUES (:n, 'd', CAST(:c AS jsonb), 'i', :iid, :uid, '1.0', true, "
+            "gen_random_uuid()::text, now(), now()) RETURNING id"
+        ),
+        {"n": name, "c": _json.dumps(contract), "iid": iid, "uid": uid},
+    )
+    return int(result.scalar())
+
+
+def _entity_prop(entity_type: str) -> dict:
+    """The shape ``adapters.ts:buildEntityObjectSchema`` emits."""
+    return {
+        "type": "object",
+        "x-entityField": True,
+        "x-entityType": entity_type,
+        "properties": {
+            "name": {"type": "string"},
+            "type": {"type": "string", "x-entityTypeDeclared": entity_type},
+        },
+    }
+
+
 def _run(db, iid: int, uid: int, name: str) -> int:
     result = db.execute(
         text(
@@ -529,3 +561,284 @@ def test_windows_cursor_handles_overflowing_annotation(db):
     ))
     assert len(result.edges) == 7  # all 7 triplets visible across windows
     assert len(result.nodes) == 14
+
+
+# ─── Projection role inference (Phase 0.2) ──────────────────────────────────
+#
+# The picker deliberately ships ``nodes: []`` meaning "infer from the schema
+# map". Before this was wired, ``resolve_projections`` ran only when
+# ``projections`` was empty AND ``triplet_field`` was set, and it was always
+# handed ``smap=None`` — so a UI-authored projection reached ``_project``,
+# found no roles, logged a warning and was skipped. Every such projection
+# produced zero atoms.
+
+
+OBSERVATION_CONTRACT = {
+    "type": "object",
+    "properties": {
+        "document": {
+            "type": "object",
+            "properties": {
+                "observations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "statement_by": _entity_prop("Person"),
+                            "directed_to": _entity_prop("Person"),
+                            "claim": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
+
+@pytest.fixture
+def observation_annotations(db):
+    uid = _user(db, "infer")
+    iid = _infospace(db, uid, "graph-infer")
+    sid = _schema_with(db, iid, uid, OBSERVATION_CONTRACT, "obs-schema")
+    a = _asset(db, iid, uid, "a")
+    r = _run(db, iid, uid, "r")
+    _annotation(db, iid, uid, r, sid, a, {
+        "document": {
+            "observations": [
+                {
+                    "statement_by": {"name": "A. Rossi", "type": "Person"},
+                    "directed_to": {"name": "J. Doe", "type": "Person"},
+                    "claim": "met at the house",
+                },
+            ]
+        }
+    })
+    return {"iid": iid, "uid": uid, "run": r, "schema": sid}
+
+
+def test_projection_with_empty_nodes_infers_roles(db, observation_annotations):
+    """A projection that declares no roles resolves them from the schema map.
+
+    This is the contract ``GraphSourcesPopover`` writes against. The projection
+    names only the array; the backend is supposed to discover that
+    ``statement_by`` and ``directed_to`` are the entity-shaped children.
+    """
+    from app.api.modules.annotation.panel_config import Projection
+
+    f = observation_annotations
+    aq = AnnotationQuery(db, f["iid"]).scope(None).runs([f["run"]])
+    source = AnnotationGraphSource(
+        query=aq,
+        projections=[Projection(path="document.observations[*]")],
+    )
+    result = asyncio.run(collect_graph(
+        db, f["iid"], source, top_n_nodes=None, top_n_edges=None,
+    ))
+
+    names = sorted(n.name for n in result.nodes)
+    assert names == ["A. Rossi", "J. Doe"], (
+        f"expected both entity children to become nodes, got {names}"
+    )
+    # Two roles and no predicate -> one cross-role co-occurrence edge.
+    assert len(result.edges) == 1
+
+
+def test_role_inference_reaches_schema_without_declared_schema_id(
+    db, observation_annotations,
+):
+    """Schemas are discovered from the scoped annotations, not only from the
+    panel's ``formula.schema_id``.
+
+    A graph panel need not declare a schema, so the source has to be able to
+    ask which contracts its annotations actually use. Without that the map is
+    empty and inference silently falls back to the canonical triplet keys —
+    which ``document.observations[*]`` rows do not carry.
+    """
+    from app.api.modules.annotation.panel_config import Projection
+
+    f = observation_annotations
+    aq = AnnotationQuery(db, f["iid"]).scope(None).runs([f["run"]])
+    assert not getattr(aq, "_schema_ids", []), "fixture must not pre-declare a schema"
+
+    source = AnnotationGraphSource(
+        query=aq, projections=[Projection(path="document.observations[*]")],
+    )
+    smap = source._schema_map()
+    paths = {n.path for n in smap.fields}
+    assert "document.observations[*].statement_by" in paths
+    assert "document.observations[*].directed_to" in paths
+
+
+def test_resolve_is_idempotent(db, observation_annotations):
+    """``_resolve`` latches — draining a source twice must not re-infer."""
+    from app.api.modules.annotation.panel_config import Projection
+
+    f = observation_annotations
+    aq = AnnotationQuery(db, f["iid"]).scope(None).runs([f["run"]])
+    source = AnnotationGraphSource(
+        query=aq, projections=[Projection(path="document.observations[*]")],
+    )
+    source._resolve()
+    first = [list(p.nodes) for p in source.projections]
+    source._resolve()
+    assert [list(p.nodes) for p in source.projections] == first
+
+
+# ─── JSON / SSE parity (Phase 0.1) ──────────────────────────────────────────
+#
+# ``POST /view`` and ``POST /view/stream`` are two packers over one request
+# body. The stream path used to build its source by hand from
+# ``AnnotationQuery.graph_stream`` and silently drop ``projections`` and ``q``,
+# so the same body produced a *different graph* depending on which endpoint you
+# called. Both now route through ``FormulaQuery._graph_source``; this pins that.
+
+
+def _formula_query(db, iid: int, run_id: int):
+    from types import SimpleNamespace
+
+    from app.api.modules.annotation.formula import Formula
+    from app.api.modules.annotation.formula_query import FormulaQuery
+
+    access = SimpleNamespace(infospace_id=iid, scope=None)
+    return FormulaQuery(db, access, [run_id], Formula(id="f", name="f"))
+
+
+def _drain_stream_view(fq, **kwargs):
+    async def _go():
+        nodes, edges = [], []
+        async for chunk in fq.graph_stream_view(**kwargs):
+            nodes.extend(chunk.nodes)
+            edges.extend(chunk.edges)
+        return nodes, edges
+
+    return asyncio.run(_go())
+
+
+def _shape(nodes, edges):
+    """Order-insensitive comparison key — chunking must not change identity."""
+    return (
+        sorted((n.id, n.name, n.type, n.frequency) for n in nodes),
+        sorted((e.source, e.target, e.predicate, e.weight) for e in edges),
+    )
+
+
+@pytest.mark.parametrize("params", [
+    pytest.param({"triplet_field": "triplets"}, id="legacy-triplet-field"),
+    pytest.param({"triplet_field": "triplets", "q": "type:person"}, id="gql-post-tier"),
+    pytest.param(
+        {"triplet_field": "triplets", "q": "predicate:knows"}, id="gql-row-tier",
+    ),
+    pytest.param(
+        {"triplet_field": "triplets", "q": 'from:"S1" hops:1'}, id="gql-traversal",
+    ),
+])
+def test_view_json_and_stream_agree(db, fixture_annotations, params):
+    """One body, two endpoints, one graph."""
+    f = fixture_annotations
+
+    collected = _formula_query(db, f["iid"], f["run"]).graph_view(
+        top_n_nodes=None, top_n_edges=None, **params,
+    )
+    streamed_nodes, streamed_edges = _drain_stream_view(
+        _formula_query(db, f["iid"], f["run"]),
+        top_n_nodes=None, top_n_edges=None, chunk_size=2, **params,
+    )
+
+    assert _shape(streamed_nodes, streamed_edges) == _shape(
+        collected.nodes, collected.edges,
+    ), f"JSON and SSE disagree for {params}"
+
+
+def test_stream_view_honours_projections(db, observation_annotations):
+    """The stream path reads ``projections``.
+
+    This is the regression that mattered most: the old SSE path took only a
+    ``triplet_field``, so a projections-only panel — the shape the picker
+    writes — either 400'd or silently graphed the wrong array.
+    """
+    from app.api.modules.annotation.panel_config import Projection
+
+    f = observation_annotations
+    nodes, edges = _drain_stream_view(
+        _formula_query(db, f["iid"], f["run"]),
+        projections=[Projection(path="document.observations[*]")],
+        top_n_nodes=None, top_n_edges=None,
+    )
+    assert sorted(n.name for n in nodes) == ["A. Rossi", "J. Doe"]
+    assert len(edges) == 1
+
+
+def test_node_type_path_reads_the_kind_off_each_row(db):
+    """``node_type_path`` has to survive the SQL, not just the fan-out.
+
+    It is what lets ONE ``observations[*]`` array carry a ``kind`` column and
+    still answer ``type:Payment`` — the mechanism behind collapsing many
+    near-identical sections into one labelled section.
+    """
+    from app.api.modules.annotation.panel_config import Projection
+
+    uid = _user(db, "ntp")
+    iid = _infospace(db, uid, "graph-ntp")
+    sid = _schema_with(db, iid, uid, OBSERVATION_CONTRACT, "ntp-schema")
+    a = _asset(db, iid, uid, "a")
+    r = _run(db, iid, uid, "r")
+    _annotation(db, iid, uid, r, sid, a, {
+        "document": {"observations": [
+            {"kind": "Payment",
+             "statement_by": {"name": "Acme", "type": "Organization"}},
+            {"kind": "Meeting",
+             "statement_by": {"name": "Acme", "type": "Organization"}},
+        ]}
+    })
+
+    aq = AnnotationQuery(db, iid).scope(None).runs([r])
+    source = AnnotationGraphSource(
+        query=aq,
+        projections=[Projection(
+            path="document.observations[*]", about="self",
+            node_type="Act", node_type_path="kind",
+        )],
+    )
+    result = asyncio.run(collect_graph(
+        db, iid, source, top_n_nodes=None, top_n_edges=None,
+    ))
+
+    minted = sorted(n.type for n in result.nodes if n.kind == "occurrence")
+    assert minted == ["Meeting", "Payment"], (
+        f"each row should carry its own declared kind, got {minted}"
+    )
+    # The pinned fallback is not used when every row states one.
+    assert "Act" not in minted
+    # Both acts name the same organisation, so it stays one node.
+    assert sum(1 for n in result.nodes if n.name == "Acme") == 1
+
+
+def test_node_kind_entity_keeps_kind_meaning_what_it_says(db):
+    """An ``about: self`` row that mints something which did not happen."""
+    from app.api.modules.annotation.panel_config import Projection
+
+    uid = _user(db, "nkind")
+    iid = _infospace(db, uid, "graph-nkind")
+    sid = _schema_with(db, iid, uid, OBSERVATION_CONTRACT, "nkind-schema")
+    a = _asset(db, iid, uid, "a")
+    r = _run(db, iid, uid, "r")
+    _annotation(db, iid, uid, r, sid, a, {
+        "document": {"observations": [{"claim": "Exhibit C"}]}
+    })
+
+    aq = AnnotationQuery(db, iid).scope(None).runs([r])
+    source = AnnotationGraphSource(
+        query=aq,
+        projections=[Projection(
+            path="document.observations[*]", about="self",
+            node_kind="entity", node_type="Evidence", node_name="claim",
+        )],
+    )
+    result = asyncio.run(collect_graph(
+        db, iid, source, top_n_nodes=None, top_n_edges=None,
+    ))
+
+    ev = next(n for n in result.nodes if n.type == "Evidence")
+    assert ev.kind == "entity"
+    assert ev.name == "Exhibit C"
