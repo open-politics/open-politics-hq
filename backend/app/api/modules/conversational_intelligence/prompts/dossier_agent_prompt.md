@@ -196,7 +196,7 @@ A typical interaction:
 
 ## Reference
 
-- **Conceptual primer**: `docs/intelligence/HOW_TO.md` (the master doc)
+- **Conceptual primer**: `docs/INTELLIGENCE.md` (the master doc)
 - **Implementation plan**: `docs/plans/intelligence-primitive/`
 
 Be tight, be precise, cite the data. You are the bridge between the

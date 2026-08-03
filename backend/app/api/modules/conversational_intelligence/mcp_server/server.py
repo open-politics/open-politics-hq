@@ -2321,62 +2321,365 @@ async def _analysis_get_schema(
     )
 
 
-def _fields_to_output_contract(fields: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Build a hierarchical output_contract from a simple field list.
+def _entity_object_schema(
+    entity_type: str = "",
+    *,
+    description: str = "",
+    alternate_types: Optional[List[str]] = None,
+    names: Optional[List[str]] = None,
+    constrained: bool = True,
+    ref: Optional[str] = None,
+) -> Dict[str, Any]:
+    """HQ's entity reference shape: ``{name, type, additional_types}``.
 
-    Each field: {name, type, description?, options?/enum?, entity_type?, array?}.
-    Types: text/string, number, integer, boolean, enum, entity. ``array: true``
-    (or a type suffixed with ``[]``) wraps the field in an array. Entity fields
-    get HQ's {name, type(x-entityTypeDeclared), additional_types} object shape so
-    curation resolves them to the canon. Lets the model author schemas the
-    natural way (a field list) instead of hand-writing a full JSON Schema.
+    Byte-for-byte the shape ``adapters.ts:buildEntityObjectSchema`` emits — the
+    ``x-entityField`` marker especially. Everything downstream keys on that
+    marker (``schema_map.infer_shape``, the Phase B prompt renderer, the
+    ``relational.cooccurs`` path builder); a schema authored without it looks
+    like a plain object and can never reach the graph or the canon.
     """
+    alts = [t for t in (alternate_types or []) if isinstance(t, str) and t.strip()]
+    all_types = ([entity_type] if entity_type else []) + alts
+    name_list = [n for n in (names or []) if isinstance(n, str) and n.strip()]
+    label = " / ".join(all_types) if all_types else "entity"
+
+    name_prop: Dict[str, Any] = {
+        "type": "string",
+        "description": f"Name of the {label}" if all_types else "Entity name",
+    }
+    if name_list:
+        name_prop["x-entityEnum"] = name_list
+        if constrained:
+            name_prop["enum"] = name_list
+
+    type_prop: Dict[str, Any] = {
+        "type": "string",
+        "description": (
+            f"Entity type — pick one of: {', '.join(all_types)}."
+            if len(all_types) > 1
+            else "Entity type — usually matches the declared primary type."
+        ),
+    }
+    if entity_type:
+        type_prop["x-entityTypeDeclared"] = entity_type
+        if constrained and all_types:
+            type_prop["enum"] = all_types
+
+    obj: Dict[str, Any] = {
+        "type": "object",
+        "description": description or (f"A {label} reference." if all_types else "An entity reference."),
+        "x-entityField": True,
+        "properties": {
+            "name": name_prop,
+            "type": type_prop,
+            "additional_types": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional additional entity types beyond the primary type.",
+            },
+        },
+        "required": ["name"],
+        "x-entityTypeConstrained": constrained,
+    }
+    if entity_type:
+        obj["x-entityType"] = entity_type
+    if alts:
+        obj["x-entityAlternateTypes"] = alts
+    if name_list:
+        obj["x-entityEnum"] = name_list
+    if ref:
+        obj["x-ref"] = ref
+    return obj
+
+
+_TRIPLET_REQUIRED = ["subject_name", "subject_type", "predicate", "object_name", "object_type"]
+
+
+def _graph_field_schema(f: Dict[str, Any]) -> Dict[str, Any]:
+    """A triplet array — the ``subject → predicate → object`` shape.
+
+    Mirrors the graph branch of ``adapters.ts:buildJsonSchemaProperties``,
+    including the ``x-fromSource`` / ``x-toSource`` anchors that tie a
+    triplet's endpoints back to an entity field elsewhere in the schema.
+    """
+    types = [t for t in (f.get("entity_types") or []) if isinstance(t, str) and t.strip()]
+    preds = [p for p in (f.get("predicates") or []) if isinstance(p, str) and p.strip()]
+    type_constrained = bool(f.get("entity_types_constrained", bool(types)))
+    pred_constrained = bool(f.get("predicates_constrained", bool(preds)))
+
+    def role_type(role: str) -> Dict[str, Any]:
+        s: Dict[str, Any] = {"type": "string", "description": f"Type of the {role} entity"}
+        if types:
+            s["x-entityTypeList"] = types
+            if type_constrained:
+                s["enum"] = types
+        s["x-entityTypeConstrained"] = type_constrained
+        return s
+
+    pred: Dict[str, Any] = {
+        "type": "string",
+        "description": f.get("predicate_description")
+        or "Relationship predicate (e.g. works_for, located_in)",
+    }
+    if preds:
+        pred["x-predicateList"] = preds
+        if pred_constrained:
+            pred["enum"] = preds
+    pred["x-predicateConstrained"] = pred_constrained
+
+    item_props: Dict[str, Any] = {
+        "subject_name": {"type": "string", "description": "Name of the subject entity"},
+        "subject_type": role_type("subject"),
+        "predicate": pred,
+        "object_name": {"type": "string", "description": "Name of the object entity"},
+        "object_type": role_type("object"),
+    }
+    extra_props, extra_required = _fields_to_properties(f.get("fields") or [])
+    item_props.update(extra_props)
+
+    out: Dict[str, Any] = {
+        "type": "array",
+        "description": f.get("description") or "Relationship triplets (subject → predicate → object)",
+        "items": {
+            "type": "object",
+            "properties": item_props,
+            "required": _TRIPLET_REQUIRED + extra_required,
+        },
+    }
+    if f.get("from_source"):
+        out["x-fromSource"] = str(f["from_source"])
+    if f.get("to_source"):
+        out["x-toSource"] = str(f["to_source"])
+    return out
+
+
+def _field_to_property(f: Dict[str, Any]) -> Dict[str, Any]:
+    """One field descriptor → one JSON Schema property node."""
+    ftype = str(f.get("type") or "text").strip().lower()
+    desc = f.get("description") or ""
+    is_array = bool(f.get("array") or f.get("multiple")) or ftype.endswith("[]")
+    if ftype.endswith("[]"):
+        ftype = ftype[:-2]
+    options = f.get("options") or f.get("enum")
+    ref = f.get("ref")
+
+    if ftype in ("graph", "triplets", "relationships"):
+        # Graph fields are intrinsically arrays — `array: true` is redundant.
+        return _graph_field_schema(f)
+
+    if ftype == "entity":
+        leaf = _entity_object_schema(
+            str(f.get("entity_type") or "").strip(),
+            description=desc,
+            alternate_types=f.get("entity_types") or f.get("alternate_types"),
+            names=options,
+            constrained=bool(f.get("constrained", True)),
+            # A ref on an ARRAY of entities belongs on the array node (that is
+            # where adapters.ts puts it), so only pass it through for scalars.
+            ref=None if is_array else ref,
+        )
+    elif ftype in ("object", "row", "group"):
+        sub_props, sub_required = _fields_to_properties(f.get("fields") or [])
+        leaf = {"type": "object", "description": desc, "properties": sub_props}
+        if sub_required:
+            leaf["required"] = sub_required
+    elif ftype in ("enum", "select") or options:
+        leaf = {"type": "string", "enum": list(options or []), "description": desc}
+    elif ftype in ("number", "float"):
+        leaf = {"type": "number", "description": desc}
+    elif ftype in ("integer", "int"):
+        leaf = {"type": "integer", "description": desc}
+    elif ftype in ("boolean", "bool"):
+        leaf = {"type": "boolean", "description": desc}
+    elif ftype in ("date", "datetime", "timestamp"):
+        leaf = {"type": "string", "format": "date-time", "description": desc}
+    else:  # text / string / default
+        leaf = {"type": "string", "description": desc}
+
+    node = {"type": "array", "items": leaf, "description": desc} if is_array else leaf
+
+    # Extensions that live on the property node rather than the leaf.
+    if ref and (is_array or ftype != "entity"):
+        node["x-ref"] = str(ref)
+    canon = f.get("canon")
+    if isinstance(canon, dict) and canon:
+        node["x-canon"] = canon
+    if f.get("justification"):
+        node["include_justification"] = True
+    return node
+
+
+def _fields_to_properties(
+    fields: List[Dict[str, Any]],
+) -> Tuple[Dict[str, Any], List[str]]:
+    """Field list → ``(properties, required)``. Recurses for nested rows."""
     props: Dict[str, Any] = {}
     required: List[str] = []
     for f in fields or []:
         if not isinstance(f, dict) or not f.get("name"):
             continue
         name = str(f["name"]).strip()
-        ftype = str(f.get("type") or "text").strip().lower()
-        desc = f.get("description") or ""
-        is_array = bool(f.get("array") or f.get("multiple")) or ftype.endswith("[]")
-        if ftype.endswith("[]"):
-            ftype = ftype[:-2]
-        options = f.get("options") or f.get("enum")
+        props[name] = _field_to_property(f)
+        # Default-required preserves the prior behaviour (every authored field
+        # was required); an explicit ``required: false`` now opts out.
+        if f.get("required", True):
+            required.append(name)
+    return props, required
 
-        if ftype == "entity":
-            et = (f.get("entity_type") or "").strip()
-            type_prop: Dict[str, Any] = {"type": "string", "description": "Entity type — usually matches the declared primary type."}
-            if et:
-                type_prop["x-entityTypeDeclared"] = et
-            leaf: Dict[str, Any] = {
-                "type": "object",
-                "description": desc,
-                "properties": {
-                    "name": {"type": "string", "description": (f"Name of the {et}").strip()},
-                    "type": type_prop,
-                    "additional_types": {"type": "array", "items": {"type": "string"}, "description": "Optional additional entity types beyond the primary type."},
-                },
-            }
-        elif ftype in ("enum", "select") or options:
-            leaf = {"type": "string", "enum": list(options or []), "description": desc}
-        elif ftype in ("number", "float"):
-            leaf = {"type": "number", "description": desc}
-        elif ftype in ("integer", "int"):
-            leaf = {"type": "integer", "description": desc}
-        elif ftype in ("boolean", "bool"):
-            leaf = {"type": "boolean", "description": desc}
-        else:  # text / string / default
-            leaf = {"type": "string", "description": desc}
 
-        props[name] = {"type": "array", "items": leaf, "description": desc} if is_array else leaf
-        required.append(name)
+def _fields_to_output_contract(fields: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Build a hierarchical output_contract from a field list.
 
+    Lets the model author schemas the natural way — a list of fields — instead
+    of hand-writing JSON Schema with HQ's extensions, which it gets wrong.
+
+    Each field: ``{name, type, description?, array?, required?, ref?, canon?}``.
+
+    Types: ``text`` / ``number`` / ``integer`` / ``boolean`` / ``date`` /
+    ``enum`` (with ``options``) / ``entity`` / ``object`` (nested row, with
+    ``fields``) / ``graph`` (triplets). ``array: true`` — or a ``[]`` suffix —
+    wraps the field in an array.
+
+    The three shapes that make a schema graph-capable:
+
+    - ``{"type": "entity", "array": true, "entity_type": "Person"}`` — a
+      canon-resolvable roster.
+    - ``{"type": "object", "array": true, "fields": [...]}`` — a nested row,
+      whose own entity fields can ``ref`` the roster.
+    - ``{"type": "graph", "from_source": "entities"}`` — triplets anchored on
+      that same roster.
+
+    ``ref`` names another field whose vocabulary this one reuses; that is what
+    lets the backend know two paths name the same population (see
+    ``annotation/schema_map.py``).
+
+    **The shape to author: named sets, then statements about them.**
+    ``GET /annotation_schemas/templates?expand=true`` returns ready-made
+    contracts *and their projections* — prefer starting from one over composing
+    a field list by hand, because the projections carry the bindings (which
+    array is time-bound, what the place is, what each row is *about*) and those
+    are where the difficulty lives.
+
+    When composing by hand, the sections are::
+
+        ROSTERS — named sets, declared ONCE, referenced by name everywhere
+          actors[]        who acts
+          instruments[]   what is USED rather than acting — the mechanism
+          places[]        every place named
+          interests[]     goals an act can further or work against
+
+        events[]          named happenings many documents each report. The
+                          referent layer: `within` and `follows` order them.
+        observations[]    what THIS document reports. Roles are generic and
+                          named — by · with · to · via · concerns — plus
+                          serves/opposes (interests), during (events),
+                          cites (evidence), two clocks, modality, magnitude.
+                          Each row becomes its own graph node.
+        attributes[]      properties OF one thing over an interval (a seat, a
+                          role, an interest's domain) — writes onto that thing.
+        relations[]       standing links between two, AND hierarchy:
+                          part_of · subsumes · furthers.
+        evidence[]        citable grounds, when the document numbers them.
+
+    Kept in step with ``annotation/templates.py``, which is the definition. The
+    two have drifted before — this text still said ``objects[]`` and
+    ``participants`` long after the v2 rename, so every companion-authored
+    schema was v1-shaped and derived no graph bindings at all.
+
+    Two rules that decide where a row belongs. **Could this happen more than
+    once between the same participants?** and **does it involve more than two
+    participants?** Either yes → ``observations``; both no → ``relations``.
+    Getting this wrong is not cosmetic: a three-participant row kept as a
+    relation *fabricates* connections nobody asserted.
+
+    Declare relations as an ``object`` array with two ``entity`` fields rather
+    than as ``graph``/triplets. An entity already carries ``{name, type}``,
+    which is exactly what a triplet spells out as ``subject_name`` +
+    ``subject_type``; the triplet form is a legacy read path, not the way
+    forward.
+    """
+    props, required = _fields_to_properties(fields)
     return {
         "type": "object",
         "properties": {"document": {"type": "object", "properties": props, "required": required}},
         "required": ["document"],
     }
+
+
+def _analysis_schema_templates(template_id: Optional[str]) -> ToolResult:
+    """Ready-made observation-model schemas, served from the one definition.
+
+    The same ``templates`` module the REST route and the editor read, so a
+    companion-authored schema and a hand-picked one are the same artifact.
+    That is the whole point: the editor and the companion have each grown their
+    own contract emitter before and drifted, and the graph silently got worse
+    on one side (A2: companion entity fields lacked ``x-entityField`` and could
+    not produce a graph at all).
+
+    Expanded, a template carries **contract and projections**. Both, because a
+    contract alone is half a template — the bindings are where the difficulty
+    lives, and handing back a good schema with a blank graph is the failure
+    this is here to prevent.
+    """
+    from app.api.modules.annotation.templates import (
+        ARCHETYPES, build_contract, build_projections, list_templates,
+    )
+
+    templates = list_templates()
+    if template_id:
+        t = next((x for x in templates if x.id == template_id), None)
+        if t is None:
+            known = ", ".join(x.id for x in templates)
+            return ToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=f"❌ No template {template_id!r}. Available: {known}",
+                )],
+                structured_content={"error": "unknown_template", "available": known},
+            )
+        contract = build_contract(t.tier, t.archetypes)
+        projections = build_projections(t.tier, t.archetypes)
+        return ToolResult(
+            content=[TextContent(
+                type="text",
+                text=(f"📐 {t.label} ({t.tier}) — {t.hint}\n"
+                      f"Sections: {', '.join(t.archetypes)}\n"
+                      f"{len(projections)} projections carry the graph bindings; pass both "
+                      f"to schema.create and the graph panel."),
+            )],
+            structured_content={
+                "template": {
+                    "id": t.id, "label": t.label, "tier": t.tier, "hint": t.hint,
+                    "archetypes": list(t.archetypes),
+                    "output_contract": contract,
+                    "projections": projections,
+                },
+            },
+        )
+
+    listing = [
+        {"id": t.id, "label": t.label, "tier": t.tier, "hint": t.hint,
+         "archetypes": list(t.archetypes)}
+        for t in templates
+    ]
+    lines = "\n".join(f"  • {t['id']} ({t['tier']}) — {t['hint']}" for t in listing)
+    return ToolResult(
+        content=[TextContent(
+            type="text",
+            text=(f"📐 {len(listing)} schema templates:\n{lines}\n\n"
+                  "Call again with template_id to get one expanded (contract + "
+                  "projections). Tiers are strict supersets — minimal is already a "
+                  "working graph, standard adds places and relations, full adds "
+                  "objects, interests, attributes and numbered evidence."),
+        )],
+        structured_content={
+            "templates": listing,
+            "archetypes": [
+                {"id": a.id, "label": a.label, "section": a.section, "hint": a.hint}
+                for a in ARCHETYPES
+            ],
+        },
+    )
 
 
 async def _analysis_create_schema(
@@ -2588,10 +2891,83 @@ async def _analysis_delete_schema(
            summary="Author annotation schemas; start and list annotation runs; open dashboards; share.")
 async def analysis_hub(
     ctx: Context,
-    operation: Annotated[str, "schema.list, schema.get, schema.stage (co-author a schema inline in chat — PREFERRED), schema.create, schema.update, schema.delete, run.start, run.list, run.dashboard, run.share, panel.add, panel.set, panel.remove (build the dashboard on the open run)"] = "schema.list",
+    operation: Annotated[str, "schema.templates (ready-made starting points — CHECK THIS FIRST when the user wants a graph), schema.list, schema.get, schema.stage (co-author a schema inline in chat — PREFERRED), schema.create, schema.update, schema.delete, run.start, run.list, run.dashboard, run.share, panel.add, panel.set, panel.remove (build the dashboard on the open run), graph.query (write a query into the open graph panel's bar)"] = "schema.list",
     schema_name: Annotated[Optional[str], "Schema name — required for schema.create, optional rename for schema.update"] = None,
     output_contract: Annotated[Optional[Dict[str, Any]], "Full JSON Schema output_contract — same shape as schema.list returns. Use the hierarchical {type, properties: {document: {type, properties: {...}, required: [...]}}, required: ['document']} convention. For schema.create, prefer the simpler schema_fields instead."] = None,
-    schema_fields: Annotated[Optional[Any], "EASY way to create a schema: a list (or JSON string) of fields [{name, type, description, options?, entity_type?, array?}]. Types: text, number, integer, boolean, enum (with options), entity (with entity_type, array:true for many). Converted to output_contract for you — prefer this over hand-writing output_contract."] = None,
+    schema_fields: Annotated[Optional[Any], (
+        "EASY way to create a schema: a list (or JSON string) of fields "
+        "[{name, type, description?, array?, required?, ref?}]. Converted to output_contract "
+        "for you — always prefer this over hand-writing output_contract.\n"
+        "Types: text, number, integer, boolean, date, enum (+options), entity (+entity_type), "
+        "object (a nested row, +fields). array:true for many.\n"
+        "\n"
+        "RUN schema.templates FIRST. A template already carries the bindings (which array is "
+        "time-bound, what the place is, what each row is about), and those are where the "
+        "difficulty lives. Compose by hand only when no template fits.\n"
+        "\n"
+        "THE SHAPE: named sets, then claims about them.\n"
+        "  ROSTERS — entity arrays, declared ONCE. Every name used anywhere else must also\n"
+        "        appear in its roster; that is what makes the same person named in three\n"
+        "        rows become ONE node.\n"
+        "    actors[]       who acts — Person, Organization, State\n"
+        "    instruments[]  what is USED rather than acting — accounts, vessels, aircraft,\n"
+        "                   properties, documents. What recurs here is often the mechanism.\n"
+        "    places[]       every place named\n"
+        "    interests[]    goals an act can further or work against. Name the GOAL, not\n"
+        "                   the actor pursuing it.\n"
+        "  events[]        named happenings many documents may each report — a case, an\n"
+        "        election, a merger. ONLY when the document gives a name you could search\n"
+        "        for; a generic description of what occurred is not a name. `within` and\n"
+        "        `follows` order them.\n"
+        "  observations[]  what THIS document reports happening. Each row becomes its own\n"
+        "        graph node, with a labelled edge per participant. Generic named roles:\n"
+        "          by[]        who did it\n"
+        "          with[]      who else took part\n"
+        "          to[]        who or what it was done to\n"
+        "          via[]       who or what it ran THROUGH — the intermediary. Often the\n"
+        "                      most valuable field in the row.\n"
+        "          concerns[]  what it is about, when that differs from `to`\n"
+        "          serves[] / opposes[]  →interests: what it furthers, what it works against\n"
+        "          during[]    →events: the occasion it belongs to\n"
+        "          cites[]     →evidence\n"
+        "        plus at/origin/destination, when/until, covers_from/covers_until (the\n"
+        "        period it is ABOUT, often years before it was recorded), modality\n"
+        "        (done · attempted · asserted · denied · alleged — a denial must never\n"
+        "        read like an assertion), magnitude, justification.\n"
+        "  attributes[]    a property OF one thing over an interval (a seat, a term of\n"
+        "        office, a budget figure) — writes onto that thing, mints nothing.\n"
+        "  relations[]     a standing link between two. ALSO where hierarchy goes: a place\n"
+        "        inside a place or a happening inside a happening (`part_of`), an interest\n"
+        "        that is a component of a broader one (`subsumes`) or that advances one\n"
+        "        without being part of it (`furthers`).\n"
+        "  evidence[]      citable grounds, when the document itself numbers them.\n"
+        "\n"
+        "TWO QUESTIONS decide where a row goes. Could this happen MORE THAN ONCE between the "
+        "same participants? Does it involve MORE THAN TWO participants? Either yes → "
+        "observations[]; both no → relations[]. This is not cosmetic: a three-participant row "
+        "left as a relation FABRICATES connections nobody asserted (payer/payee/bank emits "
+        "'payee paid bank').\n"
+        "\n"
+        "Write a relation as an object array with two entity fields — NOT as triplets. An "
+        "entity already carries {name, type}, which is exactly what a triplet spells out as "
+        "subject_name + subject_type. The triplet form is a legacy read path.\n"
+        "\n"
+        "`ref` names another field whose vocabulary this one reuses — that is what tells the "
+        "system two fields name the same entities, so they merge into one node and resolve to "
+        "one canon entry. Declare the roster once and ref it everywhere.\n"
+        "  {name:'actors', type:'entity', array:true, entity_type:'Person'}\n"
+        "  {name:'interests', type:'entity', array:true, entity_type:'Interest'}\n"
+        "  {name:'observations', type:'object', array:true, fields:[\n"
+        "     {name:'kind', type:'enum', options:['meeting','payment','statement']},\n"
+        "     {name:'by', type:'entity', array:true, entity_type:'Person', ref:'actors'},\n"
+        "     {name:'via', type:'entity', array:true, entity_type:'Organization', ref:'actors'},\n"
+        "     {name:'at', type:'entity', entity_type:'Location', ref:'places'},\n"
+        "     {name:'serves', type:'entity', array:true, entity_type:'Interest', ref:'interests'},\n"
+        "     {name:'when', type:'date'}]}\n"
+        "\n"
+        "Ask for place NAMES, never coordinates — those are resolved server-side. Ask only for "
+        "identifiers the DOCUMENT supplies; never have the model invent one."
+    )] = None,
     schema_description: Annotated[Optional[str], "Schema description"] = None,
     schema_instructions: Annotated[Optional[str], "LLM instructions for the schema"] = None,
     schema_version: Annotated[Optional[str], "Schema version (defaults to 1.0 on create)"] = None,
@@ -2621,6 +2997,55 @@ async def analysis_hub(
     panel_axis: Annotated[Optional[Dict[str, Any]], "panel.add/panel.set: role→field map for the panel kind. chart: {x, y, color, mark}; pie: {slice_by, value, facet}; map: {position, color, label}; table: {columns}; scatter: {x, y, color, size}. Fields are dotted paths like 'document.sentiment'."] = None,
     panel_filter: Annotated[Optional[Any], "panel.add/panel.set: a FilterSet {logic:'and'|'or', conditions:[{path, operator, value}]} (or just the conditions list). Narrows the panel's data. Do NOT author formulas."] = None,
     panel_size: Annotated[Optional[Dict[str, int]], "panel.add/panel.set: grid size/position {w, h, x?, y?}. Usually omit — sizes are standardized per panel kind and the layout is auto-arranged."] = None,
+    graph_query: Annotated[Optional[str], (
+        "graph.query: a GQL string for the open graph panel. Space=AND, comma=OR, "
+        "'-' negates.\n"
+        "  type:Person  -type:Location      node entity type\n"
+        "  kind:occurrence  kind:entity     things that HAPPENED vs things that PERSIST\n"
+        "  role:via                         the slot a node occupied (payer, via, on_board)\n"
+        "  serves:opacity                   nodes serving an interest; 'serves:X+' rolls\n"
+        "                                   up through the interest hierarchy\n"
+        "  converge>0.6                     actors whose interest profiles overlap MORE\n"
+        "                                   than their graph distance predicts. Zero at\n"
+        "                                   one hop, so it surfaces alignment WITHOUT\n"
+        "                                   contact — the pair worth looking at\n"
+        "  predicate:funds,owns             edge predicate\n"
+        "  degree>3  weight>2               well-connected nodes / strong edges. With a\n"
+        "                                   role: present, degree counts only that role —\n"
+        "                                   'role:via degree>20' finds intermediaries\n"
+        "  confidence>0.8                   a row column (pushed into SQL)\n"
+        "  doc.relevance>0.7                a DOCUMENT field, one level up — the\n"
+        "                                   cheapest filter there is; discards whole\n"
+        "                                   annotations before any row is exploded\n"
+        "  label==\"Acme Ltd\"                the node's own name, EXACTLY (bare text\n"
+        "                                   is a substring match on the same string)\n"
+        "  after:2020 before:2023           active in a window\n"
+        "  from:\"Angela Merkel\" hops:2      traverse out from an entity\n"
+        "  from:\"A\" from:\"B\"                separate from: tokens INTERSECT — reachable\n"
+        "                                   from both, which is how co-presence is asked.\n"
+        "                                   Commas inside one token still union.\n"
+        "  hops:2-origin / -paths           a -flag SUBTRACTS. By default a traversal\n"
+        "                                   returns the selection, the node you started\n"
+        "                                   from, and the nodes connecting them; -origin\n"
+        "                                   and -paths drop those. Combine in any order.\n"
+        "  near:\"Berlin\"<200km             within a radius of a geocoded node\n"
+        "  field:document.observations[*]   restrict to one graph source\n"
+        "Identity filters SELECT; they do not block paths. 'type:Location from:\"X\" hops:2' "
+        "is 'the places within two hops of X', not 'a route made only of places'. hops: "
+        "counts ACTOR steps — an occurrence between two people is one step, not two. "
+        "Write the query the user asked for; they see it in the bar and can edit it. "
+        "Pass an empty string to clear."
+    )] = None,
+    graph_focus: Annotated[Optional[str], (
+        "graph.query: focus one entity by name instead of writing a full query — "
+        "shorthand for from:\"<name>\" hops:1. Use with graph_hops to go wider."
+    )] = None,
+    graph_hops: Annotated[Optional[int], "graph.query: hops for graph_focus (default 1)."] = None,
+    template_id: Annotated[Optional[str], (
+        "schema.templates: return this one template EXPANDED — its full output_contract and "
+        "its projections. Omit to list all of them with their hints. Pass the contract "
+        "straight to schema.create, or seed schema.stage from it to shape it with the user."
+    )] = None,
     panels: Annotated[Optional[List[Dict[str, Any]]], "panel.add (BATCH — strongly preferred): build the WHOLE dashboard in ONE call. A list of {type, name, description?, axis, filter?} — one per panel. Sizes + layout are automatic; do not set them."] = None,
 ) -> ToolResult:
     """
@@ -2632,6 +3057,7 @@ async def analysis_hub(
     exhaustion. Go straight here.
 
     <operations>
+    • schema.templates ............. Ready-made observation-model schemas. START HERE whenever the user wants a graph, a map, a timeline, or "who did what to whom". Omit template_id to list; pass one to get its output_contract AND its projections. A template's bindings are the hard part — composing a field list by hand loses them.
     • schema.list .................. Browse schemas (summary — use schema.get before editing).
     • schema.get ................... schema_id. Returns one schema with the full, untruncated output_contract.
     • schema.stage ................. schema_name + schema_fields. Renders a lean field editor INLINE in the chat, seeded with your proposed fields, for the user to shape and confirm — then resumes. PREFER this when building a schema *with* a user; it lands the same schema as schema.create.
@@ -2659,6 +3085,9 @@ async def analysis_hub(
             _require(access, Capability.COMPUTE)
 
         await ctx.info(f"analysis_hub: operation={operation}")
+
+        if operation == "schema.templates":
+            return _analysis_schema_templates(template_id)
 
         if operation == "schema.list":
             return await _analysis_list_schemas(services, ctx)
@@ -2840,6 +3269,38 @@ async def analysis_hub(
             panel_axis = _coerce_json(panel_axis)
             panel_filter = _coerce_json(panel_filter)
             panel_size = _coerce_json(panel_size)
+
+        if operation == "graph.query":
+            # The operator writes the query string; the panel's bar renders it
+            # so the user can see and edit what was asked for. Deliberately not
+            # a hidden filter — inspectability is the point.
+            if graph_focus:
+                hops = graph_hops if isinstance(graph_hops, int) and graph_hops > 0 else 1
+                payload = {"name": graph_focus, "hops": hops}
+                return ToolResult(
+                    content=[TextContent(type="text", text=(
+                        f"🔎 Focusing the graph on '{graph_focus}' ({hops} hop"
+                        f"{'' if hops == 1 else 's'})."
+                    ))],
+                    structured_content={
+                        "ui_directive": {"command": "graph:focus", "payload": payload},
+                    },
+                )
+            if graph_query is None:
+                return ToolResult(
+                    content=[TextContent(type="text", text="❌ graph.query requires graph_query or graph_focus")],
+                    structured_content={"error": "missing_graph_query"},
+                )
+            q = graph_query.strip()
+            return ToolResult(
+                content=[TextContent(type="text", text=(
+                    f"🔍 Graph query: `{q}`" if q else "🔍 Cleared the graph query."
+                ))],
+                structured_content={
+                    "graph_query": q,
+                    "ui_directive": {"command": "graph:query", "payload": {"q": q}},
+                },
+            )
 
         if operation == "panel.add" and panels:
             # Batch: build the whole dashboard in one call → one directive that
@@ -4831,7 +5292,7 @@ if __name__ == "__main__":
 # plan). These tools let an LLM chat author Formulas, render panels, snapshot
 # Observations, and write dossier notes — the full intelligence workflow.
 #
-# See docs/intelligence/HOW_TO.md § DossierAgent for the conceptual picture
+# See docs/INTELLIGENCE.md § DossierAgent for the conceptual picture
 # and docs/plans/intelligence-primitive/05_dossier_agent.md for the plan.
 #
 # Tag family: ["dossier", "formula"]. The chat backend filters MCP tools by

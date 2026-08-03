@@ -231,7 +231,7 @@ class IntelligenceConversationService:
             the workspace-wide research toolset. ``'dossier'`` activates the
             DossierAgent — narrower toolset (formula authoring, observation
             snapshots) plus the formula-manual system prompt. See
-            ``docs/intelligence/HOW_TO.md`` § DossierAgent.
+            ``docs/INTELLIGENCE.md`` § DossierAgent.
         run_id:
             When ``agent='dossier'``, the run the agent operates against. The
             system prompt surfaces this as a default for tool calls; the tools
