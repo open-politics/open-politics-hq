@@ -25,8 +25,25 @@ else
 fi
 
 
-# Start Uvicorn with live reload
-exec uvicorn --reload --reload-dir /app --host $HOST --port $PORT --log-level $LOG_LEVEL "$APP_MODULE" 
+# Start Uvicorn with live reload.
+#
+# --reload-dir /app/app     Watch app code only. The bind mount is the whole
+#                           backend/ tree, so watching /app picks up .venv,
+#                           scratch probe_*.py, scripts/ and docs/ — all of
+#                           which trigger pointless restarts.
+# --reload-exclude          Running the test suite shouldn't bounce the server.
+# --timeout-graceful-shutdown
+#                           Default is None = wait forever for connections to
+#                           close. Our SSE endpoints (stream, chat, annotation
+#                           runs) hold open with 3s keepalives for up to 30min,
+#                           so a reload would hang on "Waiting for connections
+#                           to close" as long as any browser tab is open.
+#                           Force-close after 1s; the frontend reconnects.
+exec uvicorn --reload \
+    --reload-dir /app/app \
+    --reload-exclude 'app/tests/*' \
+    --timeout-graceful-shutdown 1 \
+    --host $HOST --port $PORT --log-level $LOG_LEVEL "$APP_MODULE"
 
 
 # bash tests-start.sh

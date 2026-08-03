@@ -2,7 +2,7 @@
 
 This is the authoritative reference for the backend architecture — the concrete implementation detail.
 
-For the philosophy behind these decisions, see [FOUNDATION.md](../../docs/FOUNDATION.md). For code conventions, see [PRACTICE.md](../../docs/PRACTICE.md). For the target content-cascade diagram, see [`docs/MASTER.mmd`](../../docs/MASTER.mmd). For feature status and outstanding work, see [FEATURE_STATUS.md](../../docs/internal/FEATURE_STATUS.md).
+For the philosophy behind these decisions, see [FOUNDATION.md](../../../docs/FOUNDATION.md). For code conventions, see [PRACTICE.md](../../../docs/PRACTICE.md). For the target content-cascade diagram, see [`docs/MASTER.mermaid`](../../../docs/MASTER.mermaid). For feature status and outstanding work, see [FEATURE_STATUS.md](../../../docs/internal/FEATURE_STATUS.md). For the graph/schema/canon domain plan, see [graph-domain/HANDOVER.md](../../../docs/plans/graph-domain/HANDOVER.md).
 
 ---
 
@@ -89,6 +89,12 @@ app/
         utils/                  # feed_parse, resolve_source_file, storage_access, watcher_filters
 
       annotation/               # Annotation + Intelligence lifecycle (Layer 3)
+        schema_map.py           # THE contract authority: what an output_contract MEANS
+                                # (shapes, entity/triplet/time/place paths, x-ref
+                                # vocabularies, canon ties) + how to read values at
+                                # those paths (iter_values / iter_entity_refs)
+        contract_resolution.py  # canon bindings → the contract a RUN executes
+                                # (type vocabulary + canon-declared properties)
         …                       # (unchanged by the content cutover — see sections below:
                                 # formula.py, formula_query.py, query.py, panel_config.py,
                                 # tasks/annotate.py, tasks/followup.py)
@@ -134,6 +140,8 @@ OUTSIDE:                    routes, dependency_injection
 **Exception 1:** Cross-domain foreign keys use string references (`"user.id"`, `"asset.id"`).
 
 **Exception 2:** Cross-domain dispatch uses the event bus or `@task .delay()`, never raw Celery imports. Content emits `source.polled`; flow's `trigger_source_poll_flows` subscribes — no import between them.
+
+**Known violation — annotation (L3) → graph (L4).** Crossed in ~9 places today: `annotation/query.py`, `formula_query.py`, `views.py` (graph schemas + `stream_graph`), `tasks/geocode.py` and `tasks/contract_resolution` paths (`Canon`/`CanonEntry`/`resolve_entities_batch`), `tasks/annotate.py` (`curate_annotated`). The rule does not describe reality here: **the canon is the annotation layer's vocabulary authority and the graph is a consumer of it**, so `Canon`/`CanonEntry` likely belong below `graph`. Until that is decided, new crossings use function-level imports and are expected to be few. See [`docs/plans/graph-domain/HANDOVER.md`](../../../docs/plans/graph-domain/HANDOVER.md).
 
 ---
 
@@ -337,7 +345,185 @@ Ingestion progress rides the same machinery one level up: `ctx.job_progress(job_
 
 Annotation triplets and persistent graphs share one streaming primitive: `stream_graph(session, iid, source, *, top_n_nodes, top_n_edges, chunk_size)` (`modules/graph/stream.py`), with `AnnotationGraphSource` (LATERAL over `Annotation.value`) and `PersistentGraphSource` (GraphEdge + Entity). Chunked, deduped across chunks, hard-stops at top-N — never materializes the full set in Python. Multi-graph-field schemas tag edges with `source_field_path`; legacy `"triplets"` keys are honored forever.
 
+Node identity is `_node_id(name, type)` — a global hash. That is load-bearing: the same entity named by a triplet, a nested row's entity leaf, or a top-level roster collapses into **one** node with no reconciliation code. Field-shape recognition comes from `annotation/schema_map.py` (one detector, shared with the frontend), not from local pattern-matching; `stream.py`'s `_SUBJECT_NAME_KEYS` COALESCE ladder survives only as the legacy fallback for schemas with no explicit role bindings.
+
 ---
+
+## Projections — the one graph atom source
+
+`AnnotationGraphSource` reads **N projections**, not one triplet array. A `Projection` (`annotation/panel_config.py`) declares an array to explode plus how to read node identity, time, place, weight and evidence off each row — so a triplet field, a nested observation row, and a bare entity roster are three instances of one declaration.
+
+```
+GraphConfig.projections ──▶ resolve_projections(cfg, formula, smap)
+                                     │  (node roles inferred from SchemaMap)
+                                     ▼
+                    AnnotationGraphSource.windows()
+                      one LATERAL + one tuple cursor PER projection,
+                      run sequentially into ONE shared aggregator
+                                     ▼
+                    stream_graph → node_slots + edge_slots → GraphChunk
+```
+
+**`Projection.about` decides what a row becomes.** One field, three deposits —
+see [observation-model/HANDOVER.md](../../../docs/plans/observation-model/HANDOVER.md):
+
+| `about` | produces |
+|---|---|
+| `self` | an **occurrence node** carrying the row's own when/where/magnitude/evidence, plus one role-labelled edge per participant. Participants inherit **nothing** — that scoping is what stops one row's date smearing across everyone in it. |
+| `"<role>"` | a **property**: the row's bindings write onto that participant's node and nothing is minted. How an entity gets an interval-valued attribute (a seat, a term) when the entity slot is a closed `{name, type}` shape. |
+| `between` / unset | cross-role **connections** — the historical behaviour |
+
+Inferred in `resolve_projections`, never typed by an author: three-or-more
+participants cannot be a pair, one participant has no pair to be, and for two
+the proxy is point-vs-interval (an instant recurs and is an event; an interval
+holds and is a state). A property row is **never** inferred — `{who, place,
+from, to}` is structurally identical to an encounter.
+
+Legacy triplet arrays are pinned to `between` by the adapter in
+`resolve_projections`, which is what lets the inference follow the model
+everywhere else.
+
+**A schema in the pattern graphs itself.** When a panel declares no
+projections, `derive_projections(smap)` builds one per array section instead of
+synthesizing a single one over `cfg.source`. `about` comes from the **section
+name** — the model's own rule, and the only way to get `attributes` right,
+since a property row is never inferable from shape. Bindings come from the
+field names the model prescribes. `derive_doc_anchors` does the same for the
+document rung. An explicitly declared projection always wins; this only fills a
+void — and the void was real, since a v2 schema opened in a panel showed one
+array and dropped every other section.
+
+**Two knobs on what an `about: self` row mints.** Both declared, because the
+answers are semantic and the row's shape cannot reveal them:
+
+| field | what it decides |
+|---|---|
+| `node_kind` | `occurrence` (default) or `entity`. An exhibit exists whether or not anyone cites it, so it is an entity — even though its row lives in an `about: self` array, because that is the only branch that mints a node. Without it, `kind:` reported *which array a row landed in*, and `kind:occurrence` returned documents alongside the acts they ground. |
+| `node_type_path` | read `node_type` from a **field on the row** rather than pinning it — mirrors `NodeRole.type_path` vs `type_const`. What lets one `observations[*]` array carry a `kind` enum and still answer `type:Payment`. Falls back to `node_type` when a row leaves it empty. |
+
+**A roleless `about: self` row still reaches the graph.** The read gate used to
+require at least one participant, which is right for a connection — an edge
+between nothing and nothing is not a row — and wrong for anything that mints a
+node of its own. An exhibit relates to nothing until something cites it; a named
+event relates to nothing until an observation says it belongs. Those sections
+were dropped in SQL before the aggregator ever saw them, silently. An
+`about: self` row now also passes on its own identity, label, time or place.
+
+| node roles | predicate | produces (when `about` is unset) |
+|---|---|---|
+| 2 | set | directed edges (the classic triplet) |
+| 2+ | unset | co-occurrence **across roles** — never within one multi-valued role, so edge count is bounded by roles² not values² |
+| 1 | — | nodes only (a roster) |
+
+Five things in here are load-bearing and easy to break:
+
+- **Node atoms are independent of edges.** `NodeRow` + `node_slots` exist because nodes used to be materialized *only* from edge slots — an entity that related to nothing never appeared, however often it was named. Rosters were structurally invisible.
+- **Typeless folding.** `("Merkel", "")` folds into `("Merkel", "Politician")` when the typed twin is *unambiguous*. Without it multi-projection merges nothing on real schemas (rosters often declare no `entity_type` while triplet endpoints carry one). Ambiguous names — `Washington` the person and the place — stay apart.
+- **Role values fan out in Python, not SQL.** A role may be multi-valued (`beguenstigte_firmen[*]` inside a row); giving each its own LATERAL would make the cursor a tuple per role and the SQL a cross product. One LATERAL, one stable cursor, combinatorics where they're cheap.
+- **Entity children beat the triplet aliases.** `_infer_node_roles` checks entity-shaped children *first*; the alias families only run when there are none. `SUBJECT_NAME_KEYS` contains `from` and `OBJECT_NAME_KEYS` contains `to`, so an ordinary row using them as interval **dates** — which the observation-model template does everywhere — was otherwise detected as a triplet and had its two date fields made into the graph's nodes.
+- **Legacy synthesis, never migration.** Empty `projections` synthesizes one from `formula.group[0].path` → `cfg.source` → `"relationships"`; `AnnotationGraphSource(triplet_field=…)` still works. No stored panel changed.
+
+Time and space ride the payload: `t0`/`t1` (existence) and `a0`/`a1` (activity) per node and edge, unioned across contributing atoms, with an **open end absorbing** (a bare timestamp means "from here onward", so `t1 = None`). Place is a **list** — `NodePlace[]` with per-entry interval, kind and ladder rung — because a company holds a registered office, a head office and a tax residence at once, in three countries, and the gap between two of them is often the finding. `place {start, end}` is a trajectory, both ends resolving their own coordinates. `lat`/`lon` resolve from the asset-facet geocoding cache first and curated `CanonEntry.properties.coords` second — **a canon is an enhancement, never a requirement** for geo, and an `Interest` never geocodes at all.
+
+---
+
+## GQL — `modules/graph/gql.py`
+
+AQL's sibling: same tokenizer (`content/query.py:_tokenize`), same `[-]prefix:value` grammar, same comma-OR / space-AND / `-`-NOT rules, plus `hops:`. One field on the wire: `GraphParams.q`.
+
+**Status: [`docs/plans/observation-model/STATUS.md`](../../../docs/plans/observation-model/STATUS.md)** — feature inventory and flows.
+
+**Full reference: [`docs/plans/observation-model/GRAPH_QUERY.md`](../../../docs/plans/observation-model/GRAPH_QUERY.md)** — every token, worked queries, and the known gaps. The summary below is the architecture; that is the grammar.
+
+**Three tiers, and only the first touches SQL.** The split decides what can be pushed down and what fundamentally cannot:
+
+| tier | tokens | where |
+|---|---|---|
+| 1 row scope | `predicate:` `confidence>0.8` **`doc.relevance>0.7`** `field:` | compiled per projection onto its lateral element; `field:` skips whole projections so the scan never happens. `doc.` climbs to the annotation root and discards whole annotations before any row is exploded |
+| 2 graph shape | `type:` `kind:` `role:` **`label==`** `serves:` `degree>` `weight>` `after:/before:` `near:` | post-aggregation — degree needs the whole edge set, `t0` is a union across atoms |
+| 3 traversal | `from:` + `hops:` | BFS **last**, over the time/space-bounded graph; identity filters then select from what it reached |
+
+Five semantics worth stating, because each answers a question the naive reading gets wrong:
+
+- **Identity filters select, they do not block paths.** `type:`/`-type:`/`kind:`/`role:`/free text say what to *show*; `after:`/`before:`/`near:` and the edge predicates say what graph you are *in*. Only the second kind bounds a traversal. Filtering first and walking the remainder reads plausibly and fails twice over: the seed is usually not of the type asked for (`type:Location from:"E1"` removed E1 before he could seed → empty), and every actor-to-actor link runs *through* an occurrence that `type:` deletes (`type:Person from:"X" hops:2` returned the seed alone). A path-scoped constraint is a different query and wants its own token.
+- **`hops:` counts *actor* hops.** Occurrences are contracted during BFS, so `actor → occurrence → actor` is one step. Without that, every query written before occurrences existed would silently halve in reach.
+- **Separate `from:` tokens intersect.** `from:"E1" from:"E2"` is reachable-from-**both** — the co-presence question. Commas inside one token still union.
+- **`degree>` is role-scoped when a `role:` is present**, counting only edges in that role and counting them even where the far end was filtered out. "`via` in 340 payments" is a finding; "340 connections" is not.
+- **`serves:X+`** rolls up through `subsumes`, so a mundane act reaches the interest hierarchy it belongs to.
+
+Tiers 2–3 run over the *capped projection* (top-N nodes), not the true graph. The UI states this ("top 1000" chip) rather than implying otherwise. Both `/view` and `/view/stream` configure through `_graph_kwargs` → `FormulaQuery._graph_source`, so the same body yields the same graph either way. (The SSE path used to build its source by hand and silently drop `projections` and `q`.)
+
+---
+
+## Schema meaning — `annotation/schema_map.py`
+
+An `output_contract` is a JSON Schema decorated with HQ extensions. **One** module resolves what it means, and every consumer reads that instead of re-deriving it (six implementations had already drifted before this existed):
+
+| Extension | Meaning |
+|---|---|
+| `x-entityField` | this node is an entity reference `{name, type, additional_types}` |
+| `x-entityType` / `x-entityAlternateTypes` / `x-entityEnum` | declared vocabulary; the primary type is the canon resolution key |
+| `x-ref` | this field **reuses another field's vocabulary** — the linking primitive. A string **or a list**: one role can draw from several rosters (a `via` that is an intermediary *or* a routing account). Resolution walks a DAG, registering the field under every anchor it reaches. Merging never depended on it — node identity is `name + type` — so what a list adds is the *declaration*: enum propagation, and telling `SchemaMap` two paths name one population |
+| `x-canon` | this field resolves into a canon (+ injection controls, see below) |
+| `x-fromSource` / `x-toSource` | a triplet's endpoints are drawn from a named entity field |
+
+`build_schema_map()` → `SchemaMap`: `fields` (typed `FieldNode` per path), `vocabularies` (the `x-ref` equivalence classes — `anchor_for(path)` gives the field a path resolves through), and `entity_paths` / `triplet_paths` / `time_paths` / `place_paths` as *candidates* a role picker offers. `schema_map_for()` caches on contract **content**, so there is no invalidation to get wrong. Served on `AnnotationSchemaRead.schema_map` (computed, never stored).
+
+Paths carry `[*]` on array nodes (`document.observations[*].claim`), matching the RolePicker and `core.filters.parse_explosion_chain`. Entity internals are deliberately **not** walked — that shape is closed, so the contract is "given an entity path, the name leaf is `<path>.name`".
+
+The value side lives here too, because a path is useless without a reader: `iter_values(value, path)` honours all three storage conventions (nested / document-unwrapped / flat dotted key) and substitutes real array indices into the returned path — which is what `FragmentCuration.fragment_path` records.
+
+**Curation consumes it directly.** `graph/tasks/curation.py` walks both `triplet_paths` (→ `GraphEdge` + source/target `FragmentCuration`) and `entity_paths` (→ `FragmentCuration.entry_id`; a mention is a membership statement, not a relationship). Both feed **one** `resolve_entities_batch` per annotation, so a name appearing in a roster *and* in a triplet resolves to a single `CanonEntry`.
+
+---
+
+## Contract resolution — `annotation/contract_resolution.py`
+
+A stored contract says what to extract. A **run** may additionally bind an entity field to a canon. That can't live in the stored contract: the same schema runs against different canons, and canon contents change between runs. So the run rewrites its contract once, up front:
+
+```
+stored contract + SchemaMap + canon bindings
+        │
+        └─▶ resolve_contract() ─▶ effective contract ─┬─▶ split_schema_for_extraction
+                                                      ├─▶ create_pydantic_model_from_json_schema
+                                                      └─▶ the prompt (_format_prop_line)
+```
+
+All three consumers read *from the contract*, so one rewrite upstream constrains all three — no per-consumer injection code. Same technique as `routes/annotation_schemas.py:_lift_configs_into_contract`, one level up.
+
+| `inject` | writes | effect |
+|---|---|---|
+| `types` | `type.enum` + `x-entityTypeList` | closes the type vocabulary (kills `Person`/`person` fragmentation at source) |
+| `inject_properties` | nested `properties` bag from `Canon.type_schemas` | model fills the canon's declared slots |
+
+Bindings: schema `x-canon` default merged with `run.configuration.canon_bindings`, **per key**. Canon precedence: run override → `run.canon_ids[0]` → schema preference → infospace default.
+
+**Entity *names* are never injected.** Types constrain, names resolve. A name list large enough to help is large enough to distort the prompt, and it would hide exactly the mentions that most need review. Identity belongs to `graph/resolution.py` (alias → embedding → `CanonProposal`) *after* extraction, not to the prompt. `POST /runs/preview-bindings` runs the same resolution the task will, so a binding's effect (and any binding that landed nowhere) is inspectable before dispatch.
+
+---
+
+## Value aliases — two layers, one resolution order
+
+Values get normalised from two places, and the order they compose in is
+load-bearing:
+
+1. **Run-wide aliases** — `AnnotationRun.views_config['aliases']`, authored
+   once and applied to every panel touching that field.
+2. **Panel merge maps** — `Panel.merge_maps`, authored per panel per field in
+   the Value Alias Manager.
+3. **Canon aliases** — the attached canon's durable value vocabulary
+   (`graph/promote.py:canon_value_merge_maps`), the read-time inverse of
+   value-fold promotion.
+
+`_build_formula_query` composes them **scope → panel → run → canon**, first
+match winning in `AnnotationQuery._find_merge_map`. The canon layer is lowest
+precedence deliberately: it is the durable base, and any explicit run, panel or
+scope alias must be able to override it for one question without editing the
+vocabulary.
+
+Applied backend-side as SQL `CASE` expressions in three places, so they cannot
+disagree: aggregations group by the canonical value, filters match any alias
+(`eq: 'SPD'` finds all of them), and field projections render canonicalised.
 
 ## Filter operators — `core/filters.py`
 
@@ -381,6 +567,10 @@ Beat runs as a single instance; workers replicate freely (all downstream work is
 **3. New enrichment?** → one `@enricher` function with a check query, capability, and queue.
 
 **4. New analysis over annotations?** → compose `AnnotationQuery` / a `/view` phase on `FormulaQuery`. No dynamic-import adapters.
+
+**4a. Need to know what a schema field *is*?** → `schema_map_for(contract)`. Never pattern-match `output_contract` locally — that is how six drifting shape detectors happened. New HQ extension? Parse it in `schema_map.py` and expose it on `FieldNode`; the emitter is `frontend/src/lib/annotations/adapters.ts` and it is the only writer.
+
+**4b. New graph capability?** → ask which of the three it is. A **new atom source** (some other field shape becoming nodes/edges) is a `Projection` role binding, not a new source class. A **new way to narrow** is a GQL token — and pick its tier deliberately, because tier 1 scales with the corpus and tiers 2–3 are bounded by the node cap. A **new way to arrange** is an `AnchorSpec` (`frontend/.../forcegraph/anchors.ts`), never a new force: clustering, geography and time are already one primitive, and a fourth special case is the thing that primitive exists to prevent.
 
 **5. New ingestion path?** → there isn't one. Field-dispatch your input into `{source_kind: [specs]}` and call `intake()`; return the job. Authoring (sync `AssetBuilder`) is only for source-less creation (compose-article, bare metadata, URL bookmarks).
 
