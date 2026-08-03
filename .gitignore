@@ -5,6 +5,7 @@ __pycache__
 .env.staging
 .local_restart_script.sh
 .dip-openapi.yaml
+openapi.json
 test_scripts/
 .DS_Store
 CLAUDE.md

@@ -242,6 +242,21 @@ export type AnnotationSchemaRead = {
 } | null);
     annotation_count?: (number | null);
     is_active: boolean;
+    /**
+     * The contract's resolved meaning — shapes, entity paths, ``x-ref``
+     * vocabularies, canon ties, time/place candidates.
+     *
+     * Computed, never stored: it is a pure function of ``output_contract``,
+     * so there is no invalidation to get wrong when a schema is edited.
+     * Serving it means the frontend picker, the graph projection, and the
+     * companion all read one answer instead of re-deriving three.
+     *
+     * A contract with a cyclic ``x-ref`` yields an empty map rather than
+     * 500-ing the read — the editor already blocks cycles on save, so one
+     * reaching this point is corrupt data, and a schema listing must not go
+     * down because a single row is malformed.
+     */
+    readonly schema_map: SchemaMap;
 };
 
 export type AnnotationSchemasOut = {
@@ -1052,6 +1067,29 @@ export type CanonSuggestionsResponse = {
     conflict?: Array<CanonSuggestion>;
 };
 
+/**
+ * A field's declared canon binding, parsed from ``x-canon``.
+ *
+ * ``type`` is the durable, canon-blind half: a run can point the schema at
+ * any canon and the tie still means the same thing. ``canon_id`` is a soft
+ * authoring-time preference — the run's own canon wins at resolution (see
+ * ``graph/tasks/curation.py:_resolve_target_canon``).
+ *
+ * ``types`` / ``inject`` / ``inject_properties`` are the injection controls
+ * consumed by ``contract_resolution``. Parsed here so the map is the one
+ * place that reads ``x-canon``; a contract that predates them simply gets
+ * the defaults.
+ */
+export type CanonTie = {
+    type?: (string | null);
+    canon_id?: (number | null);
+    types?: Array<(string)>;
+    inject?: 'none' | 'types';
+    inject_properties?: boolean;
+};
+
+export type inject = 'none' | 'types';
+
 export type CanonUpdate = {
     name?: (string | null);
     description?: (string | null);
@@ -1646,6 +1684,21 @@ export type EntityTypeSummary = {
 };
 
 /**
+ * What fills the evidence rail for a projection's atoms.
+ *
+ * Points at an inline justification object, a nested row, or a filtered
+ * subset of one (``where={"kind": "quote"}``). Deliberately separate from
+ * ``Projection.activity``: evidence is *why we believe this*, activity is
+ * *when something happened*. Either can be bound to anything.
+ */
+export type EvidenceBinding = {
+    path: string;
+    where?: ({
+    [key: string]: unknown;
+} | null);
+};
+
+/**
  * Evidence rigor levels for formal research annotation.
  */
 export type EvidenceRigor = 'minimal' | 'standard' | 'thorough' | 'exhaustive';
@@ -1724,11 +1777,46 @@ export type FieldCondition = {
 
 export type operator = 'eq' | 'ne' | 'gt' | 'ge' | 'lt' | 'le' | 'in' | 'not_in' | 'contains' | 'not_contains' | 'between' | 'exists' | 'not_exists' | 'relational.cooccurs';
 
+/**
+ * What was actually injected at one path.
+ */
+export type FieldInjection = {
+    path: string;
+    canon_id: number;
+    inject: 'none' | 'types';
+    types?: Array<(string)>;
+    properties?: Array<(string)>;
+    est_tokens?: number;
+};
+
 export type FieldJustificationConfig = {
     enabled: boolean;
     custom_prompt?: (string | null);
     rigor_level?: (EvidenceRigor | null);
 };
+
+/**
+ * One addressable field in a contract.
+ */
+export type FieldNode = {
+    path: string;
+    shape: 'string' | 'number' | 'boolean' | 'date' | 'enum_string' | 'array_string' | 'array_string_enum' | 'array_number' | 'object' | 'array_object' | 'triplet' | 'entity' | 'array_entity' | 'unknown';
+    section: string;
+    container?: (string | null);
+    label?: (string | null);
+    description?: (string | null);
+    entity_type?: (string | null);
+    alternate_types?: Array<(string)>;
+    enum?: Array<(string)>;
+    type_constrained?: boolean;
+    ref_target?: (string | null);
+    canon?: (CanonTie | null);
+    justification?: boolean;
+    from_source?: (string | null);
+    to_source?: (string | null);
+};
+
+export type shape = 'string' | 'number' | 'boolean' | 'date' | 'enum_string' | 'array_string' | 'array_string_enum' | 'array_number' | 'object' | 'array_object' | 'triplet' | 'entity' | 'array_entity' | 'unknown';
 
 export type FileUploadResponse = {
     /**
@@ -1907,6 +1995,20 @@ export type Formula = {
 };
 
 /**
+ * One triplet property to forward onto emitted graph edges.
+ *
+ * ``agg`` picks how repeated triplets combine their property value.
+ * Never uses ``array_agg(DISTINCT ...)``: unbounded-cardinality text
+ * fields can pack tens of MB into a single aggregated row at scale.
+ */
+export type ForwardPropertySpec = {
+    field: string;
+    agg?: 'first' | 'sum' | 'avg' | 'max';
+};
+
+export type agg = 'first' | 'sum' | 'avg' | 'max';
+
+/**
  * Request to generate embeddings for a single asset.
  */
 export type GenerateAssetEmbeddingsRequest = {
@@ -1979,12 +2081,21 @@ export type GeocodedEntityOut = {
  * Per-phase params for the graph view.
  *
  * ``triplet_field`` falls back to ``formula.group[0].path`` when omitted
- * (per the FormulaQuery.graph_view contract). The other knobs are
- * bounded-memory graph_stream params; the JSON endpoint collects all
- * chunks bounded by the ``top_n_*`` caps.
+ * (per the FormulaQuery.graph_view contract).
+ *
+ * **Every field applies to both endpoints.** ``/view`` and ``/view/stream``
+ * both configure through ``_graph_kwargs`` → ``FormulaQuery._graph_source``,
+ * so the same body yields the same graph either way; the JSON endpoint just
+ * collects the chunks. Only ``chunk_size`` is streaming-specific, and it
+ * controls SSE frame size rather than what the graph contains.
  */
 export type GraphParams = {
+    projections?: Array<Projection>;
     triplet_field?: (string | null);
+    /**
+     * GQL — see modules/graph/gql.py. Filters, hops, traversal.
+     */
+    q?: (string | null);
     dedup?: 'exact' | 'normalized';
     top_n_nodes?: (number | null);
     top_n_edges?: (number | null);
@@ -1997,6 +2108,8 @@ export type GraphParams = {
     node_group_by?: (string | null);
     edge_group_by?: (string | null);
     null_policy?: 'skip' | 'zero';
+    doc_place?: (string | null);
+    doc_time?: (string | null);
 };
 
 export type dedup = 'exact' | 'normalized';
@@ -2305,7 +2418,7 @@ export type LanguageDefaults = {
 export type ListingSection_AssetNode_ = {
     at_parent?: (string | null);
     items: Array<AssetNode>;
-    total: number;
+    total?: number;
     has_more?: boolean;
     cursor_next?: (string | null);
 };
@@ -2329,7 +2442,7 @@ export type Measure = {
     top_by?: (string | null);
 };
 
-export type agg = 'count' | 'mean' | 'sum' | 'max' | 'min' | 'median' | 'mode' | 'distribution' | 'top';
+export type agg2 = 'count' | 'mean' | 'sum' | 'max' | 'min' | 'median' | 'mode' | 'distribution' | 'top';
 
 /**
  * Request schema for merging entries within a canon.
@@ -2391,6 +2504,28 @@ export type ModelListResponse = {
 export type NewPassword = {
     token: string;
     new_password: string;
+};
+
+/**
+ * One entity-bearing slot on a projection's row.
+ *
+ * ``path`` is relative to the exploded element: ``"statement_by"`` inside
+ * ``document.observations[*]``. It may itself explode
+ * (``"participants[*]"``) — a role can be multi-valued. An **empty** path
+ * means the exploded element *is* the entity, which is the entity-roster case
+ * (``document.entities[*]``).
+ *
+ * ``type_path`` / ``type_const`` cover the two ways a row states an entity's
+ * type. Triplet rows carry it in a sibling column (``subject_type``); an
+ * entity object carries it inside itself, which is the default (``<path>.type``
+ * with ``<path>.name`` for the name). ``type_const`` pins the type for rows
+ * that state a name and nothing else.
+ */
+export type NodeRole = {
+    path: string;
+    label?: (string | null);
+    type_path?: (string | null);
+    type_const?: (string | null);
 };
 
 /**
@@ -2539,6 +2674,7 @@ export type ParsedQuery = {
     annotations?: Array<AnnotationFilter>;
     run_ids?: Array<(number)>;
     children_limit?: (number | null);
+    groups?: Array<ParsedQuery>;
 };
 
 export type PermissionLevel = 'read_only' | 'edit' | 'full_access';
@@ -2557,9 +2693,63 @@ export type PipelineStatsResponse = {
     last_asset_ready?: (string | null);
 };
 
+/**
+ * Where a projection's atoms are. The spatial mirror of :class:`TimeBinding`.
+ *
+ * A point is an extent that has not moved, exactly as a bare timestamp is an
+ * interval that has not ended — so space gets the same shape as time and the
+ * anchor machinery does not grow a second case:
+ *
+ * * ``at`` alone → a point. Pins there.
+ * * ``start`` + ``end`` → a **trajectory**. Pins at both, draws as an arc, and
+ * participants are pulled toward both ends. A flight is not "at" either
+ * airport.
+ *
+ * Paths are relative to the exploded element and name a place **name**, never
+ * coordinates: ``lat``/``lon`` are resolved server-side in
+ * ``graph/stream.py:_attach_coords`` from the geocoding cache or curated canon
+ * entries. Models are never asked for numbers they cannot know.
+ */
+export type PlaceBinding = {
+    at?: (string | null);
+    start?: (string | null);
+    end?: (string | null);
+    kind?: (string | null);
+};
+
 export type PredicateSummary = {
     predicate: string;
     count: number;
+};
+
+/**
+ * What a prospective run would inject. Deliberately run-less so the launch
+ * dialog and the companion can both ask before committing.
+ */
+export type PreviewBindingsRequest = {
+    schema_ids: Array<(number)>;
+    canon_bindings?: {
+        [key: string]: unknown;
+    };
+    canon_ids?: Array<(number)>;
+    /**
+     * Assets the run would cover; enables a total projection.
+     */
+    asset_count?: (number | null);
+};
+
+export type PreviewBindingsResponse = {
+    schemas?: Array<SchemaBindingPreview>;
+    injected_types?: number;
+    injected_properties?: number;
+    est_tokens_per_asset?: number;
+    projected_total_tokens?: (number | null);
+    /**
+     * A type list large enough to suggest an uncurated canon — the UI should ask for an explicit acknowledgement.
+     */
+    blocking?: boolean;
+    summary?: string;
+    warnings?: Array<(string)>;
 };
 
 export type ProcessingStatus = 'ready' | 'pending' | 'processing' | 'failed';
@@ -2574,6 +2764,39 @@ export type ProcessingStatusResponse = {
     ready: number;
     failed: number;
     total: number;
+};
+
+/**
+ * One declaration of where graph atoms come from and how to read them.
+ *
+ * ``path`` is the array to explode (``"document.observations[*]"``). Node
+ * roles resolve inside each element.
+ *
+ * Cardinality decides the shape:
+ *
+ * - 2 roles + ``predicate`` → directed edges (the classic triplet)
+ * - 2+ roles, no ``predicate`` → co-occurrence edges **across roles**
+ * (values inside a single multi-valued role do *not* link to each other,
+ * so edge count is bounded by roles² rather than values² — one dense row
+ * cannot crowd out the graph). Declaring the same path twice is the escape
+ * hatch for a genuine clique; self-pairs are always dropped.
+ * - 1 role → nodes only
+ */
+export type Projection = {
+    path: string;
+    nodes?: Array<NodeRole>;
+    predicate?: (string | null);
+    time?: (TimeBinding | null);
+    place?: (string | PlaceBinding | null);
+    weight?: (string | null);
+    evidence?: (EvidenceBinding | null);
+    activity?: (TimeBinding | null);
+    properties?: Array<ForwardPropertySpec>;
+    label?: (string | null);
+    about?: (string | null);
+    node_type?: (string | null);
+    node_label?: (string | null);
+    node_name?: (string | null);
 };
 
 export type PromoteFragmentRequest = {
@@ -2765,6 +2988,7 @@ export type ResultStatus = 'success' | 'failed';
 export type RowsParams = {
     cursor?: (string | number | null);
     limit?: number;
+    include_failed?: boolean;
 };
 
 export type RSSDiscoveryRequest = {
@@ -2794,6 +3018,34 @@ export type SaveCredentialsRequest = {
     credentials: {
         [key: string]: (string);
     };
+};
+
+export type SchemaBindingPreview = {
+    schema_id: number;
+    schema_name: string;
+    fields?: Array<FieldInjection>;
+    warnings?: Array<(string)>;
+    est_tokens_per_asset?: number;
+};
+
+/**
+ * Resolved meaning of one ``output_contract``.
+ *
+ * A Pydantic model rather than a dataclass so the *same* object is both the
+ * internal structure and the wire shape — it serializes onto
+ * ``AnnotationSchemaRead`` and generates the frontend's TS types directly,
+ * with no parallel DTO to drift from. Construction cost is paid once per
+ * distinct contract thanks to :func:`schema_map_for`'s cache.
+ */
+export type SchemaMap = {
+    fields?: Array<FieldNode>;
+    vocabularies?: {
+        [key: string]: Array<(string)>;
+    };
+    entity_paths?: Array<(string)>;
+    triplet_paths?: Array<(string)>;
+    time_paths?: Array<(string)>;
+    place_paths?: Array<(string)>;
 };
 
 /**
@@ -3152,6 +3404,41 @@ export type TaskUpdate = {
 } | null);
     status?: (TaskStatus | null);
     is_enabled?: (boolean | null);
+};
+
+/**
+ * One pickable starting point, with the contract and projections it makes.
+ */
+export type TemplateOut = {
+    id: string;
+    label: string;
+    tier: string;
+    hint: string;
+    archetypes?: Array<(string)>;
+    output_contract?: ({
+    [key: string]: unknown;
+} | null);
+    projections?: (Array<{
+    [key: string]: unknown;
+}> | null);
+    doc_place?: (string | null);
+    doc_time?: (string | null);
+};
+
+/**
+ * When a projection's atoms exist.
+ *
+ * ``start`` + ``end`` → a closed interval. ``at`` alone → the atom exists
+ * from that instant onward (the "only a timestamp" case: it pops into
+ * existence and stays). Paths are relative to the exploded element, and
+ * resolve up the ladder — atom time → row time → doc time →
+ * ``asset.event_timestamp`` — so a row without its own timestamp inherits
+ * rather than falling out of the timeline.
+ */
+export type TimeBinding = {
+    at?: (string | null);
+    start?: (string | null);
+    end?: (string | null);
 };
 
 export type Token = {
@@ -3759,6 +4046,15 @@ export type ListAnnotationSchemas1Data = {
 };
 
 export type ListAnnotationSchemas1Response = (AnnotationSchemasOut);
+
+export type ListSchemaTemplatesData = {
+    expand?: boolean;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type ListSchemaTemplatesResponse = (Array<TemplateOut>);
 
 export type GetAnnotationSchemaData = {
     /**
@@ -6247,6 +6543,15 @@ export type DistinctValuesData = {
 };
 
 export type DistinctValuesResponse2 = (DistinctValuesResponse);
+
+export type PreviewBindingsData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: PreviewBindingsRequest;
+    xPackageToken?: (string | null);
+};
+
+export type PreviewBindingsResponse2 = (PreviewBindingsResponse);
 
 export type KickGeocodeData = {
     infospaceId: number;
