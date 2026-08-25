@@ -328,7 +328,7 @@ describe('Graph field — user-facing name + multi-graph-field', () => {
     expect(f.items?.entityConfig?.alternate_types).toBeUndefined();
   });
 
-  test('array_entity round-trips with entity_type, enum, typeConstrained, color, icon', () => {
+  test('array_entity round-trips with entity_type, enum, typeConstrained', () => {
     const original = docFormData([
       fld({
         name: 'firmen',
@@ -340,8 +340,6 @@ describe('Graph field — user-facing name + multi-graph-field', () => {
             entity_type: 'Konzern',
             enum: ['Merkur', 'Tipwin', 'Insic', 'bet3000'],
             typeConstrained: true,
-            color: '#ce1a7a',
-            icon: 'House',
           },
         },
       }),
@@ -353,8 +351,6 @@ describe('Graph field — user-facing name + multi-graph-field', () => {
     expect(f.items?.entityConfig?.entity_type).toBe('Konzern');
     expect(f.items?.entityConfig?.enum).toEqual(['Merkur', 'Tipwin', 'Insic', 'bet3000']);
     expect(f.items?.entityConfig?.typeConstrained).toBe(true);
-    expect(f.items?.entityConfig?.color).toBe('#ce1a7a');
-    expect(f.items?.entityConfig?.icon).toBe('House');
     expect(f.items?.description).toBe('Companies named in this row');
   });
 
@@ -629,5 +625,175 @@ describe('Date field round-trip', () => {
 
     const back = roundTrip(form).structure[0].fields[0];
     expect(back.items?.properties?.find(f => f.name === 'when')?.type).toBe('date');
+  });
+});
+
+// =============================================================================
+// Node palette
+// =============================================================================
+
+describe('node palette — one place a type says how it looks', () => {
+  const readOf = (contract: any): AnnotationSchemaRead => ({
+    id: 1, uuid: 'u', name: 'T', description: '', output_contract: contract,
+    instructions: null, field_specific_justification_configs: {},
+    is_active: true, version: '1.0', tags: [], infospace_id: 1, user_id: 1,
+    created_at: '', updated_at: '',
+  } as any);
+
+  test('emits at the contract root and round-trips', () => {
+    const form: AnnotationSchemaFormData = {
+      ...docFormData([fld({ name: 'actors', type: 'entity', entityConfig: { entity_type: 'Person' } })]),
+      nodeStyles: { PERSON: { icon: 'Crown', color: '#112233' } },
+    };
+    const created = adaptSchemaFormDataToSchemaCreate(form);
+    expect((created.output_contract as any)['x-nodeStyles'])
+      .toEqual({ PERSON: { icon: 'Crown', color: '#112233' } });
+    expect(roundTrip(form).nodeStyles).toEqual({ PERSON: { color: '#112233', icon: 'Crown' } });
+  });
+
+  test('an empty palette leaves the contract byte-clean', () => {
+    const created = adaptSchemaFormDataToSchemaCreate(docFormData([fld({ name: 'a', type: 'string' })]));
+    expect('x-nodeStyles' in (created.output_contract as any)).toBe(false);
+    expect(roundTrip(docFormData([fld({ name: 'a', type: 'string' })])).nodeStyles).toBeUndefined();
+  });
+
+  test('a self-node section can be styled — nothing else could reach its type', () => {
+    // `events` declares its node type in `x-graph`; it has no entity field, so
+    // per-field colour and icon had nowhere to live and the type was
+    // unstyleable. The palette is keyed by type, so it simply works.
+    const form: AnnotationSchemaFormData = {
+      ...docFormData([
+        fld({
+          name: 'events', type: 'array',
+          extensions: { 'x-graph': { about: 'self', node_type: 'Event' } },
+          items: { type: 'object', properties: [fld({ name: 'name', type: 'string' })] },
+        }),
+      ]),
+      nodeStyles: { EVENT: { icon: 'CalendarRange' } },
+    };
+    expect(roundTrip(form).nodeStyles).toEqual({ EVENT: { icon: 'CalendarRange' } });
+  });
+});
+
+describe('node palette — migrating contracts that predate it', () => {
+  const load = (contract: any) => adaptSchemaReadToSchemaFormData({
+    id: 1, uuid: 'u', name: 'T', description: '', output_contract: contract,
+    instructions: null, field_specific_justification_configs: {},
+    is_active: true, version: '1.0', tags: [], infospace_id: 1, user_id: 1,
+    created_at: '', updated_at: '',
+  } as any);
+
+  test('a per-field x-entityIcon is folded into the palette', () => {
+    const form = load({
+      type: 'object',
+      properties: {
+        document: {
+          type: 'object',
+          properties: {
+            interests: {
+              type: 'array',
+              items: {
+                type: 'object',
+                'x-entityField': true,
+                'x-entityType': 'Interest',
+                'x-entityIcon': 'ActivityIcon',
+                properties: { name: { type: 'string' } },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(form.nodeStyles).toEqual({ INTEREST: { icon: 'ActivityIcon' } });
+
+    // And on the way back out it lives ONLY in the palette — leaving the old
+    // key behind would let a stale copy shadow the next edit.
+    const contract = adaptSchemaFormDataToSchemaCreate(form).output_contract as any;
+    expect(contract['x-nodeStyles']).toEqual({ INTEREST: { icon: 'ActivityIcon' } });
+    expect(contract.properties.document.properties.interests.items['x-entityIcon']).toBeUndefined();
+  });
+
+  test("a ref's inherited icon does not migrate onto the type it borrowed", () => {
+    // Schema 18397: the icon was set once, on `interests`. Ref expansion put it
+    // on roles declared `Person`, and every person came out wearing it.
+    const form = load({
+      type: 'object',
+      properties: {
+        document: {
+          type: 'object',
+          properties: {
+            interests: {
+              type: 'array',
+              items: { type: 'object', 'x-entityField': true, 'x-entityType': 'Interest', 'x-entityIcon': 'ActivityIcon', properties: {} },
+            },
+            relations: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  from: {
+                    type: 'object', 'x-entityField': true, 'x-entityType': 'Person',
+                    'x-entityIcon': 'ActivityIcon', 'x-ref': ['actors', 'interests'], properties: {},
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(form.nodeStyles).toEqual({ INTEREST: { icon: 'ActivityIcon' } });
+    expect(form.nodeStyles?.PERSON).toBeUndefined();
+  });
+
+  test('a graph field\'s buried type maps migrate too', () => {
+    const form = load({
+      type: 'object',
+      properties: {
+        document: {
+          type: 'object',
+          properties: {
+            triplets: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  subject_name: { type: 'string' },
+                  subject_type: {
+                    type: 'string',
+                    'x-entityTypeList': ['Person'],
+                    'x-entityTypeColors': { Person: '#abcdef' },
+                    'x-entityTypeIcons': { Person: 'Users' },
+                  },
+                  predicate: { type: 'string' },
+                  object_name: { type: 'string' },
+                  object_type: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(form.nodeStyles).toEqual({ PERSON: { color: '#abcdef', icon: 'Users' } });
+
+    const contract = adaptSchemaFormDataToSchemaCreate(form).output_contract as any;
+    const subjectType = contract.properties.document.properties.triplets.items.properties.subject_type;
+    expect(subjectType['x-entityTypeIcons']).toBeUndefined();
+    expect(subjectType['x-entityTypeColors']).toBeUndefined();
+    // The vocabulary itself is untouched — only the visuals moved.
+    expect(subjectType['x-entityTypeList']).toEqual(['Person']);
+  });
+
+  test('a ref carries vocabulary but no longer carries appearance', () => {
+    const form = docFormData([
+      fld({ name: 'actors', type: 'entity', entityConfig: { entity_type: 'Person', enum: ['Alice'] } }),
+      fld({ name: 'sender', type: 'entity', entityConfig: { entity_type: 'Organization' }, ref: { targets: ['actors'] } }),
+    ]);
+    const sender = (adaptSchemaFormDataToSchemaCreate(form).output_contract as any)
+      .properties.document.properties.sender;
+    expect(sender['x-entityEnum']).toEqual(['Alice']);      // vocabulary, inherited
+    expect(sender['x-entityType']).toBe('Organization');    // its own type, kept
+    expect(sender['x-entityIcon']).toBeUndefined();         // appearance, never
   });
 });

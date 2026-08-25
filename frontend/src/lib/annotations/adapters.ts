@@ -17,6 +17,7 @@ import {
   CanonTie,
   refTargets,
 } from './types';
+import { NODE_STYLES_EXTENSION, readGraphStyle, type NodeStyle } from './graphStyle';
 import {
   AnnotationRead as ClientAnnotationRead,
   AnnotationSchemaRead as ClientAnnotationSchemaRead,
@@ -149,7 +150,15 @@ function resolveFieldRef(
   };
 }
 
-/** The entity config a ref target contributes, scalar or roster. */
+/** The entity config a ref target contributes, scalar or roster.
+ *
+ *  Vocabulary only — and now that is structural rather than a filter here.
+ *  An `EntityFieldConfig` carries no colour or icon any more, because a ref
+ *  names a shared population and not a shared appearance: copying visuals made
+ *  `relations.from` — declared `Person`, ref'd at `[actors, places,
+ *  interests]` — carry the icon its author had set on *interests*, and the
+ *  graph then painted every person with it. Appearance lives in the schema's
+ *  `nodeStyles` palette, keyed by node type, where a ref cannot reach it. */
 function entityVocabularyOf(
   target: AdvancedSchemeField,
 ): EntityFieldConfig | undefined {
@@ -187,14 +196,19 @@ function mergeEntityVocabulary(
 // parser keeps and the emitter puts back.
 //
 // The invariant is that these two lists are complements. A key in
-// CONSUMED_EXTENSIONS is written by an emitter and must never be preserved
+// CONSUMED_EXTENSIONS is one the editor OWNS and must never preserve blindly
 // (a stale copy would shadow an edit); a key outside it is preserved verbatim.
 // `templateRoundTrip.test.ts` asserts both directions, including the case that
 // matters most: a key nobody has heard of yet.
+//
+// Owned is a slightly wider claim than emitted. `x-entityColor` and
+// `x-entityIcon` have no emitter any more — the palette replaced them — but
+// they stay listed, because `readPalette` migrates them and preserving the
+// originals would resurrect the very divergence the migration removes.
 
-/** Every `x-*` key an emitter in this file writes. Add to this list in the
- *  SAME change that adds an emitter, or the key gets preserved from the old
- *  contract *and* re-emitted, and a user edit loses to a stale value. */
+/** Every `x-*` key this file owns. Add to this list in the SAME change that
+ *  adds an emitter, or the key gets preserved from the old contract *and*
+ *  re-emitted, and a user edit loses to a stale value. */
 export const CONSUMED_EXTENSIONS: ReadonlySet<string> = new Set([
   // Entity objects — `buildEntityObjectSchema`
   'x-entityField', 'x-entityType', 'x-entityAlternateTypes', 'x-entityEnum',
@@ -206,6 +220,8 @@ export const CONSUMED_EXTENSIONS: ReadonlySet<string> = new Set([
   'x-entityTypeList', 'x-entityTypeColors', 'x-entityTypeIcons',
   'x-predicateList', 'x-predicateConstrained', 'x-predicateColors',
   'x-predicateIcons', 'x-predicateArrows',
+  // Contract root — the schema's node palette
+  NODE_STYLES_EXTENSION,
 ]);
 
 /** Unknown `x-*` keys on one JSON Schema node, or undefined when there are
@@ -285,8 +301,12 @@ const buildEntityObjectSchema = (
     if (alternates.length > 0) objectShape['x-entityAlternateTypes'] = alternates;
     if (entityEnum.length > 0) objectShape['x-entityEnum'] = entityEnum;
     objectShape['x-entityTypeConstrained'] = constrained;
-    if (ec?.color) objectShape['x-entityColor'] = ec.color;
-    if (ec?.icon) objectShape['x-entityIcon'] = ec.icon;
+    // No `x-entityColor` / `x-entityIcon`: appearance is keyed by node type in
+    // the contract's root palette now, not by field. A field is the wrong
+    // owner for it (two fields of one type could disagree, and a ref field
+    // inherited a type it does not have), and the palette can name self-node
+    // types that have no field at all. Old contracts are folded into the
+    // palette on load by `readPalette`, so nothing is lost by not writing here.
     if (refTargetPath) objectShape['x-ref'] = refTargetPath;
     // Canon tie. The generic field branch below emits `x-canon` onto the
     // property node, but a scalar `entity` field never reaches that branch —
@@ -318,8 +338,6 @@ const parseEntityConfigFromSchema = (schema: any): EntityFieldConfig => {
             Array.isArray(alternates) && alternates.length > 0 ? alternates : undefined,
         enum: Array.isArray(enumList) && enumList.length > 0 ? enumList : undefined,
         typeConstrained: schema['x-entityTypeConstrained'] !== false,
-        color: schema['x-entityColor'] || undefined,
-        icon: schema['x-entityIcon'] || undefined,
         extensions: collectExtensions(schema),
     };
 };
@@ -434,12 +452,11 @@ const buildJsonSchemaProperties = (
                     if (typeConstrained) s.enum = cleanedTypes;
                 }
                 s['x-entityTypeConstrained'] = typeConstrained;
-                if (graphConfig.entityTypes.typeColors && Object.keys(graphConfig.entityTypes.typeColors).length > 0) {
-                    s['x-entityTypeColors'] = graphConfig.entityTypes.typeColors;
-                }
-                if (graphConfig.entityTypes.typeIcons && Object.keys(graphConfig.entityTypes.typeIcons).length > 0) {
-                    s['x-entityTypeIcons'] = graphConfig.entityTypes.typeIcons;
-                }
+                // Type colours and icons used to be buried here, on the
+                // `subject_type` property of a triplet — a place no other
+                // authoring surface could write to and none of them thought to
+                // read. They live in the contract's root palette now, shared
+                // with the section editor. `readPalette` migrates the old ones.
                 return s;
             };
 
@@ -634,6 +651,9 @@ export const adaptSchemaFormDataToSchemaCreate = (formData: AnnotationSchemaForm
         ...(formData.contractExtensions ?? {}),
         type: 'object',
         ...(formData.contractGuidance ? { description: formData.contractGuidance } : {}),
+        ...(formData.nodeStyles && Object.keys(formData.nodeStyles).length
+            ? { [NODE_STYLES_EXTENSION]: formData.nodeStyles }
+            : {}),
         properties: {}
     };
 
@@ -756,8 +776,6 @@ const parseGraphField = (
                 typeEnum,
                 typeConstrained,
                 typeDescription: subjectTypeSchema.description || undefined,
-                typeColors: subjectTypeSchema['x-entityTypeColors'] || undefined,
-                typeIcons: subjectTypeSchema['x-entityTypeIcons'] || undefined,
             },
             relationshipSchema: {
                 predicateEnum,
@@ -966,10 +984,39 @@ export const adaptSchemaReadToSchemaFormData = (apiData: ClientAnnotationSchemaR
       // dropped: the two share a word and nothing else.
       contractGuidance: outputContract?.description || undefined,
       contractExtensions: collectExtensions(outputContract),
+      nodeStyles: readPalette(outputContract),
       // TODO: Map global settings from backend to form if they exist
     };
     return formData;
 };
+
+/**
+ * The schema's node palette, folding every older form into it.
+ *
+ * `readGraphStyle` already knows all four places a visual declaration can hide
+ * and which one wins; running load through it means opening and saving a
+ * pre-palette contract *migrates* it — the scattered `x-entityIcon`s and
+ * per-graph-field type maps collapse into one root map, and the emitters that
+ * wrote them are gone, so they do not come back.
+ *
+ * Keys are upper-cased. Every reader compares types case-insensitively
+ * (`resolveEntityColor` has always uppercased), and normalising on the way in
+ * is what stops `Person` and `PERSON` from becoming two entries that disagree.
+ */
+function readPalette(outputContract: any): Record<string, NodeStyle> | undefined {
+    const style = readGraphStyle(outputContract);
+    const types = new Set([...Object.keys(style.typeColors), ...Object.keys(style.typeIcons)]);
+    if (!types.size) return undefined;
+
+    const palette: Record<string, NodeStyle> = {};
+    for (const type of types) {
+        const entry: NodeStyle = {};
+        if (style.typeColors[type]) entry.color = style.typeColors[type];
+        if (style.typeIcons[type]) entry.icon = style.typeIcons[type];
+        palette[type] = entry;
+    }
+    return palette;
+}
 
 
 // --- OLD ADAPTERS (to be phased out or updated) ---

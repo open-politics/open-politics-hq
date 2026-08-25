@@ -3,6 +3,9 @@
  */
 
 import type { Formula } from '@/client';
+import type { NodeStyle } from './graphStyle';
+
+export type { NodeStyle };
 
 // --- Data Source & Asset Types --- //
 // Mirrors the backend's registered source kinds (content/sources/).
@@ -78,9 +81,6 @@ export interface EntityFieldConfig {
    * the declared types, false = lenient, model may invent — useful as an
    * audit signal). */
   typeConstrained?: boolean;
-  /** Optional UI metadata — color and icon for rendering this entity field. */
-  color?: string;
-  icon?: string;
   /** Unknown `x-*` keys on the entity OBJECT node. Entity objects are rebuilt
    *  wholesale by `buildEntityObjectSchema`, so they need their own bucket.
    *  See `AdvancedSchemeField.extensions`. */
@@ -318,6 +318,21 @@ export interface AnnotationSchemaFormData {
   contractGuidance?: string;
   /** Unknown `x-*` keys at the contract root. See `AdvancedSchemeField.extensions`. */
   contractExtensions?: Record<string, unknown>;
+
+  /**
+   * How each node type looks on a graph — the schema's palette, keyed by node
+   * type as authored. Emitted at the contract root as `x-nodeStyles`.
+   *
+   * **Schema-level because appearance is a property of the type, not of a
+   * field.** Two fields typed `Person` cannot disagree about what a person
+   * looks like, and a type that no field declares at all — a section's
+   * self-node, `Event` or `Observation` or `Evidence` — can still be styled,
+   * which per-field declarations made impossible.
+   *
+   * Both authoring surfaces write here: the field inspector's colour/icon
+   * controls and the graph field editor's per-type rows.
+   */
+  nodeStyles?: Record<string, NodeStyle>;
 }
 
 // --- Annotation Run & Result Types --- //
@@ -504,8 +519,11 @@ export interface GraphFieldConfig {
     typeEnum?: string[];  // Allowed entity types (e.g., ['PERSON', 'ORGANIZATION', 'LOCATION'])
     typeDescription?: string;  // Natural language guidance on how to categorize entities
     typeConstrained?: boolean;  // Whether to enforce enum or allow free-form types
-    typeColors?: Record<string, string>;  // Custom hex colors per entity type (e.g., { "PERSON": "#3B82F6" })
-    typeIcons?: Record<string, string>;  // HeroIcon names per entity type (e.g., { "PERSON": "UserIcon" })
+    // Colours and icons are NOT here. They belong to the node type, which
+    // outlives any one graph field, and they live in the schema-level
+    // `AnnotationSchemaFormData.nodeStyles` palette that the section editor
+    // writes to as well. Keeping a second copy per graph field is what let a
+    // schema declare one appearance in two places and render neither.
   };
 
   // Relationship/predicate configuration
@@ -725,6 +743,15 @@ export interface ViewGraphNode {
    *  binding names a computed profile (`neighbours:Interest`, `roles`), which
    *  is the vector shape the affinity anchor clusters on. */
   group_value?: string | string[] | Record<string, number> | null;
+  /** The resolved `WEIGHT:` binding, in `[0, 1]`. Server-side because the
+   *  denominator is: a median, a per-corpus stratum or a rank all need the
+   *  whole population, and the client only ever holds the capped top-N. */
+  size?: number | null;
+  /** The resolved `CLUSTER:` binding — which pile, not where the pile goes.
+   *  Server-side because the key may name a declaration the client cannot see;
+   *  the geometry is `anchors.ts::clusterCells`. Null when this node has no
+   *  value for the key, which leaves it where the link forces put it. */
+  cluster?: string | null;
 }
 
 /** A graph edge from a projection. Authority:
@@ -732,6 +759,7 @@ export interface ViewGraphNode {
 export interface ViewGraphEdge {
   source: string;
   target: string;
+  kind?: 'contains' | 'follows' | 'role' | 'relation';
   predicate: string;
   /** The role the target plays in its source occurrence — `payer`, `via`,
    *  `on_board`. Role-scoped degree is what turns "340 connections" into
@@ -751,12 +779,52 @@ export interface ViewGraphEdge {
   a0?: string | null;
   a1?: string | null;
   source_paths?: string[];
+  /** Which annotations produced this edge — the same provenance nodes carry.
+   *  This is what edge → document traceability reads; matching an edge back to
+   *  a raw annotation payload by label only ever worked for one legacy shape. */
+  source_annotation_ids?: number[];
 }
 
 /** Graph materialization response */
 export interface ViewGraphPhase {
   nodes: ViewGraphNode[];
   edges: ViewGraphEdge[];
+  /** The rows behind the picture — one section's records, projected by the
+   *  same query. `graph/rows.py::SectionRows`; typed in
+   *  `components/collection/graph/panes/rowTypes.ts`, which is where it is
+   *  consumed. Untyped here to keep this module free of a UI import.
+   *
+   *  A LIST: `SECTION:interests,observations` is two questions, not one — the
+   *  sections are different relations and unioning them yields a table that is
+   *  mostly empty cells. Each entry names its own section and its pane takes
+   *  that name. */
+  rows?: unknown[];
+  meta?: ViewGraphMeta;
+}
+
+/** What the engine resolved that the query did not spell out. */
+export interface ViewGraphMeta {
+  layers?: unknown[];
+  frames?: Record<string, unknown>;
+  /** Decisions the engine made on the query's behalf, in reading order:
+   *  which size measure and denominator, which scale (and whether a requested
+   *  one was refused), how many dimensions were spent and what the vector had
+   *  to fold into. Meant to be shown — the alternative is a picture whose
+   *  rules a reader has to guess at. */
+  legend?: string[];
+  /** Pane names this contract's declarations imply — what an empty bar means.
+   *  Seeds a panel nobody has configured, so it opens with the panes that make
+   *  sense for its schema instead of with nothing. */
+  panes?: string[];
+  /** What the engine resolved in a way the writer may not have meant — a
+   *  reserved word colliding with a field name, a section this run has never
+   *  heard of, a CLUSTER key that matched nothing.
+   *
+   *  Distinct from `legend`, and the distinction is the point: the legend says
+   *  what the engine DID and renders neutral; a note says what it could not do
+   *  with what you wrote and renders amber. Conflating them makes a warning
+   *  look like a setting. */
+  notes?: string[];
 }
 
 // ─── Dossier phase (projection materialisation) ───────────────────────────
