@@ -1,22 +1,22 @@
 'use client';
 
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo } from 'react';
 import { resolveEntityColor, type ColorOverrides } from '@/lib/annotations/colors';
-import { getEntityIconPaths } from '../entityTypeIcons';
 import { resolveNodeStyle, type NodeSelectionState, type ThemeTokens } from './resolveNodeStyle';
-import { nodeRadius, type GraphNode, type GraphViewConfig } from '../graphTypes';
+import type { TypeIcons } from './useTypeIcons';
+import { nodeRadius, nodeRadiusFor, type GraphNode, type GraphViewConfig } from '../graphTypes';
 
 // =============================================================================
 // useNodePainter2D — returns a ``nodeCanvasObject`` callback for
 // react-force-graph-2d. Handles the full visual cascade:
 //  1. Outer ring (selection state)
 //  2. Filled circle (entity color brightened/darkened by selection)
-//  3. Optional white-stroke icon in the circle (Path2D from entityTypeIcons)
+//  3. Optional white-stroke icon in the circle (Path2D from ``useTypeIcons``)
 //  4. Label below circle (with halo, gated by zoom + ``labelMinScale``)
 //  5. Optional sub-property labels (config.showNodeProperties)
 //
-// Caches Path2D icon objects per (type-key, icon-set) so the same icon isn't
-// re-parsed every frame for every node of that type.
+// Icon geometry is resolved and cached upstream by ``useTypeIcons`` — shared
+// with the 3D builder, so both renderers draw the same glyph for a type.
 // =============================================================================
 
 type Painter = (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => void;
@@ -31,10 +31,17 @@ const OCCURRENCE_R = 5;
  *  numerous by design; labelling them at overview zoom is illegible noise. */
 const OCCURRENCE_LABEL_SCALE = 1.6;
 
+/** Node radius below which an icon has nowhere legible to go. A 24×24 glyph
+ *  scaled under ~9px reads as a smudge, and a smudge on every node is worse
+ *  than no glyph on any. */
+const ICON_MIN_R = 4.5;
+
 interface PainterDeps {
   theme: ThemeTokens;
   colorOverrides?: ColorOverrides;
-  typeIcons?: Record<string, string>;
+  /** Resolved glyph per node type. Whether undeclared types get a default one
+   *  is decided upstream, so the painter just draws what it is handed. */
+  icons: TypeIcons;
   selection: NodeSelectionState;
   hoveredNodeId: string | null;
   config: GraphViewConfig;
@@ -49,28 +56,24 @@ interface PainterDeps {
 export function useNodePainter2D({
   theme,
   colorOverrides,
-  typeIcons,
+  icons,
   selection,
   hoveredNodeId,
   config,
   degreeMap,
   pinnedNodeIds,
 }: PainterDeps): Painter {
-  // Persistent Path2D cache keyed by `${typeUpper}:${iconKey}`. SVG path
-  // strings parse to Path2D once; reused across every paint of that type.
-  const iconPathCache = useRef<Map<string, Path2D[]>>(new Map());
-
   // Stable closure deps — re-create only when something visible changes.
   const closure = useMemo(() => ({
     theme,
     colorOverrides,
-    typeIcons,
+    icons,
     selection,
     hoveredNodeId,
     config,
     degreeMap,
     pinnedNodeIds,
-  }), [theme, colorOverrides, typeIcons, selection, hoveredNodeId, config, degreeMap, pinnedNodeIds]);
+  }), [theme, colorOverrides, icons, selection, hoveredNodeId, config, degreeMap, pinnedNodeIds]);
 
   return useCallback<Painter>((rawNode, ctx, globalScale) => {
     const node = rawNode as GraphNode;
@@ -92,9 +95,12 @@ export function useNodePainter2D({
     // labels. You don't read occurrences on the canvas; you read them in the
     // item pane, and use the canvas to choose which.
     const isOccurrence = node.kind === 'occurrence';
-    const r = isOccurrence
+    // An occurrence stays uniform unless a measure was bound to it — the point
+    // of the recessive treatment is that 400 payments read as structure, and a
+    // measure is the analyst saying which of them they want to see.
+    const r = isOccurrence && node.size == null
       ? (isHighlighted ? OCCURRENCE_R * 1.6 : OCCURRENCE_R)
-      : nodeRadius(deg, isHighlighted);
+      : nodeRadiusFor(node, deg, isHighlighted);
 
     ctx.save();
     ctx.globalAlpha = style.opacity;
@@ -138,35 +144,24 @@ export function useNodePainter2D({
       ctx.globalAlpha = style.opacity;
     }
 
-    // ---- Icon (config.showNodeIcons; skipped when icon paths missing) ----
-    if (c.config.showNodeIcons) {
-      const typeKey = (node.type || '').toUpperCase();
-      const iconCacheKey = `${typeKey}:${(c.typeIcons?.[typeKey] ?? c.typeIcons?.[node.type] ?? '')}`;
-      let paths = iconPathCache.current.get(iconCacheKey);
-      if (!paths) {
-        const rawPaths = getEntityIconPaths(node.type, c.typeIcons);
-        if (rawPaths) {
-          try {
-            paths = rawPaths.map(d => new Path2D(d));
-            iconPathCache.current.set(iconCacheKey, paths);
-          } catch {
-            paths = [];
-          }
-        }
-      }
-      if (paths && paths.length > 0) {
-        const iconSize = Math.max(10, r * 0.9);
-        const iconScale = iconSize / 24; // icons are 24x24 viewBox
-        ctx.save();
-        ctx.translate(node.x - iconSize / 2, node.y - iconSize / 2);
-        ctx.scale(iconScale, iconScale);
-        ctx.lineWidth = 2 / iconScale;
-        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        for (const p of paths) ctx.stroke(p);
-        ctx.restore();
-      }
+    // ---- Icon ----
+    // Sized to the node rather than floored at 10px: an occurrence diamond is
+    // 5px across, and a glyph that ignores that spills over the shape it is
+    // supposed to be inside. Below ICON_MIN_R there is no room for a legible
+    // one at all, so nothing is drawn.
+    const paths = r >= ICON_MIN_R ? c.icons.get(node.type) : null;
+    if (paths) {
+      const iconSize = r * (isOccurrence ? 1.0 : 1.15);
+      const iconScale = iconSize / 24; // icons are 24x24 viewBox
+      ctx.save();
+      ctx.translate(node.x - iconSize / 2, node.y - iconSize / 2);
+      ctx.scale(iconScale, iconScale);
+      ctx.lineWidth = 2 / iconScale;
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (const p of paths) ctx.stroke(p);
+      ctx.restore();
     }
 
     // ---- Label ----

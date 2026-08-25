@@ -4,22 +4,32 @@ import { useCallback, useMemo } from 'react';
 import * as THREE from 'three';
 import { resolveEntityColor, type ColorOverrides } from '@/lib/annotations/colors';
 import { resolveNodeStyle, type NodeSelectionState, type ThemeTokens } from './resolveNodeStyle';
+import type { TypeIcons } from './useTypeIcons';
 import { nodeRadius, type GraphNode, type GraphViewConfig } from '../graphTypes';
 
 // =============================================================================
 // useNodeThreeObject — returns ``nodeThreeObject(node)`` callback for
 // react-force-graph-3d. Each node renders as a THREE.Group containing:
 //   1. Sphere mesh (entity-color material, brightened/dimmed by selection)
-//   2. Label sprite (CanvasTexture-backed Sprite, scaled to face the camera)
+//   2. Icon sprite (the type's glyph, baked to a CanvasTexture)
+//   3. Label sprite (CanvasTexture-backed Sprite, scaled to face the camera)
 //
 // Sphere geometry is shared across all nodes (one geometry, many instances).
 // Materials are cached per (color, opacity) by the caller's material cache.
 // Label sprites use the texture cache for (text, color, halo) reuse.
+//
+// The icon sprite is a billboard, so it must sit *in front of* the sphere or
+// it renders inside it and is never seen. Where "in front" is depends on the
+// camera, so it is recomputed per frame — see ``faceCamera`` below. Depth
+// testing stays on, so a node behind another node hides properly instead of
+// floating its glyph through everything in front of it.
 // =============================================================================
 
 interface ThreeObjectDeps {
   theme: ThemeTokens;
   colorOverrides?: ColorOverrides;
+  /** Resolved glyph per node type — the same object 2D paints from. */
+  icons: TypeIcons;
   selection: NodeSelectionState;
   config: GraphViewConfig;
   degreeMap: Map<string, number>;
@@ -27,6 +37,47 @@ interface ThreeObjectDeps {
   pinnedNodeIds: ReadonlySet<string>;
   materialCache: { getOrCreate: (color: string, opacity: number) => THREE.Material };
   labelCache: { getSprite: (k: { text: string; color: string; haloColor: string }) => { texture: THREE.CanvasTexture; material: THREE.SpriteMaterial; width: number; height: number } };
+  iconCache: { getTexture: (key: string, paths: Path2D[]) => THREE.CanvasTexture | null };
+}
+
+/** Scratch vectors. Shared because `onBeforeRender` is synchronous, called one
+ *  object at a time on the render thread, and never re-entrant — so the
+ *  alternative is two allocations per icon per frame for no gain. */
+const CAM = new THREE.Vector3();
+const NODE = new THREE.Vector3();
+
+/**
+ * Keep a sprite hovering between its node and the camera.
+ *
+ * **Why not `nodePositionUpdate`.** That is where the label opacity cascade
+ * lives, and it looks like the natural home for this too — but 3d-force-graph
+ * only calls it from inside `layoutTick`, which stops the moment the
+ * simulation cools (`3d-force-graph.js`: `if (state.engineRunning) {
+ * layoutTick(); }`). On a settled graph the offset would freeze at whatever
+ * direction the camera happened to be in when the layout finished, and
+ * orbiting would slide every glyph behind its own sphere. Which reads exactly
+ * like the bug this whole change is fixing: icons that are simply not there.
+ *
+ * `onBeforeRender` is driven by three.js instead, so it runs on every frame the
+ * sprite is actually drawn. The world matrix is recomputed by hand afterwards
+ * because the renderer derives `modelViewMatrix` from `matrixWorld` *after*
+ * this hook — without it the glyph would trail the camera by one frame.
+ */
+function faceCamera(sprite: THREE.Sprite, offset: number): void {
+  sprite.onBeforeRender = (_renderer, _scene, camera) => {
+    const parent = sprite.parent;
+    if (!parent) return;
+    camera.getWorldPosition(CAM);
+    parent.getWorldPosition(NODE);
+    CAM.sub(NODE);
+    const d = CAM.length();
+    // Degenerate only when the camera is inside the node, where leaving the
+    // sprite at the centre is the right answer anyway.
+    if (d < 1e-6) return;
+    sprite.position.copy(CAM.multiplyScalar(offset / d));
+    sprite.updateMatrix();
+    sprite.matrixWorld.multiplyMatrices(parent.matrixWorld, sprite.matrix);
+  };
 }
 
 export function useNodeThreeObject(deps: ThreeObjectDeps) {
@@ -52,16 +103,44 @@ export function useNodeThreeObject(deps: ThreeObjectDeps) {
 
     // ---- Sphere ----
     const opacity = deps.config.nodeOpacity3D * style.opacity;
+    const worldRadius = r * 0.4 * style.scale; // 0.4 = world-units-to-radius factor
     const sphereMat = deps.materialCache.getOrCreate(style.fillColor, opacity);
     const sphere = new THREE.Mesh(sphereGeometry, sphereMat);
-    sphere.scale.setScalar(r * 0.4 * style.scale); // 0.4 = world-units-to-radius factor
+    sphere.scale.setScalar(worldRadius);
     group.add(sphere);
+
+    // ---- Icon ----
+    // Same declaration, same glyph, same rule about when it appears as 2D —
+    // the type's icon is a property of the schema, not of a renderer.
+    const iconPaths = deps.icons.get(node.type);
+    const iconName = iconPaths ? deps.icons.nameFor(node.type) : null;
+    if (iconPaths && iconName) {
+      // Keyed by the GLYPH, not the type: re-picking a type's icon leaves the
+      // type unchanged, and a type-keyed cache would keep serving the old bake.
+      const texture = deps.iconCache.getTexture(iconName, iconPaths);
+      if (texture) {
+        // Per-sprite material: opacity follows the node's dim state, which the
+        // shared texture must not carry.
+        const iconMat = new THREE.SpriteMaterial({
+          map: texture,
+          transparent: true,
+          depthWrite: false,
+          opacity: style.opacity,
+        });
+        const icon = new THREE.Sprite(iconMat);
+        icon.scale.setScalar(worldRadius * 1.25);
+        // A hair over the radius: closer and the sphere's silhouette clips the
+        // glyph's edges as the camera moves around it.
+        faceCamera(icon, worldRadius * 1.02);
+        group.add(icon);
+      }
+    }
 
     // ---- Selection ring (camera-facing) ----
     if (style.ringColor && (isHi || deps.selection.connectedNodeIds.has(node.id) || deps.selection.mergeSelectedNodeIds.has(node.id) || deps.selection.groupSelectedIds.has(node.id))) {
       const ringMat = deps.materialCache.getOrCreate(style.ringColor, 1);
       const ring = new THREE.Mesh(ringGeometry, ringMat);
-      ring.scale.setScalar(r * 0.4 * style.scale);
+      ring.scale.setScalar(worldRadius);
       // RingGeometry is flat — orient toward camera each frame is expensive
       // for many rings; instead we let it face +Z and accept that orbit
       // around the back of the node will hide it. Acceptable for v1.

@@ -1,19 +1,52 @@
 'use client';
 
 import React from 'react';
-import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Settings2, RotateCcw, Zap } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
+import {
+  HUD_PROSE, HUD_SURFACE, HudButton, HudChip, HudField, HudOverline,
+  type HudSize,
+} from './chrome';
 import type { GraphViewConfig } from './graphTypes';
 import {
   ANCHOR_HINT, ANCHOR_LABEL, effectiveAnchors,
   type AnchorKind, type AnchorSpec,
 } from './forcegraph/anchors';
+
+/** A `Select` wearing the chrome: hairline, no fill, no shadow. Radix ships
+ *  `border-input bg-transparent shadow-xs`, and the shadow is the part that
+ *  makes it read as a raised control rather than a slot. */
+const SELECT =
+  'h-7 w-full rounded-lg border-hud-line bg-transparent px-2.5 text-[11px] ' +
+  'shadow-none data-[placeholder]:text-hud-dimmer hover:border-hud-line-strong ' +
+  'focus:ring-0 focus-visible:ring-0';
+
+/** A switched setting: name on the left, control on the right, optional line
+ *  of prose underneath. The popover had four spellings of this — some with
+ *  `Label`, some indented with `pl-2`, one with the hint above the switch and
+ *  one with it below. */
+function Row({
+  label, hint, children,
+}: { label: React.ReactNode; hint?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="min-w-0">
+        <span className="block text-[11px] text-hud-fg">{label}</span>
+        {hint && (
+          <span className={cn('mt-0.5 block text-hud-dimmer', HUD_PROSE, 'text-[10px]')}>
+            {hint}
+          </span>
+        )}
+      </span>
+      <span className="shrink-0 pt-0.5">{children}</span>
+    </div>
+  );
+}
 
 interface GraphSettingsPopoverProps {
   config: GraphViewConfig;
@@ -26,6 +59,9 @@ interface GraphSettingsPopoverProps {
   /** When provided, surfaces a "Re-run layout" button at the top of the
    * popover. Wires to ``ForceGraphHandle.reheatSimulation()``. */
   onReheatSimulation?: () => void;
+  /** Set by `HudGroup` when this trigger is one position in a run. */
+  inGroup?: boolean;
+  size?: HudSize;
 }
 
 export function GraphSettingsPopover({
@@ -35,6 +71,8 @@ export function GraphSettingsPopover({
   availableEdgeFields = [],
   edgeFieldDataRange = null,
   onReheatSimulation,
+  inGroup,
+  size,
 }: GraphSettingsPopoverProps) {
   // `effectiveAnchors` folds the legacy `clusterByType` boolean in, so a
   // stored config lights up the right button without a migration step.
@@ -55,139 +93,99 @@ export function GraphSettingsPopover({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="h-6 text-[11px] px-1.5">
-          <Settings2 className="h-3 w-3 mr-1" />
-          Settings
-        </Button>
+        <HudButton icon={Settings2} inGroup={inGroup} size={size} title="Graph settings" />
       </PopoverTrigger>
-      <PopoverContent className="w-72 max-h-[70vh] overflow-y-auto p-3" align="end">
+      <PopoverContent
+        className={cn(HUD_SURFACE, 'w-72 max-h-[70vh] overflow-y-auto p-0')}
+        align="end"
+      >
         <TooltipProvider>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="font-semibold text-xs">Graph Settings</h4>
-            <div className="flex items-center gap-1">
-              {onReheatSimulation && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onReheatSimulation}
-                  className="h-6 text-[10px] px-2"
-                  title="Re-run force layout"
-                >
-                  <Zap className="h-2.5 w-2.5 mr-1" />
-                  Re-run
-                </Button>
-              )}
-              {defaultConfig && (
-                <Button variant="ghost" size="sm" onClick={handleReset} className="h-6 text-[10px] px-2">
-                  <RotateCcw className="h-2.5 w-2.5 mr-1" />
-                  Reset
-                </Button>
-              )}
-            </div>
-          </div>
+        <div className="flex items-center gap-1 border-b border-hud-line px-3 py-2">
+          <span className="mr-auto text-[11px] font-medium text-hud-fg">Settings</span>
+          {onReheatSimulation && (
+            <HudButton size="sm" icon={Zap} onClick={onReheatSimulation}
+                       title="Re-run force layout">
+              Re-run
+            </HudButton>
+          )}
+          {defaultConfig && (
+            <HudButton size="sm" icon={RotateCcw} onClick={handleReset} title="Reset to defaults" />
+          )}
+        </div>
 
+        <div className="space-y-4 p-3">
           {config.viewMode === '3d' && (
-            <div className="text-[10px] text-muted-foreground bg-muted/40 rounded px-2 py-1.5 leading-relaxed">
-              <span className="font-medium">3D mode:</span> drag to orbit, scroll to dolly, right-drag to pan. Marquee select (Alt+drag) is 2D-only — use shift+click to multi-select.
-            </div>
+            <p className={cn(HUD_PROSE, 'rounded-lg border border-hud-line px-2.5 py-1.5 text-hud-dim')}>
+              <span className="text-hud-fg">3D:</span> drag to orbit, scroll to dolly,
+              right-drag to pan. Marquee select (Alt+drag) is 2D-only — use shift+click
+              to multi-select.
+            </p>
           )}
 
           {/* Interaction */}
-          <div className="space-y-2">
-            <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Interaction</div>
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="zoom-on-click" className="text-xs">Zoom on Click</Label>
+          <section className="space-y-2">
+            <HudOverline>Interaction</HudOverline>
+            <Row label="Zoom on click">
               <Switch
-                id="zoom-on-click"
                 checked={config.zoomOnNodeClick}
                 onCheckedChange={(checked) => updateConfig({ zoomOnNodeClick: checked })}
               />
-            </div>
-
-            <div className="space-y-0.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Zoom Scale</Label>
-                <span className="text-[10px] text-muted-foreground">{config.clickZoomScale.toFixed(1)}x</span>
-              </div>
+            </Row>
+            <HudField label="Zoom scale" value={`${config.clickZoomScale.toFixed(1)}×`}>
               <Slider
                 min={1.0} max={3.0} step={0.1}
                 value={[config.clickZoomScale]}
                 onValueChange={([v]) => updateConfig({ clickZoomScale: v })}
                 disabled={!config.zoomOnNodeClick}
               />
-            </div>
-
-            <div className="space-y-0.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Transition</Label>
-                <span className="text-[10px] text-muted-foreground">{config.zoomTransitionMs}ms</span>
-              </div>
+            </HudField>
+            <HudField label="Transition" value={`${config.zoomTransitionMs}ms`}>
               <Slider
                 min={0} max={1000} step={50}
                 value={[config.zoomTransitionMs]}
                 onValueChange={([v]) => updateConfig({ zoomTransitionMs: v })}
               />
-            </div>
-          </div>
+            </HudField>
+          </section>
 
           {/* Layout */}
-          <div className="space-y-2">
-            <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Layout</div>
-
-            <div className="space-y-0.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Charge</Label>
-                <span className="text-[10px] text-muted-foreground">{config.chargeStrength}</span>
-              </div>
+          <section className="space-y-2">
+            <HudOverline>Layout</HudOverline>
+            <HudField label="Charge" value={config.chargeStrength}>
               <Slider
                 min={-1000} max={0} step={50}
                 value={[config.chargeStrength]}
                 onValueChange={([v]) => updateConfig({ chargeStrength: v })}
               />
-            </div>
-
-            <div className="space-y-0.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Link Distance</Label>
-                <span className="text-[10px] text-muted-foreground">{config.linkDistance}</span>
-              </div>
+            </HudField>
+            <HudField label="Link distance" value={config.linkDistance}>
               <Slider
                 min={50} max={400} step={10}
                 value={[config.linkDistance]}
                 onValueChange={([v]) => updateConfig({ linkDistance: v })}
               />
-            </div>
-
-            <div className="space-y-0.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Warmup</Label>
-                <span className="text-[10px] text-muted-foreground">{config.warmupTicks}</span>
-              </div>
+            </HudField>
+            <HudField label="Warmup" value={config.warmupTicks}>
               <Slider
                 min={0} max={300} step={10}
                 value={[config.warmupTicks]}
                 onValueChange={([v]) => updateConfig({ warmupTicks: v })}
               />
-            </div>
+            </HudField>
 
             {/* Layout anchors. Clustering, geography and time are one
                 primitive (see forcegraph/anchors.ts) — so they are one control
                 rather than three unrelated toggles. Anchors compose: geo pins
                 the verifiable positions while type still clusters the rest. */}
-            <div className="space-y-1">
-              <Label className="text-xs">Anchor layout on</Label>
+            <HudField label="Anchor on">
               <div className="flex flex-wrap gap-1">
                 {(['type', 'field', 'geo', 'time'] as AnchorKind[]).map((kind) => {
                   const active = anchors.some(a => a.kind === kind);
                   return (
                     <Tooltip key={kind}>
                       <TooltipTrigger asChild>
-                        <Button
-                          variant={active ? 'secondary' : 'outline'}
-                          size="sm"
-                          className="h-6 px-2 text-[10px]"
+                        <HudChip
+                          active={active}
                           onClick={() => updateConfig({
                             anchors: active
                               ? anchors.filter(a => a.kind !== kind)
@@ -200,7 +198,7 @@ export function GraphSettingsPopover({
                           })}
                         >
                           {ANCHOR_LABEL[kind]}
-                        </Button>
+                        </HudChip>
                       </TooltipTrigger>
                       <TooltipContent className="max-w-[16rem] text-xs">
                         {ANCHOR_HINT[kind]}
@@ -209,125 +207,96 @@ export function GraphSettingsPopover({
                   );
                 })}
               </div>
-              {anchors.length === 0 && (
-                <p className="text-[10px] leading-tight text-muted-foreground">
-                  Pure force layout. Anchors are a lens — switch one on when that
-                  axis is load-bearing in the data.
-                </p>
-              )}
-              {anchors.some(a => a.kind !== 'geo') && (
-                <div className="space-y-0.5 pt-0.5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs">Anchor strength</Label>
-                    <span className="text-[10px] text-muted-foreground">
-                      {anchorStrength.toFixed(1)}
-                    </span>
-                  </div>
-                  <Slider
-                    min={0.1} max={1.0} step={0.1}
-                    value={[anchorStrength]}
-                    onValueChange={([v]) => updateConfig({
-                      anchors: anchors.map(a =>
-                        a.kind === 'geo' ? a : { ...a, strength: v }),
-                      clusterStrength: v,
-                    })}
-                  />
-                </div>
-              )}
-              {anchors.some(a => a.kind === 'geo') && (
-                <p className="text-[10px] leading-tight text-muted-foreground">
-                  Geocoded nodes are pinned to real coordinates; everything else
-                  settles around them.
-                </p>
-              )}
-            </div>
-          </div>
+            </HudField>
+            {anchors.length === 0 && (
+              <p className={cn(HUD_PROSE, 'text-hud-dimmer')}>
+                Pure force layout. Anchors are a lens — switch one on when that
+                axis is load-bearing in the data.
+              </p>
+            )}
+            {anchors.some(a => a.kind !== 'geo') && (
+              <HudField label="Anchor strength" value={anchorStrength.toFixed(1)}>
+                <Slider
+                  min={0.1} max={1.0} step={0.1}
+                  value={[anchorStrength]}
+                  onValueChange={([v]) => updateConfig({
+                    anchors: anchors.map(a =>
+                      a.kind === 'geo' ? a : { ...a, strength: v }),
+                    clusterStrength: v,
+                  })}
+                />
+              </HudField>
+            )}
+            {anchors.some(a => a.kind === 'geo') && (
+              <p className={cn(HUD_PROSE, 'text-hud-dimmer')}>
+                Geocoded nodes are pinned to real coordinates; everything else
+                settles around them.
+              </p>
+            )}
+          </section>
 
           {/* Nodes */}
-          <div className="space-y-2">
-            <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Nodes</div>
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="show-node-labels" className="text-xs">Labels</Label>
+          <section className="space-y-2">
+            <HudOverline>Nodes</HudOverline>
+            <Row label="Labels">
               <Switch
-                id="show-node-labels"
                 checked={config.showNodeLabels}
                 onCheckedChange={(checked) => updateConfig({ showNodeLabels: checked })}
               />
-            </div>
-
-            <div className="flex items-center justify-between pl-2">
-              <Label htmlFor="show-all-labels" className="text-[11px] text-muted-foreground">
-                Show all (not just top 10)
-              </Label>
+            </Row>
+            <Row label="Show all" hint="Not just the top 10.">
               <Switch
-                id="show-all-labels"
                 checked={config.showAllLabels}
                 disabled={!config.showNodeLabels}
                 onCheckedChange={(checked) => updateConfig({ showAllLabels: checked })}
               />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="show-node-icons" className="text-xs">Icons</Label>
+            </Row>
+            {/* Only the DEFAULTS. An icon the schema declares always paints —
+                it is part of what the schema says a type is, not a view
+                preference this switch gets to overrule. */}
+            <Row label="Default icons"
+                 hint="Glyphs for types the schema didn't style. Declared ones always show.">
               <Switch
-                id="show-node-icons"
                 checked={config.showNodeIcons}
                 onCheckedChange={(checked) => updateConfig({ showNodeIcons: checked })}
               />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="show-node-props" className="text-xs">Field Values</Label>
+            </Row>
+            <Row label="Field values">
               <Switch
-                id="show-node-props"
                 checked={config.showNodeProperties}
                 onCheckedChange={(checked) => updateConfig({ showNodeProperties: checked })}
               />
-            </div>
-
-            <div className="space-y-0.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Label Size</Label>
-                <span className="text-[10px] text-muted-foreground">{config.labelFontSize}px</span>
-              </div>
+            </Row>
+            <HudField label="Label size" value={`${config.labelFontSize}px`}>
               <Slider
                 min={8} max={20} step={1}
                 value={[config.labelFontSize]}
                 onValueChange={([v]) => updateConfig({ labelFontSize: v })}
               />
-            </div>
-          </div>
+            </HudField>
+          </section>
 
           {/* Edges */}
-          <div className="space-y-2">
-            <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Edges</div>
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="show-edge-labels" className="text-xs">Labels</Label>
+          <section className="space-y-2">
+            <HudOverline>Edges</HudOverline>
+            <Row label="Labels">
               <Switch
-                id="show-edge-labels"
                 checked={config.showEdgeLabels}
                 onCheckedChange={(checked) => updateConfig({ showEdgeLabels: checked })}
               />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <Label htmlFor="show-edge-arrows" className="text-xs">Arrows</Label>
+            </Row>
+            <Row label="Arrows">
               <Switch
-                id="show-edge-arrows"
                 checked={config.showEdgeArrows}
                 onCheckedChange={(checked) => updateConfig({ showEdgeArrows: checked })}
               />
-            </div>
-
-            <div className="space-y-0.5">
-              <Label className="text-xs">Width Field</Label>
+            </Row>
+            <HudField label="Width field">
               <Select
                 value={config.edgeWidthField}
                 onValueChange={(v) => updateConfig({ edgeWidthField: v })}
               >
-                <SelectTrigger className="h-7 text-xs">
+                <SelectTrigger className={SELECT}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -342,7 +311,7 @@ export function GraphSettingsPopover({
                   }
                 </SelectContent>
               </Select>
-            </div>
+            </HudField>
 
             {edgeFieldDataRange && config.edgeWidthField !== 'none' && (() => {
               const { min: dMin, max: dMax } = edgeFieldDataRange;
@@ -354,88 +323,71 @@ export function GraphSettingsPopover({
               const curLower = config.edgeScaleLower ?? dMin;
               const curUpper = config.edgeScaleUpper ?? dMax;
               return (<>
-                <div className="space-y-0.5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs">Scale Lower</Label>
-                    <span className="text-[10px] text-muted-foreground">
-                      {curLower === dMin ? `${dMin} (auto)` : curLower}
-                    </span>
-                  </div>
+                <HudField
+                  label="Scale lower"
+                  value={curLower === dMin ? `${dMin} auto` : curLower}
+                >
                   <Slider
                     min={sliderMin} max={sliderMax} step={step}
                     value={[curLower]}
                     onValueChange={([v]) => updateConfig({ edgeScaleLower: v <= dMin ? null : v })}
                   />
-                </div>
-                <div className="space-y-0.5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-xs">Scale Upper</Label>
-                    <span className="text-[10px] text-muted-foreground">
-                      {curUpper === dMax ? `${dMax} (auto)` : curUpper}
-                    </span>
-                  </div>
+                </HudField>
+                <HudField
+                  label="Scale upper"
+                  value={curUpper === dMax ? `${dMax} auto` : curUpper}
+                >
                   <Slider
                     min={sliderMin} max={sliderMax} step={step}
                     value={[curUpper]}
                     onValueChange={([v]) => updateConfig({ edgeScaleUpper: v >= dMax ? null : v })}
                   />
-                </div>
+                </HudField>
               </>);
             })()}
 
-            <div className="space-y-0.5">
-              <Label className="text-xs">Color</Label>
+            <HudField label="Colour">
               <Select
                 value={config.edgeColorMode}
                 onValueChange={(v) => updateConfig({ edgeColorMode: v as GraphViewConfig['edgeColorMode'] })}
               >
-                <SelectTrigger className="h-7 text-xs">
+                <SelectTrigger className={SELECT}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="uniform">Uniform</SelectItem>
-                  <SelectItem value="predicate">By Predicate</SelectItem>
+                  <SelectItem value="predicate">By predicate</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-          </div>
+            </HudField>
+          </section>
 
           {/* Performance — affects render perf at scale, not visible appearance */}
-          <div className="space-y-2">
-            <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Performance</div>
-
-            <div className="space-y-0.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Cooldown Ticks</Label>
-                <span className="text-[10px] text-muted-foreground">{config.cooldownTicks}</span>
-              </div>
+          <section className="space-y-2">
+            <HudOverline>Performance</HudOverline>
+            <HudField label="Cooldown ticks" value={config.cooldownTicks}>
               <Slider
                 min={30} max={300} step={10}
                 value={[config.cooldownTicks]}
                 onValueChange={([v]) => updateConfig({ cooldownTicks: v })}
               />
-            </div>
-
-            <div className="space-y-0.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Label Min Zoom</Label>
-                <span className="text-[10px] text-muted-foreground">{config.labelMinScale.toFixed(1)}x</span>
-              </div>
+            </HudField>
+            <HudField label="Label min zoom" value={`${config.labelMinScale.toFixed(1)}×`}>
               <Slider
                 min={0.1} max={1.0} step={0.1}
                 value={[config.labelMinScale]}
                 onValueChange={([v]) => updateConfig({ labelMinScale: v })}
               />
-              <div className="text-[10px] text-muted-foreground">Hides labels below this zoom level (selected stay visible).</div>
-            </div>
-
-            <div className="space-y-0.5">
-              <Label className="text-xs">Force Engine</Label>
+            </HudField>
+            <p className={cn(HUD_PROSE, 'text-hud-dimmer')}>
+              Hides labels below this zoom level. The selected node keeps its own.
+            </p>
+            <HudField label="Force engine">
               <Select
                 value={config.forceEngine}
                 onValueChange={(v) => updateConfig({ forceEngine: v as GraphViewConfig['forceEngine'] })}
               >
-                <SelectTrigger className="h-7 text-xs">
+                <SelectTrigger className={SELECT}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -443,64 +395,47 @@ export function GraphSettingsPopover({
                   <SelectItem value="ngraph">ngraph (faster at scale)</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-          </div>
+            </HudField>
+          </section>
 
           {/* 3D — only visible in 3D mode */}
           {config.viewMode === '3d' && (
-            <div className="space-y-2">
-              <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">3D</div>
-
-              <div className="space-y-0.5">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs">Sphere Quality</Label>
-                  <span className="text-[10px] text-muted-foreground">{config.sphereWidthSegments}</span>
-                </div>
+            <section className="space-y-2">
+              <HudOverline>3D</HudOverline>
+              <HudField label="Sphere quality" value={config.sphereWidthSegments}>
                 <Slider
                   min={6} max={32} step={2}
                   value={[config.sphereWidthSegments]}
                   onValueChange={([v]) => updateConfig({ sphereWidthSegments: v })}
                 />
-              </div>
-
-              <div className="space-y-0.5">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs">Node Opacity</Label>
-                  <span className="text-[10px] text-muted-foreground">{config.nodeOpacity3D.toFixed(2)}</span>
-                </div>
+              </HudField>
+              <HudField label="Node opacity" value={config.nodeOpacity3D.toFixed(2)}>
                 <Slider
                   min={0.1} max={1.0} step={0.05}
                   value={[config.nodeOpacity3D]}
                   onValueChange={([v]) => updateConfig({ nodeOpacity3D: v })}
                 />
-              </div>
-
-              <div className="space-y-0.5">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs">Link Opacity</Label>
-                  <span className="text-[10px] text-muted-foreground">{config.linkOpacity3D.toFixed(2)}</span>
-                </div>
+              </HudField>
+              <HudField label="Link opacity" value={config.linkOpacity3D.toFixed(2)}>
                 <Slider
                   min={0.1} max={1.0} step={0.05}
                   value={[config.linkOpacity3D]}
                   onValueChange={([v]) => updateConfig({ linkOpacity3D: v })}
                 />
-              </div>
-            </div>
+              </HudField>
+            </section>
           )}
 
           {/* General */}
-          <div className="space-y-2">
-            <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">General</div>
-            <div className="flex items-center justify-between">
-              <Label htmlFor="auto-fit" className="text-xs">Auto Fit on Load</Label>
+          <section className="space-y-2">
+            <HudOverline>General</HudOverline>
+            <Row label="Auto fit on load">
               <Switch
-                id="auto-fit"
                 checked={config.autoFitOnLoad}
                 onCheckedChange={(checked) => updateConfig({ autoFitOnLoad: checked })}
               />
-            </div>
-          </div>
+            </Row>
+          </section>
         </div>
         </TooltipProvider>
       </PopoverContent>

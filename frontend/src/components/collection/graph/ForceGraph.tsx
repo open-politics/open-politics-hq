@@ -28,6 +28,9 @@ import {
   type SubNetworkColor,
 } from './graphTypes';
 import { useThemeReads } from './forcegraph/useThemeReads';
+import { useClusterPaint } from './forcegraph/useClusterPaint';
+import { treatmentFor } from './forcegraph/edgeKinds';
+import { collisionRadiusFor } from './forcegraph/useForcesEffect';
 import { useGeoPaint } from './forcegraph/useGeoPaint';
 import { useForcesEffect, applyForces } from './forcegraph/useForcesEffect';
 import { useNodePainter2D } from './forcegraph/useNodePainter2D';
@@ -36,6 +39,8 @@ import { useMarqueeSelection } from './forcegraph/useMarqueeSelection';
 import { useGroupDrag } from './forcegraph/useGroupDrag';
 import { useMaterialCache } from './forcegraph/useMaterialCache';
 import { useLabelTextureCache } from './forcegraph/useLabelTextureCache';
+import { useIconTextureCache } from './forcegraph/useIconTextureCache';
+import { useTypeIcons } from './forcegraph/useTypeIcons';
 import { useNodeThreeObject } from './forcegraph/useNodeThreeObject';
 import { useLinkThreeObject } from './forcegraph/useLinkThreeObject';
 import { useNodePositionUpdate3D } from './forcegraph/useNodePositionUpdate3D';
@@ -94,6 +99,11 @@ export interface ForceGraphProps {
   /** Scrubber position, so interval-scoped place anchors resolve to where a
    *  node actually was at that moment. */
   timeCursor?: string | null;
+  /** The panel's committed query. The canvas does not parse it — it hands it
+   *  to `effectiveAnchors`, which is where a layout binding written in the bar
+   *  becomes a force. This is the seam FAULTS F1 named: without it `CLUSTER:`
+   *  reached no renderer and writing it changed nothing. */
+  query?: string;
   width?: number;
   height?: number;
   highlightedNodeId?: string | null;
@@ -275,6 +285,7 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
     nodes: rawNodes,
     edges: rawEdges,
     timeCursor = null,
+    query,
     width: propWidth = 800,
     height: propHeight = 600,
     highlightedNodeId = null,
@@ -437,7 +448,7 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
   }, []);
 
   // ---- Force config wiring ----
-  useForcesEffect(activeRef, nodes, edges, config, viewMode, timeCursor);
+  useForcesEffect(activeRef, nodes, edges, config, viewMode, timeCursor, query);
 
   // First-tick force-set + reheat. The dynamic-imported lib component
   // mounts AFTER the parent's first useEffect runs, so ``ref.current`` is
@@ -461,7 +472,8 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
       // First tick — apply our forces NOW, before the simulation cools.
       // Idempotent re: useForcesEffect (which also calls applyForces);
       // last-writer-wins semantics on d3-force's setters.
-      applyForces(activeRef.current, nodesRef.current, config, viewMode, timeCursor);
+      applyForces(activeRef.current, nodesRef.current, edgesRef.current,
+                  config, viewMode, timeCursor, query);
     } else if (tickedRef.current.ticks === 2) {
       // Reheat on tick 2 so the force values written above drive the
       // remaining cooldown ticks. Safe: state.layout is definitely set by
@@ -607,11 +619,26 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
     return null;
   }, [activeSubNetworks]);
 
+  // ---- Node glyphs ----
+  // Resolved once for both renderers. ``showNodeIcons`` governs only whether
+  // types nobody styled get the palette's default glyph — an icon the schema
+  // author declared is part of what the schema says, and painting it is not a
+  // view preference the toggle gets to overrule.
+  const presentNodeTypes = useMemo(
+    () => [...new Set(nodes.map(n => n.type).filter(Boolean))],
+    [nodes],
+  );
+  const icons = useTypeIcons({
+    nodeTypes: presentNodeTypes,
+    typeIcons,
+    includeDefaults: config.showNodeIcons,
+  });
+
   // ---- 2D paint callbacks ----
   const paintNode2D = useNodePainter2D({
     theme,
     colorOverrides,
-    typeIcons,
+    icons,
     selection,
     hoveredNodeId,
     config,
@@ -633,15 +660,18 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
   // ---- 3D node object builder ----
   const materialCache = useMaterialCache();
   const labelCache = useLabelTextureCache(theme);
+  const iconCache = useIconTextureCache();
   const buildNodeThreeObject = useNodeThreeObject({
     theme,
     colorOverrides,
+    icons,
     selection,
     config,
     degreeMap,
     pinnedNodeIds,
     materialCache,
     labelCache,
+    iconCache,
   });
 
   // 3D node label visibility — anchors always show, the rest fade by camera
@@ -678,6 +708,10 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
   // ---- Group-drag handlers ----
   const nodesRef = useRef(nodes);
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+  // Read by the first-tick `applyForces` above, which needs the edge set to
+  // compute link strength from attestation rather than from endpoint degree.
+  const edgesRef = useRef(edges);
+  useEffect(() => { edgesRef.current = edges; }, [edges]);
   const groupSelectedSet = selection.groupSelectedIds;
   const { onNodeDragStart, onNodeDrag, onNodeDragEnd } = useGroupDrag({
     groupSelectedIds: groupSelectedSet,
@@ -859,7 +893,10 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
       return baseColor;
     }
 
-    let alpha = anyActive ? 0.2 : 1;
+    // **Four kinds, four weights.** An act's cast is tissue and a containment
+    // is a membrane; drawing either at the weight of a relation is most of why
+    // the canvas read as noise. `FAULTS` F2.
+    let alpha = (anyActive ? 0.2 : 1) * treatmentFor(e).alpha;
 
     const k = zoomRef.current;
     if (k < 1) {
@@ -883,7 +920,7 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
     // enough contrast there, thickening competes with the amber lens.
     const sn = subNetForEdge(e.id);
     if (sn?.color === 'amber') return base * 2.5 + 1;
-    return base;
+    return base * treatmentFor(e).width;
   }, [edgeWidthFn, subNetForEdge]);
 
   // Epistemic stroke — a denial must not paint like an assertion. The rule is
@@ -895,6 +932,12 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
   // trajectory arcs, divergence ghosts. Undefined when the map is off, so the
   // lib skips the hook entirely and the geometry is never even imported.
   const paintGeo = useGeoPaint({ nodes, config, theme, timeCursor });
+  // The cells a `CLUSTER:` binding produced. Spatial separation without labels
+  // is a rearrangement, not an answer — the reader sees four piles and has to
+  // hover a node in each to learn what they are.
+  const paintClusters = useClusterPaint({
+    nodes, config, query, nodeRadius: collisionRadiusFor(nodes, config),
+  });
 
   const linkLineDash = useCallback(
     (link: any) => edgeEpistemics(link as GraphEdge).dash,
@@ -936,7 +979,11 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
   }, [edges]);
 
   const linkCurvature = useCallback((link: any) => {
-    const curv = curvatureByEdgeId.get((link as GraphEdge).id) ?? 0;
+    const e = link as GraphEdge;
+    // Parallel edges of different kinds must not overlap into one mark: a
+    // `contains` and a `role` between the same pair are two different
+    // statements and drawing them on top of each other loses one.
+    const curv = curvatureByEdgeId.get(e.id) ?? treatmentFor(e).curvature;
     // Stash on link so the custom canvas painter can compute the bezier
     // midpoint (for hovered edge labels and backward-arrow placement).
     (link as any).__curvature = curv;
@@ -945,8 +992,14 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
 
   const linkArrowLength = useCallback((link: any) => {
     const e = link as GraphEdge;
+    // The kind decides FIRST. A sequence is direction and nothing else, so it
+    // gets the biggest head; an act's cast gets none at all — an arrow there
+    // asserts a direction between two entities that the row never claimed, and
+    // containment gets none because B being inside A is not a journey.
+    const t = treatmentFor(e);
+    if (t.arrow === 0) return 0;
     const dir = getArrowDir(e.predicate, predicateArrows, config.showEdgeArrows);
-    return dir === 'forward' || dir === 'both' ? 5 : 0;
+    return dir === 'forward' || dir === 'both' ? t.arrow : 0;
   }, [predicateArrows, config.showEdgeArrows]);
 
   const linkArrowColor = useCallback((link: any) => {
@@ -1303,7 +1356,12 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
           linkCanvasObject={paintLink2D}
           linkCanvasObjectMode={() => 'after'}
           linkLineDash={linkLineDash}
-          onRenderFramePre={paintGeo}
+          onRenderFramePre={(ctx: CanvasRenderingContext2D, scale: number) => {
+            // Clusters under geography: a cell is a soft field and the map is
+            // an outline, so the outline has to survive the wash.
+            paintClusters?.(ctx, scale);
+            paintGeo?.(ctx, scale);
+          }}
           onZoom={handleZoom}
           autoPauseRedraw={false}
           enableZoomInteraction={(e: MouseEvent) => !e.altKey}
@@ -1364,17 +1422,6 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
             onConfigChange={onConfigChange}
             onReheatSimulation={() => activeRef.current?.d3ReheatSimulation?.()}
           />
-          )}
-          {/* The entity-type legend and the top-N strip both used to float at
-              bottom-centre — over the graph, in the space the graph needs. The
-              legend was a duplicate of `GraphFilterPanel`, which every
-              interactive consumer already renders in its toolbar with the same
-              type · colour · count · toggle; the strip is now a toolbar popover
-              (`TopNodesList`). The canvas keeps its middle. */}
-          {viewMode === '3d' && (
-            <div className="absolute top-2 right-18 z-20" style={{ pointerEvents: 'auto' }}>
-              <Controls3DHelp />
-            </div>
           )}
         </>
       )}

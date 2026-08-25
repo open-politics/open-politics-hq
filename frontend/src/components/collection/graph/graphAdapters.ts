@@ -34,6 +34,8 @@ export function viewGraphToGraphData(
     kind: n.kind ?? 'entity',
     nodeType: n.node_type ?? null,
     magnitude: n.magnitude ?? null,
+    size: n.size ?? null,
+    cluster: n.cluster ?? null,
     // Time / space / provenance from the projection bindings. Null unless a
     // projection bound them, so an unconfigured panel is unchanged.
     t0: n.t0 ?? null,
@@ -69,12 +71,14 @@ export function viewGraphToGraphData(
     // falls back to the grouping value. Without these a denial paints like an
     // assertion, which manufactures the opposite claim.
     properties: e.properties ?? {},
+    kind: (e as any).kind ?? 'relation',
     groupValue: e.group_value ?? null,
     t0: e.t0 ?? null,
     t1: e.t1 ?? null,
     a0: e.a0 ?? null,
     a1: e.a1 ?? null,
     sourcePaths: e.source_paths ?? [],
+    annotationIds: e.source_annotation_ids ?? [],
     evidence: e.evidence ?? [],
   }));
 

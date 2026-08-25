@@ -57,6 +57,7 @@ const EDGE = {
   a0: null,
   a1: null,
   source_paths: ['document.observations[*]'],
+  source_annotation_ids: [12, 44],
 };
 
 describe('viewGraphToGraphData', () => {
@@ -115,6 +116,24 @@ describe('viewGraphToGraphData', () => {
     expect(e.evidence).toHaveLength(1);
     expect(e.t0).toBe('2014-03-02');
     expect(e.sourcePaths).toEqual(['document.observations[*]']);
+    expect(e.annotationIds).toEqual([12, 44]);
+  });
+
+  it('carries edge provenance, so document traceability is a lookup', () => {
+    // Edge → document used to be reconstructed by re-matching each edge
+    // against `value.document.triplets` on (subject, predicate, object)
+    // LABEL. That shape exists in exactly one legacy contract, so on any
+    // observation-model run the match found nothing and every per-document
+    // counter in the panel rendered a confident 0 — while the engine had the
+    // annotation ids the whole time.
+    const { edges } = viewGraphToGraphData({ nodes: [], edges: [EDGE as any] });
+    expect(edges[0].annotationIds).toEqual([12, 44]);
+
+    // An older payload without the key maps to empty, never undefined — the
+    // consumers iterate it directly.
+    const { source_annotation_ids, ...legacy } = EDGE;
+    const older = viewGraphToGraphData({ nodes: [], edges: [legacy as any] });
+    expect(older.edges[0].annotationIds).toEqual([]);
   });
 
   it('feeds epistemic painting, so a denial does not read as an assertion', () => {

@@ -48,8 +48,16 @@ export interface EvidenceItem {
   /** From the focused node's perspective: ``out`` = focused→peer (focused is
    *  triplet subject), ``in`` = peer→focused (focused is triplet object). */
   direction: 'out' | 'in';
+  /** The model's account of *why*. Never presented as something the document
+   *  said — that is what ``quote`` is for. */
   reasoning?: string;
+  /** The document's own words. When both are present the quote leads, because
+   *  it is the part that can be checked. */
+  quote?: string | null;
   confidence?: number;
+  /** Stable per-card key — one edge can carry several justifications, so the
+   *  edge id alone is not unique. */
+  key?: string;
   /** Subnet-mode only: full endpoint labels so the card can render
    *  ``subjectLabel → objectLabel`` instead of arrow + peer. ``direction``
    *  loses meaning here. When both are present, the card prefers them. */
@@ -576,7 +584,7 @@ const EvidenceSection: React.FC<{
           const targetNode = nodes.find(n => n.id === targetId);
           return (
             <button
-              key={`${j.edgeId}-${i}`}
+              key={j.key ?? `${j.edgeId}-${i}`}
               type="button"
               onMouseEnter={() => onEdgeHover?.(j.edgeId, j.peerId)}
               onMouseLeave={() => onEdgeHover?.(null, null)}
@@ -613,8 +621,16 @@ const EvidenceSection: React.FC<{
                   </span>
                 )}
               </div>
+              {/* The quote leads and is marked as quotation, because it is the
+                  part a reader can check. Reasoning follows in muted type as
+                  the model's account — the two must never read alike. */}
+              {j.quote && (
+                <p className="text-foreground leading-relaxed mt-1 border-l-2 border-amber-400/70 dark:border-amber-600/70 pl-1.5 italic">
+                  {j.quote.length > 170 ? j.quote.slice(0, 170) + '…' : j.quote}
+                </p>
+              )}
               {j.reasoning && (
-                <p className="text-foreground leading-relaxed mt-1">
+                <p className="text-muted-foreground leading-relaxed mt-1">
                   {j.reasoning.length > 170 ? j.reasoning.slice(0, 170) + '…' : j.reasoning}
                 </p>
               )}

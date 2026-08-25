@@ -55,6 +55,22 @@ export interface GraphNode {
    *  (how often we saw it) on purpose — conflating them makes "mentioned
    *  often" look like "large". Not a calibrated measurement. */
   magnitude?: number | null;
+  /** The resolved `WEIGHT:` binding, `[0, 1]`. Undefined when nothing bound
+   *  it, in which case the renderer keeps its own degree-based default —
+   *  `nodeRadius` is the fallback, never an override. */
+  size?: number | null;
+  /** The resolved `CLUSTER:` binding — **which pile**, not where the pile goes.
+   *
+   *  Resolved server-side because the key may name a declaration the client
+   *  cannot see (a role, a place rung, a section); the geometry is decided in
+   *  `anchors.ts::clusterCells`, because geometry is layout. `null`/undefined
+   *  means this node has no value for the key and stays where the link forces
+   *  put it — "everything else" is not a group.
+   *
+   *  Deliberately not `groupValue`: that slot is whatever `node_group_by` asked
+   *  for and is then overwritten by the convergence profile, so a clustering
+   *  stored there would vanish the moment anyone asked a `converge:` question. */
+  cluster?: string | null;
   frequency?: number;
   sourceAssetCount?: number;
   sourceAssetIds?: number[];
@@ -150,10 +166,22 @@ export interface GraphEdge {
   a1?: string | null;
   /** Which projections contributed to this edge. */
   sourcePaths?: string[];
+  /** Which annotations produced this edge. The provenance nodes already had;
+   *  edge → document traceability reads this and nothing else. */
+  annotationIds?: number[];
   /** Inline justifications from each contributing atom. */
   evidence?: GraphEvidence[];
   /** The `edge_group_by` bucket. Where binding `modality` or `stance` puts the
    *  value, which is what `edgeEpistemics` paints from. */
+  /** What this edge DOES to the picture — `contains` · `follows` · `role` ·
+   *  `relation`. Four kinds, closed (`sections.EDGE_KINDS`), resolved
+   *  server-side because it needs the projection that minted the edge.
+   *
+   *  They used to paint identically, which is the direct cause of "no
+   *  hierarchy, still random nodes everywhere": 35 containment edges drawn as
+   *  adjacency so nothing nested, and 136 role edges — an act's cast — drawn at
+   *  the weight of a finding. `FAULTS` F2. */
+  kind?: 'contains' | 'follows' | 'role' | 'relation' | null;
   groupValue?: string | null;
 }
 
@@ -323,6 +351,28 @@ const STANCE_BY_TERM: Record<string, EdgeStance> = {
   speculates: 'unresolved', qualifies: 'unresolved', alleges: 'unresolved',
   // the record changing under you
   corrects: 'corrective', retracts: 'corrective', supersedes: 'corrective',
+
+  // ── Adjectival forms, which is how a `modality` enum reads ───────────────
+  //
+  // This list was written in the verb voice a transcript uses ("the witness
+  // alleges"), and a schema states the same fact as a state ("modality:
+  // alleged"). Three of the court-records vocabulary's own terms therefore
+  // fell through to the default — including `alleged`, which defaulted to
+  // ASSERTED. An allegation painting as an assertion is the exact failure that
+  // schema exists to prevent, and it would have happened silently.
+  //
+  // Listed rather than stemmed: this vocabulary is deliberate and closed, and
+  // a stemmer would quietly admit words nobody chose.
+  recorded: 'asserted',      // a log or manifest — the document IS the record
+  testified: 'asserted',     // sworn
+  corroborated: 'asserted',  // a second independent source
+  adjudicated: 'asserted',   // a court found it
+  // Secondhand is still a claim, and `source_kind` is where its weight lives —
+  // a different axis from how the claim was made.
+  reported: 'asserted',
+  alleged: 'unresolved',     // asserted in a pleading, untested
+  declined: 'unresolved',    // refused to answer: neither denial nor admission
+  disputed: 'negated',       // contested on the record
 };
 
 const EPISTEMICS: Record<EdgeStance, EdgeEpistemics> = {
@@ -868,4 +918,30 @@ export function buildDegreeMap(edges: GraphEdge[]): Map<string, number> {
 export function nodeRadius(degree: number, isHighlighted: boolean = false): number {
   const base = isHighlighted ? 20 : 12;
   return Math.max(base, Math.min(30, base + degree * 1.5));
+}
+
+/**
+ * Radius for a node, from the resolved `WEIGHT:` binding when there is one.
+ *
+ * **Size is a measure, not a degree count.** Degree is why a hearing with forty
+ * participants swallows the scene while the thin shell company on a five-step
+ * chain — the entire finding in a concealment case — renders as a speck. It is
+ * available and it is deliberately not the default.
+ *
+ * `size` arrives already normalised to `[0, 1]` with its denominator and scale
+ * applied server-side, because those need the whole population: a median or a
+ * rank computed over the client's capped top-N is a different number from the
+ * same query. Here it only becomes pixels.
+ *
+ * Mapped through `sqrt` so that **area**, not radius, is proportional to the
+ * measure — a circle twice the radius reads as four times the quantity, and
+ * every linear-radius chart overstates its largest value by exactly that much.
+ */
+export function nodeRadiusFor(
+  node: GraphNode, degree: number, isHighlighted: boolean = false,
+): number {
+  if (node.size == null) return nodeRadius(degree, isHighlighted);
+  const min = isHighlighted ? 8 : 5;
+  const max = isHighlighted ? 34 : 26;
+  return min + Math.sqrt(Math.max(0, Math.min(1, node.size))) * (max - min);
 }

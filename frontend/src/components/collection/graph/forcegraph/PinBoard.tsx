@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Plus, Trash2, Waypoints, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { GraphNode } from '../graphTypes';
+import type { Pin } from '../panes/pins';
 
 // =============================================================================
 // PinBoard — slim single-row overlay anchored top-left, between view controls
@@ -29,6 +30,10 @@ export interface PinBoardPage {
   id: string;
   label: string;
   pinnedNodeIds: string[];
+  /** Term-pins — see `panes/pins.ts`. Each carries a GQL fragment, so one
+   *  document is one pin however much it resolves to. Optional because the
+   *  two forms coexist while the board migrates. */
+  pins?: Pin[];
 }
 
 export interface PinBoardState {
@@ -47,6 +52,10 @@ interface PinBoardProps {
   onRenamePage: (pageId: string, label: string) => void;
   onDeletePage: (pageId: string) => void;
   onUnpin: (nodeId: string) => void;
+  /** Remove a term-pin (a document, a cluster, a vector) by its id. Separate
+   *  from `onUnpin` because a term-pin is not a node — unpinning "the filing"
+   *  must not try to find a node called that. */
+  onRemovePin?: (pinId: string) => void;
   onClearPage: () => void;
   onPeerClick: (node: GraphNode) => void;
   onToggleLens: () => void;
@@ -54,7 +63,7 @@ interface PinBoardProps {
 
 export const PinBoard: React.FC<PinBoardProps> = ({
   pinBoard, nodes, onSetActivePage, onAddPage, onRenamePage, onDeletePage,
-  onUnpin, onClearPage, onPeerClick, onToggleLens,
+  onUnpin, onRemovePin, onClearPage, onPeerClick, onToggleLens,
 }) => {
   const [renamingPageId, setRenamingPageId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
@@ -64,12 +73,16 @@ export const PinBoard: React.FC<PinBoardProps> = ({
   const activePage = pinBoard.pages.find(p => p.id === pinBoard.activePageId)
     ?? pinBoard.pages[0];
   const pinIds = activePage?.pinnedNodeIds ?? [];
-  const pinnedCount = pinIds.length;
+  // Term-pins — a document, a cluster, an interest. One pin each, whatever
+  // they resolve to: pinning a filing that names eight exhibits is one pin,
+  // not eight, and that is the whole point of a pin carrying a TERM.
+  const termPins = activePage?.pins ?? [];
+  const pinnedCount = pinIds.length + termPins.length;
   const lensAvailable = pinnedCount >= 2;
 
   return (
     <div
-      className="absolute bottom-2 left-2 flex items-center gap-2 bg-background/90 backdrop-blur-sm border rounded-md px-2 py-1 max-w-[60%]"
+      className="absolute bottom-0 left-2 flex items-center gap-2 bg-background/90 backdrop-blur-sm border rounded-xl px-2 py-1 max-w-[60%]"
       style={{ pointerEvents: 'auto' }}
     >
       {/* ===== Tabs ===== */}
@@ -166,7 +179,27 @@ export const PinBoard: React.FC<PinBoardProps> = ({
 
       {/* ===== Slots / pin chips (scrolls horizontally past SLOT_COUNT) ===== */}
       <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide flex-1 min-w-0">
-        {pinIds.length === 0
+        {termPins.map(pin => (
+          <div
+            key={pin.id}
+            className="flex shrink-0 items-center gap-0.5 rounded border border-amber-200 bg-amber-50/95 py-0 pl-1.5 pr-0.5 text-[10px] dark:border-amber-800 dark:bg-amber-950/60"
+            title={`${pin.kind} — ${pin.term}`}
+          >
+            <span className="max-w-[140px] truncate font-medium">{pin.label}</span>
+            {onRemovePin && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive"
+                onClick={() => onRemovePin(pin.id)}
+                title="Remove pin"
+              >
+                <X className="h-2.5 w-2.5" />
+              </Button>
+            )}
+          </div>
+        ))}
+        {pinIds.length === 0 && termPins.length === 0
           ? Array.from({ length: SLOT_COUNT }).map((_, i) => (
               <div
                 key={`empty-${i}`}

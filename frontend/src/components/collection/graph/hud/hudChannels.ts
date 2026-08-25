@@ -177,6 +177,21 @@ export interface HudEvidence {
   aboutLabel: string;
 }
 
+/**
+ * The document's own words out of a justification payload, or null.
+ *
+ * Exported because more than one surface renders a justification and they must
+ * not disagree about what counts as the quote. `reasoning` is deliberately not
+ * folded in here: it is the model's account of *why*, and presenting it as
+ * something the document said is the one mistake this whole rail exists to
+ * avoid.
+ */
+export function quoteOf(raw: any): string | null {
+  const spans = Array.isArray(raw?.text_spans) ? raw.text_spans : [];
+  return spans.map((s: any) => s?.text_snippet ?? s?.text ?? '')
+    .filter(Boolean).join(' … ') || null;
+}
+
 function readInline(
   raw: any,
   aboutId: string,
@@ -185,9 +200,7 @@ function readInline(
   /** The thing being grounded, when it is a node we have. */
   about?: GraphNode,
 ): HudEvidence {
-  const spans = Array.isArray(raw?.text_spans) ? raw.text_spans : [];
-  const quote = spans.map((s: any) => s?.text_snippet ?? s?.text ?? '')
-    .filter(Boolean).join(' … ') || null;
+  const quote = quoteOf(raw);
   // **A justification inherits the epistemics of what it grounds.**
   //
   // The justification payload carries the document's words and the model's

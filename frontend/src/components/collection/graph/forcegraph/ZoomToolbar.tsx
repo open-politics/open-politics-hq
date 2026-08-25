@@ -1,9 +1,9 @@
 'use client';
 
 import React from 'react';
-import { Button } from '@/components/ui/button';
-import { ZoomIn, ZoomOut, Maximize2, RotateCcw, Shuffle, Sparkles, Baseline, Palette } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, RotateCcw, Shuffle, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { HudButton, HudGroup, HudReadout } from '../chrome';
 import { defaultGraphViewConfig, type GraphViewConfig } from '../graphTypes';
 
 // =============================================================================
@@ -135,88 +135,49 @@ export const ZoomToolbar: React.FC<ZoomToolbarProps> = ({
   return (
     <div
       className={cn(
-        'flex flex-row gap-0 overflow-hidden rounded-full border shadow-sm',
-        'bg-background/70 backdrop-blur-sm',
+        'flex items-center gap-1.5',
         placement === 'floating' && 'absolute left-2 top-2 z-20',
         placement === 'inline' && 'shrink-0',
       )}
     >
-      {!hideStepButtons && (
-        <>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => stepZoom(1.3)}
-            className="h-6 w-6 p-0 rounded-none"
-            title="Zoom In"
-          >
-            <ZoomIn className="h-3 w-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => stepZoom(1 / 1.3)}
-            className="h-6 w-6 p-0 rounded-none"
-            title="Zoom Out"
-          >
-            <ZoomOut className="h-3 w-3" />
-          </Button>
-        </>
-      )}
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => handle.current?.zoomToFit?.(400, 50)}
-        className="h-6 w-6 p-0 rounded-none"
-        title="Fit to Content"
-      >
-        <Maximize2 className="h-3 w-3" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => handle.current?.resetView?.(300)}
-        className="h-6 w-6 p-0 rounded-none"
-        title="Reset View"
-      >
-        <RotateCcw className="h-3 w-3" />
-      </Button>
-      {canShowPresets && (
-        <>
-          <Button
-            variant="ghost"
-            size="sm"
+      <HudGroup>
+        {!hideStepButtons && (
+          <HudButton icon={ZoomIn} onClick={() => stepZoom(1.3)} title="Zoom in" />
+        )}
+        {!hideStepButtons && (
+          <HudButton icon={ZoomOut} onClick={() => stepZoom(1 / 1.3)} title="Zoom out" />
+        )}
+        <HudButton
+          icon={Maximize2}
+          onClick={() => handle.current?.zoomToFit?.(400, 50)}
+          title="Fit to content"
+        />
+        <HudButton
+          icon={RotateCcw}
+          onClick={() => handle.current?.resetView?.(300)}
+          title="Reset view"
+        />
+        {canShowPresets && (
+          // Rich detail is a *state*, so it takes the one state channel the
+          // chrome has — filled means on. It used to paint its two glyphs
+          // amber and sit on an amber wash, which spent a meaningful colour
+          // on a preference and made it look like a warning.
+          <HudButton
+            icon={Sparkles}
+            active={richActive}
             onClick={handleRichToggle}
-            className={`h-6 w-auto px-1 flex items-center justify-center gap-0. rounded-none ${richActive ? 'bg-amber-100 dark:bg-amber-900/40' : ''}`}
-            title={richActive ? 'Rich detail: ON (click to revert)' : 'Rich detail: all labels, predicate colors, max quality'}
             aria-pressed={richActive}
-          >
-            <Baseline
-              className="h-3 w-3"
-              fill={richActive ? '#f59e0b' : 'none'}
-              stroke={richActive ? '#d97706' : 'currentColor'}
-            />
-            <Palette
-              className="h-3 w-3"
-              fill={richActive ? '#f59e0b' : 'none'}
-              stroke={richActive ? '#d97706' : 'currentColor'}
-            />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleRandomize}
-            className="h-6 w-6 p-0 rounded-none"
-            title="Randomize layout"
-          >
-            <Shuffle className="h-3 w-3" />
-          </Button>
-        </>
-      )}
+            title={richActive
+              ? 'Rich detail: on — click to revert'
+              : 'Rich detail: all labels, predicate colours, max quality'}
+          />
+        )}
+        {canShowPresets && (
+          <HudButton icon={Shuffle} onClick={handleRandomize} title="Randomise layout" />
+        )}
+      </HudGroup>
       {groupSelectedCount > 0 && (
-        <span className="text-[10px] text-cyan-600 font-medium self-center px-1.5">
-          {groupSelectedCount}
-        </span>
+        <HudReadout className="text-hud-fg">{groupSelectedCount} sel</HudReadout>
       )}
     </div>
   );

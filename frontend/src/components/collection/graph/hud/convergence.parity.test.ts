@@ -18,7 +18,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cosine, distancePenalty, profileOf } from './convergence';
+import { cosine, profileOf } from './convergence';
 import type { GraphNode } from '../graphTypes';
 
 const FIXTURE = resolve(
@@ -28,7 +28,6 @@ const FIXTURE = resolve(
 interface Cases {
   profiles: Array<{ name: string; raw: unknown; profile: Record<string, number> | null }>;
   cosines: Array<{ name: string; a: Record<string, number>; b: Record<string, number>; cosine: number }>;
-  distance_penalties: Array<{ name: string; hops: number | null; penalty: number }>;
 }
 
 const cases: Cases = JSON.parse(readFileSync(FIXTURE, 'utf8'));
@@ -66,10 +65,8 @@ describe('convergence parity — the cosine is the same number', () => {
   }
 });
 
-describe('convergence parity — the distance penalty is the same curve', () => {
-  for (const c of cases.distance_penalties) {
-    test(c.name, () => {
-      expect(distancePenalty(c.hops)).toBeCloseTo(c.penalty, 12);
-    });
-  }
-});
+// The distance penalty used to be the third parity block. It is gone from both
+// implementations: multiplying affinity by distance capped `converge>` at 0.5
+// forever, because sharing an interest puts two actors at exactly two hops.
+// Affinity and contact are two separate tests over the same pair now, so there
+// is no combined number left for the two sides to disagree about.

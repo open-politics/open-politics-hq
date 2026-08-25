@@ -29,10 +29,11 @@
  * switch into when the axis is load-bearing — never a default.
  */
 import type { GraphNode, NodePlace } from '../graphTypes';
+import { POLE_OPPOSES, POLE_SERVES, readPole } from '../hud/convergence';
 
 // ─── Serializable config ────────────────────────────────────────────────────
 
-export type AnchorKind = 'type' | 'field' | 'geo' | 'time';
+export type AnchorKind = 'type' | 'field' | 'geo' | 'time' | 'cluster';
 
 /** A rung of the place ladder — where a coordinate claim came from. */
 export type PlaceRung = 'row' | 'attribute' | 'doc' | 'asset' | 'canon';
@@ -97,6 +98,9 @@ export interface AnchorSpec {
   axis?: 'x' | 'y' | 'z';
   /** `geo` only: per-rung trust. Omitted = `DEFAULT_RUNGS`. */
   rungs?: RungWeights;
+  /** `cluster` only: how much room one node occupies, so a cell can be sized
+   *  from its contents rather than from an arbitrary fraction of the layout. */
+  nodeRadius?: number;
 }
 
 /** Where a node actually sits, and why — the resolved rung, so the UI can say
@@ -254,6 +258,7 @@ export function haversineKm(
 }
 
 export const ANCHOR_LABEL: Record<AnchorKind, string> = {
+  cluster: 'CLUSTER: binding',
   type: 'Entity type',
   field: 'Grouped field',
   geo: 'Geography',
@@ -261,6 +266,8 @@ export const ANCHOR_LABEL: Record<AnchorKind, string> = {
 };
 
 export const ANCHOR_HINT: Record<AnchorKind, string> = {
+  cluster: 'Written in the bar — `CLUSTER:place`. Each group gets a labelled '
+    + 'cell of its own, with the link forces still acting inside it.',
   type: 'Cluster nodes of the same type together.',
   field: 'Cluster by the panel\'s "group nodes by" field.',
   geo: 'Pin geocoded nodes to their real coordinates. Everything else settles around them.',
@@ -281,16 +288,120 @@ export interface ResolvedAnchor {
  *  from link distance so anchoring reads consistently at any graph size. */
 const SPREAD = 6;
 
+/**
+ * The most an anchor may pull, whatever it asks for.
+ *
+ * A **clamp, not a default**. Callers pass their own strength — a cluster
+ * slider is a user control that already reaches geo — and this only stops one
+ * anchor from dominating the simulation outright. The distinction matters:
+ * replacing a passed strength (which the geo branch used to do) makes every
+ * other layout weight unimplementable, because one term is effectively ∞.
+ */
+export const ANCHOR_STRENGTH_CEILING = 1;
+
+/** Geo's default pull. Coordinates are the one frame that is not our opinion,
+ *  so it outranks everything aspatial — but it does NOT pin: see the geo
+ *  branch of `resolveAnchors`. */
+export const GEO_STRENGTH = 1;
+
 /** Positions for a label set, evenly spaced on a circle.
  *
  * Sorted so a label keeps its position across re-renders — an unstable order
  * would make the layout jump every time the node set changed slightly. */
 function labelPositions(labels: string[], radius: number): Map<string, [number, number]> {
-  const sorted = [...new Set(labels)].sort();
+  // A profile key carries a pole (`opacity▲` / `opacity▼`). The two are the two
+  // ends of ONE axis, so they are placed **opposite each other** rather than
+  // sorted into unrelated angles — spreading them alphabetically would put
+  // "serving opacity" and "opposing opacity" wherever the alphabet happened to
+  // land, and an actor pursuing one and an actor frustrating it would read as
+  // neighbours. Positions are laid out per interest; the poles are ±180°.
+  const bases = [...new Set(labels.map(l => readPole(l).label))].sort();
   const out = new Map<string, [number, number]>();
-  sorted.forEach((label, i) => {
-    const angle = (2 * Math.PI * i) / Math.max(1, sorted.length);
-    out.set(label, [Math.cos(angle) * radius, Math.sin(angle) * radius]);
+  const seen = new Set(labels);
+  bases.forEach((base, i) => {
+    const angle = (2 * Math.PI * i) / Math.max(1, bases.length);
+    const put = (key: string, a: number) => {
+      if (seen.has(key)) out.set(key, [Math.cos(a) * radius, Math.sin(a) * radius]);
+    };
+    put(base, angle);                              // no pole — the older form
+    put(`${base}${POLE_SERVES}`, angle);
+    put(`${base}${POLE_OPPOSES}`, angle + Math.PI);
+  });
+  return out;
+}
+
+/** A cluster cell: where the pile sits, and how much room it gets. */
+export interface ClusterCell {
+  label: string;
+  /** Cell centre, in the same units as every other anchor. */
+  at: [number, number];
+  /** Half-extent. Members are pulled here and the local forces do the rest, so
+   *  this is what the label and the boundary are drawn from. */
+  r: number;
+  count: number;
+}
+
+/**
+ * Lay clusters out as a **grid of cells**, not points on a circle.
+ *
+ * This is the one layout decision the survey settled outright: the universal
+ * first move on a dense graph is grouping by an attribute, and every tool that
+ * does it well (Gephi's modularity → colour → ForceAtlas2, Cytoscape's
+ * group-attribute layouts, Bloom's categories) separates the groups *spatially*
+ * rather than only by colour. A colour-only clustering leaves the hairball a
+ * hairball with more information in it.
+ *
+ * A circle of label positions — which is what `type`/`field` anchors use — puts
+ * every group the same distance from every other and leaves the middle a
+ * contested void that fills with whatever belongs to several groups at once.
+ * A grid gives each group an interior, and an interior is what lets the *local*
+ * forces read: inside a cell, link distance means adjacency again.
+ *
+ * Cells are ordered by size, largest first, so the biggest pile lands
+ * top-left where reading starts, and sized by `sqrt(count)` so a group ten
+ * times larger gets about three times the radius — area, not radius, tracks
+ * membership, because area is what the eye compares.
+ */
+export function clusterCells(
+  counts: Map<string, number>,
+  radius: number,
+  /** Collision radius — how much room one node actually occupies. **A cell has
+   *  to be sized from its CONTENTS.** Sizing it as a fraction of an arbitrary
+   *  layout radius produced cells narrower than the piles inside them: 33 nodes
+   *  at a 60px collision radius need a disc of r ≈ √33 × 60 ≈ 345, and the cell
+   *  was 194 — so collision blew every pile out through its own boundary and
+   *  into its neighbours, which reads exactly like no clustering at all. */
+  nodeRadius = 40,
+): Map<string, ClusterCell> {
+  const out = new Map<string, ClusterCell>();
+  const entries = [...counts.entries()].sort(
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
+  );
+  if (!entries.length) return out;
+
+  // Room for `count` discs of `nodeRadius`, packed. √count is the honest
+  // scaling — area tracks membership, which is also what the eye compares.
+  const need = (count: number) => Math.max(nodeRadius, Math.sqrt(count) * nodeRadius);
+  const radii = entries.map(([, c]) => need(c));
+  const cols = Math.max(1, Math.ceil(Math.sqrt(entries.length)));
+  const rows = Math.ceil(entries.length / cols);
+
+  // Pitch from the LARGEST cell plus a gutter, so no pile can reach its
+  // neighbour's centre. Uniform rather than per-column because a ragged grid
+  // puts small piles in the gaps between big ones, and proximity then means
+  // "there was space here" instead of "these are alike".
+  const pitch = Math.max(2 * Math.max(...radii) * 1.35, radius / 3);
+  const w = pitch * cols, h = pitch * rows;
+
+  entries.forEach(([label, count], i) => {
+    const cx = (i % cols) + 0.5;
+    const cy = Math.floor(i / cols) + 0.5;
+    out.set(label, {
+      label,
+      at: [cx * pitch - w / 2, cy * pitch - h / 2],
+      r: need(count),
+      count,
+    });
   });
   return out;
 }
@@ -464,6 +575,28 @@ export function resolveAnchors(
       continue;
     }
 
+    if (spec.kind === 'cluster') {
+      // `node.cluster` is resolved server-side, because the KEY may name a
+      // declaration the client cannot see — a role, a place rung, a section.
+      // The geometry is decided here, because the geometry is layout.
+      const counts = new Map<string, number>();
+      for (const n of nodes) {
+        if (n.cluster) counts.set(n.cluster, (counts.get(n.cluster) ?? 0) + 1);
+      }
+      if (!counts.size) continue;   // don't install a force nothing satisfies
+      const cells = clusterCells(counts, radius, spec.nodeRadius);
+      out.push({
+        // A node with no value for the key returns null and stays where the
+        // link forces put it. "Everything else" is not a group, and drawing it
+        // as one puts a labelled box around the residue.
+        at: (n) => (n.cluster ? cells.get(n.cluster)?.at ?? null : null),
+        strength,
+        pin: false,
+        axes: ['x', 'y'],
+      });
+      continue;
+    }
+
     if (spec.kind === 'geo') {
       const rungs = spec.rungs ?? DEFAULT_RUNGS;
       const resolved = new Map<string, [number, number]>();
@@ -488,10 +621,24 @@ export function resolveAnchors(
           const off = spread.get(n.id);
           return off ? [base[0] + off[0], base[1] + off[1]] : base;
         },
-        // Geography is verifiable, so it is authoritative and immovable by
-        // default. Everything aspatial hangs off it.
-        strength: spec.pin === false ? strength : 1,
-        pin: spec.pin !== false,
+        // **Authoritative is not the same as immovable.**
+        //
+        // Geography is verifiable, so it outranks everything aspatial and gets
+        // the full default strength — coordinates are law and the chain
+        // stretches, not the other way round. But this used to also set
+        // `pin: true` and DISCARD the passed strength, which is infinite geo
+        // strength by another name: a pinned node has fixed coordinates, so a
+        // pinned step cannot bend, cannot lean toward the act before it, and
+        // cannot belong to a chain at all. Every layout weight downstream was
+        // then unimplementable at any number, because one term in the sum was
+        // effectively ∞.
+        //
+        // So pinning is now what the spec asked for and nothing more, and the
+        // ceiling is a CLAMP rather than a replacement — a caller that passes
+        // a lower strength (a cluster slider that already reaches geo) gets
+        // the number it passed.
+        strength: Math.min(spec.strength ?? GEO_STRENGTH, ANCHOR_STRENGTH_CEILING),
+        pin: spec.pin === true,
         axes: ['x', 'y'],
       });
       continue;
@@ -557,17 +704,39 @@ export function anchorTarget(
 }
 
 /**
- * Migrate the legacy `clusterByType` boolean into an anchor list.
+ * What actually decides layout.
  *
- * Kept so a stored panel config keeps laying out the same way. `anchors`
- * winning when present means a user who touches the new control is never
- * fighting the old flag.
+ * **The query wins.** This is the seam FAULTS F1 named: `CLUSTER:` parsed, was
+ * documented, was generated into the MCP description and the ✨ prompt, and
+ * reached no renderer — because this function read only `config.anchors`,
+ * written by the old axis-budget popover, and had never heard of the query
+ * string. Writing `CLUSTER:place` and writing nothing produced identical
+ * pictures.
+ *
+ * Precedence, and it is deliberate: a binding **written in the bar** outranks a
+ * stored config, because the bar is the thing the analyst just typed and a
+ * layout that ignores it in favour of a popover setting from last week is
+ * indistinguishable from a bug. The stored config still applies when the query
+ * says nothing, so a panel nobody has re-queried keeps laying out the same way.
+ *
+ * MVP S7 — *anything reachable by clicking is expressible as a query* — is what
+ * makes that safe: the popover has no power the bar lacks.
  */
 export function effectiveAnchors(config: {
   anchors?: AnchorSpec[];
   clusterByType?: boolean;
   clusterStrength?: number;
-}): AnchorSpec[] {
+}, query?: string): AnchorSpec[] {
+  const fromQuery: AnchorSpec[] = [];
+  if (query && /\bCLUSTER:/i.test(query)) {
+    // **Stronger than a link.** Link strength reaches 0.9 and its rest length
+    // is a fraction of the cell pitch, so at 0.6 any edge crossing two cells
+    // simply dragged both endpoints out of them — "whatever has an edge to
+    // something takes precedence in being near it". The pull has to win, and
+    // the cross-cluster link damping in `useForcesEffect` is the other half.
+    fromQuery.push({ kind: 'cluster', strength: config.clusterStrength ?? 0.95 });
+  }
+  if (fromQuery.length) return fromQuery;
   if (config.anchors?.length) return config.anchors;
   if (config.clusterByType) {
     return [{ kind: 'type', strength: config.clusterStrength ?? 0.3 }];

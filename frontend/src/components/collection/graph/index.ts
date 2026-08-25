@@ -31,4 +31,5 @@ export { ProposalReviewDialog } from './ProposalReviewDialog';
 export { GraphSettingsPopover } from './GraphSettingsPopover';
 export { GraphFilterPanel } from './GraphFilterPanel';
 export { viewGraphToGraphData, curatedDataToGraphData, tripletsArrayToGraphData } from './graphAdapters';
-export { DEFAULT_ENTITY_TYPE_ICONS, getEntityIconPaths } from './entityTypeIcons';
+// Node glyphs live with the colours they pair with, in `lib/annotations/icons`.
+export { DEFAULT_TYPE_ICONS, resolveEntityIcon } from '@/lib/annotations/icons';

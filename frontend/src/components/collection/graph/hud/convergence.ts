@@ -9,14 +9,26 @@
  * both. The question worth asking is whether they converge **disproportionately
  * to their connection** — alignment that graph distance does not explain.
  *
- *     residual = cosine(profile A, profile B) × distancePenalty(hops)
+ * **Two numbers, not one.**
  *
- * One actor-hop apart scores **zero**: you share an act, of course you share
- * its interest. The penalty relaxes as distance grows, so six hops apart and
- * still converging keeps almost the full cosine — and *no path at all* keeps
- * all of it, which is the strongest form of the signal.
+ *     similarity = cosine(profile A, profile B)     how aligned      [-1, 1]
+ *     hops       = actor-steps between them          how connected    null = no path
  *
- * **What it is not.** A high residual is not evidence of coordination. It is
+ * These used to be multiplied into a single `residual`, with a penalty pinned
+ * to 0 at one hop and rising toward 1 with distance. The intent was right and
+ * the arithmetic was not: sharing an interest puts two actors at *exactly two
+ * hops* through the interest node, where the penalty is 0.5 — so the residual
+ * could never exceed 0.5, and `converge>0.6` was empty by construction. It had
+ * been the canonical worked example in three documents.
+ *
+ * The penalty was never a weight. It was a **set difference written as a
+ * multiplication**, and you cannot multiply your way to a set operation. So
+ * callers filter on both, separately: high similarity AND high hops is the
+ * finding; high similarity AND low hops is a description of people already
+ * working together. In the query language that reads
+ * `converge>0.6 contact>2`.
+ *
+ * **What it is not.** A high similarity is not evidence of coordination. It is
  * evidence of alignment without contact, which has at least two explanations:
  * people acting together off the record, and people responding independently
  * to the same incentive. Distinguishing those two is the analytical work, and
@@ -27,12 +39,12 @@ import type { GraphEdge, GraphNode } from '../graphTypes';
 export interface ConvergencePair {
   a: GraphNode;
   b: GraphNode;
-  /** Raw profile overlap, 0–1. */
+  /** Raw profile overlap, `[-1, 1]`. Positive is alignment (including two
+   *  parties united in opposing the same thing); negative is opposition. */
   similarity: number;
-  /** Actor hops between them; `null` when no path exists. */
+  /** Actor hops between them; `null` when no path exists — the strongest form
+   *  of "converging without contact", not a missing value. */
   hops: number | null;
-  /** Similarity discounted by how much their connection already explains. */
-  residual: number;
   /** The interests they share, strongest first — the "on what" of the finding. */
   shared: string[];
 }
@@ -41,18 +53,46 @@ export interface ConvergencePair {
  *  anyway, and beyond a couple of hundred profiles the ranking is noise. */
 const MAX_ACTORS = 200;
 
+/** Pole markers `stream._profile_key` writes into a profile key. */
+export const POLE_SERVES = '▲';    // ▲
+export const POLE_OPPOSES = '▼';   // ▼
+
+export interface Pole {
+  /** The interest itself, with the marker removed — what a person reads. */
+  label: string;
+  /** `null` for a key written before poles existed (the signed single-key
+   *  form), where the direction was in the value's sign instead. */
+  direction: 'serves' | 'opposes' | null;
+}
+
+/**
+ * Split a profile key back into interest and direction.
+ *
+ * Every surface that shows a profile entry goes through this, so the marker
+ * never reaches a label. Rendering `port privatisation▼` to an analyst would
+ * be leaking an encoding, and worse, it reads as part of the interest's name.
+ */
+export function readPole(key: string): Pole {
+  if (key.endsWith(POLE_SERVES)) return { label: key.slice(0, -1), direction: 'serves' };
+  if (key.endsWith(POLE_OPPOSES)) return { label: key.slice(0, -1), direction: 'opposes' };
+  return { label: key, direction: null };
+}
+
 /**
  * A node's interest vector, when it has one.
  *
- * **Negatives are kept.** The profile is signed — an act that OPPOSES an
- * interest subtracts (`stream.OPPOSING_ROLES`) — and filtering to positives
- * broke this pane in two directions at once. Two parties who both oppose X
- * had their profiles emptied and dropped out of the pane entirely, though
- * they agree and score +1 in the bar; and a mixed profile lost its negative
- * half, overstating similarity against anyone sharing only the positive one.
+ * Values are magnitudes; the direction lives in the **key** — `stream._profile_key`
+ * appends a pole marker, so `opacity▲` and `opacity▼` are two dimensions. That
+ * is what stops an actor who both serves and opposes one interest from netting
+ * to zero and disappearing.
  *
- * Zero is still dropped: it means the entry cancelled out, which is no
- * information rather than a weak signal.
+ * **Negatives are still accepted**, never filtered: a profile written by an
+ * older run carries the signed single-key form, and dropping half of it would
+ * silently overstate similarity — the exact drift the parity fixture exists to
+ * catch.
+ *
+ * Zero is dropped. Under the two-sided key that can only mean an entry nobody
+ * contributed to.
  *
  * Reads `profile`, never `groupValue`. That slot holds whatever the panel
  * asked to group by, and this function will cosine any dict it is handed —
@@ -129,18 +169,19 @@ function hopDistances(
   return out;
 }
 
-/** Zero at one hop, rising toward 1 with distance. Unconnected pairs get the
- *  full weight: alignment with no path at all is the strongest form. */
-export function distancePenalty(hops: number | null): number {
-  if (hops == null) return 1;
-  if (hops <= 1) return 0;
-  return 1 - 1 / hops;
-}
-
+/**
+ * Rank pairs by alignment, optionally excluding the ones a short path explains.
+ *
+ * `minContact` is the set difference the old `distancePenalty` was trying to
+ * express by multiplication: pairs closer than this are dropped outright rather
+ * than scaled toward zero, so a real threshold on `minSimilarity` stays
+ * reachable. Unconnected pairs have `hops == null` and always pass — no path at
+ * all is the strongest form of the signal, not a missing one.
+ */
 export function convergencePairs(
   nodes: ReadonlyArray<GraphNode>,
   edges: ReadonlyArray<GraphEdge>,
-  { minResidual = 0.2, maxHops = 6, limit = 25 } = {},
+  { minSimilarity = 0.2, minContact = 0, maxHops = 6, limit = 25 } = {},
 ): ConvergencePair[] {
   const actors = nodes
     .filter(n => n.kind !== 'occurrence' && profileOf(n))
@@ -156,10 +197,10 @@ export function convergencePairs(
       const a = actors[i], b = actors[j];
       const pa = profiles.get(a.id)!, pb = profiles.get(b.id)!;
       const similarity = cosine(pa, pb);
-      if (similarity <= 0) continue;
+      if (similarity < minSimilarity) continue;
       const hops = dists.get(a.id)?.get(b.id) ?? null;
-      const residual = similarity * distancePenalty(hops);
-      if (residual < minResidual) continue;
+      // `null` = no path = maximally uncontacted, so it passes every floor.
+      if (hops != null && hops < minContact) continue;
       // Shared means they take the SAME side, so the signs must agree — an
       // interest one serves and the other opposes is what they disagree
       // about, and listing it under "shared" inverts the finding. Ranked by
@@ -168,10 +209,16 @@ export function convergencePairs(
         .filter(k => k in pb && Math.sign(pa[k]) === Math.sign(pb[k]))
         .sort((x, y) => Math.min(Math.abs(pb[y]), Math.abs(pa[y]))
                       - Math.min(Math.abs(pb[x]), Math.abs(pa[x])));
-      out.push({ a, b, similarity, hops, residual, shared });
+      out.push({ a, b, similarity, hops, shared });
     }
   }
-  return out.sort((x, y) => y.residual - x.residual).slice(0, limit);
+  // Ranked by alignment, then by distance — of two equally aligned pairs the
+  // one nothing connects is the more interesting finding. `null` sorts last
+  // in the comparator's terms by standing in as the largest distance.
+  const far = (h: number | null) => (h == null ? Number.MAX_SAFE_INTEGER : h);
+  return out
+    .sort((x, y) => (y.similarity - x.similarity) || (far(y.hops) - far(x.hops)))
+    .slice(0, limit);
 }
 
 /** Total activity attributable to an interest, for the dossier. */

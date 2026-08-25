@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 import { describe, expect, test } from 'bun:test';
-import { selectItems, selectEvidence, defaultHudConfig } from './hudChannels';
+import { selectItems, selectEvidence, defaultHudConfig, quoteOf } from './hudChannels';
 import type { GraphEdge, GraphNode } from '../graphTypes';
 
 const occ = (id: string, o: Partial<GraphNode> = {}): GraphNode =>
@@ -175,5 +175,27 @@ describe('a justification serves as evidence', () => {
     expect(fromExhibit.stance).toBe('contradicts');
     expect(fromExhibit.locator).toBe('p. 14');
     expect(fromExhibit.aboutLabel).toBe('He never visited the island');
+  });
+});
+
+describe('quoteOf — the document\'s words, and only those', () => {
+  test('joins every span, so a split quote is not silently truncated', () => {
+    expect(quoteOf({
+      text_spans: [{ text_snippet: 'paid EUR 4m' }, { text: 'to the Valletta account' }],
+    })).toBe('paid EUR 4m … to the Valletta account');
+  });
+
+  test('never returns reasoning as a quote', () => {
+    // The one mistake the whole evidence rail exists to avoid: `reasoning` is
+    // the model's account of why. Presenting it as something the document said
+    // manufactures a source. A justification with no span has no quote.
+    expect(quoteOf({ reasoning: 'the filing implies a transfer' })).toBeNull();
+  });
+
+  test('an absent or malformed payload is null, not a crash', () => {
+    expect(quoteOf(undefined)).toBeNull();
+    expect(quoteOf({})).toBeNull();
+    expect(quoteOf({ text_spans: 'not an array' })).toBeNull();
+    expect(quoteOf({ text_spans: [{}, { text_snippet: '' }] })).toBeNull();
   });
 });

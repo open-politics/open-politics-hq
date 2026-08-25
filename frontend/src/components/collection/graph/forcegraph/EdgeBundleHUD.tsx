@@ -32,7 +32,12 @@ export interface EdgeBundlePredicateRow {
 
 export interface EdgeBundleEvidenceItem {
   predicate: string;
+  /** The model's account of *why*. */
   reasoning: string;
+  /** The document's own words, when the justification carried a span. Shown
+   *  above the reasoning and marked as quotation — the two must not read
+   *  alike. */
+  quote?: string | null;
   confidence?: number;
   assetId: number;
   /** ``forward`` = source→target (sentence reads sourceLabel → targetLabel). */
@@ -218,7 +223,16 @@ export const EdgeBundleHUD: React.FC<EdgeBundleHUDProps> = ({
                 >
                   <Quote className="h-3 w-3 text-muted-foreground shrink-0 mt-0.5" />
                   <div className="min-w-0 flex-1">
-                    <div className="text-[11px] leading-snug">{e.reasoning}</div>
+                    {e.quote && (
+                      <div className="text-[11px] leading-snug border-l-2 border-amber-400/70 dark:border-amber-600/70 pl-1.5 italic">
+                        {e.quote}
+                      </div>
+                    )}
+                    {e.reasoning && (
+                      <div className={cn('text-[11px] leading-snug', e.quote && 'text-muted-foreground mt-1')}>
+                        {e.reasoning}
+                      </div>
+                    )}
                     <div className="text-[10px] text-muted-foreground mt-0.5 tabular-nums flex items-center gap-1.5">
                       <span className="truncate">{e.predicate}</span>
                       {e.direction === 'backward' && <span title="reverse direction">←</span>}

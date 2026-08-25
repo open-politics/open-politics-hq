@@ -1,11 +1,10 @@
 'use client';
 
 import React, { useMemo } from 'react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ArrowUpNarrowWide } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { HUD_SURFACE, HudButton, HudMeter, HudReadout } from '../chrome';
 import { resolveEntityColor, type ColorOverrides } from '@/lib/annotations/colors';
 import { buildDegreeMap, type GraphEdge, type GraphNode } from '../graphTypes';
 
@@ -50,32 +49,33 @@ export const TopNodesList: React.FC<TopNodesListProps> = ({
 
   if (topNodes.length === 0) return null;
 
+  // Degree relative to the best-connected node in view. The list was already
+  // sorted, so the *order* was visible and the *distances* were not — a run
+  // of 40, 39, 38 reads the same as 40, 4, 3 in a column of bare numbers.
+  const peak = topNodes[0]?.deg || 1;
+
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className={cn('h-6 gap-1 px-1.5 text-[11px]', className)}
+        <HudButton
+          icon={ArrowUpNarrowWide}
+          count={topNodes.length}
+          className={className}
           title="Best-connected nodes — click one to fly to it"
         >
-          <ArrowUpNarrowWide className="h-3 w-3" />
           Top
-          <Badge variant="secondary" className="h-4 px-1 text-[10px] tabular-nums">
-            {topNodes.length}
-          </Badge>
-        </Button>
+        </HudButton>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-60 p-1">
-        <div className="flex max-h-72 flex-col gap-0.5 overflow-y-auto">
+      <PopoverContent align="start" className={cn(HUD_SURFACE, 'w-64 p-1.5')}>
+        <div className="flex max-h-72 flex-col gap-px overflow-y-auto">
           {topNodes.map(({ node, deg }) => (
             <button
               key={node.id}
               type="button"
               onClick={() => onNodeClick(node)}
               className={cn(
-                'flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-[11px]',
-                'text-left transition-colors hover:bg-muted',
+                'flex w-full items-center gap-2 rounded-md px-2 py-1 text-[11px]',
+                'text-left text-hud-fg transition-colors hover:bg-hud-sunken',
               )}
               title={`${node.label} · ${node.type} · degree ${deg}`}
             >
@@ -84,8 +84,9 @@ export const TopNodesList: React.FC<TopNodesListProps> = ({
                 className="h-2 w-2 shrink-0 rounded-full"
                 style={{ backgroundColor: resolveEntityColor(node.type, colorOverrides) }}
               />
-              <span className="min-w-0 flex-1 truncate font-medium">{node.label}</span>
-              <span className="shrink-0 tabular-nums text-muted-foreground">{deg}</span>
+              <span className="min-w-0 flex-1 truncate">{node.label}</span>
+              <HudMeter value={deg / peak} className="shrink-0" />
+              <HudReadout className="w-5 text-right">{deg}</HudReadout>
             </button>
           ))}
         </div>

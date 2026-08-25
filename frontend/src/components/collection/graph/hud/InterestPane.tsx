@@ -21,7 +21,7 @@ import React, { useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { AlertTriangle, Users } from 'lucide-react';
 import type { GraphEdge, GraphNode } from '../graphTypes';
-import { convergencePairs, interestImpact } from './convergence';
+import { convergencePairs, interestImpact, readPole } from './convergence';
 
 type Tab = 'profile' | 'impact' | 'converge';
 
@@ -35,23 +35,37 @@ interface Props {
 }
 
 function Bars({ entries }: { entries: Array<[string, number]> }) {
-  const max = Math.max(1, ...entries.map(([, v]) => v));
+  const max = Math.max(1, ...entries.map(([, v]) => Math.abs(v)));
   return (
     <ul className="space-y-0.5 px-2.5 py-1.5">
-      {entries.map(([label, v]) => (
-        <li key={label} className="text-[11px]">
-          <div className="flex items-baseline gap-1">
-            <span className="truncate">{label}</span>
-            <span className="ml-auto tabular-nums text-muted-foreground">
-              {v.toLocaleString()}
-            </span>
-          </div>
-          <div className="mt-px h-1 rounded-sm bg-muted">
-            <div className="h-full rounded-sm bg-primary/60"
-                 style={{ width: `${(v / max) * 100}%` }} />
-          </div>
-        </li>
-      ))}
+      {entries.map(([key, v]) => {
+        // The pole is an encoding, not part of the interest's name. It renders
+        // as a direction the bar leans, never as a character in the label —
+        // "port privatisation▼" reads as though the ▼ were something the
+        // document wrote.
+        const { label, direction } = readPole(key);
+        const against = direction === 'opposes' || v < 0;
+        return (
+          <li key={key} className="text-[11px]">
+            <div className="flex items-baseline gap-1">
+              <span className="truncate">{label}</span>
+              {direction && (
+                <span className={cn('shrink-0 text-[9px] uppercase tracking-wide',
+                                    against ? 'text-rose-500' : 'text-emerald-600')}>
+                  {against ? 'opposes' : 'serves'}
+                </span>
+              )}
+              <span className="ml-auto tabular-nums text-muted-foreground">
+                {Math.abs(v).toLocaleString()}
+              </span>
+            </div>
+            <div className="mt-px h-1 rounded-sm bg-muted">
+              <div className={cn('h-full rounded-sm', against ? 'bg-rose-500/60' : 'bg-primary/60')}
+                   style={{ width: `${(Math.abs(v) / max) * 100}%` }} />
+            </div>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -73,7 +87,15 @@ export function InterestPane({
   }, [selected]);
 
   const impact = useMemo(() => interestImpact(nodes, edges), [nodes, edges]);
-  const pairs = useMemo(() => convergencePairs(nodes, edges), [nodes, edges]);
+  // `minContact: 2` is what makes this the *convergence* pane rather than a
+  // similarity ranking: pairs one hop apart share interests by construction,
+  // because the same act produced both profiles. Stated here rather than
+  // folded into the score — the pane's own copy promises "without contact",
+  // and a threshold you can read is one you can argue with.
+  const pairs = useMemo(
+    () => convergencePairs(nodes, edges, { minContact: 2 }),
+    [nodes, edges],
+  );
 
   const TABS: Array<[Tab, string, number]> = [
     ['impact', 'Impact', impact.length],
@@ -169,13 +191,19 @@ export function InterestPane({
                     <span className="text-muted-foreground">·</span>
                     <button type="button" onClick={() => onSelectNode?.(p.b.id)}
                             className="truncate hover:underline">{p.b.label}</button>
+                    {/* Alignment alone. The distance sits on its own line
+                        below rather than being multiplied in — one number
+                        meaning "aligned, discounted by how close they are"
+                        could never exceed 0.5 and hid which half was which. */}
                     <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
-                      {p.residual.toFixed(2)}
+                      {p.similarity.toFixed(2)}
                     </span>
                   </div>
                   <div className="mt-0.5 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
                     <span>{p.hops == null ? 'no path' : `${p.hops} hops`}</span>
-                    <span className="truncate">{p.shared.slice(0, 3).join(', ')}</span>
+                    <span className="truncate">
+                      {p.shared.slice(0, 3).map(k => readPole(k).label).join(', ')}
+                    </span>
                   </div>
                 </li>
               ))}

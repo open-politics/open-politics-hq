@@ -14,10 +14,10 @@
  * answers to "where", not two render options.
  */
 import React, { useState } from 'react';
-import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Check, LayoutPanelLeft } from 'lucide-react';
+import { LayoutPanelLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { HUD_SURFACE, HudButton, HudOption, HudOverline } from '../chrome';
 import type { GraphViewConfig } from '../graphTypes';
 import type { HudConfig } from './hudChannels';
 
@@ -46,24 +46,6 @@ const MAP_MODES: Array<{
   },
 ];
 
-function Row({
-  active, label, hint, onClick,
-}: { active: boolean; label: string; hint: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent"
-    >
-      <Check className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', active ? 'opacity-100' : 'opacity-0')} />
-      <span className="min-w-0">
-        <span className="block text-xs font-medium">{label}</span>
-        <span className="block text-[10px] leading-snug text-muted-foreground">{hint}</span>
-      </span>
-    </button>
-  );
-}
-
 export function RegionToggles({
   viewConfig, onViewConfigChange, hudConfig, onHudConfigChange,
 }: Props) {
@@ -75,56 +57,52 @@ export function RegionToggles({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          className={cn('h-8 w-8 shrink-0', activeCount > 0 && 'text-sky-500')}
+        <HudButton
+          icon={LayoutPanelLeft}
+          active={activeCount > 0}
           title="Panes and map"
-        >
-          <LayoutPanelLeft className="h-3.5 w-3.5" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-[19rem] p-2">
-        <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Map — where
-        </p>
-        {MAP_MODES.map(m => (
-          <Row
-            key={m.value}
-            active={viewConfig.mapMode === m.value}
-            label={m.label}
-            hint={m.hint}
-            onClick={() => onViewConfigChange({ ...viewConfig, mapMode: m.value })}
-          />
-        ))}
-
-        <div className="my-1.5 border-t border-border/60" />
-        <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Bottom band — when × where
-        </p>
-        <Row
-          active={lanesOn}
-          label="Lanes"
-          hint="One row per place (or kind, or cluster), occurrences drawn as bars on the same clock the scrubber runs."
-          onClick={() => onHudConfigChange({
-            ...hudConfig,
-            lanes: { ...hudConfig.lanes, enabled: !lanesOn },
-          })}
         />
-        {lanesOn && (
-          <Row
-            active={hudConfig.lanes.clock === 'activity'}
-            label="Use the second clock"
-            hint="Bars span the period each row is ABOUT rather than when it was recorded. Where the two differ — a deposition describing events fifteen years earlier — the difference is the finding."
+      </PopoverTrigger>
+      <PopoverContent align="end" className={cn(HUD_SURFACE, 'w-[19rem] space-y-3 p-2.5')}>
+        <section className="space-y-0.5">
+          <HudOverline>Map — where</HudOverline>
+          {MAP_MODES.map(m => (
+            <HudOption
+              key={m.value}
+              active={viewConfig.mapMode === m.value}
+              label={m.label}
+              hint={m.hint}
+              onClick={() => onViewConfigChange({ ...viewConfig, mapMode: m.value })}
+            />
+          ))}
+        </section>
+
+        <section className="space-y-0.5">
+          <HudOverline>Bottom band — when × where</HudOverline>
+          <HudOption
+            active={lanesOn}
+            label="Lanes"
+            hint="One row per place (or kind, or cluster), occurrences drawn as bars on the same clock the scrubber runs."
             onClick={() => onHudConfigChange({
               ...hudConfig,
-              lanes: {
-                ...hudConfig.lanes,
-                clock: hudConfig.lanes.clock === 'activity' ? 'time' : 'activity',
-              },
+              lanes: { ...hudConfig.lanes, enabled: !lanesOn },
             })}
           />
-        )}
+          {lanesOn && (
+            <HudOption
+              active={hudConfig.lanes.clock === 'activity'}
+              label="Use the second clock"
+              hint="Bars span the period each row is ABOUT rather than when it was recorded. Where the two differ — a deposition describing events fifteen years earlier — the difference is the finding."
+              onClick={() => onHudConfigChange({
+                ...hudConfig,
+                lanes: {
+                  ...hudConfig.lanes,
+                  clock: hudConfig.lanes.clock === 'activity' ? 'time' : 'activity',
+                },
+              })}
+            />
+          )}
+        </section>
       </PopoverContent>
     </Popover>
   );

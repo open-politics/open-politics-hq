@@ -1,10 +1,10 @@
-export { GraphHUD } from './GraphHUD';
 export { RegionToggles } from './RegionToggles';
 export { HudPane } from './HudPane';
 export { ItemsPane } from './ItemsPane';
 export { EvidencePane } from './EvidencePane';
 export {
   defaultHudConfig,
+  quoteOf,
   selectEvidence,
   selectItems,
   type BarsChannel,

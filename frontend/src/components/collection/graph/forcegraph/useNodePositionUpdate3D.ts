@@ -5,7 +5,14 @@ import * as THREE from 'three';
 import type { GraphViewConfig } from '../graphTypes';
 
 // =============================================================================
-// useNodePositionUpdate3D — per-frame opacity update for 3D node label sprites.
+// useNodePositionUpdate3D — per-tick opacity update for 3D node label sprites.
+//
+// NOTE on "per-tick": 3d-force-graph calls this from inside ``layoutTick``,
+// which only runs while the engine is running. Once the layout cools it stops
+// being called at all, so the camera-distance fade below freezes at whatever
+// the last tick computed. Anything that must track the camera on a *settled*
+// graph cannot live here — the node icon uses ``onBeforeRender`` on its own
+// sprite for exactly that reason (see ``useNodeThreeObject``).
 //
 // Visibility model:
 //   - Anchor (group.userData.isAnchor=true): always opacity 1 (top-N + select)
