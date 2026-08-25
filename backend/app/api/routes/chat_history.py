@@ -42,25 +42,25 @@ async def list_conversations(
         None,
         description=(
             "Filter by agent persona. Empty/absent → workspace chats only "
-            "(no agent_kind set). 'dossier' / 'formula' → only conversations "
-            "from that surface. Pass 'any' to skip the filter entirely."
+            "(no agent_kind set). Pass 'any' to skip the filter entirely, "
+            "which also surfaces threads left by retired personas."
         ),
     ),
     run_id: Optional[int] = Query(
         None,
         description=(
-            "When set with agent_kind in {'dossier','formula'}, restrict to "
-            "conversations that were authored against this annotation run."
+            "Restrict to conversations authored against this annotation run."
         ),
     ),
 ):
     """
     List chat conversations for the current user.
 
-    Agent-kind scoping ensures each chat surface only sees its own history:
-    - The default workspace chat lists conversations with no ``agent_kind``.
-    - DossierAgent / FormulaAgent overlays list their own conversations,
-      optionally further scoped to a specific ``run_id``.
+    Agent-kind scoping ensures each chat surface only sees its own history.
+    The workspace chat is the only live surface, and it lists conversations
+    with no ``agent_kind``. Threads written by the retired Dossier and Formula
+    personas carry their old kind, so they stay out of the default listing but
+    remain reachable via ``agent_kind=any``.
     """
     try:
         from sqlalchemy import or_, cast

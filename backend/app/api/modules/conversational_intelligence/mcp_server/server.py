@@ -92,6 +92,29 @@ mcp = FastMCP(
 operation = make_operation(mcp)
 
 
+def _gql_grammar() -> str:
+    """The filter half of the graph query language, generated from TOKENS.
+
+    Imported lazily and guarded because a tool *description* must never be the
+    reason the MCP server fails to start. A missing block degrades the prompt;
+    an import error at module scope takes every operation down with it.
+    """
+    try:
+        from app.api.modules.graph.gql import grammar_block
+        return grammar_block()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _channel_grammar() -> str:
+    """The binding half — panes, layout and placement. Same contract."""
+    try:
+        from app.api.modules.graph.channels import grammar_block
+        return grammar_block()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _gate(services):
     """Resolve deployment-capped access and enforce the calling operation's
     declared ``requires`` (from the catalogue registry).
@@ -2998,43 +3021,23 @@ async def analysis_hub(
     panel_filter: Annotated[Optional[Any], "panel.add/panel.set: a FilterSet {logic:'and'|'or', conditions:[{path, operator, value}]} (or just the conditions list). Narrows the panel's data. Do NOT author formulas."] = None,
     panel_size: Annotated[Optional[Dict[str, int]], "panel.add/panel.set: grid size/position {w, h, x?, y?}. Usually omit — sizes are standardized per panel kind and the layout is auto-arranged."] = None,
     graph_query: Annotated[Optional[str], (
-        "graph.query: a GQL string for the open graph panel. Space=AND, comma=OR, "
-        "'-' negates.\n"
-        "  type:Person  -type:Location      node entity type\n"
-        "  kind:occurrence  kind:entity     things that HAPPENED vs things that PERSIST\n"
-        "  role:via                         the slot a node occupied (payer, via, on_board)\n"
-        "  serves:opacity                   nodes serving an interest; 'serves:X+' rolls\n"
-        "                                   up through the interest hierarchy\n"
-        "  converge>0.6                     actors whose interest profiles overlap MORE\n"
-        "                                   than their graph distance predicts. Zero at\n"
-        "                                   one hop, so it surfaces alignment WITHOUT\n"
-        "                                   contact — the pair worth looking at\n"
-        "  predicate:funds,owns             edge predicate\n"
-        "  degree>3  weight>2               well-connected nodes / strong edges. With a\n"
-        "                                   role: present, degree counts only that role —\n"
-        "                                   'role:via degree>20' finds intermediaries\n"
-        "  confidence>0.8                   a row column (pushed into SQL)\n"
-        "  doc.relevance>0.7                a DOCUMENT field, one level up — the\n"
-        "                                   cheapest filter there is; discards whole\n"
-        "                                   annotations before any row is exploded\n"
-        "  label==\"Acme Ltd\"                the node's own name, EXACTLY (bare text\n"
-        "                                   is a substring match on the same string)\n"
-        "  after:2020 before:2023           active in a window\n"
-        "  from:\"Angela Merkel\" hops:2      traverse out from an entity\n"
-        "  from:\"A\" from:\"B\"                separate from: tokens INTERSECT — reachable\n"
-        "                                   from both, which is how co-presence is asked.\n"
-        "                                   Commas inside one token still union.\n"
-        "  hops:2-origin / -paths           a -flag SUBTRACTS. By default a traversal\n"
-        "                                   returns the selection, the node you started\n"
-        "                                   from, and the nodes connecting them; -origin\n"
-        "                                   and -paths drop those. Combine in any order.\n"
-        "  near:\"Berlin\"<200km             within a radius of a geocoded node\n"
-        "  field:document.observations[*]   restrict to one graph source\n"
-        "Identity filters SELECT; they do not block paths. 'type:Location from:\"X\" hops:2' "
-        "is 'the places within two hops of X', not 'a route made only of places'. hops: "
-        "counts ACTOR steps — an occurrence between two people is one step, not two. "
-        "Write the query the user asked for; they see it in the bar and can edit it. "
-        "Pass an empty string to clear."
+        # **Generated, not hand-written.** This was the best of four copies of
+        # the grammar precisely because it carried the gotchas — and it was
+        # still a copy, so every token added elsewhere silently made it wrong.
+        # `gql.grammar_block()` and `channels.grammar_block()` are generated
+        # from the same tables the engine runs on, so the description cannot
+        # describe a language the engine does not implement.
+        "graph.query: a query string for the open graph panel. One string, two "
+        "halves — filters decide what is in the set, CHANNELS decide what the "
+        "set does.\n\n"
+        + _gql_grammar()
+        + "\n"
+        + _channel_grammar()
+        + "\nIdentity filters SELECT; they do not block paths. "
+        "'type:Location from:\"X\" hops:2' is 'the places within two hops of X', "
+        "not 'a route made only of places'.\n"
+        "Write the query the user asked for; they see it in the bar and can "
+        "edit it. Pass an empty string to clear."
     )] = None,
     graph_focus: Annotated[Optional[str], (
         "graph.query: focus one entity by name instead of writing a full query — "
@@ -5285,18 +5288,17 @@ if __name__ == "__main__":
 
 
 # ============================================================================
-# CATEGORY: DOSSIER AGENT — formula authoring + observation snapshots
+# CATEGORY: DASHBOARD PANELS
 # ============================================================================
 #
-# The DossierAgent's specialised toolset (M7 of the intelligence-primitive
-# plan). These tools let an LLM chat author Formulas, render panels, snapshot
-# Observations, and write dossier notes — the full intelligence workflow.
+# Panel authoring for the companion chat. The formula-authoring and
+# observation-snapshot tools that used to live here are gone: hand-authored
+# formulas and frozen Observations were retired in favour of the companion
+# plus GQL on the graph panel.
 #
-# See docs/INTELLIGENCE.md § DossierAgent for the conceptual picture
-# and docs/plans/intelligence-primitive/05_dossier_agent.md for the plan.
-#
-# Tag family: ["dossier", "formula"]. The chat backend filters MCP tools by
-# tag when the request carries agent="dossier".
+# A panel is minted blank — a typed ``panel_config`` and an empty ``Formula``
+# scope — and configured from the panel surface. Nothing here resolves a
+# saved formula, because there is no longer a saved-formula registry.
 
 
 def _dashboard_dict(run: Any) -> dict:
@@ -5315,11 +5317,10 @@ def _dashboard_dict(run: Any) -> dict:
     else:
         d = {}
     # Guarantee the well-formed shape at the single read boundary, so the first
-    # write (e.g. formula_create right after run.start) can't persist a blob with
+    # write (e.g. panel_create right after run.start) can't persist a blob with
     # no `panels` key — which makes the runner's dashboardConfig.panels undefined
     # and crashes addPanel/updatePanel on open.
     d.setdefault("panels", [])
-    d.setdefault("formulas", [])
     return d
 
 
@@ -5335,415 +5336,63 @@ def _save_dashboard(run: Any, dashboard: dict) -> None:
     run.views_config = [dashboard]
 
 
-@operation(path="visualize/formula/introspect", hidden=True, tags=["dossier", "formula", "introspection"],
-           summary="Discover a run schema's paths, axes, entity vocabularies, and row-shapes.")
-async def formula_introspect_schema(
-    ctx: Context,
-    run_id: Annotated[int, "Annotation run to introspect"],
-) -> ToolResult:
-    """Discover what's available for formula authoring on this run.
+def _blank_panel_config(panel_type: str):
+    """Return a default ``PanelConfig`` for ``panel_type``.
 
-    Returns the row-shape roots (mails, events, regulatorische_handlungen,
-    …) and field paths the LLM can bind as Formula dims/measures, plus
-    sample annotation contents so the model sees concrete value shapes.
-
-    Use this FIRST when a user asks a question — the answer depends on
-    what the schema exposes.
+    Every config model defaults its ``kind`` and leaves each role slot empty,
+    so constructing one no-arg is exactly "a blank panel of this type".
+    Raises ``KeyError`` on an unknown type — the caller turns that into a
+    tool error rather than a 500.
     """
-    from app.api.modules.annotation.models import AnnotationRun, AnnotationSchema
-    from sqlmodel import select
+    from app.api.modules.annotation.panel_config import (
+        PieConfig, ChartConfig, MapConfig, TableConfig,
+        GraphConfig, MeasurementsConfig, ScatterConfig,
+    )
 
-    with get_services() as services:
-        access = _gate(services)
-        session = services["session"]
-
-        run = session.get(AnnotationRun, run_id)
-        if not run or run.infospace_id != services["infospace_id"]:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
-                structured_content={"error": "run_not_found"},
-            )
-
-        # Collect schemas attached to this run — either via RunSchemaLink
-        # (canonical) or via Annotation.schema_id (any schema that produced
-        # annotations on this run). Union both for completeness.
-        from app.api.modules.annotation.models import Annotation, RunSchemaLink
-        link_ids = {
-            link.schema_id for link in session.exec(
-                select(RunSchemaLink).where(RunSchemaLink.run_id == run_id)
-            ).all()
-        }
-        ann_ids = set(session.exec(
-            select(Annotation.schema_id).where(Annotation.run_id == run_id).distinct()
-        ).all())
-        schema_ids = sorted(link_ids | ann_ids)
-        schemas = []
-        if schema_ids:
-            schemas = session.exec(
-                select(AnnotationSchema).where(AnnotationSchema.id.in_(schema_ids))
-            ).all()
-
-        out_schemas: list[dict] = []
-        for s in schemas:
-            surface = _walk_schema_surface(s.output_contract or {})
-
-            # Sample annotations — pull up to 3 recent annotation contents for
-            # this schema. The LLM uses these as concrete examples to ground
-            # field-path bindings ("ah, predicate values look like this").
-            sample_annotations: list[Any] = []
-            try:
-                sample_rows = session.exec(
-                    select(Annotation)
-                    .where(Annotation.run_id == run_id, Annotation.schema_id == s.id)
-                    .order_by(Annotation.id.desc())
-                    .limit(3)
-                ).all()
-                for ann in sample_rows:
-                    sample_annotations.append(_truncate_sample(ann.value))
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"introspect: sample fetch failed for schema {s.id}: {e}")
-
-            out_schemas.append({
-                "schema_id": s.id,
-                "name": s.name,
-                "description": getattr(s, "description", None) or "",
-                "row_shape_roots": surface["row_shape_roots"],
-                "field_paths": surface["field_paths"],
-                "simple_fields": surface["simple_fields"],
-                "sample_annotations": sample_annotations,
-            })
-
-        dashboard = _dashboard_dict(run)
-        formulas = dashboard.get("formulas") or []
-        formula_names = [f.get("name") for f in formulas if isinstance(f, dict)]
-
-        # Human-readable summary — first thing the model sees. Keep tight; the
-        # structured_content carries the full surface.
-        summary_lines = [f"📊 Run {run_id} ({run.name}) — {len(out_schemas)} schema(s)"]
-        for s in out_schemas:
-            summary_lines.append(f"\n## {s['name']} (schema_id={s['schema_id']})")
-            if s["description"]:
-                summary_lines.append(f"_{s['description']}_")
-            if s["row_shape_roots"]:
-                roots = ", ".join(r["path"] for r in s["row_shape_roots"])
-                summary_lines.append(f"**row-shape roots:** {roots}")
-            else:
-                summary_lines.append("**row-shape roots:** (none — schema is document-shaped, not row-shaped)")
-            summary_lines.append(f"**field paths:** {len(s['field_paths'])} total")
-            # Surface the first 8 paths inline so the model has immediate signal
-            # even if it doesn't dig into structured_content.
-            for fp in s["field_paths"][:8]:
-                bits = [f"`{fp['path']}` ({fp['type']})"]
-                if fp.get("axis"):
-                    bits.append(f"axis={fp['axis']}")
-                if fp.get("enum_values"):
-                    enum_preview = ", ".join(str(v) for v in fp["enum_values"][:5])
-                    suffix = "…" if len(fp["enum_values"]) > 5 else ""
-                    bits.append(f"enum=[{enum_preview}{suffix}]")
-                summary_lines.append(f"  - " + " ".join(bits))
-            if len(s["field_paths"]) > 8:
-                summary_lines.append(f"  - … {len(s['field_paths']) - 8} more in structured_content")
-            if s["sample_annotations"]:
-                summary_lines.append(f"**sample annotations:** {len(s['sample_annotations'])} examples in structured_content")
-
-        if formula_names:
-            summary_lines.append(f"\nSaved formulas: {', '.join(formula_names)}")
-        else:
-            summary_lines.append("\nSaved formulas: (none — author one with formula_create)")
-
-        return ToolResult(
-            content=[TextContent(type="text", text="\n".join(summary_lines))],
-            structured_content={
-                "run_id": run_id,
-                "run_name": run.name,
-                "schemas": out_schemas,
-                "saved_formulas": formula_names,
-            },
-        )
+    return {
+        "pie": PieConfig, "chart": ChartConfig, "map": MapConfig,
+        "table": TableConfig, "graph": GraphConfig,
+        "measurements": MeasurementsConfig, "scatter": ScatterConfig,
+    }[panel_type]()
 
 
-def _truncate_sample(value: Any, max_chars: int = 800) -> Any:
-    """Truncate a sample annotation value for the LLM's introspection view.
-
-    Long extraction payloads burn context budget without adding signal past
-    the first few hundred characters. Stringify, slice, mark truncation.
-    """
-    import json as _json
-    try:
-        s = _json.dumps(value, ensure_ascii=False, default=str)
-    except Exception:
-        s = str(value)
-    if len(s) > max_chars:
-        return s[:max_chars] + "…[truncated]"
-    # Return the parsed value if it fits, so structured tools can navigate it.
-    return value if isinstance(value, (dict, list)) else s
+#: Default grid footprint per panel type. Mirrors the frontend's
+#: ``panelFactory.defaultGrid`` — canvas-hungry types get more room.
+_PANEL_GRID: Dict[str, Dict[str, int]] = {
+    "pie": {"w": 4, "h": 4}, "chart": {"w": 6, "h": 5}, "map": {"w": 6, "h": 6},
+    "table": {"w": 8, "h": 5}, "graph": {"w": 6, "h": 6},
+    "measurements": {"w": 3, "h": 2}, "scatter": {"w": 5, "h": 5},
+}
 
 
-@operation(path="visualize/formula/create", requires=(Capability.ORGANIZE,), hidden=True, tags=["dossier", "formula", "create"],
-           summary="Author a new Formula (PanelProjection) on a run's dashboard.")
-async def formula_create(
-    ctx: Context,
-    run_id: Annotated[int, "Annotation run that owns the dashboard"],
-    name: Annotated[str, "Unique name for the formula in this dossier"],
-    body: Annotated[Dict[str, Any], "Formula JSON — id/name/schema_id/filter/merge_maps/group/measures/derives/weight/snippet/output_keys/order_by"],
-    description: Annotated[Optional[str], "Optional human-readable description"] = None,
-) -> ToolResult:
-    """Save a new Formula on the run's DashboardConfig.formulas[].
-
-    The body is the six-verb shape (from·filter·group·measure·derive,
-    plus optional weight/snippet/order_by). Errors return a clear message
-    so the LLM can edit and retry.
-    """
-    from app.api.modules.annotation.models import AnnotationRun
-    from app.api.modules.annotation.formula import Formula
-    from pydantic import ValidationError as _ValidationError
-    import uuid
-
-    with get_services() as services:
-        access = _gate(services)
-        session = services["session"]
-        run = session.get(AnnotationRun, run_id)
-        if not run or run.infospace_id != services["infospace_id"]:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
-                structured_content={"error": "run_not_found"},
-            )
-
-        # Stamp id/name/description from the tool args (body may omit them).
-        fid = str(body.get("id") or str(uuid.uuid4())[:16])
-        merged_body = {
-            **body,
-            "id": fid,
-            "name": name,
-            "description": description if description is not None else body.get("description"),
-        }
-        try:
-            formula = Formula.model_validate(merged_body)
-        except _ValidationError as e:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Invalid formula body:\n{e}")],
-                structured_content={"error": "invalid_formula", "detail": str(e)},
-            )
-
-        dashboard = dict(_dashboard_dict(run))
-        formulas = list(dashboard.get("formulas") or [])
-        if any(f.get("name") == name for f in formulas if isinstance(f, dict)):
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Formula {name!r} already exists. Use formula_edit to modify.")],
-                structured_content={"error": "duplicate_name"},
-            )
-
-        now = datetime.now(timezone.utc).isoformat()
-        formula_entry = {
-            **formula.model_dump(mode="json"),
-            "created_at": now,
-            "updated_at": now,
-        }
-        formulas.append(formula_entry)
-        dashboard["formulas"] = formulas
-        _save_dashboard(run, dashboard)
-        session.add(run)
-        session.commit()
-
-        return ToolResult(
-            content=[TextContent(type="text", text=f"✓ Formula {name!r} saved.")],
-            structured_content={"formula": formula_entry},
-        )
-
-
-@operation(path="visualize/formula/edit", requires=(Capability.ORGANIZE,), hidden=True, tags=["dossier", "formula", "edit"],
-           summary="Merge a partial PanelProjection onto an existing formula.")
-async def formula_edit(
-    ctx: Context,
-    run_id: int,
-    name: Annotated[str, "Name of the formula to modify"],
-    patch: Annotated[Dict[str, Any], "Partial Formula — verbs to merge onto the existing body (group/measures/filter/derives/...)"],
-) -> ToolResult:
-    """Modify a saved Formula by name. The patch is merged onto the current
-    body; pass only the verbs you want to change."""
-    from app.api.modules.annotation.models import AnnotationRun
-    from app.api.modules.annotation.formula import Formula
-    from pydantic import ValidationError as _ValidationError
-
-    with get_services() as services:
-        access = _gate(services)
-        session = services["session"]
-        run = session.get(AnnotationRun, run_id)
-        if not run or run.infospace_id != services["infospace_id"]:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
-                structured_content={"error": "run_not_found"},
-            )
-
-        dashboard = dict(_dashboard_dict(run))
-        formulas = list(dashboard.get("formulas") or [])
-        idx = next(
-            (i for i, f in enumerate(formulas) if isinstance(f, dict) and f.get("name") == name),
-            None,
-        )
-        if idx is None:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Formula {name!r} not found")],
-                structured_content={"error": "formula_not_found"},
-            )
-
-        # Strip metadata fields from the existing entry before validating;
-        # they'll be re-stamped on save.
-        existing_meta = {
-            "created_at": formulas[idx].get("created_at"),
-            "updated_at": formulas[idx].get("updated_at"),
-        }
-        existing_body = {
-            k: v for k, v in formulas[idx].items()
-            if k not in {"created_at", "updated_at"}
-        }
-        merged = {**existing_body, **patch, "name": name}
-        try:
-            formula = Formula.model_validate(merged)
-        except _ValidationError as e:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Patch produced invalid formula:\n{e}")],
-                structured_content={"error": "invalid_formula", "detail": str(e)},
-            )
-
-        formulas[idx] = {
-            **formula.model_dump(mode="json"),
-            "created_at": existing_meta["created_at"],
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        dashboard["formulas"] = formulas
-        _save_dashboard(run, dashboard)
-        session.add(run)
-        session.commit()
-
-        return ToolResult(
-            content=[TextContent(type="text", text=f"✓ Formula {name!r} updated.")],
-            structured_content={"formula": formulas[idx]},
-        )
-
-
-@operation(path="visualize/formula/preview", hidden=True, tags=["dossier", "formula", "preview"],
-           summary="Run a formula and return a sample of output rows with provenance.")
-async def formula_preview(
-    ctx: Context,
-    run_id: int,
-    name: Annotated[str, "Saved formula name"],
-    limit: Annotated[int, "Max rows to return"] = 20,
-) -> ToolResult:
-    """Run a saved Formula and return a sample of the output relation
-    (rows + row count). Use this before snapshotting to verify the formula
-    does what the user asked."""
-    from app.api.modules.annotation.formulas import resolve_formula, attach_formula_lookup
-    from app.api.modules.annotation.models import AnnotationRun
-    from app.api.modules.annotation.query import AnnotationQuery
-
-    with get_services() as services:
-        access = _gate(services)
-        session = services["session"]
-        run = session.get(AnnotationRun, run_id)
-        if not run or run.infospace_id != services["infospace_id"]:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
-                structured_content={"error": "run_not_found"},
-            )
-
-        dashboard = _dashboard_dict(run)
-        try:
-            formula = resolve_formula(name, dashboard)
-        except ValueError:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Formula {name!r} not found")],
-                structured_content={"error": "formula_not_found"},
-            )
-
-        aq = (
-            AnnotationQuery(session, services["infospace_id"])
-            .runs([run_id])
-            .paginate(limit=max(1, min(int(limit), 5000)))
-        )
-        attach_formula_lookup(aq, dashboard)
-        rel = aq.relation(formula)
-        sample = [r.model_dump(mode="json") for r in rel.rows]
-
-        # The model must SEE the sample rows to verify the formula does what the
-        # user asked (this tool's whole purpose) — a row count alone is unverifiable.
-        summary = _render_rows_for_model(
-            sample,
-            label=f"📐 Formula {name!r}",
-            total=rel.total,
-            has_more=rel.has_more,
-        )
-        if rel.measure_names:
-            summary = f"Measures: {', '.join(rel.measure_names)}\n" + summary
-        return ToolResult(
-            content=[TextContent(type="text", text=summary)],
-            structured_content={
-                "formula_name": name,
-                "total": rel.total,
-                "evidence_mode": rel.evidence_mode,
-                "measure_names": rel.measure_names,
-                "has_more": rel.has_more,
-                "sample": sample,
-            },
-        )
-
-
-@operation(path="visualize/formula/list", hidden=True, tags=["dossier", "formula", "list"],
-           summary="List saved formulas on a run's dashboard.")
-async def formula_list(
-    ctx: Context,
-    run_id: int,
-) -> ToolResult:
-    """List all saved Formulas in this dossier with their key fields."""
-    from app.api.modules.annotation.models import AnnotationRun
-
-    with get_services() as services:
-        access = _gate(services)
-        session = services["session"]
-        run = session.get(AnnotationRun, run_id)
-        if not run or run.infospace_id != services["infospace_id"]:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
-                structured_content={"error": "run_not_found"},
-            )
-
-        dashboard = _dashboard_dict(run)
-        formulas = dashboard.get("formulas") or []
-        summary_lines = [f"📐 Saved formulas on run {run_id}:"]
-        for f in formulas:
-            if not isinstance(f, dict):
-                continue
-            dims = [d.get("name") for d in (f.get("group") or []) if isinstance(d, dict)]
-            meas = [m.get("name") for m in (f.get("measures") or []) if isinstance(m, dict)]
-            derives = [s.get("name") for s in (f.get("derives") or []) if isinstance(s, dict)]
-            parts = [f"group=[{', '.join(dims)}]", f"measures=[{', '.join(meas)}]"]
-            if derives:
-                parts.append(f"derives=[{', '.join(derives)}]")
-            summary_lines.append(f"  • {f.get('name')} — {' '.join(parts)}")
-        if not formulas:
-            summary_lines.append("  (none yet — formula_create to add one)")
-
-        return ToolResult(
-            content=[TextContent(type="text", text="\n".join(summary_lines))],
-            structured_content={"formulas": formulas},
-        )
-
-
-@operation(path="visualize/panel/create", requires=(Capability.ORGANIZE,), hidden=True, tags=["dossier", "panel", "create"],
-           summary="Drop a dashboard panel bound to a formula.")
+@operation(path="visualize/panel/create", requires=(Capability.ORGANIZE,), hidden=True, tags=["panel", "create"],
+           summary="Drop a blank dashboard panel of a given type onto a run.")
 async def panel_create(
     ctx: Context,
     run_id: int,
-    formula_name: Annotated[str, "Saved formula to bind to the new panel"],
-    panel_type: Annotated[str, "pie | chart | graph | table | map"] = "table",
-    panel_name: Annotated[Optional[str], "Display name for the panel (defaults to formula name)"] = None,
+    panel_type: Annotated[str, "table | chart | pie | graph | map | measurements | scatter"] = "table",
+    panel_name: Annotated[Optional[str], "Display name for the panel"] = None,
     grid_position: Annotated[Optional[Dict[str, int]], "Optional {x, y, w, h}; auto-places if omitted"] = None,
 ) -> ToolResult:
-    """Drop a panel onto the dashboard, bound to the named formula."""
+    """Drop a panel onto the run's dashboard.
+
+    The panel is minted blank: a typed ``panel_config`` with every role slot
+    empty, and an empty ``Formula`` carrying no filter, group or measures.
+    Both are then configured from the panel surface — the graph panel through
+    GQL, the rest through their role pickers.
+
+    Built from the Pydantic models rather than a hand-rolled dict so the
+    result always satisfies ``Panel``'s ``type == panel_config.kind``
+    validator.
+    """
     from app.api.modules.annotation.models import AnnotationRun
+    from app.api.modules.annotation.formula import Formula, Panel
+    from app.api.modules.annotation.panel_config import GridPosition
     import uuid
 
-    if panel_type not in {"pie", "chart", "graph", "table", "map"}:
+    try:
+        panel_config = _blank_panel_config(panel_type)
+    except KeyError:
         return ToolResult(
             content=[TextContent(type="text", text=f"❌ Invalid panel_type {panel_type!r}")],
             structured_content={"error": "invalid_panel_type"},
@@ -5760,33 +5409,27 @@ async def panel_create(
             )
 
         dashboard = dict(_dashboard_dict(run))
-        formulas = dashboard.get("formulas") or []
-        formula_entry = next(
-            (f for f in formulas if isinstance(f, dict) and f.get("name") == formula_name),
-            None,
-        )
-        if not formula_entry:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Formula {formula_name!r} not found")],
-                structured_content={"error": "formula_not_found"},
-            )
-
         panels = list(dashboard.get("panels") or [])
         # Auto-place: next free row at the bottom of the grid.
         if grid_position is None:
-            max_y = max((int(p.get("grid_position", {}).get("y", 0)) + int(p.get("grid_position", {}).get("h", 4)) for p in panels), default=0)
-            grid_position = {"x": 0, "y": max_y, "w": 6, "h": 4}
+            max_y = max(
+                (int(p.get("grid_position", {}).get("y", 0)) + int(p.get("grid_position", {}).get("h", 4))
+                 for p in panels if isinstance(p, dict)),
+                default=0,
+            )
+            size = _PANEL_GRID[panel_type]
+            grid_position = {"x": 0, "y": max_y, **size}
 
-        # Thin Panel — render binding only. Engine + filter live on the Formula.
-        new_panel = {
-            "id": str(uuid.uuid4())[:16],
-            "type": panel_type,
-            "name": panel_name or formula_name,
-            "formula_id": formula_entry.get("id"),
-            "grid_position": grid_position,
-            "collapsed": False,
-            "settings": {},
-        }
+        panel_id = str(uuid.uuid4())[:16]
+        name = panel_name or f"{panel_type.capitalize()} panel"
+        new_panel = Panel(
+            id=panel_id,
+            type=panel_type,
+            name=name,
+            formula=Formula(id=str(uuid.uuid4())[:16], name=name),
+            panel_config=panel_config,
+            grid_position=GridPosition(**grid_position),
+        ).model_dump(mode="json")
         panels.append(new_panel)
         dashboard["panels"] = panels
         _save_dashboard(run, dashboard)
@@ -5794,18 +5437,18 @@ async def panel_create(
         session.commit()
 
         return ToolResult(
-            content=[TextContent(type="text", text=f"✓ {panel_type} panel created for formula {formula_name!r} at ({grid_position['x']},{grid_position['y']})")],
+            content=[TextContent(type="text", text=f"✓ {panel_type} panel {name!r} created at ({grid_position['x']},{grid_position['y']})")],
             structured_content={"panel": new_panel},
         )
 
 
-@operation(path="visualize/panel/layout", tags=["dossier", "panel", "layout"],
+@operation(path="visualize/panel/layout", tags=["panel", "layout"],
            summary="Inspect the run's dashboard layout.")
 async def panel_layout(
     ctx: Context,
     run_id: int,
 ) -> ToolResult:
-    """Return the current grid: panel ids, types, formula bindings, positions."""
+    """Return the current grid: panel ids, types, positions, and configured-ness."""
     from app.api.modules.annotation.models import AnnotationRun
 
     with get_services() as services:
@@ -5825,9 +5468,17 @@ async def panel_layout(
             if not isinstance(p, dict):
                 continue
             pos = p.get("grid_position") or {}
-            fid = p.get("formula_id") or p.get("observation_id") or "(unbound)"
+            # A panel is "configured" once its data scope names something —
+            # a schema, a group dim, or a filter. Blank ones read as (blank)
+            # so the model can tell a placed panel from a working one.
+            f = p.get("formula") or {}
+            configured = bool(
+                f.get("schema_id") or f.get("group") or f.get("measures")
+                or (f.get("filter") or {}).get("conditions")
+            )
             summary_lines.append(
-                f"  • {p.get('type')} {p.get('name')!r} @ ({pos.get('x')},{pos.get('y')}) {pos.get('w')}x{pos.get('h')} formula={fid}"
+                f"  • {p.get('type')} {p.get('name')!r} @ ({pos.get('x')},{pos.get('y')}) "
+                f"{pos.get('w')}x{pos.get('h')} {'configured' if configured else '(blank)'}"
             )
 
         return ToolResult(
@@ -5835,101 +5486,6 @@ async def panel_layout(
             structured_content={"panels": panels},
         )
 
-
-@operation(path="visualize/observation/snapshot", requires=(Capability.ORGANIZE,), hidden=True, tags=["dossier", "snapshot"],
-           summary="Freeze a formula's current output as an immutable Observation.")
-async def observation_snapshot(
-    ctx: Context,
-    run_id: int,
-    formula_name: Annotated[str, "Saved formula to snapshot"],
-    note: Annotated[Optional[str], "Optional journalist note attached to this snapshot"] = None,
-) -> ToolResult:
-    """Snapshot a formula's current output as an immutable Observation.
-
-    The formula body is inlined; editing the formula afterwards does NOT
-    mutate this Observation. Re-snapshot to capture new corpus state.
-    """
-    from app.api.modules.annotation.formulas import resolve_formula, attach_formula_lookup
-    from app.api.modules.annotation.models import AnnotationRun
-    from app.api.modules.annotation.query import AnnotationQuery
-    from app.api.modules.annotation import snapshots as _snapshots
-
-    with get_services() as services:
-        access = _gate(services)
-        session = services["session"]
-        run = session.get(AnnotationRun, run_id)
-        if not run or run.infospace_id != services["infospace_id"]:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
-                structured_content={"error": "run_not_found"},
-            )
-
-        dashboard = _dashboard_dict(run)
-        try:
-            formula = resolve_formula(formula_name, dashboard)
-        except ValueError:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Formula {formula_name!r} not found")],
-                structured_content={"error": "formula_not_found"},
-            )
-
-        aq = AnnotationQuery(session, services["infospace_id"]).runs([run_id])
-        attach_formula_lookup(aq, dashboard)
-        rel = aq.relation(formula)
-        obs = _snapshots.snapshot_from_formula(
-            run=run,
-            formula_name=formula_name,
-            relation=rel,
-            note=note,
-            schema_id=formula.schema_id,
-        )
-        _snapshots.append_observation(run, obs)
-        session.add(run)
-        session.commit()
-
-        return ToolResult(
-            content=[TextContent(type="text", text=f"📸 Snapshotted {formula_name!r} ({len(obs.output_blob)} rows) as obs {obs.id}")],
-            structured_content={"observation": obs.model_dump(mode="json")},
-        )
-
-
-@operation(path="visualize/dossier/note", requires=(Capability.ORGANIZE,), tags=["dossier", "notes"],
-           summary="Append cited markdown to the dossier note.")
-async def dossier_note_append(
-    ctx: Context,
-    run_id: int,
-    md: Annotated[str, "Markdown to append to the dossier notes. Supports @cite[obs_id, key:(...)] markers."],
-) -> ToolResult:
-    """Append to the dossier's notes_md.
-
-    Notes are markdown; the agent should cite observations by their id
-    using ``@cite[<obs_id>, key:(<tuple>)]`` so the frontend can rewind
-    panels to the snapshot when the citation is clicked.
-    """
-    from app.api.modules.annotation.models import AnnotationRun
-
-    with get_services() as services:
-        access = _gate(services)
-        session = services["session"]
-        run = session.get(AnnotationRun, run_id)
-        if not run or run.infospace_id != services["infospace_id"]:
-            return ToolResult(
-                content=[TextContent(type="text", text=f"❌ Run {run_id} not found")],
-                structured_content={"error": "run_not_found"},
-            )
-
-        dashboard = dict(_dashboard_dict(run))
-        existing = dashboard.get("notes_md") or ""
-        new_notes = existing.rstrip() + ("\n\n" if existing else "") + md.strip() + "\n"
-        dashboard["notes_md"] = new_notes
-        _save_dashboard(run, dashboard)
-        session.add(run)
-        session.commit()
-
-        return ToolResult(
-            content=[TextContent(type="text", text=f"✓ Appended {len(md)} chars to dossier notes")],
-            structured_content={"notes_md": new_notes},
-        )
 
 
 @operation(path="ingest/sources", requires=(Capability.INGEST,), posture="confirm",

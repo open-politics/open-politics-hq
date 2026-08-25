@@ -214,7 +214,6 @@ class IntelligenceConversationService:
         provider_name: Optional[str] = None,
         agent: Optional[str] = None,
         run_id: Optional[int] = None,
-        formula_id: Optional[str] = None,
         current_route: Optional[str] = None,
         current_focus: Optional[Dict[str, Any]] = None,
         **kwargs,
@@ -227,16 +226,14 @@ class IntelligenceConversationService:
         Parameters
         ----------
         agent:
-            Optional agent persona. ``None`` / ``'intelligence'`` (default) loads
-            the workspace-wide research toolset. ``'dossier'`` activates the
-            DossierAgent — narrower toolset (formula authoring, observation
-            snapshots) plus the formula-manual system prompt. See
-            ``docs/INTELLIGENCE.md`` § DossierAgent.
+            Optional agent persona. ``None`` / ``'intelligence'`` / ``'operator'``
+            all load the workspace-wide research toolset — the operator is the
+            only persona left. The run-scoped Dossier and Formula personas were
+            retired along with hand-authored formulas.
         run_id:
-            When ``agent='dossier'``, the run the agent operates against. The
-            system prompt surfaces this as a default for tool calls; the tools
-            themselves still take ``run_id`` explicitly so the model can
-            cross-run if a user asks.
+            Optional run the chat is scoped to. The system prompt surfaces this
+            as a default for tool calls; the tools themselves still take
+            ``run_id`` explicitly so the model can cross-run if a user asks.
         """
         context_token = create_mcp_context_token_with_api_keys(
             user_id, infospace_id, api_keys or {}, conversation_id, model_name
@@ -259,8 +256,8 @@ class IntelligenceConversationService:
         model_spec = get_model_spec("language", provider_instance.provider_key, model_name)
         supports_tools = bool(getattr(model_spec, "supports_tools", False)) if model_spec else False
 
-        # The HQ operator is the default persona (browse-all catalogue). dossier/
-        # formula stay explicit; unset and legacy 'intelligence' both map to operator.
+        # The HQ operator is the only persona (browse-all catalogue). Unset and
+        # legacy 'intelligence' both map to it.
         is_operator = agent in (None, "", "intelligence", "operator")
         schema_by_name: Dict[str, Any] = {}
         active_scenario = None  # sticky operator scenario, derived from history below
@@ -296,30 +293,6 @@ class IntelligenceConversationService:
                 tools = await self.get_universal_tools(user_id, infospace_id, api_keys)
                 logger.info(f"Fetched {len(tools)} tools from MCP server")
 
-            # Agent personas — narrow the tool surface so the model stays on
-            # task. Each persona gets its own subset; the default workspace
-            # chat sees all universal tools.
-            #
-            # - dossier  : run-level orchestration (formula + panel + snapshot + note)
-            # - formula  : formula authoring only (introspect / create / edit / preview / list)
-            if agent == "dossier" and tools:
-                dossier_tool_names = {
-                    "formula_introspect_schema", "formula_create", "formula_edit",
-                    "formula_preview", "formula_list",
-                    "panel_create", "panel_layout",
-                    "observation_snapshot", "dossier_note_append",
-                }
-                before = len(tools)
-                tools = [t for t in tools if (t.get("function") or t).get("name") in dossier_tool_names]
-                logger.info(f"DossierAgent: filtered {before} → {len(tools)} tools")
-            elif agent == "formula" and tools:
-                formula_tool_names = {
-                    "formula_introspect_schema", "formula_create", "formula_edit",
-                    "formula_preview", "formula_list",
-                }
-                before = len(tools)
-                tools = [t for t in tools if (t.get("function") or t).get("name") in formula_tool_names]
-                logger.info(f"FormulaAgent: filtered {before} → {len(tools)} tools")
         else:
             tools = None
 
@@ -335,10 +308,6 @@ class IntelligenceConversationService:
         infospace = self.session.get(Infospace, infospace_id)
         if is_operator:
             system_context = self._build_operator_context(infospace, active_scenario, current_route, current_focus)
-        elif agent == "dossier":
-            system_context = self._build_dossier_agent_context(infospace, run_id)
-        elif agent == "formula":
-            system_context = self._build_formula_agent_context(infospace, run_id, formula_id)
         else:
             system_context = self._build_infospace_context(infospace)
 
@@ -493,120 +462,6 @@ class IntelligenceConversationService:
                 f"MCP capability execution failed: {tool_name} - {e}", exc_info=True
             )
             return {"error": f"Capability execution failed: {str(e)}"}
-
-    def _build_dossier_agent_context(self, infospace: Infospace, run_id: Optional[int]) -> str:
-        """Build the DossierAgent's system prompt.
-
-        Concatenates the static formula-manual (the canonical reference at
-        ``prompts/dossier_agent_prompt.md``) with a small dynamic preamble
-        carrying the active infospace + run scope. Surfaces the run_id so
-        the model defaults tool calls to it.
-        """
-        from pathlib import Path
-        now = datetime.now(timezone.utc).strftime("%A, %B %d, %Y at %H:%M UTC")
-        safe_name = (infospace.name or "").replace("{", "{{").replace("}", "}}")
-        run_hint = f"You are operating on run_id={run_id}. Default every tool call to this id unless the user explicitly scopes elsewhere." if run_id else "No run scope was provided; ask the user which run to operate on before authoring formulas."
-
-        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "dossier_agent_prompt.md"
-        try:
-            manual = prompt_path.read_text(encoding="utf-8")
-        except OSError as e:
-            logger.warning(f"DossierAgent prompt missing: {e}; falling back to inline summary")
-            manual = (
-                "You are the DossierAgent. Author Formulas (six verbs: from, "
-                "filter, group, weight, aggregate, derive), drop Panels bound "
-                "to them, snapshot Observations, and write dossier notes. "
-                "Always call formula_introspect_schema first."
-            )
-
-        # Static manual first so it is a stable, cacheable prefix; the volatile
-        # workspace block (carries the per-request timestamp) goes last so it
-        # doesn't invalidate the cached prefix on every turn.
-        return (
-            manual
-            + f"\n\n<workspace>\"{safe_name}\" — current: {now}\n{run_hint}</workspace>"
-        )
-
-    def _build_formula_agent_context(
-        self,
-        infospace: Infospace,
-        run_id: Optional[int],
-        formula_id: Optional[str] = None,
-    ) -> str:
-        """Build the FormulaAgent's system prompt.
-
-        Narrower than DossierAgent — focuses on single-formula authoring inside
-        the workspace editor. No panel ops, no snapshots, no notes. The model
-        only sees the formula-* tools and is told to lead with introspection.
-
-        When ``formula_id`` is set, surfaces the active formula's name + body
-        so the model defaults edits to it instead of asking which formula.
-        """
-        from pathlib import Path
-        from app.api.modules.annotation.models import AnnotationRun
-        now = datetime.now(timezone.utc).strftime("%A, %B %d, %Y at %H:%M UTC")
-        safe_name = (infospace.name or "").replace("{", "{{").replace("}", "}}")
-
-        run_hint = (
-            f"You are inside the formula workspace for run_id={run_id}. Always pass "
-            f"this run_id to your tools. The user is authoring or refining one formula at a time."
-            if run_id else
-            "No run scope provided. Ask the user which run before authoring."
-        )
-
-        # Active-formula hint: look up the formula by id on the run's dashboard
-        # config and surface its current body to the model so edits are
-        # informed, not speculative.
-        active_hint = ""
-        if run_id and formula_id:
-            try:
-                run = self.session.get(AnnotationRun, run_id)
-                if run:
-                    vc = getattr(run, "views_config", None)
-                    dashboard = (
-                        vc[0] if isinstance(vc, list) and vc and isinstance(vc[0], dict)
-                        else vc if isinstance(vc, dict)
-                        else None
-                    )
-                    formulas = (dashboard or {}).get("formulas") or []
-                    active = next(
-                        (f for f in formulas if isinstance(f, dict) and f.get("id") == formula_id),
-                        None,
-                    )
-                    if active:
-                        import json as _json
-                        body = _json.dumps(active.get("projection") or {}, ensure_ascii=False)[:1200]
-                        active_hint = (
-                            f"\n\n<active_formula>The user has formula "
-                            f"\"{active.get('name')}\" (id={formula_id}) open in the editor. "
-                            f"Default edits to it via formula_edit unless they ask for something new. "
-                            f"Current body (truncated):\n{body}</active_formula>"
-                        )
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"formula agent: active hint lookup failed: {e}")
-
-        prompt_path = Path(__file__).resolve().parents[1] / "prompts" / "formula_agent_prompt.md"
-        try:
-            manual = prompt_path.read_text(encoding="utf-8")
-        except OSError as e:
-            logger.warning(f"FormulaAgent prompt missing: {e}; falling back to inline summary")
-            manual = (
-                "You are the FormulaAgent. Help the user author a single Formula. "
-                "First call formula_introspect_schema(run_id) to discover the schema "
-                "surface (row-shape roots, field paths, axes). Then either propose a "
-                "PanelProjection body and call formula_create, or call formula_edit on "
-                "an existing one. Never invent fields — only use paths that introspect "
-                "actually returned."
-            )
-
-        # Static manual first so it is a stable, cacheable prefix; the active-formula
-        # hint (stable per formula) and the volatile workspace block (per-request
-        # timestamp) follow so they don't invalidate the cached prefix every turn.
-        return (
-            manual
-            + active_hint
-            + f"\n\n<workspace>\"{safe_name}\" — current: {now}\n{run_hint}</workspace>"
-        )
 
     def _build_infospace_context(self, infospace: Infospace) -> str:
         """Build system context about the infospace for the AI model"""
