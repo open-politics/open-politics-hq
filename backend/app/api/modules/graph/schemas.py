@@ -87,6 +87,30 @@ class GraphNodeData(BaseModel):
     Whatever ``node_group_by`` asked for lands here, so its meaning changes
     with the panel's configuration. Read :attr:`profile` for the semantic
     vector; see the note there for why the two are separate fields."""
+    cluster: str | None = None
+    """The ``CLUSTER:`` binding, resolved to one label. **Layout, not data.**
+
+    A third slot rather than a reuse, and the reason is the whole history of
+    the other two: ``group_value`` is whatever the panel's ``node_group_by``
+    asked for and is then *overwritten* by the convergence profile, so a
+    clustering that landed there would be silently replaced the moment anyone
+    asked a ``converge:`` question. ``profile`` is a semantic vector. Neither
+    can hold "which pile does this node go in" without one meaning destroying
+    another — one slot, three meanings, four consumers.
+
+    Resolved server-side because the KEY can address a declaration the client
+    cannot see (a section name, a role, a place rung). The **geometry** is not
+    resolved here: the canvas decides where the piles go. Method here,
+    execution there."""
+    size: float | None = None
+    """The ``WEIGHT:`` binding, resolved to ``[0, 1]``. ``None`` when nothing
+    bound it, in which case the renderer falls back to its own default.
+
+    Computed server-side because the *denominator* is: a median, a per-corpus
+    stratum or a rank all need the whole population, and a client holding the
+    capped top-N would compute a different number from the same query. The
+    decisions that produced it are in ``meta.legend`` — a size channel whose
+    rules are invisible is one that can be made to say anything."""
     profile: dict[str, float] | None = None
     """Signed affinity vector — **data**, and only ever a semantic one.
 
@@ -157,6 +181,20 @@ class GraphEdgeData(BaseModel):
     source: str
     target: str
     predicate: str
+    #: **What this edge DOES to the picture** — `contains` · `follows` · `role`
+    #: · `relation`. Four kinds, closed (``sections.EDGE_KINDS``).
+    #:
+    #: The renderer painted all four identically, which is the direct cause of
+    #: "no hierarchy, still random nodes everywhere": on run 15010, 35
+    #: containment edges rendered as adjacency so nothing nested, and 104 role
+    #: edges — the connective tissue every occurrence emits — competed for
+    #: attention with the 46 edges that were actually findings. Same weight,
+    #: same colour, same line.
+    #:
+    #: Resolved server-side because it needs the projection that minted the
+    #: edge, which the client never sees. How it is DRAWN stays on the client,
+    #: because that is layout.
+    kind: str = "relation"
     #: The role this edge's target plays in its source occurrence — ``payer``,
     #: ``via``, ``on_board``. A property of the *edge*, never of the node: the
     #: same bank is ``via`` in 340 payments and ``employer`` in 12 employments
@@ -179,6 +217,13 @@ class GraphEdgeData(BaseModel):
     a1: str | None = None
     #: Which projections contributed to this edge.
     source_paths: list[str] = Field(default_factory=list)
+    #: Which annotations contributed to this edge — the same provenance
+    #: ``GraphNodeData`` carries, on the other half of the graph. Without it a
+    #: reader wanting "which documents produced this edge" has to re-match the
+    #: edge against raw annotation payloads by ``(subject, predicate, object)``
+    #: label, which only works for one legacy schema shape and silently returns
+    #: nothing for every other. The slot has held this set the whole time.
+    source_annotation_ids: list[int] = Field(default_factory=list)
 
 
 class GraphResultData(BaseModel):

@@ -39,11 +39,16 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 __all__ = [
-    "CHANNELS", "PLACEMENTS", "WEIGHTS", "Channel", "Selector", "Binding",
-    "ChannelQuery", "parse_channels", "grammar_block", "infer_defaults",
+    "CHANNELS", "PLACEMENTS", "WEIGHTS", "REFS", "SCALES",
+    "VECTOR_FOLDS", "VECTOR_SPACES", "FRAME_COST", "DIMENSIONS",
+    "LINEAR_RANGE_LIMIT",
+    "PANE_PRESETS", "PanePreset", "preset_for",
+    "Channel", "Selector", "Binding", "ChannelQuery",
+    "parse_channels", "grammar_block", "infer_defaults", "unwired",
+    "resolve_scale", "resolve_vector_fold", "frames_spent",
 ]
 
-Sink = Literal["layout", "pane", "placement"]
+Sink = Literal["layout", "pane", "placement", "filter"]
 
 
 # ─── The table ───────────────────────────────────────────────────────────────
@@ -67,58 +72,236 @@ class Channel:
     default_role: str | None = None
     #: Display keys this channel understands inside ``(...)``.
     options: tuple[str, ...] = ()
+    #: **Does writing this change the picture?**
+    #:
+    #: The language's oldest failure is a clause that parses, is documented,
+    #: is generated into the MCP description and the ✨ prompt, and reaches no
+    #: renderer — so writing it and writing nothing produce identical pictures
+    #: (``FAULTS`` F1). `VECTOR:interests` even printed a confident legend line
+    #: describing a fold that nothing implements, which is worse than silence:
+    #: silence is ambiguous, a legend is a claim.
+    #:
+    #: So every channel declares whether it lands, here, beside its hint —
+    #: because the two go stale together or not at all. ``False`` makes the bar
+    #: pill it amber and stops the legend asserting anything.
+    wired: bool = True
 
 
 CHANNELS: tuple[Channel, ...] = (
     # ── layout ──────────────────────────────────────────────────────────────
-    Channel("VECTOR", "layout", default_role="vector",
+    Channel("VECTOR", "layout", wired=False, default_role="vector", options=("fold", "space"),
             hint="Each distinct value becomes a space anchor; members are "
-                 "pulled toward it. This is the direction the scene has."),
-    Channel("STEPS", "layout", default_role="step",
+                 "pulled toward it. This is the direction the scene has. "
+                 "`fold` says how N values collapse when there is no room for "
+                 "them; `space` says where the result is spent."),
+    Channel("STEPS", "layout", wired=False, default_role="step",
             hint="An ordered chain. Containment nests, sequence gives "
                  "direction. Never synthesised from dates."),
-    Channel("ANCHOR", "layout", default_role="anchor",
+    Channel("ANCHOR", "layout", wired=False, default_role="anchor",
             hint="Hard position from outside — coordinates where they exist. "
                  "Not only places: a channel, a docket, anything that "
                  "positions without being positioned."),
-    Channel("AXIS", "layout",
+    Channel("AXIS", "layout", wired=False,
             hint="One metric quantity on one axis. `time` is the usual one."),
     Channel("CLUSTER", "layout",
             hint="Grouping key — colour, and a soft pull. A comma-list is a "
                  "COMPOUND key: `label,type` means one group per distinct pair."),
-    Channel("WEIGHT", "layout",
+    Channel("WEIGHT", "layout", options=("ref", "scale"),
             hint="Size. A comma-list is a COMPOSITE: each term normalised to "
                  "0–1 and summed. Default `gathers`; `degree` is available and "
-                 "is deliberately not the default."),
+                 "is deliberately not the default. `ref` names a denominator "
+                 "(`median` finds the outlier), `scale` the mapping."),
     # ── sinks ───────────────────────────────────────────────────────────────
-    Channel("NODEINFO", "pane", options=("show",),
-            hint="Full detail for the focused node — typed annotations, "
-                 "provenance, statistics."),
-    Channel("DOCS", "pane", options=("show",),
-            hint="The documents themselves, with their corpus."),
-    Channel("OBSERVATIONS", "pane", default_role="companion", options=("show", "group"),
-            hint="A list of acts, grouped by the CLUSTER key."),
-    Channel("EVIDENCE", "pane", default_role="attachment", options=("show",),
-            hint="Grounds — quote, locator, stance."),
-    Channel("LANES", "pane", options=("rows", "clock"),
-            hint="Rows keyed by a step, x by the axis."),
-    Channel("CLUSTERS", "pane", options=("show",),
-            hint="The groups the CLUSTER key produced, with counts and spans."),
+    #
+    # **One channel, and the name is the analyst's.** There used to be six
+    # sinks here — NODEINFO DOCS OBSERVATIONS EVIDENCE LANES CLUSTERS — which
+    # is a hardcoded noun list living in the file that exists to delete
+    # hardcoded noun lists. It fails the project's own test: anything fixed
+    # that is not an axis kind, a stage, a set relation or a traversal is a bug
+    # we have not found yet. The seventh finding always wanted a seventh sink.
+    #
+    # A pane is a name and a query. The name resolves against `PANE_PRESETS`
+    # for a starting binding and is otherwise just a label, so
+    # `PANEL:Consignments` is as first-class as `PANEL:Evidence` and neither is
+    # known to the grammar.
+    Channel("PANEL", "pane", options=("kind", "follow", "show", "group"),
+            hint="Creates a pane. The name resolves against the preset table "
+                 "for a starting binding — an unrecognised name gets a plain "
+                 "list, which you then point wherever you like."),
+    # ── filter, in channel spelling ─────────────────────────────────────────
+    #
+    # The one channel that NARROWS rather than binds, and it earns the
+    # exception by being the address space's own name. `field:` wants a
+    # projection path — `field:document.places[*]` — which is the schema's
+    # internal spelling of a thing the analyst calls "places". Making someone
+    # learn `document.…[*]` to say "only the places section" is asking them to
+    # know the contract's shape to ask a question about its content.
+    #
+    # Resolved to `field:` against the run's projections (see
+    # `resolve_sections`), so it inherits the cheapest filter in the language:
+    # a skipped projection is a scan that never happens.
+    Channel("SECTION", "filter",
+            hint="Restrict to one section, by its own name — `SECTION:places` "
+                 "rather than `field:document.places[*]`. A dotted suffix "
+                 "reaches a field inside it."),
     # ── placement ───────────────────────────────────────────────────────────
-    Channel("CONNECT", "placement",
+    Channel("CONNECT", "placement", wired=False,
             hint="On the canvas, attached where it belongs — a document at the "
                  "node it appears at most."),
-    Channel("UNCONNECTED", "placement",
+    Channel("UNCONNECTED", "placement", wired=False,
             hint="On the canvas, unattached: positioned from its own "
                  "properties rather than its edges."),
-    Channel("DISCONNECT", "placement",
+    Channel("DISCONNECT", "placement", wired=False,
             hint="Off the canvas. Still in the data, still fills panes, still "
                  "counts for degree and traversal."),
-    Channel("SHOW", "placement", hint="Into a pane."),
-    Channel("HIDE", "placement", hint="Not fetched at all."),
+    # ── projection ──────────────────────────────────────────────────────────
+    #
+    # Was "into a pane" and consumed by nothing. It is now the projection — the
+    # clause every mature query language has and this one did not: SQL SELECT,
+    # Cypher RETURN, SPARQL SELECT, SQL/PGQ COLUMNS(...), Splunk `| table`.
+    #
+    # Its ARITY picks the surface, which is `GRAMMAR §4`'s mechanism aimed at
+    # the input it was always right for. Folding NODES into a ranked list is a
+    # layout problem wearing a table's clothes; projecting COLUMNS OF ROWS is a
+    # genuinely tabular one.
+    Channel("SHOW", "projection",
+            hint="Columns of the row table. `SHOW:by,to,magnitude`. Arity picks "
+                 "the surface: one column ranks, two cross, more tabulate, `*` "
+                 "is the whole row. A path may be qualified — `SHOW:"
+                 "observations.by` and `SHOW:by` address the same column."),
+    Channel("HIDE", "placement", wired=False, hint="Not fetched at all."),
 )
 
+#: Alternative spellings, resolved before lookup.
+#:
+#: `SELECT` is here for one reason and it is worth stating: it is the strongest
+#: prior any language model has, and honouring it costs one dict entry. The
+#: project's rule after surveying the field — *never invent a spelling where a
+#: famous one exists* — cuts both ways, and this is the cheap half.
+ALIASES: dict[str, str] = {
+    "SELECT": "SHOW",
+    "COLUMNS": "SHOW",
+    "SIZE": "WEIGHT",
+}
+
 BY_NAME: dict[str, Channel] = {c.name: c for c in CHANNELS}
+
+
+@dataclass(frozen=True, slots=True)
+class PanePreset:
+    """A starting binding for a pane, chosen by its name.
+
+    **Data, not grammar.** Nothing in the parser knows these words exist; a
+    name that misses the table is not an error, it is a pane called that with
+    a plain list in it. Adding a preset is adding a row.
+
+    ``role`` resolves through the schema's own declarations rather than naming
+    a section, which is what lets ``PANEL:Motives`` land on the vector preset
+    in a contract that never says "interests". ``path`` is for the handful of
+    presets that address something other than a section.
+    """
+
+    name: str
+    hint: str
+    #: Declared layout role whose sections this pane shows, if any.
+    role: str | None = None
+    #: A literal address, when the pane is not about a role.
+    path: str | None = None
+    #: Surface kind, when the preset means a specific one. Otherwise inferred
+    #: from the fold shape.
+    kind: str | None = None
+    #: What the pane follows — the panel's query, or the current selection.
+    follow: str = "lens"
+
+
+#: Presets, keyed by lowercased pane name. Extend freely — this list carries no
+#: weight in the language.
+PANE_PRESETS: tuple[PanePreset, ...] = (
+    # The one an empty bar opens with, beside `node`. Not a fold of the graph:
+    # the server projects one section's ROWS and ships them beside the nodes,
+    # so this pane shows the proposition a row states rather than a count of
+    # the fragments assembly left of it. `graph/rows.py`.
+    PanePreset("rows", path="rows", kind="table",
+               hint="The records behind the picture. `SECTION:` picks which, "
+                    "`SHOW:` picks the columns."),
+    PanePreset("observations", role="companion", kind="items",
+               hint="The acts themselves, grouped by the CLUSTER key."),
+    PanePreset("evidence", role="attachment", kind="items",
+               hint="Grounds — quote, locator, stance."),
+    PanePreset("places", role="anchor", kind="map",
+               hint="Where things happened, ranked by how much did."),
+    PanePreset("interests", role="vector", kind="items",
+               hint="The why axis: what the activity serves, and who converges."),
+    PanePreset("steps", role="step", kind="lanes",
+               hint="The chain, in order, along the time axis."),
+    PanePreset("docs", path="docs", kind="docs",
+               hint="One row per document: the sections and fields it filled, "
+                    "and the part of the canvas it produced. The one surface "
+                    "that runs source → graph."),
+    PanePreset("node", path="any", kind="detail", follow="selection",
+               hint="Everything known about the focused node."),
+    PanePreset("activity", path="any", kind="lanes",
+               hint="How much happened when — a fold with no row key."),
+    PanePreset("clusters", path="any", kind="list",
+               hint="The groups the CLUSTER key produced, with counts and spans."),
+)
+
+PRESETS_BY_NAME: dict[str, PanePreset] = {p.name: p for p in PANE_PRESETS}
+
+
+def preset_for(pane_name: str) -> PanePreset | None:
+    """The preset a pane name starts from, if any. Case-insensitive."""
+    return PRESETS_BY_NAME.get(pane_name.strip().lower())
+
+
+def resolve_sections(q: "ChannelQuery", projections: list[Any]) -> list[str]:
+    """``SECTION:places`` → the ``field:`` tokens that mean it.
+
+    A section is addressed by **its own name**, whatever the schema calls it,
+    and this turns that name back into the projection path the engine filters
+    on. Matched on the path's last segment so ``places`` finds
+    ``document.places[*]`` without anyone writing either half.
+
+    A name that matches nothing returns nothing rather than a filter that
+    excludes everything: an unrecognised section is a typo, and answering a
+    typo with an empty canvas is the failure mode this whole language is
+    trying to remove. It surfaces as an amber pill instead.
+    """
+    selectors = q.selectors_for("SECTION")
+    if not selectors:
+        return []
+
+    by_section: dict[str, str] = {}
+    for p in projections or ():
+        path = getattr(p, "path", "") or ""
+        if path:
+            by_section[path.rsplit(".", 1)[-1].removesuffix("[*]").lower()] = path
+
+    out: list[str] = []
+    for sel in selectors:
+        # `places` or `places.kind` — the section is the head, and a dotted
+        # suffix is a field inside it that `field:` does not address, so it is
+        # dropped here and left to a row condition.
+        head = (sel.path or "").split(".", 1)[0].strip().lower()
+        path = by_section.get(head)
+        if path and path not in out:
+            out.append(path)
+    return out
+
+
+def unresolved_sections(q: "ChannelQuery", projections: list[Any]) -> list[str]:
+    """Section names in the query that this run has no projection for."""
+    selectors = q.selectors_for("SECTION")
+    if not selectors:
+        return []
+    known = {
+        (getattr(p, "path", "") or "").rsplit(".", 1)[-1].removesuffix("[*]").lower()
+        for p in projections or ()
+    }
+    return [
+        sel.path for sel in selectors
+        if (sel.path or "").split(".", 1)[0].strip().lower() not in known
+    ]
 
 #: Filter prefixes ``gql`` owns. Listed here so an UPPERCASE spelling of one —
 #: ``TYPE:Person`` beside ``VECTOR:interests`` — is passed through lowercased
@@ -150,6 +333,81 @@ WEIGHTS: dict[str, str] = {
     "docs": "how many documents attest it",
 }
 
+#: What ``WEIGHT:x(ref:…)`` divides by.
+#:
+#: **A denominator you can read.** Normalisation was previously a policy buried
+#: in whoever computed the number; naming it makes it a term of the query, and
+#: three separate unsolved problems turn out to be the same one:
+#:
+#: * ``median`` — "what is unusually large". A EUR 41M consignment among EUR
+#:   10k ones is 4000× the median, which is the finding, and it survives a log
+#:   scale. Four hundred ordinary invoices sit at 1.0 and stay legible.
+#: * ``mentions`` — "well attested *relative to how much was said*". Sorting by
+#:   count surfaces the dense corpus; sorting by evidence surfaces the sparse
+#:   one; this is the third sort order that neither gives.
+#: * ``corpus`` — degree within its own stratum, so a corpus that talks more
+#:   does not win every degree-derived finding.
+#: * ``role`` — measured against peers doing the same job.
+REFS: dict[str, str] = {
+    "none": "the raw measure (default)",
+    "median": "divided by the population median — deviation from typical",
+    "mean": "divided by the population mean",
+    "max": "as a fraction of the largest",
+    "mentions": "divided by how often the thing was named",
+    "corpus": "normalised within its own corpus",
+    "role": "normalised among nodes of the same declared role",
+}
+
+#: How a measure maps onto radius.
+#:
+#: Node **area** carries roughly one and a half orders of magnitude before a
+#: reader stops being able to compare two of them. Money spans seven. A linear
+#: map across that range is not a tuning choice that came out badly, it is a
+#: false statement, so the engine refuses it and says which scale it used
+#: instead — see :func:`resolve_scale`.
+SCALES: dict[str, str] = {
+    "auto": "linear while the range is small, log once it is not (default)",
+    "linear": "value ∝ radius. Refused when the dynamic range exceeds "
+              "LINEAR_RANGE_LIMIT",
+    "log": "log1p — the honest default for money and counts",
+    "rank": "position in the sorted population, ignoring magnitude entirely",
+}
+
+#: Above this ratio between the largest and smallest positive value, a linear
+#: size map stops being readable and ``scale:auto`` switches to log.
+LINEAR_RANGE_LIMIT = 100.0
+
+#: How N vector values collapse when there is no dimension left for them.
+VECTOR_FOLDS: dict[str, str] = {
+    "embed": "positions from the similarity of the value labels, so adjacency "
+             "between vectors becomes itself a finding (default)",
+    "hierarchy": "one dimension: depth in the `subsumes` tree",
+    "sphere": "evenly spaced. Honest, and adjacency then means nothing — the "
+              "safe fallback, never the default",
+}
+
+#: Where a folded vector is spent.
+VECTOR_SPACES: dict[str, str] = {
+    "residual": "the freedom left INSIDE an anchor's cell. A node pinned at "
+                "Trieste in 2014 still has a neighbourhood; the vector places "
+                "it within that. Large-scale adjacency stays geography and "
+                "time, small-scale becomes affinity (default)",
+    "z": "the vertical — only available when AXIS:time is unbound",
+    "colour": "not a position at all: the honest zero-dimension answer",
+}
+
+#: What each frame costs, in dimensions. Geography is two because a coordinate
+#: is a pair; everything else is one.
+#:
+#: The arithmetic is right and the *popover* was wrong — asking an analyst to
+#: "spend three axes across four frames" is a budget UI for a decision they
+#: should never have to make. The engine spends, folds the overflow, and says
+#: what it did.
+FRAME_COST: dict[str, int] = {"geo": 2, "time": 1, "vector": 1, "event": 1}
+
+#: There are three dimensions. This is not a budget to negotiate.
+DIMENSIONS = 3
+
 
 # ─── Parsing ─────────────────────────────────────────────────────────────────
 
@@ -171,19 +429,21 @@ class Selector:
     """One address in the doc → section → field → value space."""
 
     path: str
-    """``any`` · ``docs`` · a section · ``section.field`` · a channel name when
-    the clause is a placement (``DISCONNECT:OBSERVATIONS``)."""
+    """``any`` · ``docs`` · a section · ``section.field``.
+
+    **Data, always.** Placement clauses used to be able to name a *channel*
+    instead — ``DISCONNECT:OBSERVATIONS`` took the pane off the canvas while
+    ``DISCONNECT:observations`` took the section off it. Two meanings
+    distinguished only by case is the collision the uppercase rule exists to
+    prevent, and the rule was being used to create one. With panes named by the
+    analyst there is no channel left to address: a placement moves data, and a
+    pane is a pane."""
     value: str | None = None
     """A ``.value(...)`` refinement — one member of a roster, one value of a
     field."""
     options: dict[str, str] = field(default_factory=dict)
     """Display keys. **Never selection** — mixing the two is how a filter comes
     to hide inside a display setting."""
-
-    @property
-    def is_channel_ref(self) -> bool:
-        """Does this address a channel rather than data? Placement clauses do."""
-        return self.path in BY_NAME
 
     def render(self) -> str:
         out = self.path
@@ -220,10 +480,26 @@ class ChannelQuery:
     `SECTOR:finance` would otherwise get a plausible substring match back."""
 
     def get(self, name: str) -> Binding | None:
+        """The FIRST binding for a channel. See :meth:`all` before using it."""
         for b in self.bindings:
             if b.channel.name == name:
                 return b
         return None
+
+    def all(self, name: str) -> list[Binding]:
+        """Every binding for a channel.
+
+        A channel may be written more than once — `SECTION:places
+        SECTION:events SECTION:interests` reads naturally and is how a person
+        types it. `get` returns only the first, so a caller using it silently
+        honoured one clause and discarded the rest: three sections asked for,
+        one section drawn, no error. Anything that can repeat must use this.
+        """
+        return [b for b in self.bindings if b.channel.name == name]
+
+    def selectors_for(self, name: str) -> list[Selector]:
+        """Every selector across every binding of a channel, in order."""
+        return [s for b in self.all(name) for s in b.selectors]
 
     def placement_of(self, target: str) -> str | None:
         """Which placement verb names *target*, if any."""
@@ -313,6 +589,22 @@ def _parse_selector(raw: str) -> Selector:
     return Selector(path=text, value=value, options=options)
 
 
+def unwired(q: "ChannelQuery") -> list[str]:
+    """Clauses in this query that parse and reach no renderer.
+
+    ``FAULTS`` F1, made reportable. The failure was never that these do
+    nothing — a half-built feature is normal — it is that they do nothing
+    *silently*, and one of them printed a legend line describing work it had
+    not done. A reader cannot tell an unimplemented binding from a binding
+    whose data happened to be empty, and both look like the picture is right.
+    """
+    return [
+        f"{b.channel.name}: is parsed but reaches no renderer yet — "
+        f"it changes nothing on this canvas"
+        for b in q.bindings if not b.channel.wired
+    ]
+
+
 def parse_channels(q: str) -> ChannelQuery:
     """Split one query string into bindings and everything else.
 
@@ -331,6 +623,7 @@ def parse_channels(q: str) -> ChannelQuery:
             leftovers.append(token)
             continue
         name, rest = m.group(1), m.group(2).strip()
+        name = ALIASES.get(name, name)
         if name.lower() in FILTER_PREFIXES:
             # `TYPE:Person` is `type:Person`. Handed to gql in the spelling it
             # knows, so a user may write either case throughout.
@@ -424,18 +717,111 @@ def infer_defaults(projections: list[Any]) -> ChannelQuery:
             selectors=tuple(Selector(path=s) for s in sections),
         ))
 
-    # The dense layer comes off the canvas by default. Companions are an order
-    # of magnitude more numerous than anything else, and drawing them all is
-    # what makes a first look at a real corpus unreadable.
-    if by_role.get("companion"):
-        out.bindings.append(Binding(
-            channel=BY_NAME["DISCONNECT"],
-            selectors=(Selector(path="OBSERVATIONS"),),
-        ))
+    # **Two panes, not seven.** ``MVP`` §5.
+    #
+    # The default set used to be one pane per declared role, and every one of
+    # them folded NODES into a ranked list: `payment ×8`, `Shell S1 · 1`, a
+    # Places pane that could not fill by construction. The rule that killed
+    # them — *a pane that lists nodes with a count is a pane that failed to be a
+    # layout* — leaves exactly two things worth opening with:
+    #
+    #   rows   the records behind the picture, with real columns
+    #   node   whatever is selected, rendered whole
+    #
+    # The other presets survive as DATA: `PANEL:places` still resolves, so
+    # nothing is unreachable. They are simply no longer what an empty bar means.
+    # `docs` is the third because it is the other direction. Every other
+    # surface goes graph → source: find a node, ask where it came from. This
+    # goes source → graph, and a corpus you cannot read back from is one you
+    # have to trust rather than check.
+    panes = [Selector(path="rows"), Selector(path="docs"), Selector(path="node")]
+    out.bindings.append(Binding(channel=BY_NAME["PANEL"], selectors=tuple(panes)))
+
+    # **No DISCONNECT default.** It used to contract every companion section off
+    # the canvas as a density measure, and contraction deletes the row's payload
+    # with it: edges carry no properties, so an act's magnitude, time, interest
+    # and justification vanished along with its node. The panel then offered an
+    # "observations" pane asking for exactly what this had removed.
+    #
+    # An MVP that silently deletes data fails S5 before it renders. Occurrences
+    # are visible; density is answered by CLUSTER, which is a layout question,
+    # not by deletion, which is a data one.
     if not out.get("WEIGHT"):
         out.bindings.append(Binding(
             channel=BY_NAME["WEIGHT"], selectors=(Selector(path="gathers"),)))
     return out
+
+
+# ─── Resolution — what the engine decided, and what it will say it decided ───
+
+
+def resolve_scale(requested: str | None, lo: float, hi: float) -> tuple[str, str | None]:
+    """Pick the size scale, and a note when the pick was not what was asked.
+
+    Returns ``(scale, note)``. ``note`` is non-None exactly when the engine
+    overrode the request, and it is meant to be shown — a refusal nobody is
+    told about is indistinguishable from a bug.
+
+    ``linear`` is refused rather than honoured over a wide range because the
+    channel cannot carry it: area is readable across about 1.5 orders of
+    magnitude and a EUR-41M-against-EUR-10k population spans four. Drawing it
+    linearly does not exaggerate the finding, it erases everything else.
+    """
+    want = (requested or "auto").strip().lower()
+    if want not in SCALES:
+        want = "auto"
+    span = (hi / lo) if lo > 0 and hi > 0 else float("inf") if hi > 0 else 1.0
+
+    if want == "auto":
+        return ("log", None) if span > LINEAR_RANGE_LIMIT else ("linear", None)
+    if want == "linear" and span > LINEAR_RANGE_LIMIT:
+        return "log", (
+            f"linear refused — the largest value is {span:,.0f}× the smallest, "
+            f"and node area carries about {LINEAR_RANGE_LIMIT:,.0f}×. Using log."
+        )
+    return want, None
+
+
+def resolve_vector_fold(binding: Binding | None, spent: int) -> tuple[str, str, str | None]:
+    """``(fold, space, note)`` for the vector channel, given what is left.
+
+    Overflow **folds**; it never refuses and it is never silent. With a geo
+    floor and a time axis there is no third dimension for a vector, and the
+    honest thing is to place it in the freedom the anchors leave rather than to
+    drop it or to fight them for an axis.
+    """
+    opts: dict[str, str] = {}
+    for sel in (binding.selectors if binding else ()):
+        opts.update(sel.options)
+    fold = (opts.get("fold") or "embed").strip().lower()
+    space = (opts.get("space") or "").strip().lower()
+    if fold not in VECTOR_FOLDS:
+        fold = "embed"
+    if space not in VECTOR_SPACES:
+        space = ""
+
+    free = max(0, DIMENSIONS - spent)
+    if space:
+        return fold, space, None
+    if free >= 1:
+        return fold, "z", None
+    return fold, "residual", (
+        f"{spent}/{DIMENSIONS} dimensions spent — vector folded to residual "
+        f"placement ({VECTOR_FOLDS[fold].split(',')[0]})"
+    )
+
+
+def frames_spent(q: ChannelQuery) -> tuple[int, list[str]]:
+    """How many dimensions the bound layout channels consume, and which."""
+    spent, names = 0, []
+    if q.get("ANCHOR"):
+        spent += FRAME_COST["geo"]
+        names.append("geo")
+    axis = q.get("AXIS")
+    if axis:
+        spent += FRAME_COST["time"]
+        names.append("time")
+    return spent, names
 
 
 # ─── Generated documentation ─────────────────────────────────────────────────
@@ -460,7 +846,7 @@ def grammar_block() -> str:
         "",
     ]
     for sink, title in (("layout", "LAYOUT — bind onto the canvas"),
-                        ("pane", "SINKS — fill a pane"),
+                        ("pane", "PANES — a name and a query"),
                         ("placement", "PLACEMENT — whether it is drawn")):
         lines.append(title)
         for c in CHANNELS:
@@ -469,7 +855,29 @@ def grammar_block() -> str:
             opts = f"  options: {', '.join(c.options)}" if c.options else ""
             lines.append(f"  {c.name + ':':<14} {c.hint}{opts}")
         lines.append("")
-    lines.append("WEIGHT can read:")
-    for k, v in WEIGHTS.items():
-        lines.append(f"  {k:<12} {v}")
+
+    def block(title: str, table: dict[str, str], note: str = "") -> None:
+        lines.append(title)
+        if note:
+            lines.append(f"  {note}")
+        for k, v in table.items():
+            lines.append(f"  {k:<12} {v}")
+        lines.append("")
+
+    block("WEIGHT can read:", WEIGHTS)
+    block("WEIGHT(ref:…) — the denominator, written:", REFS,
+          "Normalisation is a term of the query, not a hidden policy.")
+    block("WEIGHT(scale:…) — how a measure becomes a radius:", SCALES,
+          "A range wider than "
+          f"{LINEAR_RANGE_LIMIT:,.0f}× refuses `linear` and says so.")
+    block("VECTOR(fold:…) — how N values collapse:", VECTOR_FOLDS)
+    block("VECTOR(space:…) — where the fold is spent:", VECTOR_SPACES,
+          f"There are {DIMENSIONS} dimensions. Geo costs "
+          f"{FRAME_COST['geo']}, time {FRAME_COST['time']}; when nothing is "
+          "left the vector folds rather than fights for an axis.")
+
+    lines.append("PANEL presets — a starting binding, chosen by the pane's name:")
+    lines.append("  (data, not grammar: an unknown name is a pane called that)")
+    for p in PANE_PRESETS:
+        lines.append(f"  {p.name:<12} {p.hint}")
     return "\n".join(lines)

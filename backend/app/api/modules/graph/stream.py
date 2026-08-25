@@ -46,7 +46,10 @@ from app.api.modules.graph.schemas import (
     GraphResultData as GraphResult,
     NodePlace,
 )
-from app.core.filters import jsonb_accessor, jsonb_value_accessor, parse_explosion, safe_array_elements
+from app.core.filters import (
+    jsonb_accessor, jsonb_value_accessor, parse_explosion, safe_array_elements,
+    scalar_of,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +189,10 @@ class AnnotationGraphSource:
     here — filtered rows never enter the aggregation, and whole projections are
     skipped when ``field:`` excludes them. The graph-shape and traversal tiers
     need the assembled graph and run in ``gql.apply_to_graph``."""
+    channels: Any = None
+    """Parsed :class:`graph.channels.ChannelQuery` — the binding half of the
+    same string. Nothing here filters; it decides what the surviving set
+    *does*: what sizes a node, what groups it, what comes off the canvas."""
     doc_place: str | None = None
     doc_time: str | None = None
     """The document rung of each ladder — see :class:`GraphConfig`. Scoped to
@@ -247,6 +254,11 @@ class AnnotationGraphSource:
 
         fields: list[Any] = []
         vocabularies: dict[str, tuple[str, ...]] = {}
+        section_decls: dict[str, dict[str, Any]] = {}
+        entity_paths: list[str] = []
+        triplet_paths: list[str] = []
+        time_paths: list[str] = []
+        place_paths: list[str] = []
         for sid in schema_ids:
             schema = self.query._session.get(AnnotationSchema, sid)
             if not schema or not schema.output_contract:
@@ -260,7 +272,29 @@ class AnnotationGraphSource:
                 continue
             fields.extend(smap.fields)
             vocabularies.update(smap.vocabularies)
-        return SchemaMap(fields=tuple(fields), vocabularies=vocabularies)
+            # **Every index, not just the two the first caller needed.**
+            # Carrying only `fields` + `vocabularies` made the merged map claim
+            # that no contract in scope declared anything: `section_decls` came
+            # back empty, so `derive_projections` fell to its name-table rung
+            # for EVERY schema and the whole `x-graph` layer was inert on the
+            # graph path. A section the table happens to name (`observations`)
+            # looked correct; one it does not (`exhibits`) was inferred into
+            # `role: companion`, `node_kind: occurrence` — the opposite of what
+            # it declares — and then won the default-table tie-break.
+            section_decls.update(smap.section_decls or {})
+            entity_paths.extend(smap.entity_paths)
+            triplet_paths.extend(smap.triplet_paths)
+            time_paths.extend(smap.time_paths)
+            place_paths.extend(smap.place_paths)
+        return SchemaMap(
+            fields=tuple(fields),
+            vocabularies=vocabularies,
+            section_decls=section_decls,
+            entity_paths=tuple(dict.fromkeys(entity_paths)),
+            triplet_paths=tuple(dict.fromkeys(triplet_paths)),
+            time_paths=tuple(dict.fromkeys(time_paths)),
+            place_paths=tuple(dict.fromkeys(place_paths)),
+        )
 
     def _resolve(self) -> None:
         """Fill in node roles (and the legacy single-array fallback) once.
@@ -458,12 +492,28 @@ class AnnotationGraphSource:
                 params.update(p)
                 selects.append(f"{acc} AS node_group_raw")
 
-            for i, fp in enumerate(proj.properties or self.forward_properties):
+            forwarded = proj.properties or self.forward_properties
+            for i, fp in enumerate(forwarded):
                 bare = _as_triplet_key(fp.field)
                 selects.append(
                     f"elem->>'{bare.replace(chr(39), chr(39) * 2)}' "
                     f"AS {_safe_col_alias(bare, f'fp_{i}')}"
                 )
+            # **A row's own columns, when nobody declared which to forward.**
+            #
+            # Forwarding is opt-in, and the mega scenario's templates opt in for
+            # every occurrence. A contract that declares nothing therefore mints
+            # nodes with an EMPTY property bag — so `CLUSTER:financial_records.
+            # transaction_type` resolved the path correctly, read the node, and
+            # found nothing there. The column existed in the row table two
+            # panes away and could not reach the canvas.
+            #
+            # Selecting the element itself costs one column and no schema
+            # knowledge, which is what makes it work on a contract nobody
+            # annotated. `_atoms_for_row` copies the scalars; nested objects
+            # stay out, because a participant is a role and not a property.
+            if not forwarded and proj.about == "self":
+                selects.append("elem AS row_element")
 
             # Evidence: an explicit binding, else the inline convention.
             ev_path = proj.evidence.path if proj.evidence else "justification"
@@ -506,6 +556,8 @@ class AnnotationGraphSource:
                     # class knows the three storage conventions a value may be
                     # written in — so it supplies the accessor.
                     doc_accessor=self._path_accessor,
+                    section=_section_of(proj.path),
+                    sections=self._section_names(),
                 )
                 clauses.extend(gq_clauses)
                 params.update(gq_params)
@@ -539,6 +591,186 @@ class AnnotationGraphSource:
             last_ord = rows[-1].ord
             if len(rows) < chunk_size:
                 return
+
+    def _section_names(self) -> frozenset[str]:
+        """Every section name this run has, lowercased.
+
+        A section is addressed by the word the schema author chose for it, so
+        this is the vocabulary that decides whether ``observations.magnitude``
+        is a qualified path or just a key with a dot in it.
+        """
+        return frozenset(
+            _section_of(p.path) for p in self.projections if getattr(p, "path", None)
+        )
+
+    # ── The rows behind the picture ────────────────────────────────────────
+
+    def section_rows(
+        self,
+        proj: Projection,
+        *,
+        limit: int = 200,
+        cursor: tuple[int, int] | None = None,
+    ) -> tuple[list[dict[str, Any]], tuple[int, int] | None, int]:
+        """One projection's rows, **whole**, with the same WHERE the graph ran.
+
+        The canvas and the table are two readings of one filter, and this method
+        is why that is structural rather than a discipline: it rebuilds the
+        clause list from the very same ``_base_where`` + ``_apply_conditions`` +
+        ``row_predicate_sql`` sequence :meth:`_project` uses. There is no second
+        filter implementation that could drift from the first, so ``MVP`` S3
+        cannot be violated without deleting code that both paths call.
+
+        Returns ``(items, next_cursor, total, census)``. Each item is
+        ``{annotation_id, asset_id, ord, element}`` — the *raw* row object, not
+        a projection of it. Selecting columns in SQL would save a few hundred
+        bytes per row and cost the thing that matters: ``SHOW:`` could then only
+        name columns the query already knew about, and "show me the whole row"
+        would need a second round trip. Filtering is what has to push down;
+        projection is cosmetic and belongs where the declarations are.
+
+        ``total`` is counted under the same predicate and is deliberately
+        **independent of the graph's node cap** — a table that inherited the
+        canvas's truncation would report "8 payments" for a run holding 200 and
+        be believed.
+        """
+        from sqlalchemy import text
+
+        from app.api.modules.annotation.query import AnnotationQuery
+
+        if not isinstance(self.query, AnnotationQuery):
+            raise TypeError("AnnotationGraphSource.query must be an AnnotationQuery")
+
+        self._resolve()
+        session = self.query._session
+        arr_path = proj.array_path
+        if not arr_path:
+            return [], None, 0
+
+        def _where() -> tuple[list[str], dict[str, Any]]:
+            clauses, params = self.query._base_where(include_cursor=False)
+            self.query._apply_conditions(
+                clauses, params, element_alias="elem", active_explosion=arr_path,
+            )
+            if self.gql is not None and getattr(self.gql, "has_row_scope", False):
+                from app.api.modules.graph.gql import row_predicate_sql
+                pred_expr = (
+                    _predicate_sql(proj.predicate) if proj.predicate else "NULL"
+                )
+                gq_clauses, gq_params = row_predicate_sql(
+                    self.gql, pred_expr, doc_accessor=self._path_accessor,
+                    section=_section_of(proj.path),
+                    sections=self._section_names(),
+                )
+                clauses.extend(gq_clauses)
+                params.update(gq_params)
+            arr_expr, arr_params = jsonb_value_accessor(
+                "a.value", arr_path, param_name="rows_arr",
+            )
+            params.update(arr_params)
+            return clauses, params, arr_expr  # type: ignore[return-value]
+
+        clauses, params, arr_expr = _where()  # type: ignore[misc]
+        lateral = (
+            f"CROSS JOIN LATERAL jsonb_array_elements("
+            f"{safe_array_elements(arr_expr)}) WITH ORDINALITY AS elem_idx(elem, ord)"
+        )
+
+        counted = session.exec(text(f"""
+            SELECT COUNT(*) AS n FROM annotation a {lateral}
+            WHERE {' AND '.join(clauses)}
+        """).bindparams(**params)).one()
+        total = int(getattr(counted, "n", None) or counted[0])
+
+        page_clauses = list(clauses)
+        page_params = dict(params)
+        if cursor is not None:
+            # The LATERAL fans one annotation into many rows, so a scalar cursor
+            # on ``a.id`` would drop the tail of any annotation whose array
+            # overflows the page. Same tuple cursor as ``_project``.
+            page_clauses.append(
+                "(a.id < :rows_cur_id "
+                "OR (a.id = :rows_cur_id AND elem_idx.ord > :rows_cur_ord))"
+            )
+            page_params["rows_cur_id"], page_params["rows_cur_ord"] = cursor
+
+        rows = session.exec(text(f"""
+            SELECT a.id AS annotation_id, a.asset_id AS asset_id,
+                   elem_idx.ord AS ord, elem_idx.elem AS elem
+            FROM annotation a {lateral}
+            WHERE {' AND '.join(page_clauses)}
+            ORDER BY a.id DESC, elem_idx.ord ASC
+            LIMIT :rows_lim
+        """).bindparams(**page_params, rows_lim=limit)).all()
+
+        items = [
+            {
+                "annotation_id": r.annotation_id,
+                "asset_id": r.asset_id,
+                "ord": r.ord,
+                "element": r.elem if isinstance(r.elem, dict) else {},
+            }
+            for r in rows
+        ]
+        nxt = (
+            (rows[-1].annotation_id, rows[-1].ord)
+            if len(rows) == limit and rows else None
+        )
+
+        # ── The census ───────────────────────────────────────────────────
+        #
+        # **How often is this column actually filled, across the section — not
+        # across the page.** A picker that samples the loaded rows reports a
+        # field as empty whenever the page happens to miss it, which is exactly
+        # backwards: the fields worth telling someone about are the rare ones.
+        # `3 of 480` is a fact about the corpus; `0 of 25` is a fact about
+        # scrolling.
+        #
+        # One pass, same predicate, same LATERAL — so the numbers cannot
+        # disagree with the rows above them. Cost is the order of the COUNT(*)
+        # already run for `total`, not a new class of work.
+        #
+        # `jsonb_each` raises on a non-object, and a section of primitives is a
+        # legitimate shape, so the element is coerced to `{}` rather than
+        # guarded by a WHERE that would silently drop those rows from `total`'s
+        # denominator.
+        filled_sql = (
+            "e.v IS NOT NULL AND e.v <> 'null'::jsonb "
+            "AND e.v <> '[]'::jsonb AND e.v <> '\"\"'::jsonb"
+        )
+        # An array's example is its first element — the point is what a value
+        # LOOKS like, and `["A","B"]` renders as JSON rather than as a value.
+        example_sql = (
+            "CASE WHEN jsonb_typeof(e.v) = 'array' "
+            f"THEN {scalar_of('e.v->0')} ELSE {scalar_of('e.v')} END"
+        )
+        # `{}` means the census RAN and found nothing; `None` means it did not
+        # run. The difference is the whole point of reporting coverage — "no
+        # row filled this" and "we did not look" must not render alike.
+        census: dict[str, dict[str, Any]] | None = {}
+        try:
+            crows = session.exec(text(f"""
+                SELECT e.k AS key,
+                       count(*) FILTER (WHERE {filled_sql}) AS filled,
+                       (array_agg(DISTINCT {example_sql})
+                          FILTER (WHERE {filled_sql}))[1:4] AS examples
+                FROM annotation a {lateral},
+                     LATERAL jsonb_each(CASE
+                       WHEN jsonb_typeof(elem_idx.elem) = 'object'
+                       THEN elem_idx.elem ELSE '{{}}'::jsonb END) AS e(k, v)
+                WHERE {' AND '.join(clauses)}
+                GROUP BY e.k
+            """).bindparams(**params)).all()
+            for r in crows:
+                census[r.key] = {
+                    "filled": int(r.filled or 0),
+                    "examples": [x for x in (r.examples or []) if x],
+                }
+        except Exception:  # noqa: BLE001 — a census must never cost the table
+            logger.warning("section rows: census failed", exc_info=True)
+            census = None
+
+        return items, nxt, total, census
 
     def _record_doc_anchor(self, row: Any) -> None:
         """Remember what the *document* said about where and when it is — and
@@ -611,11 +843,24 @@ class AnnotationGraphSource:
                 shared["_edge_weight_raw"] = float(raw_w)
             except (TypeError, ValueError):
                 pass
-        for i, fp in enumerate(proj.properties or self.forward_properties):
+        forwarded = proj.properties or self.forward_properties
+        for i, fp in enumerate(forwarded):
             bare = _as_triplet_key(fp.field)
             shared[f"fp__{bare}"] = getattr(
                 row, _safe_col_alias(bare, f"fp_{i}"), None,
             )
+        if not forwarded:
+            # Undeclared contract: the row's own scalars become the node's
+            # properties, so `<section>.<column>` addresses the same thing in a
+            # filter, a table and a CLUSTER binding. Scalars only — an object or
+            # a list is a participant or a justification, and both have homes.
+            element = getattr(row, "row_element", None)
+            if isinstance(element, dict):
+                for k, v in element.items():
+                    if k in _GROUNDS_FIELDS or isinstance(v, (dict, list)):
+                        continue
+                    if v not in (None, ""):
+                        shared[f"fp__{k}"] = v
         ev = getattr(row, "evidence", None)
         if isinstance(ev, dict) and ev and self._evidence_passes(ev, proj):
             shared["_inline_justification"] = ev
@@ -723,6 +968,19 @@ class AnnotationGraphSource:
         if is_occurrence:
             shared["_is_occurrence"] = True
         label = _render_label(row, proj.node_label, per_role)
+        if not label and is_occurrence:
+            # **An address is not a label.** With nothing declared, identity
+            # falls back to `annotation:path:ordinality` — correct as an
+            # identity (stable, never folds two reports of one meeting) and
+            # unusable as a display name: a contract that declares no
+            # `node_name` rendered every node as
+            # `5940:document.financial_records[*]:1`, which is the JSON leaking
+            # onto the canvas.
+            #
+            # The section and the ordinal say the same thing and read. Identity
+            # is untouched — this is the *display* half, which is why they were
+            # separate fields to begin with.
+            label = f"{_section_of(proj.path)} #{getattr(row, 'ord', 0)}"
         if label:
             shared["_node_label"] = label
 
@@ -740,6 +998,22 @@ class AnnotationGraphSource:
         edge_props: dict[str, Any] = {}
         if "_edge_group" in shared:
             edge_props["_edge_group"] = shared["_edge_group"]
+        # …and the row's FORWARDED properties, for exactly the argument above.
+        # A forwarded property describes the ROW — `modality`, `kind`,
+        # `currency` — and every role edge of one row belongs to that row, so
+        # withholding them is the same mistake `_edge_group` was fixed for.
+        #
+        # Measured before this: 0 of 192 edges carried any property on run
+        # 15010, so `edgeEpistemics` (which reads `properties.modality`) had
+        # nothing to read and every denial painted exactly like an assertion.
+        #
+        # Still NOT node-scoped keys — `_t0`, `_place`, `_node_group_*` stay
+        # out, which is what stops one act's date smearing across everyone
+        # named in it. The distinction is whose fact it is, not where it is
+        # convenient to put it.
+        for key, value in shared.items():
+            if key.startswith("fp__") and value is not None:
+                edge_props[key] = value
 
         atoms: list[GraphAtom] = [NodeRow(
             annotation_id=ann_id, name=name, type=node_type,
@@ -1260,6 +1534,7 @@ async def stream_graph(
 
     def _touch_node(
         name: str, type_: str, atom: Any, group_key: str, role: str | None = None,
+        *, own: bool = True,
     ) -> str:
         """Register (or update) a node slot from any atom that names it.
 
@@ -1267,6 +1542,11 @@ async def stream_graph(
         properties applies to this endpoint; ``role`` is the display label the
         node appeared under. They are separate because an edge's two endpoints
         read different group slots but carry their own role names.
+
+        ``own`` says whether this atom is the node's **own** row or merely one
+        that mentions it. An edge's endpoints are the latter, and the
+        distinction decides whether the row's forwarded properties land here —
+        see the harvest below.
         """
         props = atom.properties or {}
         node_id = _node_id(name, type_)
@@ -1365,12 +1645,23 @@ async def stream_graph(
         # never filled, so an exhibit's stance, source and locator were read off
         # an empty dict and the evidence pane fell back to the node's label.
         #
-        # Reached only where ``shared`` is — the occurrence for an ``about:
-        # self`` row, the subject for a property row. Participants carry `{}`
-        # and stay clean, which is the same scoping rule as everywhere else.
-        for key, value in props.items():
-            if key.startswith("fp__") and value is not None:
-                slot["properties"].setdefault(key[4:], value)
+        # Reached only for the node the row is ABOUT — the occurrence for an
+        # ``about: self`` row, the subject for a property row. Participants stay
+        # clean, which is the same scoping rule as everywhere else.
+        #
+        # ``own`` is what enforces that now. Role edges used to carry ``{}``, so
+        # the rule held by accident; once forwarded properties were put ON the
+        # edges — deliberately, so ``edgeEpistemics`` could paint a denial
+        # differently from an assertion — every endpoint began inheriting them
+        # through here. A deposition's ``modality: denied`` landed on the
+        # witness, the person denied about, the case, and the exhibit cited:
+        # the graph asserting of a *person* what a *statement* said. Exactly the
+        # smearing the `_t0` / `_place` exclusions above exist to prevent, one
+        # field over. Edges keep the properties; nodes take only their own.
+        if own:
+            for key, value in props.items():
+                if key.startswith("fp__") and value is not None:
+                    slot["properties"].setdefault(key[4:], value)
         annotation_ids_by_node.setdefault(node_id, set()).add(atom.annotation_id)
         # First-seen **non-null** wins, not first-seen. An occurrence's
         # role-edges carry empty properties by design (participants inherit
@@ -1480,18 +1771,32 @@ async def stream_graph(
                 if slot["weight_first"] is None:
                     slot["weight_first"] = raw_w
 
-            for fp in forward_properties:
-                bare = _as_triplet_key(fp.field)
-                v = props.get(f"fp__{bare}")
-                if v is not None:
-                    slot["fp_values"][bare].append(v)
+            # **Whatever the atom carries, not whatever the panel listed.**
+            #
+            # This read only the PANEL's `forward_properties`, so a projection
+            # declaring `properties: [{field: modality}]` put modality on its
+            # NODES and never on its EDGES. With no panel config that left every
+            # edge with an empty property bag — measured: 0 of 192 on run 15010 —
+            # and `edgeEpistemics` reads `properties.modality`, so **every denial
+            # painted exactly like an assertion**. On a corpus where the
+            # difference between alleged and adjudicated is the whole point,
+            # that is not a missing feature, it is a wrong picture.
+            #
+            # The atom already carries `fp__<field>` for the projection's own
+            # declarations (and, on an undeclared contract, for the row's own
+            # scalars). The node side has always read them that way; this is the
+            # edge side catching up.
+            for key, v in props.items():
+                if not key.startswith("fp__") or v is None:
+                    continue
+                slot["fp_values"].setdefault(key[4:], []).append(v)
 
             # An edge's endpoints are nodes in their own right — same registry
             # the node atoms use, so intervals and evidence merge across both.
             _touch_node(row.subject_name, row.subject_type, row,
-                        "_node_group_subj", row.subject_role)
+                        "_node_group_subj", row.subject_role, own=False)
             _touch_node(row.object_name, row.object_type, row,
-                        "_node_group_obj", row.object_role)
+                        "_node_group_obj", row.object_role, own=False)
 
         # Stop reading windows once either cap is reached.
         if top_n_edges is not None and len(edge_slots) >= top_n_edges:
@@ -1500,6 +1805,16 @@ async def stream_graph(
             break
 
     if not node_slots:
+        # **Clear what the last call decided.** These are module-level slots,
+        # so an empty result used to leave the PREVIOUS query's legend standing
+        # — "clustered by Interest — 8 groups" printed over a canvas with no
+        # nodes at all. A confident sentence about work that did not happen, on
+        # exactly the query where the reader most needs to know why they are
+        # looking at nothing.
+        _LAST_SIZE_LEGEND.clear()
+        _LAST_SIZE_NOTES.clear()
+        _LAST_CLUSTER_LEGEND.clear()
+        _LAST_CLUSTER_NOTES.clear()
         return
 
     # Fold typeless mentions into their typed twin, and remap the edges that
@@ -1587,10 +1902,16 @@ async def stream_graph(
         if s_id == o_id or s_id not in kept_ids or o_id not in kept_ids:
             continue
         computed_weight = _compute_edge_weight(slot, edge_weight_mode)
-        edge_props = _aggregate_forward_properties(slot["fp_values"], forward_properties)
+        edge_props = _aggregate_forward_properties(
+            slot["fp_values"], forward_properties,
+        )
         all_edges.append(GraphEdge(
             source=s_id, target=o_id,
             predicate=slot["predicate_display"],
+            kind=_edge_kind(
+                slot["predicate_display"], slot.get("role_display"),
+                node_slots.get(s_id), node_slots.get(o_id),
+            ),
             role=slot.get("role_display"),
             weight=slot["weight"],
             computed_weight=computed_weight,
@@ -1602,6 +1923,7 @@ async def stream_graph(
             a0=slot["a0"],
             a1=None if slot["a1_open"] else slot["a1"],
             source_paths=sorted(slot["source_paths"]),
+            source_annotation_ids=sorted(slot["annotation_ids"]),
         ))
 
     # Computed clustering keys — an interest profile or a role distribution is
@@ -1609,7 +1931,38 @@ async def stream_graph(
     # both nodes and edges exist. Overwrites the row-read ``group_value`` when
     # the binding names a computed form.
     node_group_spec: str | None = getattr(source, "node_group_by", None)
-    attach_neighbour_profiles(all_nodes, all_edges, node_group_spec)
+    roles_by_path = _roles_by_path(source)
+    # **A query that asks for the why-axis gets it.**
+    #
+    # `converge>` and `contact>` read the interest profile, and the profile was
+    # only computed when a panel happened to set `node_group_by:
+    # "neighbours:Interest"` — an unrelated field, in a different surface, that
+    # nobody connects to the query they just typed. Without it the query parsed,
+    # ran, and returned NOTHING, which is the exact failure this language exists
+    # to make impossible: a confident empty answer to a well-formed question.
+    #
+    # The query already says what it needs. `VECTOR:` names the direction and
+    # `converge`/`contact` read it, so either is sufficient to ask for the
+    # profile; the type comes from what the vector-role sections actually
+    # produced, never from the word "Interest".
+    if not node_group_spec and _wants_profile(source):
+        vector_type = _vector_entity_type(all_nodes, roles_by_path)
+        if vector_type:
+            node_group_spec = f"{NEIGHBOUR_PREFIX}{vector_type}"
+
+    attach_neighbour_profiles(
+        all_nodes, all_edges, node_group_spec, roles_by_path=roles_by_path,
+    )
+
+    # Size, and the reasons for it. Server-side because the denominator needs
+    # the whole population — a median or a rank computed over the client's
+    # capped view is a different number from the same query.
+    attach_sizes(all_nodes, all_edges, getattr(source, "channels", None))
+
+    # Which pile each node goes in. Beside sizes because both are bindings
+    # resolved from declarations onto nodes; unlike sizes, the *geometry* stays
+    # on the canvas — this only decides membership.
+    attach_clusters(all_nodes, all_edges, getattr(source, "channels", None))
 
     # Emit in chunks of ``chunk_size`` to preserve the iterator API and
     # cap individual SSE event size. In practice all chunks land back-to-back
@@ -1628,6 +1981,10 @@ async def stream_graph(
 
 #: ``node_group_by`` values that are computed from the assembled graph rather
 #: than read off a row. See :func:`attach_neighbour_profiles`.
+#: Row keys that are grounds rather than properties — they have their own rail
+#: and would be noise in a property bag.
+_GROUNDS_FIELDS = frozenset({"justification", "evidence", "grounds", "citation"})
+
 NEIGHBOUR_PREFIX = "neighbours:"
 ROLE_PROFILE = "roles"
 
@@ -1651,8 +2008,184 @@ def is_computed_group(spec: str | None) -> bool:
     return bool(spec) and (spec == ROLE_PROFILE or spec.startswith(NEIGHBOUR_PREFIX))
 
 
+#: Layout roles whose nodes cannot hold a motive, and so must never accumulate
+#: an interest profile.
+#:
+#: * ``anchor`` — positions from outside. A city, a channel, a docket: the
+#:   setting an act happened in, not a party to it. Lisbon and Bari came back
+#:   from ``converge>0.4`` scoring as aligned actors, which is a category error
+#:   the number gives no hint of: a place has no interests, and two places
+#:   "converging" is just two places that hosted similar acts.
+#: * ``vector`` — IS the thing being profiled. Profiling it against itself
+#:   makes every interest maximally similar to the interests it co-occurs with.
+#:
+#: Read from what the section DECLARED, never from a type name, so a contract
+#: whose places are called ``sites`` and whose interests are called ``motives``
+#: is excluded on exactly the same grounds.
+NON_PROFILING_ROLES: frozenset[str] = frozenset({"anchor", "vector"})
+
+#: How a pole is spelled into a profile key. Sign is part of the **key**, not
+#: the value, and that is the whole fix for cancellation — see
+#: :func:`_profile_key`.
+POLE_SERVES = "▲"      # ▲
+POLE_OPPOSES = "▼"     # ▼
+
+
+def _profile_key(label: str, opposing: bool) -> str:
+    """``opacity`` + a pole → one profile dimension.
+
+    **Sign belongs in the key.** It used to be in the value: serving added
+    ``+1`` and opposing added ``-1`` to the same entry, so an actor who both
+    pursued and frustrated an interest netted to exactly ``0`` — and a zero
+    entry is indistinguishable from an interest they never touched. It was then
+    dropped as "no information", when it is the opposite: an actor working both
+    sides of the same interest is a finding, and the arithmetic meant to reveal
+    stated-versus-revealed was destroying it.
+
+    No sum over one key can hold both "how much" and "which way", because the
+    two directions annihilate. Two keys can, and cancellation stops being
+    unlikely and starts being **unreachable**.
+
+    What this trades away, stated plainly: two actors on opposite sides of the
+    same interest used to cosine to ``-1`` and now cosine to ``0`` — orthogonal
+    rather than opposed, because they share no dimension. Reading opposition as
+    a negative number was only ever available by accepting cancellation, and
+    ambivalence is the more common case. Pair-scoped opposition is a `polar`
+    reading and belongs with the rest of that work, not smuggled into a cosine.
+
+    Two parties who both *oppose* the same thing still converge, which is
+    correct — they share the ``▼`` dimension, and they do agree.
+    """
+    return f"{label}{POLE_OPPOSES if opposing else POLE_SERVES}"
+
+
+def _roles_by_path(source: Any) -> dict[str, str]:
+    """``projection path -> declared layout role``, when the source has any."""
+    out: dict[str, str] = {}
+    for p in getattr(source, "projections", None) or ():
+        path = getattr(p, "path", None)
+        role = getattr(p, "role", None)
+        if path and role:
+            out[path] = str(role).strip().lower()
+    return out
+
+
+#: Shape keys whose answer is computed from the interest profile.
+_PROFILE_KEYS: frozenset[str] = frozenset({"converge", "contact"})
+
+
+def _wants_profile(source: Any) -> bool:
+    """Does this query need the why-axis computed?
+
+    True when it reads the profile (``converge``/``contact``) or names a
+    direction (``VECTOR:``). Both are the analyst saying the question is about
+    what the activity serves.
+    """
+    q = getattr(source, "gql", None)
+    if q is not None:
+        for c in getattr(q, "shape_conditions", None) or ():
+            if str(getattr(c, "key", "")).lower() in _PROFILE_KEYS:
+                return True
+    chans = getattr(source, "channels", None)
+    return bool(chans is not None and hasattr(chans, "get") and chans.get("VECTOR"))
+
+
+def types_by_role(
+    nodes: list[GraphNode], roles_by_path: dict[str, str] | None,
+) -> dict[str, list[str]]:
+    """``declared layout role -> the entity types its sections produced``.
+
+    Read off the assembled nodes rather than off the contract, because what a
+    section *declares* and what it actually minted can differ — a roster nobody
+    filled contributes no types, and offering a pane for it would be offering
+    an empty one.
+
+    This is what lets a pane be scoped without naming a noun: the panes pane
+    preset says ``role: vector`` and this turns that into ``type:Interest`` on
+    a contract that says ``interests``, or ``type:Motive`` on one that says
+    ``motives``, with neither word appearing anywhere but the schema.
+    """
+    if not roles_by_path:
+        return {}
+    counts: dict[str, dict[str, int]] = {}
+    for n in nodes:
+        t = (n.type or "").strip()
+        if not t:
+            continue
+        for p in (n.source_paths or ()):
+            role = roles_by_path.get(p)
+            if role:
+                # `counts.setdefault(r, {})[t] = counts[r].get(t, 0) + 1` reads
+                # as one statement and is two: Python evaluates the RIGHT side
+                # first, so `counts[r]` ran before `setdefault` created it and
+                # the first node of every role raised KeyError. Bound once,
+                # then used.
+                bucket = counts.setdefault(role, {})
+                bucket[t] = bucket.get(t, 0) + 1
+    # Ordered by how much each type actually contributed, so a pane scoped to
+    # the top two is scoped to the ones that matter.
+    return {
+        role: sorted(ts, key=ts.__getitem__, reverse=True)
+        for role, ts in counts.items()
+    }
+
+
+def _vector_entity_type(
+    nodes: list[GraphNode], roles_by_path: dict[str, str] | None,
+) -> str | None:
+    """The entity type the vector-role sections produced.
+
+    Read off the assembled nodes rather than assumed, so a contract whose
+    directions are called ``motives`` and typed ``Motive`` works exactly as one
+    that says ``interests`` and ``Interest`` — the whole point of the
+    declaration chain is that no layer below the schema knows either word.
+    """
+    if not roles_by_path:
+        return None
+    counts: dict[str, int] = {}
+    for n in nodes:
+        if not any(roles_by_path.get(p) == "vector" for p in (n.source_paths or ())):
+            continue
+        t = (n.type or "").strip()
+        if t:
+            counts[t] = counts.get(t, 0) + 1
+    return max(counts, key=counts.__getitem__) if counts else None
+
+
+def _can_hold_a_motive(node: GraphNode, roles_by_path: dict[str, str] | None) -> bool:
+    """Is this node the kind of thing that can want something?
+
+    Decided by the roles its own projections declared, and **any anchor or
+    vector role disqualifies it** — not "any participating role qualifies it".
+
+    The difference is the whole fix. Bari is a member of the ``places`` roster
+    (``role: anchor``) *and* is referenced by three claim sections that name it
+    as where something happened. Under "any participating role wins" it kept a
+    profile and came back from ``converge>`` as an aligned actor, which is a
+    category error the number gives no hint of: a city has no interests, and
+    two cities "converging" is two cities that hosted similar acts.
+
+    Being named as a setting does not make something a party. Where a node
+    genuinely is both — an organisation that is also a venue — excluding it is
+    the safer error: a fabricated profile entry is a wrong finding, a missing
+    one is a visible gap.
+
+    With nothing declared, everything qualifies. A contract that never wrote
+    ``x-graph`` behaves exactly as it did, which is the rule the declaration
+    chain has followed everywhere else: declaring adds precision, and not
+    declaring is not an error.
+    """
+    if not roles_by_path:
+        return True
+    return not any(
+        roles_by_path.get(p) in NON_PROFILING_ROLES
+        for p in (node.source_paths or ())
+    )
+
+
 def attach_neighbour_profiles(
     nodes: list[GraphNode], edges: list[GraphEdge], spec: str | None,
+    roles_by_path: dict[str, str] | None = None,
 ) -> None:
     """Give each node a weighted profile of what it is connected to. In place.
 
@@ -1757,18 +2290,18 @@ def attach_neighbour_profiles(
         for m, _ in members:
             if m in target_ids:
                 continue          # a target does not profile itself
+            if not _can_hold_a_motive(by_id[m], roles_by_path):
+                continue          # a place has no interests — see NON_PROFILING_ROLES
             bucket = profiles.setdefault(m, {})
             for t, role in targets:
                 label = by_id[t].name
-                # **Signed.** An act that opposes an interest subtracts from the
-                # profile rather than adding to it, so an actor who both pursues
-                # and frustrates one nets toward zero — which is ambivalence, and
-                # the honest reading. Cosine over signed vectors then spans
-                # [-1, 1]: allies positive, adversaries negative, and two parties
-                # united in opposing the same thing positive again, because they
-                # do agree.
-                sign = -1.0 if (role or "").strip().lower() in OPPOSING_ROLES else 1.0
-                bucket[label] = bucket.get(label, 0.0) + sign * weight
+                # **Two-sided, as a KEY.** Serving and opposing an interest are
+                # separate dimensions, so an actor who does both shows up as
+                # doing both instead of netting to zero and vanishing. See
+                # `_profile_key` for what that buys and what it costs.
+                opposing = (role or "").strip().lower() in OPPOSING_ROLES
+                key = _profile_key(label, opposing)
+                bucket[key] = bucket.get(key, 0.0) + weight
 
     for nid, prof in profiles.items():
         # Both slots: `group_value` because the panel asked to group by this,
@@ -1776,6 +2309,411 @@ def attach_neighbour_profiles(
         # above writes only the first — it is a grouping, not an affinity.
         by_id[nid].group_value = prof
         by_id[nid].profile = prof
+
+
+#: Where :func:`attach_sizes` leaves what it decided, for ``_graph_meta`` to
+#: put on the wire. A module-level slot rather than a return value because the
+#: assembly path is a generator and threading one more tuple element through it
+#: would touch every caller for a string.
+_LAST_SIZE_LEGEND: list[str] = []
+
+#: …and what it could not do with what was written. Amber, not neutral.
+_LAST_SIZE_NOTES: list[str] = []
+
+
+def attach_sizes(
+    nodes: list[GraphNode], edges: list[GraphEdge], channels: Any,
+) -> None:
+    """Resolve the ``WEIGHT:`` binding onto ``node.size``. In place.
+
+    No binding, no sizes: an unconfigured panel keeps the renderer's own
+    default rather than being silently switched onto a measure nobody asked
+    for.
+    """
+    _LAST_SIZE_LEGEND.clear()
+    _LAST_SIZE_NOTES.clear()
+    if channels is None or not nodes:
+        return
+    binding = channels.get("WEIGHT") if hasattr(channels, "get") else None
+    if binding is None:
+        return
+
+    from app.api.modules.graph.measures import measure_nodes, parse_measure
+
+    spec = parse_measure(binding)
+    sized = measure_nodes(spec, nodes, edges)
+    for n in nodes:
+        n.size = sized.sizes.get(n.id)
+    _LAST_SIZE_LEGEND[:] = [f"size: {spec.render()}", *sized.legend]
+    _LAST_SIZE_NOTES[:] = sized.notes
+
+
+def size_legend() -> list[str]:
+    """What the last :func:`attach_sizes` decided, for ``meta.legend``."""
+    return list(_LAST_SIZE_LEGEND)
+
+
+def size_notes() -> list[str]:
+    """What it could not do with what was written, for ``meta.notes``."""
+    return list(_LAST_SIZE_NOTES)
+
+
+#: What the last :func:`attach_clusters` decided.
+_LAST_CLUSTER_LEGEND: list[str] = []
+
+#: …and what it could not do with what was written. Amber, not neutral.
+_LAST_CLUSTER_NOTES: list[str] = []
+
+#: The keys the last binding tried, when it placed nothing — so the route can
+#: turn "matched no node" into "try these columns".
+_LAST_CLUSTER_KEYS: list[str] = []
+
+#: Keys ``CLUSTER:`` understands directly, in the spelling an analyst would
+#: reach for. Everything else is looked up in ``node.properties`` and then
+#: against the node's declared sections, so a schema's own words work without
+#: any of them appearing here.
+_CLUSTER_KEYS: dict[str, Any] = {
+    "type": lambda n: n.node_type or n.type,
+    "kind": lambda n: n.kind,
+    "role": lambda n: (sorted(n.roles)[0] if n.roles else None),
+    "label": lambda n: n.name,
+    "name": lambda n: n.name,
+    "place": lambda n: (strongest_place(n.places).place if n.places else n.place),
+    "section": lambda n: (
+        _section_of(sorted(n.source_paths)[0]) if n.source_paths else None
+    ),
+}
+
+
+def _role_neighbour_labels(
+    nodes: list[GraphNode], edges: list[GraphEdge], role: str,
+) -> dict[str, str]:
+    """For each node, the name of what sits in *role* on the acts it is part of.
+
+    **A role is a neighbour, not a property.** `observations.by` names the payer
+    slot, and a payer is at the far end of an edge — it never lands in the
+    node's property bag, so reading it as a column found nothing however deep
+    the path went. This walks the slot instead: node → its occurrences → the
+    endpoint whose edge carries that role.
+
+    Depth beyond the role (`observations.by.name`) is the same answer, because
+    the name is what a pile is labelled by either way. It is accepted rather
+    than refused because a writer who addressed the filter half that way will
+    address this half that way too, and a grammar true in one position and
+    false in another is worse than one that is simply narrower.
+    """
+    by_id = {n.id: n for n in nodes}
+    want = role.strip().lower()
+    # Who fills this role, per occurrence.
+    filler: dict[str, str] = {}
+    for e in edges:
+        if (getattr(e, "role", "") or "").strip().lower() != want:
+            continue
+        far = by_id.get(e.target)
+        if far is not None and far.kind != "occurrence":
+            filler.setdefault(e.source, far.name)
+    out: dict[str, str] = {}
+    incident: dict[str, list[str]] = {}
+    for e in edges:
+        incident.setdefault(e.source, []).append(e.target)
+        incident.setdefault(e.target, []).append(e.source)
+    for n in nodes:
+        if n.id in filler:            # the act itself
+            out[n.id] = filler[n.id]
+            continue
+        names = sorted({
+            filler[m] for m in incident.get(n.id, ()) if m in filler
+        })
+        if names:
+            out[n.id] = names[0]
+    return out
+
+
+def _neighbour_labels(
+    nodes: list[GraphNode], edges: list[GraphEdge], want: set[str],
+) -> dict[str, str]:
+    """For each node, the strongest neighbour whose type is in *want*.
+
+    **The pile is often not a field on the node — it is what the node is
+    attached to.** "Which interest does this actor serve", "which place did this
+    act happen at": neither is readable off the row that named the actor,
+    because it is a property of the assembled graph.
+
+    One step **through occurrences**, because an act is the connective tissue
+    rather than a destination: an actor does not touch an interest directly, it
+    makes a payment that serves one. Counting only direct edges would find
+    nothing for exactly the nodes a reader cares about.
+
+    Ties break on the label, so a node with two equally strong attachments lands
+    in the same pile on every render. A cluster that moves when nothing changed
+    reads as a finding and is an artefact.
+    """
+    by_id = {n.id: n for n in nodes}
+    adj: dict[str, list[str]] = {}
+    for e in edges:
+        adj.setdefault(e.source, []).append(e.target)
+        adj.setdefault(e.target, []).append(e.source)
+
+    def typed(nid: str) -> str | None:
+        n = by_id.get(nid)
+        if n is None:
+            return None
+        t = (n.node_type or n.type or "").strip()
+        return t if t.lower() in want else None
+
+    out: dict[str, str] = {}
+    for n in nodes:
+        scores: dict[str, float] = {}
+        for mid in adj.get(n.id, ()):
+            m = by_id.get(mid)
+            if m is None:
+                continue
+            label = typed(mid)
+            if label:
+                # A large act pulls harder than a small one, which is the same
+                # weighting `attach_neighbour_profiles` uses.
+                scores[m.name] = scores.get(m.name, 0.0) + (m.magnitude or 1.0)
+                continue
+            if m.kind != "occurrence":
+                continue
+            for far in adj.get(mid, ()):
+                if far == n.id:
+                    continue
+                f = by_id.get(far)
+                if f is not None and typed(far):
+                    scores[f.name] = scores.get(f.name, 0.0) + (m.magnitude or 1.0)
+        if scores:
+            out[n.id] = max(sorted(scores), key=lambda k: scores[k])
+    return out
+
+
+def _section_columns(nodes: list[GraphNode], section: str) -> set[str]:
+    """Property keys carried by nodes that came from *section*.
+
+    Only what is actually on the wire, so a suggestion cannot name a column the
+    graph does not have — a hint that misfires costs more than no hint, because
+    the reader spends a query finding out that it was wrong.
+    """
+    out: set[str] = set()
+    for n in nodes:
+        if any(_section_of(p) == section for p in n.source_paths or ()):
+            out.update(k for k in (n.properties or {}) if k)
+    return out
+
+
+def attach_clusters(
+    nodes: list[GraphNode], edges: list[GraphEdge], channels: Any,
+) -> None:
+    """Resolve the ``CLUSTER:`` binding onto ``node.cluster``. In place.
+
+    **Which pile, not where the pile goes.** The canvas owns the geometry; this
+    owns the key, because the key can name a declaration the client cannot see —
+    a role, a place rung, a section. Splitting it the other way is what left
+    ``node_group_by`` as a panel field the engine half-understood.
+
+    No binding, no clusters. An unconfigured panel stays force-directed rather
+    than being silently partitioned by a key nobody chose — a grouping that
+    appears on its own is indistinguishable from a finding.
+
+    A node with no value for the key gets ``None`` rather than a bucket called
+    ``""``. Both the honest reading and the useful one: "everything else" is not
+    a group, and drawing it as one puts a labelled box around the residue.
+    """
+    _LAST_CLUSTER_LEGEND.clear()
+    _LAST_CLUSTER_NOTES.clear()
+    _LAST_CLUSTER_KEYS.clear()
+    for n in nodes:
+        n.cluster = None
+    if channels is None or not nodes:
+        return
+    binding = channels.get("CLUSTER") if hasattr(channels, "get") else None
+    if binding is None:
+        return
+    keys = [s.path for s in binding.selectors if getattr(s, "path", None)]
+    if not keys:
+        return
+
+    # **What a key can name, in order.** A reader writing `CLUSTER:Interests`
+    # means "pile these by the interest they serve", not "look for a column
+    # called Interests" — and the second reading is what made both of the
+    # obvious queries do nothing.
+    #
+    #   type · kind · role · place · section       a reserved key
+    #   <section>.<field>                          the data's own column
+    #   Location · Interest · Interests            a TYPE or a SECTION, which
+    #                                              means the neighbour of that
+    #                                              type — one hop, through
+    #                                              occurrences
+    #   anything else                              a property on the node
+    #
+    # The third rung is the one that was missing, and it is the useful one: the
+    # pile is usually what a node is ATTACHED to rather than a field it carries.
+    types = {(n.node_type or n.type or "").strip().lower() for n in nodes}
+    types.discard("")
+    sections: dict[str, set[str]] = {}
+    for n in nodes:
+        t = (n.node_type or n.type or "").strip().lower()
+        for p in n.source_paths or ():
+            if t:
+                sections.setdefault(_section_of(p), set()).add(t)
+
+    roles = {r for n in nodes for r in (n.roles or ())}
+    neighbours: dict[str, dict[str, str]] = {}
+    #: How each key was read, so the bar can SAY it. An inference nobody can see
+    #: is indistinguishable from a coincidence — `CLUSTER:Location` quietly
+    #: meaning "the place it happened at" is helpful exactly once and confusing
+    #: every time after.
+    resolved: list[str] = []
+    for key in keys:
+        leaf = key.rsplit(".", 1)[-1].strip().lower()
+        if "." in key:
+            # `<section>.<role>` and `<section>.<role>.<field>` — a ROLE is a
+            # neighbour, not a column, so it is walked rather than read.
+            parts = [p for p in key.split(".") if p]
+            slot = next(
+                (p.strip().lower() for p in parts[1:] if p.strip().lower() in roles),
+                None,
+            )
+            if slot:
+                neighbours[key] = _role_neighbour_labels(nodes, edges, slot)
+                resolved.append(f"{key} → whoever fills the {slot} slot")
+                continue
+            resolved.append(f"{key} → the row's own {leaf}")
+            continue
+        if leaf in _CLUSTER_KEYS:
+            resolved.append(f"{key} → each node's {leaf}")
+            continue
+        want = {leaf} if leaf in types else sections.get(leaf, set())
+        # A section maps to the types it minted, which is how `Interests`
+        # reaches `Interest` without either word being written down anywhere.
+        if want:
+            neighbours[key] = _neighbour_labels(nodes, edges, want)
+            named = ", ".join(sorted(want))
+            resolved.append(
+                f"{key} → the {named} it connects to"
+                + ("" if leaf in types else f" (section {leaf})"),
+            )
+        else:
+            resolved.append(f"{key} → a property called {leaf}")
+
+    def read(n: GraphNode, key: str) -> str | None:
+        # **A qualified key means the DATA's own field, never the reserved one.**
+        # Exactly as in the filter half: `kind:` is the node kind and
+        # `observations.kind:` is the column a schema happens to call `kind`.
+        # Without this, `CLUSTER:observations.kind` on the mega scenario returned
+        # two groups called `entity` and `occurrence` — a confident answer to a
+        # question nobody asked, which is the failure mode this grammar exists
+        # to remove.
+        # A walked key answers first, whether or not it is qualified — the
+        # resolution above already decided which mechanism this key needs, and
+        # re-deciding it here by counting dots is how the two disagreed.
+        if key in neighbours:
+            return neighbours[key].get(n.id)
+        qualified = "." in key
+        leaf = key.rsplit(".", 1)[-1].strip().lower()
+        if not qualified:
+            fn = _CLUSTER_KEYS.get(leaf)
+            if fn is not None:
+                v = fn(n)
+                return str(v) if v not in (None, "") else None
+        v = (n.properties or {}).get(leaf)
+        return str(v) if v not in (None, "") else None
+
+    counts: dict[str, int] = {}
+    for n in nodes:
+        # A comma list is a COMPOUND key: `CLUSTER:type,place` is one pile per
+        # distinct pair, not two clusterings fighting for the same node.
+        parts = [read(n, k) for k in keys]
+        if any(p is None for p in parts):
+            continue
+        label = " · ".join(p for p in parts if p)
+        n.cluster = label
+        counts[label] = counts.get(label, 0) + 1
+
+    placed = sum(counts.values())
+    _LAST_CLUSTER_LEGEND[:] = [
+        f"clustered by {', '.join(keys)} — {len(counts)} groups, "
+        f"{placed} of {len(nodes)} nodes"
+        + (f", {len(nodes) - placed} with no value" if placed < len(nodes) else ""),
+        *(f"  {r}" for r in resolved),
+    ]
+    if not counts:
+        # A binding that placed nothing is not a clustering with zero groups —
+        # it is a key this graph does not have, and the canvas will look
+        # identical to one with no CLUSTER at all. That has to be visible.
+        #
+        # **And a note that only says "no" is half a note.** `CLUSTER:<section>`
+        # is the commonest miss and the most reasonable thing to type: a section
+        # is not a grouping key, because every node in it would land in one
+        # pile. What the writer wants is a *column* of that section, and this
+        # knows which ones exist — so it names them.
+        # **A note that only says "no" is half a note.** `CLUSTER:<section>` is
+        # the commonest miss and the most reasonable thing to type — but a
+        # section is not a grouping key, because every node in it would land in
+        # one pile. What the writer wants is a COLUMN of it, and now that a
+        # row's own scalars reach its node, this knows which ones exist.
+        hints: list[str] = []
+        for key in keys:
+            leaf = key.rsplit(".", 1)[-1].strip().lower()
+            cols = sorted(_section_columns(nodes, leaf))
+            if cols:
+                hints.append(
+                    f"{leaf} is a section, not a key — try "
+                    + ", ".join(f"{leaf}.{c}" for c in cols[:5]),
+                )
+        _LAST_CLUSTER_NOTES[:] = [
+            f"CLUSTER:{','.join(keys)} matched no node"
+            + (" — " + "; ".join(hints) if hints else
+               " — try type, kind, role, place, section, an entity type, "
+               "a section name, or `<section>.<field>`"),
+        ]
+        # The route enriches this with the section's real columns when the key
+        # named one: a section is not a grouping key (every node in it would
+        # land in one pile) and what the writer wants is a COLUMN of it. Only
+        # the route can say which — a projection that forwards no properties
+        # puts nothing on the node, so the columns exist in the row table and
+        # nowhere else.
+        _LAST_CLUSTER_KEYS[:] = [k.rsplit(".", 1)[-1].strip().lower() for k in keys]
+
+
+def cluster_legend(nodes: list[GraphNode] | None = None) -> list[str]:
+    """What the last :func:`attach_clusters` decided, for ``meta.legend``.
+
+    *nodes* is the **final** node set. Clustering runs inside assembly, before
+    the post-tier filters (`type:`, `from:`, `degree>`) remove anything — so the
+    tally taken there describes a superset. On a query whose post-tier matched
+    nothing the legend read "7 groups, 57 of 93 nodes" over an empty canvas,
+    which is the worst moment to be told a confident number: it is exactly when
+    the reader is trying to work out why they are looking at nothing.
+
+    Recounted here rather than moved: the *denominator* for sizes genuinely is
+    the whole population (that is what `ref:` means), so the two tallies are
+    different questions and only this one follows the filter.
+    """
+    if nodes is None or not _LAST_CLUSTER_LEGEND:
+        return list(_LAST_CLUSTER_LEGEND)
+    counts: dict[str, int] = {}
+    for n in nodes:
+        if n.cluster:
+            counts[n.cluster] = counts.get(n.cluster, 0) + 1
+    placed = sum(counts.values())
+    head, *rest = _LAST_CLUSTER_LEGEND
+    keys = head.split("clustered by", 1)[-1].split("—")[0].strip()
+    return [
+        f"clustered by {keys} — {len(counts)} groups, {placed} of {len(nodes)} nodes"
+        + (f", {len(nodes) - placed} with no value" if placed < len(nodes) else ""),
+        *rest,
+    ]
+
+
+def cluster_notes() -> list[str]:
+    """What it could not do with what was written, for ``meta.notes``."""
+    return list(_LAST_CLUSTER_NOTES)
+
+
+def cluster_missed_keys() -> list[str]:
+    """Keys the last binding tried and placed nothing with."""
+    return list(_LAST_CLUSTER_KEYS)
 
 
 def _attach_doc_anchors(
@@ -2154,12 +3092,17 @@ def _aggregate_forward_properties(
 ) -> dict[str, Any]:
     """Apply each ``ForwardPropertySpec.agg`` to its collected values."""
     out: dict[str, Any] = {}
-    for fp in specs:
-        bare = _as_triplet_key(fp.field)
-        vals = values_by_field.get(bare, [])
+    by_field = {_as_triplet_key(fp.field): fp for fp in specs}
+    for bare, vals in values_by_field.items():
         if not vals:
             continue
-        agg = fp.agg
+        # A field nobody wrote a spec for still forwards — it came from the
+        # projection's own declaration, or from the row itself on a contract
+        # that declares nothing. `first` is the honest default for those: it is
+        # the only aggregation that cannot invent a value, and a modality is a
+        # label rather than a quantity.
+        fp = by_field.get(bare)
+        agg = fp.agg if fp is not None else "first"
         if agg == "first":
             out[bare] = vals[0]
             continue
@@ -2268,6 +3211,50 @@ def frame_coverage(
         "interest": {"have": len(served | interest_ids), "of": total},
         "event": {"have": len(during | event_ids), "of": total},
     }
+
+
+def _edge_kind(
+    predicate: str | None, role: str | None,
+    source: dict[str, Any] | None, target: dict[str, Any] | None,
+) -> str:
+    """What this edge DOES to the picture. ``sections.EDGE_KINDS``.
+
+    Three rungs, and the order matters — the same ladder every other reading in
+    this system walks:
+
+    1. **The conventional vocabulary.** `within`, `part_of`, `during`, `follows`
+       — words whose structural meaning is not in doubt. Checked first because
+       a containment edge is containment whether it was minted as a role slot
+       or as a relation, and asking where it came from would give two answers
+       for one fact.
+    2. **The structure.** An edge out of an OCCURRENCE is that act's cast: it
+       says who was in it, not that two things are related. 104 of run 15010's
+       192 edges are this, and drawing them at the weight of a finding is most
+       of why the canvas reads as noise.
+    3. **Otherwise a relation** — the honest default, because a relation is the
+       kind that asserts least about how to draw it.
+
+    Deliberately NOT inferred from the section: a section mints both role edges
+    and relation edges depending on its ``about``, so section identity answers a
+    different question than this one.
+    """
+    from app.api.modules.annotation.sections import edge_kind_for
+
+    declared = edge_kind_for(predicate) or edge_kind_for(role)
+    if declared:
+        return declared
+    if source is not None and source.get("kind") == "occurrence":
+        return "role"
+    return "relation"
+
+
+def _section_of(path: str) -> str:
+    """``document.observations[*]`` → ``observations``.
+
+    The section's own name, which is what the schema author wrote and therefore
+    the only spelling anyone would reach for when addressing it.
+    """
+    return (path or "").rsplit(".", 1)[-1].removesuffix("[*]").strip().lower()
 
 
 def _node_id(name: str, entity_type: str) -> str:
