@@ -33,6 +33,7 @@ misc/
 .dockerignore
 
 docs/
+docs.zip
 
 backend/logs/*
 scripts/
