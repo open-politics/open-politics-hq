@@ -2,6 +2,7 @@
 import React, { useMemo, useState } from "react";
 import * as LucideIcons from "lucide-react";
 import { useTheme } from "next-themes";
+import { HEROICON_ALIASES } from "@/lib/annotations/icons";
 
 /**
  * Icon picker — backed by lucide-react (was @heroicons/react before Phase 9).
@@ -10,6 +11,10 @@ import { useTheme } from "next-themes";
  * `BriefcaseIcon`, etc. We resolve those via `HEROICON_ALIASES` so stored
  * graph-visual declarations keep rendering; new schemas write Lucide names
  * (no trailing "Icon" suffix).
+ *
+ * The alias table lives in `lib/annotations/icons` because the picker is no
+ * longer its only reader — the graph canvas resolves the same stored names to
+ * geometry, and one table that both consult cannot drift from itself.
  */
 
 type IconEntry = {
@@ -18,91 +23,6 @@ type IconEntry = {
   /** Human-friendly label for the picker search. */
   friendly_name: string;
   Component: React.ComponentType<React.ComponentPropsWithoutRef<"svg"> & { size?: number | string }>;
-};
-
-/**
- * HeroIcon → Lucide name aliases for the most common legacy references.
- *
- * Lucide names are suffix-free (`User`, `Briefcase`); HeroIcons use the
- * `*Icon` suffix. Anything not in this table falls back to stripping the
- * trailing `Icon` segment before looking up in lucide-react.
- */
-const HEROICON_ALIASES: Record<string, string> = {
-  // People / identity
-  UserIcon: "User",
-  UserCircleIcon: "CircleUser",
-  UsersIcon: "Users",
-  UserGroupIcon: "Users",
-  IdentificationIcon: "BadgeCheck",
-  AtSymbolIcon: "AtSign",
-  // Work / orgs
-  BriefcaseIcon: "Briefcase",
-  BuildingOfficeIcon: "Building2",
-  BuildingOffice2Icon: "Building2",
-  BuildingLibraryIcon: "Landmark",
-  HomeIcon: "Home",
-  // Action
-  ArrowRightIcon: "ArrowRight",
-  ArrowLeftIcon: "ArrowLeft",
-  ArrowUpIcon: "ArrowUp",
-  ArrowDownIcon: "ArrowDown",
-  PlusIcon: "Plus",
-  MinusIcon: "Minus",
-  XMarkIcon: "X",
-  TrashIcon: "Trash2",
-  PencilIcon: "Pencil",
-  MagnifyingGlassIcon: "Search",
-  // Auth / session (HeroIcons v2 renamed these; v1 names kept too)
-  ArrowRightEndOnRectangleIcon: "LogIn",
-  ArrowRightOnRectangleIcon: "LogIn",
-  ArrowLeftStartOnRectangleIcon: "LogOut",
-  ArrowRightStartOnRectangleIcon: "LogOut",
-  ArrowLeftOnRectangleIcon: "LogOut",
-  // Comms
-  ChatBubbleLeftIcon: "MessageCircle",
-  ChatBubbleBottomCenterTextIcon: "MessageSquareText",
-  EnvelopeIcon: "Mail",
-  PhoneIcon: "Phone",
-  MegaphoneIcon: "Megaphone",
-  // Data / shapes
-  ChartBarIcon: "BarChart",
-  ChartPieIcon: "PieChart",
-  ChartLineIcon: "LineChart",
-  TableCellsIcon: "Table",
-  PresentationChartLineIcon: "LineChart",
-  Squares2X2Icon: "LayoutGrid",
-  // Status
-  CheckIcon: "Check",
-  CheckCircleIcon: "CircleCheck",
-  ExclamationTriangleIcon: "TriangleAlert",
-  InformationCircleIcon: "Info",
-  QuestionMarkCircleIcon: "CircleHelp",
-  // Navigation
-  GlobeAltIcon: "Globe",
-  MapPinIcon: "MapPin",
-  FlagIcon: "Flag",
-  LockClosedIcon: "Lock",
-  LockOpenIcon: "LockOpen",
-  // Documents
-  DocumentIcon: "FileText",
-  DocumentTextIcon: "FileText",
-  DocumentDuplicateIcon: "Files",
-  FolderIcon: "Folder",
-  BookOpenIcon: "BookOpen",
-  NewspaperIcon: "Newspaper",
-  // Time
-  ClockIcon: "Clock",
-  CalendarIcon: "Calendar",
-  CalendarDaysIcon: "CalendarDays",
-  // Misc
-  StarIcon: "Star",
-  HeartIcon: "Heart",
-  BoltIcon: "Zap",
-  CogIcon: "Cog",
-  Cog6ToothIcon: "Settings",
-  LightBulbIcon: "Lightbulb",
-  SparklesIcon: "Sparkles",
-  FireIcon: "Flame",
 };
 
 /**

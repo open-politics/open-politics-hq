@@ -1,40 +1,22 @@
 
 > # What is even happening right now?
 
-It's a question many of us ask as we navigate today's information and especially political landscape. News cycles shift rapidly, narratives are constructed and reconstructed, and the framing of issues influences public perception as much as the facts themselves.
+That's roughly where this started, less as a mission statement than as the feeling you're left with after an hour of reading the news, or when somebody hands you a stick with four hundred PDFs on it and asks whether there's anything in there worth knowing.
 
-Our approach begins with a rephrased version of this essential question:
+The frustrating thing about that situation is that it isn't really a question of expertise. Most people who work with information already know what they are looking for, and they usually know it quite precisely: if you've read enough coverage of a conflict you can tell within two paragraphs whose interest a given piece is serving, and if you've been through a hundred contracts you know which clause is the one that will matter in two years. The knowledge is there. What isn't there is the time to apply it more than fifty or so times before the evening is gone, which means most of what people know how to do, they end up doing on a sample small enough to be doubted, while the rest of the material stays unread. For a long time the only way around that was to either hire people who write code or become one of them yourself, and both of those are expensive in ways that quietly decide who gets to do this kind of work at all.
 
-> "How can we gather, measure, classify, review, and analyse developments with accuracy and transparency?"
+So what HQ does is let you write your lens down and hand the repetitive part to a machine. You formulate what you're after as questions with defined answers, more or less the way you would write a codebook: which sources are quoted, who is being framed as the problem, what the total on this invoice is, whether the document is worth keeping at all. That set of questions becomes a schema, and once you have it the system applies it to everything you point it at, whether that's twelve documents or forty thousand. What comes back is a table with a row per document and a column per question, and every value in it carries a link back to the passage it was taken from, which is the part I would defend hardest if somebody asked me what actually matters here, because a number you cannot trace back to a sentence that somebody really wrote isn't a finding, it's decoration.
 
-## The Problem
-The modern information ecosystem is designed to capture attention. Social media and traditional news operate under the same rule: attention is the most valuable currency. From emotionally charged headlines to the topics that go unmentioned, everything competes for your focus.
+From there on it behaves like data and you can treat it accordingly: sort it, plot it over time, put it on a map, look at the graph of who keeps appearing next to whom, or export the lot and carry on in R or wherever you're at home. What goes in can be almost anything, uploads, RSS feeds, search results, a directory nobody has opened since 2019, and what comes out is structured enough that you can argue with it, and that somebody else can take it apart and argue back.
 
-Navigating political landscapes — understanding key players, their motives, and how narratives get shaped — remains difficult. There are countless sources, actors, and interests shaping the discourse. For those who actively read and compare news, patterns start to emerge — but at scale, tracking these influences requires different infrastructure.
+There is deliberately nothing in the system that decides what is important. No ranking, no feed, no notion of relevance built in anywhere, because the moment a tool like this ships with an opinion about what matters it stops being infrastructure and turns into an editor, and you inherit whatever assumptions its authors happened to be carrying around. The categories are yours, which also means they're yours to defend, the same deal you're in when you write a codebook by hand and someone asks you why these categories and not others. It's the reason the same setup works for parliamentary speeches, for an inbox from a project that ended badly, and for a shoebox of scanned receipts. The machinery genuinely doesn't know the difference and doesn't need to.
 
-> "Who wants your attention where, and why?"
+It runs wherever you need it to run. We keep a hosted version going, you can put it on your own server, or you can run it on a laptop with the network off and a model sitting on the same disk, and in all three cases it is the same software. That isn't something we added for the sake of completeness. Many of the people who would get the most out of something like this are working with material they cannot upload to a company's computer, whether because a source would be identifiable or because a legal department would have their heads, and a tool that only functions with an API key from one of four vendors is of no use to them whatsoever. AGPL, no telemetry, nothing phoning home. If you'd rather not take that on trust, the source is right there and you're welcome to check.
 
-The tools for systematic analysis exist, but they've historically been available only to well resourced institutions. We're building them as public infrastructure — open, transparent, and customisable for anyone who wants to analyse political information at scale.
+The whole thing started fairly undramatically in political science at the Otto Suhr Institute here in Berlin, where we were writing a paper that involved coding a large amount of text consistently, so we built something to help with it, and then at some point looked at what we had and realised it had almost nothing to do with that particular paper. Journalists, auditors, archivists, people in legal departments, anyone whose work consists of reading runs into the same wall at roughly the same place. We presented the method at [APSA 2024](https://convention2.allacademic.com/one/apsa/apsa24/index.php?program_focus=view_paper&selected_paper_id=2148195&cmd=online_program_direct_link&sub_action=online_program) in Philadelphia and [PEIO 2025](https://www.peio.me/wp-content/uploads/PEIO17/submission_124.pdf) at Harvard, mainly because a method nobody from the outside can inspect isn't much of a method, and since the same reasoning applies to software, all of the [code](https://github.com/open-politics/open-politics-hq) is public as well. If you find the places where it's wrong, we would much rather hear about it than not.
 
-## What We're Building
-Open source communities have already built many advanced capabilities. We're assembling them into coherent infrastructure that's accessible to the public.
+If you're in Berlin, we're around the Chaos Computer Club on Thursdays fairly often. Otherwise:
 
-Raw data is meaningless without the right interface. User experience and interface design matter as much as the analytical methods. Different questions need different views — tables, visualisations, maps, or raw exports. The platform adapts.
-
-For details on how the platform works, see our [project manifest](https://github.com/open-politics/open-politics-hq).
-
-## How We Got Here
-This project emerged from research at the Otto Suhr Institute (Freie Universität Berlin). Working with my professor there, the need became clear: better tools to analyse political information systematically — frameworks that could be applied at scale, methods that could be made transparent and reproducible. The gap between what research infrastructure could theoretically do and what was actually accessible was too large to ignore.
-
-While solving that specific problem, we realised the challenge wasn't unique to political science. Anywhere natural language meets data — journalism, policy analysis, legal research, organisational documentation, regulatory monitoring — the same pattern exists. People have analytical expertise in their heads but lack infrastructure to apply it at scale.
-
-What began as tooling for research needs became general purpose infrastructure. Almost by accident, we'd built something that serves any field where you need to extract meaning from unstructured information.
-
-We've presented our core methodology at [APSA 2024](https://convention2.allacademic.com/one/apsa/apsa24/index.php?program_focus=view_paper&selected_paper_id=2148195&cmd=online_program_direct_link&sub_action=online_program) (Philadelphia) and [PEIO 2025](https://www.peio.me/wp-content/uploads/PEIO17/submission_124.pdf) (Harvard). Transparent methodology means others can critique, test, and improve our work. We invite you to do the same for this project. 
-
-If you want to contribute, learn more or want to get to know us:
-
-**Get in touch:**  
 Email: [engage@open-politics.org](mailto:engage@open-politics.org)  
 Founder: [Jim Vincent Wagner](https://www.linkedin.com/in/jim-vincent-wagner-051818257)  
 LinkedIn: [Open Politics](https://linkedin.com/company/102941572/)  

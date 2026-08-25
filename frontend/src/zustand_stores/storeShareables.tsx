@@ -342,6 +342,19 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
       triggerDownload(blob, filename);
       set({ isLoading: false });
 
+      // The package succeeded but may not carry every source file — storage can
+      // fail to serve a blob it has a path for. Saying so here is the only place
+      // the person who clicked Export finds out before they rely on the package.
+      const missing = Number(response.headers.get('X-Package-Blobs-Missing') ?? 0);
+      if (missing > 0) {
+        const expected = Number(response.headers.get('X-Package-Blobs-Expected') ?? 0);
+        toast.warning(
+          `${missing} of ${expected} source files could not be read from storage ` +
+          `and are not in this package. Annotations and text are complete.`,
+          { duration: 10000 }
+        );
+      }
+
     } catch (err) {
       console.error("Export resource error:", err);
       const message = err instanceof Error ? err.message : `Failed to export ${resourceType}`;

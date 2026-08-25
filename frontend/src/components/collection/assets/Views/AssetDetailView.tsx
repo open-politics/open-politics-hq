@@ -47,7 +47,8 @@ import { useTreeStore } from '@/zustand_stores/storeTree';
 import { useMediaBlobStore } from '@/zustand_stores/storeMediaBlobs';
 import { useAssetQuery, type QueryResult } from '@/hooks/useAssetQuery';
 import { toast } from 'sonner';
-import { ExternalLink, Info, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, X, CheckCircle, AlertCircle, ArrowUp, ArrowDown, Files, Type, Loader2, Table as TableIcon, Layers, Image as ImageIcon, Globe, Video, Music, FileSpreadsheet, Settings, Copy } from 'lucide-react';
+import { commandRegistry } from '@/lib/commandRegistry';
+import { ExternalLink, Info, Trash2, UploadCloud, Download, RefreshCw, Eye, Play, FileText, List, ChevronDown, ChevronUp, Search, File, X, CheckCircle, AlertCircle, ArrowUp, ArrowDown, Files, Type, Loader2, Table as TableIcon, Layers, Image as ImageIcon, Globe, Video, Music, FileSpreadsheet, Settings, Copy, Waypoints } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useTextSpanHighlight, useTextSpanHighlightSafe } from '@/components/collection/contexts/TextSpanHighlightContext';
@@ -2056,6 +2057,31 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
             onBack={onBack}
             onClose={onClose}
           />
+          {/* Docs → graph. The direction used to exist only the other way
+              round: a graph node could open its documents, but a document
+              could not show the graph it produced. `doc.asset_id` resolves to
+              the annotation's own column, so this is one query token rather
+              than a bespoke endpoint — and it lands in the visible bar, which
+              means the analyst can widen it from there. */}
+          {asset?.id != null && (
+            <div className="flex shrink-0 justify-end px-4 pb-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground"
+                onClick={() => {
+                  commandRegistry.dispatch('graph:query', {
+                    q: `doc.asset_id==${asset.id}`,
+                  });
+                  toast.success('Graph scoped to this document');
+                }}
+                title="Show the sub-graph this document produced"
+              >
+                <Waypoints className="h-3 w-3" />
+                Show in graph
+              </Button>
+            </div>
+          )}
           </div>
 
           {/* Main Content Area */}

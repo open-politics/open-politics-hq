@@ -72,6 +72,7 @@ export default function LoginPage() {
             <CardTitle className="text-3xl font-bold">Login</CardTitle>
             <CardDescription>Welcome back! Please enter your details.</CardDescription>
           </CardHeader>
+          <p className="text-sm"> Registration is currently closed because we are beeing flooded with attacks. Please stand by while we are enhancing our safeguards. </p> 
           <CardContent className="p-0">
             <form id="login-form" onSubmit={handleSubmit} className="space-y-4">
               <div>

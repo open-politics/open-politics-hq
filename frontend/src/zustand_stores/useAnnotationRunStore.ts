@@ -643,12 +643,33 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
         importAnnotationRun: async (infospaceId, file) => {
             set({ isLoading: true, error: null });
             try {
-                // This would need to be implemented based on the import functionality
-                toast.success('Import functionality not yet implemented.');
-                return null;
+                // A run package carries its whole dependency cone — assets (complete
+                // trees), bundles, schemas, annotations and the dashboard — so the
+                // import reconstitutes the run rather than just referencing it.
+                const { importResource } = useShareableStore.getState();
+                const result = await importResource(file, infospaceId);
+                if (!result) return null;  // importResource already toasted
+
+                // Refresh the run list so the imported run appears without a reload.
+                await get().fetchRuns(infospaceId);
+
+                // The import endpoint answers with the package envelope
+                // (imported_resource_id / imported_resource_name), not a run row.
+                const { imported_resource_id, imported_resource_name } = result as {
+                    imported_resource_id?: number;
+                    imported_resource_name?: string;
+                };
+                const runs = get().runs;
+                const imported = runs.find(r => r.id === imported_resource_id)
+                    ?? runs.find(r => r.name === imported_resource_name)
+                    ?? null;
+                toast.success(
+                    imported ? `Imported run "${imported.name}".` : 'Annotation run imported.'
+                );
+                return imported;
             } catch (error: any) {
                 const errorMsg = error.body?.detail || 'Failed to import annotation run.';
-                set({ error: errorMsg, isLoading: false });
+                set({ error: errorMsg });
                 toast.error(errorMsg);
                 return null;
             } finally {

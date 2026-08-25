@@ -38,6 +38,34 @@
   --sidebar-border: oklch(0.914 0.005 264.542);
   --sidebar-ring: oklch(0.705 0.015 286.067);
   --main-styled-text: oklch(0.7702 0.1213 194.93);
+
+  /* ── Graph chrome ────────────────────────────────────────────────────────
+     The material the graph panel's instrument is made of. Deliberately at
+     chroma 0: the app palette carries a 230-hue tint through every surface,
+     and a tinted chrome spends the colour budget on nothing. Here, any
+     colour left in a control is a colour that MEANS something — a tier, a
+     warning, an entity type.
+
+     Three rules live in these names:
+       *  `line` is the structural device, and it is faint. Separation comes
+          from a hairline, never from a shadow — nothing in this chrome casts,
+          because nothing in it is a physical object sitting on a plane.
+       *  `surface` is translucent. You look at the graph THROUGH the
+          instrument; an opaque panel is a panel, not a HUD.
+       *  `fill` appears exactly once per group — on the chosen thing. Every
+          other control is transparent. That is the whole state system, and
+          it is why no control needs a tint, a ring or a shade of grey to say
+          "on". */
+  --hud-line: oklch(0 0 0 / 11%);
+  --hud-line-strong: oklch(0 0 0 / 22%);
+  --hud-surface: oklch(1 0 0 / 72%);
+  --hud-sunken: oklch(0 0 0 / 4%);
+  --hud-fill: oklch(0.19 0 0);
+  --hud-fill-fg: oklch(0.99 0 0);
+  --hud-fg: oklch(0.24 0 0);
+  --hud-dim: oklch(0.24 0 0 / 58%);
+  --hud-dimmer: oklch(0.24 0 0 / 38%);
+
   --graph-node-stroke: #ffffff;
   --graph-node-label: #333333;
   --graph-edge-stroke: #999999;
@@ -79,6 +107,21 @@
   --sidebar-border: oklch(1 0 0 / 20%);
   --sidebar-ring: oklch(0.552 0.016 285.938);
   --main-styled-text: oklch(0.985 0 0);
+
+  /* Graph chrome, dark. Same rules, inverted — see the light block above.
+     The surface sits just above the canvas rather than well above it: over a
+     near-black graph a bright panel reads as a lid, and the point is to keep
+     seeing what is underneath. */
+  --hud-line: oklch(1 0 0 / 9%);
+  --hud-line-strong: oklch(1 0 0 / 20%);
+  --hud-surface: oklch(0.18 0 0 / 74%);
+  --hud-sunken: oklch(0 0 0 / 28%);
+  --hud-fill: oklch(0.97 0 0);
+  --hud-fill-fg: oklch(0.15 0 0);
+  --hud-fg: oklch(0.96 0 0);
+  --hud-dim: oklch(1 0 0 / 56%);
+  --hud-dimmer: oklch(1 0 0 / 34%);
+
   --graph-node-stroke: oklch(0.3 0.02 230);
   --graph-node-label: oklch(0.9 0.005 0);
   /* Edge tint readable against the dark canvas (bg ≈ oklch(0.15)) without
@@ -519,6 +562,15 @@ svg:has(#shimmer) {
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-hud-line: var(--hud-line);
+  --color-hud-line-strong: var(--hud-line-strong);
+  --color-hud-surface: var(--hud-surface);
+  --color-hud-sunken: var(--hud-sunken);
+  --color-hud-fill: var(--hud-fill);
+  --color-hud-fill-fg: var(--hud-fill-fg);
+  --color-hud-fg: var(--hud-fg);
+  --color-hud-dim: var(--hud-dim);
+  --color-hud-dimmer: var(--hud-dimmer);
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
 
