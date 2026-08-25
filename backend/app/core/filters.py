@@ -37,11 +37,15 @@ _PATH_RE = re.compile(rf"^{_SEGMENT_RE}(?:\.{_SEGMENT_RE})*$")
 
 
 def _valid_path(path: str) -> bool:
-    if not _PATH_RE.match(path):
-        return False
-    # At most one explosion marker — backend can't chain lateral joins on a
-    # single accessor (would be a cartesian product on nested arrays).
-    return path.count("[*]") <= 1
+    # Any number of explosion markers. The cap used to be one, on the grounds
+    # that "backend can't chain lateral joins on a single accessor" — true when
+    # written, and untrue since ``parse_explosion_chain`` and the relation
+    # engine's nested-LATERAL builder landed. The cost of leaving it was that
+    # the dimension side could GROUP BY ``observations[*].by[*]`` while the
+    # filter side rejected the very key it had just produced, so every
+    # click-to-filter gesture on a nested path failed validation before it
+    # reached SQL.
+    return bool(_PATH_RE.match(path))
 
 
 # ---------------------------------------------------------------------------
@@ -332,44 +336,130 @@ def jsonb_accessor(
         jsonb_accessor("a.value", "score", cast="float")
         → ("(a.value->>:field_path)::float", {"field_path": "score"})
     """
+    branches, params = _path_branches(column, path, param_name)
+    accessor = _text_coalesce([f"({b}) #>> '{{}}'" for b in branches])
+
+    if cast:
+        accessor = f"({accessor})::{cast}"
+
+    return accessor, params
+
+
+def _path_branches(
+    column: str, path: str, param_name: str,
+) -> tuple[list[str], dict[str, Any]]:
+    """The storage-convention branches for a dotted path, as JSONB (``->``/``#>``).
+
+    Three storage conventions coexist for hierarchical schemas:
+
+      (A) flat key:        ``{"document.party": "FDP"}`` — dots INSIDE the key
+      (B) nested path:     ``{"document": {"party": "FDP"}}``
+      (C) unwrapped root:  ``{"party": "FDP"}`` — the annotation task
+          (annotate.py) stores ``result["document"]`` directly at the value
+          root, so ``document.X`` field paths from the picker need to resolve
+          to ``X`` at runtime.
+
+    Callers COALESCE across all of them so nobody needs to know which applies.
+    ``CAST(... AS text[])`` rather than ``::text[]`` because SQLAlchemy's
+    ``text()`` bind-param regex skips ``:name::cast``.
+
+    Returned as JSONB rather than text because that is the form every caller
+    can narrow *from*: text is one ``#>> '{}'`` away, the entity name is one
+    :func:`scalar_of` away, and ``jsonb_array_elements`` needs the JSONB
+    itself. Rendering the operator is the caller's job — and it matters which
+    one, because a JSON ``null`` is a *value* that wins a JSONB-level COALESCE
+    but SQL NULL that falls through a text-level one. See
+    :func:`jsonb_value_accessor` for the one caller that wants the former.
+    """
     parts = path.split(".")
     if len(parts) == 1:
-        accessor = f"{column}->>{_p(param_name)}"
-        params: dict[str, Any] = {param_name: path}
-    else:
-        # Three storage conventions coexist for hierarchical schemas:
-        #   (A) flat key:        ``{"document.party": "FDP"}`` — dots INSIDE the key
-        #   (B) nested path:     ``{"document": {"party": "FDP"}}``
-        #   (C) unwrapped root:  ``{"party": "FDP"}`` — the annotation task
-        #       (annotate.py) stores ``result["document"]`` directly at the
-        #       value root, so ``document.X`` field paths from the picker need
-        #       to resolve to ``X`` at runtime.
-        # COALESCE across all three so the caller doesn't need to know which
-        # convention applies. ``CAST(... AS text[])`` rather than ``::text[]``
-        # because SQLAlchemy's text() bind-param regex skips ``:name::cast``.
-        flat_param = param_name
-        nested_param = f"{param_name}_arr"
-        branches = [
-            f"{column}->>{_p(flat_param)}",
-            f"{column} #>> CAST({_p(nested_param)} AS text[])",
-        ]
-        params = {
-            flat_param: path,
-            nested_param: "{" + ",".join(parts) + "}",
-        }
-        if parts[0] == "document":
-            unwrapped = parts[1:]
-            unwrapped_param = f"{param_name}_unwrapped"
-            if len(unwrapped) == 1:
-                branches.append(f"{column}->>{_p(unwrapped_param)}")
-                params[unwrapped_param] = unwrapped[0]
-            else:
-                unwrapped_arr_param = f"{param_name}_unwrapped_arr"
-                branches.append(
-                    f"{column} #>> CAST({_p(unwrapped_arr_param)} AS text[])"
-                )
-                params[unwrapped_arr_param] = "{" + ",".join(unwrapped) + "}"
-        accessor = f"COALESCE({', '.join(branches)})"
+        return [f"{column}->{_p(param_name)}"], {param_name: path}
+
+    flat_param = param_name
+    nested_param = f"{param_name}_arr"
+    branches = [
+        f"{column}->{_p(flat_param)}",
+        f"{column} #> CAST({_p(nested_param)} AS text[])",
+    ]
+    params: dict[str, Any] = {
+        flat_param: path,
+        nested_param: "{" + ",".join(parts) + "}",
+    }
+    if parts[0] == "document":
+        unwrapped = parts[1:]
+        unwrapped_param = f"{param_name}_unwrapped"
+        if len(unwrapped) == 1:
+            branches.append(f"{column}->{_p(unwrapped_param)}")
+            params[unwrapped_param] = unwrapped[0]
+        else:
+            unwrapped_arr_param = f"{param_name}_unwrapped_arr"
+            branches.append(
+                f"{column} #> CAST({_p(unwrapped_arr_param)} AS text[])"
+            )
+            params[unwrapped_arr_param] = "{" + ",".join(unwrapped) + "}"
+    return branches, params
+
+
+def _text_coalesce(exprs: list[str]) -> str:
+    """COALESCE at the TEXT level — a convention that yielded JSON ``null``
+    falls through to the next one, which is what every text reader wants."""
+    return exprs[0] if len(exprs) == 1 else f"COALESCE({', '.join(exprs)})"
+
+
+def scalar_of(value_expr: str) -> str:
+    """What a JSONB value MEANS as a scalar. The one rule.
+
+    Entity-typed fields store ``{name, type, additional_types}`` (built by
+    ``adapters.ts:buildEntityObjectSchema`` / ``annotation.templates.entity``).
+    Wherever such a value is grouped, filtered, aliased or displayed, what is
+    meant is the **name** — ``{"name": "Merkel", "type": "Person"}`` is not a
+    group key a human ever wants to read, and it is not a value any filter can
+    round-trip against. Everything else extracts as text unchanged.
+
+    **Read from the value, not from the contract.** Deliberate, and it matches
+    the rule this module already lives by: :func:`jsonb_accessor` COALESCEs
+    three storage conventions rather than asking the schema which one applies,
+    and :func:`safe_array_elements` exists because the LLM emits ``null`` where
+    the contract says array. A declaration-driven unwrap would be wrong in the
+    three cases that actually occur — a run whose annotations span contracts
+    that disagree, rows written before a field became entity-typed, and the
+    very common case of a model emitting a bare string where the contract
+    declares an entity object. All three read correctly here, because the
+    value is the thing being asked.
+
+    An object with no ``name`` falls through to its raw JSON, unchanged from
+    the behaviour before this existed: it is not an entity, and inventing a
+    rendering for it would be this function overreaching.
+
+    No ``jsonb_typeof`` guard is needed. JSONB extraction operators "return
+    NULL, rather than failing, if the JSON input does not have the right
+    structure to match the request" (PostgreSQL docs, true since 9.4), so
+    ``->>'name'`` is already NULL for a string, a number, an array, and an
+    object without the key — every case the COALESCE wants to fall through.
+    """
+    e = f"({value_expr})"
+    return f"COALESCE({e}->>'name', {e} #>> '{{}}')"
+
+
+def jsonb_scalar_accessor(
+    column: str,
+    path: str,
+    *,
+    param_name: str = "field_path",
+    cast: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """:func:`jsonb_accessor`, but entity-aware — see :func:`scalar_of`.
+
+    This is what every **grouping and comparison** site should use. The plain
+    text accessor remains correct for key-existence tests, which is why
+    ``exists``/``not_exists`` in :func:`condition_sql` keep it.
+
+    Identical NULL semantics to :func:`jsonb_accessor`: the COALESCE is at the
+    text level, so a convention that yielded JSON ``null`` still falls through
+    to the next one.
+    """
+    branches, params = _path_branches(column, path, param_name)
+    accessor = _text_coalesce([scalar_of(b) for b in branches])
 
     if cast:
         accessor = f"({accessor})::{cast}"
@@ -400,36 +490,17 @@ def jsonb_value_accessor(
 
         jsonb_value_accessor("a.value", "document.topics")
         → COALESCE across flat-with-dots / nested / unwrapped-root.
-    """
-    parts = path.split(".")
-    if len(parts) == 1:
-        accessor = f"{column}->{_p(param_name)}"
-        params: dict[str, Any] = {param_name: path}
-        return accessor, params
 
-    flat_param = param_name
-    nested_param = f"{param_name}_arr"
-    branches = [
-        f"{column}->{_p(flat_param)}",
-        f"{column} #> CAST({_p(nested_param)} AS text[])",
-    ]
-    params = {
-        flat_param: path,
-        nested_param: "{" + ",".join(parts) + "}",
-    }
-    if parts[0] == "document":
-        unwrapped = parts[1:]
-        unwrapped_param = f"{param_name}_unwrapped"
-        if len(unwrapped) == 1:
-            branches.append(f"{column}->{_p(unwrapped_param)}")
-            params[unwrapped_param] = unwrapped[0]
-        else:
-            unwrapped_arr_param = f"{param_name}_unwrapped_arr"
-            branches.append(
-                f"{column} #> CAST({_p(unwrapped_arr_param)} AS text[])"
-            )
-            params[unwrapped_arr_param] = "{" + ",".join(unwrapped) + "}"
-    return f"COALESCE({', '.join(branches)})", params
+    The COALESCE here is at the **JSONB** level, unlike every other accessor in
+    this module. That is load-bearing rather than incidental: a JSON ``null``
+    is a value, so it wins the COALESCE instead of falling through to the next
+    storage convention — and the callers that wrap this in
+    ``jsonb_array_elements`` need exactly that, which is what
+    :func:`safe_array_elements` then guards.
+    """
+    branches, params = _path_branches(column, path, param_name)
+    accessor = branches[0] if len(branches) == 1 else f"COALESCE({', '.join(branches)})"
+    return accessor, params
 
 
 def _p(name: str) -> str:
@@ -536,6 +607,7 @@ def condition_sql(
     column: str,
     *,
     param_prefix: str = "c",
+    self_value: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """Compile a FieldCondition into a SQL fragment + bind params.
 
@@ -546,6 +618,13 @@ def condition_sql(
     the caller).  The caller is responsible for handling ``[*]`` paths
     by setting up lateral joins and passing the element alias as *column*.
 
+    *self_value* says **the element IS the value** — there is no field beneath
+    it, as for ``tags[*]`` or ``actors[*]`` where the caller has already joined
+    the array and *column* is the element alias. The path is then only an
+    address, not something to read through. Without this the caller had to
+    carry a parallel operator table for the leaf-less case, and it supported
+    "the operators the UI produces" rather than all of them.
+
     Returns ``(sql_fragment, params)`` or raises ValueError for unknown ops.
     """
     # Relational operators are pre-handled — they don't fit the single-path
@@ -554,20 +633,27 @@ def condition_sql(
     if cond.operator == "relational.cooccurs":
         return _cooccurs_sql(cond, column, param_prefix=param_prefix)
 
-    ep = parse_explosion(cond.path)
-    # If the path has [*], the caller should have split it already and
-    # passed the element alias.  We use the remainder for the accessor.
-    field = ep.remainder if ep.is_exploded else cond.path
+    if self_value:
+        field = ""
+    else:
+        ep = parse_explosion(cond.path)
+        # If the path has [*], the caller should have split it already and
+        # passed the element alias.  We use the remainder for the accessor.
+        field = ep.remainder if ep.is_exploded else cond.path
 
-    if not field and cond.operator not in ("exists", "not_exists"):
-        # Path like "emails[*]" with no field — only exists/not_exists make sense
-        raise ValueError(f"No field after [*] for operator {cond.operator}")
+        if not field and cond.operator not in ("exists", "not_exists"):
+            # Path like "emails[*]" with no field — only exists/not_exists make sense
+            raise ValueError(f"No field after [*] for operator {cond.operator}")
 
     params: dict[str, Any] = {}
     pp = param_prefix  # shorter alias
 
     if cond.operator in ("exists", "not_exists"):
-        if not field:
+        if self_value:
+            # The element exists by virtue of being an element; what `exists`
+            # can still distinguish is a JSON `null` sitting in the array.
+            fragment = f"{scalar_of(column)} IS NOT NULL"
+        elif not field:
             # Existence of the array itself — check on the original column
             # before explosion.  Caller handles this differently.
             fragment = "TRUE"  # placeholder; caller should handle array existence
@@ -584,8 +670,16 @@ def condition_sql(
             fragment = f"NOT ({fragment})"
         return fragment, params
 
-    acc, acc_params = jsonb_accessor(column, field, param_name=f"{pp}_fp")
-    params.update(acc_params)
+    # Entity-aware, and this is the line that keeps the filter side honest: a
+    # dimension groups on `scalar_of`, so a gesture that turns a group key back
+    # into an `eq` must compare against the same thing. Using the plain text
+    # accessor here is how "click the slice" stopped matching the slice.
+    # (`exists`/`not_exists` returned above — those test key presence, not value.)
+    if self_value:
+        acc = scalar_of(column)
+    else:
+        acc, acc_params = jsonb_scalar_accessor(column, field, param_name=f"{pp}_fp")
+        params.update(acc_params)
 
     op = cond.operator
     val = cond.value

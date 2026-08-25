@@ -477,6 +477,25 @@ def _parse_canon(node: dict) -> CanonTie | None:
     )
 
 
+def _ext_source(node: dict, shape: FieldShape) -> dict:
+    """The node carrying HQ's ``x-`` extensions for this field.
+
+    A scalar ``entity`` carries them itself; an ``array_entity`` carries them on
+    ``items`` — both are built by ``adapters.ts:buildEntityObjectSchema``, so the
+    two hold identical extensions at different depths. Every reader of an
+    extension on an entity node has to make this hop, and each used to make it
+    inline. ``x-ref`` was the one that didn't, which silently dropped the
+    declared vocabulary of every multi-valued role (``by``, ``with``, ``to``,
+    ``via``) — the most common entity shape there is.
+
+    Non-entity nodes carry their extensions directly, so they pass through.
+    """
+    if shape not in ENTITY_SHAPES:
+        return node
+    source = node if shape == "entity" else node.get("items")
+    return source if isinstance(source, dict) else {}
+
+
 def _parse_enum(node: dict, shape: FieldShape) -> tuple[str, ...]:
     """Declared vocabulary, whichever key carries it for this shape.
 
@@ -485,7 +504,7 @@ def _parse_enum(node: dict, shape: FieldShape) -> tuple[str, ...]:
     vocabulary regardless of enforcement.
     """
     if shape in ENTITY_SHAPES:
-        source = node if shape == "entity" else (node.get("items") or {})
+        source = _ext_source(node, shape)
         raw = source.get("x-entityEnum")
         if isinstance(raw, list):
             return tuple(str(v) for v in raw)
@@ -504,13 +523,10 @@ def _parse_enum(node: dict, shape: FieldShape) -> tuple[str, ...]:
 def _entity_meta(node: dict, shape: FieldShape) -> tuple[str | None, tuple[str, ...], bool]:
     """``(entity_type, alternate_types, type_constrained)`` for an entity node.
 
-    Reads from the node itself for a scalar ``entity``, from ``items`` for an
-    ``array_entity`` — the two carry identical extensions (both are built by
-    ``adapters.ts:buildEntityObjectSchema``).
+    Reads from wherever this shape carries its extensions — see
+    :func:`_ext_source`.
     """
-    source = node if shape == "entity" else (node.get("items") or {})
-    if not isinstance(source, dict):
-        return None, (), True
+    source = _ext_source(node, shape)
     primary = source.get("x-entityType")
     if not primary:
         type_prop = (source.get("properties") or {}).get("type") or {}
@@ -568,7 +584,13 @@ def _walk_node(
         alternate_types=alternates,
         enum=_parse_enum(node, shape),
         type_constrained=constrained,
-        ref_targets=_parse_refs(node.get("x-ref")),
+        # ``or node`` is the fallback for a hand-authored contract that put the
+        # ref on the array rather than on its items; the adapter and the
+        # templates both write it on the items.
+        # ``or node`` is the fallback for a hand-authored contract that put the
+        # ref on the array rather than on its items; the adapter and the
+        # templates both write it on the items.
+        ref_targets=_parse_refs(_ext_source(node, shape).get("x-ref") or node.get("x-ref")),
         canon=_parse_canon(node),
         justification=bool(node.get("include_justification")),
         from_source=node.get("x-fromSource") if isinstance(node.get("x-fromSource"), str) else None,

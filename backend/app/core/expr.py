@@ -80,11 +80,11 @@ SAFE_BUILTINS: dict[str, Callable[..., Any]] = {
 class FormulaLookup:
     """A pluggable resolver for ``@formula_name[k1, k2].col`` expressions.
 
-    The default implementation returns ``None`` for every lookup (so a
-    ``derive`` that references another formula safely degrades to None
-    when the source formula hasn't been materialised). Real implementations
-    live in ``app.api.modules.annotation.formulas`` and bind to a
-    ``DashboardConfig`` + run scope.
+    The default implementation returns ``None`` for every lookup, and since
+    the saved-formula registry was retired it is also the *only* one: a
+    ``derive`` that references another formula degrades to None rather than
+    resolving. The hook stays because it is the seam a future cross-query
+    composition would bind to.
     """
 
     def lookup(

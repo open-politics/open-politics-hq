@@ -36,11 +36,13 @@ from app.core.filters import (
     FilterSet,
     MergeMap,
     condition_sql,
-    jsonb_accessor,
+    jsonb_scalar_accessor,
     jsonb_value_accessor,
     merge_case,
     parse_explosion,
+    parse_explosion_chain,
     safe_array_elements,
+    scalar_of,
 )
 
 logger = logging.getLogger(__name__)
@@ -479,15 +481,33 @@ class AnnotationQuery:
             prefix = f"fc{i}"
 
             if ep.is_exploded and element_alias and ep.array_field == active_explosion:
-                # Element-level condition on the active lateral-joined array
-                col = element_alias
-                # Rewrite the condition to use just the remainder path
-                inner_cond = FieldCondition(
-                    path=ep.remainder or ep.array_field,
-                    operator=cond.operator,
-                    value=cond.value,
-                )
-                frag, frag_params = condition_sql(inner_cond, col, param_prefix=prefix)
+                # Element-level condition on the active lateral-joined array.
+                if "[*]" in (ep.remainder or ""):
+                    # The remainder explodes AGAIN — `observations[*].by[*]`
+                    # with the observations lateral already open. One more
+                    # level is not enough; open the rest of the ladder here,
+                    # rooted at the element we already have.
+                    frag, frag_params = self._element_exists_condition(
+                        cond, element_alias, ep.remainder, prefix
+                    )
+                elif ep.remainder:
+                    inner_cond = FieldCondition(
+                        path=ep.remainder,
+                        operator=cond.operator,
+                        value=cond.value,
+                    )
+                    frag, frag_params = condition_sql(
+                        inner_cond, element_alias, param_prefix=prefix
+                    )
+                else:
+                    # No remainder — the element IS the value (``actors[*]``).
+                    # This used to substitute the CONTAINER path, emitting
+                    # ``elem->>'document.actors'``: a lookup for a field named
+                    # after the array, inside the array's own element. Always
+                    # NULL, so the condition silently matched nothing.
+                    frag, frag_params = condition_sql(
+                        cond, element_alias, param_prefix=prefix, self_value=True
+                    )
             elif ep.is_exploded:
                 # Exploded condition on a *different* array than the active
                 # explosion (or no lateral active at all). Evaluate with an
@@ -497,7 +517,7 @@ class AnnotationQuery:
                 # matches nothing (array-of-objects → empty graph) or raises
                 # ValueError (array-of-primitives → 500).
                 frag, frag_params = self._element_exists_condition(
-                    cond, ep, annotation_alias, prefix
+                    cond, f"{annotation_alias}.value", cond.path, prefix
                 )
             else:
                 # Direct condition on annotation.value
@@ -511,126 +531,67 @@ class AnnotationQuery:
     def _element_exists_condition(
         self,
         cond: FieldCondition,
-        ep: Any,  # ExplosionPath
-        annotation_alias: str,
+        root_sql: str,
+        path: str,
         prefix: str,
     ) -> tuple[str, dict[str, Any]]:
-        """Build an EXISTS subquery for element-level conditions when no
-        lateral join is active (e.g., filtering annotations that *contain*
-        matching elements without exploding them).
+        """Build an EXISTS over the whole LATERAL ladder *path* implies,
+        rooted at the SQL expression *root_sql*.
 
-        The array accessor goes through ``jsonb_value_accessor`` so dotted
-        ``ep.array_field`` paths (``document.mails``) resolve across the
-        flat / nested / unwrapped-document storage conventions — matches the
-        same policy used in ``aggregate()`` for the LATERAL join.
+        Two callers, one ladder. *root_sql* is ``a.value`` when nothing is
+        exploded yet, or an element alias when a lateral is already open and
+        the condition reaches into an array *inside* that element — which is
+        why the root is a parameter rather than assumed.
 
-        When ``ep.remainder`` is empty (``array_of_primitives[*]``), the
-        element itself IS the value; compare against ``_el #>> '{}'``.
-        Otherwise delegate to ``condition_sql`` with ``_el`` as the alias
-        and ``ep.remainder`` as the sub-path.
+        **A chain, not one level.** ``document.observations[*].by[*]`` explodes
+        twice; a single ``jsonb_array_elements`` reaches the observations and
+        stops, so the condition either matched nothing or was rejected outright
+        by the old one-``[*]`` cap in ``_valid_path``. Each segment becomes a
+        nested ``jsonb_array_elements`` reading from the one above, which is
+        the same ladder ``_compute_relation`` builds for dimensions — so a key
+        the group side can produce is a key the filter side can consume.
+
+        Array accessors go through ``jsonb_value_accessor`` so dotted paths
+        (``document.mails``) resolve across the flat / nested /
+        unwrapped-document storage conventions.
+
+        With no leaf (``tags[*]``, ``actors[*]``) the element itself IS the
+        value — ``self_value`` on ``condition_sql``, which reads it through
+        ``scalar_of`` so an array of entities compares on the name.
         """
+        chain = parse_explosion_chain(path)
         params: dict[str, Any] = {}
-        if ep.remainder:
+
+        froms: list[str] = []
+        parent = root_sql
+        for depth, seg in enumerate(chain.segments):
+            arr_acc, arr_params = jsonb_value_accessor(
+                parent, seg.array_path, param_name=f"{prefix}_a{depth}_fp",
+            )
+            params.update(arr_params)
+            froms.append(
+                f"jsonb_array_elements({safe_array_elements(arr_acc)}) AS {seg.alias}"
+            )
+            parent = seg.alias
+
+        inner_alias = chain.segments[-1].alias
+        if chain.leaf:
             inner_cond = FieldCondition(
-                path=ep.remainder, operator=cond.operator, value=cond.value
+                path=chain.leaf, operator=cond.operator, value=cond.value
             )
             inner_frag, inner_params = condition_sql(
-                inner_cond, "_el", param_prefix=prefix
+                inner_cond, inner_alias, param_prefix=prefix
             )
-            params.update(inner_params)
         else:
-            # Synthesize a condition that compares the element-as-text using
-            # a dummy single-segment path; condition_sql accepts any operator.
-            # ``_el_text`` is a SQL scalar (``_el #>> '{}'``), and we pass it
-            # as the column so ``{column}->>:path`` degenerates to the scalar.
-            from app.core.filters import condition_sql as _cs
-            # condition_sql expects ``column``; inject raw SQL by using the
-            # text-of-element expression directly via a fake single-segment
-            # path. Simpler: inline the common operators for primitives here.
-            inner_frag, inner_params = self._primitive_element_condition(
-                cond, prefix,
+            inner_frag, inner_params = condition_sql(
+                cond, inner_alias, param_prefix=prefix, self_value=True
             )
-            params.update(inner_params)
-        arr_acc, arr_params = jsonb_value_accessor(
-            f"{annotation_alias}.value",
-            ep.array_field,
-            param_name=f"{prefix}_arr_fp",
-        )
-        params.update(arr_params)
+        params.update(inner_params)
+
         sql = (
-            f"EXISTS (SELECT 1 FROM jsonb_array_elements({safe_array_elements(arr_acc)}) AS _el "
-            f"WHERE {inner_frag})"
+            f"EXISTS (SELECT 1 FROM {', '.join(froms)} WHERE {inner_frag})"
         )
         return sql, params
-
-    def _primitive_element_condition(
-        self,
-        cond: FieldCondition,
-        prefix: str,
-    ) -> tuple[str, dict[str, Any]]:
-        """Compare the element itself (not a sub-field) in a primitive array.
-
-        Used when ``field[*]`` is filtered directly (no ``.remainder``).
-        Supports the operators the UI produces: ``eq``, ``contains``, ``in``,
-        ``gt``, ``lt``, ``between`` — enough for the common filter surface.
-        """
-        acc = "_el #>> '{}'"
-        op = cond.operator
-        val = cond.value
-        params: dict[str, Any] = {}
-        pp = prefix
-        if op in ("eq", "equals"):
-            params[f"{pp}_val"] = str(val)
-            return f"{acc} = :{pp}_val", params
-        if op in ("ne", "not_equals"):
-            params[f"{pp}_val"] = str(val)
-            return f"{acc} != :{pp}_val", params
-        if op == "contains":
-            params[f"{pp}_val"] = f"%{val}%"
-            return f"{acc} ILIKE :{pp}_val", params
-        if op == "not_contains":
-            params[f"{pp}_val"] = f"%{val}%"
-            return f"{acc} NOT ILIKE :{pp}_val", params
-        if op == "in":
-            vals = list(val) if isinstance(val, (list, tuple)) else [val]
-            params[f"{pp}_val"] = [str(v) for v in vals]
-            return f"{acc} = ANY(:{pp}_val)", params
-        if op == "not_in":
-            vals = list(val) if isinstance(val, (list, tuple)) else [val]
-            params[f"{pp}_val"] = [str(v) for v in vals]
-            return f"{acc} != ALL(:{pp}_val)", params
-        if op in ("gt", "greater_than"):
-            try:
-                params[f"{pp}_val"] = float(val)
-                return f"({acc})::float > :{pp}_val", params
-            except (TypeError, ValueError):
-                params[f"{pp}_val"] = str(val)
-                return f"{acc} > :{pp}_val", params
-        if op in ("lt", "less_than"):
-            try:
-                params[f"{pp}_val"] = float(val)
-                return f"({acc})::float < :{pp}_val", params
-            except (TypeError, ValueError):
-                params[f"{pp}_val"] = str(val)
-                return f"{acc} < :{pp}_val", params
-        if op == "between":
-            if not isinstance(val, (list, tuple)) or len(val) != 2:
-                raise ValueError("'between' requires [low, high]")
-            try:
-                params[f"{pp}_lo"] = float(val[0])
-                params[f"{pp}_hi"] = float(val[1])
-                return f"({acc})::float BETWEEN :{pp}_lo AND :{pp}_hi", params
-            except (TypeError, ValueError):
-                params[f"{pp}_lo"] = str(val[0])
-                params[f"{pp}_hi"] = str(val[1])
-                return f"{acc} BETWEEN :{pp}_lo AND :{pp}_hi", params
-        if op == "exists":
-            return f"{acc} IS NOT NULL", params
-        if op == "not_exists":
-            return f"{acc} IS NULL", params
-        raise ValueError(
-            f"Operator {op!r} not supported for primitive-array element filter"
-        )
 
     def _find_merge_map(self, field_path: str) -> MergeMap | None:
         """Find a merge map whose field_path matches the given path."""
@@ -833,13 +794,14 @@ class AnnotationQuery:
         ) -> tuple[str, dict[str, Any]]:
             if ep.is_exploded:
                 if ep.remainder:
-                    return jsonb_accessor("elem", ep.remainder, param_name=param_name, cast=cast)
-                # Array of primitives — elem IS the value. ``#>> '{}'`` extracts
-                # any jsonb leaf as text and works uniformly for string / number
-                # / bool elements; wrap in the cast when requested.
-                acc = "elem #>> '{}'"
+                    return jsonb_scalar_accessor("elem", ep.remainder, param_name=param_name, cast=cast)
+                # Elem IS the value. ``scalar_of`` extracts any jsonb leaf as
+                # text — uniform for string / number / bool elements, and for
+                # an array of ENTITIES it yields the name rather than the
+                # object's raw JSON.
+                acc = scalar_of("elem")
                 return (f"({acc})::{cast}" if cast else acc), {}
-            return jsonb_accessor("a.value", raw_path, param_name=param_name, cast=cast)
+            return jsonb_scalar_accessor("a.value", raw_path, param_name=param_name, cast=cast)
 
         # Build the group-by accessor
         group_acc, group_params = accessor_for(ep_group, group_by, "grp_fp")
@@ -988,7 +950,6 @@ class AnnotationQuery:
         from app.core.filters import (
             ExplosionChain,
             ExplosionSegment,
-            jsonb_accessor,
             jsonb_value_accessor,
             merge_case,
             parse_explosion_chain,
@@ -1051,13 +1012,19 @@ class AnnotationQuery:
             Chains with no segments read from ``a.value`` via ``raw_path``;
             chains ending in an explosion (``leaf == ""``) read the element
             as text; everything else reads the leaf inside the innermost
-            element."""
+            element.
+
+            All three go through ``scalar_of`` (see ``core.filters``), because
+            an entity slot holds ``{name, type}`` and a group key of
+            ``{"name": "Merkel", "type": "Person"}`` is neither readable nor
+            round-trippable through a filter. The filter side reads the same
+            rule, which is what keeps a clicked slice matching its own label."""
             if not chain.segments:
-                return jsonb_accessor("a.value", raw_path, param_name=pname, cast=cast)
+                return jsonb_scalar_accessor("a.value", raw_path, param_name=pname, cast=cast)
             parent = chain.innermost_alias
             if chain.leaf:
-                return jsonb_accessor(parent, chain.leaf, param_name=pname, cast=cast)
-            acc = f"{parent} #>> '{{}}'"
+                return jsonb_scalar_accessor(parent, chain.leaf, param_name=pname, cast=cast)
+            acc = scalar_of(parent)
             return (f"({acc})::{cast}" if cast else acc), {}
 
         # ── Dimension expressions ──────────────────────────────────────
@@ -1584,41 +1551,49 @@ class AnnotationQuery:
         """
         limit = min(max(1, int(limit)), 1000)
 
-        ep = parse_explosion(field_path)
+        # The full ladder, not one level: a value list for
+        # ``observations[*].by[*]`` has to reach the participants, and a single
+        # lateral stops at the observations.
+        chain = parse_explosion_chain(field_path)
         clauses, params = self._base_where()
 
         from_clause = "annotation a"
         element_alias: str | None = None
-        active_explosion: str | None = None
 
-        if ep.is_exploded:
+        parent = "a.value"
+        for depth, seg in enumerate(chain.segments):
             arr_acc, arr_params = jsonb_value_accessor(
-                "a.value", ep.array_field, param_name="dv_expl_fp"
+                parent, seg.array_path, param_name=f"dv_expl{depth}_fp"
             )
             params.update(arr_params)
-            from_clause = (
-                f"annotation a, LATERAL jsonb_array_elements({safe_array_elements(arr_acc)}) AS elem"
+            from_clause += (
+                f", LATERAL jsonb_array_elements("
+                f"{safe_array_elements(arr_acc)}) AS {seg.alias}"
             )
-            element_alias = "elem"
-            active_explosion = ep.array_field
+            parent = seg.alias
+        if chain.segments:
+            element_alias = chain.innermost_alias
 
         self._apply_conditions(
             clauses, params,
             element_alias=element_alias,
-            active_explosion=active_explosion,
+            active_explosion=chain.outer_array_path,
         )
 
-        if ep.is_exploded:
-            if ep.remainder:
-                acc, acc_params = jsonb_accessor(
-                    "elem", ep.remainder, param_name="dv_fp"
+        if chain.segments:
+            if chain.leaf:
+                acc, acc_params = jsonb_scalar_accessor(
+                    element_alias, chain.leaf, param_name="dv_fp"
                 )
             else:
-                # Array of primitives — element itself is the value.
-                acc = "elem #>> '{}'"
+                # Element itself is the value — a primitive, or an entity whose
+                # name is what an alias is written against. Listing
+                # `{"name": …, "type": …}` here offered the user a value they
+                # could not alias and a search term that could not match.
+                acc = scalar_of(element_alias)
                 acc_params = {}
         else:
-            acc, acc_params = jsonb_accessor(
+            acc, acc_params = jsonb_scalar_accessor(
                 "a.value", field_path, param_name="dv_fp"
             )
         params.update(acc_params)

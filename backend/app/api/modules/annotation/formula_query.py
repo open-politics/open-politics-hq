@@ -4,10 +4,8 @@
 For each ``/view`` request the route constructs a :class:`FormulaQuery`
 once. The constructor folds the Formula's filter, merge_maps, schema_id,
 and any incoming scope contributions into a configured
-:class:`AnnotationQuery`. Composition (``@formula.col`` references) is
-attached via ``attach_formula_lookup`` at construction. Each phase
-packer method (``rows_view``, ``aggregate_view``, ``graph_view``, …)
-reuses the same configured AQ.
+:class:`AnnotationQuery`. Each phase packer method (``rows_view``,
+``aggregate_view``, ``graph_view``, …) reuses the same configured AQ.
 
 Adding a new view phase = adding a new packer method here + a new
 field on :class:`ViewRequest`. The AQ engine is untouched.
@@ -19,16 +17,18 @@ plumbing.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Iterable
 
 from app.api.modules.annotation.formula import Formula
-from app.api.modules.annotation.formulas import attach_formula_lookup
 from app.api.modules.annotation.panel_config import Scope
 from app.api.modules.annotation.query import (
     AnnotationQuery,
     OutputRelation,
 )
 from app.api.modules.graph.schemas import GraphResultData
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sqlmodel import Session
@@ -47,9 +47,6 @@ class FormulaQuery:
     2. Folds in the Formula's ``schema_id``, ``filter``, ``merge_maps``.
     3. Composes each incoming scope's ``filter`` and ``merge_maps`` on
        top (AND semantics, append semantics).
-    4. Attaches composition (``@formula.col``) via
-       :func:`attach_formula_lookup` if a ``formula_lookup_cfg`` is
-       provided (typically the run's ``views_config``).
 
     Each phase packer (one method per view type) reads from this single
     configured AQ. The AQ's chaining API is *not* mutated by phase
@@ -67,7 +64,6 @@ class FormulaQuery:
         panel_merge_maps: Iterable[Any] = (),
         run_aliases: Iterable[Any] = (),
         canon_aliases: Iterable[Any] = (),
-        formula_lookup_cfg: dict[str, Any] | None = None,
     ) -> None:
         self.formula = formula
         self.aq = self._build_aq(
@@ -77,8 +73,6 @@ class FormulaQuery:
             run_aliases=run_aliases,
             canon_aliases=canon_aliases,
         )
-        if formula_lookup_cfg:
-            attach_formula_lookup(self.aq, formula_lookup_cfg)
 
     # ─── Construction ────────────────────────────────────────────────
 
@@ -214,6 +208,7 @@ class FormulaQuery:
         declared.
         """
         from app.api.modules.graph import gql as gql_mod
+        from app.api.modules.graph.channels import parse_channels
         from app.api.modules.graph.stream import AnnotationGraphSource
 
         tf = triplet_field
@@ -242,10 +237,20 @@ class FormulaQuery:
                     "graphable section to derive them from"
                 )
 
+        # **One string, two halves.** `parse_channels` claims the UPPERCASE
+        # bindings and hands back everything it did not, so `gql` never sees a
+        # clause it has no vocabulary for.
+        #
+        # Without this split, `VECTOR:interests` reached `gql`, failed its
+        # lowercase-prefix pattern, and fell through to FREE TEXT — a substring
+        # match on node names that returns a plausible handful of nodes and no
+        # error. Every binding in the language behaved that way.
+        chans = parse_channels(q or "")
+
         # One parse, both tiers. Row scope rides into the read query; the
         # graph-shape and traversal tiers run on the assembled result, because
         # degree and unioned intervals only exist after aggregation.
-        parsed = gql_mod.parse(q)
+        parsed = gql_mod.parse(chans.rest)
 
         # An unconfigured panel gets the document rung derived too — see
         # ``panel_config.derive_doc_anchors``. An explicit setting always wins.
@@ -275,6 +280,26 @@ class FormulaQuery:
             doc_time=doc_time,
             gql=parsed if not parsed.is_empty else None,
         )
+        source.channels = chans
+
+        # `SECTION:places` → `field:document.places[*]`.
+        #
+        # Resolved here rather than in the parser because it needs the run's
+        # projections, and those are only known once the source has resolved
+        # them — the whole point of the alias is that the analyst names the
+        # section and the engine finds the path. Folded into the SAME
+        # `GraphQuery`, so it is tier 1 and a skipped projection is a scan that
+        # never happens.
+        try:
+            from app.api.modules.graph.channels import resolve_sections
+            source._resolve()
+            fields = resolve_sections(chans, list(source.projections or []))
+            if fields:
+                parsed.fields.extend(f for f in fields if f not in parsed.fields)
+                source.gql = parsed
+        except Exception:  # noqa: BLE001 — an alias must not break a view
+            logger.warning("SECTION: could not resolve to a projection", exc_info=True)
+
         return source, parsed
 
     def graph_view(
@@ -486,6 +511,11 @@ def _node_to_dict(n: Any) -> dict[str, Any]:
         # `group_value` — the convergence residual reads this one and nothing
         # else. See `GraphNodeData.profile`.
         "profile": getattr(n, "profile", None),
+        "size": getattr(n, "size", None),
+        # Which pile. Layout, not data — the canvas decides where the piles go,
+        # this only says which one a node belongs to. See `GraphNodeData.cluster`
+        # for why it is not `group_value`.
+        "cluster": getattr(n, "cluster", None),
         "properties": n.properties,
         "evidence": getattr(n, "evidence", []),
         # Time / space / provenance — what the slider, the geo anchor and the
@@ -515,6 +545,10 @@ def _edge_to_dict(e: Any) -> dict[str, Any]:
         "source": e.source,
         "target": e.target,
         "predicate": e.predicate,
+        # contains · follows · role · relation. Four kinds, four treatments —
+        # `FAULTS` F2. Resolved here because it needs the projection that minted
+        # the edge; how it is DRAWN stays on the client.
+        "kind": getattr(e, "kind", "relation"),
         "role": getattr(e, "role", None),
         "weight": e.weight,
         "computed_weight": e.computed_weight,
@@ -526,4 +560,5 @@ def _edge_to_dict(e: Any) -> dict[str, Any]:
         "a0": getattr(e, "a0", None),
         "a1": getattr(e, "a1", None),
         "source_paths": getattr(e, "source_paths", []),
+        "source_annotation_ids": getattr(e, "source_annotation_ids", []),
     }

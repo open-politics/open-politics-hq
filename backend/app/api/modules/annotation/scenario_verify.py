@@ -69,6 +69,19 @@ class Case(NamedTuple):
     check: Callable[[Any, list, list], tuple[bool, str]]
     #: What the shape needs that does NOT exist yet, if anything.
     blocked_by: str | None = None
+    #: How a person would actually ask it.
+    #:
+    #: With this field the suite is also an **NL→GQL bench, for free**: ask a
+    #: model the question, run whatever query it writes through the same
+    #: ``check``, and the six investigation shapes become a score instead of an
+    #: argument. Three things get measured, in increasing order of what we care
+    #: about — did it parse (fixed-half quality), did it hit this run's declared
+    #: space (context-packet quality), did it pass the check (the real score).
+    #:
+    #: Not a unit test and it must never gate CI on a model's output. It is a
+    #: bench: run it, read the failures, tune the prompt or add a token, run it
+    #: again. Every token added afterwards gets scored rather than argued about.
+    question: str | None = None
 
 
 def _names(nodes: list) -> set[str]:
@@ -89,8 +102,15 @@ def _c1(graph, nodes, edges):
     return ok, f"{sorted(got)} · {len(between)} edges among them"
 
 
-def _c1_residual(graph, nodes, edges):
-    """The residual itself: high affinity × high distance."""
+def _c1_affinity(graph, nodes, edges):
+    """The affinity itself — high, and undiscounted.
+
+    This used to check the *residual* (affinity × distance penalty), which
+    could not exceed 0.5 for any pair that shared an interest and so could
+    never assert what the case is about. Affinity and contact are two readings
+    now; `_c1` already asserts the absence of a path, so this asserts the
+    alignment on its own terms.
+    """
     prof = {n.name: gql._profile_of(n) for n in graph.nodes}
     pairs = [("Piotr Zieliński", "Sofia Duarte"), ("Piotr Zieliński", "Ilona Vaher")]
     sims = [gql._cosine(prof[a], prof[b])
@@ -151,15 +171,31 @@ def _c3(graph, nodes, edges):
 
 
 def _c4(graph, nodes, edges):
-    """Stated vs revealed: the regulator's profile must carry both signs."""
+    """Stated vs revealed: the regulator must show up on both sides.
+
+    Read through the poles rather than off a bare interest name. The direction
+    lives in the KEY now (``regulatory neutrality▲`` / ``▼``), which is what
+    stops an actor who does both from netting to zero and disappearing — and it
+    means this case can finally assert what it was always about: the same body
+    asserting one thing and acting toward another, both visible at once.
+    """
     r = next((n for n in graph.nodes if n.name == "Federal Procurement Review Board"), None)
     if r is None or not isinstance(r.group_value, dict):
         return False, "the review board has no interest profile"
-    p = r.group_value
-    stated = p.get("regulatory neutrality", 0)
-    revealed = p.get("vendor market position", 0)
-    return stated < 0 < revealed or (stated and revealed), \
-        f"neutrality {stated:+g} · vendor position {revealed:+g}"
+
+    def poles(label: str) -> tuple[float, float]:
+        p = r.group_value
+        return (float(p.get(f"{label}▲", 0) or 0), float(p.get(f"{label}▼", 0) or 0))
+
+    n_for, n_against = poles("regulatory neutrality")
+    v_for, v_against = poles("vendor market position")
+    stated = n_for + n_against
+    revealed = v_for + v_against
+    ok = bool(stated and revealed)
+    return ok, (
+        f"neutrality {n_for:g}▲/{n_against:g}▼ · "
+        f"vendor position {v_for:g}▲/{v_against:g}▼"
+    )
 
 
 # ─── Case 5 — divergence across domains ──────────────────────────────────────
@@ -248,9 +284,20 @@ def _c6(graph, nodes, edges):
 
 CASES: list[Case] = [
     Case("1", "convergence without contact",
-         'serves:"erode multilateral oversight"+', _c1),
-    Case("1r", "…and the residual says so", "", _c1_residual),
-    Case("2", "a repeating method — the hub", "role:via", _c2),
+         'serves:"erode multilateral oversight"+', _c1,
+         question="who is working to erode multilateral oversight"),
+    Case("1r", "…and the affinity says so", "", _c1_affinity),
+    # `contact>1`, not `contact>2`, and the difference is worth knowing: two
+    # actors who share an interest are exactly TWO hops apart *through the
+    # interest node itself*, so `contact>2` excludes the very pairs the case is
+    # about. This is the same arithmetic that capped the old residual at 0.5,
+    # surfacing where it belongs — as a threshold a person picks and can argue
+    # with, rather than as a ceiling built into the number.
+    Case("1q", "…and the query can now ask it directly",
+         'converge>0.9 contact>1', _c1,
+         question="who converges on the same interests without ever touching"),
+    Case("2", "a repeating method — the hub", "role:via", _c2,
+         question="what do payments route through"),
     Case("2m", "…and the motif itself", "", _c2_motif,
          blocked_by="no `motif:` token — group_by reads a field, not a shape"),
     Case("3", "a concealed chain", "", _c3,
@@ -261,6 +308,28 @@ CASES: list[Case] = [
                     "PAIR-scoped, or X→Y hostility and X→Z warmth cancel"),
     Case("6", "how it unfolded", "", _c6,
          blocked_by="no place-granularity frame; nesting exists, zoom does not"),
+]
+
+#: The easy half of the bench.
+#:
+#: The six shapes above are the hard cases, and a bench made only of hard cases
+#: cannot tell a prompt problem from a grammar problem — a model that nails
+#: convergence-without-contact and fumbles "payments in 2014" is failing at
+#: something the language already does perfectly well. These exist to catch
+#: that, and they are deliberately dull.
+EASY_QUESTIONS: list[tuple[str, str]] = [
+    ("payments in 2014", "kind:occurrence type:payment after:2014 before:2015"),
+    ("everything around Trieste", 'near:"Trieste"<80km'),
+    ("who speaks most", "role:by degree>3"),
+    ("just the organisations", "type:Organization"),
+    ("what happened, not who", "kind:occurrence"),
+    ("the best-attested connections", "weight>2"),
+    ("everything two hops from Halász", 'from:"Halász" hops:2'),
+    ("what Halász and Duarte were both in", 'from:"Halász" from:"Duarte"'),
+    ("only high-confidence rows", "confidence>0.8"),
+    ("documents the model scored relevant", "doc.relevance>0.7"),
+    ("the places", "type:Location"),
+    ("one company by name", 'label=="Adria Marine Ltd"'),
 ]
 
 

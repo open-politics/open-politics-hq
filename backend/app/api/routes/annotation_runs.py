@@ -1,4 +1,5 @@
 """Routes for annotation runs."""
+import json
 import asyncio
 import logging
 from typing import Any, AsyncIterable, Literal, Optional, Dict, Union
@@ -783,6 +784,18 @@ class GraphParams(BaseModel):
     """The document rung of the place / time ladders — see ``GraphConfig``.
     Annotation-scoped, so they are configured here rather than on a
     projection: what a filing is *about* applies to everything it mentions."""
+    rows_limit: int = 200
+    """How many section rows ride along with the graph. Zero disables them.
+
+    The rows are the table half of one view (``MVP`` §4): the same ``q``
+    produces both, so a pane can render the proposition a row states instead of
+    a count of the fragments assembly left. Paged independently of
+    ``top_n_nodes`` — a table that inherited the canvas's truncation would
+    report "8 payments" for a run holding two hundred, and be believed."""
+    rows_cursor: str | None = None
+    """``"<annotation_id>:<ord>"``. Tuple-shaped because one annotation fans
+    into many rows and a scalar cursor drops the tail of any array that
+    overflows a page."""
 
 
 class ViewRequest(BaseModel):
@@ -824,6 +837,20 @@ class ViewRowsPhase(BaseModel):
 class ViewGraphPhase(BaseModel):
     nodes: list[dict]
     edges: list[dict]
+    rows: list[dict] | None = None
+    """The rows behind the picture — **one table per named section**.
+
+    Same query, two surfaces. ``nodes``/``edges`` are for layout; ``rows`` is for
+    reading, and entity cells carry the node id the assembler minted so a click
+    in either surface selects in both.
+
+    A list because ``SECTION:interests,observations`` is two questions, not one:
+    the sections are different relations and unioning them yields a table that
+    is mostly empty cells. Each entry names its own section, and the pane takes
+    that name — a pane called "rows" sitting above a list of interests is a
+    label that tells the reader nothing they could not already see.
+
+    See ``graph/rows.py`` and ``docs/plans/observation-model/MVP.md`` §4."""
     meta: dict = Field(default_factory=dict)
     """What the engine actually ran, so the panel does not have to guess.
 
@@ -876,10 +903,6 @@ def _build_formula_query(
                 rolled.append(fid)
 
     _run = session.get(AnnotationRun, run_id)
-    formula_lookup_cfg = (
-        _run.views_config
-        if _run and isinstance(_run.views_config, dict) else None
-    )
     # Run-wide aliases library lives on AnnotationRun.views_config['aliases'].
     # Compose: scope merge_maps → panel merge_maps → run aliases (first-match
     # wins, so scope and panel take precedence over the global library).
@@ -904,7 +927,6 @@ def _build_formula_query(
         panel_merge_maps=body.merge_maps,
         run_aliases=run_aliases,
         canon_aliases=canon_aliases,
-        formula_lookup_cfg=formula_lookup_cfg,
     )
 
 
@@ -932,16 +954,245 @@ def _build_view_phases(session, access, run_id: int, body: "ViewRequest") -> dic
 
     if body.graph is not None:
         gr = fq.graph_view(**_graph_kwargs(body.graph))
+        # Built once and handed to both: the panes are named after the tables,
+        # so computing them twice would be two queries whose answers could
+        # disagree about what the panel is showing.
+        tables = _graph_rows(fq, body.graph)
         result["graph"] = ViewGraphPhase(
             nodes=[_node_to_dict(n) for n in gr.nodes],
             edges=[_edge_to_dict(e) for e in gr.edges],
-            meta=_graph_meta(fq, body.graph, gr),
+            rows=tables,
+            meta=_graph_meta(fq, body.graph, gr, tables),
         )
 
     return result
 
 
-def _graph_meta(fq, gp: "GraphParams", gr) -> dict:
+#: Rows per non-acts section when the query named none. The docs fold wants
+#: breadth — every section a document filled — not depth in any one of them;
+#: `SECTION:` is how a reader asks for depth, and it then gets the full budget.
+_FOLD_ROWS_PER_SECTION = 50
+
+
+def _graph_rows(fq, gp: "GraphParams") -> list[dict] | None:
+    """The table half of a graph view: **one table per named section**.
+
+    Built from the same source object the canvas was built from, so the two
+    surfaces cannot answer the same question differently — ``MVP`` S3 holds
+    because there is one filter implementation, not two that agree.
+
+    Which sections, and which columns, come out of the query itself:
+
+    .. code-block:: text
+
+        SECTION:interests,observations  →  TWO tables, in the order written
+        (absent)                        →  one: the acts, not the cast
+        SHOW:by,to,magnitude            →  the columns, applied to each
+
+    A comma list splits rather than merges because the sections are *different
+    relations*: interests have a name and a domain, observations have a payer
+    and an amount. Unioning them produces a table that is mostly empty cells
+    with a column header for every field in the schema, which is what a "show
+    me everything" surface always degenerates into.
+
+    Never raises. A view that renders a canvas and 500s on its table is worse
+    than one that renders a canvas and says why the table is missing, so every
+    failure becomes a note the reader can see.
+    """
+    if not gp.rows_limit:
+        return None
+    from app.api.modules.graph import rows as rowmod
+
+    try:
+        source, _gq = fq._graph_source(
+            projections=gp.projections or None,
+            triplet_field=gp.triplet_field,
+            dedup=gp.dedup,
+            q=gp.q,
+            doc_place=gp.doc_place,
+            doc_time=gp.doc_time,
+        )
+        source._resolve()
+        projections = list(getattr(source, "projections", None) or [])
+        if not projections:
+            return None
+
+        shared: list[str] = []
+        requested, show = _rows_clauses(gp.q, projections, shared)
+        by_name = rowmod.section_names(projections)
+        chosen = [
+            by_name[h] for h in (rowmod.parse_path(r).head for r in requested)
+            if h in by_name
+        ]
+        budget = min(gp.rows_limit, 1000)
+
+        if chosen:
+            cursor: tuple[int, int] | None = None
+            if gp.rows_cursor and ":" in gp.rows_cursor and len(chosen) == 1:
+                a, _, b = gp.rows_cursor.partition(":")
+                if a.isdigit() and b.isdigit():
+                    cursor = (int(a), int(b))
+            # Split the page budget so N tables cost what one did. A reader
+            # asking for three sections wants to see all three, not the first
+            # one in full.
+            per = max(1, budget // len(chosen))
+            return [
+                _one_table(source, proj, show, per, cursor, list(shared))
+                for proj in chosen
+            ]
+
+        # ── Nothing named ────────────────────────────────────────────────
+        #
+        # **Which sections go on the wire is not the same question as which
+        # pane opens.** They used to be one: absent a query, exactly one table
+        # was built, so the docs pane — which is a *fold of the tables already
+        # on the wire* and deliberately has no scope of its own — could only
+        # ever show that one section. A document listing its observations and
+        # nothing else is not a document view; it is the acts table grouped by
+        # asset, wearing the docs pane's title.
+        #
+        # So: every section is built, and `choose_section` decides only which
+        # one a *table pane* is named after (see `_graph_meta`). The acts keep
+        # the full budget because that is the surface read line by line; the
+        # rest are bounded, because the fold is an overview and `SECTION:` is
+        # how a reader asks for one of them in full.
+        acts = rowmod.choose_section(projections, None)
+        if acts is None:
+            return None
+        cursor = None
+        if gp.rows_cursor and ":" in gp.rows_cursor:
+            a, _, b = gp.rows_cursor.partition(":")
+            if a.isdigit() and b.isdigit():
+                cursor = (int(a), int(b))
+        tables = [_one_table(source, acts, show, budget, cursor, list(shared))]
+        fold_per = max(1, min(_FOLD_ROWS_PER_SECTION, budget))
+        tables += [
+            _one_table(source, p, show, fold_per, None, [])
+            for p in projections if p is not acts
+        ]
+        return tables
+    except Exception:  # noqa: BLE001 — a table must never cost the canvas
+        logger.warning("graph rows: could not build the table", exc_info=True)
+        return None
+
+
+def _one_table(source, proj, show, limit, cursor, notes) -> dict:
+    """One section, projected. The unit a pane renders and is named after."""
+    from app.api.modules.graph import rows as rowmod
+    from app.api.modules.graph.stream import _node_id
+
+    items, nxt, total, census = source.section_rows(proj, limit=limit, cursor=cursor)
+    elements = [it["element"] for it in items]
+    columns = rowmod.columns_for(proj, elements, show, census)
+    section = rowmod.section_of(proj.path)
+
+    packed = [
+        {
+            "id": f"{it['annotation_id']}:{section}:{it['ord']}",
+            "annotationId": it["annotation_id"],
+            "assetId": it["asset_id"],
+            # **The node this row minted, when it minted one.**
+            #
+            # Without it a row could only be reached through its participants,
+            # so selecting the ACT itself — a payment, a meeting — matched no
+            # row and the table emptied with "Nothing in the selection touches
+            # these rows". The row IS the act; not linking it to its own node
+            # was the one link the whole two-surface design turns on.
+            "nodeId": _row_node_id(proj, it),
+            "cells": rowmod.cells_for(it["element"], columns, _node_id),
+            "justification": rowmod._grounds(it["element"]),
+        }
+        for it in items
+    ]
+    if show:
+        got = {c.key.lower() for c in columns}
+        missing = [
+            s for s in show
+            if s.strip() != "*"
+            and (rowmod.parse_path(s).segments[-1:] or [s])[0].lower() not in got
+        ]
+        if missing:
+            # Per table, not shared: `SHOW:name` is a real column on interests
+            # and no column at all on observations, and one note for both would
+            # be wrong about one of them.
+            notes = [*notes,
+                     f"no column for: {', '.join(missing)} in {section}"]
+    if nxt:
+        notes = [*notes, f"showing {len(packed)} of {total} rows"]
+
+    return rowmod.SectionRows(
+        section=section, path=proj.path, columns=columns, items=packed,
+        total=total, cursor_next=f"{nxt[0]}:{nxt[1]}" if nxt else None,
+        notes=notes,
+    ).as_dict()
+
+
+def _row_node_id(proj, item: dict) -> str | None:
+    """The occurrence node id this row produced, reproduced exactly.
+
+    Mirrors ``AnnotationGraphSource._occurrence_name`` + ``_node_id``: a
+    declared ``node_name`` when the row supplies one, else the positional
+    address, and the type from ``node_type_path`` then ``node_type``. Computed
+    rather than plumbed because the rows and the graph are two separate SQL
+    passes — and if the two ever disagree, a click selects the wrong thing,
+    which is worse than not linking at all. The mirror is the risk; a shared
+    helper would be better and is a bigger change than this.
+    """
+    if getattr(proj, "about", None) != "self":
+        return None
+    from app.api.modules.graph.stream import _node_id
+
+    el = item.get("element") or {}
+    name = None
+    if getattr(proj, "node_name", None):
+        raw = el.get(proj.node_name)
+        if isinstance(raw, str) and raw.strip():
+            name = raw.strip()
+    if name is None:
+        name = f"{item['annotation_id']}:{proj.path}:{item['ord']}"
+
+    declared = el.get(proj.node_type_path) if getattr(proj, "node_type_path", None) else None
+    node_type = (
+        (str(declared).strip() if isinstance(declared, str) and declared.strip() else None)
+        or getattr(proj, "node_type", None)
+        or ("Occurrence" if getattr(proj, "node_kind", "occurrence") != "entity"
+            else "Entity")
+    )
+    return _node_id(name, node_type)
+
+
+def _rows_clauses(
+    q: str | None, projections: list, notes: list[str],
+) -> tuple[list[str], list[str]]:
+    """``SECTION:`` and ``SHOW:`` off the query string.
+
+    An unresolvable section is **reported**, not silently ignored: the whole
+    point of naming a section by its own word is that getting it wrong should
+    say so, and an empty table under a name the analyst typed is the exact
+    failure this grammar replaces.
+    """
+    if not q:
+        return [], []
+    from app.api.modules.graph.channels import parse_channels
+    from app.api.modules.graph.rows import parse_path, section_names
+
+    try:
+        chans = parse_channels(q)
+    except Exception:  # noqa: BLE001
+        return [], []
+    requested = [s.path for s in chans.selectors_for("SECTION") if s.path]
+    show = [s.path for s in chans.selectors_for("SHOW") if s.path]
+    known = set(section_names(projections))
+    unknown = [r for r in requested if parse_path(r).head not in known]
+    if unknown:
+        notes.append(
+            "no section called " + ", ".join(unknown)
+            + " — this run has: " + ", ".join(sorted(known)),
+        )
+    return requested, show
+
+
+def _graph_meta(fq, gp: "GraphParams", gr, tables: list[dict] | None = None) -> dict:
     """Resolved layers + frame coverage for one graph phase.
 
     Computed from the *same* source object the packer used, so what the panel
@@ -952,6 +1203,10 @@ def _graph_meta(fq, gp: "GraphParams", gr) -> dict:
     from app.api.modules.graph.stream import frame_coverage
 
     layers: list[dict] = []
+    # Bound in the try below and read again further down for the inferred
+    # panes. Declared here so that read is an explicit `is None` check rather
+    # than a NameError caught by a bare `except`.
+    source: Any = None
     try:
         # `_graph_kwargs` carries the packer's caps too; `_graph_source` takes
         # only the configuration half. Filtered by the signature rather than by
@@ -986,7 +1241,236 @@ def _graph_meta(fq, gp: "GraphParams", gr) -> dict:
     except Exception:  # noqa: BLE001 — meta is never worth failing a view over
         logger.warning("graph meta: could not resolve layers", exc_info=True)
 
-    return {"layers": layers, "frames": frame_coverage(gr.nodes, gr.edges)}
+    # What the engine decided and the query did not say. Every entry is a
+    # choice a reader would otherwise have to reverse-engineer from the
+    # picture: which size scale, which denominator, over which population, and
+    # whether a bound frame had to be folded because three dimensions were
+    # already spent. A refusal nobody is told about looks exactly like a bug.
+    # **S1/S2: what the engine resolved in a way the writer may not have meant.**
+    #
+    # Separate from `legend`, which says what the engine DID. A note says what
+    # it *could not do with what you wrote* — a reserved word colliding with a
+    # field name, a section this run has never heard of. The panel renders these
+    # amber; the legend renders neutral. Conflating them would make a warning
+    # look like a setting.
+    notes: list[str] = []
+    try:
+        from app.api.modules.graph.channels import (
+            parse_channels, unresolved_sections,
+        )
+        from app.api.modules.graph.gql import parse as parse_gql
+        from app.api.modules.graph.channels import unwired
+        from app.api.modules.graph.stream import cluster_notes, size_notes
+        notes.extend(parse_gql(gp.q or "").notes)
+        notes.extend(size_notes())
+        if gp.q:
+            notes.extend(unwired(parse_channels(gp.q)))
+        notes.extend(cluster_notes())
+    except Exception:  # noqa: BLE001 — a note is never worth failing a view over
+        logger.warning("graph meta: could not read query notes", exc_info=True)
+
+    legend: list[str] = []
+    try:
+        from app.api.modules.graph.channels import (
+            frames_spent, parse_channels, resolve_vector_fold,
+        )
+        from app.api.modules.graph.stream import cluster_legend, size_legend
+
+        legend.extend(size_legend())
+        legend.extend(cluster_legend(gr.nodes))
+        chans = parse_channels(gp.q or "")
+        # **The legend says what the engine DID.** `VECTOR:` printed
+        # "vector: embed fold → z" — a confident sentence about a fold that
+        # reaches no renderer — which is worse than silence, because silence is
+        # ambiguous and a legend is a claim. The clause is reported as unwired
+        # in `notes` instead; a channel that lands nothing describes nothing.
+        if chans.unknown:
+            legend.append("unrecognised clauses: " + ", ".join(chans.unknown))
+    except Exception:  # noqa: BLE001 — meta is never worth failing a view over
+        logger.warning("graph meta: could not resolve legend", exc_info=True)
+
+    # **What an empty bar means.** The panes a contract's own declarations
+    # imply, so a panel nobody has configured opens with the panes that make
+    # sense for its schema rather than with nothing. An invisible default is a
+    # magic layout; a stated one is a starting point — and because it resolves
+    # through declared ROLES, a contract whose sections are called `motives`
+    # and `exhibits` gets the same panes as one that says `interests` and
+    # `evidence`, without either name appearing anywhere.
+    defaults: list[dict] = []
+    try:
+        from app.api.modules.graph.channels import PRESETS_BY_NAME, infer_defaults
+        from app.api.modules.graph.stream import _roles_by_path, types_by_role
+
+        projections = list(getattr(source, "projections", None) or []) if source else []
+        inferred = infer_defaults(projections)
+        panel = inferred.get("PANEL")
+        if panel:
+            # **A pane needs a selector, not just a name.** Emitting bare names
+            # left every pane folding the whole node set, so "Interests" listed
+            # everything with a count nobody could identify. The preset says
+            # which declared ROLE it is about; this turns that into the entity
+            # types those sections actually produced, so the scope is a real
+            # filter and still contains no noun.
+            #
+            # Read from the **declarations**, not from `gr.nodes`. The assembled
+            # graph is whatever the current query left, so deriving scopes from
+            # it made them collapse the moment someone narrowed: a query for
+            # `SECTION:places` produced a graph of Locations, every other pane
+            # therefore resolved to no type, and Observations and Interests both
+            # silently reverted to listing everything. A pane's scope is a
+            # property of the contract and must not move when the filter does.
+            # **Scope by SECTION, not by guessed type.**
+            #
+            # A claim section mints an OCCURRENCE and its fields' entity types
+            # are the *participants* — so scoping Observations by type produced
+            # `type:"Location","Person","Evidence"`, which is the cast rather
+            # than the acts. The section's own name is exact, is what the
+            # analyst would write, and is tier 1: the scan for every other
+            # projection never happens.
+            #
+            # `kind:` then separates the act from the people in it, which is
+            # the one distinction a section name cannot carry.
+            by_role: dict[str, list[str]] = {}
+            mints_acts: dict[str, bool] = {}
+            for p in getattr(source, "projections", None) or []:
+                role = (getattr(p, "role", None) or "").strip().lower()
+                path = getattr(p, "path", "") or ""
+                if not role or not path:
+                    continue
+                section = path.rsplit(".", 1)[-1].removesuffix("[*]")
+                by_role.setdefault(role, []).append(section)
+                # `about: self` is the declaration that says a row IS a thing
+                # that happened — the one field in the model that decides act
+                # versus property versus relation. `node_kind` defaults to
+                # "occurrence" whether or not anyone declared it, so trusting
+                # it put `kind:occurrence` on the Places and Interests panes,
+                # which are rosters of entities and came back empty.
+                # …and an explicit `node_kind: entity` overrides it. `evidence`
+                # is `about: self` — an exhibit is a thing in its own right —
+                # while still being an ENTITY, because an exhibit persists and
+                # recurs rather than happening. Both halves of the declaration
+                # have to be read or the Evidence pane asks for occurrences
+                # that were never minted and comes back empty.
+                mints = (
+                    getattr(p, "about", None) == "self"
+                    and getattr(p, "node_kind", "occurrence") != "entity"
+                )
+                mints_acts[role] = mints_acts.get(role, False) or mints
+
+            # **A table pane is named after the section it shows.** `rows` is
+            # what the binding is called, not what the pane is: a pane titled
+            # "rows" sitting above a list of interests is a label that tells the
+            # reader nothing they could not already see, and with two sections
+            # open it tells them nothing about which is which.
+            named = tables if tables is not None else (_graph_rows(fq, gp) or [])
+            # **A pane is a layout decision; the tables on the wire are a data
+            # one.** Absent a `SECTION:`, every section is now built so the docs
+            # fold is complete — but opening a pane per section would turn an
+            # unconfigured panel into eight stacked tables. One pane, the acts,
+            # which is what `choose_section` is for; naming sections opens one
+            # pane each, because then the reader asked for them.
+            if _rows_clauses(gp.q, projections, [])[0]:
+                pane_tables = named
+            else:
+                pane_tables = named[:1]
+            for sel in panel.selectors:
+                if sel.path == "rows":
+                    for t in pane_tables:
+                        defaults.append({
+                            "name": t["section"],
+                            "q": f"SECTION:{t['section']}",
+                            "kind": "table",
+                        })
+                    continue
+                preset = PRESETS_BY_NAME.get(sel.path)
+                if preset and preset.kind == "docs":
+                    # A fold of the tables already on the wire — it needs no
+                    # scope of its own, and giving it one would let it disagree
+                    # with the tables it is folding.
+                    defaults.append({"name": "docs", "q": "", "kind": "docs"})
+                    continue
+                parts: list[str] = []
+                if preset and preset.role:
+                    sections = by_role.get(preset.role) or []
+                    if sections:
+                        parts.append("SECTION:" + ",".join(sections))
+                        if mints_acts.get(preset.role):
+                            parts.append("kind:occurrence")
+                if preset and preset.name == "places":
+                    parts.append("BY place")
+                elif preset and preset.name == "clusters":
+                    parts.append("BY type")
+                defaults.append({
+                    "name": sel.path,
+                    "q": " ".join(parts),
+                    "kind": preset.kind if preset else None,
+                })
+    except Exception:  # noqa: BLE001 — a panel must render without them
+        logger.warning("graph meta: could not infer panes", exc_info=True)
+
+    return {
+        "layers": layers,
+        "frames": frame_coverage(gr.nodes, gr.edges),
+        "legend": legend,
+        "notes": notes,
+        "panes": defaults,
+        "index": _graph_index(source, gr),
+    }
+
+
+def _graph_index(source: Any, gr) -> dict:
+    """Everything this run is addressable BY, at every level.
+
+    One structure so the bar can complete, the ✨ prompt can enumerate and the
+    resolution ladder can be *shown* — three surfaces that were each guessing
+    separately, which is how `CLUSTER:Location` came to mean nothing while
+    looking like it should mean something obvious.
+
+    The ladder a bare word walks, and the order is the answer to "what did you
+    think I meant":
+
+    .. code-block:: text
+
+        type · kind · role · place · section     a reserved key
+        <section>.<field>                        the row's own column
+        Location · Interest                      an entity TYPE — the neighbour
+        places · interests                       a SECTION — the types it minted
+        anything else                            a property on the node
+
+    Read off the **assembled graph** rather than the contract, because that is
+    what a completion has to be true of: offering `Location` on a run whose
+    query has already excluded every place is a suggestion that returns nothing.
+    """
+    from app.api.modules.graph.rows import columns_for, section_of
+
+    out: dict[str, Any] = {
+        "sections": {}, "types": [], "roles": [], "predicates": [], "properties": [],
+    }
+    try:
+        for p in getattr(source, "projections", None) or ():
+            name = section_of(getattr(p, "path", "") or "")
+            if name:
+                out["sections"][name] = [
+                    {"key": c.key, "label": c.label, "kind": c.kind,
+                     "ref": c.ref, "source": c.source}
+                    for c in columns_for(p, [])
+                ]
+        types, roles, props = set(), set(), set()
+        for n in gr.nodes:
+            t = (n.node_type or n.type or "").strip()
+            if t:
+                types.add(t)
+            roles.update(n.roles or ())
+            props.update((n.properties or {}).keys())
+        out["types"] = sorted(types)
+        out["roles"] = sorted(roles)
+        out["properties"] = sorted(props)
+        out["predicates"] = sorted({
+            e.predicate for e in gr.edges if getattr(e, "predicate", None)
+        })
+    except Exception:  # noqa: BLE001 — an index is never worth failing a view over
+        logger.warning("graph meta: could not build the index", exc_info=True)
+    return out
 
 
 def _graph_kwargs(gp: "GraphParams") -> dict:
@@ -1221,6 +1705,438 @@ async def distinct_values(
 # guard second: what will this binding actually do, and did any of it land
 # nowhere? Same resolution path the task will run, no run required, nothing
 # written.
+
+
+# ─── The graph query context packet ──────────────────────────────────────────
+
+
+class GraphContextResponse(BaseModel):
+    """What a writer — human or model — needs to write a query for THIS run.
+
+    Three tiers, and the split is an engineering fact rather than a design
+    principle: the fixed half is identical across every run and belongs in a
+    cached prompt prefix; the declared half is small and per-run.
+
+    * **A · fixed** — the algebra and the gotchas, generated from ``TOKENS``
+      and the channel table. The same for every run, forever.
+    * **B · declared** — this schema's own declarations, *rendered*. Not a
+      vocabulary list assembled alongside the engine (which goes stale the
+      moment a schema declares something new) but the same ``sections.py`` +
+      ``derive_projections`` output the engine itself reads, so it is
+      structurally unable to drift.
+    * **C · instantiated** — read off the assembled graph. Roster contents,
+      type counts, the time window, and **fill density**.
+
+    Tier C is the one that is easy to think optional and is not. A declaration
+    teaches that a slot exists; a filled row teaches multi-word-ness, casing,
+    quoting — and whether anyone fills it at all. ``role:via degree>20`` against
+    a corpus where ``via`` is populated in 12% of rows returns almost nothing,
+    and the writer should know that *before* writing it, not after the panel
+    comes back empty.
+    """
+
+    grammar: str
+    """Tier A. The filter and channel halves, generated."""
+    declared: Dict[str, Any]
+    """Tier B. Sections with their roles, frames and declared axes."""
+    instantiated: Dict[str, Any]
+    """Tier C. Roster contents, counts, window, fill density, sample rows."""
+
+
+class GraphValidateRequest(BaseModel):
+    q: str
+
+
+class GraphValidateResponse(BaseModel):
+    """Why a query might not answer what was asked.
+
+    Two failure modes, kept apart because they have different fixes:
+
+    * ``unknown`` — a **fixed-half** miss. ``sector:finance`` is not a prefix,
+      so it silently became a free-text substring match on node names and
+      returned something plausible. Right for a half-typed human, dangerous for
+      a model.
+    * ``empty_risk`` — a **declared-half** miss. ``serves:opacity`` parses
+      perfectly and this run has no interest by that name. This is the one that
+      fires constantly in early testing and is the whole payoff of tier B.
+
+    Both render as amber pills rather than red errors: the query still runs,
+    and the reading is still a reading.
+    """
+
+    parsed: list[Dict[str, Any]]
+    unknown: list[Dict[str, Any]]
+    empty_risk: list[Dict[str, Any]]
+
+
+def _declared_types_by_role(source: Any) -> dict[str, list[str]]:
+    """``declared layout role -> the entity types its sections DECLARE``.
+
+    From the contract, so it is a fixed property of the run rather than of
+    whatever the current query happened to leave standing. A section's entity
+    types are the `x-entityType` values on the fields inside it, which is the
+    same thing `resolve_contract` closes an enum against.
+    """
+    out: dict[str, list[str]] = {}
+    try:
+        smap = source._schema_map()
+    except Exception:  # noqa: BLE001 — a panel renders without scopes
+        return out
+    if smap is None:
+        return out
+
+    for p in getattr(source, "projections", None) or ():
+        role = getattr(p, "role", None)
+        path = getattr(p, "path", "") or ""
+        if not role or not path:
+            continue
+        stem = path.replace("[*]", "")
+        seen = out.setdefault(str(role).strip().lower(), [])
+        for f in smap.fields:
+            if not f.entity_type or not f.path.startswith(stem):
+                continue
+            if f.entity_type not in seen:
+                seen.append(f.entity_type)
+    return {k: v for k, v in out.items() if v}
+
+
+def _graph_vocabulary(session, access, run_id: int) -> dict[str, Any]:
+    """Declared + instantiated value spaces for one run.
+
+    Enumerable spaces come back in full; node names do not, because there are
+    as many of them as there are nodes. Returning a shape for those — a count
+    and a sample — is what makes a writer reach for a substring rather than
+    guess at an exact ``label==``.
+    """
+    from app.api.modules.annotation.panel_config import derive_projections
+    from app.api.modules.annotation.schema_map import schema_map_for
+    from app.api.modules.annotation.models import AnnotationSchema
+
+    run = session.get(AnnotationRun, run_id)
+    out: dict[str, Any] = {"sections": [], "entity_types": [], "roles": []}
+    if run is None:
+        return out
+
+    for schema in (run.target_schemas or []):
+        try:
+            smap = schema_map_for(schema.output_contract)
+        except Exception:  # noqa: BLE001 — a packet must not fail a panel
+            continue
+        for p in derive_projections(smap) or ():
+            path = getattr(p, "path", "") or ""
+            out["sections"].append({
+                "path": path,
+                "section": path.rsplit(".", 1)[-1].removesuffix("[*]"),
+                "role": getattr(p, "role", None),
+                "frame": getattr(p, "frame", None),
+                "roles": sorted(getattr(p, "roles", None) or []),
+            })
+        for f in smap.fields:
+            if f.entity_type and f.entity_type not in out["entity_types"]:
+                out["entity_types"].append(f.entity_type)
+    return out
+
+
+@router.get("/{run_id}/graph/context", response_model=GraphContextResponse)
+async def graph_context(
+    *,
+    run_id: int,
+    access: Access = Requires(scope=None),
+    session: SessionDep,
+):
+    """Everything a writer needs to produce a query that answers something."""
+    access.require_in_scope("run_ids", run_id)
+
+    def _run() -> GraphContextResponse:
+        from app.api.modules.graph import channels as ch_mod
+        from app.api.modules.graph import gql as gql_mod
+
+        grammar = "\n\n".join(
+            filter(None, [gql_mod.grammar_block(), ch_mod.grammar_block()])
+        )
+        declared = _graph_vocabulary(session, access, run_id)
+
+        instantiated: dict[str, Any] = {}
+        try:
+            # Same boundary the view endpoints use, so the packet describes the
+            # graph a query would actually run against rather than a second
+            # assembly that could differ.
+            #
+            # `formula` is required and is the *data scope*, not the shape —
+            # an empty one means "this run, unfiltered", which is exactly what
+            # a context packet should describe. Omitting it raised a validation
+            # error that the surrounding `except` swallowed, so tier C came back
+            # empty and the writer was left guessing at predicates and interest
+            # names — the one thing tier C exists to prevent.
+            probe = ViewRequest(
+                formula=Formula(id="graph-context", name="graph context"),
+                graph=GraphParams(top_n_nodes=400, top_n_edges=1200),
+            )
+            fq = _build_formula_query(session, access, run_id, probe)
+            result = fq.graph_view(**_graph_kwargs(probe.graph))
+            types: dict[str, int] = {}
+            interests: list[str] = []
+            names: list[str] = []
+            for n in result.nodes:
+                t = (n.type or "").strip()
+                if t:
+                    types[t] = types.get(t, 0) + 1
+                if t.lower() == "interest" and n.name not in interests:
+                    interests.append(n.name)
+                if len(names) < 25:
+                    names.append(n.name)
+            preds: dict[str, int] = {}
+            roles: dict[str, int] = {}
+            for e in result.edges:
+                p = (e.predicate or "").strip()
+                if p:
+                    preds[p] = preds.get(p, 0) + 1
+                r = (getattr(e, "role", None) or "").strip()
+                if r:
+                    roles[r] = roles.get(r, 0) + 1
+            stamps = [n.t0 for n in result.nodes if n.t0]
+            instantiated = {
+                "node_count": len(result.nodes),
+                "edge_count": len(result.edges),
+                "entity_types": types,
+                "predicates": preds,
+                # Fill density, as a count per role: `via` at 12 out of 340
+                # edges is the difference between a good query and an empty
+                # panel, and no schema can show it.
+                "role_fill": roles,
+                # Enumerable — returned whole, because a writer guessing at an
+                # interest name is the single most common way a query comes
+                # back empty.
+                "interests": sorted(interests),
+                # Not enumerable. A shape instead, so the reader reaches for a
+                # substring rather than inventing an exact name.
+                "names": {"count": len(result.nodes), "sample": names},
+                "window": {
+                    "from": min(stamps) if stamps else None,
+                    "to": max(stamps) if stamps else None,
+                },
+            }
+        except Exception:  # noqa: BLE001 — tiers A and B are still useful
+            logger.warning("graph context: could not instantiate", exc_info=True)
+
+        return GraphContextResponse(
+            grammar=grammar, declared=declared, instantiated=instantiated,
+        )
+
+    return await asyncio.to_thread(_run)
+
+
+@router.post("/{run_id}/graph/validate", response_model=GraphValidateResponse)
+async def graph_validate(
+    *,
+    run_id: int,
+    access: Access = Requires(scope=None),
+    session: SessionDep,
+    body: GraphValidateRequest,
+):
+    """Re-parse a query and report what this run cannot answer."""
+    access.require_in_scope("run_ids", run_id)
+
+    def _run() -> GraphValidateResponse:
+        from app.api.modules.graph import channels as ch_mod
+        from app.api.modules.graph import gql as gql_mod
+
+        chans = ch_mod.parse_channels(body.q or "")
+        parsed_q = gql_mod.parse(chans.rest)
+
+        parsed: list[dict[str, Any]] = []
+        unknown: list[dict[str, Any]] = []
+        empty_risk: list[dict[str, Any]] = []
+
+        for clause in chans.unknown:
+            unknown.append({
+                "token": clause,
+                "why": f"`{clause.split(':', 1)[0]}` is not a channel — "
+                       "it was reported rather than treated as free text.",
+                "did_you_mean": [c.name for c in ch_mod.CHANNELS][:6],
+            })
+
+        for b in chans.bindings:
+            parsed.append({"token": b.render(), "tier": 2, "ok": True})
+
+        # Free text is the fixed-half miss: a mistyped prefix lands here and
+        # silently becomes a substring search on node names.
+        if parsed_q.text:
+            unknown.append({
+                "token": parsed_q.text,
+                "why": "no prefix matched — this became a free-text substring "
+                       "match on node names, which usually returns something "
+                       "and rarely returns the answer.",
+                "did_you_mean": [t.token for t in gql_mod.TOKENS if t.prefix][:6],
+            })
+
+        vocab = _graph_vocabulary(session, access, run_id)
+        known_types = {t.lower() for t in vocab.get("entity_types", [])}
+        for t in parsed_q.types:
+            parsed.append({"token": f"type:{t}", "tier": 2, "ok": True})
+            if known_types and t.lower() not in known_types:
+                empty_risk.append({
+                    "token": f"type:{t}",
+                    "why": f"no entity type named `{t}` is declared by this "
+                           "run's schemas.",
+                    "did_you_mean": sorted(vocab.get("entity_types", []))[:6],
+                })
+
+        for c in parsed_q.shape_conditions:
+            parsed.append({"token": f"{c.key}{c.op}{c.value}", "tier": 2, "ok": True})
+        for c in parsed_q.row_conditions:
+            parsed.append({"token": f"{c.key}{c.op}{c.value}", "tier": 1, "ok": True})
+        for s in parsed_q.serves:
+            parsed.append({"token": f"serves:{s}", "tier": 2, "ok": True})
+        if parsed_q.seeds:
+            parsed.append({"token": "from:", "tier": 3, "ok": True})
+
+        return GraphValidateResponse(
+            parsed=parsed, unknown=unknown, empty_risk=empty_risk,
+        )
+
+    return await asyncio.to_thread(_run)
+
+
+class GraphAssistRequest(BaseModel):
+    prose: str
+
+
+class GraphAssistResponse(BaseModel):
+    q: str
+
+
+#: What the writer is told before it writes. The gotchas ride in the generated
+#: grammar; this is only the contract for the reply.
+_ASSIST_SYSTEM = """\
+You write graph query strings for an analysis panel. Reply with the query and \
+nothing else — no explanation, no code fence, no leading verb.
+
+Rules that decide whether the query answers the question:
+
+* Use ONLY the tokens in the grammar below. An unrecognised token silently \
+  becomes a substring match on node names and returns something plausible and \
+  wrong, so inventing one is worse than omitting it.
+* Use ONLY values that appear in the run's instantiated vocabulary. Interests \
+  and entity types are listed in full; if the value you want is not there, the \
+  run cannot answer that question and a narrower query is the honest reply.
+* Interest names are usually multi-word. Quote them: serves:"port access"+
+* If the question is about alignment WITHOUT contact, that is two tokens — \
+  converge> for the affinity and contact> for the distance. Neither alone \
+  says it. Use `contact>1`, which means "not directly connected": two actors \
+  who share an interest are exactly TWO hops apart *through the interest node \
+  itself*, so `contact>2` excludes the very pairs the question is about.
+* Prefer fewer tokens. A query that returns too much is readable; one that \
+  returns nothing teaches the analyst that the panel is broken.
+
+**Never nest a filter inside a channel.** A channel takes a *path* — a section \
+name, `docs`, or `any` — never another clause. `CONNECT:field:document.places[*]` \
+is not a thing; it is `CONNECT:places`, or more often nothing at all, because \
+everything is connected by default and `CONNECT:` only says so redundantly. \
+Reach for `DISCONNECT:` when a dense layer should come off the canvas.
+
+**`PANEL:` names a pane; it does not filter.** `PANEL:interests` opens a pane \
+already scoped to interests — do not also add a filter for them, because a \
+filter narrows the CANVAS and the question was about a pane. If the canvas \
+should narrow too, say so with a filter and mean it.
+
+**`serves:` runs one way; traversal runs the other.** This is the pair of \
+forms most questions about the why-axis need, and reaching for the wrong one \
+returns nothing:
+
+    who serves X            serves:"X"
+    what does X serve       from:"X" hops:1 type:Interest
+    where does X converge   serves:"X" type:Location
+    what X routes through   from:"X" hops:1 role:via
+
+Separate `serves:` tokens **union**. Listing three interests asks for anyone \
+serving any of them, which is almost never the question — if you do not know \
+which interest, traverse from the actor instead of guessing names.
+"""
+
+
+@router.post("/{run_id}/graph/assist", response_model=GraphAssistResponse)
+async def graph_assist(
+    *,
+    run_id: int,
+    access: Access = Requires(scope=None),
+    session: SessionDep,
+    body: GraphAssistRequest,
+):
+    """Prose → a proposed query.
+
+    Returns a string for the **draft**. Nothing here applies it: the writer
+    proposes and only a person commits, which is the difference between an
+    assistant and a panel that changes under you.
+    """
+    access.require_in_scope("run_ids", run_id)
+
+    packet = await graph_context(run_id=run_id, access=access, session=session)
+
+    from app.api.modules.foundation_service_providers.registry import (
+        ProviderError, get_configured_foundation_provider, resolve,
+    )
+
+    # **The user's own language settings, through the normal cascade.**
+    #
+    # `context="chat"` because this is an interactive request made on someone's
+    # behalf, not a batch annotation — so it honours the `chat` override in
+    # `LanguageDefaults` before falling back to `default`, which is exactly
+    # what a person configuring "the model I talk to" expects it to mean.
+    # (An unrecognised context is not an error here: `LanguageDefaults.resolve`
+    # falls through to `default`, so a wrong string silently ignores the
+    # override rather than failing. That is why this one has to be right.)
+    #
+    # The cascade itself is `resolve`'s: infospace `enrichment_config` → the
+    # owner's `provider_defaults` → deployment default. Nothing is hardcoded
+    # here, which matters for a deployment running self-hosted models where a
+    # guessed provider name simply does not exist.
+    configured = get_configured_foundation_provider(
+        session, access.infospace_id, "language", context="chat",
+    )
+    try:
+        provider = resolve(
+            "language",
+            configured.provider_key if configured else None,
+            configured.model_name if configured else None,
+            infospace_id=access.infospace_id,
+            context="chat",
+            session=session,
+        )
+    except ProviderError as e:
+        # Actionable, because the fix is a setting rather than a retry.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No language model available for this infospace: {e}. "
+                "Set one under the infospace's providers, or in your own "
+                "defaults."
+            ),
+        ) from e
+
+    context_block = json.dumps(
+        {"declared": packet.declared, "instantiated": packet.instantiated},
+        ensure_ascii=False, default=str,
+    )[:12000]
+
+    response = await provider.generate(
+        messages=[
+            {"role": "system",
+             "content": f"{_ASSIST_SYSTEM}\n\nGRAMMAR\n{packet.grammar}"},
+            {"role": "user",
+             "content": f"THIS RUN\n{context_block}\n\nQUESTION\n{body.prose}"},
+        ],
+        model_name=provider.model,
+    )
+    # `content`, which is what `GenerationResponse` actually calls it. A
+    # wrong attribute name here fails silently — `getattr` returns None, the
+    # bar gets an empty draft, and it reads as "the model had nothing to say".
+    text = (getattr(response, "content", None) or "").strip()
+    # Models fence things. Strip it rather than handing a bar a line of
+    # backticks that will parse as free text.
+    if text.startswith("```"):
+        text = text.strip("`").split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    return GraphAssistResponse(q=text.splitlines()[0].strip() if text else "")
 
 
 class PreviewBindingsRequest(BaseModel):
@@ -1502,322 +2418,3 @@ def get_geocoded_entities(
         ))
     return out
 
-# ─── M5: Observation snapshots ──────────────────────────────────────────────
-#
-# Observation snapshots — immutable frozen outputs of formulas. Persisted as
-# JSON entries on ``AnnotationRun.views_config['observations']``. See
-# ``docs/INTELLIGENCE.md`` § Observations.
-
-from app.api.modules.annotation import snapshots as _snapshots
-from app.api.modules.annotation.formulas import resolve_formula as _resolve_formula
-from app.api.modules.annotation.formulas import attach_formula_lookup as _attach_formula_lookup
-
-
-class _ObservationSnapshotRequest(BaseModel):
-    # Provide one of ``formula_name`` (snapshot a saved formula from the
-    # intelligence list) or ``formula`` (snapshot an inline-bound panel's
-    # private formula, which doesn't live in formulas[]).
-    formula_name: Optional[str] = None
-    formula: Optional[Formula] = None
-    note: Optional[str] = None
-    schema_id: Optional[int] = None
-    canon_id: Optional[int] = None
-    allow_unresolved: bool = False
-
-
-@router.post("/{run_id}/observations", response_model=_snapshots.Observation, status_code=status.HTTP_201_CREATED)
-def create_observation_snapshot(
-    *,
-    run_id: int,
-    body: _ObservationSnapshotRequest,
-    access: Access = Requires(Capability.COMPUTE, scope=None),
-    session: SessionDep,
-) -> _snapshots.Observation:
-    """Snapshot a formula's current output to ``DashboardConfig.observations[]``.
-
-    Runs the named formula against the current corpus, freezes the output
-    relation + provenance, inlines the formula body for cite-stability, and
-    stores the result on the run's dashboard config. The snapshot is
-    immutable — editing the source Formula afterwards does not mutate this
-    Observation. Re-snapshot to capture new corpus state.
-    """
-    access.require_in_scope("run_ids", run_id)
-    run = session.get(AnnotationRun, run_id)
-    if not run or run.infospace_id != access.infospace_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-
-    dashboard = run.views_config if isinstance(run.views_config, dict) else {}
-
-    # Exactly one binding must be present.
-    if (body.formula_name is None) == (body.formula is None):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provide exactly one of formula_name or formula",
-        )
-
-    if body.formula is not None:
-        formula = body.formula
-    else:
-        try:
-            formula = _resolve_formula(body.formula_name, dashboard)
-        except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-
-    aq = (
-        AnnotationQuery(session, access.infospace_id)
-        .scope(access.scope)
-        .runs([run_id])
-    )
-    _attach_formula_lookup(aq, dashboard if isinstance(dashboard, dict) else {})
-    result = aq.relation(formula)
-
-    obs = _snapshots.snapshot_from_formula(
-        run=run,
-        formula_name=body.formula_name,
-        formula=body.formula,
-        relation=result,
-        note=body.note,
-        schema_id=body.schema_id,
-    )
-    _snapshots.append_observation(run, obs)
-    session.add(run)
-    session.commit()
-    return obs
-
-
-class GenerateFormulaRequest(BaseModel):
-    """One-shot prompt → :class:`Formula` body. The prompt-bar surface
-    uses this to skip the conversational agent for the common case
-    (``write me a weighted rate by quarter``)."""
-
-    prompt: str
-    provider: str | None = None
-    model: str | None = None
-
-
-@router.post(
-    "/{run_id}/formulas/generate",
-    response_model=Formula,
-)
-async def generate_formula_from_prompt(
-    *,
-    run_id: int,
-    access: Access = Requires(scope=None),
-    session: SessionDep,
-    body: GenerateFormulaRequest,
-) -> Formula:
-    """One-shot LLM call: sentence → Formula body.
-
-    The prompt-bar surface in the FormulaWorkspace calls this. The
-    response is the typed ``Formula`` shape; the frontend persists it via
-    the dashboard's ``formulas[]`` array and the run auto-saves.
-
-    The LLM is constrained to emit JSON matching ``Formula.model_json_schema``
-    via the provider's structured-output protocol (tool call). The system
-    message surfaces the run's schemas so field paths the model proposes
-    actually exist."""
-    import json
-    import secrets
-    import string
-
-    from app.api.modules.foundation_service_providers import resolve
-
-    access.require_in_scope("run_ids", run_id)
-    run = session.get(AnnotationRun, run_id)
-    if not run or run.infospace_id != access.infospace_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-
-    # Collect schemas attached to this run for the system prompt.
-    from app.api.modules.annotation.models import AnnotationSchema, Annotation, RunSchemaLink
-    link_ids = {
-        link.schema_id for link in session.exec(
-            select(RunSchemaLink).where(RunSchemaLink.run_id == run_id)
-        ).all()
-    }
-    ann_ids = set(session.exec(
-        select(Annotation.schema_id).where(Annotation.run_id == run_id).distinct()
-    ).all())
-    schema_ids = sorted(link_ids | ann_ids)
-    schemas: list[AnnotationSchema] = []
-    if schema_ids:
-        schemas = session.exec(
-            select(AnnotationSchema).where(AnnotationSchema.id.in_(schema_ids))
-        ).all()
-
-    # Resolve the language provider for this infospace. ``provider`` /
-    # ``model`` from the body win; otherwise the infospace default is used.
-    try:
-        provider = resolve(
-            "language",
-            body.provider,
-            body.model,
-            infospace_id=access.infospace_id,
-            context="chat",
-            session=session,
-        )
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Language provider not available: {e}",
-        )
-
-    formula_schema = Formula.model_json_schema()
-
-    schema_summary_lines: list[str] = []
-    for s in schemas:
-        schema_summary_lines.append(f"## schema {s.id} — {s.name}")
-        if getattr(s, "description", None):
-            schema_summary_lines.append(f"{s.description}")
-        try:
-            from app.api.modules.conversational_intelligence.mcp_server.server import (
-                _walk_schema_surface,
-            )
-            surface = _walk_schema_surface(s.output_contract or {})
-            if surface.get("row_shape_roots"):
-                schema_summary_lines.append("row roots: " + ", ".join(
-                    r["path"] for r in surface["row_shape_roots"]
-                ))
-            paths = surface.get("field_paths") or []
-            if paths:
-                schema_summary_lines.append("paths:")
-                for p in paths[:40]:
-                    line = f"  {p['path']} ({p.get('type','?')})"
-                    if p.get("enum_values"):
-                        line += f"  enum: {p['enum_values'][:6]}"
-                    schema_summary_lines.append(line)
-        except Exception:
-            pass
-        schema_summary_lines.append("")
-
-    system_prompt = (
-        "You translate the user's question into a structured Formula body.\n"
-        "Formulas have six verbs:\n"
-        "  - from (schema_id): which schema to read.\n"
-        "  - filter (FilterSet): condition rows must match.\n"
-        "  - group (Dimension[]): group keys. kind ∈ {field, entity, time, doc, geo}.\n"
-        "  - measures (Measure[]): aggregations. agg ∈ {count, sum, mean, median, mode, min, max, distribution, top}.\n"
-        "  - weight (Measure | null): multiplier for sum/mean (weighted forms).\n"
-        "  - derives (DeriveSpec[]): post-aggregate expressions, can reference @<formula_name>.col.\n"
-        "Choose minimal verbs. A simple count by category is\n"
-        "  group=[{name: cat, kind: field, path: category}], measures=[{name: n, agg: count}].\n"
-        "For time series, kind=time and set interval. For top-N evidence, agg=top, top_by=field.\n"
-        "Use the user's words for ``name``. Field paths must exist on the run's schemas.\n"
-        f"Available schemas:\n{chr(10).join(schema_summary_lines)}"
-    )
-
-    # Provider-agnostic structured output via a forced tool call. Same
-    # pattern the annotation pipeline uses for two-phase emission.
-    emitted_formula: dict | None = None
-
-    async def _tool_executor(tool_name: str, args: dict) -> dict:
-        nonlocal emitted_formula
-        if tool_name == "emit_formula":
-            emitted_formula = args
-        return {"ok": True}
-
-    # Bare-function shape — the provider abstraction normalises this to each
-    # vendor's native shape (Anthropic ``input_schema``, OpenAI ``parameters``).
-    # Don't pass vendor-specific keys here.
-    emit_tool = {
-        "name": "emit_formula",
-        "description": "Emit the structured Formula body that answers the user's question.",
-        "parameters": formula_schema,
-    }
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": body.prompt},
-    ]
-
-    try:
-        response_iter = await provider.generate(
-            messages=messages,
-            model_name=provider.model or body.model or "",
-            tools=[emit_tool],
-            tool_choice={"type": "tool", "name": "emit_formula"},
-            tool_executor=_tool_executor,
-            stream=False,
-            max_tool_iterations=2,
-        )
-        # Drain non-streaming response.
-        if hasattr(response_iter, "__aiter__"):
-            async for _ in response_iter:
-                pass
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"LLM call failed: {e}",
-        )
-
-    if emitted_formula is None:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="LLM didn't call emit_formula — try a more specific prompt.",
-        )
-
-    # Stamp a fresh id so the frontend's addFormula doesn't dedupe by id.
-    alphabet = string.ascii_letters + string.digits
-    emitted_formula["id"] = "".join(secrets.choice(alphabet) for _ in range(12))
-
-    try:
-        formula = Formula.model_validate(emitted_formula)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"LLM emitted invalid Formula: {e}",
-        )
-    return formula
-
-
-@router.get("/{run_id}/observations", response_model=list[_snapshots.Observation])
-def list_observation_snapshots(
-    *,
-    run_id: int,
-    access: Access = Requires(scope=None),
-    session: SessionDep,
-) -> list[_snapshots.Observation]:
-    """List all snapshots stored on this run's dashboard. Pull-back path."""
-    access.require_in_scope("run_ids", run_id)
-    run = session.get(AnnotationRun, run_id)
-    if not run or run.infospace_id != access.infospace_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-    return _snapshots.list_observations(run)
-
-
-@router.get("/{run_id}/observations/{obs_id}", response_model=_snapshots.Observation)
-def get_observation_snapshot(
-    *,
-    run_id: int,
-    obs_id: str,
-    access: Access = Requires(scope=None),
-    session: SessionDep,
-) -> _snapshots.Observation:
-    """Read one snapshot — no recompute. The cite-stability path."""
-    access.require_in_scope("run_ids", run_id)
-    run = session.get(AnnotationRun, run_id)
-    if not run or run.infospace_id != access.infospace_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-    obs = _snapshots.get_observation(run, obs_id)
-    if obs is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Observation not found")
-    return obs
-
-
-@router.delete("/{run_id}/observations/{obs_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_observation_snapshot(
-    *,
-    run_id: int,
-    obs_id: str,
-    access: Access = Requires(Capability.COMPUTE, scope=None),
-    session: SessionDep,
-) -> None:
-    """Drop a snapshot. Cited findings stay broken unless the user takes
-    explicit action — snapshots are not silently recreated."""
-    access.require_in_scope("run_ids", run_id)
-    run = session.get(AnnotationRun, run_id)
-    if not run or run.infospace_id != access.infospace_id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
-    if not _snapshots.remove_observation(run, obs_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Observation not found")
-    session.add(run)
-    session.commit()

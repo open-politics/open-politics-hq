@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "ROLES", "FRAMES", "DECL_KEYS", "SECTIONS", "DECL_EXTENSION",
+    "EDGE_KINDS", "EDGE_KIND_BY_PREDICATE", "edge_kind_for",
     "sanitize_decl", "decl_for_name",
 ]
 
@@ -166,6 +167,48 @@ SECTIONS: dict[str, dict[str, Any]] = {
         "evidence": {"path": "justification"},
     },
 }
+
+
+#: What an edge DOES to the picture. Four kinds, closed — and closed for the
+#: same reason the six axis kinds are: they are the algebra of how a connection
+#: can be drawn, not a list of words anyone might use.
+#:
+#: ``FAULTS`` F2: all four painted as one grey line, so 35 containment edges on
+#: run 15010 read as adjacency and nothing nested, while 104 role edges — the
+#: connective tissue of every occurrence — competed for attention with the 46
+#: edges that were actually findings.
+#:
+#: .. code-block:: text
+#:
+#:     contains   B is INSIDE A          enclosure, never an arrow
+#:     follows    A then B               a tapered arrow along the chain
+#:     role       the cast of one act    thin, receding — tissue, not a finding
+#:     relation   an asserted link       the primary line: weight, arrow, label
+EDGE_KINDS: tuple[str, ...] = ("contains", "follows", "role", "relation")
+
+#: Conventional predicate → edge kind. The SECOND rung, exactly like
+#: :data:`SECTIONS`: a contract that declares nothing still reads the way the
+#: model's own prescribed vocabulary means, and a contract that declares
+#: ``x-edge`` on a predicate overrides it.
+#:
+#: Deliberately small. Only words whose STRUCTURAL meaning is not in doubt go
+#: here — everything else is a relation, which is the honest default because a
+#: relation is the kind that asserts least about how to draw it.
+EDGE_KIND_BY_PREDICATE: dict[str, str] = {
+    # Containment. `during` is temporal containment and nests the same way:
+    # an act inside an episode is inside it.
+    "within": "contains", "part_of": "contains", "contains": "contains",
+    "during": "contains", "inside": "contains", "subsumes": "contains",
+    # Sequence. Never synthesised from dates — a chain is something a document
+    # states, and inferring one from timestamps invents an order nobody wrote.
+    "follows": "follows", "precedes": "follows", "succeeds": "follows",
+    "then": "follows", "next": "follows",
+}
+
+
+def edge_kind_for(predicate: str | None) -> str | None:
+    """The conventional kind for a predicate, or ``None`` to fall through."""
+    return EDGE_KIND_BY_PREDICATE.get((predicate or "").strip().lower())
 
 
 def sanitize_decl(raw: Any) -> dict[str, Any] | None:
