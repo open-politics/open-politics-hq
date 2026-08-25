@@ -14,12 +14,14 @@
  * anything is disabled rather than merely disappointing.
  */
 import React from 'react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Axis3d, Check, Lock, Unlock } from 'lucide-react';
+import { Axis3d, Lock, Unlock } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  HUD_NUM, HUD_PROSE, HUD_SURFACE, HudButton, HudChip, HudMeter,
+  HudOption, HudOverline, HudReadout,
+} from '@/components/collection/graph/chrome';
 import {
   AXIS_BUDGET, CAMERAS, FRAME_COST, FRAME_HINT, FRAME_LABEL,
   canAfford, defaultAxisBudget, freeFrames, spent,
@@ -44,13 +46,10 @@ const FRAMES: Frame[] = ['geo', 'time', 'interest', 'event'];
 
 function Bar({ have, of }: { have: number; of: number }) {
   const pct = of > 0 ? Math.round((100 * have) / of) : 0;
-  const filled = Math.round(pct / 10);
   return (
-    <span className="flex items-center gap-1 tabular-nums">
-      <span className="font-mono text-[9px] tracking-tighter text-muted-foreground">
-        {'●'.repeat(filled)}{'○'.repeat(10 - filled)}
-      </span>
-      <span className="w-8 text-right text-[10px] text-muted-foreground">{pct}%</span>
+    <span className="flex items-center gap-1.5">
+      <HudMeter value={pct / 100} />
+      <span className={cn(HUD_NUM, 'w-7 text-right text-hud-dimmer')}>{pct}%</span>
     </span>
   );
 }
@@ -84,23 +83,20 @@ export function GraphAxesPopover({
   }) => (
     <Tooltip>
       <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={onPick}
-          disabled={disabled}
-          className={cn(
-            'flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-[11px]',
-            'transition-colors hover:bg-accent disabled:opacity-40',
-            'disabled:hover:bg-transparent',
-          )}
-        >
-          <Check className={cn('h-3 w-3 shrink-0', active ? 'opacity-100' : 'opacity-0')} />
-          <span className="min-w-0 flex-1 truncate font-medium">{FRAME_LABEL[f]}</span>
-          <span className="shrink-0 text-[9px] text-muted-foreground">
-            {FRAME_COST[f]} {FRAME_COST[f] === 1 ? 'axis' : 'axes'}
-          </span>
-          {cov(f) && <Bar {...cov(f)!} />}
-        </button>
+        <div>
+          <HudOption
+            active={active}
+            disabled={disabled}
+            onClick={onPick}
+            label={FRAME_LABEL[f]}
+            trailing={
+              <span className="flex items-center gap-2">
+                <HudReadout>{FRAME_COST[f]}ax</HudReadout>
+                {cov(f) && <Bar {...cov(f)!} />}
+              </span>
+            }
+          />
+        </div>
       </TooltipTrigger>
       <TooltipContent side="right" className="max-w-[17rem] text-xs">
         {FRAME_HINT[f]}
@@ -116,45 +112,39 @@ export function GraphAxesPopover({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="h-6 gap-1 px-1.5 text-[11px]">
-          <Axis3d className="h-3 w-3" />
+        <HudButton icon={Axis3d} count={`${used}/${AXIS_BUDGET}`}>
           {b.plane ? FRAME_LABEL[b.plane] : '—'}
-          {b.up && <span className="text-muted-foreground">· {FRAME_LABEL[b.up]}</span>}
-          <Badge variant="secondary" className="h-4 px-1 text-[10px] tabular-nums">
-            {used}/{AXIS_BUDGET}
-          </Badge>
-        </Button>
+          {b.up && <span className="text-hud-dimmer">·{FRAME_LABEL[b.up]}</span>}
+        </HudButton>
       </PopoverTrigger>
 
-      <PopoverContent align="start" className="w-[22rem] p-3">
+      <PopoverContent align="start" className={cn(HUD_SURFACE, 'w-[22rem] p-0')}>
         <TooltipProvider delayDuration={200}>
-          <div className="mb-2 flex items-baseline justify-between">
-            <span className="text-xs font-medium">Axes</span>
-            <span className="text-[10px] text-muted-foreground">
+          <div className="flex items-baseline gap-2 border-b border-hud-line px-3 py-2">
+            <span className="text-[11px] font-medium text-hud-fg">Axes</span>
+            <span className={cn(HUD_PROSE, 'text-hud-dimmer')}>
               three axes, four frames
             </span>
           </div>
 
-          <div className="space-y-2">
-            <section>
-              <div className="mb-0.5 flex items-center justify-between px-1.5">
-                <span className="text-[10px] font-medium text-muted-foreground">
-                  PLANE
-                </span>
-                {b.plane === 'geo' && (
-                  <button
-                    type="button"
+          <div className="space-y-3 p-2.5">
+            <section className="space-y-0.5">
+              <HudOverline
+                trailing={b.plane === 'geo' ? (
+                  <HudChip
+                    active={b.pin}
                     onClick={() => onChange({ ...b, pin: !b.pin })}
-                    className="flex items-center gap-1 text-[9px] text-muted-foreground hover:text-foreground"
                     title={b.pin
                       ? 'Pinned — a simulation must not out-vote a latitude'
                       : 'Pulled — the layout may move a geocoded node'}
                   >
                     {b.pin ? <Lock className="h-2.5 w-2.5" /> : <Unlock className="h-2.5 w-2.5" />}
                     {b.pin ? 'pinned' : 'pulled'}
-                  </button>
-                )}
-              </div>
+                  </HudChip>
+                ) : undefined}
+              >
+                Plane
+              </HudOverline>
               {FRAMES.map(f => (
                 <Row key={f} f={f} active={b.plane === f}
                      disabled={dead(f) || f === 'event'}
@@ -162,10 +152,8 @@ export function GraphAxesPopover({
               ))}
             </section>
 
-            <section className="border-t pt-1.5">
-              <div className="mb-0.5 px-1.5 text-[10px] font-medium text-muted-foreground">
-                UP
-              </div>
+            <section className="space-y-0.5">
+              <HudOverline>Up</HudOverline>
               {FRAMES.map(f => (
                 <Row key={f} f={f} active={b.up === f}
                      disabled={dead(f) || f === 'event' || FRAME_COST[f] + (b.plane ? FRAME_COST[b.plane] : 0) > AXIS_BUDGET}
@@ -174,37 +162,30 @@ export function GraphAxesPopover({
             </section>
 
             {free.length > 0 && (
-              <p className="rounded-md border border-dashed px-2 py-1.5 text-[10px] leading-tight text-muted-foreground">
-                <span className="font-medium">Free: {free.map(f => FRAME_LABEL[f]).join(' · ')}.</span>{' '}
+              <p className={cn(HUD_PROSE, 'rounded-lg border border-hud-line px-2.5 py-1.5 text-hud-dimmer')}>
+                <span className="text-hud-fg">Free: {free.map(f => FRAME_LABEL[f]).join(' · ')}.</span>{' '}
                 Not demoted — an unpinned interest drifts to the centre of gravity
                 of everything serving it, so where it lands is an answer.
               </p>
             )}
 
-            <section className="border-t pt-2">
-              <div className="mb-1 px-1.5 text-[10px] font-medium text-muted-foreground">
-                CAMERA
-              </div>
-              <div className="grid grid-cols-2 gap-1">
+            <section className="space-y-1.5">
+              <HudOverline>Camera</HudOverline>
+              <div className="flex flex-wrap gap-1">
                 {CAMERAS.map(c => {
                   const on = b.plane === c.budget.plane && b.up === c.budget.up;
                   return (
                     <Tooltip key={c.id}>
                       <TooltipTrigger asChild>
-                        <button
-                          type="button"
+                        <HudChip
+                          active={on}
                           onClick={() => {
                             onChange({ ...c.budget });
                             onViewModeChange?.(c.view);
                           }}
-                          className={cn(
-                            'rounded border px-2 py-1 text-[11px] transition-colors',
-                            on ? 'border-primary bg-accent font-medium'
-                               : 'hover:bg-accent',
-                          )}
                         >
                           {c.label}
-                        </button>
+                        </HudChip>
                       </TooltipTrigger>
                       <TooltipContent className="max-w-[15rem] text-xs">
                         {c.hint}
@@ -213,7 +194,7 @@ export function GraphAxesPopover({
                   );
                 })}
               </div>
-              <p className="mt-1.5 px-1.5 text-[10px] leading-tight text-muted-foreground">
+              <p className={cn(HUD_PROSE, 'text-hud-dimmer')}>
                 Each is a viewing angle on one arrangement, not a different
                 chart — which is why the map, the lanes and the canvas cannot
                 disagree about what is on screen.

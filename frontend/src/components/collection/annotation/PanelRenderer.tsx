@@ -14,7 +14,6 @@ import AnnotationResultsPieChart from './AnnotationResultsPieChart';
 import AnnotationResultsTable from './AnnotationResultsTable';
 import AnnotationResultsMap, { MapPoint } from './AnnotationResultsMap';
 import AnnotationResultsGraph from './AnnotationResultsGraph';
-import { FormulaPreview } from './formulas/FormulaPreview';
 import { AnnotationTimeAxisControls } from './AnnotationTimeAxisControls';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';

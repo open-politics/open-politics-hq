@@ -56,8 +56,6 @@ import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useAnnotationRunStore, PanelViewConfig } from '@/zustand_stores/useAnnotationRunStore';
 import { useSurfaceCommands } from '@/hooks/useSurfaceCommands';
 import AnnotationRunnerHeader from './AnnotationRunnerHeader';
-import { FormulaWorkspace } from './formulas/FormulaWorkspace';
-import { DockedChat } from '@/components/collection/chat/DockedChat';
 import { PanelRenderer } from './PanelRenderer';
 import { PanelTypePicker } from './panels/PanelTypePicker';
 import { DragScopeProvider, DroppablePanelZone } from './panels/DragScopeProvider';
@@ -65,7 +63,6 @@ import { createScopeFromSelection, validateScopeGraph } from '@/lib/annotations/
 import { resolveGridGeometry } from '@/lib/annotations/grid';
 import { useShareableStore } from '@/zustand_stores/storeShareables';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
-import { AnnotationMapControls } from './AnnotationMapControls';
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
@@ -249,7 +246,6 @@ export default function AnnotationRunner({
     randomizeLayout,
     setDashboardDirty,
     saveDashboardToBackend,
-    loadDashboardFromRun,
     setActiveRun,
     addScope,
     focusMode,
@@ -409,10 +405,6 @@ export default function AnnotationRunner({
 
   const [isSchemesCollapsed, setIsSchemesCollapsed] = useState(false);
   const [isSourceStatsOpen, setIsSourceStatsOpen] = useState(false);
-  // Observation workspace mount state — null when closed, { id: string|null } when open.
-  // id=null means "new observation", string means "edit existing".
-  const [formulaEditor, setFormulaEditor] = useState<{ id: string | null } | null>(null);
-  const [dossierAgentOpen, setDossierAgentOpen] = useState<boolean>(false);
   // Ctrl+P quick panel picker (keyboard-navigable).
   const [isPanelPickerOpen, setIsPanelPickerOpen] = useState(false);
   const [isAssetSelectorOpen, setIsAssetSelectorOpen] = useState(false);
@@ -560,7 +552,6 @@ export default function AnnotationRunner({
         case 'f': e.preventDefault(); toggleFocusMode(); break;
         case 'p': e.preventDefault(); setIsPanelPickerOpen(true); break;
         case 's': e.preventDefault(); void saveDashboard(); break;
-        case 'a': e.preventDefault(); setDossierAgentOpen((o) => !o); break;
         case 'c':
           // Defer to an active text selection so the user can still copy.
           if ((window.getSelection()?.toString() ?? '').length > 0) return;
@@ -792,50 +783,7 @@ export default function AnnotationRunner({
           canExtend={canExtendRun}
           allSchemas={runSchemes}
           allResults={currentRunResults}
-          onOpenFormula={(id) => setFormulaEditor({ id })}
-          onOpenDossierAgent={activeRun ? () => setDossierAgentOpen(true) : undefined}
         />
-
-        {/* Formula workspace — full-screen overlay when open. Closes
-            via the inner "Close" button in its top bar. */}
-        {formulaEditor && activeInfospace && activeRun && (
-          <FormulaWorkspace
-            infospaceId={activeInfospace.id}
-            runId={activeRun.id}
-            schemas={runSchemes}
-            formulaId={formulaEditor.id}
-            onClose={() => setFormulaEditor(null)}
-          />
-        )}
-
-        {/* DossierAgent — pinned bottom-right tab. Header toggle controls
-            mount; closing the tab via X tears down the mount entirely. */}
-        {dossierAgentOpen && activeRun && (
-          <DockedChat
-            agent="dossier"
-            runId={activeRun.id}
-            title="DossierAgent"
-            accent="text-purple-600 dark:text-purple-400"
-            defaultOpen
-            onDismiss={() => setDossierAgentOpen(false)}
-            onAgentMutation={async () => {
-              // Agent wrote to the backend (formula_create/edit, panel_create,
-              // observation_snapshot, …). Refetch the run so the dashboard
-              // panels + formula list reflect the change without manual reload.
-              if (!activeInfospace?.id || !activeRun?.id) return;
-              try {
-                const { RunsService } = await import('@/client');
-                const fresh = await RunsService.getRun({
-                  infospaceId: activeInfospace.id,
-                  runId: activeRun.id,
-                });
-                loadDashboardFromRun(fresh as any);
-              } catch {
-                // Silent — toast on next user action would be intrusive here.
-              }
-            }}
-          />
-        )}
 
         {/* Floating exit-focus button — only rendered while focus mode is on.
             Stays in the top-right of the viewport so the panel canvas has

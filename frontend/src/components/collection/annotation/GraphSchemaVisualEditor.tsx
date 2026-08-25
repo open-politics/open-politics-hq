@@ -41,6 +41,7 @@ import {
   SchemaSection,
   JsonSchemaType,
   GraphFieldConfig,
+  NodeStyle,
 } from "@/lib/annotations/types";
 import { DEFAULT_ENTITY_COLORS, getEntityColorSet, resolveEntityColor } from "@/lib/annotations/colors";
 import { IconPickerDialog } from "@/components/collection/utilities/icons/IconPickerOverlay";
@@ -602,6 +603,11 @@ interface GraphSchemaVisualEditorProps {
   section: SchemaSection;
   disabled: boolean;
   onFieldUpdate: (update: Partial<AdvancedSchemeField>) => void;
+  /** The schema's node palette. Shared with the section editor: a triplet
+   *  field's `PERSON` and an entity roster's `Person` are the same type and
+   *  now cannot be given two different appearances. */
+  nodeStyles: Record<string, NodeStyle>;
+  onStyleChange: (type: string, style: NodeStyle | null) => void;
 }
 
 const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
@@ -609,9 +615,30 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
   section,
   disabled,
   onFieldUpdate,
+  nodeStyles,
+  onStyleChange,
 }) => {
   const graphConfig = field.graphConfig!;
   const [showPreview, setShowPreview] = useState(true);
+
+  // The palette, flattened to the per-attribute maps this editor's controls
+  // and preview already speak. Keyed upper-case, as the palette is.
+  const styleOf = (type: string): NodeStyle => nodeStyles[type.trim().toUpperCase()] ?? {};
+  const typeColors = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const [type, style] of Object.entries(nodeStyles)) {
+      if (style?.color) out[type] = style.color;
+    }
+    return out;
+  }, [nodeStyles]);
+  const setTypeStyle = (type: string, patch: NodeStyle) => {
+    const key = type.trim().toUpperCase();
+    const next = { ...styleOf(key), ...patch };
+    const cleaned: NodeStyle = {};
+    if (next.color) cleaned.color = next.color;
+    if (next.icon) cleaned.icon = next.icon;
+    onStyleChange(key, Object.keys(cleaned).length ? cleaned : null);
+  };
 
   // --- Updaters ---
 
@@ -627,34 +654,21 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
   // Entity types
   const entityTypes = graphConfig.entityTypes.typeEnum ?? [];
   const setEntityTypes = (types: string[]) => {
-    // Drop metadata keyed by types that no longer exist — otherwise stale
-    // colors/icons persist into saved output_contract and leak into imports.
-    const keep = new Set(types);
-    const prune = <V,>(map: Record<string, V> | undefined): Record<string, V> | undefined =>
-      map ? Object.fromEntries(Object.entries(map).filter(([k]) => keep.has(k))) : map;
+    // Colours and icons are NOT pruned here any more. They live in the
+    // schema's palette, which is keyed by node type and shared with every
+    // other field — dropping `PERSON` from this triplet field's list says
+    // nothing about whether some entity roster still declares it.
     updateGraphConfig({
       entityTypes: {
         ...graphConfig.entityTypes,
         typeEnum: types,
         typeConstrained: types.length > 0 ? (graphConfig.entityTypes.typeConstrained ?? true) : false,
-        typeColors: prune(graphConfig.entityTypes.typeColors),
-        typeIcons: prune(graphConfig.entityTypes.typeIcons),
       },
     });
   };
 
   // Entity type colors
-  const handleEntityTypeColorChange = (type: string, color: string) => {
-    updateGraphConfig({
-      entityTypes: {
-        ...graphConfig.entityTypes,
-        typeColors: {
-          ...(graphConfig.entityTypes.typeColors || {}),
-          [type]: color,
-        },
-      },
-    });
-  };
+  const handleEntityTypeColorChange = (type: string, color: string) => setTypeStyle(type, { color });
 
   // Predicates
   const predicates = graphConfig.relationshipSchema.predicateEnum ?? [];
@@ -689,17 +703,7 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
   };
 
   // Entity type icons
-  const handleEntityTypeIconChange = (type: string, iconKey: string) => {
-    updateGraphConfig({
-      entityTypes: {
-        ...graphConfig.entityTypes,
-        typeIcons: {
-          ...(graphConfig.entityTypes.typeIcons || {}),
-          [type]: iconKey,
-        },
-      },
-    });
-  };
+  const handleEntityTypeIconChange = (type: string, iconKey: string) => setTypeStyle(type, { icon: iconKey });
 
   // Predicate icons
   const handlePredicateIconChange = (predicate: string, iconKey: string) => {
@@ -821,7 +825,7 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
             <LiveGraphPreview
               entityTypes={entityTypes}
               predicates={predicates}
-              entityTypeColors={graphConfig.entityTypes.typeColors}
+              entityTypeColors={typeColors}
               predicateColors={graphConfig.relationshipSchema.predicateColors}
               className="w-full"
             />
@@ -856,7 +860,7 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
               label="Entity Types"
               description="Define what kinds of entities the AI should extract (e.g., people, organizations, locations)"
               showColorPicker={!disabled}
-              colorOverrides={graphConfig.entityTypes.typeColors}
+              colorOverrides={typeColors}
               onColorChange={handleEntityTypeColorChange}
             />
 
@@ -867,7 +871,7 @@ const GraphSchemaVisualEditor: React.FC<GraphSchemaVisualEditorProps> = ({
                 <p className="text-[10px] text-muted-foreground mt-0.5 mb-2">Assign icons to entity types for graph visualization</p>
                 <div className="grid grid-cols-2 gap-1.5">
                   {entityTypes.map((type) => {
-                    const currentIcon = graphConfig.entityTypes.typeIcons?.[type];
+                    const currentIcon = styleOf(type).icon;
                     return (
                       <div key={type} className="flex items-center gap-2 px-2 py-1.5 rounded-md border text-xs">
                         {currentIcon ? (

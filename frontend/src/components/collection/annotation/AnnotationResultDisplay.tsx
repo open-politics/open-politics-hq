@@ -168,9 +168,17 @@ interface AnnotationResultDisplayProps {
   density?: Density;
   /** Per-(schema, field) numeric range cache for inferred bars. */
   rangeCache?: FieldRangeCache;
+  /** When set, every field LABEL becomes a control that hides that field.
+   *
+   *  Used by the Composer, whose exemplar row is this component: the surface
+   *  showing what you get is also the surface you edit, so there is no second
+   *  representation of the selection to drift from the first. */
+  onFieldToggle?: (fieldKey: string) => void;
 }
 
 interface SingleAnnotationResultProps {
+  /** See `AnnotationResultDisplayProps.onFieldToggle`. */
+  onFieldToggle?: (fieldKey: string) => void;
   result: FormattedAnnotation;
   schema: AnnotationSchemaRead;
   compact?: boolean;
@@ -244,6 +252,7 @@ function SingleAnnotationResult({
   filters = [],
   density = 'expanded',
   rangeCache,
+  onFieldToggle,
 }: SingleAnnotationResultProps) {
   const renderedRef = useRef<HTMLDivElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -862,14 +871,33 @@ function SingleAnnotationResult({
                 })();
 
                 const formatted = formatFieldNameUtil(schemaField.name);
-                const labelInner = formatted.modality && formatted.modality !== 'document' ? (
-                  <span className="flex items-center gap-1">
-                    {getModalityIcon(formatted.modality, 'sm')}
-                    <span className="leading-tight whitespace-nowrap">{formatted.displayName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}:</span>
-                  </span>
-                ) : (
+                const labelText = (
                   <span className="leading-tight whitespace-nowrap">{formatted.displayName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}:</span>
                 );
+                const labelBody = formatted.modality && formatted.modality !== 'document' ? (
+                  <span className="flex items-center gap-1">
+                    {getModalityIcon(formatted.modality, 'sm')}
+                    {labelText}
+                  </span>
+                ) : labelText;
+                // **The label is the control.** Wrapped here rather than at the
+                // five places that render it, because a toggle that exists in
+                // four sections and not the fifth is worse than none — the
+                // reader learns the gesture, then finds a field it does not
+                // work on. One wrap, every layout.
+                const labelInner = onFieldToggle ? (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onFieldToggle(schemaField.name); }}
+                    title="Hide this datapoint"
+                    className="group/lbl flex min-w-0 items-center gap-1 rounded text-left hover:text-foreground"
+                  >
+                    {labelBody}
+                    <span className="text-[10px] leading-none opacity-0 transition-opacity group-hover/lbl:opacity-70">
+                      &times;
+                    </span>
+                  </button>
+                ) : labelBody;
 
                 const justificationIcon = justificationValue ? (
                   <TooltipProvider delayDuration={100}>
@@ -1652,6 +1680,7 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
     filters = [],
     density = 'expanded',
     rangeCache,
+    onFieldToggle,
 }) => {
 
   const findSchemaForResult = (res: FormattedAnnotation, sch: AnnotationSchemaRead | AnnotationSchemaRead[]): AnnotationSchemaRead | null => {
@@ -1675,6 +1704,7 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
       const { result: singleResult, schema: singleSchema } = validResultsWithSchemas[0];
       return (
         <SingleAnnotationResult
+          onFieldToggle={onFieldToggle}
           result={singleResult}
           schema={singleSchema}
           compact={compact}
@@ -1766,6 +1796,7 @@ const AnnotationResultDisplay: React.FC<AnnotationResultDisplayProps> = ({
     if (matchingSchema) {
       return (
         <SingleAnnotationResult
+          onFieldToggle={onFieldToggle}
           result={result}
           schema={matchingSchema}
           compact={compact}

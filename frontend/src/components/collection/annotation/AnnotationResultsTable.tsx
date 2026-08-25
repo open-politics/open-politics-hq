@@ -34,6 +34,10 @@ import { useAnnotationView } from '@/hooks/useAnnotationView';
 import type { AnnotationResultRow, AssetSummary, PanelConfig, TableVizConfig } from '@/lib/annotations/types';
 import { PanelHeaderSlot } from './panels/PanelHeaderSlot';
 import { ValueAliasManager } from './panels/ValueAliasManager';
+import { Composer } from '@/components/collection/composer/Composer';
+import {
+  fromSchemaFields, type ComposerModel,
+} from '@/components/collection/composer/composerModel';
 import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
@@ -65,6 +69,7 @@ import GuidedRetryModal from './GuidedRetryModal';
 import { useFragmentCuration } from '@/hooks/useFragmentCuration';
 import AnnotationCurationModal from './AnnotationCurationModal';
 import {
+  TypedCell,
   type Density,
   type FieldRangeCache,
   type NumericRange,
@@ -404,39 +409,6 @@ export function AnnotationResultsTable({
     });
     return next;
   }, [schemas, cfg?.columns]);
-
-  // Toggle handler for the header popover — flips a field on/off in
-  // ``cfg.columns``. When all fields are present and the user turns one
-  // off, we materialize the explicit list (otherwise we wouldn't know
-  // it's a subset). When the toggled list ends up equal to "all", we
-  // collapse back to ``[]`` so the panel persists the lean default.
-  const handleFieldToggle = useCallback(
-    (schemaId: number, fieldKey: string) => {
-      const allKeys = getTargetKeysForScheme(schemaId, schemas).map(tk => tk.key);
-      const currentColumns: string[] = (cfg?.columns ?? []) as string[];
-      // If cfg.columns is empty (= "show all"), materialize all keys
-      // first so we can subtract from a known set.
-      const base = currentColumns.length > 0
-        ? currentColumns.slice()
-        : schemas.flatMap(s => getTargetKeysForScheme(s.id, schemas).map(tk => tk.key));
-      let next: string[];
-      if (base.includes(fieldKey)) {
-        next = base.filter(k => k !== fieldKey);
-      } else {
-        next = [...base, fieldKey];
-      }
-      // Collapse to [] when next == all-fields-across-all-schemas.
-      const allEverywhere = schemas.flatMap(s =>
-        getTargetKeysForScheme(s.id, schemas).map(tk => tk.key),
-      );
-      const isEqualToAll =
-        next.length === allEverywhere.length && next.every(k => allEverywhere.includes(k));
-      onUpdatePanel({
-        panel_config: { ...(cfg as any), columns: isEqualToAll ? [] : next },
-      } as any);
-    },
-    [cfg, schemas, onUpdatePanel],
-  );
 
   // Track if this is the initial render to avoid calling onTableConfigChange on mount
   const isInitialRender = useRef(true);
@@ -1154,6 +1126,58 @@ export function AnnotationResultsTable({
     filterArrayItems // NEW: Include focus toggle state for filtering
   ]);
 
+  // ── The Composer ──────────────────────────────────────────────────────
+  //
+  // Replaces the per-column checkbox popover. Same storage (`cfg.columns`,
+  // where `[]` still means "show all"), so nothing about persistence changes —
+  // what changes is that you choose against the field's real VALUES and its
+  // fill rate instead of against its name.
+  //
+  // Grain = schema, because that is what a column list is scoped to here. When
+  // the fold lands and the table speaks GQL, this adapter goes and the graph's
+  // `SECTION:`/`SHOW:` one serves both.
+  const [composerFor, setComposerFor] = useState<number | null>(null);
+
+  const composerModel = useMemo<ComposerModel | null>(() => {
+    if (composerFor == null) return null;
+    const groups = schemas.map(s => ({
+      id: s.id,
+      label: s.name,
+      fields: getTargetKeysForScheme(s.id, schemas),
+    }));
+    const model = fromSchemaFields(
+      groups,
+      (cfg?.columns ?? []) as string[],
+      // Sampled from the rows already on screen — honest for a picker, and
+      // explicitly labelled as such, because it is not run-wide coverage.
+      (schemaId) => tableData
+        .map(r => r.resultsMap[schemaId]?.value)
+        .filter(v => v != null),
+      (value, key) => getAnnotationFieldValue(value, key),
+    );
+    return { ...model, grain: String(composerFor) };
+  }, [composerFor, schemas, cfg?.columns, tableData]);
+
+  const handleComposerChange = useCallback((next: ComposerModel) => {
+    const grainId = Number(next.grain);
+    const grainKeys = getTargetKeysForScheme(grainId, schemas).map(tk => tk.key);
+    const allEverywhere = schemas.flatMap(s =>
+      getTargetKeysForScheme(s.id, schemas).map(tk => tk.key),
+    );
+    const current = (cfg?.columns ?? []) as string[];
+    const base = current.length > 0 ? current : allEverywhere;
+    // Only this schema's fields are being edited; another schema's columns are
+    // not the Composer's to drop.
+    const others = base.filter(k => !grainKeys.includes(k));
+    const picked = next.selected.map(id => id.split(':').slice(1).join(':'));
+    const merged = [...others, ...picked];
+    const isAll = merged.length === allEverywhere.length
+      && merged.every(k => allEverywhere.includes(k));
+    onUpdatePanel({
+      panel_config: { ...(cfg as any), columns: isAll ? [] : merged },
+    } as any);
+  }, [cfg, schemas, onUpdatePanel]);
+
   // Create flattened data for table display (including expanded children)
   const flattenedTableData = useMemo((): EnrichedAssetRecord[] => {
     const flattened: EnrichedAssetRecord[] = [];
@@ -1573,8 +1597,15 @@ export function AnnotationResultsTable({
     const unfoldedFieldColumns: ColumnDef<EnrichedAssetRecord>[] = unfoldFields ? schemas.flatMap((schema, schemaIndex) => {
       const targetKeys = getTargetKeysForScheme(schema.id, schemas);
       const selectedKeys = selectedFieldsPerScheme[schema.id] || [];
-      const fieldsToShow = targetKeys.filter(tk => selectedKeys.includes(tk.key));
-      
+      // **Selection order, not declaration order.** This used to iterate the
+      // schema and test membership, which threw the user's ordering away — so
+      // `cfg.columns` had an order that nothing rendered. The Composer's strip
+      // is only meaningful if the order it produces is the order drawn.
+      const byKey = new Map(targetKeys.map(tk => [tk.key, tk]));
+      const fieldsToShow = selectedKeys
+        .map(k => byKey.get(k))
+        .filter((tk): tk is { key: string; name: string; type: string } => Boolean(tk));
+
       return fieldsToShow.map((field, fieldIndex) => ({
         id: `field_${schema.id}_${field.key}`,
         meta: {
@@ -1717,10 +1748,8 @@ export function AnnotationResultsTable({
         displayName: schema.name,
       },
       header: ({ column }) => {
-        // Toggle writes straight to cfg.columns via onUpdatePanel — see
-        // the outer handleFieldToggle. One source of truth means the
-        // visible set always reflects the persisted config.
-        const onToggle = (fieldKey: string) => handleFieldToggle(schema.id, fieldKey);
+        // The Composer writes straight to cfg.columns via onUpdatePanel. One
+        // source of truth means the visible set always reflects the config.
         const currentSelectedFields = selectedFieldsPerScheme[schema.id] || [];
         const availableFields = getTargetKeysForScheme(schema.id, schemas);
 
@@ -1728,35 +1757,16 @@ export function AnnotationResultsTable({
           <div className="flex flex-col space-y-1 min-w-0">
             <div className="flex items-center justify-between min-w-0">
                <span className="font-medium truncate flex-1" title={schema.name}>{schema.name}</span>
-               <Popover>
-                 <PopoverTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 ml-1 opacity-60 hover:opacity-100 flex-shrink-0">
-                      <Settings2 className="h-3.5 w-3.5" />
-                      <span className="sr-only">Configure Fields</span>
-                    </Button>
-                 </PopoverTrigger>
-                 <PopoverContent className="w-56 p-0" align="start">
-                    <div className="p-2 font-medium text-xs border-b">Show Fields:</div>
-                    <ScrollArea className="max-h-60 overflow-y-auto p-1">
-                      {availableFields.map(field => (
-                        <div key={field.key} className="flex items-center space-x-2 px-2 py-1.5 text-xs">
-                           <Checkbox
-                              id={`field-header-toggle-${schema.id}-${field.key}`}
-                              checked={currentSelectedFields.includes(field.key)}
-                              onCheckedChange={() => onToggle(field.key)}
-                              disabled={currentSelectedFields.length === 1 && currentSelectedFields.includes(field.key)}
-                           />
-                           <Label
-                              htmlFor={`field-header-toggle-${schema.id}-${field.key}`}
-                              className={cn("font-normal cursor-pointer truncate", (currentSelectedFields.length === 1 && currentSelectedFields.includes(field.key)) && "opacity-50 cursor-not-allowed")}
-                           >
-                              {field.name} ({field.type})
-                           </Label>
-                        </div>
-                      ))}
-                    </ScrollArea>
-                 </PopoverContent>
-               </Popover>
+               <Button
+                 variant="ghost"
+                 size="icon"
+                 className="h-6 w-6 ml-1 opacity-60 hover:opacity-100 flex-shrink-0"
+                 title={`Choose datapoints — ${currentSelectedFields.length} of ${availableFields.length} shown`}
+                 onClick={(e) => { e.stopPropagation(); setComposerFor(schema.id); }}
+               >
+                 <Settings2 className="h-3.5 w-3.5" />
+                 <span className="sr-only">Choose datapoints</span>
+               </Button>
             </div>
           </div>
         );
@@ -2836,6 +2846,75 @@ export function AnnotationResultsTable({
         assetCount={new Set(curationState.payloads.map(p => p.assetId)).size}
         progress={curationProgress}
       />
+      {composerModel && (
+        <Composer
+          open={composerFor != null}
+          onClose={() => setComposerFor(null)}
+          model={composerModel}
+          onChange={handleComposerChange}
+          title={`Datapoints — ${schemas.find(s => s.id === composerFor)?.name ?? ''}`}
+          minSelected={1}
+          // Where this is going: the table's flat `columns` list becomes the
+          // same `SHOW:` clause the graph already speaks. Showing it now makes
+          // the two surfaces legibly one thing before the fold makes them one.
+          queryPreview={d => `SHOW:${d.selected
+            .map(id => id.split(':').slice(1).join(':')).join(',')}`}
+          // **The table's own folded-schema cell, verbatim.** `renderContext=
+          // "table"` with no `targetFieldKey` is the three-section layout —
+          // strings | numerics | lists — and `comfortable` is the density that
+          // hides empty numerics and lists. Previewing per-field columns would
+          // show a layout this table never draws.
+          renderExemplar={(selected, toggle) => {
+            const schema = schemas.find(s => String(s.id) === composerModel.grain);
+            if (!schema) return null;
+            // Flat dot-path keys: `getAnnotationFieldValue` matches them
+            // exactly (its "Strategy 0"), so no nesting is needed to stand in
+            // for a real value blob.
+            const value: Record<string, unknown> = {};
+            for (const f of composerModel.fields) {
+              if (f.groupId !== composerModel.grain) continue;
+              if (f.exemplar === undefined) continue;
+              value[f.id.split(':').slice(1).join(':')] = f.exemplar;
+            }
+            return (
+              <AnnotationResultDisplay
+                result={{ id: -1, schema_id: schema.id, asset_id: -1,
+                          status: 'success', value } as any}
+                schema={schema}
+                compact
+                renderContext="table"
+                selectedFieldKeys={selected.map(id => id.split(':').slice(1).join(':'))}
+                density="comfortable"
+                rangeCache={fieldRangeCache}
+                // The cell IS the control: clicking a label hides that field.
+                // No second representation of the selection to drift from it.
+                onFieldToggle={(fieldKey) => toggle(`${composerModel.grain}:${fieldKey}`)}
+              />
+            );
+          }}
+          // Fallback for the columnar layout — unused while renderExemplar is
+          // supplied, kept so the prop contract stays honest.
+          renderCell={(f, value) => {
+            const key = f.id.split(':').slice(1).join(':');
+            const schema = schemas.find(s => String(s.id) === f.groupId);
+            if (!schema) return null;
+            return (
+              <TypedCell
+                field={{
+                  key,
+                  name: f.label,
+                  type: getFieldDefinitionFromSchema(schema, key)?.type ?? 'string',
+                  definition: getFieldDefinitionFromSchema(schema, key),
+                }}
+                value={value}
+                density={density}
+                schema={schema}
+                rangeCache={fieldRangeCache}
+              />
+            );
+          }}
+        />
+      )}
     </div>
   );
 }

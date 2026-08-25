@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { ButtonGroup } from '@/components/ui/button-group';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
@@ -10,7 +9,6 @@ import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, RefreshCw, AlertCircle, Info, Download, Settings2, Search, X, Eye, EyeOff, Trash2, GitMerge, Database, Fingerprint, Check, Box, Square, Maximize2, Minimize2, Library, ArrowUpToLine } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { AnnotationSchemaRead, AssetRead, KnowledgeGraphRead, SimilarPairRead } from '@/client';
 import { FormattedAnnotation, TimeAxisConfig, PanelConfig, GraphVizConfig, GraphProjection } from '@/lib/annotations/types';
 import { KnowledgeGraphsService, AnnotationsService, EntitiesService } from '@/client';
@@ -32,30 +30,45 @@ import { isTimestampField, isLocationField, parseTimestampValue } from '@/lib/an
 import { inferFieldRange } from '@/components/collection/annotation/cellRenderers';
 import type { GraphEdits } from '@/lib/annotations/types';
 import { ForceGraph, type ForceGraphHandle, GraphNode, GraphEdge, type Clock, viewGraphToGraphData, GraphViewConfig, defaultGraphViewConfig, GraphSettingsPopover, GraphFilterPanel, edgeFieldRange, bundleEdges, bundleIdForEdge, bundleIdForPair, type BundledEdge } from '@/components/collection/graph';
+import {
+  HudBar, HudButton, HudGroup, HudReadout, HudRule, HudSegmented,
+} from '@/components/collection/graph/chrome';
 import { useFullscreen } from '@/components/collection/graph/forcegraph/useFullscreen';
 import { ZoomToolbar } from '@/components/collection/graph/forcegraph/ZoomToolbar';
 import { NodeDetailHUD, type EvidenceItem as HUDEvidenceItem, type DocumentBadge as HUDDocBadge, type AssetFieldRow as HUDAssetFieldRow, type EligibleField as HUDEligibleField } from '@/components/collection/graph/forcegraph/NodeDetailHUD';
-import { NodeProjectionDossier } from '@/components/collection/graph/forcegraph/NodeProjectionDossier';
 import { EdgeBundleHUD, type EdgeBundleEvidenceItem, type EdgeBundleDocChip } from '@/components/collection/graph/forcegraph/EdgeBundleHUD';
 import { CompareBySubjectButton } from '@/components/collection/graph/forcegraph/CompareBySubjectButton';
-import { PanelFormulaBinder } from './formulas/PanelFormulaBinder';
 import { PinBoard as PinBoardOverlay } from '@/components/collection/graph/forcegraph/PinBoard';
 import { useCanonEntityLookup } from '@/hooks/useCanonEntityLookup';
 import { resolveEntityColor } from '@/lib/annotations/colors';
 import { PanelHeaderSlot } from './panels/PanelHeaderSlot';
-import { GraphQueryBar } from './panels/GraphQueryBar';
+import {
+  DocsTable, NodeDetail, PaneLayout, QueryBar, RowTable, derivePanes, fold,
+  foldEvidence, makePane, paneQuery, reconcileDerived,
+  type GraphIndex, type InferredPane, type PaneRegion, type PaneSpec,
+  type RegionSize, type SectionRows, type SurfaceData, type SurfaceRow,
+} from '@/components/collection/graph/panes';
 import { GraphAxesPopover, type FrameCoverage } from './panels/GraphAxesPopover';
 import { GraphLayersPopover, type GraphLayer, type LayerShow, type LayerView } from './panels/GraphLayersPopover';
+import { Composer } from '@/components/collection/composer/Composer';
+import { applyToGql, fromSectionRows } from '@/components/collection/composer/composerModel';
+import { Cell as RowCell } from '@/components/collection/graph/panes/RowTable';
+import { pageNodeIds, pinDoc, type Pin } from '@/components/collection/graph/panes/pins';
 import { budgetToAnchors, defaultAxisBudget, type AxisBudget } from '@/components/collection/graph/forcegraph/axes';
 import { TopNodesList } from '@/components/collection/graph/forcegraph/TopNodesList';
 import { TimeScrubber, filterByCursor } from '@/components/collection/graph/forcegraph/TimeScrubber';
-import { GraphHUD, RegionToggles, defaultHudConfig, type HudConfig } from '@/components/collection/graph/hud';
-import { negatedValues, setNegatedValues } from '@/lib/query/graph_query_language';
+// `GraphHUD` is gone from here — `PaneLayout` replaced it. The rest of this
+// module still holds the bars clock and the region toggles, which have not
+// moved yet.
+import { RegionToggles, defaultHudConfig, quoteOf, type HudConfig } from '@/components/collection/graph/hud';
+import { appendGraphToken, negatedValues, setNegatedValues } from '@/lib/query/graph_query_language';
 import { useSurfaceCommands } from '@/hooks/useSurfaceCommands';
+import { useGraphAssist } from '@/hooks/useGraphAssist';
 import { EmptyStateCard } from './panels/EmptyStateCard';
 import { ValueAliasManager } from './panels/ValueAliasManager';
 import { EvidenceDrawer } from './panels/EvidenceDrawer';
 import { walkOutputContract, flattenFieldPaths } from '@/lib/annotations/fieldPaths';
+import { hasGraphStyle, readGraphStyle } from '@/lib/annotations/graphStyle';
 import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
 import { usePromoteRun, useSetResolveIntoCanon } from '@/hooks/useCanons';
 import { effectiveMergeMaps } from '@/lib/annotations/valueAliases';
@@ -216,6 +229,11 @@ interface PinPage {
   id: string;
   label: string;
   pinnedNodeIds: string[];
+  /** Term-pins — see `panes/pins.ts`. A pin carrying a GQL fragment, so one
+   *  document is one pin whatever it resolves to. Coexists with the node-id
+   *  list rather than replacing it: `pageNodeIds` unions both, which is what
+   *  lets this land without rewriting every pin site at once. */
+  pins?: Pin[];
 }
 
 interface PinBoard {
@@ -266,17 +284,14 @@ export default function AnnotationResultsGraph({
   const broadcastAddScope = useAnnotationRunStore(s => s.addScope);
 
   // Canon entity lookup — graph nodes carry labels/types but not canon ids.
-  // The projection dossier and EdgeDetailHUD consume canon entity ids; kept
-  // here for forward-compat with the entity-role overlay path.
-  const { findId: findEntityId, entities: canonEntities } = useCanonEntityLookup(infospaceId);
+  // CompareBySubjectButton resolves its entity set through this.
+  const { entities: canonEntities } = useCanonEntityLookup(infospaceId);
 
-  // In the new Panel/Formula model, projection-based entity-role overlays
-  // (NodeProjectionDossier, EdgeDetailHUD) are not active — the Panel no
-  // longer carries a PanelProjection. These stay false/null until the
-  // overlay system is re-wired to formula-native paths.
+  // Projection-based entity-role overlays are not active: the Panel carries no
+  // PanelProjection, so there is nothing to derive roles from. Kept as a
+  // constant (rather than removed) because CompareBySubjectButton gates its
+  // visibility on it — it turns on when projections reach the panel.
   const projectionHasEntityRoles = false;
-  const resolvedProjection: null = null;
-  const actorRole = 'actor';
   const subjectRole = 'subject';
 
   // Read the per-type visual config from panel_config.
@@ -369,6 +384,22 @@ export default function AnnotationResultsGraph({
     onUpdatePanel({ panel_config: { ...cfg, q: q || null } as GraphVizConfig });
   }, [onUpdatePanel, cfg]);
 
+  // A query proposed but not applied. Transient by design — it belongs to this
+  // reading session, not to the panel, because an unaccepted proposal is not a
+  // configuration and should not survive a reload or travel to whoever the
+  // dashboard is shared with.
+  const [graphDraft, setGraphDraft] = useState<string | null>(null);
+
+  // Prose → a proposed query, and the amber pills for whatever this run cannot
+  // answer. Both go into the draft; neither applies anything.
+  const { warnings: queryWarnings, validate: validateQuery, ask: askGraph } =
+    useGraphAssist(infospaceId, runId);
+
+  // Validate on commit, not per keystroke. `empty_risk` needs the run's own
+  // vocabulary, so it is a round-trip — and a query is only worth checking
+  // once it is one.
+  useEffect(() => { void validateQuery(graphQuery); }, [graphQuery, validateQuery]);
+
   /** "Show me this node's neighbourhood" — as a query, not as a list.
    *
    *  Replaces the connection list the node HUD used to render along its bottom
@@ -427,6 +458,66 @@ export default function AnnotationResultsGraph({
   const graphMeta = (viewData?.graph as any)?.meta ?? {};
   const layers: GraphLayer[] = graphMeta.layers ?? [];
   const frameCoverage: FrameCoverage | undefined = graphMeta.frames;
+  // What the engine decided that the query did not say: which size scale and
+  // denominator, whether a requested scale was refused, how many dimensions
+  // were spent and what the vector had to fold into. Shown, always — a size
+  // channel whose rules are invisible is one that can be made to say anything.
+  const graphLegend: string[] = graphMeta.legend ?? [];
+  /** What the engine resolved in a way the writer may not have meant — a
+   *  reserved word colliding with a field name, a section this run has never
+   *  heard of. Distinct from the legend: the legend says what the engine DID,
+   *  a note says what it could not do with what you wrote. Amber, not neutral. */
+  const graphNotes: string[] = graphMeta.notes ?? [];
+  /** Panes the contract's declarations imply, each with the scope the engine
+   *  resolved for it — what an empty bar means. */
+  const inferredPanes: InferredPane[] = graphMeta.panes ?? [];
+  /** What this run is addressable BY — sections and their columns, plus the
+   *  types, roles, predicates and properties actually present. Read off the
+   *  assembled graph, so a completion cannot offer something the query has
+   *  already excluded. Drives the bar's autocomplete. */
+  const graphIndex: GraphIndex | undefined = graphMeta.index;
+
+  /** The rows behind the picture — one section's records, projected by the
+   *  same query that drew the canvas. Entity cells carry node ids, which is
+   *  what makes selection one thing across both surfaces rather than two
+   *  states to reconcile. `graph/rows.py`, `MVP.md` §4. */
+  const sectionTables: SectionRows[] = (viewData?.graph as any)?.rows ?? [];
+
+  // ── The Composer, on the GQL path ─────────────────────────────────────
+  //
+  // Reads the query and writes it back: `SECTION:` is the grain, `SHOW:` the
+  // columns. It holds no state of its own, which is what guarantees it cannot
+  // drift from the bar — both are renderers of the same string, and anything
+  // the wheel can do is by construction expressible as a query (MVP S7).
+  const [composePaneId, setComposePaneId] = useState<string | null>(null);
+
+  const composerModel = useMemo(() => {
+    if (!composePaneId || sectionTables.length === 0) return null;
+    return fromSectionRows(sectionTables, graphQuery, (section) => {
+      // Rosters are the projections that are ABOUT nothing — a cast, not an
+      // act. `about` is the declaration that decides it, so the split holds
+      // for a contract whose sections are called `motives` and `exhibits`.
+      const l = layers.find(
+        x => x.path.split('.').pop()?.replace('[*]', '') === section,
+      );
+      return l && l.about === null ? 'body' : null;
+    });
+  }, [composePaneId, sectionTables, graphQuery, layers]);
+
+  /** Validation warnings and engine notes, as one rail.
+   *
+   *  A note arrives with the *result*, so it can say things validation cannot
+   *  know in advance — that `kind:payment` matched no node kind on a contract
+   *  whose acts state their type in a field literally called `kind`. The
+   *  backend already phrases each as a sentence with the spellings that do
+   *  work, so the token shown is the note's own first clause. */
+  const engineNotes = useMemo(() => [
+    ...queryWarnings,
+    ...graphNotes.map(n => {
+      const [head, ...rest] = n.split(' — ');
+      return { token: head, why: rest.join(' — ') || head };
+    }),
+  ], [queryWarnings, graphNotes]);
 
   // Separate rows fetch — the graph response carries only ``annotation_ids``
   // per node, not asset ids. To populate the node detail panel's "Appears
@@ -815,6 +906,30 @@ export default function AnnotationResultsGraph({
     }));
   }, [setPinBoard]);
 
+  /** Pin a DOCUMENT — one pin, whose subgraph is what its term resolves to. */
+  const handlePinDoc = useCallback(
+    (assetId: number, title: string | undefined, nodeIds: string[]) => {
+      const pin = pinDoc(assetId, title, nodeIds);
+      setPinBoard(pb => ({
+        ...pb,
+        pages: pb.pages.map(p => p.id !== pb.activePageId ? p : {
+          ...p,
+          // Idempotent: pinning the same document twice is one pin, because
+          // the id is the document's.
+          pins: [...(p.pins ?? []).filter(x => x.id !== pin.id), pin],
+        }),
+      }));
+    }, [setPinBoard]);
+
+  const handleRemovePin = useCallback((pinId: string) => {
+    setPinBoard(pb => ({
+      ...pb,
+      pages: pb.pages.map(p => p.id !== pb.activePageId ? p : {
+        ...p, pins: (p.pins ?? []).filter(x => x.id !== pinId),
+      }),
+    }));
+  }, [setPinBoard]);
+
   const handleAddPinPage = useCallback((label: string) => {
     const id = newPinPageId();
     setPinBoard(pb => ({
@@ -979,49 +1094,43 @@ export default function AnnotationResultsGraph({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSchemaId]);
 
-  // Extract schema-level graph config (typeColors, typeIcons, predicateColors)
-  const schemaGraphFieldConfig = useMemo(() => {
+
+  // Colours, icons and arrow heads the CONTRACT declares.
+  //
+  // These were being read from a legacy `graphConfig` key that the current
+  // editor no longer writes, so a schema author could pick a palette, watch it
+  // round-trip through save and reload intact — there is a test asserting
+  // exactly that — and never see it on the canvas. `readGraphStyle` walks for
+  // the `x-*` extensions the editor actually emits, and still reads the legacy
+  // shape so older contracts keep their appearance.
+  const schemaStyle = useMemo(() => {
     if (!selectedSchemaId) return null;
-    const schema = [...schemas, ...(allSchemas || [])].find(s => s.id.toString() === selectedSchemaId);
+    const schema = [...schemas, ...(allSchemas || [])]
+      .find(s => s.id.toString() === selectedSchemaId);
     if (!schema?.output_contract) return null;
-    const props = (schema.output_contract as any)?.properties;
-    if (!props) return null;
-    // Find the graph field (type === 'graph' or has graphConfig)
-    const findGraphConfig = (obj: any): any => {
-      if (!obj || typeof obj !== 'object') return null;
-      for (const val of Object.values(obj)) {
-        if (val && typeof val === 'object') {
-          const v = val as any;
-          if (v.graphConfig) return v.graphConfig;
-          if (v.properties) {
-            const nested = findGraphConfig(v.properties);
-            if (nested) return nested;
-          }
-        }
-      }
-      return null;
-    };
-    return findGraphConfig(props);
+    const style = readGraphStyle(schema.output_contract);
+    return hasGraphStyle(style) ? style : null;
   }, [selectedSchemaId, schemas, allSchemas]);
 
   const schemaColorOverrides = useMemo(() => {
-    if (!schemaGraphFieldConfig) return undefined;
-    const colors: Record<string, string> = {};
-    let hasAny = false;
-    if (schemaGraphFieldConfig.entityTypes?.typeColors) {
-      Object.assign(colors, schemaGraphFieldConfig.entityTypes.typeColors);
-      hasAny = true;
-    }
-    return hasAny ? { schemaColors: colors, predicateColors: schemaGraphFieldConfig.relationshipSchema?.predicateColors } : undefined;
-  }, [schemaGraphFieldConfig]);
+    if (!schemaStyle) return undefined;
+    return {
+      schemaColors: schemaStyle.typeColors,
+      predicateColors: schemaStyle.predicateColors,
+    };
+  }, [schemaStyle]);
 
-  const schemaTypeIcons = useMemo(() => {
-    return schemaGraphFieldConfig?.entityTypes?.typeIcons || undefined;
-  }, [schemaGraphFieldConfig]);
+  const schemaTypeIcons = useMemo(
+    () => (Object.keys(schemaStyle?.typeIcons ?? {}).length
+      ? schemaStyle!.typeIcons : undefined),
+    [schemaStyle],
+  );
 
-  const schemaPredicateArrows = useMemo(() => {
-    return schemaGraphFieldConfig?.relationshipSchema?.predicateArrows || undefined;
-  }, [schemaGraphFieldConfig]);
+  const schemaPredicateArrows = useMemo(
+    () => (Object.keys(schemaStyle?.predicateArrows ?? {}).length
+      ? schemaStyle!.predicateArrows : undefined),
+    [schemaStyle],
+  );
 
   // Handle graph config change (frontend-local GraphViewConfig — unrelated to
   // backend GraphVizConfig; persisted in settings so the force-graph renderer
@@ -1036,13 +1145,22 @@ export default function AnnotationResultsGraph({
   // and can edit it, same contract as the content explorer's search command.
   // `focus` drills into one node by name so "show me Merkel's neighbourhood"
   // becomes a query the user can then widen or narrow themselves.
+  // **The writer proposes; a person commits.** These used to call
+  // `setGraphQuery` — the *applied* value — so a model rewrote the panel under
+  // the analyst and nothing re-parsed what it wrote. Both halves of that were
+  // wrong: a hallucinated token degrades to a free-text name match and comes
+  // back with a plausible handful of nodes, and by then the view has already
+  // changed. Routing to the draft keeps the proposal visible, checkable and
+  // one keystroke from being accepted.
+  //
+  // `clearQuery` still applies directly: clearing is unambiguous and reversible.
   useSurfaceCommands('graph', {
-    query: (p) => setGraphQuery(String(p?.q ?? '')),
+    query: (p) => setGraphDraft(String(p?.q ?? '')),
     focus: (p) => {
       const name = String(p?.name ?? '').trim();
       if (!name) return;
       const hops = Number(p?.hops ?? 1);
-      setGraphQuery(`from:"${name}" hops:${Number.isFinite(hops) ? hops : 1}`);
+      setGraphDraft(`from:"${name}" hops:${Number.isFinite(hops) ? hops : 1}`);
     },
     clearQuery: () => setGraphQuery(''),
   });
@@ -1097,6 +1215,18 @@ export default function AnnotationResultsGraph({
     for (const r of results) m.set(r.id, r.asset_id);
     return m;
   }, [results]);
+
+  /** The asset an edge is attributed to for lens/filter purposes. An edge
+   *  aggregated across several documents has several; the asset lens is a
+   *  membership test (``edgeAssetMap``) and this is only the card's badge, so
+   *  the first is the honest answer rather than a fabricated "primary". */
+  const firstAssetIdOf = useCallback((e: GraphEdge): number => {
+    for (const aid of e.annotationIds ?? []) {
+      const assetId = annotationIdToAssetId.get(aid);
+      if (assetId != null) return assetId;
+    }
+    return -1;
+  }, [annotationIdToAssetId]);
 
   const getNodeDetails = useCallback((nodeId: string) => {
     const node = nodes.find(n => n.id === nodeId);
@@ -1180,6 +1310,159 @@ export default function AnnotationResultsGraph({
     bars: { ...defaultHudConfig.bars, ...hudConfig?.bars },
     lanes: { ...defaultHudConfig.lanes, ...hudConfig?.lanes },
   }), [hudConfig]);
+
+  // ---- Panes -------------------------------------------------------------
+  // `n` panes, each a query, replacing four named slots with four bespoke
+  // selectors. Persisted on `panel_config.hud.panes` — the same opaque bag the
+  // old config used, so nothing needs migrating that has not already been
+  // written by a newer panel.
+  const panes: PaneSpec[] = useMemo(
+    () => (hudConfig?.panes as PaneSpec[] | undefined) ?? [],
+    [hudConfig],
+  );
+
+  const writePanes = useCallback((next: PaneSpec[]) => {
+    onUpdatePanel({
+      panel_config: { ...cfg, hud: { ...(hudConfig ?? {}), panes: next } } as GraphVizConfig,
+    });
+  }, [onUpdatePanel, cfg, hudConfig]);
+
+  const handleUpdatePane = useCallback((id: string, next: Partial<PaneSpec>) => {
+    writePanes(panes.map(p => (p.id === id ? { ...p, ...next } : p)));
+  }, [panes, writePanes]);
+
+  const handleRemovePane = useCallback((id: string) => {
+    writePanes(panes.filter(p => p.id !== id));
+  }, [panes, writePanes]);
+
+  // **Region widths: live in state, persisted on release.**
+  //
+  // A drag emits a move event per frame, and writing `panel_config` sixty times
+  // a second would round-trip the whole panel config through the API on every
+  // one of them. So the drag drives local state — the column follows the hand —
+  // and only the release writes. Reads fall back to the stored value, so a
+  // reload keeps the width.
+  const [dragSize, setDragSize] = useState<RegionSize | null>(null);
+  const regionSize: RegionSize = useMemo(
+    () => dragSize ?? ((hudConfig?.regionSize as RegionSize | undefined) ?? {}),
+    [dragSize, hudConfig],
+  );
+
+  const handleResizeRegion = useCallback((region: PaneRegion, px: number) => {
+    setDragSize(prev => ({ ...(prev ?? regionSize), [region]: px }));
+  }, [regionSize]);
+
+  const handleCommitRegion = useCallback((region: PaneRegion, px: number) => {
+    const next = { ...regionSize, [region]: px };
+    setDragSize(null);
+    onUpdatePanel({
+      panel_config: {
+        ...cfg, hud: { ...(hudConfig ?? {}), regionSize: next },
+      } as GraphVizConfig,
+    });
+  }, [regionSize, onUpdatePanel, cfg, hudConfig]);
+
+  const handleAddPane = useCallback((region: PaneRegion) => {
+    // Named for the question, not chosen from a list. A name that matches a
+    // preset gets its binding; one that does not gets a plain list, which is
+    // exactly as legitimate.
+    writePanes([...panes, { ...makePane('New pane', panes), region }]);
+  }, [panes, writePanes]);
+
+  // A row click drives the canvas. Picking a node selects it; picking a fold
+  // bucket scopes the QUERY to that bucket rather than holding a private
+  // selection — which is what makes the gesture survive a reload, travel with
+  // a shared dashboard and be reachable by the companion.
+  // Alt-clicking a bar writes the window into the query. Same reasoning as
+  // clicking a place: a temporal gesture is a query edit, not a private
+  // viewport state, so it survives reload, travels with a shared dashboard,
+  // and narrows every pane at once instead of only the canvas.
+  const handleScopeToWindow = useCallback((from: string, to: string) => {
+    const cleaned = graphQuery
+      .split(/\s+/)
+      .filter(t => !/^-?(after|before):/i.test(t))
+      .join(' ');
+    setGraphQuery(
+      `${cleaned} after:${from.slice(0, 10)} before:${to.slice(0, 10)}`.trim(),
+    );
+  }, [graphQuery, setGraphQuery]);
+
+  /**
+   * Which table a pane shows.
+   *
+   * By name first, because a pane IS named after its section. But a pane
+   * persisted before that was true — every panel seeded while the default pane
+   * was called `rows` — has a name no section answers, and matching on the name
+   * alone rendered "No rows for this query" over a table that was sitting right
+   * there in the payload. A stored pane outliving a naming change is normal;
+   * losing its contents to one is not.
+   *
+   * So: the name, then the section its own query names, then the only table
+   * there is. Each fallback is narrower than the last and none of them guesses
+   * between two candidates.
+   */
+  const tableForPane = useCallback((name: string): SectionRows | undefined => {
+    const want = name.trim().toLowerCase();
+    const byName = sectionTables.find(t => t.section.toLowerCase() === want);
+    if (byName) return byName;
+    const spec = panes.find(p => p.name.trim().toLowerCase() === want);
+    const named = /\bSECTION:\s*([A-Za-z0-9_]+)/i.exec(spec?.q ?? '')?.[1];
+    if (named) {
+      const bySpec = sectionTables.find(
+        t => t.section.toLowerCase() === named.toLowerCase(),
+      );
+      if (bySpec) return bySpec;
+    }
+    return sectionTables.length === 1 ? sectionTables[0] : undefined;
+  }, [sectionTables, panes]);
+
+  const handlePanePick = useCallback((row: SurfaceRow) => {
+    if (row.nodeId) {
+      const node = nodes.find(n => n.id === row.nodeId);
+      if (node) { handleNodeSelect(node); return; }
+    }
+    if (row.keys.length === 1 && row.keys[0]) {
+      setGraphQuery(appendGraphToken(graphQuery, `label=="${row.keys[0]}"`));
+    }
+  }, [nodes, handleNodeSelect, graphQuery, setGraphQuery]);
+
+  // Derivation, on commit only.
+  //
+  // **Two kinds of pane, two rules.**
+  //
+  // A pane the analyst opened (`PANEL:Consignments`, or the ＋ button) is
+  // theirs: derivation only ever turns those ON, never off, because editing a
+  // query is not a request to close what you were reading.
+  //
+  // A pane the ENGINE derived is a view of the query — it exists because
+  // `SECTION:` named a section, and it has no content the query does not
+  // decide. So it follows the query. Protecting it under "never subtract"
+  // is what froze a panel showing one pane called `exhibits` reading "No rows
+  // for this query" while the engine was returning tables for `observations`
+  // and `actors`: seeding was gated on `panes.length === 0`, so once a panel
+  // had any pane at all, a new section could never get one.
+  useEffect(() => {
+    if (!inferredPanes.length) return;
+    // **Backfill.** A pane persisted before the engine resolved scopes carries
+    // no `q`, so it folds the whole node set under a name promising something
+    // narrower. Adopting the inferred scope where the analyst has not written
+    // one keeps "the query proposes, configuration disposes" — an explicit `q`
+    // is never overwritten.
+    const filled = panes.map(p => {
+      if (p.q || !p.linked) return p;
+      const inf = inferredPanes.find(
+        i => i.name.trim().toLowerCase() === p.name.trim().toLowerCase());
+      return inf?.q ? { ...p, q: inf.q, kind: p.kind ?? (inf.kind ?? undefined) } : p;
+    });
+    // A panel that has never been configured has no analyst panes, so every
+    // pane it gets is derived — which is exactly what reconciliation produces.
+    const next = derivePanes(
+      graphQuery, reconcileDerived(filled, inferredPanes), inferredPanes,
+    );
+    // Compare by content, not length — a backfill changes no count.
+    if (JSON.stringify(next) !== JSON.stringify(panes)) writePanes(next);
+  }, [graphQuery, panes, inferredPanes, writePanes]);
+
 
   // Region mode: a spatial gesture is a query edit, not a private viewport
   // state. Writing `near:` into `q` is what makes clicking a place scope the
@@ -1632,44 +1915,28 @@ export default function AnnotationResultsGraph({
   const activePeerId: string | null = hoveredEvidence?.peerId ?? navigatedPeerId;
 
   // ---- Edge → asset traceability ----------------------------------------
-  // Maps each rendered edge to the set of assets whose triplets contributed
-  // to it. Powers the asset-scoped lens: clicking a badge's network icon
-  // lights every edge this document spawned, plus the incident nodes.
-  // Built once per (edges × results) pass; matched by (subject, target,
-  // predicate) like ``hudEvidence`` but reversed.
+  // Maps each rendered edge to the set of assets that produced it. Powers the
+  // asset-scoped lens: clicking a badge's network icon lights every edge this
+  // document spawned, plus the incident nodes.
+  //
+  // The edge carries ``annotationIds`` — the exact set the engine aggregated
+  // it from — so this is a lookup, not a reconstruction. It previously
+  // re-matched each edge against ``value.document.triplets`` by
+  // (subject, predicate, object) LABEL, which only ever described one legacy
+  // schema shape: any observation-model run has no ``triplets`` key at all, so
+  // the map came back empty and every badge read a confident 0.
   const edgeAssetMap: Map<string, Set<number>> = useMemo(() => {
     const map = new Map<string, Set<number>>();
-    if (edges.length === 0 || results.length === 0) return map;
-    const nodeById = new Map(nodes.map(n => [n.id, n]));
-    const edgeKey = (s: string, t: string, p: string) =>
-      `${s.toLowerCase()}|${t.toLowerCase()}|${p.toLowerCase()}`;
-    const edgeIndex = new Map<string, GraphEdge>();
     for (const e of edges) {
-      const src = nodeById.get(e.sourceId);
-      const tgt = nodeById.get(e.targetId);
-      if (!src || !tgt) continue;
-      edgeIndex.set(edgeKey(src.label, tgt.label, e.predicate), e);
-    }
-    for (const r of results) {
-      if (!r.value || typeof r.value !== 'object') continue;
-      const doc = (r.value as any).document || r.value;
-      const triplets = (doc as any)?.triplets;
-      if (!Array.isArray(triplets)) continue;
-      for (const t of triplets) {
-        if (!t || typeof t !== 'object') continue;
-        const subj = String(t.subject_name || t.subject || '');
-        const obj = String(t.object_name || t.object || '');
-        const pred = String(t.predicate || '');
-        if (!subj || !obj || !pred) continue;
-        const e = edgeIndex.get(edgeKey(subj, obj, pred));
-        if (!e) continue;
-        let set = map.get(e.id);
-        if (!set) { set = new Set(); map.set(e.id, set); }
-        set.add(r.asset_id);
+      const assetIds = new Set<number>();
+      for (const aid of e.annotationIds ?? []) {
+        const assetId = annotationIdToAssetId.get(aid);
+        if (assetId != null) assetIds.add(assetId);
       }
+      if (assetIds.size > 0) map.set(e.id, assetIds);
     }
     return map;
-  }, [edges, nodes, results]);
+  }, [edges, annotationIdToAssetId]);
 
   // Asset-scoped highlight lens. Click a badge's network icon → all edges
   // this asset spawned go amber, all incident nodes light up, evidence cards
@@ -1724,9 +1991,11 @@ export default function AnnotationResultsGraph({
   // evidence-rail filter. Same data, two surfaces.
   const pinNodeIds: Set<string> | null = useMemo(() => {
     if (!pinBoard.showLens) return null;
-    const ids = activePinPage?.pinnedNodeIds ?? [];
-    if (ids.length === 0) return null;
-    return new Set(ids);
+    // Both kinds: bare ids, and the hints a term-pin carried. `pageNodeIds`
+    // is the one place that union lives.
+    const ids = activePinPage ? pageNodeIds(activePinPage as any) : new Set<string>();
+    if (ids.size === 0) return null;
+    return ids;
   }, [pinBoard.showLens, activePinPage]);
 
   // What a pane means by "the selection": the focused node, plus anything
@@ -1737,6 +2006,34 @@ export default function AnnotationResultsGraph({
     if (pinNodeIds) for (const id of pinNodeIds) ids.add(id);
     return ids;
   }, [selectedNodeId, pinNodeIds]);
+
+  // One fetch, N folds. Every pane reduces the SAME nodes and edges the canvas
+  // holds, so a pane physically cannot disagree with what is on screen — there
+  // is one set in memory and a pane is a reduction of it, never a second
+  // request that answers the same question later and differently.
+  const paneSurfaces = useMemo(() => {
+    const out: Record<string, SurfaceData> = {};
+    for (const spec of panes) {
+      const q = paneQuery(spec, graphQuery);
+      const input = {
+        nodes,
+        edges: renderEdges,
+        q,
+        focusIds: spec.follow === 'selection' ? hudFocusIds : undefined,
+        legend: graphLegend,
+        kind: spec.kind,
+        // Same cursor the canvas anchors on, so an interval-scoped place
+        // resolves to where the node was at that moment in both.
+        cursor: timeCursor,
+      };
+      // Evidence folds justifications rather than nodes — the one pane whose
+      // rows are not things but the words behind things.
+      out[spec.id] = spec.name.trim().toLowerCase() === 'evidence'
+        ? foldEvidence(input)
+        : fold(input);
+    }
+    return out;
+  }, [panes, graphQuery, nodes, renderEdges, hudFocusIds, graphLegend]);
 
 
   const pinNetworkEdges: Set<string> | null = useMemo(() => {
@@ -2016,79 +2313,55 @@ export default function AnnotationResultsGraph({
     return docs.map(({ sortKey, ...rest }) => rest);
   }, [selectedNodeDetails, assetsMap, schemas, results, eligibleFields, allClassified, effectiveHudVisibleFields, assetEdgeCount]);
 
-  // Right-rail "connection details": each item corresponds to a real
-  // ``GraphEdge`` involving the focused node, with the triplet's description
-  // as the justification. Triplets that don't resolve to a rendered edge
-  // (predicate filtered, peer node hidden) are dropped — no point showing
-  // rationale for a connection that isn't on screen. Top-level
-  // ``*_justification`` fields belong with their document on the left rail
-  // (future work) — they don't get mixed in here.
+  // Right-rail "connection details": one item per inline justification riding
+  // an edge the focused node is an endpoint of. The edge carries its own
+  // ``evidence[]`` and ``annotationIds``, so an item is read off the edge
+  // rather than reconstructed.
+  //
+  // This used to walk ``value.document.triplets`` and match each triplet back
+  // to an edge by (peer label, predicate). That shape only exists in one
+  // legacy contract; on an observation-model run the loop found no triplets
+  // and the whole rail rendered empty while the wire was carrying the
+  // justifications the entire time.
   const hudEvidence: HUDEvidenceItem[] = useMemo(() => {
-    if (!selectedNodeDetails?.sourceAssetIds?.length) return [];
-    const entityLabel = selectedNodeDetails.label.toLowerCase();
+    if (!selectedNodeDetails) return [];
     const nodeById = new Map(nodes.map(n => [n.id, n]));
-    // Lookup tables keyed by ``${peerLabel.toLowerCase()}|${predicate.toLowerCase()}``
-    // so triplet → edge matching is O(1) per triplet.
-    const outKey = (peer: string, pred: string) => `${peer.toLowerCase()}|${pred.toLowerCase()}`;
-    const outgoingByPeerPred = new Map<string, GraphEdge>();
-    for (const e of selectedNodeDetails.outgoingEdges) {
-      const peer = nodeById.get(e.targetId);
-      if (peer) outgoingByPeerPred.set(outKey(peer.label, e.predicate), e);
-    }
-    const incomingByPeerPred = new Map<string, GraphEdge>();
-    for (const e of selectedNodeDetails.incomingEdges) {
-      const peer = nodeById.get(e.sourceId);
-      if (peer) incomingByPeerPred.set(outKey(peer.label, e.predicate), e);
-    }
     const out: HUDEvidenceItem[] = [];
-    const seenEdgeIds = new Set<string>();
-    for (const result of results) {
-      if (!selectedNodeDetails.sourceAssetIds!.includes(result.asset_id)) continue;
-      if (!result.value || typeof result.value !== 'object') continue;
-      const val = result.value as Record<string, any>;
-      const doc = val.document || val;
-      const triplets = doc?.triplets;
-      if (!Array.isArray(triplets)) continue;
-      for (const t of triplets) {
-        if (!t || typeof t !== 'object') continue;
-        const subjRaw = t.subject_name || t.subject || '';
-        const objRaw = t.object_name || t.object || '';
-        const subj = String(subjRaw).toLowerCase();
-        const obj = String(objRaw).toLowerCase();
-        const isSubject = subj === entityLabel;
-        const isObject = obj === entityLabel;
-        if (!isSubject && !isObject) continue;
-        const evidence = t.description || t.context || '';
-        if (!evidence) continue;
-        const peerLabel = String(isSubject ? objRaw : subjRaw);
-        const predicate = String(t.predicate || '');
-        if (!peerLabel || !predicate) continue;
-        const lookup = isSubject ? outgoingByPeerPred : incomingByPeerPred;
-        const edge = lookup.get(outKey(peerLabel, predicate));
-        if (!edge) continue;
-        if (seenEdgeIds.has(edge.id)) continue;
-        seenEdgeIds.add(edge.id);
-        const peerId = isSubject ? edge.targetId : edge.sourceId;
-        // Always populate subject/object labels so cards render as proper
-        // ``subj predicate obj`` sentences regardless of mode. ``peerLabel``
-        // / ``direction`` stay populated for back-compat hooks.
+
+    const push = (e: GraphEdge, direction: 'out' | 'in') => {
+      const subject = nodeById.get(e.sourceId);
+      const object = nodeById.get(e.targetId);
+      const peerId = direction === 'out' ? e.targetId : e.sourceId;
+      const peer = nodeById.get(peerId);
+      if (!peer) return;
+      // An edge with no inline justification still deserves a card — the
+      // connection is on screen and its provenance is knowable. Absent
+      // reasoning renders as a bare sentence rather than being dropped, which
+      // is what previously made "no justification" and "no data" look alike.
+      const items = e.evidence?.length ? e.evidence : [undefined];
+      items.forEach((raw, i) => {
         out.push({
-          assetId: result.asset_id,
-          edgeId: edge.id,
+          assetId: firstAssetIdOf(e),
+          edgeId: e.id,
           peerId,
-          predicate,
-          peerLabel,
-          direction: isSubject ? 'out' : 'in',
-          reasoning: evidence,
-          confidence: t.confidence,
-          subjectLabel: String(subjRaw),
-          objectLabel: String(objRaw),
-          subjectId: edge.sourceId,
+          predicate: e.predicate,
+          peerLabel: peer.label,
+          direction,
+          reasoning: raw?.reasoning ?? undefined,
+          quote: quoteOf(raw),
+          confidence: e.confidence ?? undefined,
+          subjectLabel: subject?.label,
+          objectLabel: object?.label,
+          subjectId: e.sourceId,
+          key: `${e.id}:${i}`,
         });
-      }
-    }
+      });
+    };
+
+    for (const e of selectedNodeDetails.outgoingEdges) push(e, 'out');
+    for (const e of selectedNodeDetails.incomingEdges) push(e, 'in');
     return out;
-  }, [selectedNodeDetails, results, nodes]);
+  }, [selectedNodeDetails, nodes, firstAssetIdOf]);
 
   // ---- Pin-set subnet scope ----
   // When the pin lens is active and no single node is focused, the HUD
@@ -2192,55 +2465,36 @@ export default function AnnotationResultsGraph({
     }
     const finalDocs = docs.map(({ sortKey, ...rest }: any) => rest as HUDDocBadge);
 
-    // Evidence: triplets where BOTH endpoints are pinned. Renders as
-    // pair cards (subjectLabel → objectLabel) — direction loses meaning
-    // when there's no focal node.
+    // Evidence: the justifications riding the edges where BOTH endpoints are
+    // pinned. Renders as pair cards (subjectLabel → objectLabel) — direction
+    // loses meaning when there's no focal node.
+    //
+    // Read off the edge, same as ``hudEvidence``. The previous version
+    // re-matched ``value.document.triplets`` by label triple and so returned
+    // nothing for any run that does not use that one legacy contract.
     const evidenceItems: HUDEvidenceItem[] = [];
-    if (interPinEdges.length > 0) {
-      const edgeKey = (s: string, t: string, p: string) =>
-        `${s.toLowerCase()}|${t.toLowerCase()}|${p.toLowerCase()}`;
-      const edgeIndex = new Map<string, GraphEdge>();
-      for (const e of interPinEdges) {
-        const src = nodeById.get(e.sourceId);
-        const tgt = nodeById.get(e.targetId);
-        if (!src || !tgt) continue;
-        edgeIndex.set(edgeKey(src.label, tgt.label, e.predicate), e);
-      }
-      const seenEdgeIds = new Set<string>();
-      for (const result of results) {
-        if (!pinSourceAssetIds.has(result.asset_id)) continue;
-        if (!result.value || typeof result.value !== 'object') continue;
-        const val = result.value as Record<string, any>;
-        const doc = val.document || val;
-        const triplets = doc?.triplets;
-        if (!Array.isArray(triplets)) continue;
-        for (const t of triplets) {
-          if (!t || typeof t !== 'object') continue;
-          const subjRaw = t.subject_name || t.subject || '';
-          const objRaw = t.object_name || t.object || '';
-          const pred = String(t.predicate || '');
-          if (!subjRaw || !objRaw || !pred) continue;
-          const reasoning = t.description || t.context || '';
-          if (!reasoning) continue;
-          const e = edgeIndex.get(edgeKey(String(subjRaw), String(objRaw), pred));
-          if (!e) continue;
-          if (seenEdgeIds.has(e.id)) continue;
-          seenEdgeIds.add(e.id);
-          evidenceItems.push({
-            assetId: result.asset_id,
-            edgeId: e.id,
-            peerId: e.targetId,
-            predicate: pred,
-            peerLabel: String(objRaw),
-            direction: 'out',
-            reasoning,
-            confidence: t.confidence,
-            subjectLabel: String(subjRaw),
-            objectLabel: String(objRaw),
-            subjectId: e.sourceId,
-          });
-        }
-      }
+    for (const e of interPinEdges) {
+      const subject = nodeById.get(e.sourceId);
+      const object = nodeById.get(e.targetId);
+      if (!subject || !object) continue;
+      const items = e.evidence?.length ? e.evidence : [undefined];
+      items.forEach((raw, i) => {
+        evidenceItems.push({
+          assetId: firstAssetIdOf(e),
+          edgeId: e.id,
+          peerId: e.targetId,
+          predicate: e.predicate,
+          peerLabel: object.label,
+          direction: 'out',
+          reasoning: raw?.reasoning ?? undefined,
+          quote: quoteOf(raw),
+          confidence: e.confidence ?? undefined,
+          subjectLabel: subject.label,
+          objectLabel: object.label,
+          subjectId: e.sourceId,
+          key: `${e.id}:${i}`,
+        });
+      });
     }
 
     const label = activePinPage?.label ?? 'Pins';
@@ -2257,7 +2511,7 @@ export default function AnnotationResultsGraph({
   }, [
     pinNodeIds, activePinPage, edges, nodes, results, schemas,
     assetsMap, eligibleFields, allClassified, effectiveHudVisibleFields,
-    assetEdgeCount, annotationIdToAssetId,
+    assetEdgeCount, annotationIdToAssetId, firstAssetIdOf,
   ]);
 
   // ---- Active-lens summary ----
@@ -2308,44 +2562,38 @@ export default function AnnotationResultsGraph({
 
   // ---- Bundle inspector data -------------------------------------------
   // Pair labels + per-predicate evidence + source documents for the open
-  // bundle. Scans the same triplet rows the node HUD reads, matched to this
-  // pair in either direction.
+  // bundle. A bundle already holds its ``members`` — the exact edges it was
+  // folded from — so this reads them rather than re-deriving the pair from
+  // raw annotation rows by label, which is what it used to do and which found
+  // nothing outside one legacy contract.
   const bundleDetail = useMemo(() => {
     if (!selectedBundle) return null;
     const srcNode = nodes.find(n => n.id === selectedBundle.sourceId);
     const tgtNode = nodes.find(n => n.id === selectedBundle.targetId);
     const srcLabel = srcNode?.label ?? selectedBundle.sourceId;
     const tgtLabel = tgtNode?.label ?? selectedBundle.targetId;
-    const srcL = srcLabel.toLowerCase();
-    const tgtL = tgtLabel.toLowerCase();
 
     const evidence: EdgeBundleEvidenceItem[] = [];
     const docCount = new Map<number, number>();
-    for (const r of results) {
-      if (!r.value || typeof r.value !== 'object') continue;
-      const doc = (r.value as any).document || r.value;
-      const triplets = (doc as any)?.triplets;
-      if (!Array.isArray(triplets)) continue;
-      for (const t of triplets) {
-        if (!t || typeof t !== 'object') continue;
-        const subj = String(t.subject_name || t.subject || '').toLowerCase();
-        const obj = String(t.object_name || t.object || '').toLowerCase();
-        const fwd = subj === srcL && obj === tgtL;
-        const bwd = subj === tgtL && obj === srcL;
-        if (!fwd && !bwd) continue;
-        const predicate = String(t.predicate || '');
-        if (!predicate) continue;
-        docCount.set(r.asset_id, (docCount.get(r.asset_id) ?? 0) + 1);
-        const reasoning = t.description || t.context || '';
-        if (reasoning) {
-          evidence.push({
-            predicate,
-            reasoning,
-            confidence: typeof t.confidence === 'number' ? t.confidence : undefined,
-            assetId: r.asset_id,
-            direction: fwd ? 'forward' : 'backward',
-          });
-        }
+    for (const m of selectedBundle.members) {
+      const direction: 'forward' | 'backward' =
+        m.sourceId === selectedBundle.sourceId ? 'forward' : 'backward';
+      for (const aid of m.annotationIds ?? []) {
+        const assetId = annotationIdToAssetId.get(aid);
+        if (assetId != null) docCount.set(assetId, (docCount.get(assetId) ?? 0) + 1);
+      }
+      for (const raw of m.evidence ?? []) {
+        const reasoning = raw?.reasoning ?? '';
+        const quote = quoteOf(raw);
+        if (!reasoning && !quote) continue;
+        evidence.push({
+          predicate: m.predicate,
+          reasoning,
+          quote,
+          confidence: typeof m.confidence === 'number' ? m.confidence : undefined,
+          assetId: firstAssetIdOf(m),
+          direction,
+        });
       }
     }
     const documents: EdgeBundleDocChip[] = Array.from(docCount.entries())
@@ -2360,7 +2608,7 @@ export default function AnnotationResultsGraph({
       evidence,
       documents,
     };
-  }, [selectedBundle, nodes, results, assetsMap]);
+  }, [selectedBundle, nodes, assetsMap, annotationIdToAssetId, firstAssetIdOf]);
 
   // Empty state lives *below* every hook. An early return above them would
   // change the hook count between renders (the run's schemas arrive async),
@@ -2388,10 +2636,6 @@ export default function AnnotationResultsGraph({
     <div ref={fullscreenRootRef} className={`h-full flex flex-col ${isFullscreen ? 'bg-background' : ''}`}>
       <PanelHeaderSlot>
         <>
-          <PanelFormulaBinder
-            formulaId={panelConfig.formula_ref ?? null}
-            onBind={(id) => onUpdatePanel({ formula_ref: id } as any)}
-          />
           <CompareBySubjectButton
             sourcePanel={panelConfig}
             schema={schemas.find(s => s.id.toString() === selectedSchemaId) ?? null}
@@ -2436,142 +2680,24 @@ export default function AnnotationResultsGraph({
         />
       )}
 
-      {/* Toolbar */}
+      {/* Toolbar.
+       *
+       *  Was fourteen outline buttons in one flat wrap, every one at the same
+       *  weight — `Refresh` looked exactly as consequential as `Resolve into
+       *  canon`, and which of them you got on a given line depended on the
+       *  panel width. Styling alone would not have fixed that, because the
+       *  problem was that nothing said what belonged with what.
+       *
+       *  Three groups, separated by hairlines, in the order the questions
+       *  actually arrive:
+       *
+       *    WHAT IS ON SCREEN   axes · layers · filter · top
+       *    WHAT I DO TO IT     refresh · curate · dedup · promote · resolve · export
+       *    HOW I LOOK AT IT    2D/3D · details · settings · fullscreen
+       */}
       {!focusMode && (
-      <div className="flex flex-wrap items-center gap-2 px-2 py-1.5 ">
-        {/* View Mode Toggle (2D / 3D). Persisted via graphViewConfig.viewMode.
-            3D is dynamic-imported — Three.js (~600 KB) doesn't ship until
-            the user flips this for the first time on the page. */}
-        <ToggleGroup
-          type="single"
-          value={graphConfig.viewMode ?? '2d'}
-          onValueChange={(value) => {
-            if (value !== '2d' && value !== '3d') return; // ignore deselect
-            handleGraphConfigChange({ ...graphConfig, viewMode: value });
-          }}
-          size="sm"
-          className="h-6"
-          aria-label="Graph view mode"
-        >
-          <ToggleGroupItem value="2d" className="h-6 px-2 text-[11px]">
-            <Square className="h-3 w-3 mr-1" />
-            2D
-          </ToggleGroupItem>
-          <ToggleGroupItem value="3d" className="h-6 px-2 text-[11px]">
-            <Box className="h-3 w-3 mr-1" />
-            3D
-          </ToggleGroupItem>
-        </ToggleGroup>
-
-        {/* Search input lives as a floating bar above the connections strip
-            inside the canvas (rendered further below). The toolbar slot is
-            kept empty on purpose so the rest of the toolbar's layout
-            (filters, settings, fullscreen) flows the same way. */}
-
-        {/* View Controls */}
-        <ButtonGroup>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-6 text-[11px] px-1.5"
-            onClick={() => setShowDetailPanel(!showDetailPanel)}
-            disabled={!selectedNodeId}
-          >
-            {showDetailPanel ? <EyeOff className="h-3 w-3 mr-1" /> : <Eye className="h-3 w-3 mr-1" />}
-            Details
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-6 text-[11px] px-1.5"
-            onClick={aggregateGraph}
-            disabled={isLoading || !selectedSchemaId}
-          >
-            <RefreshCw className={`h-3 w-3 mr-1 ${isLoading ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
-        </ButtonGroup>
-
-        {/* Data Actions */}
-        <ButtonGroup>
-          {graphData && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-6 text-[11px] px-1.5"
-            onClick={handleExportGraph}
-          >
-            <Download className="h-3 w-3 mr-1" />
-            Export
-          </Button>
-          )}
-          {graphData && curationData.totalTriplets > 0 && (
-          <Button
-            variant="default"
-            size="sm"
-            className="h-6 text-[11px] px-1.5"
-            onClick={() => setShowCuratePanel(true)}
-          >
-            <Database className="h-3 w-3 mr-1" />
-            Curate ({curationData.totalTriplets})
-          </Button>
-          )}
-          {hasCanon && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-6 text-[11px] px-1.5"
-            onClick={handlePromote}
-            disabled={promoting}
-            title="Promote this run's authored merges into its canon"
-          >
-            {promoting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <ArrowUpToLine className="h-3 w-3 mr-1" />}
-            Promote
-          </Button>
-          )}
-          {hasCanon && (
-          <Button
-            variant={resolveOn ? "secondary" : "outline"}
-            size="sm"
-            className="h-6 text-[11px] px-1.5"
-            onClick={handleToggleResolve}
-            disabled={settingResolve}
-            title={resolveOn
-              ? 'Resolving into canon — settled matches auto-apply, the rest stage as proposals. Click to turn off.'
-              : 'Resolve into canon — settled-only curation + staged proposals'}
-          >
-            {settingResolve ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Library className="h-3 w-3 mr-1" />}
-            Resolve into canon
-          </Button>
-          )}
-          {nodes.length >= 2 && (() => {
-            const dedupButton = (
-              <Button
-                variant={activeDedupPairs.length > 0 ? "secondary" : "outline"}
-                size="sm"
-                className="h-6 text-[11px] px-1.5"
-                onClick={() => {
-                  if (showDedupPanel) { setShowDedupPanel(false); }
-                  else if (dedupPairs.length > 0) { setShowDedupPanel(true); }
-                  else { handleFindDuplicates(); }
-                }}
-                disabled={isDedupLoading || !embeddingsOn}
-              >
-                {isDedupLoading ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Fingerprint className="h-3 w-3 mr-1" />}
-                {activeDedupPairs.length > 0 ? `Dedup (${activeDedupPairs.length})` : 'Dedup'}
-              </Button>
-            );
-            if (embeddingsOn) return dedupButton;
-            return (
-              <TooltipProvider delayDuration={100}>
-                <Tooltip>
-                  <TooltipTrigger asChild>{dedupButton}</TooltipTrigger>
-                  <TooltipContent>Configure an embedding provider to suggest duplicates.</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            );
-          })()}
-        </ButtonGroup>
+      <HudBar>
+        {/* ── what is on screen ───────────────────────────────────────── */}
 
         {/* WHERE things sit — three axes across four frames. The panel's
             primary control; "which field is the source" was never the
@@ -2593,27 +2719,6 @@ export default function AnnotationResultsGraph({
           legacyField={tripletFieldStr}
         />
 
-        {/* Graph Settings */}
-        <GraphSettingsPopover
-          config={graphConfig}
-          onConfigChange={handleGraphConfigChange}
-          defaultConfig={defaultGraphViewConfig}
-          availableEdgeFields={Array.from(new Set(edges.flatMap(e => Object.keys(e.properties || {}))))}
-          edgeFieldDataRange={edgeFieldRange(edges, graphConfig.edgeWidthField)}
-          onReheatSimulation={() => forceGraphRef.current?.reheatSimulation()}
-        />
-
-        {/* Best-connected nodes. Was a strip floating over the middle of the
-            canvas; it is the same data, out of the graph's way. */}
-        {nodes.length > 0 && (
-          <TopNodesList
-            nodes={nodes}
-            edges={edges}
-            onNodeClick={handleNodeSelect}
-          />
-        )}
-
-        {/* Filter Panel */}
         {nodes.length > 0 && (
           <GraphFilterPanel
             entityTypes={Array.from(new Map(nodes.map(n => [n.type.toUpperCase(), n])).entries()).map(([type]) => {
@@ -2630,32 +2735,144 @@ export default function AnnotationResultsGraph({
           />
         )}
 
-        {/* Stats */}
-        {graphData && (
-          <div className="text-xs text-muted-foreground">
-            {graphData.metadata.total_nodes} nodes {graphData.metadata.total_edges} edges
-            {selectedNodeId && selectedNodeDetails && (
-              <span className="ml-1.5 text-blue-600">
-                • {selectedNodeDetails.totalConnections}c
-              </span>
-            )}
-          </div>
+        {/* Best-connected nodes. Was a strip floating over the middle of the
+            canvas; it is the same data, out of the graph's way. */}
+        {nodes.length > 0 && (
+          <TopNodesList
+            nodes={nodes}
+            edges={edges}
+            onNodeClick={handleNodeSelect}
+          />
         )}
 
-        {/* Fullscreen toggle — pushed to the right edge of the toolbar so it
-            stays out of the way of the primary actions. Detail pane lives
-            inside the fullscreen container, so node details remain accessible
-            without leaving the view. */}
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-6 text-[11px] px-1.5 ml-auto"
-          onClick={toggleFullscreen}
-          title={isFullscreen ? 'Exit fullscreen (Esc)' : 'Enter fullscreen'}
-        >
-          {isFullscreen ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
-        </Button>
-      </div>
+        <HudRule vertical />
+
+        {/* ── what I do to it ─────────────────────────────────────────── */}
+
+        <HudGroup>
+          <HudButton
+            icon={RefreshCw}
+            onClick={aggregateGraph}
+            disabled={isLoading || !selectedSchemaId}
+            title="Re-run the projection"
+            className={isLoading ? '[&_svg]:animate-spin' : undefined}
+          >
+            Refresh
+          </HudButton>
+          {graphData && curationData.totalTriplets > 0 && (
+            <HudButton
+              icon={Database}
+              count={curationData.totalTriplets}
+              onClick={() => setShowCuratePanel(true)}
+              title="Review and edit the extracted triplets"
+            >
+              Curate
+            </HudButton>
+          )}
+          {/* The "no embeddings" case is a plain `title` rather than a
+              `Tooltip`. A tooltip wrapper here would become the group's direct
+              child, so the button inside would never be told it is in a run
+              and would draw its own box mid-row. A one-line explanation does
+              not need a portal. */}
+          {nodes.length >= 2 && (
+            <HudButton
+              icon={isDedupLoading ? Loader2 : Fingerprint}
+              active={activeDedupPairs.length > 0}
+              count={activeDedupPairs.length > 0 ? activeDedupPairs.length : undefined}
+              onClick={() => {
+                if (showDedupPanel) { setShowDedupPanel(false); }
+                else if (dedupPairs.length > 0) { setShowDedupPanel(true); }
+                else { handleFindDuplicates(); }
+              }}
+              disabled={isDedupLoading || !embeddingsOn}
+              title={embeddingsOn
+                ? 'Suggest duplicate nodes'
+                : 'Configure an embedding provider to suggest duplicates.'}
+              className={isDedupLoading ? '[&_svg]:animate-spin' : undefined}
+            >
+              Dedup
+            </HudButton>
+          )}
+          {hasCanon && (
+            <HudButton
+              icon={promoting ? Loader2 : ArrowUpToLine}
+              onClick={handlePromote}
+              disabled={promoting}
+              title="Promote this run's authored merges into its canon"
+              className={promoting ? '[&_svg]:animate-spin' : undefined}
+            >
+              Promote
+            </HudButton>
+          )}
+          {hasCanon && (
+            <HudButton
+              icon={settingResolve ? Loader2 : Library}
+              active={resolveOn}
+              onClick={handleToggleResolve}
+              disabled={settingResolve}
+              title={resolveOn
+                ? 'Resolving into canon — settled matches auto-apply, the rest stage as proposals. Click to turn off.'
+                : 'Resolve into canon — settled-only curation + staged proposals'}
+              className={settingResolve ? '[&_svg]:animate-spin' : undefined}
+            >
+              Resolve
+            </HudButton>
+          )}
+          {graphData && (
+            <HudButton icon={Download} onClick={handleExportGraph} title="Export the graph" />
+          )}
+        </HudGroup>
+
+        {/* ── how I look at it ────────────────────────────────────────── */}
+
+        <div className="ml-auto flex items-center gap-1.5">
+          {/* The graph's own numbers, as a readout rather than a control —
+              nothing here is clickable, and it should not look like it is. */}
+          {graphData && (
+            <HudReadout className="mr-0.5">
+              {graphData.metadata.total_nodes}n · {graphData.metadata.total_edges}e
+              {selectedNodeId && selectedNodeDetails && (
+                <span className="text-hud-fg"> · {selectedNodeDetails.totalConnections}c</span>
+              )}
+            </HudReadout>
+          )}
+
+          {/* 2D / 3D. 3D is dynamic-imported — Three.js (~600 KB) doesn't
+              ship until the user flips this for the first time on the page. */}
+          <HudSegmented
+            value={graphConfig.viewMode ?? '2d'}
+            onChange={(v) => handleGraphConfigChange({ ...graphConfig, viewMode: v })}
+            options={[
+              { value: '2d', label: '2D', icon: Square },
+              { value: '3d', label: '3D', icon: Box },
+            ]}
+          />
+
+          <HudGroup>
+            <HudButton
+              icon={showDetailPanel ? EyeOff : Eye}
+              active={showDetailPanel && !!selectedNodeId}
+              onClick={() => setShowDetailPanel(!showDetailPanel)}
+              disabled={!selectedNodeId}
+              title="Node detail panel"
+            />
+            <GraphSettingsPopover
+              config={graphConfig}
+              onConfigChange={handleGraphConfigChange}
+              defaultConfig={defaultGraphViewConfig}
+              availableEdgeFields={Array.from(new Set(edges.flatMap(e => Object.keys(e.properties || {}))))}
+              edgeFieldDataRange={edgeFieldRange(edges, graphConfig.edgeWidthField)}
+              onReheatSimulation={() => forceGraphRef.current?.reheatSimulation()}
+            />
+            <HudButton
+              icon={isFullscreen ? Minimize2 : Maximize2}
+              active={isFullscreen}
+              onClick={toggleFullscreen}
+              title={isFullscreen ? 'Exit fullscreen (Esc)' : 'Enter fullscreen'}
+            />
+          </HudGroup>
+        </div>
+      </HudBar>
       )}
 
       {/* Error Display */}
@@ -2705,12 +2922,24 @@ export default function AnnotationResultsGraph({
               the corner node info, docs and pins all want; zoom and randomise
               are the least contextual things that were competing for it. */}
           <div className="flex items-start gap-1.5">
-            <GraphQueryBar
+            <QueryBar
               value={graphQuery}
               onChange={setGraphQuery}
+              proposed={graphDraft}
               nodeCount={nodes.length}
               edgeCount={edges.length}
               nodeCap={panelConfig.formula ? 1000 : null}
+              // Two sources, one rail. `queryWarnings` is what validation could
+              // not resolve *before* the query ran; `graphNotes` is what the
+              // engine resolved in a way the writer may not have meant while
+              // running it — `kind:payment` hitting a reserved word on a
+              // contract whose acts state their type in a field called `kind`.
+              // A reader has no use for the distinction: both mean "this did
+              // not do what you probably meant", and both must be amber rather
+              // than silent. S1/S2.
+              warnings={engineNotes}
+              onAsk={askGraph}
+              index={graphIndex}
               className="min-w-0 flex-1"
             />
             <RegionToggles
@@ -2742,6 +2971,7 @@ export default function AnnotationResultsGraph({
             edges={rawEdges}
             cursor={timeCursor}
             onCursorChange={setTimeCursor}
+            onScopeToWindow={handleScopeToWindow}
             clock={barsClock}
             onClockChange={setBarsClock}
             placement={hudConfig?.bars?.placement ?? 'inline'}
@@ -2758,6 +2988,9 @@ export default function AnnotationResultsGraph({
               ref={forceGraphRef}
               viewControls="external"
               nodes={nodes}
+              // The committed query, not the draft — layout follows what was
+              // run, never what is being typed.
+              query={graphQuery}
               edges={renderEdges}
               timeCursor={timeCursor}
               highlightedNodeId={selectedNodeId}
@@ -2806,19 +3039,66 @@ export default function AnnotationResultsGraph({
                 memory — no fetch, so the list cannot disagree with the canvas.
                 Hidden in focus mode along with the rest of the chrome. */}
             {!focusMode && (
-              <GraphHUD
-                nodes={nodes}
-                edges={renderEdges}
-                config={hudConfig}
-                onConfigChange={handleHudConfigChange}
+              <PaneLayout
+                panes={panes}
+                surfaces={paneSurfaces}
+                onUpdatePane={handleUpdatePane}
+                onRemovePane={handleRemovePane}
+                onComposePane={setComposePaneId}
+                inheritedQ={graphQuery}
+                onAddPane={handleAddPane}
+                regionSize={regionSize}
+                onResizeRegion={handleResizeRegion}
+                onCommitRegion={handleCommitRegion}
+                onPick={handlePanePick}
                 focusIds={hudFocusIds}
-                selectedNodeId={selectedNodeId}
-                onSelectNode={handleNodeSelectById}
-                timeCursor={timeCursor}
-                showRegions={graphConfig.mapMode === 'region'}
-                activePlace={activePlace}
-                onScopeToPlace={handleScopeToPlace}
-                onScopeToInterest={handleScopeToInterest}
+                warnings={queryWarnings}
+                onAsk={askGraph}
+                // One table per named section, keyed by the pane's own name —
+                // a pane called "interests" renders the interests table and a
+                // pane called "observations" renders that one, with no
+                // ordering assumption between panes and tables.
+                // Source → graph. Every table regrouped by the document that
+                // produced it, reusing the asset lens the canvas already has
+                // and the pin board it already persists — a new surface, not a
+                // new mechanism.
+                docs={
+                  <DocsTable
+                    tables={sectionTables}
+                    titleOf={(id) => assetsMap.get(id)?.title ?? undefined}
+                    highlightedAssetId={highlightedAssetId}
+                    onHighlight={setHighlightedAssetId}
+                    onOpenAsset={openDetailOverlay}
+                    onPinDoc={handlePinDoc}
+                    onSelectNode={handleNodeSelectById}
+                  />
+                }
+                tableFor={(name) => {
+                  const t = tableForPane(name);
+                  return t ? (
+                    <RowTable
+                      rows={t}
+                      // The table narrows to the selection rather than
+                      // reordering under it: a reader who clicked a node is
+                      // asking "what did this do", not "where is this in the
+                      // list".
+                      selectedIds={selectedNodeId
+                        ? new Set([selectedNodeId]) : undefined}
+                      onSelectNode={handleNodeSelectById}
+                    />
+                  ) : undefined;
+                }}
+                detail={selectedNodeDetails ? (
+                  <NodeDetail
+                    node={selectedNodeDetails}
+                    edges={renderEdges}
+                    degree={selectedNodeDetails.totalConnections}
+                    documents={(selectedNodeDetails.sourceAssetIds ?? []).map(id => ({
+                      assetId: id, title: assetsMap.get(id)?.title,
+                    }))}
+                    onOpenAsset={openDetailOverlay}
+                  />
+                ) : undefined}
               />
             )}
 
@@ -2837,6 +3117,7 @@ export default function AnnotationResultsGraph({
                 onRenamePage={handleRenamePinPage}
                 onDeletePage={handleDeletePinPage}
                 onUnpin={handleUnpin}
+                onRemovePin={handleRemovePin}
                 onClearPage={handleClearPinPage}
                 onPeerClick={handleNodeSelect}
                 onToggleLens={handleTogglePinLens}
@@ -3153,96 +3434,20 @@ export default function AnnotationResultsGraph({
                 the centred selected node so the canvas remains the focal
                 surface; the HUD container has pointer-events: none so the
                 user can pan/zoom the graph in the gaps. ===== */}
-            {/* ===== Anchor HUD — fires when a node is the HUD owner. The
-                pin-set lens (if active) stays on the canvas as context, but
-                this HUD describes the focused node. The swap chip in the
-                title pill jumps to the subnet HUD when both are live. ===== */}
-            {showDetailPanel && hudOwner === 'anchor' && selectedNodeDetails && (
-              <NodeDetailHUD
-                focalNode={selectedNodeDetails as any}
-                edges={[
-                  ...selectedNodeDetails.outgoingEdges,
-                  ...selectedNodeDetails.incomingEdges,
-                ]}
-                nodes={nodes}
-                documents={hudDocuments}
-                evidence={hudEvidence}
-                highlightedEdgeId={activeEdgeId}
-                eligibleFields={eligibleFields}
-                visibleFieldUids={effectiveHudVisibleFields}
-                onVisibleFieldUidsChange={setHudVisibleFields}
-                showJustifications={hudShowJustifications}
-                onShowJustificationsChange={setHudShowJustifications}
-                highlightedAssetId={highlightedAssetId}
-                onAssetHighlightToggle={(aid) =>
-                  setHighlightedAssetId(prev => prev === aid ? null : aid)
-                }
-                rangeCache={hudRangeCache}
-                isFocusedNodePinned={selectedNodeId
-                  ? (activePinPage?.pinnedNodeIds?.includes(selectedNodeId) ?? false)
-                  : false}
-                onTogglePin={selectedNodeId ? () => handleTogglePin(selectedNodeId) : undefined}
-                pinEvidencePeerIds={pinEvidencePeerIds}
-                onPeerClick={handleNodeSelect}
-                onAssetClick={openDetailOverlay}
-                onEdgeHover={(edgeId, peerId) =>
-                  setHoveredEvidence(edgeId && peerId ? { edgeId, peerId } : null)
-                }
-                swapTo={subnetAvailable && pinSubnetScope ? {
-                  label: pinSubnetScope.summary.label,
-                  meta: `${pinSubnetScope.summary.nodeCount} node${pinSubnetScope.summary.nodeCount === 1 ? '' : 's'}`,
-                  kind: 'subnet',
-                  onClick: swapHudOwner,
-                } : undefined}
-                lenses={activeLenses}
-                onFocusSubgraph={() => focusSubgraph(selectedNodeDetails.label)}
-                onClose={clearSelection}
-              />
-            )}
+            {/* ===== The anchor HUD lived here — a `pointer-events: none`
+                overlay that positioned a sources rail, an evidence column and
+                a title pill around the centred node.
 
-            {/* ===== Projection dossier rail — sibling to the anchor HUD when
-                the panel's projection has entity-typed roles. Surfaces
-                "AS <role>" buckets ranked by primary × confidence × count.
-                Click a bucket → push a cooccurs scope to peer panels. ===== */}
-            {showDetailPanel && hudOwner === 'anchor' && selectedNodeDetails && projectionHasEntityRoles && (() => {
-              const focalLabel = (selectedNodeDetails as any).label as string | undefined;
-              const focalType = (selectedNodeDetails as any).type as string | undefined;
-              const focalEntityId = findEntityId(focalLabel, focalType);
-              if (!focalEntityId) return null;
-              return (
-                <NodeProjectionDossier
-                  infospaceId={infospaceId}
-                  runId={runId}
-                  entityId={focalEntityId}
-                  entityLabel={focalLabel}
-                  projection={resolvedProjection}
-                  onBucketClick={(_group, bucket) => {
-                    if (!focalLabel || !bucket.label) return;
-                    const { pushed } = pushCooccursToDashboard({
-                      entities: [focalLabel, bucket.label],
-                      reach: 'annotation',
-                      panels: dashboardPanels as any,
-                      schemas: schemas as any,
-                      addScope: broadcastAddScope,
-                      sourcePanelId: panelConfig.id,
-                      excludePanelId: panelConfig.id,
-                      label: `${focalLabel} ↔ ${bucket.label}`,
-                    });
-                    if (pushed === 0) {
-                      toast.warning('No peer panels with Entity-typed schemas to scope.');
-                    } else {
-                      toast.success(
-                        `Scoped ${pushed} peer panel${pushed === 1 ? '' : 's'} to ${focalLabel} ↔ ${bucket.label}`,
-                      );
-                    }
-                  }}
-                  onRowClick={(row) => {
-                    const assetId = (row.provenance as any)?.asset_id;
-                    if (typeof assetId === 'number') openDetailOverlay(assetId);
-                  }}
-                />
-              );
-            })()}
+                Replaced by the `node` PANE, which says the same things and
+                more: it renders EVERY non-empty field the wire carries rather
+                than the four the overlay knew about, and it sits in a region
+                the analyst can move, rename, unlink and point somewhere else.
+
+                Removing it was not cosmetic. Both surfaces drew at once, so a
+                selected node put the overlay's document rail directly on top
+                of the Places pane and its evidence cards on top of the
+                Observations pane — two answers to the same question, stacked,
+                neither readable. ===== */}
 
             {/* ===== Subnet HUD — fires when the pin-set is the HUD owner.
                 A focused node (if any) keeps its blue ring on the canvas as
@@ -3434,6 +3639,35 @@ export default function AnnotationResultsGraph({
             </p>
           </div>
         </div>
+      )}
+
+      {composerModel && (
+        <Composer
+          open={composePaneId != null}
+          onClose={() => setComposePaneId(null)}
+          model={composerModel}
+          onChange={next => setGraphQuery(applyToGql(graphQuery, next))}
+          title="Datapoints"
+          queryPreview={d => applyToGql(graphQuery, d)}
+          // The graph's OWN cell renderer — the one `RowTable` uses — so the
+          // exemplar row is the table it previews, not a lookalike.
+          renderCell={(field, value) => (
+            <RowCell
+              col={{
+                key: field.id,
+                label: field.label,
+                kind: (field.kind === 'entity' ? 'nominal' : field.kind) as any,
+                ref: field.kind === 'entity' ? 'entity' : undefined,
+                entityType: field.entityType ?? undefined,
+                unit: field.unit ?? undefined,
+                source: field.source,
+              }}
+              raw={value}
+              item={{ id: 'exemplar', annotationId: -1, cells: {} } as any}
+              onSelectNode={handleNodeSelectById}
+            />
+          )}
+        />
       )}
     </div>
   );

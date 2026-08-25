@@ -63,11 +63,11 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ButtonGroup } from '@/components/ui/button-group';
-import { FormulaListPopover } from './formulas/FormulaListPopover';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AnnotationRunRead, AnnotationSchemaRead, AssetRead } from '@/client';
 import { DashboardConfig, PanelViewConfig, useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { FormattedAnnotation } from '@/lib/annotations/types';
 import ShareAnnotationRunDialog from './ShareAnnotationRunDialog';
 import { VariableSplittingControls } from './VariableSplittingControls';
@@ -111,12 +111,6 @@ interface AnnotationRunnerHeaderProps {
 
   allSchemas: AnnotationSchemaRead[];
   allResults: FormattedAnnotation[];
-
-  /** Open the run-scoped Formula workspace. id=null = new formula. */
-  onOpenFormula?: (id: string | null) => void;
-  /** Open the DossierAgent chat overlay (M7). Receives the run id so the
-   *  agent scopes to it. Header just calls; the runner owns the overlay. */
-  onOpenDossierAgent?: () => void;
 }
 
 export default function AnnotationRunnerHeader({
@@ -143,8 +137,6 @@ export default function AnnotationRunnerHeader({
   canExtend,
   allSchemas,
   allResults,
-  onOpenFormula,
-  onOpenDossierAgent,
 }: AnnotationRunnerHeaderProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [editingName, setEditingName] = useState(activeRun.name ?? '');
@@ -155,12 +147,41 @@ export default function AnnotationRunnerHeader({
   const [settingsName, setSettingsName] = useState('');
   const [settingsDescription, setSettingsDescription] = useState('');
   const [isPartialAlertDismissed, setIsPartialAlertDismissed] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   // Track whether name/description have unsaved edits
   const nameIsDirty = editingName.trim() !== (activeRun.name ?? '');
   const descriptionIsDirty = editingDescription.trim() !== (activeRun.description ?? '');
 
   const { getGlobalVariableSplitting, setGlobalVariableSplitting, toggleFocusMode, focusMode } = useAnnotationRunStore();
+  const exportAnnotationRun = useAnnotationRunStore(s => s.exportAnnotationRun);
+  const importAnnotationRun = useAnnotationRunStore(s => s.importAnnotationRun);
+  const { activeInfospace } = useInfospaceStore();
+
+  const handleExportRun = async () => {
+    if (!activeInfospace?.id || !activeRun?.id) return;
+    setIsExporting(true);
+    try {
+      await exportAnnotationRun(activeInfospace.id, activeRun.id);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleImportRun = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Reset immediately so re-picking the same file still fires onChange.
+    e.target.value = '';
+    if (!file || !activeInfospace?.id) return;
+    setIsImporting(true);
+    try {
+      await importAnnotationRun(activeInfospace.id, file);
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   // Canon frame the run resolves into — surfaced as a subtle chip by name.
   const { canons } = useCanons();
@@ -427,21 +448,6 @@ export default function AnnotationRunnerHeader({
                         </div>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                    {onOpenFormula && (
-                      <FormulaListPopover onOpenFormula={onOpenFormula} />
-                    )}
-                    {onOpenDossierAgent && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-6 text-[11px] px-1.5"
-                        onClick={onOpenDossierAgent}
-                        title="Open the DossierAgent — chat-driven formula authoring + observation snapshots"
-                      >
-                        <span className="text-purple-600 dark:text-purple-400">◆</span>
-                        <span className="ml-1 hidden lg:inline">Agent</span>
-                      </Button>
-                    )}
                     {/* Layout — groups the canvas-arrangement actions
                         (Compact / Shuffle / Focus) under one menu. Each item
                         mirrors a Ctrl shortcut handled in AnnotationRunner. */}
@@ -513,6 +519,13 @@ export default function AnnotationRunnerHeader({
                       </Button>
                     )}
                     {/* Overflow — import/export/delete */}
+                    <input
+                      ref={importInputRef}
+                      type="file"
+                      accept=".zip"
+                      className="hidden"
+                      onChange={handleImportRun}
+                    />
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="outline" size="sm" className="h-6 w-6 p-0">
@@ -520,13 +533,17 @@ export default function AnnotationRunnerHeader({
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem>
+                        {/* Exports the RUN, not just the dashboard: assets (whole
+                            trees, with their derived text), bundles, schemas,
+                            annotations and this dashboard — everything needed to
+                            reconstitute it on another instance. */}
+                        <DropdownMenuItem onClick={handleExportRun} disabled={isExporting}>
                           <Download className="h-4 w-4 mr-2" />
-                          Export Dashboard
+                          {isExporting ? 'Exporting…' : 'Export Run'}
                         </DropdownMenuItem>
-                        <DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => importInputRef.current?.click()} disabled={isImporting}>
                           <Upload className="h-4 w-4 mr-2" />
-                          Import Dashboard
+                          {isImporting ? 'Importing…' : 'Import Run'}
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={onDeleteRun} disabled={isProcessing || isRetryingJob} className="text-destructive focus:text-destructive">

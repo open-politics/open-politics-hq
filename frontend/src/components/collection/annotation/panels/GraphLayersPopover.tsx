@@ -28,12 +28,14 @@
  * the least visible from the canvas.
  */
 import React, { useMemo } from 'react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Layers, Eye, EyeOff, PanelRight, Link2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  HUD_LABEL, HUD_PROSE, HUD_SURFACE, HudButton, HudGroup, HudOverline,
+  HudReadout,
+} from '@/components/collection/graph/chrome';
 
 /** One resolved projection, as the engine ran it. Mirrors `_graph_meta`. */
 export interface GraphLayer {
@@ -121,48 +123,45 @@ export function GraphLayersPopover({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-xs">
-          <Layers className="h-3.5 w-3.5" />
+        <HudButton
+          icon={Layers}
+          count={live || layers.length || 1}
+          tone={blank > 0 ? 'warn' : 'neutral'}
+          title={blank > 0
+            ? `${blank} layer${blank === 1 ? '' : 's'} produced nothing`
+            : 'What the graph is made of'}
+        >
           Layers
-          <Badge variant="secondary" className="h-4 px-1 text-[10px] tabular-nums">
-            {live || layers.length || 1}
-          </Badge>
-          {blank > 0 && (
-            <span className="text-[10px] text-amber-600 dark:text-amber-400"
-                  title={`${blank} layer${blank === 1 ? '' : 's'} produced nothing`}>
-              {blank} empty
-            </span>
-          )}
-        </Button>
+        </HudButton>
       </PopoverTrigger>
 
-      <PopoverContent align="end" className="w-[26rem] p-3">
-        <div className="mb-2 flex items-baseline justify-between">
-          <span className="text-xs font-medium">Layers</span>
-          <span className="text-[10px] text-muted-foreground">
+      <PopoverContent align="end" className={cn(HUD_SURFACE, 'w-[26rem] p-0')}>
+        <div className="flex items-baseline gap-2 border-b border-hud-line px-3 py-2">
+          <span className="text-[11px] font-medium text-hud-fg">Layers</span>
+          <span className={cn(HUD_PROSE, 'text-hud-dimmer')}>
             what the graph is made of
           </span>
         </div>
 
-        {layers.length === 0 && (
-          <div className="rounded-md border border-dashed px-2.5 py-2 text-[11px] text-muted-foreground">
-            Nothing resolved yet. A schema written in the observation model
-            graphs itself — its sections become layers with no configuration.
-            {legacyField && (
-              <> This panel is on the pre-projections field{' '}
-                <code className="font-mono">{legacyField}</code>.</>
-            )}
-          </div>
-        )}
+        <div className="space-y-3 p-2.5">
+          {layers.length === 0 && (
+            <p className={cn(HUD_PROSE, 'rounded-lg border border-hud-line px-2.5 py-2 text-hud-dim')}>
+              Nothing resolved yet. A schema written in the observation model
+              graphs itself — its sections become layers with no configuration.
+              {legacyField && (
+                <> This panel is on the pre-projections field{' '}
+                  <code className="font-mono text-hud-fg">{legacyField}</code>.</>
+              )}
+            </p>
+          )}
 
-        <TooltipProvider delayDuration={200}>
-          <div className="space-y-2.5">
+          <TooltipProvider delayDuration={200}>
             {tiered.map(t => (
-              <section key={t.id}>
+              <section key={t.id} className="space-y-1">
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <div className="mb-0.5 cursor-help px-1 text-[10px] font-medium tracking-wide text-muted-foreground">
-                      {t.label}
+                    <div className="cursor-help">
+                      <HudOverline>{t.label}</HudOverline>
                     </div>
                   </TooltipTrigger>
                   <TooltipContent side="left" className="max-w-[16rem] text-xs">
@@ -177,74 +176,53 @@ export function GraphLayersPopover({
                     return (
                       <div
                         key={l.path}
-                        className={cn('rounded-md border px-2 py-1.5',
-                          empty && 'border-dashed opacity-70')}
+                        className={cn('rounded-lg border border-hud-line px-2.5 py-2',
+                                      empty && 'opacity-60')}
                       >
                         <div className="flex items-center gap-1.5">
-                          <code className="min-w-0 flex-1 truncate font-mono text-[11px]">
+                          <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-hud-fg">
                             {l.path.replace(/^document\./, '').replace('[*]', '')}
                           </code>
-                          <Badge variant="outline" className="h-4 shrink-0 px-1 text-[9px]">
+                          <span className={cn(HUD_LABEL, 'shrink-0 text-hud-dimmer')}>
                             {aboutLabel(l)}
-                          </Badge>
-                          <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground">
-                            {l.nodes}n {l.edges}e
                           </span>
+                          <HudReadout>{l.nodes}n {l.edges}e</HudReadout>
                         </div>
 
-                        <div className="mt-1 flex items-center justify-between gap-2">
-                          <div className="flex min-w-0 flex-wrap gap-1">
+                        <div className="mt-1.5 flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
                             {l.roles.slice(0, 6).map(r => (
-                              <span key={r}
-                                className="rounded bg-muted px-1 text-[9px] text-muted-foreground">
-                                {r}
-                              </span>
+                              <span key={r} className="text-[10px] text-hud-dim">{r}</span>
                             ))}
                             {l.roles.length > 6 && (
-                              <span className="text-[9px] text-muted-foreground">
+                              <span className="text-[10px] text-hud-dimmer">
                                 +{l.roles.length - 6}
                               </span>
                             )}
                             {l.bound.map(bnd => (
                               <span key={bnd}
-                                className="rounded border px-1 text-[9px] text-muted-foreground">
+                                className="rounded border border-hud-line px-1 text-[9px] text-hud-dimmer">
                                 {bnd}
                               </span>
                             ))}
                           </div>
 
-                          <div className="flex shrink-0 items-center gap-0.5">
-                            {SHOW.map(s => {
-                              const Icon = s.icon;
-                              return (
-                                <Tooltip key={s.id}>
-                                  <TooltipTrigger asChild>
-                                    <button
-                                      type="button"
-                                      onClick={() => set(l.path, s.id)}
-                                      className={cn(
-                                        'rounded p-1 transition-colors',
-                                        show === s.id
-                                          ? 'bg-accent text-foreground'
-                                          : 'text-muted-foreground hover:bg-muted',
-                                      )}
-                                      aria-label={s.label}
-                                    >
-                                      <Icon className="h-3 w-3" />
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent className="max-w-[15rem] text-xs">
-                                    <span className="font-medium">{s.label}.</span>{' '}
-                                    {s.hint}
-                                  </TooltipContent>
-                                </Tooltip>
-                              );
-                            })}
-                          </div>
+                          <HudGroup size="sm" className="shrink-0">
+                            {SHOW.map(s => (
+                              <HudButton
+                                key={s.id}
+                                icon={s.icon}
+                                active={show === s.id}
+                                onClick={() => set(l.path, s.id)}
+                                aria-label={s.label}
+                                title={`${s.label} — ${s.hint}`}
+                              />
+                            ))}
+                          </HudGroup>
                         </div>
 
                         {empty && (
-                          <p className="mt-1 text-[10px] leading-tight text-amber-600 dark:text-amber-400">
+                          <p className={cn(HUD_PROSE, 'mt-1.5 text-amber-600 dark:text-amber-400')}>
                             Produced nothing — the section is declared and the
                             rows are empty.
                           </p>
@@ -255,8 +233,8 @@ export function GraphLayersPopover({
                 </div>
               </section>
             ))}
-          </div>
-        </TooltipProvider>
+          </TooltipProvider>
+        </div>
       </PopoverContent>
     </Popover>
   );

@@ -653,7 +653,7 @@ export default function AnnotationRunnerDock({
           ? "bottom-2 left-12 w-12 h-12 shadow-2xl ring-1 ring-primary/20"
           : dockMode === 'open'
             ? "bottom-2 left-1/2 transform -translate-x-1/2 w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[1500px] max-w-[95vw] shadow-lg hover:shadow-xl border border-border/50 rounded-md"
-            : "bottom-2 left-1/2 transform -translate-x-1/2 w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[700px] sm:max-w-[700px] shadow-2xl ring-1 ring-primary/20"
+            : "bottom-2 left-1/2 transform -translate-x-1/2 w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[700px] sm:max-w-[700px] shadow-none ring-1 ring-primary/20"
       )}>
         <div className="flex items-center justify-center sm:justify-between px-2 sm:px-4 py-0.5 cursor-pointer hover:bg-muted/30 transition-colors rounded-none " onClick={() => {
           if (dockMode === 'mini') {
