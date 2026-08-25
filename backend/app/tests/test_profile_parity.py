@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.api.modules.graph.gql import _cosine, _distance_penalty, _profile_of
+from app.api.modules.graph.gql import _cosine, _profile_of
 
 FIXTURE = Path(__file__).parent / "fixtures" / "profile_parity.json"
 CASES = json.loads(FIXTURE.read_text())
@@ -31,15 +31,6 @@ def test_the_profile_is_read_the_same_way(case):
 @pytest.mark.parametrize("case", CASES["cosines"], ids=lambda c: c["name"])
 def test_the_cosine_is_the_same_number(case):
     assert _cosine(case["a"], case["b"]) == pytest.approx(case["cosine"], abs=1e-12)
-
-
-@pytest.mark.parametrize(
-    "case", CASES["distance_penalties"], ids=lambda c: c["name"]
-)
-def test_the_distance_penalty_is_the_same_curve(case):
-    assert _distance_penalty(case["hops"]) == pytest.approx(
-        case["penalty"], abs=1e-12
-    )
 
 
 def test_a_non_dict_profile_is_not_a_profile():

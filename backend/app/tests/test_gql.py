@@ -410,7 +410,7 @@ def test_doc_conditions_are_skipped_without_an_accessor():
     assert clauses == []
 
 
-# ─── converge> — the residual, as a query token ─────────────────────────────
+# ─── converge> and contact> — affinity and distance, as two tokens ──────────
 
 
 @pytest.fixture
@@ -418,8 +418,8 @@ def converging():
     """Two pairs that share an interest profile, at different graph distances.
 
     near_a/near_b work together directly. far_a/far_b never touch. Both pairs
-    converge on the same interests — which is exactly the distinction the
-    residual exists to draw.
+    converge on the same interests — which is exactly the distinction
+    ``contact`` exists to draw.
     """
     # Two DISTINCT profiles, one per pair — otherwise every cross-pair also
     # converges at infinite distance, which is correct but tests nothing.
@@ -448,13 +448,31 @@ def converging():
     return nodes, edges
 
 
-def test_converge_drops_the_pair_that_already_works_together(converging):
-    """One hop apart and converging is a description, not a finding — the
-    penalty is zero there, so the residual is zero however similar they are."""
+def test_contact_drops_the_pair_that_already_works_together(converging):
+    """One hop apart and converging is a description, not a finding.
+
+    It is `contact` that says so, not a discount on the affinity. Both pairs
+    are equally aligned; only the distance differs, and only the distance
+    filter should separate them.
+    """
     nodes, edges = converging
-    kept, _ = gql.apply_to_graph(gql.parse("converge>0.5"), nodes, edges)
+    kept, _ = gql.apply_to_graph(
+        gql.parse("converge>0.5 contact>1"), nodes, edges)
     names = _names(kept)
     assert "Near A" not in names and "Near B" not in names
+    assert {"Far A", "Far B"} <= names
+
+
+def test_converge_alone_keeps_the_pair_that_works_together(converging):
+    """Without a `contact` clause, aligned-and-connected is still aligned.
+
+    The old residual multiplied this pair to zero and dropped it, which
+    conflated "not aligned" with "aligned for an obvious reason" — two
+    different answers to two different questions.
+    """
+    nodes, edges = converging
+    kept, _ = gql.apply_to_graph(gql.parse("converge>0.5"), nodes, edges)
+    assert {"Near A", "Near B", "Far A", "Far B"} <= _names(kept)
 
 
 def test_converge_surfaces_the_pair_the_graph_does_not_connect(converging):
@@ -463,6 +481,36 @@ def test_converge_surfaces_the_pair_the_graph_does_not_connect(converging):
     nodes, edges = converging
     kept, _ = gql.apply_to_graph(gql.parse("converge>0.5"), nodes, edges)
     assert {"Far A", "Far B"} <= _names(kept)
+
+
+def test_converge_has_no_ceiling_below_one(converging):
+    """The bug this replaces: `converge>0.6` was empty by arithmetic.
+
+    Sharing an interest puts two actors at exactly two hops through the
+    interest node, where the old penalty was 0.5 — so the residual could never
+    exceed 0.5 and the canonical worked example in three documents returned
+    nothing. Affinity is now reported whole.
+    """
+    nodes, edges = converging
+    for threshold in ("0.6", "0.9", "0.99"):
+        kept, _ = gql.apply_to_graph(
+            gql.parse(f"converge>{threshold}"), nodes, edges)
+        assert {"Far A", "Far B"} <= _names(kept), threshold
+
+
+def test_contact_keeps_unreachable_pairs_at_every_floor(converging):
+    """No path at all is the STRONGEST form of "without contact", not a
+    missing value — so it must pass any floor the walk can express."""
+    nodes, edges = converging
+    kept, _ = gql.apply_to_graph(
+        gql.parse("converge>0.5 contact>99"), nodes, edges)
+    assert {"Far A", "Far B"} <= _names(kept)
+
+
+def test_contact_is_tier_two_and_pairs_with_converge():
+    q = gql.parse("converge>0.6 contact>2")
+    assert sorted(c.key for c in q.shape_conditions) == ["contact", "converge"]
+    assert not q.row_conditions
 
 
 def test_converge_ignores_nodes_with_no_profile(converging):
@@ -488,13 +536,10 @@ def test_converge_composes_with_an_identity_filter(converging):
     assert _names(kept) == {"Far A"}
 
 
-def test_the_residual_has_a_ceiling_of_one(converging):
-    """Identical profiles with no path between them is the maximum: cosine 1
-    times a full distance penalty. Nothing scores above it, so a threshold at
-    or over 1 is empty by construction."""
+def test_converge_is_a_cosine_and_so_tops_out_at_one(converging):
+    """Identical profiles cosine to exactly 1, so a threshold at or above 1 is
+    empty by construction — the honest ceiling, and the only one."""
     nodes, edges = converging
-    assert {"Far A", "Far B"} <= _names(
-        gql.apply_to_graph(gql.parse("converge>0.99"), nodes, edges)[0])
     assert gql.apply_to_graph(gql.parse("converge>1.0"), nodes, edges)[0] == []
 
 

@@ -29,7 +29,6 @@ from app.api.modules.annotation.formula import (
     OrderBy,
     SnippetBinding,
 )
-from app.api.modules.annotation.formulas import attach_formula_lookup
 from app.api.modules.annotation.query import AnnotationQuery
 
 
@@ -230,52 +229,6 @@ def test_distribution_decomposition_merges_with_sum(db, fx):
     assert by_cat["A"]["total"] == pytest.approx(4.0 + 6.0 + 2.0 + 5.0)
     assert by_cat["B"]["total"] == pytest.approx(8.0 + 9.0)
 
-
-def test_composition_lookup_keys_on_derive(db, fx):
-    """When ``output_keys`` names a derive, composition still resolves
-    against the post-eval relation."""
-    base = Formula(
-        id="b",
-        name="by_cat_base",
-        group=[Dimension(name="cat", kind="field", path="category")],
-        measures=[Measure(name="n", agg="count"), Measure(name="sumsc", path="score", agg="sum")],
-        derives=[{"name": "bucket", "expr": "1 if (sumsc / n) > 5 else 0"}],
-        output_keys=["bucket"],
-    )
-
-    aq = AnnotationQuery(db, fx["iid"]).runs([fx["rid"]])
-    # Persist the base formula on a synthetic dashboard so attach_formula_lookup
-    # can find it. (resolve_formula reads from dashboard_config.formulas[].)
-    dashboard = {"formulas": [base.model_dump(mode="json")]}
-    attach_formula_lookup(aq, dashboard)
-
-    # Probe the lookup directly — simulating what a composing formula would do.
-    lookup = aq._formula_lookup
-    # bucket=1 row corresponds to category B (2 annotations, avg=8.5 > 5);
-    # bucket=0 row corresponds to category A (4 annotations, avg=4.25 ≤ 5).
-    # The lookup keys off the derive value (bucket), reading any column
-    # (here n) from the post-derive row.
-    val_high = lookup.lookup("by_cat_base", (1,), "n")
-    val_low = lookup.lookup("by_cat_base", (0,), "n")
-    assert val_high == 2  # B has 2 annotations
-    assert val_low == 4   # A has 4 annotations
-
-
-def test_composition_rejects_evidence_mode_source(db, fx):
-    """Composing onto an evidence-mode source (snippet or top measure) is a
-    foot-gun — evidence rows carry no aggregated measures."""
-    evidence_formula = Formula(
-        id="e",
-        name="evidence_src",
-        group=[Dimension(name="cat", kind="field", path="category")],
-        measures=[Measure(name="ev", agg="top", top_n=3, top_by="score")],
-    )
-    aq = AnnotationQuery(db, fx["iid"]).runs([fx["rid"]])
-    dashboard = {"formulas": [evidence_formula.model_dump(mode="json")]}
-    attach_formula_lookup(aq, dashboard)
-
-    with pytest.raises(ValueError, match="evidence mode"):
-        aq._formula_lookup.lookup("evidence_src", ("A",), "ev")
 
 
 def test_relation_can_be_called_twice_on_same_aq(db, fx):

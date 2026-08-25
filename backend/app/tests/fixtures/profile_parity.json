@@ -1,49 +1,76 @@
 {
   "_comment": [
-    "Shared fixture for the ONE convergence computation that exists twice.",
+    "Shared fixture for the convergence computations that exist twice.",
     "",
-    "`gql._profile_of` / `_cosine` / `_distance_penalty` (Python) and",
-    "`hud/convergence.ts` profileOf / cosine / distancePenalty (TypeScript)",
-    "are the same three functions written twice, and `_converging`'s docstring",
-    "asserts they mirror each other exactly. They did not: the TS side filtered",
-    "profile entries to `w > 0`, so two parties who both OPPOSE the same thing",
-    "had their profiles emptied and disappeared from the pane while scoring +1",
-    "in the query bar, and any mixed profile lost its negative half and",
-    "overstated similarity.",
+    "`gql._profile_of` / `_cosine` (Python) and `hud/convergence.ts`",
+    "profileOf / cosine (TypeScript) are the same functions written twice, and",
+    "`_converging`'s docstring asserts they mirror each other exactly. They did",
+    "not: the TS side filtered profile entries to `w > 0`, so two parties who",
+    "both OPPOSE the same thing had their profiles emptied and disappeared from",
+    "the pane while scoring +1 in the query bar, and any mixed profile lost its",
+    "negative half and overstated similarity.",
     "",
     "A docstring claiming two implementations agree is how they came to",
     "disagree. This file is the claim, in numbers, and both suites assert",
     "against it. Add a case here before changing either implementation.",
     "",
+    "`distance_penalties` used to live here. The penalty is GONE from both",
+    "sides: it multiplied affinity by distance, which capped `converge>` at",
+    "0.5 forever because sharing an interest puts two actors at exactly two",
+    "hops. It was a set difference written as a multiplication. Affinity and",
+    "contact are now two separate tests over the same pair — `converge` and",
+    "`contact` — so there is no combined number left to keep in parity.",
+    "",
     "Read by app/tests/test_profile_parity.py and",
     "frontend/src/components/collection/graph/hud/convergence.parity.test.ts"
   ],
-
   "profiles": [
     {
       "name": "a plain positive profile passes through",
-      "raw": {"opacity": 3, "sovereignty": 1},
-      "profile": {"opacity": 3, "sovereignty": 1}
+      "raw": {
+        "opacity": 3,
+        "sovereignty": 1
+      },
+      "profile": {
+        "opacity": 3,
+        "sovereignty": 1
+      }
     },
     {
       "name": "negatives are KEPT — opposition is half the signal",
-      "raw": {"oversight": -4},
-      "profile": {"oversight": -4}
+      "raw": {
+        "oversight": -4
+      },
+      "profile": {
+        "oversight": -4
+      }
     },
     {
       "name": "an entry that cancelled to zero is dropped, not kept as weak",
-      "raw": {"opacity": 3, "oversight": 0},
-      "profile": {"opacity": 3}
+      "raw": {
+        "opacity": 3,
+        "oversight": 0
+      },
+      "profile": {
+        "opacity": 3
+      }
     },
     {
       "name": "a profile that is all zeros is no profile at all",
-      "raw": {"oversight": 0},
+      "raw": {
+        "oversight": 0
+      },
       "profile": null
     },
     {
       "name": "non-numeric entries are ignored",
-      "raw": {"opacity": 2, "junk": "nope"},
-      "profile": {"opacity": 2}
+      "raw": {
+        "opacity": 2,
+        "junk": "nope"
+      },
+      "profile": {
+        "opacity": 2
+      }
     },
     {
       "name": "an empty map is no profile",
@@ -51,58 +78,78 @@
       "profile": null
     }
   ],
-
   "cosines": [
     {
       "name": "both SERVE the same interest — allies",
-      "a": {"opacity": 3},
-      "b": {"opacity": 2},
+      "a": {
+        "opacity": 3
+      },
+      "b": {
+        "opacity": 2
+      },
       "cosine": 1.0
     },
     {
       "name": "both OPPOSE the same interest — they do agree",
-      "a": {"oversight": -3},
-      "b": {"oversight": -2},
+      "a": {
+        "oversight": -3
+      },
+      "b": {
+        "oversight": -2
+      },
       "cosine": 1.0
     },
     {
       "name": "one serves, one opposes — adversaries, and the sign says so",
-      "a": {"oversight": 3},
-      "b": {"oversight": -2},
+      "a": {
+        "oversight": 3
+      },
+      "b": {
+        "oversight": -2
+      },
       "cosine": -1.0
     },
     {
       "name": "a mixed profile keeps BOTH halves in the dot product",
-      "a": {"opacity": 3, "oversight": -1},
-      "b": {"opacity": 2, "oversight": -4},
+      "a": {
+        "opacity": 3,
+        "oversight": -1
+      },
+      "b": {
+        "opacity": 2,
+        "oversight": -4
+      },
       "cosine": 0.7071067811865475
     },
     {
       "name": "dropping the negative half would have scored this 1.0",
-      "a": {"opacity": 3, "oversight": -1},
-      "b": {"opacity": 2, "oversight": 4},
+      "a": {
+        "opacity": 3,
+        "oversight": -1
+      },
+      "b": {
+        "opacity": 2,
+        "oversight": 4
+      },
       "cosine": 0.14142135623730953
     },
     {
       "name": "disjoint interests do not converge",
-      "a": {"opacity": 3},
-      "b": {"climate": 3},
+      "a": {
+        "opacity": 3
+      },
+      "b": {
+        "climate": 3
+      },
       "cosine": 0.0
     },
     {
       "name": "an empty profile yields zero rather than a division",
       "a": {},
-      "b": {"opacity": 3},
+      "b": {
+        "opacity": 3
+      },
       "cosine": 0.0
     }
-  ],
-
-  "distance_penalties": [
-    {"name": "no path at all is the STRONGEST form", "hops": null, "penalty": 1.0},
-    {"name": "same node", "hops": 0, "penalty": 0.0},
-    {"name": "one hop explains itself", "hops": 1, "penalty": 0.0},
-    {"name": "two hops", "hops": 2, "penalty": 0.5},
-    {"name": "three hops", "hops": 3, "penalty": 0.6666666666666667},
-    {"name": "six hops keeps almost all of it", "hops": 6, "penalty": 0.8333333333333334}
   ]
 }

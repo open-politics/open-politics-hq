@@ -694,29 +694,46 @@ def valence_graph(db):
     ), top_n_nodes=None, top_n_edges=None))
 
 
-def test_opposing_an_interest_subtracts_from_the_profile(valence_graph):
+def test_opposing_an_interest_is_its_own_profile_DIMENSION(valence_graph):
     """A profile built by counting cannot tell pursuing a goal from frustrating
-    it. Signing it is what makes an adversary distinguishable from an ally —
-    and from a stranger, who has no entry at all."""
+    it. The direction is carried in the KEY — `market_access▲` against
+    `market_access▼` — so an adversary is distinguishable from an ally, and
+    both from a stranger, who has no entry at all.
+
+    It used to be carried in the value's sign, summed into one entry. That read
+    the same for these three actors and could not survive an actor who did
+    both: see `test_pursuing_and_opposing_one_interest_shows_BOTH`.
+    """
     by = _by_name(valence_graph)
-    assert by["A"].group_value == {"market_access": 1.0}
-    assert by["B"].group_value == {"market_access": 1.0}
-    assert by["C"].group_value == {"market_access": -1.0}
+    assert by["A"].group_value == {"market_access▲": 1.0}
+    assert by["B"].group_value == {"market_access▲": 1.0}
+    assert by["C"].group_value == {"market_access▼": 1.0}
 
 
-def test_the_residual_reads_opposition_as_negative(valence_graph):
-    """Cosine over signed vectors spans [-1, 1]: allies positive, adversaries
-    negative. `converge>` therefore keeps meaning what it always meant, and
-    opposition becomes expressible rather than invisible."""
+def test_allies_converge_and_adversaries_do_not(valence_graph):
+    """Two actors on the same side share a dimension and cosine to 1. Two on
+    opposite sides share none and cosine to 0 — orthogonal.
+
+    This is the documented trade for killing cancellation: opposition used to
+    read as -1, which was only available by summing signed values into one key,
+    which is exactly what made an ambivalent actor vanish. Pair-scoped
+    opposition is a `polar` reading and belongs with that work.
+    """
     from app.api.modules.graph import gql
     prof = {n.name: gql._profile_of(n) for n in valence_graph.nodes}
     assert gql._cosine(prof["A"], prof["B"]) == pytest.approx(1.0)
-    assert gql._cosine(prof["A"], prof["C"]) == pytest.approx(-1.0)
+    assert gql._cosine(prof["A"], prof["C"]) == pytest.approx(0.0)
 
 
-def test_pursuing_and_opposing_one_interest_nets_to_nothing(db):
-    """Ambivalence is the honest reading, and a zero entry is dropped: it is no
-    information, not a weak signal."""
+def test_pursuing_and_opposing_one_interest_shows_BOTH(db):
+    """An actor working both sides of one interest is a FINDING, not a zero.
+
+    Signed values summed into one key made this actor's only interest net to
+    exactly 0.0, and a zero entry is indistinguishable from an interest they
+    never touched — so the profile emptied and the actor dropped out of every
+    convergence reading. Stated-versus-revealed, destroyed by the arithmetic
+    meant to show it.
+    """
     from app.api.modules.graph import gql
     contract = build_contract("full", ARCHETYPES)
     uid = _user(db, "ambivalent")
@@ -742,8 +759,9 @@ def test_pursuing_and_opposing_one_interest_nets_to_nothing(db):
     ), top_n_nodes=None, top_n_edges=None))
 
     d = _by_name(g)["D"]
-    assert d.group_value == {"market_access": 0.0}
-    assert gql._profile_of(d) is None, "a cancelled entry is not a weak signal"
+    assert d.group_value == {"market_access▲": 1.0, "market_access▼": 1.0}
+    assert gql._profile_of(d) == {"market_access▲": 1.0, "market_access▼": 1.0}, \
+        "an actor on both sides must survive as being on both sides"
 
 
 def test_a_run_of_joiners_collapses_to_one(court_graph):

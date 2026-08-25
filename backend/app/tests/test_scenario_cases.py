@@ -52,6 +52,16 @@ def test_rosters_are_the_vocabulary(mega):
 
 @pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
 def test_investigation_shape(mega, case):
+    """Each shape, against its known answer.
+
+    A case carrying ``blocked_by`` names something the engine cannot express
+    yet, so it is an **expected** failure rather than a red test people learn
+    to scroll past. ``strict`` is the point: the day one starts passing, this
+    fails and tells us the gap closed — which is exactly what the field was
+    written for and what the harness was not doing with it.
+    """
+    if case.blocked_by:
+        pytest.xfail(case.blocked_by)
     graph, _ = mega
     nodes, edges = (run_query(graph, case.query) if case.query
                     else (list(graph.nodes), list(graph.edges)))
@@ -66,36 +76,73 @@ def test_investigation_shape(mega, case):
 # day the gap closed, and a comment cannot tell you that.
 
 
-def test_the_interest_profile_cannot_express_a_pair(mega):
-    """Case 5's real limit, pinned.
+def test_the_profile_keeps_BOTH_sides_of_one_interest(mega):
+    """Ambivalence survives, because the sign is a KEY.
 
-    The profile is actor-scoped: every act an actor took, across every
-    counterpart, in one bucket per interest. So State X being hostile to Y and
-    warm to Z politically cancels to zero — right arithmetic, destroyed finding,
-    because Case 5 is about a *pair*.
+    Serving and opposing one interest used to be ``+1`` and ``−1`` summed into
+    a single entry, so an actor who did both netted to exactly ``0`` — and a
+    zero entry is indistinguishable from an interest they never touched, so it
+    was dropped as "no information". An actor working both sides of the same
+    interest is a finding, and the arithmetic meant to reveal stated-versus-
+    revealed was destroying it.
     """
     graph, _ = mega
     x = next(n for n in graph.nodes if n.name == "Directorate of Materiel Procurement")
-    assert x.group_value.get("regulatory neutrality") == 0, (
-        "if this is non-zero the profile grew a pair dimension — delete this "
-        "test and un-block Case 5")
+    poles = {
+        k: v for k, v in x.group_value.items()
+        if k.startswith("incumbent renewal")
+    }
+    assert set(poles) == {"incumbent renewal▲", "incumbent renewal▼"}, (
+        f"expected both poles to survive, got {sorted(poles)}")
+    assert all(v > 0 for v in poles.values()), "magnitudes, never signs"
 
 
-def test_magnitude_dominates_a_profile(mega):
-    """A design consequence worth having in front of us.
+def test_the_interest_profile_still_cannot_express_a_pair(mega):
+    """Case 5's real limit, pinned — and it is NOT the cancellation.
 
-    Profile weight is the occurrence's magnitude when it has one, so an
-    uncalibrated 1–10 salience outvotes ten unweighted acts. Deliberate — a
-    large act should pull harder — but `magnitude` is *not a measurement*
-    (STATUS §5), and here a single `magnitude: 9` ruling swamps the regulator's
-    stated position by 9:1.
+    Two-sided keys fixed serving-versus-opposing. They do not fix
+    *counterpart*: the profile is still actor-scoped, so one bucket per
+    (interest, sign) holds every act across every counterpart, and State X
+    hostile to Y while warm to Z politically still lands in one place. Case 5
+    is about a pair, and nothing here is pair-scoped.
+
+    The day a key in this profile carries a counterpart, delete this test and
+    un-block Case 5.
+    """
+    graph, _ = mega
+    x = next(n for n in graph.nodes if n.name == "Directorate of Materiel Procurement")
+    for key in x.group_value:
+        assert key.count("▲") + key.count("▼") <= 1, key
+        assert "|" not in key, (
+            f"`{key}` looks pair-scoped — if the profile grew a counterpart "
+            "dimension, delete this test and un-block Case 5")
+
+
+def test_magnitude_does_not_weight_a_profile(mega):
+    """One act, one vote — and the size is carried, not spent.
+
+    Magnitude used to be the profile weight, and it does not survive real
+    money: a EUR 41,000,000 contract outvoted every unweighted act by seven
+    orders of magnitude, so the cosine between two organisations was decided
+    entirely by contract size. That is a category error rather than a tuning
+    problem — the field's own docstring says magnitude is "not a measurement…
+    uncalibrated and not comparable across documents", and a quantity that
+    cannot be compared across documents cannot weight a vector that is.
+
+    Magnitude is not lost. It stays on the occurrence, where ``WEIGHT:numeric``
+    reads it as SIZE — the question it can actually answer.
     """
     graph, _ = mega
     r = next(n for n in graph.nodes if n.name == "Federal Procurement Review Board")
-    assert r.group_value["regulatory neutrality"] == -8, (
-        "one asserted neutrality (+1) minus one magnitude-9 ruling that opposed "
-        "it (−9). The sign is the finding; the size is an artefact of an "
-        "uncalibrated field.")
+    neutrality = {
+        k: v for k, v in r.group_value.items()
+        if k.startswith("regulatory neutrality")
+    }
+    assert neutrality, "the regulator's stated position vanished entirely"
+    # Every entry is a COUNT of acts. A magnitude-9 ruling contributes exactly
+    # what a magnitude-less one does.
+    assert all(float(v).is_integer() and v > 0 for v in neutrality.values()), (
+        f"profile weights must be act counts, got {neutrality}")
 
 
 # ─── Frames — what can hold an axis ─────────────────────────────────────────

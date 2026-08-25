@@ -268,6 +268,53 @@ def test_cross_window_edges_dedup(db):
     assert result.edges[0].weight == 10  # aggregated across all windows
 
 
+def test_edges_carry_their_source_annotation_ids(db):
+    """An edge reports which annotations produced it, unioned across rows.
+
+    Nodes have always carried ``source_annotation_ids``; edges accumulated the
+    same set in their slot and dropped it on the floor. Anything wanting "which
+    documents produced this edge" therefore had to re-match the edge against
+    raw annotation payloads by ``(subject, predicate, object)`` LABEL — which
+    describes exactly one legacy contract and silently returns nothing for
+    every other, so the panel's document counters read a confident 0 on any
+    observation-model run.
+    """
+    uid = _user(db, "prov")
+    iid = _infospace(db, uid, "graph-prov")
+    sid = _schema(db, iid, uid)
+    a = _asset(db, iid, uid, "a")
+    r = _run(db, iid, uid, "r")
+
+    shared = [
+        _annotation(db, iid, uid, r, sid, a, {
+            "triplets": [
+                {"subject_name": "X", "subject_type": "person",
+                 "predicate": "likes",
+                 "object_name": "Y", "object_type": "org"},
+            ]
+        })
+        for _ in range(3)
+    ]
+    lone = _annotation(db, iid, uid, r, sid, a, {
+        "triplets": [
+            {"subject_name": "X", "subject_type": "person",
+             "predicate": "avoids",
+             "object_name": "Z", "object_type": "org"},
+        ]
+    })
+
+    aq = AnnotationQuery(db, iid).scope(None).runs([r])
+    source = AnnotationGraphSource(query=aq, triplet_field="triplets")
+    result = asyncio.run(collect_graph(
+        db, iid, source, top_n_nodes=None, top_n_edges=None, chunk_size=2,
+    ))
+
+    by_pred = {e.predicate: e for e in result.edges}
+    # Unioned across windows (chunk_size=2 splits these), sorted, deduped.
+    assert by_pred["likes"].source_annotation_ids == sorted(shared)
+    assert by_pred["avoids"].source_annotation_ids == [lone]
+
+
 def test_cap_counts_unique_edges_not_emissions(db):
     """``top_n_edges`` caps unique edges, not emission rows.
 
