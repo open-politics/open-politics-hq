@@ -130,23 +130,17 @@ interface IntelligenceChatProps {
    * backend, AND scopes the history list to conversations from this surface.
    *   - ``undefined`` / ``'intelligence'`` (default): workspace research chat.
    *     Full toolset, file attachments enabled, suggestion chips visible.
-   *   - ``'dossier'`` : run-level DossierAgent (formula + panel + snapshot + note).
-   *   - ``'formula'`` : in-workspace FormulaAgent (formula authoring only).
    *
-   * Each agent gets its own conversation history. See ``HOW_TO.md`` § agents.
+   * See ``HOW_TO.md`` § agents.
    */
-  agent?: 'intelligence' | 'dossier' | 'formula'
-  /** When ``agent`` is ``'dossier'`` or ``'formula'``, the annotation run id
-   *  the agent operates against. The backend surfaces this in the system
+  agent?: 'intelligence'
+  /** Optional annotation run scope. The backend surfaces this in the system
    *  prompt and stamps it onto the conversation for history scoping. */
   runId?: number
-  /** When set, the in-workspace agent gets a hint about the currently-edited
-   *  formula so it can default tool calls and respond contextually. */
-  formulaId?: string | null
   /** Fires after the chat completes a turn that called a mutation tool
-   *  (formula_create/edit, panel_create/edit, observation_snapshot, …). The
-   *  parent uses this to refetch the active run so live edits flow back into
-   *  the dashboard / workspace without manual reload. */
+   *  (panel_create/panel_layout, …). The parent uses this to refetch the
+   *  active run so live edits flow back into the dashboard without a
+   *  manual reload. */
   onAgentMutation?: () => void
   /** When ``true``, swap the viewport-relative outer sizing (``min-h-[91svh]``,
    *  ``max-h-[92.75svh]``) for ``h-full min-h-0`` so the chat fits inside a
@@ -197,7 +191,7 @@ function ActiveJobBanners() {
   )
 }
 
-export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMutation, embedded = false, initialPrompt, initialConversationId, companion = false }: IntelligenceChatProps) {
+export function IntelligenceChat({ className, agent, runId, onAgentMutation, embedded = false, initialPrompt, initialConversationId, companion = false }: IntelligenceChatProps) {
   const [input, setInput] = useState('')
   const { selections, setSelection } = useProvidersStore()
   const selectedModel = selections.llm?.modelId || ''
@@ -346,8 +340,8 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
 
   const { activeInfospace, fetchInfospaces } = useInfospaceStore()
 
-  // Conversation management hook — scoped to this surface so each agent
-  // (intelligence / dossier / formula) only sees its own history.
+  // Conversation management hook — scoped to this surface so the workspace
+  // chat only sees its own history.
   const {
     conversations,
     isLoading: isLoadingConversations,
@@ -381,7 +375,6 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
     auto_save: currentConversationId !== null,
     agent,
     run_id: runId,
-    formula_id: formulaId,
   })
 
   // B3/B4: mirror the active conversation into the shared chat store so a
@@ -422,9 +415,9 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
   }, [companion, resolvedQueue, pendingReturns, currentConversationId, isLoading])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live-update bridge — when the agent finishes a turn that mutates the
-  // dashboard (formula_create/edit/delete, panel_create, observation_snapshot),
-  // tell the parent so it can refetch the run. Without this, agent edits sit
-  // on the backend invisible until the user reloads.
+  // dashboard (panel_create, panel_layout), tell the parent so it can refetch
+  // the run. Without this, agent edits sit on the backend invisible until the
+  // user reloads.
   const lastFiredMutationMsgIdRef = React.useRef<string | null>(null)
   React.useEffect(() => {
     if (!onAgentMutation || isLoading) return
@@ -432,9 +425,7 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
     if (!last || last.role !== 'assistant') return
     if (lastFiredMutationMsgIdRef.current === last.id) return
     const mutationTools = new Set([
-      'formula_create', 'formula_edit', 'formula_delete',
       'panel_create', 'panel_layout',
-      'observation_snapshot', 'dossier_note_append',
     ])
     const mutated = (last.tool_executions ?? []).some(t =>
       t.status === 'completed' && mutationTools.has(t.tool_name),
@@ -2287,23 +2278,6 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
               <PersistentTaskTracker messages={messages} />
               
               {messages.length === 0 ? (
-                agent === 'dossier' ? (
-                  <ConversationEmptyState
-                    icon={<Bot className="h-8 w-8 text-purple-600 dark:text-purple-400" />}
-                    title="DossierAgent"
-                    description={runId
-                      ? `Operating on run ${runId}. Ask me to author formulas, drop panels, or snapshot findings.`
-                      : 'Open a run to start authoring.'}
-                  />
-                ) : agent === 'formula' ? (
-                  <ConversationEmptyState
-                    icon={<Bot className="h-8 w-8 text-blue-600 dark:text-blue-400" />}
-                    title="Formula assistant"
-                    description={runId
-                      ? `Tell me what signal you want to measure. I'll introspect the schema and propose a formula.`
-                      : 'Open a run to start authoring formulas.'}
-                  />
-                ) : (
                 <ConversationEmptyState
                   icon={<Bot className="h-10 w-10 sm:h-12 sm:w-12" />}
                   title="Start a conversation with your intelligence data"
@@ -2345,7 +2319,6 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                     </div>
                   </div>
                 </ConversationEmptyState>
-                )
               ) : (
                 <div className="space-y-1">
                   {messages.map(renderMessage)}
@@ -2709,9 +2682,7 @@ export function IntelligenceChat({ className, agent, runId, formulaId, onAgentMu
                 <PromptInputToolbar>
                   <PromptInputTools>
                     {/* Context-attachment buttons (assets + images) only apply
-                        to the workspace chat. Dossier / Formula agents work
-                        against an annotation run; attaching arbitrary assets
-                        would muddle their scope. */}
+                        to the workspace chat. */}
                     {(!agent || agent === 'intelligence') && (
                       <>
                     <TooltipProvider>

@@ -60,18 +60,12 @@ export interface UseIntelligenceChatOptions {
   auto_save?: boolean  // Optional: Automatically save messages to conversation history
   /**
    * Agent persona — selects system prompt + MCP tool subset on the backend.
-   *   - ``undefined`` / ``'intelligence'``: workspace research chat (full tools).
-   *   - ``'dossier'``: run-level DossierAgent — formula + panel + snapshot + note.
-   *   - ``'formula'``: in-workspace FormulaAgent — formula authoring only.
-   *
-   * For dossier/formula, pass ``run_id`` so the agent scopes to one annotation run.
+   * Only the workspace research operator remains; ``undefined`` and
+   * ``'intelligence'`` both resolve to it.
    */
-  agent?: 'intelligence' | 'dossier' | 'formula'
-  /** For dossier / formula agents, the run id they operate against. */
+  agent?: 'intelligence'
+  /** Optional run scope, so the operator can narrow to one annotation run. */
   run_id?: number
-  /** For the FormulaAgent, the currently-open formula id so the model has
-   *  context about what the user is editing. Surfaces in the system prompt. */
-  formula_id?: string | null
 }
 
 export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
@@ -173,10 +167,9 @@ export function useIntelligenceChat(options: UseIntelligenceChatOptions = {}) {
         context_depth: customOptions?.contextDepth,
         // Vision features
         image_asset_ids: customOptions?.imageAssetIds,
-        // Agent persona — DossierAgent (M7) or default intelligence chat.
+        // Agent persona — the workspace research operator is the only one left.
         agent: (customOptions as any)?.agent ?? (options as any).agent,
         run_id: (customOptions as any)?.run_id ?? (options as any).run_id,
-        formula_id: (customOptions as any)?.formula_id ?? (options as any).formula_id,
         current_route: contextRef.current.route || undefined,
         current_focus: contextRef.current.focus ?? undefined,
       } as ChatRequest
