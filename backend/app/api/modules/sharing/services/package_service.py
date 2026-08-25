@@ -9,12 +9,18 @@ import json
 import zipfile
 import tempfile
 import os
-from typing import Dict, Any, Optional, List, Tuple, Union
+from typing import Dict, Any, Iterable, Optional, List, Tuple, Union
 from datetime import datetime, timezone, date
 import uuid
 from pathlib import Path
-from sqlalchemy import select, text
-from sqlmodel import Session
+from sqlalchemy import text
+# sqlmodel's select — NOT sqlalchemy's. With sqlalchemy's, ``Session.exec()``
+# yields ``Row`` objects rather than model instances, so ``ann.asset_id`` raises
+# and ``set(select(Annotation.imported_from_uuid))`` collects Rows that can never
+# compare equal to the uuid strings it is checked against (silently defeating the
+# already-imported dedup). Every call site in this module wants entities or bare
+# scalars, which is exactly what sqlmodel's select + exec produce.
+from sqlmodel import Session, select
 from fastapi import UploadFile
 import asyncio
 from collections import defaultdict
@@ -24,7 +30,7 @@ import dateutil.parser
 from app.models import (
     Source, AnnotationSchema, AnnotationRun, Dataset, ResourceType,
     Annotation, Asset, Bundle, Infospace, User, AssetKind, SourceStatus,
-    AnnotationSchemaTargetLevel, RunStatus, ResultStatus, Source,
+    AnnotationSchemaTargetLevel, RunStatus, RunType, ResultStatus, Source,
     ProcessingStatus,
 )
 from app.api.modules.foundation_service_providers.base import StorageProvider
@@ -163,6 +169,41 @@ class DataPackage:
         self.metadata = metadata
         self.content = content
         self.files = files or {}
+
+    def blob_census(self) -> Tuple[int, int]:
+        """``(expected, missing)`` — how many source files this package claims,
+        and how many of those storage would not give up at export time.
+
+        An export whose storage cannot serve the bytes still succeeds: refusing
+        the whole package because one file rotted is worse than saying so. But
+        it must never *present* as complete, and this is what lets the route say
+        otherwise. Derived from the manifest rather than counted during the
+        build, because the manifest is the thing that survives the download —
+        a package read back with ``from_zip`` answers the same as the one that
+        was written, and every builder path is covered without bookkeeping.
+
+        The walk is structural, not per-package-type: every serialized asset
+        carries either ``blob_file_reference`` (the bytes rode along) or
+        ``blob_path_fetch_failed`` (they did not), wherever it sits in the tree.
+        """
+        expected = missing = 0
+
+        def walk(node: Any) -> None:
+            nonlocal expected, missing
+            if isinstance(node, dict):
+                got = "blob_file_reference" in node
+                lost = bool(node.get("blob_path_fetch_failed"))
+                if got or lost:
+                    expected += 1
+                    missing += lost
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(self.content)
+        return expected, missing
 
     def to_zip(self, output_path: str) -> None:
         """Serializes the package to a ZIP file."""
@@ -305,13 +346,19 @@ class PackageBuilder:
         self.settings = settings
 
     async def _fetch_file_content_from_storage(self, storage_path: str) -> Optional[bytes]:
-        """Fetch file content from storage provider if path is valid."""
+        """Fetch file content from storage provider if path is valid.
+
+        Returning ``None`` means "the asset claims a blob and storage would not
+        give it up". Callers record that per asset as ``blob_path_fetch_failed``;
+        :meth:`DataPackage.blob_census` folds those flags into the number the
+        route reports.
+        """
         if not storage_path or not self.storage_provider:
             return None
         try:
             file_obj = await self.storage_provider.get_file(storage_path)
             # Ensure read is in thread for sync file obj if provider returns one
-            content = await asyncio.to_thread(file_obj.read) 
+            content = await asyncio.to_thread(file_obj.read)
             if hasattr(file_obj, 'close') and callable(getattr(file_obj, 'close')):
                 await asyncio.to_thread(file_obj.close)
             return content
@@ -397,9 +444,147 @@ class PackageBuilder:
         logger.debug(f"Exported {len(chunks_data)} chunks for asset {asset.id}, embeddings included: {include_embeddings}")
         return chunks_data
 
+    def _collect_asset_closure(self, seeds: List[Asset]) -> Dict[int, Asset]:
+        """Expand ``seeds`` into every asset of every tree they belong to.
+
+        Exporting only the annotated assets (plus their direct parents) ships a
+        container whose children are a lie: annotate page 3 of a PDF and the
+        importing instance receives the PDF and page 3, with pages 1, 2, 4…
+        missing and nothing to say they ever existed. Re-processing on the far
+        side cannot repair that either — it mints *new* children with new UUIDs
+        while the imported annotations still reference the old ones.
+
+        So the unit of export is the whole tree: walk up from each seed to its
+        root, then back down over every descendant. Guards against cycles via
+        the visited set (a malformed parent chain would otherwise spin).
+        """
+        collected: Dict[int, Asset] = {}
+
+        # Up: every seed's root.
+        roots: Dict[int, Asset] = {}
+        for seed in seeds:
+            node, guard = seed, 0
+            while node.parent_asset_id and guard < 100:
+                parent = self.session.get(Asset, node.parent_asset_id)
+                if not parent:
+                    break
+                node, guard = parent, guard + 1
+            roots[node.id] = node
+
+        # Down: every descendant of every root.
+        frontier = list(roots.values())
+        while frontier:
+            node = frontier.pop()
+            if node.id in collected:
+                continue
+            collected[node.id] = node
+            children = self.session.exec(
+                select(Asset).where(Asset.parent_asset_id == node.id).order_by(Asset.part_index, Asset.id)
+            ).all()
+            frontier.extend(children)
+
+        # A seed whose tree walk somehow missed it still ships.
+        for seed in seeds:
+            collected.setdefault(seed.id, seed)
+
+        logger.debug(f"Asset closure: {len(seeds)} seeds → {len(roots)} roots → {len(collected)} assets")
+        return collected
+
+    def _collect_bundle_closure(self, assets: Iterable[Asset]) -> Dict[int, Bundle]:
+        """Every bundle the given assets sit in, plus each bundle's ancestors.
+
+        Without this an imported run's assets all land at the infospace root and
+        the collection structure the analyst built is gone. Ancestors come along
+        so the bundle tree reassembles rather than flattening; ``0`` is the root
+        sentinel, not a real bundle, so it is never fetched.
+        """
+        wanted: set[int] = set()
+        for asset in assets:
+            for bid in (asset.bundle_ids or []):
+                if bid:
+                    wanted.add(bid)
+
+        collected: Dict[int, Bundle] = {}
+        frontier = list(wanted)
+        while frontier:
+            bid = frontier.pop()
+            if bid in collected or not bid:
+                continue
+            bundle = self.session.get(Bundle, bid)
+            if not bundle:
+                continue
+            collected[bid] = bundle
+            if bundle.parent_bundle_id:
+                frontier.append(bundle.parent_bundle_id)
+
+        logger.debug(f"Bundle closure: {len(wanted)} direct → {len(collected)} with ancestors")
+        return collected
+
+    async def _serialize_asset_full(
+        self,
+        asset: Asset,
+        *,
+        include_chunks: bool = False,
+        include_embeddings: bool = False,
+    ) -> Dict[str, Any]:
+        """One asset → its complete manifest entry.
+
+        ``AssetRead`` already carries every field the importer needs to
+        reconstruct the asset exactly (modalities, fragments, tags, stub,
+        processing_status, enrichment_resolved, …), so the job here is only to
+        attach what lives outside the row: the blob bytes, the parent's UUID
+        (ids do not survive the remap), bundle UUIDs, and optionally chunks.
+        """
+        data = AssetRead.model_validate(asset).model_dump(exclude_none=True)
+
+        # Text content rides inline. It is the thing that must never go missing
+        # while the blob arrives, so it is not gated on a size threshold.
+        data.pop("text_content", None)
+        if asset.text_content:
+            data["text_content"] = asset.text_content
+
+        # Parent linkage travels by UUID; local ids mean nothing on the far side.
+        if asset.parent_asset_id:
+            parent = self.session.get(Asset, asset.parent_asset_id)
+            if parent:
+                data["parent_asset_uuid"] = str(parent.uuid)
+            data["part_index"] = asset.part_index
+
+        # Bundle membership by UUID, same reasoning.
+        bundle_uuids: List[str] = []
+        for bid in (asset.bundle_ids or []):
+            if not bid:
+                continue
+            bundle = self.session.get(Bundle, bid)
+            if bundle:
+                bundle_uuids.append(str(bundle.uuid))
+        if bundle_uuids:
+            data["bundle_uuids"] = bundle_uuids
+
+        if asset.blob_path:
+            file_bytes = await self._fetch_file_content_from_storage(asset.blob_path)
+            if file_bytes:
+                original_filename = (
+                    (asset.file_info or {}).get("original_filename")
+                    or (asset.file_info or {}).get("filename")
+                    or asset.title
+                    or Path(asset.blob_path).name
+                )
+                data["blob_file_reference"] = self._add_file_to_package(original_filename, file_bytes)
+            else:
+                # Recorded so the importer can flag the asset for repair rather
+                # than silently presenting a blob-less asset as complete.
+                data["blob_path_fetch_failed"] = True
+        data.pop("blob_path", None)  # storage-local; the far side mints its own
+
+        if include_chunks or include_embeddings:
+            data["chunks"] = await self._export_asset_chunks(asset, include_embeddings=include_embeddings)
+
+        return data
+
     async def build_asset_package(
-        self, 
-        asset: Asset, 
+        self,
+        asset: Asset,
         include_text_content_as_file: bool = False,
         include_annotations: bool = False,
         include_justifications: bool = False
@@ -532,15 +717,44 @@ class PackageBuilder:
         run: AnnotationRun,
         include_annotations: bool = True,
         include_justifications: bool = True,
-        include_chunks: bool = False,
+        include_chunks: bool = True,
         include_embeddings: bool = False
     ) -> DataPackage:
+        """Package one run so it reconstitutes exactly on another instance.
+
+        "Exactly" is the requirement, so the package carries the whole
+        dependency cone rather than the parts the run happens to point at:
+
+        - **complete asset trees**, not just the annotated assets (see
+          :meth:`_collect_asset_closure`);
+        - **the bundles** those assets live in, with ancestors, so the
+          collection structure survives;
+        - **chunks by default** — they are derived content, and regenerating
+          them on the far side is exactly the re-processing that would break
+          annotation↔asset linkage.
+
+        ``include_embeddings`` stays opt-in: vectors are large and tied to a
+        specific model, so a package that carries them is only useful to an
+        instance running that same model.
+        """
         logger.debug(f"Building package for AnnotationRun ID: {run.id}, Name: {run.name}")
         run_content = run.model_dump(exclude_none=True, exclude={'annotations', 'target_schemas'})
-        
-        # Ensure views_config is included in the export
+
+        # views_config carries the dashboard (panels + layout). It travels as an
+        # opaque blob behind ``migrate_views_config`` on the way in, so a later
+        # change to the panel shape is a migration rather than a broken package.
         if hasattr(run, 'views_config') and run.views_config:
             run_content['views_config'] = run.views_config
+
+        # canon_ids are deliberately NOT exported: a canon is an infospace-level
+        # coordinate frame, and carrying bare ids would point the imported run at
+        # whatever happens to occupy those ids on the target. The graph degrades
+        # gracefully without one (canon is an enhancement, never a requirement).
+        run_content.pop('canon_ids', None)
+        run_content.pop('resolve_into_canon', None)
+        # Local foreign keys that mean nothing on the far side.
+        run_content.pop('source_bundle_id', None)
+        run_content.pop('flow_execution_id', None)
 
         # Include full schema definitions (not just references)
         run_content["annotation_schemas"] = []
@@ -548,10 +762,9 @@ class PackageBuilder:
             schema_data = schema.model_dump(exclude_none=True)
             run_content["annotation_schemas"].append(schema_data)
 
-        # Collect all unique assets used in this run
-        unique_assets = {}
         run_content["assets"] = []
-        
+        run_content["bundles"] = []
+
         if include_annotations:
             run_content["annotations"] = []
             annotations = []
@@ -570,76 +783,51 @@ class PackageBuilder:
                 annotations.extend(ann_batch)
                 ann_offset += BATCH_SIZE
 
-            # First pass: collect all unique assets
+            # Seeds = the annotated assets; closure = their complete trees.
+            seeds: Dict[int, Asset] = {}
             for ann in annotations:
-                asset = self.session.get(Asset, ann.asset_id)
-                if asset and asset.id not in unique_assets:
-                    unique_assets[asset.id] = asset
-            
-            # Second pass: collect parent assets for any child assets
-            # This ensures parent-child relationships are preserved during export
-            assets_to_check_for_parents = list(unique_assets.values())
-            for asset in assets_to_check_for_parents:
-                if asset.parent_asset_id:
-                    parent_asset = self.session.get(Asset, asset.parent_asset_id)
-                    if parent_asset and parent_asset.id not in unique_assets:
-                        unique_assets[parent_asset.id] = parent_asset
-                        logger.debug(f"Added parent asset '{parent_asset.title}' (ID {parent_asset.id}) to export package for child asset '{asset.title}' (ID {asset.id})")
-            
-            # Third pass: include full asset content for all unique assets
-            for asset_id, asset in unique_assets.items():
-                asset_data = AssetRead.model_validate(asset).model_dump(exclude_none=True, exclude={'text_content'})
-                
-                # Include parent-child relationship information
-                if asset.parent_asset_id:
-                    asset_data['parent_asset_id'] = asset.parent_asset_id
-                    asset_data['part_index'] = asset.part_index
-                    # Include parent UUID for reference resolution during import
-                    parent_asset = self.session.get(Asset, asset.parent_asset_id)
-                    if parent_asset:
-                        asset_data['parent_asset_uuid'] = str(parent_asset.uuid)
-                
-                # Include text content inline if short, or as file if long
-                if asset.text_content and len(asset.text_content) < 5000:
-                    asset_data['text_content'] = asset.text_content
-                elif asset.text_content:
-                    text_file_ref = self._add_file_to_package(f"asset_{asset.uuid}_content.txt", asset.text_content.encode('utf-8'))
-                    asset_data['text_content_file_reference'] = text_file_ref
-                
-                # Include blob content as file if available
-                if asset.blob_path:
-                    file_bytes = await self._fetch_file_content_from_storage(asset.blob_path)
-                    if file_bytes:
-                        original_filename = (asset.file_info or {}).get("original_filename") or (asset.file_info or {}).get("filename") or asset.title or Path(asset.blob_path).name
-                        blob_file_ref = self._add_file_to_package(original_filename, file_bytes)
-                        asset_data["blob_file_reference"] = blob_file_ref
-                
-                # Handle chunks and embeddings if requested
-                if include_chunks or include_embeddings:
-                    asset_data["chunks"] = await self._export_asset_chunks(
-                        asset, 
-                        include_embeddings=include_embeddings
-                    )
-                
-                run_content["assets"].append(asset_data)
-            
-            # Fourth pass: build annotations with proper references
+                if ann.asset_id not in seeds:
+                    asset = self.session.get(Asset, ann.asset_id)
+                    if asset:
+                        seeds[asset.id] = asset
+            unique_assets = self._collect_asset_closure(list(seeds.values()))
+
+            # Bundles the closure lives in, ancestors included. Serialized
+            # parent-first so the importer can resolve parents by UUID.
+            bundles = self._collect_bundle_closure(unique_assets.values())
+            for bundle in sorted(bundles.values(), key=lambda b: (b.parent_bundle_id, b.id)):
+                bundle_data = bundle.model_dump(exclude_none=True, exclude={'assets'})
+                parent = bundles.get(bundle.parent_bundle_id)
+                bundle_data["parent_bundle_uuid"] = str(parent.uuid) if parent else None
+                run_content["bundles"].append(bundle_data)
+
+            # Assets, parents before children so import ordering is trivial.
+            for asset in sorted(unique_assets.values(), key=lambda a: (a.parent_asset_id or 0, a.part_index or 0, a.id)):
+                run_content["assets"].append(await self._serialize_asset_full(
+                    asset, include_chunks=include_chunks, include_embeddings=include_embeddings,
+                ))
+
+            # Annotations, referencing assets + schemas by UUID.
             for ann in annotations:
                 # Justifications travel inline inside ``value``.
                 ann_data = ann.model_dump(exclude_none=True, exclude={'justifications'})
 
-                # Include asset reference
                 asset = self.session.get(Asset, ann.asset_id)
                 if asset:
                     ann_data["asset_reference"] = {"uuid": str(asset.uuid), "id": asset.id, "title": asset.title}
-                
-                # Include schema reference
+
                 schema = self.session.get(AnnotationSchema, ann.schema_id)
                 if schema:
                     ann_data["schema_reference"] = {"uuid": str(schema.uuid), "id": schema.id, "name": schema.name, "version": schema.version}
-                
+
                 run_content["annotations"].append(ann_data)
-        
+
+            logger.info(
+                f"Run package '{run.name}': {len(annotations)} annotations, "
+                f"{len(seeds)} annotated assets → {len(unique_assets)} in closure, "
+                f"{len(bundles)} bundles, {len(run_content['annotation_schemas'])} schemas"
+            )
+
         package_metadata = PackageMetadata(
             package_type=ResourceType.RUN,
             source_entity_uuid=str(run.uuid),
@@ -1222,6 +1410,14 @@ class PackageImporter:
         logger.debug(f"Registered import: {entity_type_str} '{source_uuid}' -> local_id={local_entity.id}, local_uuid={local_entity.uuid}")
 
     def _get_local_id_from_source_uuid(self, entity_type_str: str, source_uuid: Optional[str]) -> Optional[int]:
+        """Resolve a source UUID to a local id, within THIS import only.
+
+        ``Asset`` and ``Bundle`` carry no ``imported_from_uuid`` column (the
+        constructor accepts the kwarg and SQLModel drops it), so there is no
+        durable provenance link to consult across imports. The map is therefore
+        per-import by construction, and importing the same package twice yields
+        two independent copies rather than reusing the first.
+        """
         if not source_uuid: return None
         # Updated to handle defaultdict structure properly
         entity_type_map = self.uuid_map.get(entity_type_str)
@@ -1229,7 +1425,8 @@ class PackageImporter:
         source_uuid_entry = entity_type_map.get(source_uuid)
         if source_uuid_entry is None: return None
         return source_uuid_entry.get("local_id")
-    
+
+
     def _sort_assets_by_parent_child_order(self, assets_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Sort assets to ensure parent assets are imported before their children.
@@ -1346,7 +1543,123 @@ class PackageImporter:
         
         return new_src
 
-    async def _import_asset_data(self, asset_data_in_pkg: Dict[str, Any], package_files: Dict[str, bytes], parent_source_id: Optional[int], parent_asset_id: Optional[int] = None) -> Asset:
+    async def _import_asset_chunks(self, asset: Asset, chunks_data: List[Dict[str, Any]]) -> int:
+        """Restore an asset's chunks from the package.
+
+        The exporter has always written these; nothing ever read them back, so
+        every imported asset arrived with an empty chunk table and silently
+        returned nothing from search. Embeddings are restored only when the
+        package carried them AND the local instance already knows the model —
+        a vector is meaningless outside the space that produced it, so an
+        unknown model drops the vector and keeps the text, leaving the chunk
+        re-embeddable rather than wrong.
+        """
+        if not chunks_data:
+            return 0
+
+        from app.models import AssetChunk, EmbeddingModel
+        from app.api.modules.content.models import EMBEDDING_SUPPORTED_DIMS
+
+        created = 0
+        for chunk_data in chunks_data:
+            if not isinstance(chunk_data, dict):
+                continue
+            chunk = AssetChunk(
+                asset_id=asset.id,
+                chunk_index=chunk_data.get("chunk_index", created),
+                text_content=chunk_data.get("text_content"),
+                blob_reference=chunk_data.get("blob_reference"),
+                chunk_metadata=chunk_data.get("chunk_metadata") or {},
+            )
+
+            embedding = chunk_data.get("embedding")
+            model_id = chunk_data.get("embedding_model_id")
+            if embedding and model_id is not None:
+                # Match by dimension: the source instance's model id is
+                # meaningless here, so only a locally-registered model of the
+                # same dimension can carry the vector.
+                dim = len(embedding)
+                local_model = self.session.exec(
+                    select(EmbeddingModel).where(
+                        EmbeddingModel.dimension == dim,
+                        EmbeddingModel.is_active == True,  # noqa: E712
+                    )
+                ).first()
+                if local_model is not None and dim in EMBEDDING_SUPPORTED_DIMS:
+                    setattr(chunk, f"embedding_{dim}", embedding)
+                    chunk.embedding_model_id = local_model.id
+                else:
+                    logger.debug(
+                        f"Asset {asset.id} chunk {chunk.chunk_index}: no local {dim}d embedding "
+                        f"model, keeping text and dropping the vector for re-embedding."
+                    )
+
+            self.session.add(chunk)
+            created += 1
+
+        self.session.flush()
+        logger.debug(f"Imported {created} chunks for asset {asset.id} ('{asset.title}')")
+        return created
+
+    def _import_run_bundle(
+        self,
+        bundle_data: Dict[str, Any],
+        bundle_uuid_to_local: Dict[str, int],
+    ) -> Optional[Bundle]:
+        """Recreate one bundle from a run package, preserving its place in the tree.
+
+        Name collisions are resolved by suffixing rather than merging into the
+        existing bundle: two unrelated imports that happen to share a name are
+        not the same collection, and silently folding them together loses the
+        boundary the analyst drew.
+        """
+        source_uuid = str(bundle_data.get("uuid") or uuid.uuid4())
+        existing_local_id = self._get_local_id_from_source_uuid(ResourceType.BUNDLE.value, source_uuid)
+        if existing_local_id:
+            return self.session.get(Bundle, existing_local_id)
+
+        parent_uuid = bundle_data.get("parent_bundle_uuid")
+        parent_bundle_id = bundle_uuid_to_local.get(str(parent_uuid), 0) if parent_uuid else 0
+
+        base_name = bundle_data.get("name") or f"Imported Bundle {source_uuid[:8]}"
+        name, counter = base_name, 1
+        while self.session.exec(
+            select(Bundle).where(
+                Bundle.infospace_id == self.target_infospace_id,
+                Bundle.parent_bundle_id == parent_bundle_id,
+                Bundle.name == name,
+                Bundle.version == (bundle_data.get("version") or "1.0"),
+            )
+        ).first():
+            name = f"{base_name} ({counter})"
+            counter += 1
+
+        new_bundle = Bundle(
+            infospace_id=self.target_infospace_id,
+            user_id=self.target_user_id,
+            name=name,
+            description=bundle_data.get("description"),
+            purpose=bundle_data.get("purpose"),
+            bundle_metadata=bundle_data.get("bundle_metadata"),
+            version=bundle_data.get("version") or "1.0",
+            tags=bundle_data.get("tags") or [],
+            parent_bundle_id=parent_bundle_id,
+            sealed=bool(bundle_data.get("sealed", False)),
+        )
+        self.session.add(new_bundle)
+        self.session.flush()
+        self._register_imported_entity(ResourceType.BUNDLE.value, source_uuid, new_bundle)
+        logger.debug(f"Imported Bundle '{new_bundle.name}' (ID {new_bundle.id}) under parent {parent_bundle_id}")
+        return new_bundle
+
+    async def _import_asset_data(
+        self,
+        asset_data_in_pkg: Dict[str, Any],
+        package_files: Dict[str, bytes],
+        parent_source_id: Optional[int],
+        parent_asset_id: Optional[int] = None,
+        bundle_uuid_to_local: Optional[Dict[str, int]] = None,
+    ) -> Asset:
         # Ensure asset_uuid is a string. Fallback if uuid is missing.
         asset_uuid = str(asset_data_in_pkg.get("uuid") or asset_data_in_pkg.get("entity_uuid", uuid.uuid4()))
         existing_local_id = self._get_local_id_from_source_uuid(ResourceType.ASSET.value, asset_uuid)
@@ -1361,7 +1674,14 @@ class PackageImporter:
         new_blob_path = None
         if asset_data_in_pkg.get("blob_file_reference") and package_files:
             new_blob_path = await self._store_file_from_package(asset_data_in_pkg["blob_file_reference"], package_files)
-        
+
+        # The exporter records ``blob_path_fetch_failed`` when the source asset
+        # claimed a file that storage would not serve. Such an asset arrives with
+        # its text, chunks and annotations intact — so it is worth importing —
+        # but it must not present as complete, or the missing document is only
+        # discovered by the person who goes looking for it.
+        blob_lost = bool(asset_data_in_pkg.get("blob_path_fetch_failed"))
+
         text_content = asset_data_in_pkg.get("text_content")
         if asset_data_in_pkg.get("text_content_file_reference") and package_files:
             text_file_bytes = package_files.get(asset_data_in_pkg["text_content_file_reference"])
@@ -1379,26 +1699,22 @@ class PackageImporter:
             else:
                 logger.warning(f"Could not resolve parent asset UUID {parent_uuid} for asset {asset_uuid}. Parent relationship will be lost.")
         
-        # Handle bundle relationship resolution
-        resolved_bundle_id = None
-        if asset_data_in_pkg.get("bundle_id"):
-            # Asset was in a bundle in the original infospace
-            # We need to find the imported bundle by its original UUID
-            # The bundle export includes the UUID, and we track it during import
-            original_bundle_id = asset_data_in_pkg.get("bundle_id")
-            
-            # Try to find bundle by checking if we have bundle UUID in asset data
-            # AssetRead includes bundle_id but not bundle UUID, so we need to query
-            # Check if bundle was already imported by looking through our uuid_map
-            for source_uuid, mapping in self.uuid_map.get(ResourceType.BUNDLE.value, {}).items():
-                # We don't have the original bundle UUID here directly, so we'll try a different approach
-                # We'll set this after all bundles are imported, or resolve via asset_data if available
-                pass
-            
-            # For now, we'll leave bundle_ids as None and rely on the bundle import setting it
-            # via array_append in import_bundle_package
-            logger.debug(f"Asset {asset_uuid} had bundle_id {original_bundle_id} in original infospace, will be linked during bundle import")
-        
+        # Bundle membership. The package carries bundle UUIDs (local ids mean
+        # nothing across instances) and the run importer has already recreated
+        # the bundles, so this is a straight lookup. ``{0}`` is the root
+        # sentinel and the required fallback — the column is NOT NULL with a
+        # CHECK that the array is non-empty.
+        resolved_bundle_ids: List[int] = []
+        for pkg_bundle_uuid in (asset_data_in_pkg.get("bundle_uuids") or []):
+            local_bid = (bundle_uuid_to_local or {}).get(str(pkg_bundle_uuid))
+            if local_bid is None:
+                local_bid = self._get_local_id_from_source_uuid(ResourceType.BUNDLE.value, str(pkg_bundle_uuid))
+            if local_bid and local_bid not in resolved_bundle_ids:
+                resolved_bundle_ids.append(local_bid)
+        if not resolved_bundle_ids:
+            resolved_bundle_ids = [0]
+
+
         if parent_source_id is None and asset_data_in_pkg.get("kind") != "INFOSPACE_EXPORT_ANCHOR": # Example of a special kind
             logger.debug(f"Asset UUID {asset_uuid} is being imported without a direct parent_source_id. This is expected for bundle-only assets.")
         
@@ -1421,6 +1737,25 @@ class PackageImporter:
             # It's already a datetime object, use it directly
             parsed_event_timestamp = event_timestamp_raw
 
+        # Processing status travels with the asset. An asset that was READY on
+        # the exporting instance arrives READY here, because its derived content
+        # (text, chunks, children) came along in the package — re-deriving it
+        # would mint new child assets with new UUIDs while the imported
+        # annotations still point at the old ones. The only assets that get
+        # re-processed are the ones the repair pass in
+        # ``_repair_unprocessed_assets`` finds genuinely incomplete.
+        try:
+            processing_status = ProcessingStatus(asset_data_in_pkg["processing_status"])
+        except (KeyError, ValueError):
+            processing_status = ProcessingStatus.READY
+
+        processing_error = asset_data_in_pkg.get("processing_error")
+        if blob_lost:
+            processing_status = ProcessingStatus.FAILED
+            processing_error = (
+                "Source file was unreadable at export time and is not in the package."
+            )
+
         new_asset = Asset(
             infospace_id=self.target_infospace_id,
             user_id=self.target_user_id,
@@ -1430,18 +1765,34 @@ class PackageImporter:
             imported_from_uuid=asset_uuid,
             title=asset_data_in_pkg.get("title", f"Imported Asset {asset_uuid[:8]}"),
             kind=asset_kind_enum, # Use validated enum
+            stub=bool(asset_data_in_pkg.get("stub", False)),
+            bundle_ids=resolved_bundle_ids,
             text_content=text_content,
             blob_path=new_blob_path,
             source_identifier=asset_data_in_pkg.get("source_identifier"),
+            source_token=asset_data_in_pkg.get("source_token"),
             facets=_extract_facets_from_asset_data(asset_data_in_pkg),
             file_info=_extract_file_info_from_asset_data(asset_data_in_pkg),
+            modalities=asset_data_in_pkg.get("modalities"),
+            fragments=asset_data_in_pkg.get("fragments") or {},
+            tags=asset_data_in_pkg.get("tags") or [],
             content_hash=asset_data_in_pkg.get("content_hash"),
+            processing_status=processing_status,
+            processing_error=processing_error,
+            enrichment_resolved=asset_data_in_pkg.get("enrichment_resolved"),
+            enrichment_errors=asset_data_in_pkg.get("enrichment_errors"),
             event_timestamp=parsed_event_timestamp
             # uuid will be auto-generated
         )
         self.session.add(new_asset)
         self.session.flush() # Flush to get ID before registering or using for children
         self._register_imported_entity(ResourceType.ASSET.value, asset_uuid, new_asset)
+
+        # Chunks are derived content and were previously exported but never
+        # read back, so search and RAG silently came up empty on every imported
+        # asset. They are restored verbatim for the same reason as text: the
+        # alternative is re-chunking, which is re-processing.
+        await self._import_asset_chunks(new_asset, asset_data_in_pkg.get("chunks") or [])
 
         logger.debug(f"Imported Asset '{new_asset.title}' (ID {new_asset.id}, Original UUID {asset_uuid}) linked to Source ID {parent_source_id}")
 
@@ -1475,10 +1826,19 @@ class PackageImporter:
             logger.warning(f"No annotation UUIDs found in data for asset {local_asset_id}, skipping.")
             return
 
-        # 2. Find which of these annotations already exist in the database in a single query.
-        existing_uuids_query = select(Annotation.imported_from_uuid).where(Annotation.imported_from_uuid.in_(ann_uuids_to_import))
+        # 2. Find which of these annotations already exist ON THIS ASSET. Scoped
+        #    to the target infospace and asset because ``imported_from_uuid`` is
+        #    the SOURCE instance's id: the same annotation legitimately arrives
+        #    in several infospaces, and an unscoped check would let the first
+        #    import silently suppress every later one.
+        existing_uuids_query = select(Annotation.imported_from_uuid).where(
+            Annotation.imported_from_uuid.in_(ann_uuids_to_import),
+            Annotation.infospace_id == self.target_infospace_id,
+            Annotation.asset_id == local_asset_id,
+        )
         existing_uuids = set(self.session.exec(existing_uuids_query).all())
-        
+
+
         if existing_uuids:
             logger.info(f"Skipping {len(existing_uuids)} annotations that already exist for asset {local_asset_id}.")
 
@@ -1651,6 +2011,60 @@ class PackageImporter:
             logger.warning(f"Unexpected type for {field_name}: {type(value)}")
             return None
 
+    def _repair_unprocessed_assets(self, local_asset_ids: List[int]) -> List[int]:
+        """Queue processing only for assets that arrived genuinely incomplete.
+
+        The default for an imported run is **do not re-process**. Derived
+        content travels in the package, and re-deriving it would mint new child
+        assets with new UUIDs while the imported annotations still reference the
+        originals — orphaned annotations plus duplicate children.
+
+        The exception is an asset that has a blob but no derived content and no
+        children: the file made it across, the text did not. That one is
+        incomplete either way, and nothing references children it never had, so
+        processing it is a repair rather than a divergence.
+
+        Returns the ids queued, so callers can report the count.
+        """
+        if not local_asset_ids:
+            return []
+
+        from app.api.modules.content.types import needs_processing
+        from app.core.events import emit
+
+        queued: List[int] = []
+        for asset_id in local_asset_ids:
+            asset = self.session.get(Asset, asset_id)
+            if not asset or not asset.blob_path or not needs_processing(asset.kind):
+                continue
+            if asset.text_content:
+                continue  # text came across — nothing to derive
+            has_children = self.session.exec(
+                select(Asset.id).where(Asset.parent_asset_id == asset.id).limit(1)
+            ).first()
+            if has_children:
+                continue  # content lives in the children, which also came across
+
+            asset.processing_status = ProcessingStatus.PENDING
+            self.session.add(asset)
+            queued.append(asset.id)
+
+        if queued:
+            self.session.flush()
+            for asset_id in queued:
+                asset = self.session.get(Asset, asset_id)
+                emit("asset.ingested", {
+                    "asset_id": asset.id,
+                    "infospace_id": asset.infospace_id,
+                })
+            logger.info(
+                f"Import repair: queued {len(queued)} of {len(local_asset_ids)} assets for processing "
+                f"(blob present, no derived content). The rest imported complete."
+            )
+        else:
+            logger.info(f"Import repair: all {len(local_asset_ids)} assets arrived complete; nothing re-processed.")
+        return queued
+
     async def import_annotation_run_package(self, package: DataPackage, conflict_strategy: str = 'skip') -> AnnotationRun:
         if package.metadata.package_type != ResourceType.RUN:
             raise ValueError("Invalid package type for import_annotation_run_package")
@@ -1707,7 +2121,21 @@ class PackageImporter:
             if len(local_target_schemas) != len(local_target_schema_ids):
                 logger.warning(f"Mismatch in resolved local target schemas for run {source_uuid}. Expected {len(local_target_schema_ids)}, found {len(local_target_schemas)}.")
 
-        # Second, import assets included in the package (ordered by parent-child relationships)
+        # Second, recreate the bundles the run's assets live in. Done BEFORE the
+        # assets so each asset's bundle_ids can be resolved as it is created;
+        # the exporter emits them parent-first so a parent is always present.
+        bundle_uuid_to_local: Dict[str, int] = {}
+        if run_data.get("bundles") and isinstance(run_data["bundles"], list):
+            logger.info(f"Importing {len(run_data['bundles'])} bundles for run '{run_data.get('name', source_uuid[:8])}'")
+            for bundle_data in run_data["bundles"]:
+                if not isinstance(bundle_data, dict):
+                    continue
+                local_bundle = self._import_run_bundle(bundle_data, bundle_uuid_to_local)
+                if local_bundle:
+                    bundle_uuid_to_local[str(bundle_data.get("uuid"))] = local_bundle.id
+            self.session.flush()
+
+        # Third, import assets (ordered by parent-child relationships)
         local_asset_ids = []
         if run_data.get("assets") and isinstance(run_data["assets"], list):
             logger.info(f"Importing {len(run_data['assets'])} assets for run '{run_data.get('name', source_uuid[:8])}'")
@@ -1715,11 +2143,14 @@ class PackageImporter:
             ordered_assets = self._sort_assets_by_parent_child_order(run_data["assets"])
             for asset_data_in_pkg in ordered_assets:
                 # Import each asset - they are not tied to a specific source in this context
-                imported_asset = await self._import_asset_data(asset_data_in_pkg, package.files, parent_source_id=None)
+                imported_asset = await self._import_asset_data(
+                    asset_data_in_pkg, package.files, parent_source_id=None,
+                    bundle_uuid_to_local=bundle_uuid_to_local,
+                )
                 if imported_asset:
                     local_asset_ids.append(imported_asset.id)
                     logger.debug(f"Imported asset '{imported_asset.title}' (ID {imported_asset.id}) for run")
-        
+
         # Flush after importing all assets to ensure they're persisted
         if local_asset_ids:
             self.session.flush()
@@ -1737,17 +2168,37 @@ class PackageImporter:
             if k not in ("_watermark", "_cursor", "_chained_asset_ids")
         }
 
+        # ``run_type`` and ``trigger_type`` are plain strings/enums that describe
+        # how the run came to exist — they carry over so an imported monitoring
+        # run still reads as one. ``live`` deliberately does not: a run that was
+        # watching a source on the exporting instance has no source to watch
+        # here, and arriving already-live would have it re-pend against an empty
+        # scope. The importer lands it dormant; the user turns it back on.
+        try:
+            run_type = RunType(run_data["run_type"]) if run_data.get("run_type") else RunType.ONE_OFF
+        except (ValueError, KeyError):
+            run_type = RunType.ONE_OFF
+
         new_run = AnnotationRun(
             infospace_id=self.target_infospace_id,
             user_id=self.target_user_id,
             imported_from_uuid=source_uuid,
             name=run_data.get("name", f"Imported Run {source_uuid[:8]}"),
+            description=run_data.get("description"),
             configuration=imported_config,
             status=RunStatus(run_data.get("status", "completed")) if run_data.get("status") else RunStatus.COMPLETED,
             include_parent_context=run_data.get("include_parent_context", False),
             context_window=run_data.get("context_window", 0),
             error_message=run_data.get("error_message"),
             views_config=_migrate_imported_views_config(run_data.get("views_config", [])),
+            graph_config=run_data.get("graph_config"),
+            run_type=run_type,
+            tags=run_data.get("tags") or [],
+            is_favorite=bool(run_data.get("is_favorite", False)),
+            trigger_type=run_data.get("trigger_type") or "manual",
+            trigger_context=run_data.get("trigger_context") or {},
+            follow_on_version_change=bool(run_data.get("follow_on_version_change", False)),
+            live=False,
             target_schemas=local_target_schemas,
             created_at=created_at,
             started_at=started_at,
@@ -1766,8 +2217,17 @@ class PackageImporter:
             # 1. Collect all annotation UUIDs from the incoming package data.
             ann_uuids_to_import = {str(ann_data.get("uuid")) for ann_data in annotations_data if ann_data.get("uuid")}
             
-            # 2. Find which of these annotations already exist in the database.
-            existing_uuids_query = select(Annotation.imported_from_uuid).where(Annotation.imported_from_uuid.in_(ann_uuids_to_import))
+            # 2. Find which of these annotations already exist ON THIS RUN.
+            #    ``imported_from_uuid`` is the SOURCE instance's id, so it is only
+            #    unique over there. Scoping to the freshly-created run is what
+            #    makes a second import a complete independent copy instead of an
+            #    empty run: unscoped, the first import's annotations matched and
+            #    suppressed every one of them — across infospaces too.
+            existing_uuids_query = select(Annotation.imported_from_uuid).where(
+                Annotation.imported_from_uuid.in_(ann_uuids_to_import),
+                Annotation.infospace_id == self.target_infospace_id,
+                Annotation.run_id == new_run.id,
+            )
             existing_uuids = set(self.session.exec(existing_uuids_query).all())
             if existing_uuids:
                 logger.info(f"Skipping {len(existing_uuids)} annotations that already exist.")
@@ -1813,6 +2273,9 @@ class PackageImporter:
                 self.session.add_all(annotations_to_create)
                 self.session.flush()
                 logger.info(f"Successfully imported {len(annotations_to_create)} new annotations for run '{new_run.name}'.")
+
+        # Repair pass — the ONLY place an imported run re-processes anything.
+        self._repair_unprocessed_assets(local_asset_ids)
 
         # Final commit for the entire run import transaction
         self.session.commit()
@@ -2106,35 +2569,43 @@ class PackageService:
             asset = self.session.get(Asset, resource_id)
             if not asset or asset.infospace_id != infospace_id:
                 raise ValueError(f"Asset {resource_id} not found or not accessible.")
-            return await builder.build_asset_package(asset, include_annotations=True, include_justifications=True)
+            package = await builder.build_asset_package(asset, include_annotations=True, include_justifications=True)
         elif resource_type == ResourceType.SOURCE:
             # Direct database access for Sources with validation
             source = self.session.get(Source, resource_id)
             if not source or source.infospace_id != infospace_id:
                 raise ValueError(f"Source {resource_id} not found or not accessible.")
-            return await builder.build_source_package(source, include_assets=True)
+            package = await builder.build_source_package(source, include_assets=True)
         elif resource_type == ResourceType.SCHEMA:
             schema = self.annotation_service.get_schema(schema_id=resource_id, infospace_id=infospace_id, user_id=user_id)
-            if not schema or schema.infospace_id != infospace_id: 
+            if not schema or schema.infospace_id != infospace_id:
                 raise ValueError(f"Schema {resource_id} not found or not accessible in infospace {infospace_id}.")
-            return await builder.build_annotation_schema_package(schema)
+            package = await builder.build_annotation_schema_package(schema)
         elif resource_type == ResourceType.RUN:
             run = self.annotation_service.get_run_details(run_id=resource_id, infospace_id=infospace_id, user_id=user_id)
-            if not run or run.infospace_id != infospace_id: 
+            if not run or run.infospace_id != infospace_id:
                 raise ValueError(f"Run {resource_id} not found or not accessible in infospace {infospace_id}.")
-            return await builder.build_annotation_run_package(run, include_annotations=True, include_justifications=True)
+            package = await builder.build_annotation_run_package(run, include_annotations=True, include_justifications=True)
         elif resource_type == ResourceType.BUNDLE:
             bundle = self.session.get(Bundle, resource_id)
             if not bundle or bundle.infospace_id != infospace_id:
                 raise ValueError(f"Bundle {resource_id} not found or not accessible.")
-            return await builder.build_bundle_package(bundle, include_assets_content=True, include_asset_annotations=True)
+            package = await builder.build_bundle_package(bundle, include_assets_content=True, include_asset_annotations=True)
         elif resource_type == ResourceType.DATASET:
             dataset = self.dataset_service.get_dataset(dataset_id=resource_id, user_id=user_id, infospace_id=infospace_id)
-            if not dataset or dataset.infospace_id != infospace_id: 
+            if not dataset or dataset.infospace_id != infospace_id:
                 raise ValueError(f"Dataset {resource_id} not found or not accessible in infospace {infospace_id}.")
-            return await builder.build_dataset_package(dataset, include_assets=True, include_annotations=True)
+            package = await builder.build_dataset_package(dataset, include_assets=True, include_annotations=True)
         else:
             raise NotImplementedError(f"Export for resource type {resource_type} not implemented in PackageService.")
+
+        expected, missing = package.blob_census()
+        if missing:
+            logger.warning(
+                f"Export of {resource_type.value} {resource_id}: {missing} of {expected} "
+                f"source files could not be read from storage and are NOT in the package."
+            )
+        return package
 
     async def import_resource_package(
         self,

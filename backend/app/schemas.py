@@ -1211,18 +1211,13 @@ class ChatRequest(SQLModel):
     # Image attachments for vision models
     image_asset_ids: Optional[List[int]] = None  # Asset IDs of images to include in the conversation
     # Agent persona — selects which system prompt + MCP tool subset to load.
-    # 'intelligence' (default) is the workspace-wide research chat with the
-    # workspace_hub / library_hub / analysis_hub tool family. 'dossier' selects
-    # the M7 DossierAgent — formula authoring + observation snapshots, scoped
-    # to a single run. See ``docs/INTELLIGENCE.md`` § DossierAgent.
-    agent: Optional[str] = None  # 'operator' (browse-all catalogue) | 'intelligence' (legacy default) | 'dossier' | 'formula'
-    # When agent='dossier'|'formula', the run the agent operates against. The
-    # agent's tools take run_id explicitly; this lets the system prompt scope
-    # itself and surface defaults for tool calls.
+    # The browse-all operator is the only persona; 'intelligence' is a legacy
+    # alias for it. The run-scoped Dossier and Formula personas were retired
+    # along with hand-authored formulas.
+    agent: Optional[str] = None  # 'operator' | 'intelligence' (legacy alias)
+    # Optional run the chat is scoped to. Tools take run_id explicitly; this
+    # lets the system prompt scope itself and surface defaults for tool calls.
     run_id: Optional[int] = None
-    # For the FormulaAgent, the currently-open formula in the workspace. The
-    # backend prepends a hint so the agent knows what the user is editing.
-    formula_id: Optional[str] = None
 
 class ChatResponse(SQLModel):
     """Response from intelligence analysis chat."""

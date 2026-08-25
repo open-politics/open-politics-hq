@@ -14,6 +14,7 @@ from app.models import (
     ResourceType,
     PermissionLevel,
     Infospace,
+    InfospaceCollaborator,
 )
 from app.schemas import (
     ShareableLinkCreate,
@@ -44,20 +45,18 @@ def _assert_capability_on_infospace(
     Used for routes where infospace_id comes from the request body (not path),
     so the standard Requires() dependency can't resolve it automatically.
     """
-    from app.api.modules.identity_infospace_user.models import Collaborator, CollaboratorRole
-
     infospace = db.get(Infospace, infospace_id)
     if not infospace:
         raise HTTPException(status_code=404, detail="Infospace not found")
 
     # Owner has all capabilities
-    if infospace.user_id == user_id:
+    if infospace.owner_id == user_id:
         return
 
     collaborator = db.exec(
-        select(Collaborator).where(
-            Collaborator.infospace_id == infospace_id,
-            Collaborator.user_id == user_id,
+        select(InfospaceCollaborator).where(
+            InfospaceCollaborator.infospace_id == infospace_id,
+            InfospaceCollaborator.user_id == user_id,
         )
     ).first()
     if not collaborator:
@@ -238,7 +237,7 @@ async def export_resource(
     Returns a file download. Requires organize capability.
     """
     try:
-        filepath, filename = await service.export_resource(
+        filepath, filename, (blobs_expected, blobs_missing) = await service.export_resource(
             user_id=access.user_id,
             resource_type=resource_type,
             resource_id=resource_id,
@@ -246,10 +245,19 @@ async def export_resource(
         )
         background_tasks.add_task(service._cleanup_temp_file, filepath)
         media_type = "application/zip" if filepath.endswith(".zip") else "application/json"
+        # The body is a file, so the blob census travels in headers — the one
+        # channel a download has for saying "this is not all of it". The client
+        # reports the shortfall instead of presenting a clean download.
         return FileResponse(
             path=filepath,
             filename=filename,
             media_type=media_type,
+            headers={
+                "X-Package-Blobs-Expected": str(blobs_expected),
+                "X-Package-Blobs-Missing": str(blobs_missing),
+                "Access-Control-Expose-Headers":
+                    "X-Package-Blobs-Expected, X-Package-Blobs-Missing",
+            },
         )
     except HTTPException as e:
         raise e

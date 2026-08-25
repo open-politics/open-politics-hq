@@ -402,10 +402,17 @@ class ShareableService:
             return pkg, tmp_path
         except Exception as e: logger.error(f"Save failed: {e}", exc_info=True); self._cleanup_temp_file(tmp_path); raise
 
-    async def export_resource(self, user_id: int, resource_type: ResourceType, resource_id: int, infospace_id: int) -> Tuple[str, str]: 
-        _, path = await self._get_export_data_for_resource(user_id, resource_type, resource_id, infospace_id)
+    async def export_resource(self, user_id: int, resource_type: ResourceType, resource_id: int, infospace_id: int) -> Tuple[str, str, Tuple[int, int]]:
+        """Returns ``(filepath, filename, (blobs_expected, blobs_missing))``.
+
+        The census rides back so the route can report it. An export whose storage
+        could not serve the files still produces a valid package — it just is not
+        the whole thing, and the caller has to be able to say so rather than hand
+        over a clean-looking download.
+        """
+        pkg, path = await self._get_export_data_for_resource(user_id, resource_type, resource_id, infospace_id)
         if not path: raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Export file creation failed.")
-        return path, os.path.basename(path)
+        return path, os.path.basename(path), pkg.blob_census()
 
     async def export_resources_batch(self, user_id: int, rt: ResourceType, r_ids: List[int], inf_id: int) -> Tuple[str, str]:
         if not r_ids: raise HTTPException(status.HTTP_400_BAD_REQUEST, "No IDs")
