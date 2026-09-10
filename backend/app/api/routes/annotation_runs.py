@@ -814,6 +814,13 @@ class ViewRequest(BaseModel):
     """
 
     formula: Formula
+    q: str | None = None
+    """The panel's GQL string — see :class:`Panel.q`.
+
+    Panel-level rather than under ``graph`` because the query is what the PANEL
+    asks, not how one phase draws. ``GraphParams.q`` remains as the fallback for
+    clients that have not migrated; ``_effective_q`` is the single reader.
+    """
     fields: list[str] | None = None
     incoming_scopes: list[Scope] = Field(default_factory=list)
     merge_maps: list[MergeMap] = Field(default_factory=list)
@@ -953,6 +960,10 @@ def _build_view_phases(session, access, run_id: int, body: "ViewRequest") -> dic
         result["aggregate"] = fq.aggregate_view()
 
     if body.graph is not None:
+        if body.q and not body.graph.q:
+            # Panel-level `q` wins for a client that has migrated; a client
+            # still sending it under `graph` keeps working untouched.
+            body.graph = body.graph.model_copy(update={"q": body.q})
         gr = fq.graph_view(**_graph_kwargs(body.graph))
         # Built once and handed to both: the panes are named after the tables,
         # so computing them twice would be two queries whose answers could
@@ -1471,6 +1482,18 @@ def _graph_index(source: Any, gr) -> dict:
     except Exception:  # noqa: BLE001 — an index is never worth failing a view over
         logger.warning("graph meta: could not build the index", exc_info=True)
     return out
+
+
+def _effective_q(body: "ViewRequest") -> str | None:
+    """The query this request runs, wherever the client put it.
+
+    One reader, so the panel-level field and the graph-phase one cannot be
+    consulted in different orders by different call sites — which is how a
+    panel ends up drawing one query and reporting another.
+    """
+    if body.q:
+        return body.q
+    return (body.graph.q if body.graph else None) or None
 
 
 def _graph_kwargs(gp: "GraphParams") -> dict:

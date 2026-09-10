@@ -217,11 +217,37 @@ class Panel(BaseModel):
     formula_ref: str | None = None
     fields: list[str] = Field(default_factory=list)
     panel_config: PanelConfig
+    q: str | None = None
+    """The panel's GQL string — see :mod:`app.api.modules.graph.gql`.
+
+    **A property of the question the panel asks, not of how it draws.** It lived
+    on ``GraphConfig`` because the graph was the only surface that spoke the
+    language; every other panel type carried its filter as a ``Formula.filter``
+    instead, which meant two filter languages compiling onto one
+    ``AnnotationQuery`` and ANDed with no report (``STATE.md`` §"the duplication
+    that justifies it"). Declaring it here is the first half of collapsing them.
+
+    ``GraphConfig.q`` is still read as a fallback for panels saved before this
+    moved, and is never written again — see ``effective_q``.
+    """
     time_source: str | None = None
     scopes_in: list[Scope] = Field(default_factory=list)
     merge_maps: list[MergeMap] = Field(default_factory=list)
     grid_position: GridPosition
     collapsed: bool = False
+
+    @property
+    def effective_q(self) -> str | None:
+        """The panel's query, wherever it was stored.
+
+        One accessor so no caller has to know that graph panels used to keep
+        this somewhere else — and so the fallback can be deleted in one edit
+        once no stored dashboard carries the old shape.
+        """
+        if self.q:
+            return self.q
+        legacy = getattr(self.panel_config, "q", None)
+        return legacy or None
 
     @model_validator(mode="after")
     def _type_matches_config(self) -> "Panel":
