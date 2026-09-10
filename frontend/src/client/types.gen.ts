@@ -3711,6 +3711,7 @@ export type ValidationError = {
  */
 export type ViewRequest = {
     formula: Formula;
+    q?: (string | null);
     fields?: (Array<(string)> | null);
     incoming_scopes?: Array<Scope>;
     merge_maps?: Array<MergeMap>;
