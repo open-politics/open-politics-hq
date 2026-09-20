@@ -66,9 +66,16 @@ export function OperatorCompanion() {
       <div
         ref={windowRef}
         className={cn(
-          'fixed bottom-4 right-4 z-40 flex flex-col overflow-hidden rounded-lg border bg-background shadow-2xl',
-          'max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)]',
-          maximized ? 'h-[85vh] w-[720px]' : 'h-[780px] w-[480px]',
+          'fixed right-4 bottom-[calc(1rem+var(--app-rail,0px))] z-40 flex flex-col overflow-hidden rounded-lg border bg-background shadow-2xl',
+          // `dvh`/`dvw` rather than `vh`/`vw`: on a phone `100vh` is the tallest
+          // the viewport ever gets, so the window was sized past the bottom of
+          // the screen whenever the URL bar was showing.
+          'max-h-[calc(100dvh-2rem-var(--app-rail,0px))] max-w-[calc(100dvw-2rem)]',
+          // A 480px window does not fit a 390px phone. Below `sm` it takes the
+          // width it can get; the fixed sizes are for screens that have room.
+          maximized
+            ? 'h-[85dvh] w-[calc(100dvw-2rem)] sm:w-[720px]'
+            : 'h-[780px] w-[calc(100dvw-2rem)] sm:w-[480px]',
           !open && 'hidden',
         )}
         role="dialog"
@@ -116,7 +123,7 @@ export function OperatorCompanion() {
       {!open && (
         <button
           className={cn(
-            'fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border bg-background/95 px-3.5 py-2.5',
+            'fixed right-4 bottom-[calc(1rem+var(--app-rail,0px))] z-40 flex items-center gap-2 rounded-full border bg-background/95 px-3.5 py-2.5',
             'text-sm font-medium shadow-lg backdrop-blur transition-colors hover:bg-muted',
           )}
           title="Open the HQ Chat (Ctrl+K)"

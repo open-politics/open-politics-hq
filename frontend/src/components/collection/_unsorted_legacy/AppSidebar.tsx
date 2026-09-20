@@ -62,7 +62,6 @@ import {
   SidebarTrigger,
   SidebarGroup,
   SidebarGroupLabel,
-  SidebarSeparator,
   SidebarMenu
 } from "@/components/ui/sidebar"
 import HistoryList from "@/components/ui/SearchHistory"
@@ -222,20 +221,25 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
   ], [])
 
   return (
-    <Sidebar collapsible="icon" variant="floating" {...props} className="">
+    <Sidebar collapsible="icon" variant="floating" {...props}>
       <SidebarHeader>
         <InfospaceSwitcher />
       </SidebarHeader>
+      {/* Six labelled groups and four rules for eight links meant roughly as
+          many rows of chrome as destinations. The labels already separate the
+          groups — that is what a label is for — so the rules were doing the
+          same job twice, and "Navigation" was a heading over a single link
+          named Home, which is the one entry that needs no explaining.
+
+          The remaining taxonomy (Tools / Stores / Sharing / Settings) is left
+          alone deliberately: three of those still head a single item, but which
+          way they should merge is a product call, not a layout one. */}
       <SidebarContent className="flex flex-col">
-        <NavMain title="Navigation" items={navMain} />
+        <NavMain items={navMain} />
         <NavMain title="Inquire" items={inquireNav} />
-        <SidebarSeparator />
         <NavMain title="Tools" items={toolsNav} />
-        <SidebarSeparator />
         <NavMain title="Stores" items={storesNav} />
-        <SidebarSeparator />
         <NavMain title="Sharing" items={sharingNav} />
-        <SidebarSeparator />
         <NavMain title="Settings" items={settingsNav} />
         {/* {user?.is_superuser && (
           <NavProjects projects={projects} />

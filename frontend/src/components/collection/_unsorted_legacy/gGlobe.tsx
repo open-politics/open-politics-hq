@@ -20,7 +20,6 @@ import { useGeoDataStore } from '@/zustand_stores/storeGeodata';
 import MapPopupManager from "@/components/collection/globes/MapPopupManager";
 import ReactDOM from "react-dom";
 import * as GeoJSON from 'geojson';
-import { any } from "@amcharts/amcharts5/.internal/core/util/Array";
 
 // Helper function to format Date object to YYYY-MM-DDTHH:MM:SS
 const formatDateForAPI = (date: Date | null): string | null => {

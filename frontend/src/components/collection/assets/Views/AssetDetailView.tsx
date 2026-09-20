@@ -31,7 +31,7 @@ import {
 import { Pagination, PaginationContent, PaginationItem, PaginationPrevious, PaginationNext } from "@/components/ui/pagination"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { formatDistanceToNowStrict } from 'date-fns';
 import { Switch } from '@/components/ui/switch';

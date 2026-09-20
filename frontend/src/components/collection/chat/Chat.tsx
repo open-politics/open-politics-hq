@@ -142,10 +142,9 @@ interface IntelligenceChatProps {
    *  active run so live edits flow back into the dashboard without a
    *  manual reload. */
   onAgentMutation?: () => void
-  /** When ``true``, swap the viewport-relative outer sizing (``min-h-[91svh]``,
-   *  ``max-h-[92.75svh]``) for ``h-full min-h-0`` so the chat fits inside a
-   *  bounded container (e.g. ``DockedChat``'s 600px panel). Default ``false``
-   *  for the full-page workspace chat. */
+  /** Host hint for the chat's *chrome*, not its size — sizing is now inherited
+   *  from whatever bounded box the chat is placed in, the same way in both
+   *  hosts. Set for compact hosts such as ``DockedChat``'s panel. */
   embedded?: boolean
   /** When set, the chat seeds this text and auto-sends it once — exactly once —
    *  as soon as a model + infospace are ready and the conversation is empty.
@@ -1724,9 +1723,11 @@ export function IntelligenceChat({ className, agent, runId, onAgentMutation, emb
       // under the message so the chat always has precedence; in the 440px
       // DockedChat this keeps the narrow inline layout with no sidebar.
       "@container flex gap-4 flex-1 overflow-hidden",
-      embedded
-        ? "h-full min-h-0 max-h-full"
-        : "min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh]",
+      // One sizing rule for both hosts. The page chat used to carry its own
+      // viewport math here while the docked chat inherited its box; now the
+      // shell gives every host a bounded height, so inheriting is correct in
+      // both and `embedded` no longer has anything to say about size.
+      "h-full min-h-0 max-h-full",
       className,
     )}>
       {/* Conversation History Sidebar - Overlay on mobile, side-by-side on desktop */}

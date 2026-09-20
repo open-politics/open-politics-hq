@@ -13,7 +13,10 @@ export function ActiveObservations() {
   const { observations, remove } = useObservations()
   if (observations.length === 0) return null
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex w-72 flex-col gap-2">
+    // Sits a launcher-height above the companion rather than on top of it —
+    // both used to anchor to `bottom-4 right-4`, so whichever rendered last won
+    // and the other became unclickable.
+    <div className="fixed right-4 bottom-[calc(4.75rem+var(--app-rail,0px))] z-50 flex w-72 max-w-[calc(100dvw-2rem)] flex-col gap-2">
       {observations.map((o) => (
         <div key={o.id} className="relative rounded-md bg-background shadow-lg">
           <button

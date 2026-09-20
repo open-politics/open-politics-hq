@@ -1068,10 +1068,15 @@ export default function AssetExplorer({ initialQuery = '' }: { initialQuery?: st
       </div>
 
       {/* ── Body ── */}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {/* Helper panel */}
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        {/* Helper panel.
+            A 320px `flex-shrink-0` column left roughly 55px for results on a
+            375px screen — the filters were visible and the thing being filtered
+            was not. It is already a toggle, so below `@2xl` it becomes what a
+            toggled panel should be: an overlay that covers the results while
+            you set filters and gets out of the way when you are done. */}
         {showHelpers && (
-          <ScrollArea className="h-full min-h-0 w-80 flex-shrink-0 self-stretch border-r bg-muted/10">
+          <ScrollArea className="h-full min-h-0 w-80 flex-shrink-0 self-stretch border-r bg-muted/10 @max-2xl/page:absolute @max-2xl/page:inset-y-0 @max-2xl/page:left-0 @max-2xl/page:z-20 @max-2xl/page:w-[min(20rem,85%)] @max-2xl/page:border-r @max-2xl/page:bg-background @max-2xl/page:shadow-xl">
             <div className="p-4 space-y-0">
               {/* Kind */}
               <Section title="Kind">
