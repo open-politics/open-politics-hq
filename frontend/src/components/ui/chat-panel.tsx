@@ -36,9 +36,12 @@ export function ChatPanel({ messages, query, onModelChange }: ChatPanelProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const isFirstRender = useRef(true) // For development environment
 
+  // Empty is the "nothing chosen yet" sentinel, which is what the effect below
+  // keys off. It used to be the literal 'gemini-3-flash' — a model this backend
+  // no longer serves at all, so a fresh session opened on something unusable.
   const [selectedModelId, setSelectedModelId] = useLocalStorage<string>(
     'selectedModel',
-    'gemini-3-flash' // Default to Gemini which supports tools
+    ''
   )
   
   const { activeInfospace } = useInfospaceStore()
@@ -46,7 +49,7 @@ export function ChatPanel({ messages, query, onModelChange }: ChatPanelProps) {
   // Load default model from backend if none selected
   useEffect(() => {
     async function loadDefaultModel() {
-      if (!activeInfospace?.id || selectedModelId !== 'gemini-3-flash') return
+      if (!activeInfospace?.id || selectedModelId) return
       
       try {
         const response = await IntelligenceChatService.listAvailableModels()

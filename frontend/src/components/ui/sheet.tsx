@@ -5,6 +5,7 @@ import * as SheetPrimitive from "@radix-ui/react-dialog"
 import { XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { useIsMobile } from "@/hooks/use-mobile"
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
   return <SheetPrimitive.Root data-slot="sheet" {...props} />
@@ -50,8 +51,22 @@ function SheetContent({
   side = "right",
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
-  side?: "top" | "right" | "bottom" | "left"
+  /**
+   * `auto` — beside the content where there is room for two columns, under the
+   * thumb where there is not. A right-hand sheet on a phone is `w-3/4` of 390px:
+   * too narrow to read a dense list in, and it leaves a useless strip of the
+   * page behind it. A bottom sheet gets the full width and sits where a finger
+   * already is.
+   *
+   * Viewport-keyed on purpose: a sheet is portaled to the document, so "is there
+   * room beside it" genuinely is a question about the screen, not a container.
+   * And a sheet only opens on interaction, long after the first-render caveat on
+   * `useIsMobile` has resolved.
+   */
+  side?: "top" | "right" | "bottom" | "left" | "auto"
 }) {
+  const isMobile = useIsMobile()
+  const resolved = side === "auto" ? (isMobile ? "bottom" : "right") : side
   return (
     <SheetPortal>
       <SheetOverlay />
@@ -59,18 +74,27 @@ function SheetContent({
         data-slot="sheet-content"
         className={cn(
           "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out fixed z-50 flex flex-col gap-4 shadow-lg transition ease-in-out data-[state=closed]:duration-300 data-[state=open]:duration-500",
-          side === "right" &&
+          resolved === "right" &&
             "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm",
-          side === "left" &&
+          resolved === "left" &&
             "data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm",
-          side === "top" &&
+          resolved === "top" &&
             "data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top inset-x-0 top-0 h-auto border-b",
-          side === "bottom" &&
+          resolved === "bottom" &&
             "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom inset-x-0 bottom-0 h-auto border-t",
+          // Bounded, so a long body scrolls inside the sheet instead of pushing its
+          // own header off the top; rounded, so it reads as a layer lifted over the
+          // page rather than a footer; clear of the home indicator.
+          resolved === "bottom" && "max-h-[90dvh] rounded-t-xl pb-safe",
           className
         )}
         {...props}
       >
+        {/* The grab bar. Not a drag target — it is the conventional mark that
+            says "this came up from the bottom and goes back down". */}
+        {resolved === "bottom" && (
+          <div aria-hidden className="mx-auto -mb-2 mt-2 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/25" />
+        )}
         {children}
         <SheetPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">
           <XIcon className="size-4" />

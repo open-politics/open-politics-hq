@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { VariantProps, cva } from "class-variance-authority"
+import { usePathname } from "next/navigation"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -29,7 +30,10 @@ import { PanelLeftClose, PanelRightClose } from "lucide-react"
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
 const SIDEBAR_WIDTH = "16rem"
-const SIDEBAR_WIDTH_MOBILE = "18rem"
+// 18rem is 288px — 74% of a 390px phone, so the sheet used to bury the page it
+// was navigating away from. Capping against the viewport keeps a strip of
+// context visible, which is what tells you the sheet is a layer and not a page.
+const SIDEBAR_WIDTH_MOBILE = "min(18rem, 85vw)"
 const SIDEBAR_WIDTH_ICON = "3rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 
@@ -41,6 +45,15 @@ type SidebarContextProps = {
   setOpenMobile: (open: boolean) => void
   isMobile: boolean
   toggleSidebar: () => void
+}
+
+/** The persisted desktop preference, or `undefined` before the client has one. */
+function readStoredOpen(): boolean | undefined {
+  if (typeof document === "undefined") return undefined
+  const match = document.cookie.match(
+    new RegExp(`(?:^|;\\s*)${SIDEBAR_COOKIE_NAME}=(true|false)`)
+  )
+  return match ? match[1] === "true" : undefined
 }
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null)
@@ -79,7 +92,18 @@ const SidebarProvider = React.forwardRef<
 
     // This is the internal state of the sidebar.
     // We use openProp and setOpenProp for control from outside the component.
-    const [_open, _setOpen] = React.useState(defaultOpen)
+    //
+    // The cookie below has been written on every toggle for as long as this
+    // component has existed, and nothing ever read it back — so the sidebar
+    // reopened collapsed on every single load no matter what you set. Reading
+    // it in the initialiser rather than an effect means the first paint is
+    // already right, with no expand-on-load flicker.
+    //
+    // Safe against hydration: the only thing server-rendered from this provider
+    // is the wrapper div, whose markup does not depend on `open`. Both consumers
+    // that render `data-state` (the HQ shell and the marketing header) gate
+    // themselves behind a mounted flag, so neither exists in the SSR output.
+    const [_open, _setOpen] = React.useState(() => readStoredOpen() ?? defaultOpen)
     const open = openProp ?? _open
     const setOpen = React.useCallback(
       (value: boolean | ((value: boolean) => boolean)) => {
@@ -102,6 +126,16 @@ const SidebarProvider = React.forwardRef<
         ? setOpenMobile((open) => !open)
         : setOpen((open) => !open)
     }, [isMobile, setOpen, setOpenMobile])
+
+    // Close the mobile sheet once it has done its job. Without this the open
+    // flag outlives the route: tapping a link in the marketing menu leaves
+    // `openMobile` true, and the next screen — a different sidebar entirely —
+    // opens with it. A nav surface that stays open after navigating is also
+    // just wrong on its own terms.
+    const pathname = usePathname()
+    React.useEffect(() => {
+      setOpenMobile(false)
+    }, [pathname])
 
     // Adds a keyboard shortcut to toggle the sidebar.
     React.useEffect(() => {
@@ -201,17 +235,21 @@ const Sidebar = React.forwardRef<
 
     if (isMobile) {
       return (
-        <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
+        <Sheet open={openMobile} onOpenChange={setOpenMobile}>
           <SheetContent
             data-sidebar="sidebar"
             data-mobile="true"
-            className="w-[var(--sidebar-width)] bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
+            className={cn(
+              "w-[var(--sidebar-width)] bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden",
+              className
+            )}
             style={
               {
                 "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
               } as React.CSSProperties
             }
             side={side}
+            {...props}
           >
             <SheetHeader className="sr-only">
               <SheetTitle>Sidebar</SheetTitle>
@@ -239,8 +277,8 @@ const Sidebar = React.forwardRef<
             "group-data-[collapsible=offcanvas]:w-0",
             "group-data-[side=right]:rotate-180",
             variant === "floating" || variant === "inset"
-              ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4))]"
-              : "group-data-[collapsible=icon]:[var(--sidebar-width-icon)]"
+              ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_1rem)]"
+              : "group-data-[collapsible=icon]:w-[var(--sidebar-width-icon)]"
           )}
         />
         <div
@@ -251,8 +289,8 @@ const Sidebar = React.forwardRef<
               : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
             // Adjust the padding for floating and inset variants.
             variant === "floating" || variant === "inset"
-              ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4)_+2px)]"
-              : "group-data-[collapsible=icon]:[var(--sidebar-width-icon)] group-data-[side=left]:border-r group-data-[side=right]:border-l",
+              ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_1rem_+_2px)]"
+              : "group-data-[collapsible=icon]:w-[var(--sidebar-width-icon)] group-data-[side=left]:border-r group-data-[side=right]:border-l",
             className
           )}
           {...props}
@@ -282,7 +320,13 @@ const SidebarTrigger = React.forwardRef<
       data-sidebar="trigger"
       variant="ghost"
       size="icon"
-      className={cn("h-7 w-7 text-muted-foreground", className)}
+      className={cn(
+        "h-7 w-7 text-muted-foreground",
+        // 28px is under half the 44px touch minimum, and this is the control
+        // that opens navigation — the single most-tapped thing in the shell.
+        "[@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:w-10",
+        className
+      )}
       onClick={(event) => {
         onClick?.(event)
         toggleSidebar()
@@ -536,8 +580,11 @@ const sidebarMenuButtonVariants = cva(
           "bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]",
       },
       size: {
-        default: "h-8 text-sm",
-        sm: "h-7 text-xs",
+        // Each size gains a touch tier. Nav rows are the whole point of the
+        // mobile sheet, so they are the rows that most need a finger-sized
+        // target; on a mouse they stay compact.
+        default: "h-8 text-sm [@media(pointer:coarse)]:h-11",
+        sm: "h-7 text-xs [@media(pointer:coarse)]:h-9",
         lg: "h-12 text-sm group-data-[collapsible=icon]:!p-0",
       },
       colorVariant: {

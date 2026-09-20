@@ -52,7 +52,10 @@ export function NavMain({
   };
   return (
     <SidebarGroup className="p-2">
-      <SidebarGroupLabel>{title ? title : "Navigation"}</SidebarGroupLabel>
+      {/* No title, no heading. The fallback here used to be the literal string
+          "Navigation", so a group that deliberately went unlabelled got one
+          anyway — which is why omitting it was never an option. */}
+      {title && <SidebarGroupLabel>{title}</SidebarGroupLabel>}
       <SidebarMenu>
         {items.map((item) =>
           item.items && item.items.length > 0 ? (
