@@ -5,16 +5,32 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  /* ── Radius ──────────────────────────────────────────────────────────────
+     One number the whole app's corners derive from. The steps are mapped
+     into `@theme` below, so `rounded-md` / `rounded-lg` / `rounded-xl` all
+     move together when this changes. Before that mapping existed the token
+     was orphaned and every `rounded-*` fell back to a Tailwind default,
+     which is why editing it appeared to do nothing. */
   --radius: 0.625rem;
+
+  /* ── Elevation ───────────────────────────────────────────────────────────
+     A ground and two steps above it. `background` is the ground; `card` is
+     anything resting on it; `popover` is anything floating over it. They
+     used to be the same colour, so no surface could recede or lift and every
+     boundary in the app had to be drawn with a border.
+
+     The steps are deliberately small. Separation here is tonal, matching the
+     rule the graph chrome already follows — a hairline or a tone change,
+     never a shadow. Big jumps would turn panels into physical objects. */
   --background: oklch(0.9913 0.0044 214.33);
   --foreground: oklch(0.141 0.005 285.823);
-  --card: oklch(0.9913 0.0044 214.33);
+  --card: oklch(1 0 0);
   --card-foreground: oklch(0.141 0.005 285.823);
-  --popover: oklch(0.9913 0.0044 214.33);
+  --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.141 0.005 285.823);
   --primary: oklch(0.21 0.006 285.885);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.9913 0.0044 214.33);
+  --secondary: oklch(0.96 0.004 286.32);
   --secondary-foreground: oklch(0.21 0.006 285.885);
   --muted: oklch(0.96 0.004 286.32);
   --muted-foreground: oklch(0.552 0.016 285.938);
@@ -29,7 +45,7 @@
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.9913 0.0044 214.33);
+  --sidebar: oklch(1 0 0);
   --sidebar-foreground: oklch(0.141 0.005 285.823);
   --sidebar-primary: oklch(0.21 0.006 285.885);
   --sidebar-primary-foreground: oklch(0.985 0 0);
@@ -75,15 +91,20 @@
 }
 
 .dark {
+  /* Elevation, dark. Same ladder as the light block: ground, resting, floating.
+     Dark mode is the case where a missing ladder hurts most — over a near-black
+     ground an unlit panel is simply invisible, so every edge had to be a border.
+     Lightness climbs, hue and chroma stay put, so the 230 tint reads as one
+     material lit from one direction rather than three different greys. */
   --background: oklch(0.15 0.02 230);
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.15 0.02 230);
+  --card: oklch(0.185 0.02 230);
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.15 0.02 230);
+  --popover: oklch(0.205 0.02 230);
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.92 0.004 286.32);
   --primary-foreground: oklch(0.21 0.006 285.885);
-  --secondary: oklch(0.15 0.02 230);
+  --secondary: oklch(0.22 0.02 230);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.22 0.02 230);
   --muted-foreground: oklch(0.705 0.015 286.067);
@@ -98,7 +119,7 @@
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.15 0.02 230);
+  --sidebar: oklch(0.185 0.02 230);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
@@ -244,13 +265,102 @@
   }
 }
 
-.scrollbar-hide::-webkit-scrollbar {
+/* ═══ Scrolling ════════════════════════════════════════════════════════════
+   HQ never shows a scrollbar. That is a decision, not an oversight, so it is
+   stated once here rather than re-spelled per component — and so nobody
+   "fixes" it back later.
+
+   A hidden scrollbar removes an affordance, though: with no bar and no
+   clipped-text cue, nothing tells you a region continues past its edge. That
+   job moves to `.scroll-edges`, which fades the content out at whichever edge
+   has more behind it. A fade is the better signal anyway — it says "there is
+   more this way" at the exact place the eye is already looking, instead of
+   parking a control on the far side of the panel. */
+
+/* Hide the bar. `overflow` still scrolls; wheel, trackpad, touch and keyboard
+   are untouched. Applied globally below to every scroll container, with this
+   class kept because ~40 call sites already name it. */
+.scrollbar-hide::-webkit-scrollbar,
+.scroll-edges::-webkit-scrollbar,
+.scroll-edges-x::-webkit-scrollbar {
+  width: 0;
+  height: 0;
   display: none;
 }
 
-.scrollbar-hide {
+.scrollbar-hide,
+.scroll-edges,
+.scroll-edges-x {
   -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
+  scrollbar-width: none;     /* Firefox */
+}
+
+/* Registering the edge sizes as typed custom properties is what lets them
+   animate — an unregistered variable jumps between values, and a fade that
+   snaps on reads as a rendering glitch rather than as depth. Browsers without
+   `@property` simply get the instant version. */
+@property --edge-start {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --edge-end {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+/* The affordance. Drive it by setting `data-edge-start` / `data-edge-end` on
+   the element — `useScrollEdges` does this from real scroll position, so a
+   region that does not actually overflow is never masked. */
+.scroll-edges,
+.scroll-edges-x {
+  --edge-size: 1.75rem;
+  --edge-start: 0px;
+  --edge-end: 0px;
+  transition: --edge-start 140ms linear, --edge-end 140ms linear;
+  /* Deliberately no `overscroll-behavior` here. Containment is right for a
+     page-level scroller and a trap for a list inside a page: reach the end of
+     the list and swiping stops moving the page around it. `Surface` asks for it
+     where it belongs. */
+}
+
+.scroll-edges {
+  -webkit-mask-image: linear-gradient(to bottom,
+    transparent 0, #000 var(--edge-start),
+    #000 calc(100% - var(--edge-end)), transparent 100%);
+  mask-image: linear-gradient(to bottom,
+    transparent 0, #000 var(--edge-start),
+    #000 calc(100% - var(--edge-end)), transparent 100%);
+}
+
+.scroll-edges-x {
+  -webkit-mask-image: linear-gradient(to right,
+    transparent 0, #000 var(--edge-start),
+    #000 calc(100% - var(--edge-end)), transparent 100%);
+  mask-image: linear-gradient(to right,
+    transparent 0, #000 var(--edge-start),
+    #000 calc(100% - var(--edge-end)), transparent 100%);
+}
+
+.scroll-edges[data-edge-start="true"],
+.scroll-edges-x[data-edge-start="true"] { --edge-start: var(--edge-size); }
+
+.scroll-edges[data-edge-end="true"],
+.scroll-edges-x[data-edge-end="true"] { --edge-end: var(--edge-size); }
+
+/* A mask clips whatever it covers, so anything that must escape the box —
+   a sticky header's popover, a focus ring — has to sit outside the masked
+   element. Opt a subtree out when that bites. */
+.scroll-edges-none {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/* Reduced motion: keep the fade (it carries information), drop the animation. */
+@media (prefers-reduced-motion: reduce) {
+  .scroll-edges,
+  .scroll-edges-x { transition: none; }
 }
 
 .d3-overlay {
@@ -499,18 +609,6 @@ svg:has(#shimmer) {
   }
 }
 
-/* Restore essential Shadcn/UI base styles */
-@layer base {
-  * {
-    border-color: var(--color-border);
-  }
-
-  body {
-    background-color: var(--color-background);
-    color: var(--color-foreground);
-  }
-}
-
 /* Restore shimmer animation for v4 compatibility */
 .animate-shimmer {
   background: linear-gradient(
@@ -530,9 +628,34 @@ svg:has(#shimmer) {
 }
 
 @theme inline {
+  /* ── Typography ──────────────────────────────────────────────────────────
+     `app/layout.tsx` puts Geist's `.variable` classes on <body>, which only
+     declares `--font-geist-*`; it does not make `font-sans` use them. Without
+     this mapping the utility resolved to Tailwind's stock system stack and
+     the loaded typeface was never actually painted.
+
+     The fallbacks are load-bearing, not decoration: if the Geist variable is
+     ever absent the chain degrades to the same stack that was rendering
+     before, so a missing font can never leave the app unstyled. */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system,
+               "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, "SF Mono",
+               Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* ── Radius scale ────────────────────────────────────────────────────────
+     Derived from the single `--radius` token so corners stay in proportion
+     to each other when it moves. Unmapped, `rounded-md` and `rounded-lg`
+     silently used Tailwind's defaults and the token controlled nothing. */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --color-card: color-mix(in oklab, var(--card) 100%, transparent);
+  /* Plain passthrough. The `color-mix(... 100%, transparent)` this replaces
+     was a no-op that only obscured what the token resolved to. */
+  --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
@@ -658,7 +781,156 @@ svg:has(#shimmer) {
   * {
     @apply border-border outline-ring/50;
   }
+
+  /* ── The height chain ──────────────────────────────────────────────────
+     Everything below this point sizes with `h-full` / `flex-1 min-h-0`, and
+     all of it resolves against these two rules. Without a definite height on
+     the root elements `h-full` resolves against an indefinite parent and
+     collapses, which is why pages used to re-derive their own height from
+     the viewport with hand-tuned `svh` percentages.
+
+     Plain `100%` here, not `dvh`. The root element only has to be a definite
+     height for the chain to resolve; it does not need to track the mobile URL
+     bar, and giving it `dvh` would resize every long document as the bar
+     hides. The one place that genuinely wants the dynamic viewport is the app
+     shell, and it asks for it directly. */
+  html {
+    height: 100%;
+  }
+
+  /* `height: 100%` only — deliberately NOT `overflow: hidden`. The routes
+     outside /hq (landing, /accounts, /webpages, public share links) scroll the
+     document normally and would be trapped by it. The app shell locks its own
+     scrolling instead, which is the only place that wants to be locked. */
   body {
     @apply bg-background text-foreground;
+    height: 100%;
   }
+
+  /* No scrollbars anywhere — see the Scrolling section above for the whole
+     rationale. Stated here as well as per-class so a container that scrolls
+     without opting in still never grows a bar. */
+  *::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+}
+
+/* ── Control labels ────────────────────────────────────────────────────────
+   The text beside an icon in a toolbar. It is the first thing a cramped bar
+   should give up and the first thing a roomy surface should show, and that is
+   one rule rather than a breakpoint spelled out at every button.
+
+   Keyed to the `panelheader` container, so it answers to the width of the bar
+   the button is actually in — not the browser window, which is what
+   `hidden lg:inline` measured and why full labels used to appear in a 300px
+   panel on a wide monitor.
+
+   The second rule is the one that matters for the overflow sheet. When a
+   cluster is too wide for its bar it moves into a sheet (`ActionOverflow`),
+   which portals out of the container entirely — so the container query stops
+   matching and every label would vanish at exactly the moment there is finally
+   room for it. Inside that sheet, room is guaranteed by construction. */
+.control-label {
+  display: none;
+}
+
+@container panelheader (min-width: 32rem) {
+  .control-label {
+    display: inline;
+  }
+}
+
+[data-actions-overflow] .control-label {
+  display: inline;
+}
+
+/* ── The document stays put under the app ──────────────────────────────────
+   On a phone the whole HQ layout could be dragged: rail, header and dock
+   rubber-banding together and snapping back, so nothing felt anchored. The shell
+   is exactly `100dvh` and scrolls inside itself, but the *document* beneath it
+   was still a scroller — iOS lets the root elastic-scroll even when nothing
+   overflows, and every inner list that reached its end handed its momentum
+   straight to it.
+
+   Scoped with `:has()` so it holds only while the shell is on the page. Routes
+   outside /hq — the landing page, /accounts, public share links — are ordinary
+   documents that must keep scrolling, which is why this can never be a blanket
+   rule on `body`. */
+html:has([data-app-shell]),
+html:has([data-app-shell]) body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* ── The bottom rail's reservation ─────────────────────────────────────────
+   The rail itself sits in the layout column, so the content area shrinks
+   around it and nothing needs to reserve room. Elements that are `position:
+   fixed`, though, are positioned against the viewport and know nothing about
+   it — the operator companion, the observation toasts and the runner dock all
+   anchor to `bottom-*` and would sit underneath it.
+
+   So the shell publishes one number and they offset by it. Zero when there is
+   no rail (any width at or above `md`, or focus mode, which strips all chrome),
+   which makes `calc(1rem + var(--app-rail))` correct everywhere without a
+   single breakpoint at the call site. */
+[data-app-shell] { --app-rail: 0px; }
+
+@media (max-width: 767px) {
+  [data-app-shell][data-rail="on"] {
+    --app-rail: calc(3.5rem + env(safe-area-inset-bottom));
+  }
+}
+
+/* ── Safe areas ────────────────────────────────────────────────────────────
+   `app/layout.tsx` sets `viewportFit: 'cover'`, so on a notched device the
+   page extends under the status bar and the home indicator and these insets
+   return real values. Nothing consumed them outside the graph's fullscreen
+   path, which is why fixed bottom chrome sat under the home indicator.
+
+   They resolve to 0 on every device without insets, so these are inert on
+   desktop and Android rather than something to branch on. */
+@utility pt-safe { padding-top: env(safe-area-inset-top); }
+@utility pr-safe { padding-right: env(safe-area-inset-right); }
+@utility pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+@utility pl-safe { padding-left: env(safe-area-inset-left); }
+
+@utility inset-safe {
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+
+/* Margin, for chrome whose own padding must stay intact: the inset is added
+   outside the box rather than eating into it. */
+@utility mb-safe { margin-bottom: env(safe-area-inset-bottom); }
+@utility mt-safe { margin-top: env(safe-area-inset-top); }
+
+/* The height a bottom-anchored bar needs to clear the home indicator. */
+@utility h-safe-bottom { height: env(safe-area-inset-bottom); }
+
+/* ── Overlay material ──────────────────────────────────────────────────────
+   The one surface for chrome that floats over a canvas: map drawers, a chart's
+   legend, anything you read the content *through*. It is the graph chrome's
+   material, named so it can be used by class anywhere rather than re-derived.
+   Before this the app spelled "translucent panel over something" a dozen ways —
+   `bg-background/55 backdrop-blur-sm` through `bg-background/95 backdrop-blur` —
+   and none agreed with each other or with the graph.
+
+   Reads the same `--hud-*` tokens as `HUD_SURFACE` in `components/ui/chrome.tsx`,
+   so tuning the tokens tunes both. `HUD_SURFACE` stays a Tailwind class list on
+   purpose: call sites override pieces of it (`bg-transparent`) and
+   tailwind-merge can only resolve that against utilities it recognises. */
+@utility surface-overlay {
+  background-color: var(--hud-surface);
+  border-color: var(--hud-line);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  backdrop-filter: blur(24px) saturate(1.5);
+  box-shadow: none;
 }

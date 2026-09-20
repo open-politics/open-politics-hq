@@ -1,7 +1,14 @@
 'use client';
 
 /**
- * The graph panel's chrome — the instrument the graph is read through.
+ * The instrument chrome — first the graph's, now the app's.
+ *
+ * It lives in `ui/` because it stopped being a graph detail: panel headers,
+ * map overlays and the dashboard read through it too. What follows is the
+ * argument it was built on, which is the reason to use it and not a
+ * `variant="outline"` in its place.
+ *
+ * Originally: the graph panel's chrome — the instrument the graph is read through.
  *
  * The panel used to dress itself in stock shadcn: `variant="outline"` on
  * every control, which is `border bg-background shadow-xs`. Three properties,
@@ -59,9 +66,17 @@ export const HUD_NUM = 'text-[10px] tabular-nums tracking-tight';
 
 export type HudSize = 'sm' | 'md';
 
+/**
+ * Heights carry a touch tier. The instrument is dense on purpose — 24px and
+ * 28px controls read as precise under a mouse — and a fingertip needs roughly
+ * 36–44px, so on a coarse pointer every control steps up here, once, rather
+ * than through a `size="touch"` prop at a hundred call sites. It asks the input
+ * device, not the width: a touch laptop gets the bigger target at 1440px and a
+ * desktop mouse keeps the dense one in a narrow window.
+ */
 const SIZE: Record<HudSize, { h: string; px: string; icon: string; r: string }> = {
-  sm: { h: 'h-6', px: 'px-2', icon: 'h-3 w-3', r: 'rounded-md' },
-  md: { h: 'h-7', px: 'px-2.5', icon: 'h-3.5 w-3.5', r: 'rounded-lg' },
+  sm: { h: 'h-6 [@media(pointer:coarse)]:h-9', px: 'px-2', icon: 'h-3 w-3', r: 'rounded-md' },
+  md: { h: 'h-7 [@media(pointer:coarse)]:h-10', px: 'px-2.5', icon: 'h-3.5 w-3.5', r: 'rounded-lg' },
 };
 
 /** The resting state of every control in the panel: a hairline around
@@ -126,7 +141,9 @@ export const HudButton = React.forwardRef<HTMLButtonElement, HudButtonProps>(
         data-active={active || undefined}
         className={cn(
           BASE, s.h,
-          iconOnly ? (size === 'sm' ? 'w-6' : 'w-7') : s.px,
+          iconOnly
+            ? (size === 'sm' ? 'w-6 [@media(pointer:coarse)]:w-9' : 'w-7 [@media(pointer:coarse)]:w-10')
+            : s.px,
           HUD_LABEL,
           active ? CHOSEN : cn(REST, TONE[tone]),
           // In a group the container owns the ring and the corners; the child
@@ -225,7 +242,7 @@ export const HudChip = React.forwardRef<
       type="button"
       data-active={active || undefined}
       className={cn(
-        BASE, 'h-6 gap-1 rounded-md px-2', HUD_LABEL,
+        BASE, 'h-6 gap-1 rounded-md px-2 [@media(pointer:coarse)]:h-8', HUD_LABEL,
         active ? CHOSEN : REST,
         className,
       )}
@@ -324,6 +341,11 @@ export function HudBar({
  *
  * `shadow-none` is not redundant. Radix's `PopoverContent` ships `shadow-md`,
  * and a `className` that only adds classes loses to it.
+ *
+ * The same material is available by class as `surface-overlay` (globals.css),
+ * for non-graph overlays. Both read `--hud-surface` / `--hud-line`; this one
+ * stays a utility list so call sites can override parts of it through
+ * tailwind-merge.
  */
 export const HUD_SURFACE =
   'rounded-xl border border-hud-line bg-hud-surface shadow-none ' +
@@ -369,7 +391,7 @@ export function HudOption({
       disabled={disabled}
       data-active={active || undefined}
       className={cn(
-        'group relative flex w-full items-start gap-2 rounded-md py-1 pl-3 pr-1.5 text-left',
+        'group relative flex w-full items-start gap-2 rounded-md py-1 pl-3 pr-1.5 text-left [@media(pointer:coarse)]:py-2',
         'transition-colors hover:bg-hud-sunken disabled:pointer-events-none disabled:opacity-35',
         className,
       )}
