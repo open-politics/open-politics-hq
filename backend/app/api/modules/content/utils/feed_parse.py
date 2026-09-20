@@ -1,10 +1,12 @@
 """Feed parsing — the one place RSS/Atom XML becomes entries.
 
 Shared by two entry modes (Q3 of the redesign): the **watched** ``RSSFeed`` *source*
-(its ``read`` streams entries as inline-content ARTICLE items each poll) and the
-**one-shot** ``Feed`` *content type* (its ``process`` turns a dumped feed blob into
-child WEB stubs that re-enter acquisition). Same parse, two consumers — neither
-re-implements feedparser.
+(its ``read`` streams entries as ARTICLE items each poll) and the **one-shot**
+``Feed`` *content type* (its ``process`` runs the same items through the acquire
+spine). Same parse, two consumers — neither re-implements feedparser.
+
+This module only reports what the feed said; whether an entry's ``content`` is
+the article or a lede is decided downstream, in ``sources/rss.entries_to_items``.
 """
 
 from __future__ import annotations

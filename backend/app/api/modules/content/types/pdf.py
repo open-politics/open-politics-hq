@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-import fitz  # PyMuPDF
+import pymupdf
 
 from app.api.modules.content.models import Asset, AssetKind
 from app.api.modules.content.types import content_type, Text, Image
@@ -112,7 +112,7 @@ def _extract_pages(
 ) -> tuple[str, List[AssetCreate], dict]:
     """Walk the PDF, build a PDF_PAGE AssetCreate per page with ordered modalities,
     and return (full_text, pages, parent metadata)."""
-    doc = fitz.open(filename=file_path)
+    doc = pymupdf.open(filename=file_path)
     full_text = ""
     pages: List[AssetCreate] = []
     total_chars = 0
@@ -173,7 +173,7 @@ def _extract_pages(
 
 def _sample_pages(file_path: str, sample_pages: int = 3) -> dict:
     """Cheap first-pages sample for Phase-1 image-only detection."""
-    doc = fitz.open(filename=file_path)
+    doc = pymupdf.open(filename=file_path)
     with doc:
         page_count = doc.page_count
         chars = images = 0

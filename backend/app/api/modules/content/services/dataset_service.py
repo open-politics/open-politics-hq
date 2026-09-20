@@ -5,7 +5,7 @@ from sqlmodel import Session, select, func
 from datetime import datetime, timezone
 
 # Import base service types
-from app.api.modules.foundation_service_providers.base import StorageProvider
+from app.api.modules.foundation_service_providers import StorageProvider
 
 from app.models import Dataset, Asset, AnnotationRun, Annotation, ResultStatus, User
 from app.schemas import DatasetCreate, DatasetUpdate

@@ -2,12 +2,14 @@
 
 A feed URL fetched by ``web`` (or an uploaded ``.rss`` / ``.xml``) is detected here
 and expanded **into a bundle named after the feed**: each entry becomes an ARTICLE
-asset carrying the feed's **inline content** (no re-scrape of the article URL), and
+asset carrying the entry's full body where the feed supplied one and the scraped
+article where it supplied only a lede (``RSSFeed.fetch`` decides, on length), and
 the feed artifact sits beside them. This is the *document* half; the *watched
-subscription* is the ``rss`` SOURCE, which yields the same inline-content ARTICLE
-items per poll. Both run the ONE acquire spine — ``parse_feed`` → ``entries_to_items``
-→ ``intake_items`` — so a feed ingested as a document and the same feed watched as a
-subscription converge on identical assets, not two shapes that drift apart.
+subscription* is the ``rss`` SOURCE, which yields the same items per poll.
+
+Both run the ONE acquire spine — ``parse_feed`` → ``entries_to_items`` →
+``intake_items`` — so a feed ingested as a document and the same feed watched as
+a subscription converge on identical assets, not two shapes that drift apart.
 
 Articles are standalone documents → they land as **bundle members** (not children of
 the feed). ARTICLE has no processor, so they are born READY; enrichment (embedding,
@@ -33,7 +35,7 @@ logger = logging.getLogger(__name__)
     category="document",
 )
 class FeedDocument:
-    """A fetched feed file → one inline-content ARTICLE asset per entry, in a bundle."""
+    """A fetched feed file → one ARTICLE asset per entry, in a bundle."""
 
     @staticmethod
     def recognizes(head: bytes) -> bool:

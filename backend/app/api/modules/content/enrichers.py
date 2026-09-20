@@ -4,7 +4,8 @@ Enrichment system: @enricher decorator and enricher functions.
 @enricher wraps @task with enrichment defaults:
 - enrichment_resolved gate (GIN-indexed, prevents re-dispatch)
 - EnrichmentContext with done/fail/skip/provider
-- dispatch_filter checks ENABLED_ENRICHERS + enrichment_config + capability
+- dispatch_filter checks deployment.processing.background_content_enrichers
+  + enrichment_config + capability
 
 Six enrichers: ocr, geocoding, hash, language_detection, quality_score, embedding.
 """
@@ -48,12 +49,10 @@ def retry_enrichment(session: Session, asset_id: int, enricher_name: str):
 # ── @enricher decorator ───────────────────────────────────────────────────────
 
 def _enrichment_dispatch_filter(enricher_name: str, capability: str | None = None):
-    """Build dispatch_filter for an enricher: checks ENABLED_ENRICHERS + enrichment_config + capability."""
+    """Build dispatch_filter for an enricher: deployment switch + enrichment_config + capability."""
     def _filter(infospace) -> bool:
         from app.core.dispatch import _get_enabled_enrichers
-        enabled = _get_enabled_enrichers()
-        # None = all enrichers enabled ("*"), set = whitelist (empty set = nothing)
-        if enabled is not None and enricher_name not in enabled:
+        if enricher_name not in _get_enabled_enrichers():
             return False
 
         # Check enrichment_config
@@ -61,7 +60,7 @@ def _enrichment_dispatch_filter(enricher_name: str, capability: str | None = Non
         if config is not None:
             # EnrichmentConfig exists — enricher must be explicitly enabled
             if isinstance(config, dict):
-                from app.api.modules.foundation_service_providers.base import EnrichmentConfig
+                from app.api.modules.foundation_service_providers import EnrichmentConfig
                 config = EnrichmentConfig(**config)
             if not config.is_enabled(enricher_name):
                 return False
@@ -132,7 +131,7 @@ def enricher(
                     if infospace:
                         config = infospace.enrichment_config
                         if isinstance(config, dict):
-                            from app.api.modules.foundation_service_providers.base import EnrichmentConfig as EC
+                            from app.api.modules.foundation_service_providers import EnrichmentConfig as EC
                             config = EC(**config)
             except Exception as e:
                 logger.warning("Failed to load enrichment_config: %s", e)
@@ -165,7 +164,7 @@ def enrich_ocr(ctx: EnrichmentContext, asset_ids: list[int]):
     """OCR assets (PDF_PAGE children) with image modality."""
     from collections import defaultdict
     import asyncio
-    import fitz
+    import pymupdf
 
     from app.api.modules.content.utils.resolve_source_file import resolve_source_file
 
@@ -185,13 +184,17 @@ def enrich_ocr(ctx: EnrichmentContext, asset_ids: list[int]):
                 blob_path_by_parent[asset.parent_asset_id] = blob_path
         session.commit()
 
-    # Resolve providers
-    try:
-        ocr = ctx.provider("ocr")
-        storage = ctx.provider("storage")
-    except Exception as e:
-        logger.warning("OCR provider not available: %s", e)
-        return
+    # Let a ProviderError propagate. The @task wrapper turns it into a
+    # structural block that survives until the user fixes their config, so
+    # dispatch stops selecting this batch.
+    #
+    # This used to catch it, log a warning and return — marking nothing. The
+    # assets stayed absent from `enrichment_resolved`, so the enricher's own
+    # check query re-selected the identical batch every 60 seconds, forever,
+    # logging the same warning each time. The other three enrichers were right
+    # to let it through; this one was the outlier.
+    ocr = ctx.provider("ocr")
+    storage = ctx.provider("storage")
 
     # Phase 2: Load PDFs, run OCR — no DB session
     ocr_results: list[tuple[int, str | None, str, float]] = []
@@ -211,14 +214,18 @@ def enrich_ocr(ctx: EnrichmentContext, asset_ids: list[int]):
                 for asset_id, page_index in page_list:
                     try:
                         pdf_bytes.seek(0)
-                        doc = fitz.open(stream=pdf_bytes.read(), filetype="pdf")
+                        doc = pymupdf.open(stream=pdf_bytes.read(), filetype="pdf")
                         try:
                             page = doc.load_page(page_index or 0)
                             pix = page.get_pixmap(dpi=150)
                             image_bytes = pix.tobytes("png")
                         finally:
                             doc.close()
-                        result = await ocr.extract_text(image_bytes)
+                        # Pass the resolved model through. It used to be
+                        # *required* by model_required and then discarded,
+                        # because the adapter read its model from an env var and
+                        # extract_text had no model parameter at all.
+                        result = await ocr.extract_text(image_bytes, model=ocr.model)
                         ocr_results.append((asset_id, result.text, result.engine, result.confidence))
                     except Exception as e:
                         ocr_failed.append((asset_id, str(e)))

@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy import text
 from sqlmodel import Session
 
-from app.api.modules.foundation_service_providers.base import (
+from app.api.modules.foundation_service_providers import (
     ScrapingProvider, StorageProvider, WebSearchProvider,
 )
 from app.core.config import AppSettings

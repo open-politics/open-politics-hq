@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Protocol, Set, Tuple, Type, TypeVar, runtime_checkable
 
 from app.api.modules.content.models import Asset, AssetKind, Modality
-from app.api.modules.foundation_service_providers.base import StorageProvider
+from app.api.modules.foundation_service_providers import StorageProvider
 
 # BaseProcessor/ProcessingContext not imported here to avoid circular dependency:
 # types <- processors.base <- processors/__init__ <- strategy <- types

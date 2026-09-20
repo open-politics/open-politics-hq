@@ -9,6 +9,10 @@ and does NOT create image children:
   • The web_article *type* turns the entry's enclosure images (surfaced in
     metadata["rss_images"]) into child assets when it processes the article.
 
+An entry body is inline content only when it IS the article: below
+``SCRAPE_THRESHOLD`` it is a lede, and ``fetch`` acquires the article from the
+entry link instead (falling back to the lede if it cannot).
+
 Identity = entry guid/link; change-token = the entry's updated/published date
 (so a revised entry re-fetches and supersedes); provenance = rss://host/…#guid.
 """
@@ -27,7 +31,7 @@ import feedparser
 from app.api.modules.content.contexts import SourceContext
 from app.api.modules.content.models import AssetKind
 from app.api.modules.content.sources import (
-    FetchedContent, Preview, RawItem, source_type,
+    SCRAPE_THRESHOLD, FetchedContent, Preview, RawItem, realize_article, source_type,
 )
 from app.api.modules.content.utils.feed_parse import parse_feed, _entry_content
 
@@ -40,7 +44,23 @@ def entries_to_items(
     """Parsed feed entries → RawItems. THE feed→item mapping, shared by the watched
     ``rss`` source and the one-shot ``RSS_FEED`` content type, so a feed ingested either
     way yields byte-identical assets. Previously each side built its own, disagreeing on
-    metadata keys and match policy."""
+    metadata keys and match policy.
+
+    **An entry body below ``SCRAPE_THRESHOLD`` is a preview, not the content.**
+    The realization contract is explicit — inline ``text`` is only ever the FULL
+    content, and a snippet is preview metadata — but a feed hands both shapes
+    over through one field. ``<content:encoded>`` is the article;
+    ``<description>`` is its first two sentences; feedparser puts whichever
+    exists in the same place. Measured across UN News, the Commission press
+    corner, DW, France 24 and Al Jazeera, the median entry body is 114–412
+    characters: every one of those feeds carries a lede, not a story.
+
+    So the length is the decision. Full body → inline, and ``fetch`` is a
+    pass-through with no network. Lede → ``text`` stays empty, the lede stays in
+    ``metadata["summary"]`` where it already was, and ``fetch`` acquires from the
+    locator like every other network source. Identity, drift token and
+    provenance are untouched either way, so re-polls behave exactly as before.
+    """
     items: List[RawItem] = []
     for entry in entries:
         identity = entry["identity"]
@@ -51,6 +71,7 @@ def entries_to_items(
                 ts = dateutil.parser.parse(pub)
             except Exception:
                 ts = None
+        body = entry["content"] or ""
         # Drift token: the entry's publish/revision date if present (bumps when the feed
         # revises the entry), else None (= "no drift signal" → dedup on identity alone).
         # NOT a content hash — feed bodies wiggle (ads, relative timestamps), which would
@@ -61,7 +82,8 @@ def entries_to_items(
             title=entry["title"],
             source_token=pub or None,
             locator=entry["link"] or identity,
-            text=entry["content"],   # RSS content arrives inline — free during read
+            # Only when it is the whole article. See the docstring.
+            text=(body if len(body) >= SCRAPE_THRESHOLD else None),
             event_timestamp=ts,
             metadata={
                 "author": entry["author"],
@@ -116,13 +138,18 @@ class RSSFeed:
         )
 
     async def fetch(self, item: RawItem, ctx: SourceContext) -> FetchedContent:
-        # RSS content is inline (read already has it), so fetch is a pass-through.
-        # No hash here — the builder derives it from the text via the one derivation.
-        return FetchedContent(
-            text_content=item.text or "",
-            event_timestamp=item.event_timestamp,
-            metadata=item.metadata,
-        )
+        """Full body through; otherwise acquire the article behind the entry link.
+
+        ``read`` fills ``text`` only when the entry carried the whole article
+        (``entries_to_items``), so an empty one here means the feed gave us a
+        lede. The feed path was the one network source that never did the second
+        half of its own contract — it returned the lede as if it were content,
+        and every consumer downstream read a headline as a document.
+
+        No hash here — the builder derives it from the text via the one derivation.
+        """
+        return await realize_article(
+            item, ctx, preview=(item.metadata or {}).get("summary") or "")
 
 
 # ── Preview / discovery (no ingestion needed) — used by routes ─────────────────

@@ -331,6 +331,12 @@ async def _run_ingestion_job(ctx: TaskContext, job_id: int) -> Dict[str, int]:
                 src.total_items_ingested = (src.total_items_ingested or 0) + fresh
                 src.consecutive_failures = 0          # poll succeeded → reset breaker
                 src.status = SourceStatus.PENDING      # back to idle/ready (mint set PROCESSING)
+                # …and the evidence of the failure, or a source that recovered
+                # still reads as broken. The breaker and the status were reset
+                # here from the start; `error_message` was not, so every surface
+                # that shows it kept painting a fixed feed red indefinitely.
+                src.error_message = None
+                src.last_error_at = None
                 session.add(src)
                 session.commit()
 

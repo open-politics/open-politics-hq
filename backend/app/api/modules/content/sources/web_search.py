@@ -1,8 +1,12 @@
 """Web-search source — a query becomes ARTICLE RawItems via the search provider.
 
-Search results carry their snippet/content inline, so ``read`` populates ``text``
-and ``fetch`` packages it (no separate scrape). A monitored query advances its
-cursor's ``seen_urls`` so re-polls skip already-ingested results.
+An answer engine returns whole articles; a metasearch engine returns two-line
+snippets. Both arrive in the same field, so ``read`` applies the one length rule
+(``SCRAPE_THRESHOLD``) and ``fetch`` acquires the article behind the URL when it
+only got a snippet — the same shape ``/search/ingest`` already used when minting
+``web`` jobs from the same hits, which is why the two paths used to disagree
+about what the same result contained. A monitored query advances its cursor's
+``seen_urls`` so re-polls skip already-ingested results.
 """
 
 from __future__ import annotations
@@ -14,7 +18,7 @@ import dateutil.parser
 from app.api.modules.content.contexts import SourceContext
 from app.api.modules.content.models import AssetKind
 from app.api.modules.content.sources import (
-    FetchedContent, Preview, RawItem, source_type,
+    SCRAPE_THRESHOLD, FetchedContent, Preview, RawItem, realize_article, source_type,
 )
 
 
@@ -31,13 +35,16 @@ class WebSearch:
             query = it.get("query")
             if not query:
                 raise ValueError("web_search source missing query")
-            results = await ctx.search_provider.search(query, max_results=it.get("max_results", 20))
+            # `limit`, not `max_results`: the latter landed in **kwargs and matched
+            # neither provider's option list, so it was silently dropped and each
+            # engine used its own default.
+            results = await ctx.search_provider.search(query, limit=it.get("max_results", 20))
             for i, r in enumerate(results):
-                if not getattr(r, "url", None) or r.url in seen:
+                if not r.url or r.url in seen:
                     continue
-                text = (getattr(r, "raw_data", None) or {}).get("raw_content") or getattr(r, "content", "") or ""
+                snippet = r.best_text or ""
                 ts = None
-                pub = (getattr(r, "raw_data", None) or {}).get("published_date")
+                pub = r.published_date
                 if pub:
                     try:
                         ts = dateutil.parser.parse(pub)
@@ -46,19 +53,21 @@ class WebSearch:
                 yield RawItem(
                     source_identifier=r.url,
                     kind=AssetKind.ARTICLE,
-                    title=getattr(r, "title", None) or r.url,
+                    title=r.title or r.url,
                     # Drift token = publish date if the result has one, else None
                     # (= "no drift signal" → dedup on URL identity alone). NOT a hash of
                     # the snippet: search snippets wiggle between polls, which would
                     # spuriously re-ingest every result every cycle.
                     source_token=pub or None,
                     locator=r.url,
-                    text=text,
+                    # Inline only when it IS the article; a snippet is preview
+                    # metadata and `fetch` goes and gets the real thing.
+                    text=(snippet if len(snippet) >= SCRAPE_THRESHOLD else None),
                     event_timestamp=ts,
                     metadata={
                         "search_query": query, "search_provider": getattr(r, "provider", None),
                         "search_score": getattr(r, "score", None), "search_rank": i + 1,
-                        "content_source": "search_result",
+                        "search_snippet": snippet,
                     },
                 )
 
@@ -67,8 +76,6 @@ class WebSearch:
                        extra={"score": item.metadata.get("search_score")})
 
     async def fetch(self, item: RawItem, ctx: SourceContext) -> FetchedContent:
-        # Pass-through: read already carried the body. The builder derives the hash.
-        return FetchedContent(
-            text_content=item.text,
-            event_timestamp=item.event_timestamp, metadata=item.metadata,
-        )
+        """Pass the article through; scrape the URL when read only got a snippet."""
+        return await realize_article(
+            item, ctx, preview=(item.metadata or {}).get("search_snippet") or "")

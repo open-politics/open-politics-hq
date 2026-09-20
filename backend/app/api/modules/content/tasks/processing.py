@@ -23,7 +23,7 @@ from sqlmodel import Session, select
 
 from app.api.modules.content.contexts import ProcessingContext
 from app.api.modules.content.models import Asset, ProcessingStatus
-from app.api.modules.foundation_service_providers.base import StorageProvider, ScrapingProvider
+from app.api.modules.foundation_service_providers import StorageProvider, ScrapingProvider
 from app.core.tasks import TaskContext, task
 from app.core.task_utils import run_async_in_celery
 
@@ -123,6 +123,15 @@ def _pending_with_ready_parent(iid: int):
       self_chain=True,
       batch=50,
       queue="processing",
+      # A container type's `process` does real work inside this task: a PDF
+      # splits into pages, an archive unrolls (nested, in-process), a feed
+      # document runs the whole acquire spine over its entries — which now
+      # includes realizing each one from its URL. This was the one heavy task
+      # still on the 120 s DEFAULT, not on a considered budget (`ingest` sets
+      # 3600, `process_annotation_run` 7200, `source_polling` 600). Still well
+      # inside Celery's 3720 s hard limit and the stale-PROCESSING reset window,
+      # so a genuinely stuck asset is still recovered.
+      timeout=1800,
       tags=frozenset({"content"}))
 def item_processing(ctx: TaskContext, asset_ids: list[int]):
     """Process PENDING assets. Atomic claim per asset, then process_asset (the type's processor)."""

@@ -116,11 +116,104 @@ def registered_source_kinds() -> List[str]:
 
 
 # ── Shared helpers (what ≥2 source classes reach for) ──────────────────────────
-#
+
+#: Where "the source already had the content" stops and "the source had a
+#: preview of it" begins, in characters.
+#:
+#: The realization contract says inline ``text`` is only for the FULL content —
+#: a snippet is preview metadata, never ``text``. Some wires hand over both
+#: shapes through the same field and nothing but length distinguishes them: an
+#: RSS ``content:encoded`` body is the article, an RSS ``description`` is two
+#: sentences of it, and both arrive as ``entry.content``. Above any metasearch
+#: snippet (~150-300 chars), below a real article body.
+#:
+#: Lives here, with the contract it enforces, because ``search.web`` (L3) and
+#: the RSS source (L2) apply the SAME rule and content cannot import from
+#: search. It was defined in search first, which is why the feed path never got
+#: it.
+SCRAPE_THRESHOLD = 800
+
 # Note there is no hashing helper here. A source realizes *content*, not digests —
 # `AssetBuilder.content_hash()` is the one derivation, and the builder applies it.
 # The single exception is a source that stages a blob: it holds bytes the builder
 # never sees, so it imports that same function rather than growing a second one.
+
+
+async def realize_article(
+    item: "RawItem", ctx: "SourceContext", *, preview: str = "",
+) -> "FetchedContent":
+    """Second half of the realization contract, for the sources that need it.
+
+    ``read`` sets ``text`` only when it already held the WHOLE article. Empty
+    means the wire gave us a preview and the article is at ``item.locator``.
+    This walks the locator and hands back the best text available:
+
+    .. code-block:: text
+
+        item.text                 ──► pass through, no network
+        scrape(locator) ≥ preview ──► the article
+        anything else             ──► the preview, marked as such
+
+    **The scrape never fails the item.** A monitor that drops a story because a
+    publisher answered 403 is worse than one that keeps the headline: the
+    headline is still evidence the story ran, it still dedups on the same
+    identity, and the article is recoverable on a later drift. That is also why
+    this is not a content type — a processor that raises marks the asset FAILED
+    and removes it from every run's scope permanently.
+
+    A "scrape" shorter than the preview we already have is a consent wall or a
+    stub page, not the article, so the preview wins on length rather than on
+    presence.
+
+    ``content_source`` on the returned metadata records which branch ran, so the
+    corpus can be read honestly — "mean 2k chars" means nothing if a tenth of
+    the rows are ledes and nothing says which.
+    """
+    if item.text:
+        return FetchedContent(text_content=item.text,
+                              event_timestamp=item.event_timestamp,
+                              metadata=item.metadata)
+
+    def _preview(source: str) -> "FetchedContent":
+        return FetchedContent(text_content=preview,
+                              event_timestamp=item.event_timestamp,
+                              metadata={**(item.metadata or {}), "content_source": source})
+
+    url = item.locator
+    if not url or not ctx.scraping_provider:
+        return _preview("preview_only")
+
+    import logging
+    try:
+        scraped = await ctx.scraping_provider.scrape_url(url, timeout=30)
+    except Exception as e:
+        logging.getLogger(__name__).info(
+            "Could not scrape %s (%s) — keeping the preview text", url, e)
+        return _preview("preview_after_scrape_failed")
+
+    text = ((scraped or {}).get("text_content") or "").strip()
+    if len(text) < len(preview):
+        return _preview("preview_beat_scrape")
+
+    ts = item.event_timestamp
+    if not ts and scraped.get("publication_date"):
+        import dateutil.parser
+        try:
+            ts = dateutil.parser.parse(scraped["publication_date"])
+        except Exception:
+            pass
+    return FetchedContent(
+        text_content=text,
+        event_timestamp=ts,
+        metadata={
+            **(item.metadata or {}),
+            "content_source": "scraped",
+            "content_format": "text",
+            "scraped_title": scraped.get("title"),
+            "top_image": scraped.get("top_image"),
+            "content_length": len(text),
+        },
+    )
 
 
 async def stage_blob(
