@@ -16,7 +16,7 @@ from app.models import User
 from app.schemas import TokenPayload
 
 # --- Provider Protocols ---
-from app.api.modules.foundation_service_providers.base import (
+from app.api.modules.foundation_service_providers import (
     StorageProvider,
     ScrapingProvider,
     WebSearchProvider,

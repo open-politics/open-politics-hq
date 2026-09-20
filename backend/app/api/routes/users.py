@@ -136,7 +136,7 @@ def update_user_me(
     # model_required=True providers missing a model_name. Read paths don't
     # validate, so legacy rows deserialize unchanged.
     if user_in.provider_defaults is not None:
-        from app.api.modules.foundation_service_providers.base import validate_provider_defaults
+        from app.api.modules.foundation_service_providers import validate_provider_defaults
         try:
             validate_provider_defaults(user_in.provider_defaults)
         except ValueError as e:

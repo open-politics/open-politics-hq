@@ -541,9 +541,8 @@ async def ingest_search_results(
     the full article (≥ threshold) carries it inline → ``web.fetch`` passes it through
     (no re-scrape); a short metasearch snippet carries no ``text`` → the web source
     scrapes the URL. One ``web`` IngestionJob; poll it (or the useIngestionJobs hook)."""
-    # 800 chars: above any SearXNG snippet (~150-300), below Tavily raw_content (multi-k).
-    SCRAPE_THRESHOLD = 800
     from app.api.modules.content.intake import intake
+    from app.api.modules.content.sources import SCRAPE_THRESHOLD
 
     specs: List[dict] = []
     for result in bulk_request.results:

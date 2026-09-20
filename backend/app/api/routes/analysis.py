@@ -28,8 +28,8 @@ router = APIRouter()
 
 class RagSearchRequest(BaseModel):
     question: str
-    model: str = "gemini-2.0-flash-thinking-exp-01-21"
-    provider_name: Optional[str] = None  # LLM provider key (e.g. "google", "openai", "ollama"). Auto-detected from user defaults if omitted.
+    model: str = "claude-sonnet-4-6"
+    provider_name: Optional[str] = None  # LLM provider key (e.g. "anthropic", "openai", "ollama"). Auto-detected from user defaults if omitted.
     embedding_model_id: Optional[int] = None  # Override infospace's configured embedding model
     enable_thinking: bool = False
     temperature: float = Field(default=0.1, ge=0.0, le=2.0)

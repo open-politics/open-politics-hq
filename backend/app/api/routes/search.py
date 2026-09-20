@@ -114,16 +114,16 @@ async def web_search_and_ingest(
 
         results_data = [
             {
-                "title": r.get("title", ""),
-                "url": r.get("url", ""),
-                "content": r.get("content", ""),
-                "score": r.get("score"),
-                "raw": r.get("raw", r),
-                **({"raw_content": r["raw_content"]} if "raw_content" in r else {}),
-                **({"favicon": r["favicon"]} if "favicon" in r else {}),
-                **({"published_date": r["published_date"]} if "published_date" in r else {}),
+                "title": hit.title,
+                "url": hit.url,
+                "content": hit.content,
+                "score": hit.score,
+                "raw": hit.raw,
+                "raw_content": hit.raw_content,
+                "favicon": hit.favicon,
+                "published_date": hit.published_date,
             }
-            for r in raw_results
+            for hit in raw_results
         ]
         return SearchAndIngestResponse(
             query=request.query, provider=request.provider,

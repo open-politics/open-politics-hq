@@ -93,19 +93,31 @@ class RunsCountPhase(BaseModel):
 
 def _fetch_runs(
     session, access, infospace_id: int, skip: int, limit: int,
-    include_counts: bool,
+    include_counts: bool, live: Optional[bool] = None,
+    status: Optional[RunStatus] = None,
 ):
     """Fetch runs + per-run annotation counts.
 
     One row per run — there is no family tier. A run is a single durable object;
     extension grows it in place and a live run's annotations accumulate on the
     same row, so its own ``status`` and count are the whole truth.
+
+    Ordered by ``updated_at`` descending. A live run's row is touched every time
+    its annotations grow, so "most recently changed" and "what is actually
+    moving" are the same question — and it is the one a monitoring list is for.
+    Before this the query had no ORDER BY at all, so the page you got was
+    whatever order the database felt like returning.
     """
     query = (
         select(AnnotationRun)
         .where(AnnotationRun.infospace_id == infospace_id)
     )
+    if live is not None:
+        query = query.where(AnnotationRun.live == live)
+    if status is not None:
+        query = query.where(AnnotationRun.status == status)
     query = access.scope_filter(query, AnnotationRun.id, "run_ids")
+    query = query.order_by(AnnotationRun.updated_at.desc(), AnnotationRun.id.desc())
     query = query.offset(skip).limit(limit)
     runs = list(session.exec(query).all())
 
@@ -139,9 +151,11 @@ async def list_runs(
     skip: int = 0,
     limit: int = 100,
     include_counts: bool = Query(True, description="Include counts of annotations and assets"),
+    live: Optional[bool] = Query(None, description="Only live runs, or only non-live"),
+    status: Optional[RunStatus] = Query(None, description="Only runs in this status"),
     session: SessionDep,
 ):
-    """Retrieve runs for the infospace (JSON).
+    """Retrieve runs for the infospace (JSON), most recently changed first.
 
     For a progressive SSE version (runs first, count later), call the
     sibling endpoint ``GET /stream``.
@@ -150,10 +164,17 @@ async def list_runs(
 
     result_runs = await asyncio.to_thread(
         _fetch_runs, session, access, infospace_id, skip, limit, include_counts,
+        live, status,
     )
     count_query = select(func.count(AnnotationRun.id)).where(
         AnnotationRun.infospace_id == infospace_id
     )
+    # The count must agree with the page, or a filtered list reports a total it
+    # is not showing.
+    if live is not None:
+        count_query = count_query.where(AnnotationRun.live == live)
+    if status is not None:
+        count_query = count_query.where(AnnotationRun.status == status)
     count_query = access.scope_filter(count_query, AnnotationRun.id, "run_ids")
     total_count = await asyncio.to_thread(lambda: session.exec(count_query).one())
     return AnnotationRunsOut(data=result_runs, count=total_count)
@@ -166,9 +187,13 @@ async def list_runs_stream(
     skip: int = 0,
     limit: int = 100,
     include_counts: bool = Query(True, description="Include counts of annotations and assets"),
+    live: Optional[bool] = Query(None, description="Only live runs, or only non-live"),
+    status: Optional[RunStatus] = Query(None, description="Only runs in this status"),
     session: SessionDep,
 ):
     """Progressive SSE feed for run list — runs first, count later.
+
+    Same ordering and filters as the JSON sibling; they share ``_fetch_runs``.
 
     Native async-generator endpoint; FastAPI's SSE pipeline attaches
     3s keepalive pings (survives nginx ``proxy_read_timeout``).
@@ -178,6 +203,7 @@ async def list_runs_stream(
     try:
         result_runs = await asyncio.to_thread(
             _fetch_runs, session, access, infospace_id, skip, limit, include_counts,
+            live, status,
         )
     except Exception as e:
         logger.exception("SSE list_runs error")
@@ -193,6 +219,10 @@ async def list_runs_stream(
         count_query = select(func.count(AnnotationRun.id)).where(
             AnnotationRun.infospace_id == infospace_id
         )
+        if live is not None:
+            count_query = count_query.where(AnnotationRun.live == live)
+        if status is not None:
+            count_query = count_query.where(AnnotationRun.status == status)
         count_query = access.scope_filter(count_query, AnnotationRun.id, "run_ids")
         total_count = await asyncio.to_thread(
             lambda: session.exec(count_query).one()
@@ -2096,7 +2126,7 @@ async def graph_assist(
 
     packet = await graph_context(run_id=run_id, access=access, session=session)
 
-    from app.api.modules.foundation_service_providers.registry import (
+    from app.api.modules.foundation_service_providers import (
         ProviderError, get_configured_foundation_provider, resolve,
     )
 

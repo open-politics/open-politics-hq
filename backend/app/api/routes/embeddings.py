@@ -188,51 +188,41 @@ async def discover_embedding_models(
     With ``provider_key``: probe that provider's runtime models (uses infospace
     owner's stored credentials or the supplied BYOK runtime_key).
     """
-    from app.api.modules.foundation_service_providers import list_providers, resolve, ProviderError
-    from app.api.modules.foundation_service_providers.base import EmbeddingModelSpec
+    from app.api.modules.foundation_service_providers import (
+        list_providers, list_models, ProviderError, EmbeddingModelSpec,
+    )
 
-    model_infos = []
+    def entry(spec, provider_key: str) -> EmbeddingModelInfo:
+        return EmbeddingModelInfo(
+            name=spec.name,
+            provider=provider_key,
+            dimension=spec.dimension,
+            description=spec.description or None,
+            max_sequence_length=spec.max_sequence_length,
+        )
 
-    # Runtime probe for a specific provider.
+    # One endpoint: its curated models, then whatever it reports live. For a
+    # local endpoint the live half is the only half that exists — nothing can
+    # declare ahead of time which models an operator happens to have pulled.
     if request.provider_key:
         try:
-            p = resolve(
-                "embedding", request.provider_key, "probe",
+            specs = await list_models(
+                "embedding", request.provider_key,
                 infospace_id=access.infospace_id,
                 runtime_key=request.runtime_key,
                 session=session,
             )
-            raw = []
-            if hasattr(p._instance, "discover_models"):
-                raw = await p.discover_models()
-            elif hasattr(p._instance, "get_available_models"):
-                raw = p.get_available_models()
-            for m in raw:
-                model_infos.append(EmbeddingModelInfo(
-                    name=m.get("name") if isinstance(m, dict) else getattr(m, "name", str(m)),
-                    provider=request.provider_key,
-                    dimension=(m.get("dimension", 0) if isinstance(m, dict) else getattr(m, "dimension", 0)),
-                    description=(m.get("description") if isinstance(m, dict) else getattr(m, "description", None)),
-                    max_sequence_length=(m.get("max_sequence_length") if isinstance(m, dict) else getattr(m, "max_sequence_length", None)),
-                ))
-            return AvailableModelsResponse(models=model_infos)
         except ProviderError as e:
-            logger.info("Runtime probe failed for %s: %s — falling back to static specs", request.provider_key, e)
+            raise HTTPException(status_code=400, detail=str(e))
+        return AvailableModelsResponse(models=[
+            entry(s, request.provider_key)
+            for s in specs if isinstance(s, EmbeddingModelSpec)
+        ])
 
-    # Static enumeration across all embedding providers.
-    providers_iter = list_providers("embedding")
-    if request.provider_key:
-        providers_iter = [(pk, d) for pk, d in providers_iter if pk == request.provider_key.lower()]
-
-    for provider_key, desc in providers_iter:
-        for spec in desc.models:
-            if isinstance(spec, EmbeddingModelSpec):
-                model_infos.append(EmbeddingModelInfo(
-                    name=spec.name,
-                    provider=provider_key,
-                    dimension=spec.dimension,
-                    description=spec.description or None,
-                    max_sequence_length=spec.max_sequence_length,
-                ))
-
-    return AvailableModelsResponse(models=model_infos)
+    # Every provider's curated models.
+    return AvailableModelsResponse(models=[
+        entry(spec, provider_key)
+        for provider_key, desc in list_providers("embedding")
+        for spec in desc.models
+        if isinstance(spec, EmbeddingModelSpec)
+    ])

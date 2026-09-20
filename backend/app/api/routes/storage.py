@@ -77,7 +77,7 @@ def browse_storage(
 
     is_owner = access.is_owner
 
-    allowed_str = [p.strip() for p in (settings.ALLOWED_IMPORT_PATHS or "").split(",") if p.strip()]
+    allowed_str = [p for p in (settings.ALLOWED_IMPORT_PATHS or []) if p]
     if not allowed_str:
         allowed_str = [settings.LOCAL_STORAGE_BASE_PATH]
 

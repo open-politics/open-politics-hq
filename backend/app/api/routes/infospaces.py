@@ -128,7 +128,7 @@ def update_infospace(
     # Save-time completeness check. Read paths don't validate — legacy rows
     # with partial selections still need to deserialize.
     if infospace_in.enrichment_config is not None:
-        from app.api.modules.foundation_service_providers.base import validate_enrichment_config
+        from app.api.modules.foundation_service_providers import validate_enrichment_config
         try:
             validate_enrichment_config(infospace_in.enrichment_config)
         except ValueError as e:

@@ -241,17 +241,19 @@ def list_schema_templates(
     *about* — are where the difficulty actually lives, and a template that
     skipped them would hand back a good schema and a blank graph.
     """
-    from app.api.modules.annotation.templates import (
-        build_contract, build_doc_anchors, build_projections, list_templates,
-    )
+    from app.api.modules.annotation.templates import list_templates
 
+    # The template builds itself. This used to call
+    # ``build_contract(t.tier, t.archetypes)`` here, which made the catalogue a
+    # config format this route interprets — and fixed what a template could be
+    # at "a tier and some archetypes", so anything else could not be offered.
     return [
         TemplateOut(
             id=t.id, label=t.label, tier=t.tier, hint=t.hint,
             archetypes=list(t.archetypes),
-            output_contract=build_contract(t.tier, t.archetypes) if expand else None,
-            projections=build_projections(t.tier, t.archetypes) if expand else None,
-            **(build_doc_anchors(t.tier) if expand else {}),
+            output_contract=t.contract() if expand else None,
+            projections=t.projections() if expand else None,
+            **(t.doc_anchors() if expand else {}),
         )
         for t in list_templates()
     ]

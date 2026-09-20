@@ -127,7 +127,7 @@ def create_directory_import_job(
             detail=f"Source path '{request.source_path}' does not exist or is not a directory"
         )
 
-    allowed_paths = [p.strip() for p in (settings.ALLOWED_IMPORT_PATHS or "").split(",") if p.strip()]
+    allowed_paths = [p for p in (settings.ALLOWED_IMPORT_PATHS or []) if p]
     if not allowed_paths:
         allowed_paths = [settings.LOCAL_STORAGE_BASE_PATH]
 
@@ -647,7 +647,7 @@ async def reconcile_directory(
             detail=f"Source path '{request.source_path}' does not exist or is not a directory",
         )
 
-    allowed_paths = [p.strip() for p in (settings.ALLOWED_IMPORT_PATHS or "").split(",") if p.strip()]
+    allowed_paths = [p for p in (settings.ALLOWED_IMPORT_PATHS or []) if p]
     if not allowed_paths:
         allowed_paths = [settings.LOCAL_STORAGE_BASE_PATH]
     if not any(source.is_relative_to(Path(p).resolve()) for p in allowed_paths):
