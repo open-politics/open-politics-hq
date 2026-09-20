@@ -36,6 +36,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { Surface } from '@/components/layout/Surface';
 import {
   Plus,
   Play,
@@ -429,7 +430,7 @@ function NodeEditor({ node, flow, bundles, schemas, onClose, onSave }: NodeEdito
   };
 
   return (
-    <div className="w-80 border-l bg-background flex flex-col h-full">
+    <div className="w-80 border-l bg-background flex flex-col h-full @max-3xl/page:h-auto @max-3xl/page:max-h-[40%] @max-3xl/page:w-full @max-3xl/page:border-l-0 @max-3xl/page:border-t">
       <div className="p-3 border-b flex items-center justify-between">
         <h3 className="font-semibold text-sm">Edit Node</h3>
         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onClose}>
@@ -1168,9 +1169,14 @@ function FlowsPageInner() {
   }
 
   return (
-    <div className="h-full flex min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] w-full max-w-full overflow-hidden">
+    // 224 + 320 = 544px of fixed rails inside `overflow-hidden`, with no
+    // breakpoint anywhere, so below about 900px the canvas vanished between
+    // them and the inspector was simply off-screen. Stacks to a column where
+    // three abreast do not fit. (This route is currently commented out of the
+    // sidebar, so it is repaired rather than redesigned.)
+    <Surface className="flex-col @3xl/page:flex-row">
       {/* LEFT: Flow Selector */}
-      <div className="w-56 border-r flex flex-col bg-muted/20">
+      <div className="w-56 border-r flex flex-col bg-muted/20 @max-3xl/page:w-full @max-3xl/page:max-h-[30%] @max-3xl/page:border-b @max-3xl/page:border-r-0">
         <div className="p-3 border-b flex items-center justify-between">
           <h2 className="font-semibold text-sm">Flows</h2>
           <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setIsCreateOpen(true)}>
@@ -1439,7 +1445,7 @@ function FlowsPageInner() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </Surface>
   );
 }
 

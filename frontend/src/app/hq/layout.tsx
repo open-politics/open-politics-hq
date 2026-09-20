@@ -4,6 +4,7 @@ import { SidebarInset, SidebarTrigger, useSidebar } from "@/components/ui/sideba
 import { AppSidebar } from "@/components/collection/_unsorted_legacy/AppSidebar"
 import { TopbarSlotProvider, TopbarSlotRenderer } from "@/components/layout/TopbarSlot"
 import { DefaultTopbar } from "@/components/layout/DefaultTopbar"
+import { BottomRail } from "@/components/layout/BottomRail"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable"
 import LottiePlaceholder from "@/components/ui/lottie-placeholder"
@@ -24,9 +25,21 @@ import { useEffect, useState, useRef } from 'react';
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
-// Main content + the global right dock. Desktop: a resizable split; mobile: a
-// sheet; fullscreen: the dock lifts over the whole content area. Driven entirely
-// by the dock store, so any route can summon detail / discover / source editing.
+// Main content + the global right dock. The dock is a resizable split beside
+// the content on a wide screen and a sheet over it on a narrow one, driven
+// entirely by the dock store so any route can summon detail / discover /
+// source editing.
+//
+// The shape below matters more than it looks. This used to be two whole trees
+// behind `if (isMobile)`, and `children` — the entire page — sat at a different
+// depth in each. `useIsMobile` cannot know the viewport until after it mounts,
+// so on a phone React built the desktop tree, ran every page effect, then threw
+// it away and built the mobile one: a visible flash, all page state lost, and
+// every mount-time fetch issued twice on every navigation.
+//
+// Now the group, the first panel and `<main>` are unconditional, so `children`
+// occupies one stable position and never remounts. Only the dock's presentation
+// forks, and the dock is usually closed on arrival.
 function MainContentWithInspector({
   children,
   mainContentRef,
@@ -41,51 +54,31 @@ function MainContentWithInspector({
   const isOpen = useDock((s) => s.entry !== null) && !inlineHosted;
   const close = useDock((s) => s.close);
 
-  if (isMobile) {
-    return (
-      <>
-        <main
-          ref={mainContentRef}
-          className="relative z-10 flex h-full min-h-0 flex-1 flex-col overflow-hidden focus:outline-none @container"
-          tabIndex={-1}
-        >
-          {children}
-        </main>
-        <Sheet open={isOpen} onOpenChange={(open) => !open && close()}>
-          <SheetContent side="right" className="flex h-full w-[92vw] flex-col p-0 sm:w-[420px]">
-            <SheetHeader className="sr-only">
-              <SheetTitle>Dock</SheetTitle>
-              <SheetDescription>Summoned detail and tools</SheetDescription>
-            </SheetHeader>
-            <DockHost />
-          </SheetContent>
-        </Sheet>
-      </>
-    );
-  }
+  // Split beside the content only when there is room for two columns.
+  const splitDock = isOpen && !isMobile;
 
   return (
     <>
       <ResizablePanelGroup
         direction="horizontal"
-        className="relative z-10 flex h-full min-h-0 flex-1"
+        className="relative z-10 flex min-h-0 flex-1"
         autoSaveId={null}
       >
         <ResizablePanel
-          defaultSize={isOpen ? 50 : 100}
+          defaultSize={splitDock ? 50 : 100}
           minSize={30}
           className="min-h-0 overflow-hidden"
         >
           <main
             ref={mainContentRef}
-            className="h-full min-h-0 overflow-y-auto focus:outline-none @container"
+            className="flex h-full min-h-0 flex-col overflow-hidden focus:outline-none @container"
             tabIndex={-1}
           >
             {children}
           </main>
         </ResizablePanel>
 
-        {isOpen && (
+        {splitDock && (
           <>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={50} minSize={24} maxSize={75} className="min-h-0 overflow-hidden">
@@ -94,6 +87,21 @@ function MainContentWithInspector({
           </>
         )}
       </ResizablePanelGroup>
+
+      {/* Narrow: the same dock, over the content instead of beside it. Rendered
+          as a sibling of the group rather than inside it, so toggling between
+          the two presentations never disturbs the panel that holds the page. */}
+      {isMobile && (
+        <Sheet open={isOpen} onOpenChange={(open) => !open && close()}>
+          <SheetContent side="right" className="flex h-full w-[92vw] flex-col p-0 pb-safe sm:w-[420px]">
+            <SheetHeader className="sr-only">
+              <SheetTitle>Dock</SheetTitle>
+              <SheetDescription>Summoned detail and tools</SheetDescription>
+            </SheetHeader>
+            <DockHost />
+          </SheetContent>
+        </Sheet>
+      )}
     </>
   );
 }
@@ -168,15 +176,15 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
 
   return (
     <TopbarSlotProvider>
-      <AppSidebar className="fixed md:relative h-full md:h-auto" />
+      <AppSidebar />
       <SidebarInset
         className={cn(
-          "max-w-full overflow-hidden",
+          "min-h-0 max-w-full overflow-hidden",
           hasCustomBackground && "bg-transparent backdrop-blur-sm"
         )}
       >
         {!focusMode && (
-        <header className="flex h-16 shrink-0 items-center gap-2 border-b mb-1 px-4 relative z-10">
+        <header className="relative z-10 mb-1 flex h-14 shrink-0 items-center gap-2 border-b px-3 md:h-16 md:px-4">
           <SidebarTrigger className="-ml-1" />
           <div className="h-4 w-[1px] mx-2 bg-border" />
           <div className="flex-1 min-w-0 flex items-center gap-2">
@@ -187,7 +195,7 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
 
         {/* Mobile Info Banner */}
         {sidebarMobile && !preferences.docs_banner_dismissed && (
-          <div className="sm:hidden mx-3 mb-2 relative">
+          <div className="relative mx-3 mb-2 flex-none sm:hidden">
             <div className="flex items-center justify-between gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-500 rounded-md">
               <Link 
                 href="https://docs.open-politics.org/pages/app/overview" 
@@ -215,13 +223,21 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
         <MainContentWithInspector mainContentRef={mainContentRef}>
           {children}
         </MainContentWithInspector>
+
+        {/* In the column, not over it: the content region above is `flex-1
+            min-h-0`, so it gives up exactly the rail's height and no page has
+            to know the rail is there. */}
+        {!focusMode && <BottomRail />}
       </SidebarInset>
     </TopbarSlotProvider>
   );
 }
 
 export default function HQLayout({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, isLoggedIn, isLoggingOut } = useAuth();  
+  const { user, isLoading, isLoggedIn, isLoggingOut } = useAuth();
+  // Focus mode strips every piece of chrome, the rail included — so the
+  // reservation it publishes has to go to zero with it.
+  const focusMode = useAnnotationRunStore((s) => s.focusMode);
   const activeInfospace = useInfospaceStore.getState().activeInfospace;
   const router = useRouter();
   const [isClient, setIsClient] = useState(false);
@@ -238,7 +254,7 @@ export default function HQLayout({ children }: { children: React.ReactNode }) {
   
   if (!isClient || isLoading || isLoggingOut) {
     return (
-      <div className="h-screen w-full flex justify-center items-center">
+      <div className="h-dvh w-full flex justify-center items-center">
         <LottiePlaceholder />
       </div>
     )
@@ -246,7 +262,7 @@ export default function HQLayout({ children }: { children: React.ReactNode }) {
 
   if (!isLoggedIn) {
     return (
-      <div className="h-screen w-full flex justify-center items-center">
+      <div className="h-dvh w-full flex justify-center items-center">
         <LottiePlaceholder />
       </div>
     )
@@ -254,7 +270,16 @@ export default function HQLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <TextSpanHighlightProvider>
-      <div className="h-full max-h-screen w-full flex flex-col md:flex-row overflow-hidden">
+      {/* The one element in the app that names a viewport unit. `dvh` is the
+          dynamic viewport: it tracks the mobile URL bar as it hides and shows,
+          where the `100vh` this replaces always reported the tallest state and
+          left the bottom of the app permanently underneath browser chrome.
+          Everything below sizes with `h-full` / `flex-1 min-h-0` against this. */}
+      <div
+        data-app-shell
+        data-rail={focusMode ? 'off' : 'on'}
+        className="h-dvh w-full flex flex-col md:flex-row overflow-hidden"
+      >
         <CommandRegistryBridge />
         <ActiveObservations />
         <OperatorCompanion />

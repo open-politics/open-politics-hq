@@ -1,3 +1,5 @@
+import { Surface } from '@/components/layout/Surface';
+
 export default function BookmarksPage() {
     const bookmarks = [
       { id: 1, title: 'Example Bookmark 1', url: '#' },
@@ -6,7 +8,7 @@ export default function BookmarksPage() {
     ]
   
     return (
-      <div className="p-6">
+      <Surface scroll className="p-6">
         <h1 className="text-2xl font-bold mb-4">Bookmarks</h1>
         <div className="grid gap-4">
           {bookmarks.map((bookmark) => (
@@ -18,6 +20,6 @@ export default function BookmarksPage() {
             </div>
           ))}
         </div>
-      </div>
+      </Surface>
     )
   }

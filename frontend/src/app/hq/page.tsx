@@ -13,6 +13,7 @@ import { HomeIdentityBar } from '@/components/collection/home/HomeIdentityBar'
 import { HomeInquiryBar } from '@/components/collection/home/HomeInquiryBar'
 import { HomeAssetsPanel, HomeSchemasPanel } from '@/components/collection/home/HomeFoundation'
 import { HomeAnalysisModule, HomeGraphsModule, HomePackagesModule } from '@/components/collection/home/HomeWork'
+import { Surface } from '@/components/layout/Surface';
 
 const fade = {
   hidden: { opacity: 0, y: 8 },
@@ -35,11 +36,11 @@ function HomePage() {
 
   return (
     <>
+    <Surface scroll asChild className="gap-4 p-4 sm:p-6">
     <motion.div
       initial="hidden"
       animate="show"
       variants={{ show: { transition: { staggerChildren: 0.06 } } }}
-      className="flex h-full w-full flex-col gap-4 overflow-y-auto p-4 scrollbar-hide min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] sm:p-6"
     >
       <HomeIdentityBar
         name={activeInfospace?.name || ''}
@@ -75,6 +76,7 @@ function HomePage() {
         </div>
       </div>
     </motion.div>
+    </Surface>
 
     <AnnotationSchemaCard
       show={!!viewingSchema}

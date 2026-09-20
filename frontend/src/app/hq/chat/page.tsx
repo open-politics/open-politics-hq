@@ -4,6 +4,7 @@ import { Suspense, useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useChatStore } from '@/zustand_stores/storeChat'
 import { IntelligenceChat } from '@/components/collection/chat/Chat'
+import { Surface } from '@/components/layout/Surface'
 
 export const maxDuration = 60
 
@@ -34,10 +35,10 @@ export default function Page() {
   useEffect(() => { openChat() }, [openChat])
 
   return (
-    <div className="h-full p-2 pt-0 sm:pr-4">
+    <Surface className="p-2 pt-0 sm:pr-4">
       <Suspense fallback={null}>
         <ChatSurface />
       </Suspense>
-    </div>
+    </Surface>
   )
 }

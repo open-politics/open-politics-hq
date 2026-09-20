@@ -1,6 +1,8 @@
+import { Surface } from '@/components/layout/Surface';
+
 export default function NewsPage() {
     return (
-      <div className="p-6">
+      <Surface scroll className="p-6">
         <h1 className="text-2xl font-bold mb-4">Globe View</h1>
         <div className="rounded-lg border p-4">
           <p>This is where the globe visualization will go.</p>
@@ -10,6 +12,6 @@ export default function NewsPage() {
             </div>
           </div>
         </div>
-      </div>
+      </Surface>
     )
   }

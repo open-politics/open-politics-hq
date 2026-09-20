@@ -2,6 +2,7 @@
 
 import React, { useCallback } from 'react';
 import AssetManager from '@/components/collection/assets/AssetManager';
+import { Surface } from '@/components/layout/Surface';
 
 export default function AssetManagerPage() {
   const handleLoadIntoRunner = useCallback((runId: number, runName: string) => {
@@ -9,8 +10,8 @@ export default function AssetManagerPage() {
   }, []);
 
   return (
-    <div className="flex h-full w-full max-w-full max-h-[92.75svh] flex-col overflow-hidden min-h-[91svh] md:min-h-[92.75svh]">
+    <Surface>
       <AssetManager onLoadIntoRunner={handleLoadIntoRunner} />
-    </div>
+    </Surface>
   );
 }

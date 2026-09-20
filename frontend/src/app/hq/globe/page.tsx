@@ -11,6 +11,7 @@ import { useLayoutStore } from '@/zustand_stores/storeLayout';
 import { useArticleTabNameStore } from '@/hooks/useArticleTabNameStore';
 import { Announcement } from '@/components/collection/_unsorted_legacy/announcement';
 import { FileText } from 'lucide-react';
+import { Surface } from '@/components/layout/Surface';
 
 const GlobePage = () => {
   const geojsonUrl = '/api/v1/locations/geojson/';
@@ -142,7 +143,7 @@ const GlobePage = () => {
   };
 
   return (
-    <div className="h-full w-full relative">
+    <Surface className="relative">
       {isLoading ? (
         <div className="flex items-center justify-center h-full">
           <div className="loader"></div>
@@ -204,7 +205,7 @@ const GlobePage = () => {
           </AnimatePresence>
         </>
       )}
-    </div>
+    </Surface>
   );
 };
 

@@ -29,6 +29,7 @@ import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import { toast } from 'sonner';
 import { TopbarSlot } from '@/components/layout/TopbarSlot';
+import { Surface } from '@/components/layout/Surface';
 
 interface ChatMessage {
   id: string;
@@ -204,7 +205,7 @@ export default function ContentSearchPage() {
   };
 
   return (
-    <div className="h-full flex flex-col min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] w-full max-w-full overflow-y-auto scrollbar-hide">
+    <Surface>
       {/* Header → app top bar */}
       <TopbarSlot>
         <div className="flex w-full items-center gap-3">
@@ -236,10 +237,10 @@ export default function ContentSearchPage() {
         </div>
       </TopbarSlot>
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-6 min-h-0">
+      <div className="grid min-h-0 flex-1 auto-rows-fr grid-cols-1 gap-6 lg:auto-rows-auto lg:grid-cols-4">
         {/* Settings Panel */}
         {showSettings && (
-          <Card className="lg:col-span-1">
+          <Card className="min-h-0 overflow-y-auto lg:col-span-1">
             <CardHeader>
               <CardTitle className="text-sm">Search Configuration</CardTitle>
             </CardHeader>
@@ -474,6 +475,6 @@ export default function ContentSearchPage() {
           </div>
         </Card>
       </div>
-    </div>
+    </Surface>
   );
 }

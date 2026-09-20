@@ -10,6 +10,7 @@ import LocationDetailPanel from '@/components/collection/_unsorted_legacy/Locati
 import { useLayoutStore } from '@/zustand_stores/storeLayout';
 import { useArticleTabNameStore } from '@/hooks/useArticleTabNameStore';
 import { useGeoDataStore } from '@/zustand_stores/storeGeodata';
+import { Surface } from '@/components/layout/Surface';
 
 const GlobePage = () => {
   const [results, setResults] = useState(null);
@@ -56,7 +57,7 @@ const GlobePage = () => {
   };
 
   return (
-    <div className="h-screen w-full relative">
+    <Surface className="relative">
       <div className="flex h-full flex-col">
         {/* Globe Section */}
         <div className="relative flex-1 h-full overflow-hidden">
@@ -103,7 +104,7 @@ const GlobePage = () => {
           )}
         </AnimatePresence>
       </div>
-    </div>
+    </Surface>
   );
 };
 

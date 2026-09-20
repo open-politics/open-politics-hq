@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { DiscoverPanel } from '@/components/collection/intake/discover/DiscoverPanel';
+import { Surface } from '@/components/layout/Surface';
 
 export const maxDuration = 60;
 
@@ -10,10 +11,10 @@ export const maxDuration = 60;
 // toolbar and chat instead of duplicating an older search component.
 export default function SearchPage() {
   return (
-    <div className="container mx-auto py-6">
+    <Surface scroll className="container mx-auto py-6">
       <div className="mx-auto max-w-3xl overflow-hidden rounded-lg border">
         <DiscoverPanel mode="overlay" fullscreen={false} close={() => {}} escalate={() => {}} />
       </div>
-    </div>
+    </Surface>
   );
 }

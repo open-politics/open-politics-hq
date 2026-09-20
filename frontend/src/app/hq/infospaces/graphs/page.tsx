@@ -6,6 +6,7 @@ import PredicateManager from '@/components/collection/graph/PredicateManager';
 import { CanonsPanel, GraphView } from '@/components/collection/graph';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Surface } from '@/components/layout/Surface';
 
 /**
  * Graphs surface — the user's knowledge area.
@@ -23,8 +24,8 @@ export default function GraphsPage() {
   const graphIdParam = searchParams.get('graph_id');
 
   return (
-    <div className="h-full flex flex-col min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] w-full max-w-full overflow-y-auto scrollbar-hide">
-      <Tabs defaultValue={initialTab} className="flex flex-col flex-1">
+    <Surface>
+      <Tabs defaultValue={initialTab} className="flex min-h-0 flex-1 flex-col">
         <div className="border-b px-4 pt-2">
           <TabsList>
             <TabsTrigger value="view">Graph View</TabsTrigger>
@@ -57,6 +58,6 @@ export default function GraphsPage() {
           <PredicateManager />
         </TabsContent>
       </Tabs>
-    </div>
+    </Surface>
   );
 }

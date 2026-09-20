@@ -16,6 +16,7 @@ import { adaptEnhancedAnnotationToFormattedAnnotation } from "@/lib/annotations/
 import { FormattedAnnotation, AnnotationRunParams } from "@/lib/annotations/types";
 import { runPollIntervalMs } from "@/lib/annotations/pollIntervals";
 import { motion } from "framer-motion";
+import { Surface } from '@/components/layout/Surface';
 
 export default function AnnotationRunnerPage() {
   const { activeInfospace } = useInfospaceStore();
@@ -295,9 +296,8 @@ export default function AnnotationRunnerPage() {
   const isProcessing = isLoadingResults || activeRun?.status === 'running' || activeRun?.status === 'pending';
   
   return (
-    <div className="h-full flex flex-col min-h-[91svh] md:min-h-[92.75svh] max-h-[92.75svh] w-full max-w-full overflow-y-auto scrollbar-hide">
-      
-      <div className="flex-1 relative z-10">
+    <Surface>
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col">
         <AnnotationRunner
             allRuns={runs}
             isLoadingRuns={isLoadingRuns}
@@ -330,6 +330,6 @@ export default function AnnotationRunnerPage() {
           onClearRun={clearActiveRun}
         />
       )}
-    </div>
+    </Surface>
   );
 } 
