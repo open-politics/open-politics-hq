@@ -21,14 +21,15 @@ from app.models import (
 )
 from app.schemas import AnnotationCreate
 from app.core.db import engine
-from app.api.modules.foundation_service_providers.registry import resolve
+from app.api.modules.foundation_service_providers import resolve
 from app.core.task_utils import (
     create_pydantic_model_from_json_schema,
     make_python_identifier,
     run_async_in_celery,
     split_schema_for_extraction,
 )
-from app.core.tasks import TaskContext, task
+from app.core.tasks import TaskContext, cached_resolve, task
+from app.api.modules.foundation_service_providers import GenerationOptions
 from app.core.config import settings
 from app.api.modules.annotation.contract_resolution import resolve_for_annotation_run
 from app.api.modules.annotation.schema_map import infer_shape
@@ -59,13 +60,6 @@ def get_annotation_processing_config():
             'default_concurrency': DEFAULT_ANNOTATION_CONCURRENCY,
             'max_concurrency': MAX_ANNOTATION_CONCURRENCY,
         }
-
-async def get_cached_provider(provider_type: str, settings_instance):
-    """Get a cached provider instance. Only 'storage' is supported here."""
-    from app.core.tasks import cached_resolve
-    if provider_type == "storage":
-        return cached_resolve("storage")
-    raise ValueError(f"Unknown provider type: {provider_type}")
 
 def _get_image_asset_kinds(process_pdfs_as_images: bool = True) -> frozenset:
     """Asset kinds that support image modality for the current run config.
@@ -455,18 +449,18 @@ async def fetch_asset_content(asset: Asset, storage_provider: 'StorageProviderDe
             pdf_bytes = await asyncio.to_thread(pdf_file_stream.read)
             pdf_file_stream.close()
             
-            import fitz
+            import pymupdf
             
             def extract_page_image(pdf_bytes: bytes, page_num: int) -> bytes:
                 """Extract a single page as PNG image."""
-                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
                 try:
                     if page_num >= doc.page_count:
                         logger.warning(f"Page {page_num} out of range for PDF with {doc.page_count} pages")
                         return b""
                     page = doc.load_page(page_num)
                     # Render page as PNG image (matrix controls DPI - 2.0 = 144 DPI)
-                    pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+                    pix = page.get_pixmap(matrix=pymupdf.Matrix(2.0, 2.0))
                     return pix.tobytes("png")
                 finally:
                     doc.close()
@@ -1410,6 +1404,58 @@ def _estimate_tokens(text_content: Any) -> int:
     return 0
 
 
+def _thinking_requested(run_config: Dict[str, Any]) -> bool:
+    """Did the run ask for extended thinking?
+
+    Two shapes exist in the wild. The annotation runner writes a top-level
+    ``include_thoughts`` (AnnotationRunnerDock.tsx:308) and always has; the task
+    only ever read a nested ``thinking_config.include_thoughts``. Of 245 stored
+    runs, 87 carry the top-level key and 1 carries the nested one — so the
+    toggle in the UI has never once reached a provider.
+
+    Accept both. The nested form stays readable because flows and the API can
+    still send it.
+    """
+    if run_config.get("include_thoughts"):
+        return True
+    return bool((run_config.get("thinking_config") or {}).get("include_thoughts", False))
+
+
+def _generation_options(run_config: Dict[str, Any], **overrides: Any) -> GenerationOptions:
+    """Pick the generation options out of a run's configuration.
+
+    ``run.configuration`` is a shared bag: targeting (``target_asset_ids``),
+    processing flags (``csv_row_processing``, ``pdf_page_processing``),
+    concurrency, internal bookkeeping (``_watermark``), *and* a handful of
+    generation options. Most keys in it legitimately belong to someone else, so
+    this selects rather than validates — an unrecognised key here means "not
+    mine", not "wrong".
+
+    That is a deliberate retreat from where this started. The first version
+    refused unknown keys, on the principle that a silent drop teaches an
+    operator the switch is broken rather than that the name is wrong. Checking
+    it against real data showed it would reject ten key names present across
+    ~240 existing runs. The principle is right; this is the wrong boundary for
+    it. Refusing a typo belongs where the value is *written* —
+    ``AnnotationRunCreate.configuration`` is untyped ``Dict[str, Any]``, and
+    typing it is the actual fix. Filed in docs/plans/found-adjacent-2026-09.md.
+
+    What is still enforced: any key that *is* a generation option gets its type
+    checked by pydantic, so ``temperature: "hot"`` fails loudly right here.
+    """
+    known = set(GenerationOptions.model_fields)
+    values = {k: v for k, v in run_config.items() if k in known}
+
+    # The run's own vocabulary for a thinking budget.
+    budget = run_config.get("thinking_budget") or (
+        run_config.get("thinking_config") or {}).get("thinking_budget")
+    if budget:
+        values["thinking_budget"] = budget
+
+    values.update({k: v for k, v in overrides.items() if v is not None})
+    return GenerationOptions(**values)
+
+
 def _pick_extraction_strategy(
     *,
     run_config: Dict[str, Any],
@@ -1809,31 +1855,27 @@ async def _run_phase_b_loop(
     user_content_blocks.append({"type": "text", "text": user_prompt_tail, "cacheable": True})
     messages.append({"role": "user", "content": user_content_blocks})
 
-    # Hand off to the provider. Its tool loop drives until the model stops
-    # emitting tool_use blocks (i.e. calls done() or the provider's internal
-    # iteration cap is hit).
-    provider_kwargs = dict(extra_provider_kwargs or {})
-    provider_kwargs.pop("response_format", None)
-    if media_inputs and "media_inputs" not in provider_kwargs:
-        provider_kwargs["media_inputs"] = media_inputs
-
+    # Hand off to the engine. Its tool loop drives until the model stops calling
+    # tools — normally because done() fired its terminate sentinel.
+    #
+    # `tool_choice="any"` is the load-bearing setting here: the model MUST call
+    # submit or done and cannot answer in prose. It used to be raw Anthropic
+    # JSON passed through **kwargs, which is why this whole extraction mode
+    # worked on exactly one endpoint. The neutral vocabulary is what every
+    # dialect can now encode.
     response_iter = await provider.generate(
         messages=messages,
         model_name=model_name,
         tools=[submit_tool, done_tool],
         tool_executor=tool_executor,
-        thinking_enabled=False,  # Phase B: thinking off (per-turn cost)
-        stream=True,  # avoid Anthropic SDK nonstreaming-timeout check on long loops
-        tool_choice={"type": "any"},  # the model MUST call submit or done — no free text
-        max_tool_iterations=max_tool_iterations,
-        **{
-            k: v for k, v in provider_kwargs.items()
-            if k not in (
-                "thinking_config", "model_name", "api_keys", "tools",
-                "tool_executor", "thinking_enabled", "stream", "tool_choice",
-                "max_tool_iterations",
-            )
-        },
+        thinking_enabled=False,          # Phase B: thinking off (per-turn cost)
+        stream=True,
+        options=_generation_options(
+            extra_provider_kwargs or {},
+            tool_choice="any",
+            max_tool_iterations=max_tool_iterations,
+            media=media_inputs or None,
+        ),
     )
     response = await _drain_stream(response_iter)
     if response is None:
@@ -1996,16 +2038,20 @@ async def process_single_asset_schema(
         # Call the provider for structured classification
         # Get the model name from run config (frontend sends as ai_model and ai_provider)
         model_name = run_config.get("model") or run_config.get("ai_model") or run_config.get("model_name")
-        thinking_enabled = run_config.get("thinking_config", {}).get("include_thoughts", False)
+        thinking_enabled = _thinking_requested(run_config)
 
         logger.info(f"Task: Using model '{model_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}")
 
         # ── Track 2: route between single-shot and two-phase iterative ──
         list_fields = schema_info.get("list_fields") or []
         phase_a_output_model_class = schema_info.get("phase_a_output_model_class")
-        provider_model_info = provider.get_model_info(model_name) if hasattr(provider, "get_model_info") else None
-        provider_supports_tools = bool(getattr(provider_model_info, "supports_tools", False))
-        context_length = getattr(provider_model_info, "context_length", None)
+        # Capability facts come from the declaration via Resolved.spec — no I/O,
+        # always present. This used to read a per-instance cache that only the
+        # discovery routes ever filled, so in a worker it was always None:
+        # supports_tools read False and two-phase extraction never ran.
+        spec = provider.spec
+        provider_supports_tools = bool(getattr(spec, "supports_tools", False))
+        context_length = getattr(spec, "context_length", None)
         doc_tokens = _estimate_tokens(text_content_for_provider)
         extraction_strategy = _pick_extraction_strategy(
             run_config=run_config,
@@ -2058,22 +2104,14 @@ async def process_single_asset_schema(
                     response_format=phase_a_schema_to_use,
                     thinking_enabled=thinking_enabled,  # Phase A: thinking honors run config
                     stream=True,
-                    **{k: v for k, v in full_provider_config_for_classify.items()
-                       if k not in ["thinking_config", "model_name", "api_keys", "stream"]},
+                    options=_generation_options(
+                        run_config,
+                        media=provider_specific_config.get("media_inputs") or None,
+                    ),
                 )
                 phase_a_response = await _drain_stream(phase_a_iter)
                 if phase_a_response is None:
                     raise Exception("Phase A produced no response")
-                # Streaming with response_format produces a forced tool_use
-                # rather than text. The tool call's arguments JSON IS the
-                # structured output — surface it as ``content`` so the existing
-                # JSON-parse path works identically to non-streaming.
-                if not getattr(phase_a_response, "content", None):
-                    for tc in (getattr(phase_a_response, "tool_calls", None) or []):
-                        fn = tc.get("function") or {}
-                        if fn.get("name") == "extract":
-                            phase_a_response.content = fn.get("arguments") or "{}"
-                            break
                 # Parse Phase A response
                 try:
                     phase_a_data = (
@@ -2101,20 +2139,41 @@ async def process_single_asset_schema(
                     list_fields=list_fields,
                     phase_a_data=phase_a_data,
                     max_tool_iterations=phase_b_max_iters,
-                    extra_provider_kwargs={
-                        k: v for k, v in full_provider_config_for_classify.items()
-                        if k not in [
-                            "thinking_config", "model_name", "api_keys",
-                            "tools", "tool_executor", "thinking_enabled",
-                            "media_inputs", "max_tool_iterations",
-                        ]
-                    },
+                    extra_provider_kwargs=run_config,
                 )
                 logger.info(
                     f"Task: Asset {asset.id} Phase B done — turns={phase_b_result['turn_count']} "
                     f"received={phase_b_result['items_received']} dropped_dupes={phase_b_result['items_dropped']} "
                     f"done_called={phase_b_result['done_called']} rationale={phase_b_result['done_rationale'][:140]!r}"
                 )
+
+                # **Zero turns is a failed turn, not an empty document.**
+                #
+                # Phase B runs with `tool_choice="any"`: the model MUST call
+                # `submit` or `done` and cannot answer in prose. A document with
+                # genuinely nothing in it therefore still produces one turn —
+                # `done()` with a rationale saying so. Zero means the turn never
+                # delivered a call at all: the reply was truncated on max_tokens
+                # mid-reasoning, or the endpoint ignored the constraint.
+                #
+                # Merging that empty accumulator wrote a SUCCESS annotation with
+                # every list section empty — a confident, silent, wrong answer
+                # that no retry would ever revisit, because the pair now had a
+                # non-failed annotation and the delta skips those forever.
+                # Measured on a local 35B through llama.cpp: 7 of the first ~20
+                # documents landed this way, each after burning its whole 8192
+                # output budget on reasoning.
+                #
+                # Failing here is what makes it recoverable — `retry_failed`
+                # re-asks the question instead of the corpus quietly carrying a
+                # hole shaped like an answer.
+                if phase_b_result["turn_count"] == 0:
+                    raise Exception(
+                        "Phase B produced no tool calls "
+                        f"({phase_b_result['done_rationale'] or 'no rationale'}). "
+                        "The turn was forced to call a tool, so this is a truncated "
+                        "or refused turn, not an empty document."
+                    )
 
                 # Merge phase results into a single envelope so downstream
                 # demultiplex sees the same shape as a single-shot call.
@@ -2170,8 +2229,10 @@ async def process_single_asset_schema(
                     model_name=model_name,
                     response_format=schema_to_use,
                     thinking_enabled=thinking_enabled,
-                    **{k: v for k, v in full_provider_config_for_classify.items()
-                       if k not in ['thinking_config', 'model_name', 'api_keys']}
+                    options=_generation_options(
+                        run_config,
+                        media=provider_specific_config.get("media_inputs") or None,
+                    ),
                 )
         finally:
             # Release semaphore immediately after API call completes
@@ -2265,7 +2326,7 @@ async def process_single_asset_schema(
         
         # Inline thinking trace into the parent annotation's value JSONB.
         thinking_trace_content = provider_response_envelope.get("_thinking_trace")
-        include_thoughts = run_config.get("thinking_config", {}).get("include_thoughts", False)
+        include_thoughts = _thinking_requested(run_config)
         # Always-on cache observability: stamp token usage onto the parent
         # doc annotation regardless of include_thoughts. Without this, the
         # only way to verify prompt caching is firing is to trawl worker
@@ -2612,7 +2673,7 @@ async def _process_annotation_run_async(
                     runtime_key=runtime_key,
                     session=session,
                 )
-                storage_provider_instance = await get_cached_provider("storage", app_settings)
+                storage_provider_instance = cached_resolve("storage")
                 provider_creation_time = time.time() - provider_start_time
                 logger.info(f"Task: Provider creation/retrieval took {provider_creation_time:.3f}s for Run {run.id}")
             except Exception as e_provider:
@@ -3188,7 +3249,7 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
                     runtime_key=runtime_key,
                     session=session,
                 )
-                storage_provider_instance = await get_cached_provider("storage", app_settings)
+                storage_provider_instance = cached_resolve("storage")
                 logger.info(f"Task: Providers initialized for retry of Run {run.id}")
             except Exception as e_provider:
                 logger.error(f"Task: Failed to create providers for retry of Run {run.id}: {e_provider}", exc_info=True)

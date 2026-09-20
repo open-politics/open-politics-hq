@@ -557,6 +557,10 @@ def _walk_node(
     the two mirrored labels and nothing more, because a row inside a section is
     not a section and honouring it would make ``x-graph`` mean two things.
     """
+    # Local import: ``task_utils`` reaches ``app.schemas``, which reaches back
+    # here for ``AnnotationSchemaRead.schema_map``. One reader, no cycle.
+    from app.core.task_utils import justification_flag
+
     if not isinstance(node, dict):
         return
 
@@ -587,12 +591,16 @@ def _walk_node(
         # ``or node`` is the fallback for a hand-authored contract that put the
         # ref on the array rather than on its items; the adapter and the
         # templates both write it on the items.
-        # ``or node`` is the fallback for a hand-authored contract that put the
-        # ref on the array rather than on its items; the adapter and the
-        # templates both write it on the items.
         ref_targets=_parse_refs(_ext_source(node, shape).get("x-ref") or node.get("x-ref")),
         canon=_parse_canon(node),
-        justification=bool(node.get("include_justification")),
+        # Same both-ways reading, and for the same reason — but `_ext_source`
+        # only hops to `items` for ENTITY shapes, and a claim section is an
+        # `array_object`. This read the array node ALONE, so every claim section
+        # reported `justification: False` to every consumer of the map while its
+        # contract said True. `justification_flag` is the one reader the two
+        # extraction paths share; imported here rather than at module scope
+        # because `task_utils` reaches `app.schemas`, which reaches back here.
+        justification=justification_flag(node)[0],
         from_source=node.get("x-fromSource") if isinstance(node.get("x-fromSource"), str) else None,
         to_source=node.get("x-toSource") if isinstance(node.get("x-toSource"), str) else None,
         graph_role=(decl or {}).get("role"),

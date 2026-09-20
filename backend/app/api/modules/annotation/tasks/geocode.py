@@ -372,7 +372,7 @@ def geocode(ctx: TaskContext, annotation_ids: list[int], params: GeocodeParams):
                 skipped_count += 1
                 continue
 
-            # Provider contract (see foundation_service_providers/implemented/*):
+            # Provider contract (see foundation_service_providers/geocoding/):
             # ``bbox`` normalized to ``[south, north, west, east]`` floats;
             # ``geometry`` is raw GeoJSON (Polygon/MultiPolygon for admin
             # boundaries, Point for POIs/cities). We simplify geometry to

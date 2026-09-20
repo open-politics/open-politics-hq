@@ -13,10 +13,22 @@ watermark is per-run JSON), so the body applies it by reusing the processor's
 own ``_delta_query`` — same logic, so the gate and the work can never drift.
 Live runs are few, so dispatching the body per cycle is cheap; the body only
 re-pends when there is genuinely new content, so an idle bundle stays quiet.
+
+It is also the only thing that can RESUME a stranded run, which is why the
+check covers PENDING as well as the terminal states. ``process_annotation_run``
+has no schedule — it moves on the ``annotation_run.created`` event and on its
+own self-chain — so a run left PENDING by a broken chain is reachable by
+nothing. That happens on every worker restart mid-chunk: the task is
+redelivered (``task_acks_late``), finds the crashed worker's 30-minute Redis
+lock still held, backs off, and after the lock expires nothing asks again. The
+run then sits PENDING with live content arriving and no heartbeat, for good.
+Re-emitting is idempotent — the streaming delta and the pair-level skip mean a
+spurious dispatch is a no-op — so the recovery costs nothing when it is not
+needed. ``STRANDED_AFTER`` keeps it from racing a run that is simply working.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlmodel import select
 
@@ -26,6 +38,13 @@ from app.core.tasks import TaskContext, task
 
 logger = logging.getLogger(__name__)
 
+#: How long a PENDING live run may go untouched before it counts as stranded.
+#: Comfortably longer than one chunk of LLM calls, so a run that is simply
+#: working is never mistaken for one whose chain died.
+STRANDED_AFTER = timedelta(minutes=15)
+
+_WATCHED = [RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_ERRORS, RunStatus.PENDING]
+
 
 @task("live_runs",
       check=lambda iid: (
@@ -33,7 +52,7 @@ logger = logging.getLogger(__name__)
           .where(
               AnnotationRun.infospace_id == iid,
               AnnotationRun.live == True,
-              AnnotationRun.status.in_([RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_ERRORS]),
+              AnnotationRun.status.in_(_WATCHED),
           )
           .order_by(AnnotationRun.id)
       ),
@@ -41,7 +60,7 @@ logger = logging.getLogger(__name__)
       batch=20,
       tags=frozenset({"annotation"}))
 def live_runs(ctx: TaskContext, run_ids: list[int]) -> None:
-    """Re-pend each live, caught-up run that has new work in its scope.
+    """Keep every live run moving: re-pend the caught-up, re-dispatch the stranded.
 
     Scope-agnostic: the body's ``_delta_query`` resolves whatever the run
     watches (bundle subtree or explicit list). A static list never has new
@@ -54,7 +73,24 @@ def live_runs(ctx: TaskContext, run_ids: list[int]) -> None:
             run = session.get(AnnotationRun, run_id)
             if not run or not run.live:
                 continue
-            if run.status not in (RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_ERRORS):
+            if run.status not in _WATCHED:
+                continue
+
+            if run.status == RunStatus.PENDING:
+                # Already where a caught-up run would be re-pended TO, so the
+                # only thing missing is the dispatch. Re-emit if it has gone
+                # quiet for long enough that nothing can still be chaining.
+                touched = run.updated_at
+                if touched is not None and touched.tzinfo is None:
+                    touched = touched.replace(tzinfo=timezone.utc)
+                if touched is not None and \
+                        datetime.now(timezone.utc) - touched < STRANDED_AFTER:
+                    continue
+                emit("annotation_run.created", {"infospace_id": run.infospace_id})
+                logger.warning(
+                    "live_runs: re-dispatched stranded run %d (PENDING and untouched "
+                    "since %s — its chain died)", run_id, touched)
+                ctx.stat("unstranded")
                 continue
 
             watermark = int((run.configuration or {}).get(WATERMARK_KEY, 0) or 0)
