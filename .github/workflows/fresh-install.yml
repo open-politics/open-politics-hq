@@ -1,0 +1,172 @@
+name: Fresh install
+
+# The only check that exercises what a new user actually does: clone, run
+# setup.sh, get a working stack. Everything else in CI runs against an
+# already-configured tree, which is exactly how a fresh-install bug survives —
+# POSTGRES_DB was missing from the compose projection for as long as every
+# developer machine had a legacy .env that happened to carry it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'setup.sh'
+      - 'compose*.yml'
+      - 'my-hq.example.yml'
+      - '.env.example'
+      - 'backend/app/core/config.py'
+      - 'backend/Dockerfile'
+      - '.github/workflows/fresh-install.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'setup.sh'
+      - 'compose*.yml'
+      - 'my-hq.example.yml'
+      - '.env.example'
+      - 'backend/app/core/config.py'
+      - 'backend/Dockerfile'
+      - '.github/workflows/fresh-install.yml'
+  workflow_dispatch:
+
+jobs:
+  fresh-install:
+    name: Clone → setup.sh → healthy stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert the checkout is what a clone gives you
+        # ensure_conf copies this; if it is not committed, a fresh clone dies on
+        # `cp` with no message worth reading.
+        run: |
+          test -f my-hq.example.yml || { echo "my-hq.example.yml is not in the repo"; exit 1; }
+          test -f .env.example      || { echo ".env.example is not in the repo"; exit 1; }
+          test ! -f .env            || { echo ".env is committed — it must not be"; exit 1; }
+          test ! -f my-hq.yml       || { echo "my-hq.yml is committed — it must not be"; exit 1; }
+
+      - name: setup.sh, non-interactive
+        run: |
+          printf 'ci@example.org\nci-password-not-a-placeholder\nci-password-not-a-placeholder\n' \
+            | ./setup.sh dev || { echo "::error::setup.sh failed on a clean tree"; exit 1; }
+
+      - name: The database compose created is the one my-hq.yml names
+        # The bug this job exists for: my-hq.yml names the database, config.py
+        # builds the DSN from it, and nothing handed POSTGRES_DB to the image —
+        # so initdb made `postgres` and the backend asked for something else.
+        run: |
+          WANT=$(grep -A4 '^    database:' my-hq.yml | grep '      name:' | awk '{print $2}')
+          echo "my-hq.yml names: $WANT"
+          docker compose exec -T db psql -U postgres -lqt | cut -d'|' -f1 | grep -qw "$WANT" \
+            || { echo "::error::database '$WANT' does not exist"; docker compose exec -T db psql -U postgres -lqt; exit 1; }
+
+      - name: Backend is ready
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8022/api/v1/healthz/readiness || true)
+            [ "$code" = "200" ] && { echo "ready"; exit 0; }
+            sleep 5
+          done
+          echo "::error::backend never became ready"
+          docker compose logs backend --tail=80
+          exit 1
+
+      - name: Frontend serves, and proxies /api to the backend
+        # The rewrite is why no NEXT_PUBLIC_API_URL is needed; a compose hostname
+        # in that variable would break the browser and pass every server-side test.
+        run: |
+          curl -fsS -o /dev/null http://127.0.0.1:3000/ || { echo "::error::frontend not serving"; exit 1; }
+          curl -fsS -o /dev/null http://127.0.0.1:3000/api/v1/healthz/readiness \
+            || { echo "::error::/api is not proxied by the frontend"; exit 1; }
+
+      - name: Uploads land on the host in every mode
+        # local_fs is the default; the bind used to exist only in the dev
+        # override, so production wrote into the container and lost it.
+        run: |
+          docker compose -f compose.yml config \
+            | grep -q 'target: /data/storage' \
+            || { echo "::error::local_fs is not mounted in the production compose file"; exit 1; }
+
+      - name: Audit is clean
+        run: ./setup.sh audit
+
+      - name: Editing my-hq.yml is caught, and render fixes it
+        run: |
+          sed -i 's/^    pdf_max_pages: .*/    pdf_max_pages: 7/' my-hq.yml
+          docker compose up -d --force-recreate backend
+          sleep 20
+          docker compose logs backend --tail=40 | grep -q 'changed since .env was rendered' \
+            || { echo "::error::stale config was not detected"; exit 1; }
+          ./setup.sh render
+          docker compose up -d backend
+          for i in $(seq 1 40); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8022/api/v1/healthz/readiness || true)
+            [ "$code" = "200" ] && exit 0
+            sleep 5
+          done
+          echo "::error::render did not recover the stack"
+          docker compose logs backend --tail=40
+          exit 1
+
+      - name: Invalid config is refused, not absorbed
+        # The whole point of putting the rules in AppSettings: `docker compose
+        # up` has to reject a bad my-hq.yml on its own, with no setup.sh in the
+        # loop. Each case below booted happily before these gates existed.
+        run: |
+          set -u
+          cp my-hq.yml /tmp/my-hq.good.yml
+          fail=0
+          check() {   # check <label> <sed-expr>
+            cp /tmp/my-hq.good.yml /tmp/my-hq.bad.yml
+            sed -i "$2" /tmp/my-hq.bad.yml
+            if docker compose exec -T -e HQ_CONFIG_FILE=/tmp/bad.yml backend \
+                 sh -c 'cat > /tmp/bad.yml' < /tmp/my-hq.bad.yml \
+               && docker compose exec -T -e HQ_CONFIG_FILE=/tmp/bad.yml -w /app backend \
+                 python -c 'import app.api.dependency_injection' 2>/dev/null; then
+              echo "::error::accepted invalid config: $1"
+              fail=1
+            else
+              echo "rejected: $1"
+            fi
+          }
+          check "network.mode typo"        's/^    mode: .*/    mode: hsot/'
+          check "use.web_search typo"      's/^    web_search: .*/    web_search: searxnng/'
+          check "access level typo"        's/^      openai: .*/      openai: yes/'
+          check "negative pool size"       's/^        size: .*/        size: -1/'
+          check "empty database name"      's/^      name: opp_app_users/      name: ""/'
+          exit $fail
+
+      - name: Provider addresses are reachable, not just coherent
+        # `audit` probes every container-backed base_url from inside the backend.
+        # The searxng entry once said :8080 against a service on :8888 — every
+        # declaration consistent, web search dead.
+        run: ./setup.sh audit
+
+      - name: No legacy keys survive a render
+        # prune_env runs on every render, not once at migration. MINIO_* and
+        # WIPE_DB outlived the one-shot that was supposed to remove them.
+        run: |
+          ./setup.sh render
+          if grep -qE '^(MINIO_|PROVIDER_ACCESS_|WIPE_DB=|ENABLED_ENRICHERS=)' .env; then
+            echo "::error::legacy keys still in .env after render"
+            grep -nE '^(MINIO_|PROVIDER_ACCESS_|WIPE_DB=|ENABLED_ENRICHERS=)' .env
+            exit 1
+          fi
+          cp .env /tmp/env.1 && ./setup.sh render && diff /tmp/env.1 .env \
+            || { echo "::error::render is not idempotent"; exit 1; }
+
+      - name: Secrets never reach a third-party image
+        # garage and nominatim used to carry env_file: .env, which handed them
+        # ENCRYPTION_MASTER_KEY and every provider key.
+        run: |
+          for svc in garage nominatim searxng ollama caddy; do
+            if awk "/^  $svc:/,/^  [a-z_]+:\$/" compose.yml | grep -q 'env_file'; then
+              echo "::error::$svc has env_file: .env — narrow it to the vars it needs"
+              exit 1
+            fi
+          done
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail=120

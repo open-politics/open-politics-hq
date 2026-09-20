@@ -1,0 +1,179 @@
+# Deployment config for CI. Same shape as app/tests/hq-test.yml; the services
+# are GitHub service containers, so they answer on localhost instead of compose
+# service names. Referenced by HQ_CONFIG_FILE in .github/workflows/tests.yml.
+
+stack:
+  name: hq-ci
+  project: HQ
+  environment: local
+  user_agent: OpenPoliticsHQ/1.0
+
+deployment:
+  users:
+    open_registration: true
+    require_email_verification: false
+    allowed_actions: "*"
+    token_expiry_minutes: 11520
+    password_reset_expiry_hours: 48
+  storage:
+    use: local_fs
+    user_uploads:
+      host_path: ./.store/local_fs
+      base_path: /tmp/test-storage
+    importable_paths:
+      - /tmp/test-storage/datasets
+    browse_max_files: 5000
+  email:
+    host: ""
+    port: 587
+    user: ""
+    from_email: test@example.com
+    from_name: ""
+    tls: true
+    ssl: false
+  network:
+    mode: bridge
+    reach: local
+    bind: 127.0.0.1
+    domain: localhost
+    acme_email: ""
+    cors:
+      origins:
+        - http://localhost:3000
+      methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      headers:
+        - "*"
+  services:
+    backend:
+      port: 8022
+      workers: 1
+      image: backend
+      tag: latest
+    frontend:
+      port: 3000
+    celery:
+      workers: 1
+      processing_workers: 1
+    database:
+      host: localhost
+      port: 5432
+      name: test_db
+      user: postgres
+      ssl_mode: ""
+      pool:
+        size: 5
+        max_overflow: 10
+        pre_ping: true
+    redis:
+      host: localhost
+      port: 6379
+      db: 0
+      url: ""
+    s3:
+      endpoint: garage:3900
+      bucket: hq-test
+      region: garage
+      use_ssl: false
+      key_env: S3_ACCESS_KEY_ID
+  processing:
+    background_content_enrichers:   # off: a test enables what it needs
+      hash: false
+      ocr: false
+      geocoding: false
+      language_detection: false
+      quality_score: false
+      embedding: false
+    pdf_max_pages: 0
+    content_rate_limit: ""
+    max_upload_size_bytes: 1073741824
+    dispatch_interval_seconds: 120
+    annotation:
+      default_concurrency: 2
+      max_concurrency: 4
+      chunk_size: 10
+  sso:
+    discourse:
+      enabled: false
+      url: ""
+
+foundation:
+  run:
+    searxng: false
+    ollama: false
+    nominatim: false
+    garage: false
+  use:
+    ocr: tesseract
+    geocoding: nominatim_api        # keyless, no container
+    scraping: newspaper4k
+    web_search: ""                  # nothing runs one; a test that needs it says so
+    storage: local_fs
+  access:
+    language:
+      ollama: all
+      llamacpp: all
+      openai: byok
+      anthropic: byok
+      mistral: byok
+    embedding:
+      ollama: all
+      openai: byok
+      jina: byok
+      voyage: byok
+    ocr:
+      tesseract: all
+      ollama: all
+    geocoding:
+      nominatim_local: all
+      nominatim_api: all
+      mapbox: byok
+    web_search:
+      searxng: all
+      tavily: byok
+    scraping:
+      newspaper4k: all
+  providers:
+    ollama:
+      base_url: http://ollama:11434
+      ocr_model: llava
+    llamacpp:
+      base_url: http://host.docker.internal:4000
+    searxng:
+      base_url: http://searxng:8888
+    nominatim_local:
+      base_url: http://nominatim:8080
+      pbf_url: https://download.geofabrik.de/europe-latest.osm.pbf
+      replication_url: https://planet.openstreetmap.org/replication/day/
+      import_style: admin
+    tesseract:
+      language: eng
+    openai:
+      base_url: https://api.openai.com/v1
+      key_env: OPENAI_API_KEY
+    anthropic:
+      base_url: https://api.anthropic.com
+      key_env: ANTHROPIC_API_KEY
+    mistral:
+      base_url: https://api.mistral.ai/v1
+      key_env: MISTRAL_API_KEY
+    jina:
+      base_url: https://api.jina.ai/v1/embeddings
+      model: jina-embeddings-v5-text-small
+      key_env: JINA_API_KEY
+    voyage:
+      base_url: https://api.voyageai.com/v1
+      key_env: VOYAGE_API_KEY
+    tavily:
+      base_url: https://api.tavily.com
+      key_env: TAVILY_API_KEY
+    nominatim_api:
+      base_url: https://nominatim.openstreetmap.org
+    mapbox:
+      base_url: https://api.mapbox.com/geocoding/v5/mapbox.places
+      key_env: MAPBOX_ACCESS_TOKEN

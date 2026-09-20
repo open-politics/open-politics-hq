@@ -63,6 +63,14 @@ jobs:
           fi
           echo "ok: single content derivation"
 
+      - name: Lockfile matches pyproject — uv.lock must not drift
+        # --frozen in backend/Dockerfile and in the install steps below means a
+        # stale lock fails the image build with a resolution error instead of
+        # saying "you forgot to relock". Fail here, clearly, first.
+        run: |
+          pip install uv==0.12.17
+          uv lock --check
+
   unit-tests:
     name: Unit tests
     runs-on: ubuntu-latest
@@ -72,27 +80,15 @@ jobs:
         working-directory: backend
     env:
       PYTHONPATH: ${{ github.workspace }}/backend
-      # Minimal config — unit tests don't hit real services
-      ENVIRONMENT: local
+      # Deployment config is a file, not a pile of env vars — see .github/hq-ci.yml.
+      # Only secrets live here, because only secrets live in the environment.
+      HQ_CONFIG_FILE: ${{ github.workspace }}/.github/hq-ci.yml
       SECRET_KEY: test-secret
       ENCRYPTION_MASTER_KEY: dGVzdGtleQ==
-      POSTGRES_SERVER: localhost
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: unused
-      POSTGRES_USER: unused
       POSTGRES_PASSWORD: unused
-      REDIS_HOST: localhost
-      REDIS_PORT: "6379"
-      REDIS_DB: "0"
       REDIS_PASSWORD: ""
-      STORAGE_PROVIDER_TYPE: local_fs
-      LOCAL_STORAGE_BASE_PATH: /tmp/test-storage
       FIRST_SUPERUSER: unused@test.local
       FIRST_SUPERUSER_PASSWORD: unused
-      ENABLED_ENRICHERS: ""
-      DOMAIN: localhost
-      PROJECT_NAME: HQ
-      BACKEND_PORT: "8022"
 
     steps:
       - uses: actions/checkout@v4
@@ -102,10 +98,12 @@ jobs:
           python-version: "3.13"
 
       - name: Install uv
-        run: pip install uv
+        run: pip install uv==0.12.17
 
       - name: Install dependencies
-        run: uv pip install --system --no-cache-dir -e ".[dev]"
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ env.pythonLocation }}
+        run: uv sync --frozen --extra dev --no-install-project
 
       - name: Run unit tests
         run: >-
@@ -125,31 +123,15 @@ jobs:
         working-directory: backend
     env:
       PYTHONPATH: ${{ github.workspace }}/backend
-      ENVIRONMENT: local
+      # Deployment config is a file, not a pile of env vars — see .github/hq-ci.yml.
+      # It names the service containers below; only secrets stay here.
+      HQ_CONFIG_FILE: ${{ github.workspace }}/.github/hq-ci.yml
       SECRET_KEY: test-secret-key-not-for-production
       ENCRYPTION_MASTER_KEY: dGVzdC1lbmNyeXB0aW9uLWtleS1ub3QtZm9yLXByb2Q=
+      POSTGRES_PASSWORD: testpassword
+      REDIS_PASSWORD: ""
       FIRST_SUPERUSER: admin@test.local
       FIRST_SUPERUSER_PASSWORD: testpassword123
-      USERS_OPEN_REGISTRATION: "True"
-      BACKEND_PORT: "8022"
-      BACKEND_CORS_ORIGINS: "http://localhost"
-      DOMAIN: localhost
-      PROJECT_NAME: HQ
-      STACK_NAME: hq-test
-      # Services on localhost via GHA service containers
-      POSTGRES_SERVER: localhost
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: test_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: testpassword
-      REDIS_HOST: localhost
-      REDIS_PORT: "6379"
-      REDIS_DB: "0"
-      REDIS_PASSWORD: ""
-      # Storage
-      STORAGE_PROVIDER_TYPE: local_fs
-      LOCAL_STORAGE_BASE_PATH: /tmp/test-storage
-      ENABLED_ENRICHERS: ""
 
     services:
       postgres:
@@ -184,10 +166,12 @@ jobs:
           python-version: "3.13"
 
       - name: Install uv
-        run: pip install uv
+        run: pip install uv==0.12.17
 
       - name: Install dependencies
-        run: uv pip install --system --no-cache-dir -e ".[dev]"
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ env.pythonLocation }}
+        run: uv sync --frozen --extra dev --no-install-project
 
       - name: Create storage directory
         run: mkdir -p /tmp/test-storage
