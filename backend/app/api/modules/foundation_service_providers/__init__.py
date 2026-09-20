@@ -1,83 +1,91 @@
 """
-Provider interfaces, registry, and resolution.
+__init__.py — the only import surface external callers use.
+===========================================================
 
-Three files form the provider system:
-- base.py:      Protocol classes + ModelSpec types + ProviderSelection
-- registry.py:  Framework (@provider, ProviderDescriptor) + registry + resolve()
-- providers.py: All provider declarations
+  .primitives  ──► Resolution (vocabulary): CAPABILITIES, ProviderError,
+                    Setting, descriptor_for, list_providers, …
+  .resolve     ──► Resolution (verbs): resolve(), list_models(),
+                    probe_providers(), Resolved
+                    ◄── imported AFTER .primitives: it pulls in
+                        providers.py, which needs the vocabulary first
 
-Public API — everything else is internal:
-- ``resolve(capability, ...)``  → build a provider
-- ``Resolved``                  → return type, delegates to the instance
-- ``ProviderError``             → raised on any resolution failure
-- ``is_capability_available()`` → cheap deployment-level probe (circuit breakers)
-- ``list_providers(capability)`` → discovery UI helper
-- ``probe_providers()``         → startup status summary
+  .models                 ──► Model specs: ModelSpec
+  .language / .embedding  ──► Model specs: LLMModelSpec, EmbeddingModelSpec
+
+  .user_config  ──► Selection: ProviderSelection, ProviderDefaults,
+                     EnrichmentConfig, validate_*
+
+  seven domain packages  ──► Contracts: the Provider Protocols and their
+                              result types — no implementation, so this
+                              import is safe at startup
+
+  resolve("language", infospace_id=5)      build a provider
+  list_models("language", "ollama", ...)   what this endpoint can run NOW
+
+  NOT IN THIS FILE
+    providers.py   every declaration; ~15 lines adds one more endpoint.
+    MAP.md         why the package is shaped this way.
 """
 
-from .base import (
-    ModelSpec,
-    LLMModelSpec,
-    EmbeddingModelSpec,
-    StorageProvider,
-    FileStat,
-    ScrapingProvider,
-    WebSearchProvider,
-    GeocodingProvider,
-    EmbeddingProvider,
-    OcrProvider,
-    OcrResult,
-    LanguageModelProvider,
-    ModelInfo,
-    GenerationResponse,
+# The vocabulary a declaration is written in.
+from .primitives import (
+    CAPABILITIES,
+    ProviderError,
+    Resolved,
+    Setting,
+    capabilities_for,
+    descriptor_for,
+    get_model_spec,
+    list_providers,
+)
+
+# Importing this runs providers.py, so it must follow the vocabulary.
+from .resolve import (
+    get_configured_foundation_provider,
+    is_capability_available,
+    list_models,
+    probe_providers,
+    resolve,
+)
+
+# Model specs.
+from .models import ModelSpec
+from .language import LLMModelSpec
+from .embedding import EmbeddingModelSpec
+
+# What a user or infospace has chosen.
+from .user_config import (
     ProviderSelection,
     LanguageDefaults,
     ProviderDefaults,
     EnrichmentConfig,
+    validate_provider_defaults,
+    validate_enrichment_config,
 )
 
-from .registry import (
-    resolve,
-    Resolved,
-    ProviderError,
-    is_capability_available,
-    list_providers,
-    get_model_spec,
-    get_configured_foundation_provider,
-    probe_providers,
-    CAPABILITIES,
-)
+# Contracts only — importing these pulls in no implementation, so startup is safe.
+from .language import LanguageModelProvider, GenerationResponse, GenerationOptions
+from .embedding import EmbeddingProvider
+from .ocr import OcrProvider, OcrResult
+from .geocoding import GeocodingProvider
+from .scraping import ScrapingProvider
+from .storage import StorageProvider
+from .web_search import WebSearchProvider, SearchHit, SearchResults
 
 __all__ = [
-    # Model specs
-    "ModelSpec",
-    "LLMModelSpec",
-    "EmbeddingModelSpec",
-    # Provider selection
-    "ProviderSelection",
-    "LanguageDefaults",
-    "ProviderDefaults",
-    "EnrichmentConfig",
-    # Provider protocols
-    "StorageProvider",
-    "FileStat",
-    "ScrapingProvider",
-    "WebSearchProvider",
-    "GeocodingProvider",
-    "EmbeddingProvider",
-    "OcrProvider",
-    "OcrResult",
-    "LanguageModelProvider",
-    "ModelInfo",
-    "GenerationResponse",
-    # Resolution — public API
-    "resolve",
-    "Resolved",
-    "ProviderError",
-    "is_capability_available",
-    "list_providers",
-    "get_model_spec",
-    "get_configured_foundation_provider",
-    "probe_providers",
+    # Resolution
+    "resolve", "list_models", "Resolved", "ProviderError", "Setting",
+    "is_capability_available", "list_providers", "descriptor_for", "capabilities_for",
+    "get_model_spec", "get_configured_foundation_provider", "probe_providers",
     "CAPABILITIES",
+    # Model specs
+    "ModelSpec", "LLMModelSpec", "EmbeddingModelSpec",
+    # Selection
+    "ProviderSelection", "LanguageDefaults", "ProviderDefaults", "EnrichmentConfig",
+    "validate_provider_defaults", "validate_enrichment_config",
+    # Contracts
+    "LanguageModelProvider", "GenerationResponse", "GenerationOptions",
+    "EmbeddingProvider", "OcrProvider", "OcrResult", "GeocodingProvider",
+    "ScrapingProvider", "StorageProvider", "WebSearchProvider",
+    "SearchHit", "SearchResults",
 ]

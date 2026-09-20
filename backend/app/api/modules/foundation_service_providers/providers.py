@@ -1,439 +1,464 @@
 """
-Provider Declarations
-=====================
+providers.py — every provider declaration. Nothing here is code.
+================================================================
 
-All provider declarations live here — one decorated class per external service.
-The ``@provider`` decorator reads ``Capability`` attributes and registers
-``ProviderDescriptor`` entries into the shared registry.
+  @provider
+  class Anthropic:
+    key      = "anthropic"          ┐
+    api_key  = Setting(…)           ├──► Endpoint    who we talk to
+    base_url = Setting(…)           │
+    contexts = {"cloud"}            ┘
 
-Adding a new provider: define a class with ``key``, optional ``api_key`` /
-``base_url`` / ``contexts``, and one or more capability attributes
-(``language``, ``embedding``, ``ocr``, etc.). Credential key for user-stored
-keys is auto-derived from ``key`` when ``api_key`` is present.
+    language = Language(            ┐
+      dialect  = …dialects.blocks   │
+      features = [prompt_caching]   ├──► Binding  (Domain.__call__ checks
+      quirks   = BlocksQuirks(…)    │              the shape, at import)
+      models   = [LLMModelSpec(…)]  ┘
+    )
 
-Most providers only need ``api_key`` and ``base_url``, which ``_build_config``
-handles automatically. The ``extra`` lambdas exist for providers whose
-implementations have non-standard constructor signatures — see inline comments
-on each for the specific reason.
+              Endpoint + Binding ──► _registry[(capability, provider_key)]
 
-``model_required=False`` is set on Capability declarations where the provider
-has a single fixed implementation and no model selection (Tesseract, Mapbox,
-NominatimAPI, SearXNG, Tavily, MinIO, LocalFS, Newspaper4k). Everything else
-defaults to ``model_required=True``.
+  the attribute name (``language =``) must equal the bound domain's
+  name, or the AssertionError names the fix.
+
+  TWO THINGS THE FILE PROVES
+    LlamaCpp     blocks (Anthropic's packaging) + models_v1 (OpenAI's
+                 listing) — dialect and features are independent, so a
+                 new language provider is ~26 lines, not ~900.
+    Nominatim×2  one dialect, two endpoints, differing in a URL, a rate
+                 limit and a User-Agent — three GeocodingQuirks fields
+                 where two 200-line files used to be.
+
+  NOT IN THIS FILE
+    primitives.py  the vocabulary, Domain.__call__, @provider, _registry.
+    resolve.py     declaration ──► live object.
+    <domain>/      the contract: base.py, models.py, dialects/, features/.
 """
 
-from app.api.modules.foundation_service_providers.base import (
-    LLMModelSpec,
-    EmbeddingModelSpec,
+from app.api.modules.foundation_service_providers.primitives import Setting, provider
+
+from app.api.modules.foundation_service_providers.embedding import (
+    Embedding, EmbeddingModelSpec, EmbeddingQuirks,
 )
-from app.api.modules.foundation_service_providers.registry import (
-    Setting,
-    Capability,
-    provider,
+from app.api.modules.foundation_service_providers.geocoding import Geocoding, GeocodingQuirks
+from app.api.modules.foundation_service_providers.language import (
+    Language, BlocksQuirks, TurnsQuirks, ItemsQuirks, LLMModelSpec,
 )
+from app.api.modules.foundation_service_providers.ocr import Ocr, OcrQuirks
+from app.api.modules.foundation_service_providers.scraping import Scraping, ScrapingQuirks
+from app.api.modules.foundation_service_providers.storage import Storage, StorageQuirks
+from app.api.modules.foundation_service_providers.web_search import WebSearch, WebSearchQuirks
 
 
-# ── Multi-capability providers ────────────────────────────────────────────────
+# ── Language ──────────────────────────────────────────────────────────────────
+
 
 @provider
-class Ollama:
-    key = "ollama"
-    base_url = Setting("OLLAMA_BASE_URL", default="http://host.docker.internal:11434")
+class Anthropic:
+    key = "anthropic"
+    name = "Anthropic"
+    description = "Claude language models from Anthropic."
+    api_key = Setting("ANTHROPIC_API_KEY", label="Anthropic API Key",
+                      url="https://console.anthropic.com/settings/keys")
+    base_url = Setting("ANTHROPIC_BASE_URL", default="https://api.anthropic.com")
+    contexts = {"cloud"}
+
+    language = Language(
+        dialect=Language.dialects.blocks,
+        features=[Language.features.prompt_caching],
+        models=[
+            LLMModelSpec("claude-sonnet-4-6", "Latest Sonnet — enhanced reasoning",
+                         supports_tools=True, supports_thinking=True,
+                         supports_multimodal=True, supports_structured_output=True,
+                         supports_prompt_caching=True,
+                         max_tokens=64_000, context_length=200_000),
+            LLMModelSpec("claude-opus-4-7", "Most capable Opus",
+                         supports_tools=True, supports_thinking=True,
+                         supports_multimodal=True, supports_structured_output=True,
+                         supports_prompt_caching=True,
+                         max_tokens=32_000, context_length=200_000),
+            LLMModelSpec("claude-opus-4-6", "Most capable model for complex tasks",
+                         supports_tools=True, supports_thinking=True,
+                         supports_multimodal=True, supports_structured_output=True,
+                         supports_prompt_caching=True,
+                         max_tokens=32_000, context_length=200_000),
+            LLMModelSpec("claude-haiku-4-5", "Fast and affordable",
+                         supports_tools=True, supports_multimodal=True,
+                         supports_structured_output=True, supports_prompt_caching=True,
+                         max_tokens=64_000, context_length=200_000),
+        ],
+    )
+
+
+@provider
+class LlamaCpp:
+    key = "llamacpp"
+    name = "llama.cpp"
+    description = "Local GGUF inference via llama-server."
+    base_url = Setting("LLAMACPP_BASE_URL", default="http://host.docker.internal:4000")
     contexts = {"local", "self_hosted"}
 
-    language = Capability("language_ollama.OllamaLanguageModelProvider")
-    embedding = Capability("embedding_ollama.OllamaEmbeddingProvider")
-    ocr = Capability(
-        "ocr_ollama.OllamaOcrProvider",
-        extra=lambda s: {"model": getattr(s, "OLLAMA_OCR_MODEL", "llava")},  # ollama serves multiple vision models — selects which one does OCR
+    language = Language(
+        dialect=Language.dialects.blocks,       # Anthropic's packaging…
+        features=[Language.features.models_v1,  # …OpenAI's model listing
+                  Language.features.props],     # …and its own /props
+        # Probed live 2026-09-17: /v1/messages emits typed thinking + tool_use.
+        quirks=BlocksQuirks(
+            auth_header="bearer",               # llama-server's --api-key reads Bearer
+            placeholder_api_key="no-key",       # keyless, but a client wants a string
+            # A GGUF reasons because its chat template does, not because we asked;
+            # silence leaves it on and it can eat the whole output cap.
+            no_thinking_template_kwarg="enable_thinking",
+        ),
     )
 
 
 @provider
 class OpenAI:
     key = "openai"
-    api_key = Setting("OPENAI_API_KEY")
+    name = "OpenAI"
+    description = "GPT models and text embeddings from OpenAI."
+    api_key = Setting("OPENAI_API_KEY", label="OpenAI API Key",
+                      url="https://platform.openai.com/api-keys")
     base_url = Setting("OPENAI_BASE_URL", default="https://api.openai.com/v1")
     contexts = {"cloud"}
 
-    language = Capability("language_openai.OpenAILanguageModelProvider", models=[
-        LLMModelSpec(
-            name="gpt-5.2",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_multimodal=True,
-            supports_structured_output=True,
+    language = Language(
+        dialect=Language.dialects.items,
+        features=[Language.features.mcp],
+        quirks=ItemsQuirks(
+            max_tokens_field="max_output_tokens",
+            developer_role=True,
+            store=False,
+            strict_tools=True,
         ),
-        LLMModelSpec(
-            name="gpt-5-mini",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_multimodal=True,
-            supports_structured_output=True,
-        ),
-        LLMModelSpec(
-            name="gpt-5-nano",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_structured_output=True,
-        ),
-        LLMModelSpec(
-            name="gpt-4.1",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_multimodal=True,
-            supports_structured_output=True,
-        ),
-        LLMModelSpec(
-            name="o3",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_thinking=True,
-            supports_structured_output=True,
-        ),
-        LLMModelSpec(
-            name="o4-mini",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_thinking=True,
-            supports_structured_output=True,
-        ),
-    ])
-    embedding = Capability("embedding_openai.OpenAIEmbeddingProvider", models=[
-        EmbeddingModelSpec(
-            name="text-embedding-3-small",
-            dimension=1536,
-            max_sequence_length=8191,
-        ),
-        EmbeddingModelSpec(
-            name="text-embedding-3-large",
-            dimension=3072,
-            max_sequence_length=8191,
-        ),
-    ], extra=lambda s, models: {  # openai's API doesn't expose embedding specs — dimensions must be passed in
-        "models": {
-            m.name: {"dimension": m.dimension, "max_sequence_length": m.max_sequence_length}
-            for m in models
+        extra=lambda s, models: {
+            # Unset ⇒ the `mcp` feature declines and our own executor runs tools.
+            "mcp_server_url": getattr(s, "MCP_PUBLIC_URL", None),
         },
-    })
+        models=[
+            LLMModelSpec("gpt-5.2", "Best for coding and agentic tasks",
+                         supports_tools=True, supports_multimodal=True,
+                         supports_structured_output=True),
+            LLMModelSpec("gpt-5-mini", "Faster, cost-efficient for well-defined tasks",
+                         supports_tools=True, supports_multimodal=True,
+                         supports_structured_output=True),
+            LLMModelSpec("gpt-5-nano", "Fastest, most cost-efficient",
+                         supports_tools=True, supports_multimodal=True,
+                         supports_structured_output=True),
+            LLMModelSpec("gpt-4.1", "Smartest non-reasoning model",
+                         supports_tools=True, supports_multimodal=True,
+                         supports_structured_output=True),
+            LLMModelSpec("o3", "Reasoning model for complex tasks",
+                         supports_tools=True, supports_thinking=True,
+                         supports_multimodal=True, supports_structured_output=True),
+            LLMModelSpec("o4-mini", "Fast, cost-efficient reasoning",
+                         supports_tools=True, supports_thinking=True,
+                         supports_multimodal=True, supports_structured_output=True),
+        ],
+    )
 
-
-# ── Language-only providers ───────────────────────────────────────────────────
-
-@provider
-class Anthropic:
-    key = "anthropic"
-    api_key = Setting("ANTHROPIC_API_KEY")
-    base_url = Setting("ANTHROPIC_BASE_URL", default="https://api.anthropic.com")
-    contexts = {"cloud"}
-
-    language = Capability("language_anthropic.AnthropicLanguageModelProvider", models=[
-        LLMModelSpec(
-            name="claude-sonnet-4-6",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_thinking=True,
-            supports_multimodal=True,
-            supports_structured_output=True,
-        ),
-        LLMModelSpec(
-            name="claude-opus-4-6",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_thinking=True,
-            supports_multimodal=True,
-            supports_structured_output=True,
-        ),
-        LLMModelSpec(
-            name="claude-haiku-4-5",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_thinking=False,
-            supports_multimodal=True,
-            supports_structured_output=True,
-        ),
-    ])
-
-
-@provider
-class Gemini:
-    key = "gemini"
-    api_key = Setting("GOOGLE_API_KEY")
-    contexts = {"cloud"}
-
-    language = Capability("language_gemini.GeminiLanguageModelProvider", models=[
-        LLMModelSpec(
-            name="gemini-3.1-pro",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_thinking=True,
-            supports_multimodal=True,
-            supports_structured_output=True,
-            context_length=1048576,
-            max_tokens=8192,
-        ),
-        LLMModelSpec(
-            name="gemini-3-flash",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_thinking=True,
-            supports_multimodal=True,
-            supports_structured_output=True,
-            context_length=1048576,
-            max_tokens=8192,
-        ),
-        LLMModelSpec(
-            name="gemini-2.5-pro",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_thinking=True,
-            supports_multimodal=True,
-            supports_structured_output=True,
-            context_length=1048576,
-            max_tokens=8192,
-        ),
-        LLMModelSpec(
-            name="gemini-2.5-flash",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_thinking=True,
-            supports_multimodal=True,
-            supports_structured_output=True,
-            context_length=1048576,
-            max_tokens=8192,
-        ),
-    ])
+    embedding = Embedding(
+        dialect=Embedding.dialects.indexed,
+        features=[Embedding.features.verify],
+        models=[
+            EmbeddingModelSpec("text-embedding-3-small", dimension=1536,
+                               max_sequence_length=8191),
+            EmbeddingModelSpec("text-embedding-3-large", dimension=3072,
+                               max_sequence_length=8191),
+        ],
+    )
 
 
 @provider
 class Mistral:
     key = "mistral"
-    api_key = Setting("MISTRAL_API_KEY")
-    base_url = Setting("MISTRAL_BASE_URL", default="https://api.mistral.ai")
+    name = "Mistral AI"
+    description = "Mistral and Codestral language models. EU-hosted."
+    api_key = Setting("MISTRAL_API_KEY", label="Mistral API Key",
+                      url="https://console.mistral.ai/api-keys/")
+    base_url = Setting("MISTRAL_BASE_URL", default="https://api.mistral.ai/v1")
     contexts = {"cloud"}
 
-    language = Capability("language_mistral.MistralLanguageModelProvider", models=[
-        LLMModelSpec(
-            name="mistral-large-latest",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_structured_output=True,
-        ),
-        LLMModelSpec(
-            name="mistral-small-latest",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_structured_output=True,
-        ),
-        LLMModelSpec(
-            name="codestral-latest",
-            supports_tools=True,
-            supports_streaming=True,
-            supports_structured_output=True,
-        ),
-    ])
+    language = Language(
+        dialect=Language.dialects.turns,
+        models=[
+            LLMModelSpec("mistral-large-latest", "Most capable Mistral model",
+                         supports_tools=True, supports_structured_output=True),
+            LLMModelSpec("mistral-small-latest", "Efficient and fast",
+                         supports_tools=True, supports_structured_output=True),
+            LLMModelSpec("codestral-latest", "Code-specialised",
+                         supports_tools=True, supports_structured_output=True),
+        ],
+    )
 
 
-# ── Embedding-only providers ─────────────────────────────────────────────────
+@provider
+class Ollama:
+    key = "ollama"
+    name = "Ollama"
+    description = "Run open-source models locally via Ollama. Language, embedding and OCR."
+    base_url = Setting("OLLAMA_BASE_URL", default="http://host.docker.internal:11434")
+    contexts = {"local", "self_hosted"}
+
+    language = Language(
+        dialect=Language.dialects.turns,        # same packaging as Mistral…
+        path="/api/chat",                       # …at a different address
+        features=[Language.features.models_ollama, Language.features.model_pull],
+        quirks=TurnsQuirks(                     # …and seven flags are the difference
+            tool_args_encoding="object",        # Mistral sends a JSON string
+            tool_result_needs_call_id=False,    # no such field on this endpoint
+            image_placement="message_array",    # message-level `images: [b64]`
+            schema_field="format",              # not `response_format`
+            params_envelope="options",          # sampling params nest, max_tokens renames
+            stream_frame="ndjson",              # not SSE deltas
+            thinking_tags=True,
+            native_tool_parsing=False,
+            retry_without_tools_on_400=True,
+        ),
+    )
+
+    embedding = Embedding(
+        dialect=Embedding.dialects.flat,
+        features=[Embedding.features.probe_model, Embedding.features.list_models],
+        quirks=EmbeddingQuirks(server_truncate=True, char_budget_ratio=3.2),
+    )
+
+    ocr = Ocr(
+        dialect=Ocr.dialects.vision_prompt,
+        model_required=False,
+        extra=lambda s, models: {"model": getattr(s, "OLLAMA_OCR_MODEL", "llava")},
+    )
+
+
+# ── Embedding ─────────────────────────────────────────────────────────────────
+
 
 @provider
 class Jina:
     key = "jina"
-    api_key = Setting("JINA_API_KEY")
+    name = "Jina AI"
+    description = "High-quality multilingual text embeddings."
+    api_key = Setting("JINA_API_KEY", label="Jina API Key",
+                      url="https://jina.ai/embeddings/#apiform")
+    base_url = Setting("JINA_BASE_URL", default="https://api.jina.ai/v1/embeddings")
     contexts = {"cloud"}
 
-    embedding = Capability("embedding_jina.JinaEmbeddingProvider", models=[
-        EmbeddingModelSpec(
-            name="jina-embeddings-v5-text-small",
-            dimension=1024,
-            max_sequence_length=32768,
-        ),
-        EmbeddingModelSpec(
-            name="jina-embeddings-v5-text-nano",
-            dimension=768,
-            max_sequence_length=8192,
-        ),
-        EmbeddingModelSpec(
-            name="jina-embeddings-v4",
-            dimension=1024,
-            max_sequence_length=32768,
-        ),
-    ], extra=lambda s, models: {  # jina has no model-spec API; fallback model + dimensions provided statically
-        "default_model": getattr(s, "JINA_EMBEDDING_MODEL", "jina-embeddings-v5-text-small"),
-        "models": {
-            m.name: {"dimension": m.dimension, "max_sequence_length": m.max_sequence_length}
-            for m in models
-        },
-    })
+    embedding = Embedding(
+        dialect=Embedding.dialects.indexed,
+        features=[Embedding.features.verify],
+        # Configured URL is already the full path; the dialect must not append.
+        quirks=EmbeddingQuirks(base_url_is_full_path=True),
+        models=[
+            EmbeddingModelSpec("jina-embeddings-v5-text-small", dimension=1024,
+                               max_sequence_length=32768),
+            EmbeddingModelSpec("jina-embeddings-v5-text-nano", dimension=768,
+                               max_sequence_length=8192),
+            EmbeddingModelSpec("jina-embeddings-v4", dimension=1024,
+                               max_sequence_length=32768),
+        ],
+    )
 
 
 @provider
 class Voyage:
     key = "voyage"
-    api_key = Setting("VOYAGE_API_KEY")
+    name = "Voyage AI"
+    description = "Specialised embeddings for code, law and finance."
+    api_key = Setting("VOYAGE_API_KEY", label="Voyage API Key",
+                      url="https://dash.voyageai.com/")
     base_url = Setting("VOYAGE_BASE_URL", default="https://api.voyageai.com/v1")
     contexts = {"cloud"}
 
-    embedding = Capability("embedding_voyage.VoyageAIEmbeddingProvider", models=[
-        EmbeddingModelSpec(
-            name="voyage-4-large",
-            dimension=1024,
-            max_sequence_length=32000,
-        ),
-        EmbeddingModelSpec(
-            name="voyage-4",
-            dimension=1024,
-            max_sequence_length=32000,
-        ),
-        EmbeddingModelSpec(
-            name="voyage-4-lite",
-            dimension=1024,
-            max_sequence_length=32000,
-        ),
-        EmbeddingModelSpec(
-            name="voyage-4-nano",
-            dimension=1024,
-            max_sequence_length=32000,
-        ),
-        EmbeddingModelSpec(
-            name="voyage-code-3",
-            dimension=1024,
-            max_sequence_length=32000,
-        ),
-        EmbeddingModelSpec(
-            name="voyage-finance-2",
-            dimension=1024,
-            max_sequence_length=32000,
-        ),
-        EmbeddingModelSpec(
-            name="voyage-law-2",
-            dimension=1024,
-            max_sequence_length=32000,
-        ),
-        EmbeddingModelSpec(
-            name="voyage-code-2",
-            dimension=1536,
-            max_sequence_length=16000,
-        ),
-    ])
+    embedding = Embedding(
+        dialect=Embedding.dialects.indexed,
+        features=[Embedding.features.verify],
+        # Requires the document/query distinction; rejects `encoding_format`.
+        quirks=EmbeddingQuirks(input_type="document", encoding_format=False),
+        models=[
+            EmbeddingModelSpec("voyage-4-large", dimension=1024, max_sequence_length=32000),
+            EmbeddingModelSpec("voyage-4", dimension=1024, max_sequence_length=32000),
+            EmbeddingModelSpec("voyage-4-lite", dimension=1024, max_sequence_length=32000),
+            EmbeddingModelSpec("voyage-4-nano", dimension=1024, max_sequence_length=32000),
+            EmbeddingModelSpec("voyage-code-3", dimension=1024, max_sequence_length=32000),
+            EmbeddingModelSpec("voyage-finance-2", dimension=1024, max_sequence_length=32000),
+            EmbeddingModelSpec("voyage-law-2", dimension=1024, max_sequence_length=32000),
+            EmbeddingModelSpec("voyage-code-2", dimension=1536, max_sequence_length=16000),
+        ],
+    )
 
 
 # ── OCR ───────────────────────────────────────────────────────────────────────
 
+
 @provider
 class Tesseract:
     key = "tesseract"
+    name = "Tesseract OCR"
+    description = "Open-source OCR engine running locally."
     contexts = {"local"}
-    ocr = Capability("ocr_tesseract.TesseractOcrProvider", model_required=False)
+
+    ocr = Ocr(
+        dialect=Ocr.dialects.local_engine,
+        model_required=False,
+        # Engine language; a caller still overrides per document via `language_hint`.
+        quirks=OcrQuirks(default_language=Setting("OCR_DEFAULT_LANGUAGE", default="eng")),
+    )
 
 
 # ── Geocoding ─────────────────────────────────────────────────────────────────
 
+
 @provider
 class NominatimLocal:
-    key = "local"
+    key = "nominatim_local"
+    name = "Local Nominatim"
+    description = "Self-hosted Nominatim geocoding instance."
     base_url = Setting("NOMINATIM_BASE_URL", default="http://nominatim:8080")
     contexts = {"local", "self_hosted"}
-    geocoding = Capability(
-        "geocoding_nominatim_local.NominatimLocalGeocodingProvider",
+
+    geocoding = Geocoding(
+        dialect=Geocoding.dialects.osm,
         model_required=False,
+        # Self-hosted: real boundary geometry, no rate limit, no User-Agent policy.
+        quirks=GeocodingQuirks(polygons=True),
     )
 
 
 @provider
 class NominatimAPI:
     key = "nominatim_api"
+    name = "Nominatim Public API"
+    description = "OpenStreetMap's free public geocoding API (rate-limited)."
+    base_url = Setting("NOMINATIM_API_URL", default="https://nominatim.openstreetmap.org")
     contexts = {"cloud"}
-    geocoding = Capability(
-        "geocoding_nominatim_api.NominatimAPIGeocodingProvider",
-        extra=lambda s: {"user_agent": s.GEOCODING_USER_AGENT},  # nominatim blocks requests without a user-agent
+
+    geocoding = Geocoding(
+        dialect=Geocoding.dialects.osm,     # same packaging as the self-hosted one
         model_required=False,
+        quirks=GeocodingQuirks(
+            polygons=True,
+            rate_limit_seconds=1.0,         # the public usage policy
+            # OSM rejects a request without one, and attributes traffic by it,
+            # so the operator's own identity has to reach the wire. stack.user_agent.
+            user_agent=Setting("GEOCODING_USER_AGENT", default="OpenPoliticsHQ/1.0"),
+        ),
     )
 
 
 @provider
 class Mapbox:
     key = "mapbox"
-    api_key = Setting("MAPBOX_ACCESS_TOKEN")
+    name = "Mapbox Geocoding"
+    description = "Commercial geocoding API from Mapbox."
+    api_key = Setting("MAPBOX_ACCESS_TOKEN", label="Mapbox Access Token",
+                      url="https://account.mapbox.com/access-tokens/")
+    base_url = Setting("MAPBOX_BASE_URL",
+                       default="https://api.mapbox.com/geocoding/v5/mapbox.places")
     contexts = {"cloud"}
-    geocoding = Capability(
-        "geocoding_mapbox.MapboxGeocodingProvider",
+
+    geocoding = Geocoding(
+        dialect=Geocoding.dialects.geojson,
         model_required=False,
+        # Point geometry only — boundaries need a separate paid API.
+        quirks=GeocodingQuirks(polygons=False),
     )
 
 
 # ── Storage ───────────────────────────────────────────────────────────────────
 
+
 @provider
-class MinIO:
-    key = "minio"
-    contexts = {"self_hosted"}
-    storage = Capability(
-        "storage_minio.MinioStorageProvider",
-        extra=lambda s: {  # S3 protocol needs its own credential shape — doesn't fit api_key/base_url
-            "endpoint_url": s.MINIO_ENDPOINT,
-            "access_key": s.MINIO_ACCESS_KEY,
-            "secret_key": s.MINIO_SECRET_KEY,
-            "bucket_name": s.MINIO_BUCKET_NAME,
-            "use_ssl": s.MINIO_USE_SSL,
-        },
+class S3:
+    key = "s3"
+    name = "Object storage (S3)"
+    description = "Any S3-compatible bucket — Garage, AWS, Hetzner, R2, B2, Wasabi."
+    # Both: the same protocol whether the bucket is a container on this machine
+    # or somebody else's region. Which one it is lives in my-hq.yml, not here.
+    contexts = {"self_hosted", "cloud"}
+
+    storage = Storage(
+        dialect=Storage.dialects.s3,
         model_required=False,
+        # Six values, none named like the standard api_key/base_url pair.
+        # region matters: Garage rejects a request without one.
+        extra=lambda s, models: {
+            "endpoint_url": s.S3_ENDPOINT,
+            "access_key": s.S3_ACCESS_KEY_ID,
+            "secret_key": s.S3_SECRET_ACCESS_KEY,
+            "bucket_name": s.S3_BUCKET_NAME,
+            "region": s.S3_REGION,
+            "use_ssl": s.S3_USE_SSL,
+        },
     )
 
 
 @provider
 class LocalFS:
     key = "local_fs"
+    name = "Local Filesystem"
+    description = "Store files directly on the local filesystem."
     contexts = {"local"}
-    storage = Capability(
-        "storage_local.LocalFileSystemStorageProvider",
-        extra=lambda s: {  # impl resolves all paths under base_path and validates imports against allowed list
-            "base_path": s.LOCAL_STORAGE_BASE_PATH,
-            "allowed_import_paths": [p.strip() for p in (s.ALLOWED_IMPORT_PATHS or "").split(",") if p.strip()],
-        },
+
+    storage = Storage(
+        dialect=Storage.dialects.filesystem,
         model_required=False,
+        extra=lambda s, models: {"base_path": s.LOCAL_STORAGE_BASE_PATH},
     )
 
 
 # ── Scraping ──────────────────────────────────────────────────────────────────
 
+
 @provider
 class Newspaper4k:
     key = "newspaper4k"
+    name = "Newspaper4k"
+    description = "Local article scraping and extraction."
     contexts = {"local"}
-    scraping = Capability(
-        "scraping_newspaper4k.Newspaper4kScrapingProvider",
-        extra=lambda s: {"config": {  # newspaper4k builds its internal Config once at init from this dict
-            "timeout": getattr(s, "SCRAPING_TIMEOUT", 30),
-            "threads": getattr(s, "SCRAPING_THREADS", 4),
-            "fetch_images": getattr(s, "SCRAPING_FETCH_IMAGES", True),
-            "enable_nlp": getattr(s, "SCRAPING_ENABLE_NLP", False),
-            "language": getattr(s, "SCRAPING_DEFAULT_LANGUAGE", "en"),
-            "user_agent": getattr(s, "SCRAPING_USER_AGENT", None),
-        }},
+
+    scraping = Scraping(
+        dialect=Scraping.dialects.article_parser,
         model_required=False,
+        quirks=ScrapingQuirks(
+            timeout=30,
+            threads=4,
+            fetch_images=True,
+            enable_nlp=False,
+            language="en",
+        ),
     )
 
 
-# ── Web Search ────────────────────────────────────────────────────────────────
+# ── Web search ────────────────────────────────────────────────────────────────
+
 
 @provider
 class Tavily:
     key = "tavily"
-    api_key = Setting("TAVILY_API_KEY")
+    name = "Tavily"
+    description = "AI-optimised web search with synthesized answers."
+    api_key = Setting("TAVILY_API_KEY", label="Tavily API Key",
+                      url="https://tavily.com/#api")
+    base_url = Setting("TAVILY_BASE_URL", default="https://api.tavily.com")
     contexts = {"cloud"}
-    web_search = Capability(
-        "web_search_tavily.TavilyWebSearchProvider",
+
+    web_search = WebSearch(
+        dialect=WebSearch.dialects.answer_engine,
         model_required=False,
+        quirks=WebSearchQuirks(raw_content=True, answer=True, images=True),
     )
 
 
 @provider
 class SearXNG:
     key = "searxng"
+    name = "SearXNG"
+    description = "Self-hosted metasearch. No API key, no outbound budget."
     base_url = Setting("SEARXNG_BASE_URL", default="http://searxng:8080")
     contexts = {"local", "self_hosted"}
-    web_search = Capability(
-        "web_search_searxng.SearXNGWebSearchProvider",
+
+    web_search = WebSearch(
+        dialect=WebSearch.dialects.metasearch,
         model_required=False,
     )
