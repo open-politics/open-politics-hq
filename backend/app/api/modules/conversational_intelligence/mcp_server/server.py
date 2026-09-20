@@ -49,7 +49,7 @@ from fastapi import HTTPException
 from typing import List, Optional, Any, Dict, Union, Tuple
 from datetime import datetime, timezone
 from fastmcp import FastMCP, Context
-from fastmcp.tools.tool import ToolResult
+from fastmcp.tools import ToolResult  # fastmcp>=4 dropped the .tools.tool submodule
 from mcp.types import TextContent
 
 from app.api.modules.identity_infospace_user.access import resolve_access_capped, Capability
@@ -239,11 +239,11 @@ def format_search_summary(results: List[dict], query: str, max_items: int = 5) -
     lines = [f"Found {len(results)} results for '{query}':\n"]
 
     for i, result in enumerate(results[:max_items], 1):
-        lines.append(f"{i}. {result.get('title', '(untitled)')}")
-        lines.append(f"   URL: {result.get('url', '')}")
-        if result.get('score'):
-            lines.append(f"   Relevance: {int(result['score'] * 100)}%")
-        snippet = result.get("content") or result.get("raw_content") or ""
+        lines.append(f"{i}. {result.title or '(untitled)'}")
+        lines.append(f"   URL: {result.url}")
+        if result.score:
+            lines.append(f"   Relevance: {int(result.score * 100)}%")
+        snippet = result.best_text
         if snippet:
             lines.append(f"   {truncate_text(snippet, 500)}")
         lines.append("")
@@ -1769,30 +1769,28 @@ async def web_research(
                 )
             
             search_items_summary = format_search_summary(raw_results, query)
-            summary_text = search_items_summary
-            if raw_results and "raw" in raw_results[0] and "summary_answer" in raw_results[0]["raw"]:
-                summary_answer = raw_results[0]["raw"]["summary_answer"]
-                summary_text = f"{summary_answer}\n\n{search_items_summary}"
-            
-            # Extract top-level images from first result's raw data (where Tavily stores them)
-            top_level_images = []
-            if raw_results and "raw" in raw_results[0]:
-                top_level_images = raw_results[0]["raw"].get("tavily_images", [])
+            # The engine's answer and images are named fields on SearchResults.
+            # They used to be smuggled into results[0]["raw"] under Tavily-specific
+            # keys, which this read unconditionally — so on any other provider it
+            # was reaching for keys that could never be there.
+            summary_text = (f"{raw_results.answer}\n\n{search_items_summary}"
+                            if raw_results.answer else search_items_summary)
+            top_level_images = raw_results.images
             
             search_results_data = [
                 {
-                    "title": result.get("title", ""),
-                    "url": result.get("url", ""),
-                    "content": result.get("content", ""),
-                    "text_content": result.get("raw_content"),
-                    "score": result.get("score"),
+                    "title": result.title,
+                    "url": result.url,
+                    "content": result.content,
+                    "text_content": result.raw_content,
+                    "score": result.score,
                     "provider": effective_provider,
                     "file_info": {
                         "search_query": query,
                         "search_provider": effective_provider,
-                        "search_score": result.get("score"),
-                        "published_date": result.get("published_date"),
-                        "favicon": result.get("favicon"),
+                        "search_score": result.score,
+                        "published_date": result.published_date,
+                        "favicon": result.favicon,
                     }
                 }
                 for result in raw_results
@@ -2644,9 +2642,7 @@ def _analysis_schema_templates(template_id: Optional[str]) -> ToolResult:
     lives, and handing back a good schema with a blank graph is the failure
     this is here to prevent.
     """
-    from app.api.modules.annotation.templates import (
-        ARCHETYPES, build_contract, build_projections, list_templates,
-    )
+    from app.api.modules.annotation.templates import ARCHETYPES, list_templates
 
     templates = list_templates()
     if template_id:
@@ -2660,13 +2656,16 @@ def _analysis_schema_templates(template_id: Optional[str]) -> ToolResult:
                 )],
                 structured_content={"error": "unknown_template", "available": known},
             )
-        contract = build_contract(t.tier, t.archetypes)
-        projections = build_projections(t.tier, t.archetypes)
+        # The template builds itself — see SchemaTemplate. A bespoke one is not
+        # expressible as tier × archetypes and used to be unofferable here.
+        contract = t.contract()
+        projections = t.projections()
+        sections = ", ".join(t.archetypes) or "bespoke — see the contract"
         return ToolResult(
             content=[TextContent(
                 type="text",
                 text=(f"📐 {t.label} ({t.tier}) — {t.hint}\n"
-                      f"Sections: {', '.join(t.archetypes)}\n"
+                      f"Sections: {sections}\n"
                       f"{len(projections)} projections carry the graph bindings; pass both "
                       f"to schema.create and the graph panel."),
             )],
@@ -3446,9 +3445,9 @@ async def _analysis_start_run(
             elif stored_keys.get("openai"):
                 model_name = "gpt-5.2"
                 provider_name = provider_name or "openai"
-            elif stored_keys.get("gemini") or stored_keys.get("GOOGLE_API_KEY"):
-                model_name = "gemini-3-flash"
-                provider_name = provider_name or "gemini"
+            elif stored_keys.get("mistral"):
+                model_name = "mistral-large-latest"
+                provider_name = provider_name or "mistral"
             else:
                 model_name = "qwen3:14b"  # Local Ollama fallback
                 provider_name = provider_name or "ollama"
@@ -4852,7 +4851,10 @@ async def _analysis_share_run(
         
         services["session"].commit()
         
-        share_url = f"{settings.FRONTEND_URL}/share/{link.token}"
+        # settings.FRONTEND_URL has never existed — this raised AttributeError
+        # after the link was already committed. server_host is what the email
+        # service builds user-facing links from.
+        share_url = f"{settings.server_host}/share/{link.token}"
         
         await ctx.info(f"Created shareable link: {share_url}")
         

@@ -24,13 +24,13 @@ Rotation procedure (operator):
   2. In .env: move the current ENCRYPTION_MASTER_KEY value into
      ENCRYPTION_MASTER_KEY_FALLBACKS, set ENCRYPTION_MASTER_KEY to the new key.
   3. Restart backend, celery_worker, celery_beat (no shared key cache — each
-     process must reload).  ./setup.sh rotate --fernet automates steps 1-5.
+     process must reload).  ./start.sh rotate --fernet automates steps 1-5.
   4. Run this command (no flags).
   5. After it reports success, clear ENCRYPTION_MASTER_KEY_FALLBACKS and restart
      the three services again. The old key is now fully retired.
 
 Infrastructure credentials (Postgres / MinIO / Redis) are NOT touched here —
-those are recoverable and handled by ``./setup.sh rotate``.
+those are recoverable and handled by ``./start.sh rotate``.
 """
 
 from __future__ import annotations

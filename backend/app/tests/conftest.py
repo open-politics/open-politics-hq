@@ -1,6 +1,9 @@
 """
 Shared test fixtures.
 
+Configuration: the suite points HQ_CONFIG_FILE at ``hq-test.yml`` next to this
+file, so it no longer depends on an ambient .env being present in the CWD.
+
 Unit tests use SQLite in-memory. Only specific tables are created per-test
 module — the full app metadata uses JSONB/pgvector types that SQLite can't handle.
 
@@ -13,8 +16,46 @@ AssetBuilder.build() never commits internally. Opt-in per test — see
 test_asset_builder_identity.py for examples. Commit-discipline invariant:
 callers (handlers, routes, @task bodies) own the transaction boundary.
 """
+import os
+from pathlib import Path
+
 import pytest
 from sqlmodel import Session, create_engine
+
+# Name the deployment config BEFORE anything imports app.core.config —
+# HQ_CONFIG_FILE is read once, at module import.
+#
+# The deployment's own my-hq.yml when there is one, because the functional
+# tests talk to the services it describes — its database is the database they
+# need. Otherwise hq-test.yml, which is enough for everything that touches no
+# service. Either way the suite names its config instead of inheriting whatever
+# .env happened to be in the pytest CWD, which is what used to decide whether
+# it ran at all. An HQ_CONFIG_FILE already set wins; that is how CI points at
+# .github/hq-ci.yml.
+# Same candidates app.core.config searches, because the suite runs both from a
+# repo checkout (backend/app/tests/...) and from /app in a container.
+_here = Path(__file__).resolve()
+_deployment_config = next(
+    (c for c in (Path.cwd() / "my-hq.yml", _here.parents[2] / "my-hq.yml",
+                 _here.parents[3] / "my-hq.yml") if c.is_file()),
+    None,
+)
+os.environ.setdefault(
+    "HQ_CONFIG_FILE", str(_deployment_config or _here.parent / "hq-test.yml")
+)
+
+# Secrets are not config, so they are not in that file. These are obvious
+# non-values: real ones come from the environment, and the boot gate refuses a
+# placeholder, so nothing here can be mistaken for a deployment credential.
+for _k, _v in {
+    "SECRET_KEY": "test-secret-key-not-for-production",
+    "ENCRYPTION_MASTER_KEY": "dGVzdC1lbmNyeXB0aW9uLWtleS1ub3QtZm9yLXByb2Q=",
+    "POSTGRES_PASSWORD": "testpassword",
+    "REDIS_PASSWORD": "",
+    "FIRST_SUPERUSER": "admin@test.local",
+    "FIRST_SUPERUSER_PASSWORD": "testpassword123",
+}.items():
+    os.environ.setdefault(_k, _v)
 
 
 @pytest.fixture(scope="module")

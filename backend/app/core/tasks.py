@@ -18,10 +18,12 @@ Error handling convention for @task functions:
 from __future__ import annotations
 
 import logging
+import threading
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generator, Optional, Type
+from typing import Any, Callable, Generator, Iterator, Optional, Type
 
 from pydantic import BaseModel
 from sqlmodel import Session
@@ -113,7 +115,7 @@ def cached_resolve(
 
     # Runtime key → bypass cache (BYOK isolation).
     if runtime_key:
-        from app.api.modules.foundation_service_providers.registry import resolve
+        from app.api.modules.foundation_service_providers import resolve
         return resolve(
             capability, provider_key, model,
             infospace_id=infospace_id, context=context, runtime_key=runtime_key,
@@ -121,7 +123,7 @@ def cached_resolve(
 
     cache_key = f"{capability}:{provider_key or '_'}:{model or '_'}:{infospace_id or 'system'}:{context or '_'}"
     if cache_key not in _provider_cache:
-        from app.api.modules.foundation_service_providers.registry import resolve
+        from app.api.modules.foundation_service_providers import resolve
         _provider_cache[cache_key] = resolve(
             capability, provider_key, model,
             infospace_id=infospace_id, context=context,
@@ -174,7 +176,7 @@ class TaskContext:
         system default env var.
         """
         if not isinstance(capability, str):
-            from app.api.modules.foundation_service_providers.registry import CAPABILITIES
+            from app.api.modules.foundation_service_providers import CAPABILITIES
             for name, proto in CAPABILITIES.items():
                 if proto is capability:
                     capability = name
@@ -310,19 +312,72 @@ def _get_redis():
         return None
 
 
+# ── Concurrency slots ────────────────────────────────────────────────────────
+#
+# A slot is a Redis key that exists while one invocation of (task, infospace) is
+# running. `max_concurrency` of them per pair; the dispatcher counts them before
+# admitting more work.
+#
+# **The slot is held by a HEARTBEAT, not by a long TTL.** It used to be taken
+# with `ttl = timeout * 2 + 60` and released in a `finally` — which is correct
+# right up until the process does not reach its `finally`. A worker killed
+# mid-task (a restart, a redeploy, an OOM, Celery's own hard time limit) leaves
+# the key behind for the full TTL, and for a task with `timeout=7200` that is
+# FOUR HOURS. `max_concurrency=4` means four such deaths wedge that infospace
+# for half a day, silently and invisibly: the check query still finds work, the
+# dispatcher still runs, and every invocation returns at the slot gate having
+# done nothing. Measured on `process_annotation_run` — four worker restarts
+# during one session left all four slots held with ~4h TTLs.
+#
+# So the TTL is now a short constant and a background thread refreshes it while
+# the body runs. A process that dies stops refreshing, and the slot is free
+# within `SLOT_TTL` instead of within the task's own worst case. The TTL still
+# has to outlive the task — it just does so a beat at a time.
+#
+# The refresh is compare-and-extend against a per-acquisition token, and so is
+# the release. Without one, a heartbeat that stalled long enough for its slot to
+# expire and be re-taken would go on extending — and a release would go on
+# deleting — a slot belonging to somebody else.
+
+#: How long a slot survives unrefreshed. Two missed beats of headroom: pure
+#: Python yields the GIL every few milliseconds, so only a C extension holding
+#: it for over a minute could starve the heartbeat, and nothing here does.
+SLOT_TTL = 90
+
+#: Seconds between refreshes.
+SLOT_HEARTBEAT = 30
+
 # Lua script: try to acquire one of N slots atomically.
 # Returns the slot index (>= 0) on success, -1 if all slots occupied.
 _ACQUIRE_SLOT_LUA = """
 local prefix = KEYS[1]
 local max = tonumber(ARGV[1])
 local ttl = tonumber(ARGV[2])
+local token = ARGV[3]
 for i = 0, max - 1 do
     local key = prefix .. ":" .. i
-    if redis.call("SET", key, "1", "NX", "EX", ttl) then
+    if redis.call("SET", key, token, "NX", "EX", ttl) then
         return i
     end
 end
 return -1
+"""
+
+# Extend a slot we still hold. Returns 1 on success, 0 if it is no longer ours —
+# which means our own heartbeat fell behind and someone else took the index.
+_REFRESH_SLOT_LUA = """
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("EXPIRE", KEYS[1], tonumber(ARGV[2]))
+end
+return 0
+"""
+
+# Release a slot we still hold. Same guard, same reason.
+_RELEASE_SLOT_LUA = """
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+    return redis.call("DEL", KEYS[1])
+end
+return 0
 """
 
 # Lua script: count how many of N slots are currently occupied.
@@ -442,8 +497,8 @@ def capabilities_served_by_provider(provider_key: str) -> set[str]:
     blocks for every capability that provider implements (e.g. ``openai``
     implements both ``language`` and ``embedding``).
     """
-    from app.api.modules.foundation_service_providers.registry import _registry
-    return {cap for (cap, pk) in _registry if pk == provider_key.lower()}
+    from app.api.modules.foundation_service_providers import capabilities_for
+    return capabilities_for(provider_key)
 
 
 def list_structural_blocks(infospace_id: int) -> dict[str, str]:
@@ -471,15 +526,96 @@ def list_structural_blocks(infospace_id: int) -> dict[str, str]:
     return out
 
 
-def acquire_slot(r, task_name: str, infospace_id: int, max_concurrency: int, timeout: int) -> int:
-    """Try to acquire a concurrency slot. Returns slot index (>= 0) or -1 if full."""
+def acquire_slot(r, task_name: str, infospace_id: int, max_concurrency: int,
+                 token: str, ttl: int = SLOT_TTL) -> int:
+    """Take a concurrency slot. Returns its index (>= 0), or -1 if all are held.
+
+    ``token`` identifies THIS acquisition; ``refresh_slot`` and ``release_slot``
+    both check it, so an invocation can only ever extend or free its own slot.
+    """
     prefix = _slot_prefix(task_name, infospace_id)
-    return r.eval(_ACQUIRE_SLOT_LUA, 1, prefix, max_concurrency, timeout)
+    return r.eval(_ACQUIRE_SLOT_LUA, 1, prefix, max_concurrency, ttl, token)
 
 
-def release_slot(r, task_name: str, infospace_id: int, slot: int):
-    """Release a previously acquired concurrency slot."""
-    r.delete(f"{_slot_prefix(task_name, infospace_id)}:{slot}")
+def refresh_slot(r, task_name: str, infospace_id: int, slot: int, token: str,
+                 ttl: int = SLOT_TTL) -> bool:
+    """Extend a slot we still hold. False means we no longer hold it."""
+    key = f"{_slot_prefix(task_name, infospace_id)}:{slot}"
+    return bool(r.eval(_REFRESH_SLOT_LUA, 1, key, token, ttl))
+
+
+def release_slot(r, task_name: str, infospace_id: int, slot: int, token: str) -> bool:
+    """Free a slot we still hold. False means it was already someone else's."""
+    key = f"{_slot_prefix(task_name, infospace_id)}:{slot}"
+    return bool(r.eval(_RELEASE_SLOT_LUA, 1, key, token))
+
+
+@contextmanager
+def slot_held(r, task_name: str, infospace_id: int,
+              max_concurrency: int) -> Iterator[bool]:
+    """Hold one concurrency slot for the duration of the block, heartbeat and all.
+
+    Yields whether the caller may proceed:
+
+    .. code-block:: text
+
+        no Redis      ──► True   nothing to limit with; run unthrottled
+        slot taken    ──► True   refreshed every SLOT_HEARTBEAT until the block ends
+        all held      ──► False  caller decides: re-queue, or give up this cycle
+
+    The heartbeat is a daemon thread, which is the whole mechanism: a thread
+    cannot outlive the process it belongs to, so "the worker died" and "the slot
+    stops being refreshed" are the same event. Nothing has to notice the death
+    or clean up after it.
+
+    Release is in a ``finally``, so an orderly exit — including
+    ``SoftTimeLimitExceeded``, which is raised in this thread — frees the slot at
+    once rather than leaving it to expire.
+    """
+    if r is None:
+        yield True
+        return
+
+    token = uuid.uuid4().hex
+    slot = acquire_slot(r, task_name, infospace_id, max_concurrency, token)
+    if slot < 0:
+        yield False
+        return
+
+    stop = threading.Event()
+
+    def _beat() -> None:
+        # `wait` returns True the moment the block ends, so release is not held
+        # up by a sleep that has just started.
+        while not stop.wait(SLOT_HEARTBEAT):
+            try:
+                if not refresh_slot(r, task_name, infospace_id, slot, token):
+                    logger.warning(
+                        "Slot %s:%d lost while %s was still running — its TTL "
+                        "lapsed and another invocation took the index. The task "
+                        "continues; concurrency may briefly exceed %d.",
+                        _slot_prefix(task_name, infospace_id), slot, task_name,
+                        max_concurrency,
+                    )
+                    return
+            except Exception as e:
+                # A Redis blip must not kill the task it is only accounting for.
+                # Missing a beat costs at most the slot, and only if the blip
+                # outlasts the TTL.
+                logger.debug("Slot heartbeat for %s failed: %s", task_name, e)
+
+    beat = threading.Thread(target=_beat, name=f"slot-hb:{task_name}:{slot}",
+                            daemon=True)
+    beat.start()
+    try:
+        yield True
+    finally:
+        stop.set()
+        beat.join(timeout=5)
+        try:
+            release_slot(r, task_name, infospace_id, slot, token)
+        except Exception as e:
+            logger.debug("Slot release for %s failed (it will expire): %s", task_name, e)
 
 
 def count_occupied_slots(r, task_name: str, infospace_id: int, max_concurrency: int) -> int:
@@ -629,7 +765,7 @@ def task(
                 logger.debug("Task %s skipped (blocked): %s", name, block_reason)
                 return
 
-            # Check dispatch_filter before doing any work (respects ENABLED_ENRICHERS etc.)
+            # Check dispatch_filter before doing any work (respects the enrichers block etc.)
             # Event-triggered tasks bypass the dispatcher, so this is the only gate.
             if dispatch_filter is not None:
                 try:
@@ -676,18 +812,15 @@ def task(
             if not batch_ids:
                 return
 
-            # Acquire concurrency slot
+            # Hold a concurrency slot for the body, and only for the body: the
+            # self-chain below must dispatch AFTER the slot is free, or a chain
+            # of depth `max_concurrency` deadlocks against itself.
             r = _get_redis()
-            slot = -1
-            if r:
-                # TTL must OUTLIVE the task, not equal it. At timeout == the task's own
-                # deadline, a task running right up to its limit has its slot expire
-                # while it is still executing — the dispatcher then sees a free slot and
-                # over-admits. The TTL is only a crash-safety net (the slot is released
-                # explicitly in `finally`), so erring long costs nothing.
-                slot = acquire_slot(r, name, infospace_id, max_concurrency, timeout * 2 + 60)
-                if slot < 0:
-                    # No slot available — direct invocations re-queue, others bail
+            with slot_held(r, name, infospace_id, max_concurrency) as admitted:
+                if not admitted:
+                    # All slots held — a direct invocation re-queues so its ids
+                    # are not dropped; a scheduled sweep just waits for the next
+                    # cycle, which will re-derive them anyway.
                     if batch_ids is not None and _chain_depth == 0:
                         self_task.apply_async(
                             args=[batch_ids, infospace_id],
@@ -695,56 +828,52 @@ def task(
                         )
                     return
 
-            try:
-                # Build context
-                task_id = None
                 try:
-                    task_id = self_task.request.id
-                except Exception:
-                    pass
-                ctx = context_cls(
-                    infospace_id=infospace_id,
-                    settings=settings,
-                    task_name=name,
-                    failure_memory=failure_memory,
-                    task_id=task_id,
-                )
+                    # Build context
+                    task_id = None
+                    try:
+                        task_id = self_task.request.id
+                    except Exception:
+                        pass
+                    ctx = context_cls(
+                        infospace_id=infospace_id,
+                        settings=settings,
+                        task_name=name,
+                        failure_memory=failure_memory,
+                        task_id=task_id,
+                    )
 
-                # Call decorated function — params_model tasks get a third
-                # positional argument; plain tasks stay binary.
-                if params_model is not None:
-                    if params_dict is None:
-                        raise ValueError(
-                            f"Task {name} requires params (params_model={params_model.__name__}); "
-                            "none provided"
-                        )
-                    params = params_model(**params_dict)
-                    fn(ctx, batch_ids, params)
-                else:
-                    fn(ctx, batch_ids)
+                    # Call decorated function — params_model tasks get a third
+                    # positional argument; plain tasks stay binary.
+                    if params_model is not None:
+                        if params_dict is None:
+                            raise ValueError(
+                                f"Task {name} requires params (params_model={params_model.__name__}); "
+                                "none provided"
+                            )
+                        params = params_model(**params_dict)
+                        fn(ctx, batch_ids, params)
+                    else:
+                        fn(ctx, batch_ids)
 
-                # Flush stats
-                duration_ms = (time.perf_counter() - start) * 1000
-                _flush_stats(name, infospace_id, ctx._stats, duration_ms)
+                    # Flush stats
+                    duration_ms = (time.perf_counter() - start) * 1000
+                    _flush_stats(name, infospace_id, ctx._stats, duration_ms)
 
-            except Exception as e:
-                # Structural failures (provider misconfig) block indefinitely.
-                # Transient failures set a short backoff + optional retry.
-                from app.api.modules.foundation_service_providers.registry import ProviderError
-                if isinstance(e, ProviderError):
-                    logger.warning("Task %s structurally blocked: %s", name, e)
-                    set_structural_block(name, infospace_id, str(e))
+                except Exception as e:
+                    # Structural failures (provider misconfig) block indefinitely.
+                    # Transient failures set a short backoff + optional retry.
+                    from app.api.modules.foundation_service_providers import ProviderError
+                    if isinstance(e, ProviderError):
+                        logger.warning("Task %s structurally blocked: %s", name, e)
+                        set_structural_block(name, infospace_id, str(e))
+                        return
+                    logger.error("Task %s failed: %s", name, e, exc_info=True)
+                    if r:
+                        r.set(f"task:{name}:{infospace_id}:backoff", "1", ex=300)
+                    if retries > 0:
+                        raise self_task.retry(countdown=retry_delay, exc=e)
                     return
-                logger.error("Task %s failed: %s", name, e, exc_info=True)
-                if r:
-                    r.set(f"task:{name}:{infospace_id}:backoff", "1", ex=300)
-                if retries > 0:
-                    raise self_task.retry(countdown=retry_delay, exc=e)
-                return
-            finally:
-                # Release slot before self-chain to avoid deadlock
-                if r and slot >= 0:
-                    release_slot(r, name, infospace_id, slot)
 
             # Self-chain (runs after slot is released)
             if self_chain:
@@ -815,11 +944,10 @@ def task(
             if dispatch_filter is not None:
                 def _make_gate(task_name, cap):
                     def _gate() -> bool:
-                        # Check ENABLED_ENRICHERS (global config)
+                        # Deployment switch: my-hq.yml enrichers block
                         try:
                             from app.core.dispatch import _get_enabled_enrichers
-                            enabled = _get_enabled_enrichers()
-                            if enabled is not None and task_name not in enabled:
+                            if task_name not in _get_enabled_enrichers():
                                 return False
                         except Exception:
                             pass

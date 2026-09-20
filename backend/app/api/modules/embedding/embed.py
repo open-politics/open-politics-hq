@@ -72,8 +72,8 @@ async def ensure_embedding_model(
             return existing
 
         # Static spec first — no credentials needed.
-        from app.api.modules.foundation_service_providers.registry import get_model_spec
-        from app.api.modules.foundation_service_providers.base import EmbeddingModelSpec
+        from app.api.modules.foundation_service_providers import get_model_spec
+        from app.api.modules.foundation_service_providers import EmbeddingModelSpec
         spec = get_model_spec("embedding", provider, model_name)
         if isinstance(spec, EmbeddingModelSpec):
             dimension = spec.dimension
@@ -84,15 +84,19 @@ async def ensure_embedding_model(
                     "ensure_embedding_model needs infospace_id to probe dimension when "
                     "no static spec is available"
                 )
-            from app.api.modules.foundation_service_providers.registry import resolve
+            from app.api.modules.foundation_service_providers import resolve
             provider_instance = resolve(
                 "embedding", provider, model_name,
                 infospace_id=infospace_id,
                 runtime_key=runtime_key,
                 session=session,
             )
-            if hasattr(provider_instance._instance, "_probe_model"):
-                info = await provider_instance._probe_model(model_name)
+            # `probe_model` is a declared feature, so asking for it is an
+            # honest question about this endpoint rather than a guess at a
+            # private attribute. Endpoints without it fall through to measuring
+            # a real vector, which always works and costs one tiny request.
+            if hasattr(provider_instance, "probe_model"):
+                info = await provider_instance.probe_model(model_name)
                 dimension = info.get("dimension") or 0
             if not dimension:
                 test_vec = await provider_instance.embed_single(" ", model_name)

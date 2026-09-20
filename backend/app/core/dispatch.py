@@ -24,19 +24,16 @@ MAX_DISPATCH_PER_CYCLE = 2000
 MAX_PER_TASK_PER_CYCLE = 500
 
 
-def _get_enabled_enrichers() -> set[str] | None:
-    """Parse ENABLED_ENRICHERS config.
+def _get_enabled_enrichers() -> set[str]:
+    """Enricher names switched on in my-hq.yml.
 
-    Returns None if all enrichers are enabled ("*"), an empty set if none,
-    or a set of names for a whitelist.
+    A plain set. The comma-string this replaces encoded three different things
+    in one value — "*" meant all (returned None, "no filter"), "" meant none
+    (empty set), anything else a whitelist — so every caller had to know that
+    None and set() were opposites rather than degrees of the same thing.
     """
     from app.core.config import settings
-    raw = (getattr(settings, "ENABLED_ENRICHERS", "") or "").strip()
-    if not raw:
-        return set()  # empty = nothing runs
-    if raw == "*":
-        return None  # None = all run (no filter)
-    return {e.strip() for e in raw.split(",") if e.strip()}
+    return {name for name, on in (settings.ENRICHERS or {}).items() if on}
 
 
 def _get_redis():
@@ -49,7 +46,7 @@ def _get_redis():
 
 def _is_capability_configured(capability_name: str) -> bool:
     """Check if any provider for this capability is accessible in this deployment."""
-    from app.api.modules.foundation_service_providers.registry import CAPABILITIES, is_capability_available
+    from app.api.modules.foundation_service_providers import CAPABILITIES, is_capability_available
     from app.core.config import settings
     if capability_name not in CAPABILITIES:
         return True  # unknown capability = don't block
@@ -97,7 +94,7 @@ def _dispatch_task_for_infospace(desc, infospace_id: int, budget: int = MAX_PER_
     if is_structurally_blocked(desc.name, infospace_id):
         return 0
 
-    # Apply dispatch_filter (enrichment config + ENABLED_ENRICHERS)
+    # Apply dispatch_filter (enrichment config + the enrichers block)
     if desc.dispatch_filter:
         try:
             # dispatch_filter receives infospace object, but we have only the id.

@@ -21,13 +21,13 @@ from typing import Any, Dict, List, Optional
 from sqlmodel import Session
 
 from app.api.modules.content.intake import intake
+# The full-vs-snippet rule belongs to the source realization contract, not to
+# search — the RSS source needs the identical cut and cannot import from L3.
+# Re-exported here because callers and tests already import it from this module.
+from app.api.modules.content.sources import SCRAPE_THRESHOLD
 from app.api.modules.foundation_service_providers import ProviderError, resolve
 
 logger = logging.getLogger(__name__)
-
-# Full article vs metasearch snippet: above any SearXNG snippet (~150-300 chars),
-# below Tavily raw_content (multi-thousand). Full → inline passthrough; snippet → scrape.
-SCRAPE_THRESHOLD = 800
 
 
 async def search_web(
@@ -39,9 +39,9 @@ async def search_web(
     limit: int = 10,
     runtime_key: str | None = None,
     provider_params: Optional[Dict[str, Any]] = None,
-) -> List[Dict[str, Any]]:
-    """Run a web search and return raw provider results. Creates nothing — the caller
-    decides whether to hand them back to the user or pass them to ``ingest_results``."""
+) -> "SearchResults":
+    """Run a web search. Creates nothing — the caller decides whether to hand the
+    results back to the user or pass them to ``ingest_results``."""
     try:
         web_search_provider = resolve(
             "web_search", provider,
@@ -50,22 +50,19 @@ async def search_web(
     except ProviderError as e:
         raise ValueError(str(e)) from e
 
-    params = provider_params or {}
-    raw_results = await web_search_provider.search(query=query, limit=limit, **params)
-    logger.info("Web search '%s' via %s → %d results", query, provider, len(raw_results or []))
-    return list(raw_results or [])
+    results = await web_search_provider.search(query, limit=limit, **(provider_params or {}))
+    logger.info("Web search %r via %s → %d hits", query, provider, len(results))
+    return results
 
 
-def _result_spec(r: Dict[str, Any]) -> Optional[dict]:
-    """A raw result dict → a ``web`` intake spec. Full content rides inline (passthrough);
-    a short snippet carries no ``text`` so the web source scrapes the locator."""
-    url = r.get("url")
-    if not url:
+def _result_spec(hit: "SearchHit") -> Optional[dict]:
+    """A hit → a ``web`` intake spec. Full content rides inline (passthrough); a
+    short snippet carries no ``text``, so the web source scrapes the locator."""
+    if not hit.url:
         return None
-    spec: dict = {"url": url, "title": r.get("title")}
-    content = r.get("raw_content") or r.get("content") or ""
-    if len(content) >= SCRAPE_THRESHOLD:
-        spec["text"] = content
+    spec: dict = {"url": hit.url, "title": hit.title}
+    if len(hit.best_text) >= SCRAPE_THRESHOLD:
+        spec["text"] = hit.best_text
     return spec
 
 

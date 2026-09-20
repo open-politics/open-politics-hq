@@ -8,6 +8,7 @@ read-modify-write credential endpoints would then persist, wiping every key).
 import json
 
 import pytest
+from pydantic import ValidationError
 from cryptography.fernet import Fernet
 
 from app.core.config import AppSettings
@@ -66,9 +67,21 @@ class TestEncryptionKeysParsing:
         )
         assert s.encryption_keys == [KEY_A, KEY_B]
 
-    def test_empty(self):
-        s = _settings(ENCRYPTION_MASTER_KEY="", ENCRYPTION_MASTER_KEY_FALLBACKS="")
-        assert s.encryption_keys == []
+    def test_empty_key_is_refused_outright(self):
+        """An empty ENCRYPTION_MASTER_KEY no longer parses to "no keys".
+
+        It used to yield ``encryption_keys == []`` — a running deployment that
+        silently could not encrypt anything, which is the one state this key
+        must never be in: it is what stands between a database dump and every
+        user's stored provider credentials. The boot gate refuses it instead.
+        """
+        with pytest.raises(ValidationError, match="ENCRYPTION_MASTER_KEY"):
+            _settings(ENCRYPTION_MASTER_KEY="", ENCRYPTION_MASTER_KEY_FALLBACKS="")
+
+    def test_fallbacks_may_be_empty(self):
+        """Only the primary is required — fallbacks exist solely during rotation."""
+        s = _settings(ENCRYPTION_MASTER_KEY=KEY_A, ENCRYPTION_MASTER_KEY_FALLBACKS="")
+        assert s.encryption_keys == [KEY_A]
 
 
 # ── round-trip & rotation ─────────────────────────────────────────────────────

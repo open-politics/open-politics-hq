@@ -20,7 +20,14 @@ from app.core.tasks import (
     _task_registry,
     get_task_registry,
     MAX_CHAIN_DEPTH,
+    SLOT_HEARTBEAT,
+    SLOT_TTL,
     _slot_prefix,
+    acquire_slot,
+    count_occupied_slots,
+    refresh_slot,
+    release_slot,
+    slot_held,
 )
 
 
@@ -312,6 +319,107 @@ class TestSlotPrefix:
 
     def test_different_infospaces_different_prefixes(self):
         assert _slot_prefix("a", 1) != _slot_prefix("a", 2)
+
+
+# ═══════════════════════════════════════════════════
+# Concurrency slots — the heartbeat and its token
+# ═══════════════════════════════════════════════════
+
+@pytest.fixture
+def slots():
+    """A private (task, infospace) slot pool, emptied before and after."""
+    import app.core.tasks as tasks_mod
+
+    r = tasks_mod._get_redis()
+    if r is None:
+        pytest.skip("Redis unavailable")
+    name, iid, cap = "slot_probe", 990_001, 2
+
+    def clear():
+        for i in range(cap + 2):
+            r.delete(f"{_slot_prefix(name, iid)}:{i}")
+
+    clear()
+    yield r, name, iid, cap
+    clear()
+
+
+class TestSlotHeartbeat:
+    """A slot must not outlive the process holding it by more than a beat."""
+
+    def test_ttl_is_the_short_constant_not_the_task_timeout(self, slots):
+        """The regression this exists for.
+
+        The TTL used to be ``timeout * 2 + 60``. For ``process_annotation_run``
+        (``timeout=7200``) a killed worker left its slot held for four hours, and
+        four such deaths wedged an infospace's annotation for half a day.
+        """
+        r, name, iid, cap = slots
+        slot = acquire_slot(r, name, iid, cap, "tok")
+        assert slot >= 0
+        assert r.ttl(f"{_slot_prefix(name, iid)}:{slot}") <= SLOT_TTL
+        assert SLOT_TTL < 7200, "a slot must never be held for a task's whole worst case"
+
+    def test_pool_fills_and_frees(self, slots):
+        r, name, iid, cap = slots
+        taken = [acquire_slot(r, name, iid, cap, f"tok{i}") for i in range(cap)]
+        assert sorted(taken) == list(range(cap))
+        assert acquire_slot(r, name, iid, cap, "overflow") == -1
+        assert count_occupied_slots(r, name, iid, cap) == cap
+        assert release_slot(r, name, iid, taken[0], "tok0") is True
+        assert acquire_slot(r, name, iid, cap, "reuse") == taken[0]
+
+    def test_only_the_owner_may_refresh_or_release(self, slots):
+        """Without the token a stalled heartbeat extends — and a late release
+        deletes — a slot that now belongs to a different invocation."""
+        r, name, iid, cap = slots
+        slot = acquire_slot(r, name, iid, cap, "mine")
+        assert refresh_slot(r, name, iid, slot, "mine") is True
+        assert refresh_slot(r, name, iid, slot, "theirs") is False
+        assert release_slot(r, name, iid, slot, "theirs") is False
+        assert count_occupied_slots(r, name, iid, cap) == 1
+        assert release_slot(r, name, iid, slot, "mine") is True
+
+    def test_heartbeat_restores_a_decayed_ttl(self, slots, monkeypatch):
+        """Proof the beat is what keeps the slot alive, not the initial TTL."""
+        import time
+        import app.core.tasks as tasks_mod
+
+        r, name, iid, cap = slots
+        monkeypatch.setattr(tasks_mod, "SLOT_HEARTBEAT", 1)
+
+        with slot_held(r, name, iid, cap) as admitted:
+            assert admitted is True
+            key = f"{_slot_prefix(name, iid)}:0"
+            r.expire(key, 5)                      # simulate time passing
+            assert r.ttl(key) <= 5
+            time.sleep(2.5)                       # two beats
+            assert r.ttl(key) > 5, "heartbeat did not extend the slot"
+        assert count_occupied_slots(r, name, iid, cap) == 0, "slot not released on exit"
+
+    def test_exit_releases_even_when_the_body_raises(self, slots):
+        r, name, iid, cap = slots
+        with pytest.raises(RuntimeError):
+            with slot_held(r, name, iid, cap) as admitted:
+                assert admitted
+                raise RuntimeError("boom")
+        assert count_occupied_slots(r, name, iid, cap) == 0
+
+    def test_full_pool_yields_false_and_holds_nothing(self, slots):
+        r, name, iid, cap = slots
+        for i in range(cap):
+            acquire_slot(r, name, iid, cap, f"held{i}")
+        with slot_held(r, name, iid, cap) as admitted:
+            assert admitted is False
+        assert count_occupied_slots(r, name, iid, cap) == cap
+
+    def test_no_redis_runs_unthrottled(self):
+        """No Redis is not a reason to refuse work — it is a reason not to count."""
+        with slot_held(None, "anything", 1, 4) as admitted:
+            assert admitted is True
+
+    def test_beat_interval_leaves_headroom(self):
+        assert SLOT_HEARTBEAT < SLOT_TTL / 2, "one missed beat must not lose the slot"
 
 
 # ═══════════════════════════════════════════════════

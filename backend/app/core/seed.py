@@ -16,16 +16,36 @@ from app.models import (
 )
 from app.schemas import InfospaceCreate, UserCreate
 from app.api.modules.foundation_service_providers import resolve
+from tenacity import before_sleep_log, retry, stop_after_delay, wait_fixed
 
 logger = logging.getLogger(__name__)
+
+# Resolving the storage provider is a network call when storage.use is s3:
+# the dialect constructs a client and creates the bucket if missing. Nothing
+# orders minio before the backend, so on a cold `up` this raced and lost —
+# prestart runs with `set -e`, so one refused connection killed the whole boot
+# and (with restart: always) looped it. Bounded so a genuinely wrong endpoint
+# still fails fast rather than hanging the boot for minutes.
+STORAGE_WAIT_SECONDS = 60
+
+
+@retry(
+    stop=stop_after_delay(STORAGE_WAIT_SECONDS),
+    wait=wait_fixed(2),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
+)
+def _resolve_storage():
+    provider = resolve("storage")
+    assert provider is not None, "Storage provider not initialized"
+    return provider
 
 
 def init_db(session: Session) -> None:
     """Seed superuser, default infospace, and annotation schemas."""
     # Call the factory function with settings
     try:
-        storage_provider = resolve("storage")
-        assert storage_provider is not None, "Storage provider not initialized"
+        storage_provider = _resolve_storage()
     except Exception as e:
         logger.error(f"Error creating storage provider: {e}")
         raise

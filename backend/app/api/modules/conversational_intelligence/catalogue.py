@@ -354,7 +354,7 @@ def browse(access, session, infospace_id: int, path: str | None = None) -> list[
     provider isn't configured is shown with ``needs_setup`` so the operator can
     offer to set it up instead of failing later. ``path`` narrows to a subtree.
     """
-    from app.api.modules.foundation_service_providers.registry import (
+    from app.api.modules.foundation_service_providers import (
         get_configured_foundation_provider,
     )
 

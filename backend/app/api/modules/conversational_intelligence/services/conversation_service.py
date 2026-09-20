@@ -9,8 +9,10 @@ from sqlmodel import Session, select, and_, or_
 import asyncio
 from jose import jwt
 
-from app.api.modules.foundation_service_providers import resolve, ProviderError, get_model_spec
-from app.api.modules.foundation_service_providers.base import GenerationResponse
+from app.api.modules.foundation_service_providers import (
+    resolve, ProviderError, get_model_spec, GenerationOptions,
+)
+from app.api.modules.foundation_service_providers import GenerationResponse
 from app.models import Asset, User, Infospace, Bundle, AnnotationSchema, Annotation, AssetKind
 from app.api.modules.annotation.services import AnnotationService
 from app.api.modules.content.query import AssetQuery
@@ -343,87 +345,30 @@ class IntelligenceConversationService:
                     name, args, user_id, infospace_id, api_keys, conversation_id
                 )
 
-        try:
-            return await provider_instance.generate(
-                messages=context_messages,
-                model_name=model_name,
-                tools=tools,
-                stream=stream,
-                thinking_enabled=thinking_enabled,
+        # One call. The engine owns the retries.
+        #
+        # This used to be followed by ~60 lines of fallback: catch the exception,
+        # string-match the provider's error text for "does not support tools" or
+        # "does not support temperature", and re-issue a narrower request. That
+        # is a provider concern that had leaked into a service — it could only
+        # ever recognise the wordings someone had already seen, and every new
+        # endpoint needed its own. It now lives in the engine as retry steps
+        # driven by quirks.
+        return await provider_instance.generate(
+            messages=context_messages,
+            model_name=model_name,
+            tools=tools,
+            stream=stream,
+            thinking_enabled=thinking_enabled,
+            tool_executor=_tool_executor,
+            options=GenerationOptions(
+                # The endpoint reaches our MCP server with this, where the `mcp`
+                # feature is attached and a server URL is configured; otherwise
+                # our own executor runs every tool and the header is unused.
                 mcp_headers={"Authorization": f"Bearer {context_token}"},
-                tool_executor=_tool_executor,
                 **kwargs,
-            )
-
-        except Exception as e:
-            error_str = str(e)
-
-            if "does not support tools" in error_str and tools is not None:
-                logger.warning(f"Model {model_name} rejected tools, retrying without tools")
-                fallback_context = (
-                    system_context
-                    + "\n\nNote: This model doesn't support tool calls, so I can only provide conversational responses based on your questions."
-                )
-                fallback_messages = [
-                    {"role": "system", "content": fallback_context}
-                ] + messages
-
-                try:
-                    return await provider_instance.generate(
-                        messages=fallback_messages,
-                        model_name=model_name,
-                        tools=None,
-                        stream=stream,
-                        mcp_headers={"Authorization": f"Bearer {context_token}"},
-                        tool_executor=lambda name, args: self.execute_tool_call(
-                            name,
-                            args,
-                            user_id,
-                            infospace_id,
-                            api_keys,
-                            conversation_id,
-                        ),
-                        **kwargs,
-                    )
-                except Exception as fallback_e:
-                    logger.error(
-                        f"Intelligence chat failed even without tools: {fallback_e}"
-                    )
-                    raise RuntimeError(
-                        f"Intelligence conversation failed: {str(fallback_e)}"
-                    )
-
-            if (
-                "temperature" in error_str and "does not support" in error_str
-            ) or "unsupported_value" in error_str:
-                logger.warning(
-                    f"Model {model_name} rejected parameters, retrying with minimal config"
-                )
-                clean_kwargs = {
-                    k: v
-                    for k, v in kwargs.items()
-                    if k not in ["temperature", "top_p", "max_tokens"]
-                }
-
-                try:
-                    return await provider_instance.generate(
-                        messages=context_messages,
-                        model_name=model_name,
-                        tools=tools,
-                        stream=stream,
-                        mcp_headers={"Authorization": f"Bearer {context_token}"},
-                        **clean_kwargs,
-                    )
-                except Exception as clean_e:
-                    logger.error(
-                        f"Intelligence chat failed even with clean parameters: {clean_e}"
-                    )
-                    raise RuntimeError(
-                        f"Intelligence conversation failed: {str(clean_e)}"
-                    )
-
-            logger.error(f"Intelligence chat failed: {e}")
-            raise RuntimeError(f"Intelligence conversation failed: {str(e)}")
+            ),
+        )
 
     async def execute_tool_call(
         self,
@@ -602,8 +547,10 @@ General principles:
     def _op_load(self, args: Optional[Dict[str, Any]], schema_by_name: Dict[str, Any]) -> Dict[str, Any]:
         """Operator hot-core: load operations/sets/a scenario into the tool set for THIS turn.
 
-        Returns the ``_load_tools`` sentinel the provider loop consumes to extend
-        the model's available tools mid-turn (see AnthropicLanguageModelProvider).
+        Returns the ``_load_tools`` sentinel the engine's turn loop consumes to
+        extend the model's available tools mid-turn — see ``Turn.with_tools`` in
+        foundation_service_providers/language/. Works on every dialect now; it
+        used to be reimplemented per provider.
         A scenario additionally hands back its playbook and stays sticky across
         turns (derived from history by ``active_scenario_from_messages``).
         """
@@ -918,7 +865,7 @@ General principles:
         ``/providers/models`` route (infospace-gated) instead.
         """
         from app.api.modules.foundation_service_providers import list_providers
-        from app.api.modules.foundation_service_providers.base import LLMModelSpec
+        from app.api.modules.foundation_service_providers import LLMModelSpec
 
         results: List[Dict[str, Any]] = []
         for provider_key, desc in list_providers("language"):

@@ -88,6 +88,31 @@ def map_json_type_to_python_type(json_type: Union[str, List[str]]) -> Any:
         return Any
 
 
+def justification_flag(prop_schema: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    """``(enabled, prompt)`` for one property, wherever the flag was written.
+
+    **An array declares it on its ITEMS, not on itself** — one justification per
+    item is the whole point, and that is what ``adapters.ts`` (the only writer)
+    and ``annotation/templates.py`` both emit. Every backend reader looked at the
+    array node instead, so for an array<object> — which is every claim section in
+    the observation model — the flag was written, stored, exported and never
+    read. Measured: 21 observation rows, 0 justifications, `with quotes: 0/214`
+    on the assembled graph. The evidence rail of the model was silently off.
+
+    Both placements are accepted. The array node is where a hand-authored
+    contract puts it, and ``schema_map`` already takes the same both-ways
+    reading for ``x-ref`` for exactly that reason.
+    """
+    if not isinstance(prop_schema, dict):
+        return False, None
+    items = prop_schema.get("items")
+    items = items if isinstance(items, dict) else {}
+    enabled = bool(prop_schema.get("include_justification")
+                   or items.get("include_justification"))
+    prompt = prop_schema.get("justification_prompt") or items.get("justification_prompt")
+    return enabled, prompt
+
+
 def split_schema_for_extraction(
     output_contract: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
@@ -165,13 +190,14 @@ def split_schema_for_extraction(
             continue
         if not isinstance(items.get("properties"), dict):
             continue
+        justify, justify_prompt = justification_flag(prop)
         list_fields.append({
             "name": name,
             "path": f"{path_prefix}.{name}" if path_prefix else name,
             "item_schema": copy.deepcopy(items),
             "description": prop.get("description"),
-            "include_justification": bool(prop.get("include_justification")),
-            "justification_prompt": prop.get("justification_prompt"),
+            "include_justification": justify,
+            "justification_prompt": justify_prompt,
         })
         list_field_names.append(name)
 
@@ -254,7 +280,7 @@ def create_pydantic_model_from_json_schema(
         field_info = Field(**field_info_kwargs)
 
         needs_justification = bool(
-            justifications_enabled and prop_schema.get("include_justification")
+            justifications_enabled and justification_flag(prop_schema)[0]
         )
         is_array_of_object = (
             prop_type_json == "array"

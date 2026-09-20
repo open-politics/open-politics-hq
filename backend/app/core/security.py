@@ -48,7 +48,7 @@ def get_password_hash(password: str) -> str:
 
 # Lazy per-process MultiFernet singleton. There is no shared cache: each
 # process (uvicorn workers, celery_worker, celery_beat) builds its own on first
-# use and must be RESTARTED to pick up rotated keys. See ./setup.sh rotate.
+# use and must be RESTARTED to pick up rotated keys. See ./start.sh rotate.
 _fernet: Optional[MultiFernet] = None
 
 
