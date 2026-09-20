@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+#############
+#############
+## Use this script to build containers and push them to a registry (local or something like Docker Hub)//
+## For Eample: /push-registry-containers.sh tag all GoodMorning6000 <-- bcomes the tag you can use in a deployment file
+
 # Set the organization name
 ORG_NAME="openpoliticsproject"  # Replace with your organization name
 
