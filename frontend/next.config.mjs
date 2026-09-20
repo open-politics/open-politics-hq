@@ -1,15 +1,13 @@
-import { fileURLToPath } from 'url';
-import { dirname, resolve } from 'path';
 import createMDX from '@next/mdx';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   pageExtensions: ['js', 'jsx', 'mdx', 'ts', 'tsx'],
   output: "standalone",
-  productionBrowserSourceMaps: true,
+  // Off: 481 .map files / 94MB of the published image, and a large slice
+  // of the build. The frontend is open source, so the maps disclosed
+  // nothing that isn't already public — this is purely size and speed.
+  productionBrowserSourceMaps: false,
   compress: false,
   images: {
     deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
@@ -73,21 +71,16 @@ const nextConfig = {
   //     },
   //   ]
   // },
+  // Server-side proxy: the browser calls /api on this origin, Next forwards to
+  // the backend over the compose network. This is why no NEXT_PUBLIC_API_URL is
+  // needed — and why setting one to a compose hostname breaks the browser.
   async rewrites() {
     return [
       {
         source: "/api/:path*",
-        destination: `http://backend:${process.env.NODE_ENV === 'development' ? process.env.BACKEND_PORT : 8022}/api/:path*`,
+        destination: `http://backend:${process.env.BACKEND_PORT || 8022}/api/:path*`,
       },
-      {
-        source: "/api/v1/editor/mdx/:folder/:filename",
-        destination: `http://backend:8000/api/v1/editor/mdx/:folder/:filename`
-      }
     ];
-  },
-  webpack: (config, { isServer }) =>  {
-    config.resolve.alias['@'] = resolve(__dirname, 'src');
-    return config;
   },
   turbopack: {
     resolveAlias: {
@@ -96,12 +89,13 @@ const nextConfig = {
   },
   experimental: {
     mdxRs: true,
+    // Dev FS caching stays ON (default) — that is what the 16.3 bump is for.
+    // The build cache is off: the prod Dockerfile discards .next/cache with the
+    // builder stage, so writing it is pure cost.
+    turbopackFileSystemCacheForBuild: false,
     serverComponentsHmrCache: true,
     optimizePackageImports: [
       '@/components/ui',
-      '@amcharts/amcharts5',
-      '@fortawesome/react-fontawesome',
-      '@fortawesome/free-solid-svg-icons',
       '@emotion/react',
     ],
   },

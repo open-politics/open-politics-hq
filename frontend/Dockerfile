@@ -6,7 +6,7 @@ WORKDIR /app
 
 # Install dependencies with bun
 FROM base AS deps
-COPY package.json bun.lock* bun.lockb* ./
+COPY package.json bun.lock ./
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --no-save --frozen-lockfile
 

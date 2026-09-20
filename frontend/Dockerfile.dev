@@ -4,8 +4,10 @@ FROM oven/bun:alpine
 WORKDIR /app
 
 # Install deps first so source edits don't invalidate the install layer.
-# bun.lock is the current lockfile; package-lock.json is kept around for openapi tooling.
-COPY package.json bun.lock* package-lock.json* ./
+# Both paths are unglobbed on purpose: `bun.lock*` would silently match nothing
+# if the lockfile went missing, and --frozen-lockfile would then have nothing to
+# freeze against — an unpinned install that looks like a pinned one.
+COPY package.json bun.lock ./
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
 
@@ -14,4 +16,8 @@ COPY . .
 
 EXPOSE 3000
 
-CMD ["bun", "run", "dev", "--turbo"]
+# `next dev` ignores the HOSTNAME env var (unlike the standalone server.js that
+# prod runs), so the bind address has to arrive as a flag. FRONTEND_BIND_HOST is
+# set by the hardened-network fragment; unset everywhere else, so the default
+# keeps normal bridge-mode dev reachable through its published port.
+CMD ["sh", "-c", "exec bun run dev --turbopack -H ${FRONTEND_BIND_HOST:-0.0.0.0}"]
