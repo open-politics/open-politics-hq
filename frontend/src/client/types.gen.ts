@@ -1092,6 +1092,58 @@ export type CanonUpdate = {
 };
 
 /**
+ * One model as a picker needs it. Domain-specific fields stay None.
+ */
+export type CatalogModel = {
+    name: string;
+    description?: string;
+    source?: string;
+    supports_tools?: (boolean | null);
+    supports_streaming?: (boolean | null);
+    supports_thinking?: (boolean | null);
+    supports_multimodal?: (boolean | null);
+    supports_structured_output?: (boolean | null);
+    supports_prompt_caching?: (boolean | null);
+    max_tokens?: (number | null);
+    context_length?: (number | null);
+    dimension?: (number | null);
+    max_sequence_length?: (number | null);
+};
+
+/**
+ * One endpoint serving one domain, as the setup UI needs it.
+ */
+export type CatalogProvider = {
+    id: string;
+    name: string;
+    description?: string;
+    requires_api_key: boolean;
+    api_key_name?: (string | null);
+    api_key_url?: (string | null);
+    is_local: boolean;
+    has_env_fallback: boolean;
+    model_required: boolean;
+    dialect: string;
+    features?: Array<(string)>;
+    pullable: boolean;
+    models?: Array<CatalogModel>;
+};
+
+/**
+ * Every provider, every domain, in one call.
+ *
+ * Keyed by the REAL registered domain names. The previous endpoint keyed off a
+ * hand-written map that listed five of seven, under a docstring promising every
+ * one — so `scraping` and `storage` were invisible and the next domain anyone
+ * registered would have been too.
+ */
+export type CatalogResponse = {
+    domains: {
+        [key: string]: Array<CatalogProvider>;
+    };
+};
+
+/**
  * Schema for creating a new chat conversation.
  */
 export type ChatConversationCreate = {
@@ -1591,19 +1643,14 @@ export type EnableWatchRequest = {
 };
 
 /**
- * Per-infospace enrichment configuration. All enrichers require explicit opt-in.
+ * Per-infospace enrichment configuration. Every enricher is opt-in.
  *
- * Each field is either:
- * - True (enable with system defaults)
- * - ProviderSelection (enable with specific provider + optional model)
- * - None/missing (disabled)
+ * Each field is either ``True`` (enable with system defaults), a
+ * ``ProviderSelection`` (enable with a specific provider+model), or
+ * ``None``/missing (disabled).
  *
- * Embedding is always ``ProviderSelection`` (never plain bool) because you
- * can't embed without choosing a provider and model.
- *
- * Completeness checks live in ``validate_enrichment_config()`` — call it
- * from save-path endpoints (``PATCH /infospaces/{id}``). Reads must NOT
- * validate: legacy rows with partial selections still need to deserialize.
+ * Embedding is always ``ProviderSelection`` — you cannot embed without
+ * choosing a provider and a model, because the vector dimension depends on it.
  */
 export type EnrichmentConfig = {
     ocr?: (boolean | ProviderSelection | null);
@@ -2460,11 +2507,10 @@ export type KnowledgeGraphUpdate = {
 };
 
 /**
- * Language capability defaults with context-specific overrides.
+ * Language defaults with context-specific overrides.
  *
- * ``default`` is the base language provider. ``chat`` and ``annotation``
- * override it for those specific contexts.  ``resolve()`` checks the
- * context override first and falls back to ``default``.
+ * ``default`` is the base choice. ``chat`` and ``annotation`` override it for
+ * those contexts; ``resolve(context=...)`` checks the override first.
  */
 export type LanguageDefaults = {
     default?: (ProviderSelection | null);
@@ -2534,6 +2580,10 @@ export type Message = {
     message: string;
 };
 
+export type ModelActionResponse = {
+    message: string;
+};
+
 /**
  * Information about a language model.
  */
@@ -2556,6 +2606,12 @@ export type ModelInfo = {
 export type ModelListResponse = {
     models: Array<ModelInfo>;
     providers: Array<(string)>;
+};
+
+export type ModelRequest = {
+    capability: string;
+    provider_key: string;
+    model_name: string;
 };
 
 export type NewPassword = {
@@ -2874,15 +2930,11 @@ export type ProposeResolutionsParams = {
 export type target = 'entities' | 'predicates' | 'both';
 
 /**
- * User's per-capability provider preferences.
+ * A user's per-domain provider preferences.
  *
- * Core capabilities are named fields — enforced by the model schema.
- * Language uses ``LanguageDefaults`` for context-specific overrides;
- * all other capabilities are plain ``ProviderSelection``.
- *
- * Completeness checks live in ``validate_provider_defaults()`` — call it
- * from save-path endpoints. The model itself stays permissive so existing
- * DB rows with partial selections still deserialize.
+ * Completeness checks live in ``validate_provider_defaults()`` — call it from
+ * save-path endpoints only. The model itself stays permissive so existing DB
+ * rows with partial selections still deserialize.
  */
 export type ProviderDefaults = {
     language?: (LanguageDefaults | null);
@@ -2890,20 +2942,6 @@ export type ProviderDefaults = {
     web_search?: (ProviderSelection | null);
     ocr?: (ProviderSelection | null);
     geocoding?: (ProviderSelection | null);
-};
-
-export type ProviderInfo = {
-    provider_name: string;
-    models: Array<ProviderModel>;
-};
-
-export type ProviderListResponse = {
-    providers: Array<ProviderInfo>;
-};
-
-export type ProviderModel = {
-    name: string;
-    description?: (string | null);
 };
 
 /**
@@ -6308,13 +6346,13 @@ export type ExportPackageResponse = (unknown);
 
 export type DiscoverModelsData = {
     /**
-     * Capability name: 'language', 'embedding', 'ocr', 'geocoding', 'web_search'
+     * Domain name: 'language', 'embedding', 'ocr', 'geocoding', 'web_search'
      */
     capability: string;
     infospaceId: number;
     packageToken?: (string | null);
     /**
-     * Optional: probe a specific provider's runtime models (requires credentials)
+     * Restrict to one provider. Required to reach an endpoint's live listing.
      */
     providerKey?: (string | null);
     /**
@@ -6345,6 +6383,32 @@ export type InfospaceEnrichmentStatusData = {
 export type InfospaceEnrichmentStatusResponse = ({
     [key: string]: unknown;
 });
+
+export type ProviderCatalogData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type ProviderCatalogResponse = (CatalogResponse);
+
+export type PullModelData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: ModelRequest;
+    xPackageToken?: (string | null);
+};
+
+export type PullModelResponse = (ModelActionResponse);
+
+export type DeleteModelData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: ModelRequest;
+    xPackageToken?: (string | null);
+};
+
+export type DeleteModelResponse = (ModelActionResponse);
 
 export type ListRelationshipsData = {
     graphId: number;
@@ -6413,8 +6477,16 @@ export type ListRunsData = {
     includeCounts?: boolean;
     infospaceId: number;
     limit?: number;
+    /**
+     * Only live runs, or only non-live
+     */
+    live?: (boolean | null);
     packageToken?: (string | null);
     skip?: number;
+    /**
+     * Only runs in this status
+     */
+    status?: (RunStatus | null);
     xPackageToken?: (string | null);
 };
 
@@ -6436,8 +6508,16 @@ export type ListRuns1Data = {
     includeCounts?: boolean;
     infospaceId: number;
     limit?: number;
+    /**
+     * Only live runs, or only non-live
+     */
+    live?: (boolean | null);
     packageToken?: (string | null);
     skip?: number;
+    /**
+     * Only runs in this status
+     */
+    status?: (RunStatus | null);
     xPackageToken?: (string | null);
 };
 
@@ -6450,8 +6530,16 @@ export type ListRunsStreamData = {
     includeCounts?: boolean;
     infospaceId: number;
     limit?: number;
+    /**
+     * Only live runs, or only non-live
+     */
+    live?: (boolean | null);
     packageToken?: (string | null);
     skip?: number;
+    /**
+     * Only runs in this status
+     */
+    status?: (RunStatus | null);
     xPackageToken?: (string | null);
 };
 
@@ -7688,16 +7776,6 @@ export type BrowseRssFeedData = {
 
 export type BrowseRssFeedResponse = (unknown);
 
-export type GetUnifiedProvidersResponse = (unknown);
-
-export type GetProvidersResponse = (ProviderListResponse);
-
-export type PullOllamaModelData = {
-    modelName: string;
-};
-
-export type PullOllamaModelResponse = (Message);
-
 export type GetOllamaAvailableModelsData = {
     limit?: number;
     sort?: string;
@@ -7706,14 +7784,6 @@ export type GetOllamaAvailableModelsData = {
 export type GetOllamaAvailableModelsResponse = ({
     [key: string]: unknown;
 });
-
-export type RemoveOllamaModelData = {
-    modelName: string;
-};
-
-export type RemoveOllamaModelResponse = (Message);
-
-export type GetGeocodingProvidersResponse = (unknown);
 
 export type GeocodeLocationData = {
     infospaceId: number;
