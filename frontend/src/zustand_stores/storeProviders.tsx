@@ -6,9 +6,23 @@ import type { ProviderDefaults, ProviderSelection as BackendProviderSelection } 
 // Provider types match backend capabilities
 export type ProviderCapability = 'llm' | 'embedding' | 'web_search' | 'geocoding' | 'ocr' | 'annotation';
 
+// Mirrors CatalogModel / CatalogProvider from the generated client. Kept as an
+// interface rather than importing the generated type so the store's own shape
+// stays explicit, but every field below exists on the wire — see
+// GET /providers/{infospace_id}/catalog.
 export interface ProviderModelSpec {
   name: string;
   description?: string;
+  /** "curated" — declared in the backend catalog. "live" — reported by the endpoint. */
+  source?: string;
+  supports_tools?: boolean | null;
+  supports_streaming?: boolean | null;
+  supports_thinking?: boolean | null;
+  supports_multimodal?: boolean | null;
+  supports_structured_output?: boolean | null;
+  supports_prompt_caching?: boolean | null;
+  max_tokens?: number | null;
+  context_length?: number | null;
   dimension?: number | null;
   max_sequence_length?: number | null;
 }
@@ -21,17 +35,24 @@ export interface ProviderMetadata {
   api_key_name?: string;
   api_key_url?: string;
   is_local: boolean;
-  is_oss: boolean;      // Open source
-  is_free: boolean;     // Free tier available
   has_env_fallback: boolean;
   features: string[];
-  rate_limited?: boolean;
-  rate_limit_info?: string;
+  /** Whether this endpoint manages its own model inventory. Ask this, never the id. */
+  pullable?: boolean;
+  /** The wire it speaks. Two providers sharing one share a wire. */
+  dialect?: string;
   /** True when the provider requires an explicit model_name for save-validation to pass. */
   model_required?: boolean;
-  /** Statically-declared models for this (capability, provider). Empty for runtime-discovered (e.g. Ollama). */
+  /** Curated models. Empty for endpoints whose inventory is runtime-discovered. */
   models?: ProviderModelSpec[];
 }
+
+//: Backend domain name → the store's capability key. Only 'language' differs;
+//: the UI has always called it 'llm'. Everything else is identity, so a new
+//: backend domain appears under its own name without an edit here.
+export const DOMAIN_TO_CAPABILITY: Record<string, ProviderCapability> = {
+  language: 'llm',
+};
 
 export interface ProviderSelection {
   providerId: string;
@@ -58,10 +79,12 @@ interface ProvidersState {
   hydrateFromProfile: (providerDefaults: ProviderDefaults | null | undefined) => void;
 
   // Helpers
-  getProvider: (providerId: string) => ProviderMetadata | undefined;
+  // Accept null: every caller reads a selection that may not be made yet, and
+  // all three already answer "not found" for an unknown id.
+  getProvider: (providerId: string | null | undefined) => ProviderMetadata | undefined;
   getApiKey: (providerId: string) => string | undefined;
-  hasApiKey: (providerId: string) => boolean;
-  needsApiKey: (providerId: string) => boolean;
+  hasApiKey: (providerId: string | null | undefined) => boolean;
+  needsApiKey: (providerId: string | null | undefined) => boolean;
 }
 
 export const useProvidersStore = create<ProvidersState>()(
@@ -78,13 +101,18 @@ export const useProvidersStore = create<ProvidersState>()(
 
       apiKeys: {},
 
+      // Seeded empty on purpose. Hardcoding provider ids here is what rotted:
+      // 'gemini' no longer exists at all, 'ollama_embeddings' and
+      // 'nominatim_local' are ids the backend has never emitted. A selection is
+      // only ever valid against the live catalog, so it starts absent and every
+      // consumer already reads it with `selections[cap]?.providerId`.
       selections: {
-        llm: { providerId: 'gemini' },
-        embedding: { providerId: 'ollama_embeddings' },
-        web_search: { providerId: 'searxng' },
-        geocoding: { providerId: 'nominatim_local' },
-        ocr: { providerId: 'tesseract' },
-        annotation: { providerId: 'gemini' },
+        llm: {} as ProviderSelection,
+        embedding: {} as ProviderSelection,
+        web_search: {} as ProviderSelection,
+        geocoding: {} as ProviderSelection,
+        ocr: {} as ProviderSelection,
+        annotation: {} as ProviderSelection,
       },
       
       setProviders: (capability, providers) =>
@@ -169,6 +197,7 @@ export const useProvidersStore = create<ProvidersState>()(
 
       // Helpers
       getProvider: (providerId) => {
+        if (!providerId) return undefined;
         const state = get();
         for (const capability of Object.keys(state.providers) as ProviderCapability[]) {
           const provider = state.providers[capability].find(p => p.id === providerId);
@@ -182,7 +211,7 @@ export const useProvidersStore = create<ProvidersState>()(
       },
       
       hasApiKey: (providerId) => {
-        return !!get().apiKeys[providerId];
+        return !!providerId && !!get().apiKeys[providerId];
       },
       
       needsApiKey: (providerId) => {
@@ -198,6 +227,15 @@ export const useProvidersStore = create<ProvidersState>()(
         apiKeys: state.apiKeys,
         selections: state.selections,
       }),
+      // v2 drops persisted selections. Browsers still hold the old seeds, and
+      // those ids ('gemini', 'ollama_embeddings', 'nominatim_local') name
+      // providers this backend cannot resolve — a stale pick fails at run time
+      // with a confusing error rather than falling back. API keys are kept.
+      version: 2,
+      migrate: (persisted: any, version: number) => {
+        if (version >= 2) return persisted;
+        return { ...persisted, selections: {} };
+      },
     }
   )
 );

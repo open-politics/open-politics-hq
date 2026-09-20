@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -48,9 +48,10 @@ import {
   Tags,
   NotebookText
 } from "lucide-react";
-import { useProvidersStore, ProviderCapability, ProviderMetadata } from '@/zustand_stores/storeProviders';
+import { useProvidersStore, DOMAIN_TO_CAPABILITY, ProviderCapability, ProviderMetadata } from '@/zustand_stores/storeProviders';
 import { toast } from 'sonner';
-import { UtilsService, UsersService, ProviderInfo, ProviderModel } from '@/client';
+import { UtilsService, UsersService, ProvidersService } from '@/client';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 
 interface OllamaAvailableModel {
   name: string;
@@ -107,6 +108,16 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
     needsApiKey,
   } = useProvidersStore();
 
+  const { activeInfospace } = useInfospaceStore();
+
+  // The endpoint whose inventory the panel is managing. Derived from the
+  // declaration — whichever language provider reports `model_pull` — so adding
+  // a second local runtime needs no change here.
+  const managedProvider = useMemo(
+    () => (providers.llm || []).find(p => p.features?.includes('model_pull'))?.id,
+    [providers.llm],
+  );
+
   const [isLoading, setIsLoading] = useState(true);
   const [activeCapability, setActiveCapability] = useState<ProviderCapability>('llm');
   const [tempApiKeys, setTempApiKeys] = useState<Record<string, string>>({});
@@ -130,29 +141,29 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
   useEffect(() => {
     fetchProviders();
     fetchStoredCredentials();
-    fetchOllamaModels();
+    fetchInstalledModels();
     fetchOllamaAvailable();
   }, []);
 
   const fetchProviders = async () => {
     setIsLoading(true);
     try {
-      const response = await UtilsService.getUnifiedProviders();
-      const data = response as {
-        providers: Record<ProviderCapability, ProviderMetadata[]>;
-        capabilities: string[];
-      };
-      
-      // Validate response structure
-      if (!data || !data.providers) {
-        throw new Error('Invalid response structure: missing providers');
+      if (!activeInfospace?.id) return;
+      // The catalog, not the old unified listing: it iterates the real domain
+      // registry (which showed five of seven) and carries per-model capability
+      // flags and a typed `pullable`, so nothing downstream has to infer either.
+      const data = await ProvidersService.providerCatalog({
+        infospaceId: activeInfospace.id,
+      });
+
+      if (!data || !data.domains) {
+        throw new Error('Invalid response structure: missing domains');
       }
-      
-      // Update store with provider metadata for each capability
-      for (const capability of Object.keys(data.providers) as ProviderCapability[]) {
-        const providersForCapability = data.providers[capability];
-        if (Array.isArray(providersForCapability)) {
-          setProviders(capability, providersForCapability);
+
+      for (const [domain, list] of Object.entries(data.domains)) {
+        const capability = (DOMAIN_TO_CAPABILITY[domain] ?? domain) as ProviderCapability;
+        if (Array.isArray(list)) {
+          setProviders(capability, list as unknown as ProviderMetadata[]);
         }
       }
       
@@ -175,12 +186,18 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
     }
   };
 
-  const fetchOllamaModels = async () => {
+  // What this endpoint reports it has RIGHT NOW. Live, so it needs credentials
+  // and an infospace; the curated catalog cannot answer it.
+  const fetchInstalledModels = async (providerKey = managedProvider) => {
+    if (!activeInfospace?.id || !providerKey) return;
     try {
-      const response = await UtilsService.getProviders();
-      const ollama = response.providers.find((p: ProviderInfo) => p.provider_name === 'ollama');
-      setOllamaModels(ollama ? ollama.models.map((m: ProviderModel) => m.name) : []);
-    } catch { /* ignore */ }
+      const data = await ProvidersService.discoverModels({
+        infospaceId: activeInfospace.id,
+        capability: 'language',
+        providerKey,
+      }) as any;
+      setOllamaModels(((data.models || []) as Array<{ name: string }>).map(m => m.name));
+    } catch { /* an unreachable endpoint simply lists nothing */ }
   };
 
   const fetchOllamaAvailable = async () => {
@@ -195,22 +212,32 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
     }
   };
 
-  const handlePullModel = async (modelName: string) => {
+  // Generic over any endpoint declaring `model_pull`. The route carries no
+  // provider name — the declaration decides who can answer it.
+  const handlePullModel = async (modelName: string, providerKey = managedProvider) => {
+    if (!activeInfospace?.id || !providerKey) return;
     setIsPullingModel(modelName);
     try {
-      await UtilsService.pullOllamaModel({ modelName });
+      await ProvidersService.pullModel({
+        infospaceId: activeInfospace.id,
+        requestBody: { capability: 'language', provider_key: providerKey, model_name: modelName },
+      });
       toast.success(`Model ${modelName} pulled successfully`);
-      await fetchOllamaModels();
+      await fetchInstalledModels(providerKey);
     } catch { toast.error(`Failed to pull model ${modelName}`); }
     finally { setIsPullingModel(null); }
   };
 
-  const handleRemoveModel = async (modelName: string) => {
+  const handleRemoveModel = async (modelName: string, providerKey = managedProvider) => {
+    if (!activeInfospace?.id || !providerKey) return;
     setIsRemovingModel(modelName);
     try {
-      await UtilsService.removeOllamaModel({ modelName });
+      await ProvidersService.deleteModel({
+        infospaceId: activeInfospace.id,
+        requestBody: { capability: 'language', provider_key: providerKey, model_name: modelName },
+      });
       toast.success(`Model ${modelName} removed`);
-      await fetchOllamaModels();
+      await fetchInstalledModels(providerKey);
     } catch { toast.error(`Failed to remove model ${modelName}`); }
     finally { setIsRemovingModel(null); }
   };
@@ -408,16 +435,10 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
                     Local
                   </Badge>
                 )}
-                {provider.is_oss && (
+                {provider.pullable && (
                   <Badge variant="outline" className="text-[11px] px-1.5 py-0 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800">
-                    <Code2 className="w-2.5 h-2.5 mr-0.5" />
-                    Open Source
-                  </Badge>
-                )}
-                {provider.is_free && (
-                  <Badge variant="outline" className="text-[11px] px-1.5 py-0 bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800">
-                    <Heart className="w-2.5 h-2.5 mr-0.5" />
-                    Free
+                    <Download className="w-2.5 h-2.5 mr-0.5" />
+                    Manages models
                   </Badge>
                 )}
                 {provider.has_env_fallback && (
@@ -492,13 +513,6 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
             </div>
           )}
 
-          {/* Rate limit info */}
-          {provider.rate_limited && provider.rate_limit_info && (
-            <div className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-              <AlertCircle className="w-3 h-3" />
-              {provider.rate_limit_info}
-            </div>
-          )}
 
           {/* API Key Management */}
           {provider.requires_api_key && (
@@ -640,14 +654,18 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
               )}
             </div>
           )}
-          {/* Ollama model management — inline */}
-          {provider.id === 'ollama' && (
+          {/* Model management — shown for any endpoint that declares it can
+              manage its own inventory. The actions inside still post to the
+              ollama-specific routes; repoint them at
+              POST/DELETE /providers/{infospace_id}/models/pull once the client
+              is regenerated. */}
+          {provider.features?.includes('model_pull') && (
             <div className="space-y-1.5 pt-1 border-t border-gray-200 dark:border-gray-700">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
                   Installed ({ollamaModels.length})
                 </span>
-                <Button variant="ghost" size="sm" onClick={fetchOllamaModels} className="h-5 w-5 p-0">
+                <Button variant="ghost" size="sm" onClick={() => fetchInstalledModels(provider.id)} className="h-5 w-5 p-0">
                   <RefreshCw className="h-3 w-3" />
                 </Button>
               </div>
@@ -658,7 +676,7 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
                     <div key={model} className="flex items-center justify-between py-0.5 group">
                       <span className="font-mono text-[11px] text-gray-700 dark:text-gray-300 truncate">{model}</span>
                       <button
-                        onClick={() => handleRemoveModel(model)}
+                        onClick={() => handleRemoveModel(model, provider.id)}
                         disabled={isRemovingModel === model}
                         className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity shrink-0"
                       >
@@ -686,7 +704,7 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
                   {/* Custom pull */}
                   <div className="flex gap-2 p-3 border rounded-lg">
                     <Input placeholder="e.g. llama3.2:3b" value={ollamaCustomName} onChange={e => setOllamaCustomName(e.target.value)} />
-                    <Button variant="secondary" disabled={!ollamaCustomName.trim()} onClick={() => { handlePullModel(ollamaCustomName.trim()); setIsOllamaDialogOpen(false); }}>Pull</Button>
+                    <Button variant="secondary" disabled={!ollamaCustomName.trim()} onClick={() => { handlePullModel(ollamaCustomName.trim(), provider.id); setIsOllamaDialogOpen(false); }}>Pull</Button>
                   </div>
 
                   {/* Filters */}
@@ -771,7 +789,7 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
                             {model.parameters && <span>{model.parameters}</span>}
                           </div>
                         </div>
-                        <Button variant="outline" size="sm" className="ml-3 shrink-0" disabled={isPullingModel === model.name} onClick={() => { handlePullModel(model.name); setIsOllamaDialogOpen(false); }}>
+                        <Button variant="outline" size="sm" className="ml-3 shrink-0" disabled={isPullingModel === model.name} onClick={() => { handlePullModel(model.name, provider.id); setIsOllamaDialogOpen(false); }}>
                           {isPullingModel === model.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
                         </Button>
                       </div>

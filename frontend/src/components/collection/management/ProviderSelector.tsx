@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ButtonGroup } from "@/components/ui/button-group"
 import { useProvidersStore } from '@/zustand_stores/storeProviders';
-import { UtilsService } from '@/client';
-import { ProviderInfo, ProviderModel } from '@/client';
+import { ProvidersService } from '@/client';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
 
 interface Provider {
@@ -31,6 +31,8 @@ export default function ProviderSelector({ showModels = true, className = '', ca
     setSelection,
   } = useProvidersStore();
 
+  const { activeInfospace } = useInfospaceStore();
+
   const selectedProvider = selections[capability]?.providerId || null;
   const selectedModel = selections[capability]?.modelId || null;
 
@@ -50,32 +52,26 @@ export default function ProviderSelector({ showModels = true, className = '', ca
   useEffect(() => {
     const fetchProviders = async () => {
       try {
-        const response = await UtilsService.getUnifiedProviders() as any;
-        const llmProviders = response.providers?.llm || [];
-        
-        // Fetch models for LLM providers
-        const legacyResponse = await UtilsService.getProviders();
-        const providerModels = new Map(
-          legacyResponse.providers.map((p: ProviderInfo) => [
-            p.provider_name, 
-            p.models.map((m: ProviderModel) => m.name)
-          ])
-        );
-        
-        const providerList: Provider[] = llmProviders.map((provider: any) => ({
-          name: provider.id,
-          models: providerModels.get(provider.id) || []
+        if (!activeInfospace?.id) return;
+        // One call. This used to be two — the unified listing for the provider
+        // names and a second legacy route for their models — which is exactly
+        // what the catalog collapses.
+        const data = await ProvidersService.providerCatalog({
+          infospaceId: activeInfospace.id,
+        });
+        const providerList: Provider[] = (data.domains?.language || []).map(p => ({
+          name: p.id,
+          models: (p.models || []).map(m => m.name),
         }));
         
         setProviders(providerList);
         
         // If no provider is selected, or if the selected provider is no longer valid, set a default.
         if (!selectedProvider || !providerList.some(p => p.name === selectedProvider)) {
-          // Prefer Anthropic (Claude) providers first, then others
-          const defaultProvider =
-            providerList.find(p => p.name.toLowerCase().includes('anthropic')) ||
-            providerList.find(p => p.name === 'gemini') ||
-            providerList[0];
+          // Whatever the backend actually offers, first entry wins. The old
+          // fallback chain named 'gemini' second, a provider that no longer
+          // exists — so it never matched and only ever cost a lookup.
+          const defaultProvider = providerList[0];
           if (defaultProvider) {
             setSelectedProvider(defaultProvider.name);
             // The model will be set by the other useEffect hook.
@@ -89,7 +85,7 @@ export default function ProviderSelector({ showModels = true, className = '', ca
 
     fetchProviders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capability]); // Re-run when capability changes
+  }, [capability, activeInfospace?.id]); // Re-run when capability or infospace changes
 
   useEffect(() => {
     // Update available models when the selectedProvider or the list of providers changes.

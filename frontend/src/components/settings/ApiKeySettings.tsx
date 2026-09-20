@@ -1,6 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { ProvidersService } from '@/client';
+import { useProvidersStore, DOMAIN_TO_CAPABILITY, type ProviderCapability, type ProviderMetadata } from '@/zustand_stores/storeProviders';
+import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,59 +27,59 @@ interface ApiKeySettingsProps {
 }
 
 // Provider configuration for credential management
-const PROVIDERS = [
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    description: 'GPT models and text-embedding',
-    apiKeyUrl: 'https://platform.openai.com/api-keys',
-    placeholder: 'sk-...'
-  },
-  {
-    id: 'anthropic',
-    name: 'Anthropic Claude',
-    description: 'Claude models for reasoning',
-    apiKeyUrl: 'https://console.anthropic.com/settings/keys',
-    placeholder: 'sk-ant-...'
-  },
-  {
-    id: 'gemini',
-    name: 'Google Gemini',
-    description: 'Gemini models',
-    apiKeyUrl: 'https://aistudio.google.com/app/apikey',
-    placeholder: 'AI...'
-  },
-  {
-    id: 'voyage',
-    name: 'Voyage AI',
-    description: 'Voyage embeddings (recommended by Anthropic)',
-    apiKeyUrl: 'https://www.voyageai.com',
-    placeholder: 'pa-...'
-  },
-  {
-    id: 'jina',
-    name: 'Jina AI',
-    description: 'Jina embeddings',
-    apiKeyUrl: 'https://jina.ai',
-    placeholder: 'jina_...'
-  },
-  {
-    id: 'tavily',
-    name: 'Tavily',
-    description: 'AI-powered web search',
-    apiKeyUrl: 'https://tavily.com',
-    placeholder: 'tvly-...'
-  },
-  {
-    id: 'mapbox',
-    name: 'Mapbox',
-    description: 'Geocoding and mapping',
-    apiKeyUrl: 'https://account.mapbox.com',
-    placeholder: 'pk...'
-  }
-];
+//: Input hints only — cosmetic, never a source of truth. An id missing here
+//: simply gets no placeholder; it does not disappear from the list.
+const KEY_PLACEHOLDERS: Record<string, string> = {
+  openai: 'sk-...',
+  anthropic: 'sk-ant-...',
+  voyage: 'pa-...',
+  jina: 'jina_...',
+  tavily: 'tvly-...',
+  mapbox: 'pk...',
+  mistral: '...',
+};
 
 export default function ApiKeySettings({ className = '' }: ApiKeySettingsProps) {
+  const { providers: byCapability, setProviders } = useProvidersStore();
+  const { activeInfospace } = useInfospaceStore();
+
+  // Every endpoint that actually takes a key, deduplicated across the domains
+  // it serves — openai appears under both llm and embedding, and should be one
+  // card. Derived from the declarations, so a provider added or removed in the
+  // backend catalog shows up here without anyone editing this file. It used to
+  // be a hand-written list, which is how it came to still offer Gemini.
+  const PROVIDERS = useMemo(() => {
+    const seen = new Map<string, { id: string; name: string; description: string; apiKeyUrl?: string; placeholder?: string }>();
+    for (const list of Object.values(byCapability)) {
+      for (const p of (list as ProviderMetadata[]) || []) {
+        if (!p.requires_api_key || seen.has(p.id)) continue;
+        seen.set(p.id, {
+          id: p.id,
+          name: p.name,
+          description: p.description || '',
+          apiKeyUrl: p.api_key_url || undefined,
+          placeholder: KEY_PLACEHOLDERS[p.id],
+        });
+      }
+    }
+    return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [byCapability]);
+
+  // The store is shared, so this only fetches when nothing has filled it yet.
+  useEffect(() => {
+    if (PROVIDERS.length > 0) return;
+    (async () => {
+      try {
+        if (!activeInfospace?.id) return;
+        const data = await ProvidersService.providerCatalog({ infospaceId: activeInfospace.id });
+        for (const [domain, list] of Object.entries(data.domains || {})) {
+          const cap = (DOMAIN_TO_CAPABILITY[domain] ?? domain) as ProviderCapability;
+          if (Array.isArray(list)) setProviders(cap, list as unknown as ProviderMetadata[]);
+        }
+      } catch { /* the cards stay empty; nothing here can be configured blind */ }
+    })();
+  }, []);
+
   const [savedProviders, setSavedProviders] = useState<string[]>([]);
   const [tempApiKeys, setTempApiKeys] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
