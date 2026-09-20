@@ -12,7 +12,7 @@ You point HQ at documents, uploads, RSS feeds, search results, a directory nobod
 
 The part that does the actual work is annotation. You write down what you're looking for as questions with defined answers, roughly the way you'd write a codebook, and the system applies that across everything you point it at, whether that's twelve documents or forty thousand. What comes back is structured: a row per document, a column per question, and every value carrying a link back to the passage it was taken from. From there it's tables, charts, maps, entity graphs, or an export you take somewhere else entirely.
 
-Self-hostable with Docker Compose or Kubernetes. Works against Anthropic, OpenAI, Google or a local Ollama, so it runs the same on a server as it does on a laptop with the network off. AGPLv3.
+Self-hostable with Docker Compose or Kubernetes. Works against Anthropic, OpenAI, Mistral or a local Ollama, so it runs the same on a server as it does on a laptop with the network off. AGPLv3.
 
 <img src=".github/assets/images/asset-manager.png" alt="Asset Manager">
 <img src=".github/assets/images/annotation-schema.png" alt="Annotation Schema">
@@ -79,23 +79,60 @@ cd open-politics-hq
 ./setup.sh
 ```
 
-`setup.sh` is the single entrypoint. Run with no arguments it opens an
-interactive **dashboard**: it shows current state (environment, profiles,
-workers, secret/placeholder status, running services) and offers menu options
-to set up, start, stop, restart, rotate secrets, and view logs — no flags
-needed. It generates `.env` with strong secrets, creates `.store/` with correct
-permissions, and lets you pick a deployment preset (`dev`, `production`,
-`local-ollama`, `local-geocoder`, `searxng` — additive). Re-running is always
-safe: existing secrets and data are never overwritten.
+`setup.sh` is the single entrypoint. No arguments opens the dashboard: current
+state, and menu options to start, stop, restart, view logs, change settings and
+rotate secrets. It writes `.env` with strong secrets and creates `.store/` with
+the right permissions. Re-running is safe. Existing secrets and data are never
+overwritten, and it reads your current config rather than asking again.
 
-Flags exist for automation/CI:
+There's one shortcut and a couple of operations. Everything else is config:
 
 ```bash
-./setup.sh --preset dev -y           # lean dev, no prompts
-./setup.sh --preset production --preset local-ollama
-./setup.sh rotate --fernet           # rotate the encryption key safely
-./setup.sh --help
+./setup.sh dev secure        # dev, host-network mode
+./setup.sh logs [service]    # tail the stack (or: watch)
+./setup.sh rotate --fernet   # rotate the encryption key
 ```
+
+### Configuration
+
+Two files. `.env` holds secrets and nothing else. Everything else lives in
+`my-hq.yml` — storage (local disk or any S3), which local models and services to
+run, which provider answers a given job and who's allowed to use your API keys,
+background enrichers, limits, ports, smtp, network mode. It's commented, it has
+an index at the bottom, and `./setup.sh` writes it for you. Edit it directly
+when you'd rather not click through menus.
+
+After setup, plain `docker compose` works. `COMPOSE_FILE`, `COMPOSE_PROFILES`
+and `COMPOSE_PROJECT_NAME` are written into `.env`, so a bare
+`docker compose up -d` picks up the same files, profiles and network mode the
+script would — including secure mode. No flags to remember, nothing to re-state.
+
+### Secure network mode
+
+`network.mode: host` is the default. Every container shares the host's network
+namespace and binds `127.0.0.1` directly — no docker bridge, no NAT, no port
+mappings at all. Caddy is the only thing that binds publicly, and only if you
+asked for it.
+
+Bridge mode publishes on `127.0.0.1` too, so this is not the difference between
+exposed and not. What host mode removes is the publishing layer itself: no
+docker-proxy holding a socket, nothing to misconfigure into `0.0.0.0`, and one
+fewer hop. It also lets the stack reach services already on the host's loopback
+— a model server on `127.0.0.1:4000` that no bridge container can see.
+
+`mode: bridge` is the opt-out, and it is the right one on macOS and Windows
+unless Docker Desktop's host networking is switched on (Settings -> Resources ->
+Network). `./setup.sh` warns when it sees that combination.
+
+After starting, the script checks what is actually listening and refuses to
+report success if anything sits on an address it shouldn't. Reading the compose
+file won't tell you this — a bind setting can be inert or ignored, and it looks
+correct either way.
+
+Nominatim is the one service that can't take a bind setting — its image binds
+`0.0.0.0:8080` with no way to change it. It stays on the docker bridge, where
+its own network namespace contains that, and gets published on `127.0.0.1` only.
+Same result, no exception to the rule.
 
 For the hosted option, Kubernetes, or hybrid setups, see the [installation guide](https://docs.open-politics.org/pages/app/installation-self-hosted).
 
@@ -107,12 +144,12 @@ For the hosted option, Kubernetes, or hybrid setups, see the [installation guide
 | Frontend | Web interface — Next.js + React |
 | Worker | Background processing for large jobs — Celery |
 | Database | Data storage with vector search — PostgreSQL + pgvector |
-| Object Storage | File storage for uploads — MinIO (S3-compatible) |
+| Object Storage | File storage for uploads — local disk, or any S3-compatible service |
 | Cache/Queue | Session management, job queues — Redis |
 | Geocoding | Location extraction and mapping — Nominatim |
 | LLM (optional) | Local AI inference — Ollama |
 
-Model providers are swappable: Anthropic, OpenAI, Google, or Ollama running locally. Keys go in through the web interface, or you skip them entirely and keep everything on your own hardware.
+Model providers are swappable: Anthropic, OpenAI, Mistral, or Ollama running locally. Keys go in through the web interface, or you skip them entirely and keep everything on your own hardware.
 
 For deployment options (hosted, Kubernetes, hybrid), see the [installation guide](https://docs.open-politics.org/pages/app/installation-self-hosted) or have a look at the [deployment options](.deployments).
 
