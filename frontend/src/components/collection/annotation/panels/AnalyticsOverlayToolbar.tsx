@@ -64,7 +64,10 @@ export function AnalyticsOverlayToolbar({
           title="Analytics overlays"
         >
           <Sparkles className="h-3 w-3 mr-1" />
-          Overlays{active > 0 ? ` (${active})` : ''}
+          {/* The word goes on a narrow bar; the icon, the count and the title
+              stay. Outside a chart bar the container never matches, so it shows. */}
+          <span className="@max-md/chartbar:sr-only">Overlays</span>
+          {active > 0 ? ` (${active})` : ''}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-60 p-3" align="end">

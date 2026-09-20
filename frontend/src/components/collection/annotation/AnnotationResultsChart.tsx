@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
+import { useScrollEdges } from '@/hooks/useScrollEdges';
 import {
   ComposedChart,
   Bar,
@@ -184,7 +185,7 @@ const ChartLegendOverlay: React.FC<{
 }> = ({ entries }) => {
   if (entries.length === 0) return null;
   return (
-    <div className="absolute top-1.5 right-1.5 z-20 max-w-[45%] max-h-[120px] overflow-y-auto rounded-md border border-border/60 bg-background/75 px-2 py-1.5 shadow-sm backdrop-blur-sm">
+    <div className="absolute top-1.5 right-1.5 z-20 max-w-[45%] max-h-[120px] overflow-y-auto rounded-md border surface-overlay px-2 py-1.5 @max-md/chart:max-h-16">
       <ul className="space-y-1">
         {entries.map((e, i) => (
           <li key={`${e.name}-${i}`} className="flex items-center gap-1.5 leading-none">
@@ -2447,6 +2448,9 @@ const AnnotationResultsChart: React.FC<Props> = ({
   // contributed to the clicked bar/point.
   const [evidenceScope, setEvidenceScope] = useState<Scope | null>(null);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
+  // The bucket/overlay strip scrolls sideways on a narrow panel (see the bar
+  // below); this lights its edges so the hidden controls announce themselves.
+  const controlsStripRef = useScrollEdges<HTMLDivElement>('x');
   const chartLastClickRef = useRef<{ key: string; at: number } | null>(null);
 
   // Analytics overlays — client-side derived series over the rendered data.
@@ -2729,14 +2733,23 @@ const AnnotationResultsChart: React.FC<Props> = ({
     && processedData.chartData.length <= 60;
 
   return (
-    <div className="h-full flex flex-col space-y-3">
+    <div className="@container/chart h-full flex flex-col space-y-3">
       {/* Mark toggle moved inline (display knob — stays on the canvas, not
           in the panel header). The config popover handles data-side concerns
           only: roles, filter, time interval, advanced. */}
       <PanelHeaderSlot>{null}</PanelHeaderSlot>
       {showControls && (
-        <div className="flex flex-col gap-1.5 px-2 py-1.5 border-b bg-muted/20 flex-shrink-0">
-          <div className="flex items-center gap-2 flex-wrap">
+        <div className="@container/chartbar flex flex-col gap-1.5 px-2 py-1.5 border-b bg-muted/20 flex-shrink-0">
+          {/* Mode, sort, series, fields, bucket interval, render style, overlays —
+              up to eight controls. Wrapping was right on a wide panel and wrong
+              on a narrow one: at phone width it stacked into three rows and took
+              a third of the height from a plot that had little to begin with.
+              Below `@lg` it becomes one row you swipe, with an edge fade where
+              the rest is waiting. */}
+          <div
+            ref={controlsStripRef}
+            className="scroll-edges-x flex items-center gap-2 flex-wrap @max-lg/chartbar:flex-nowrap @max-lg/chartbar:overflow-x-auto @max-lg/chartbar:[&>*]:shrink-0"
+          >
             {/* Timeline ↔ Grouped — the only meaningful chart-side toggle.
                 Timeline plots cfg.x as a continuous time axis; Grouped
                 treats it as a categorical bar chart. The bar/line/area

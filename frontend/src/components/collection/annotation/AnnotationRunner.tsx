@@ -861,8 +861,27 @@ export default function AnnotationRunner({
                 );
               }}
             >
+      {/* Container queries, not media queries.
+          `@media (min-width: 768px)` asked how wide the *window* is, which is
+          the one measurement that has nothing to do with this grid: open the
+          dock beside the runner on a 1440px monitor and the dashboard is 500px
+          wide while the media query still reports "desktop", so panels keep
+          their multi-column placement in a column that cannot hold it.
+          `@container page` asks the page surface — the same question a phone
+          asks, answered once.
+
+          The mobile branch also dropped `max-height`, which was pinning a
+          stacked panel to the height it had been given as a *grid cell*. With
+          rows auto-sized that number means nothing, and it clipped the panel
+          body, which is `overflow-hidden`.
+
+          Stacked panels get a *definite* height instead: `height: auto` left
+          every `h-full` child — the chart's ResponsiveContainer, the map canvas —
+          resolving against nothing. The clamp keeps each panel proportional to
+          its desktop size, never under 280px, and never taller than 70% of the
+          screen, so the next panel always peeks in and says "keep scrolling". */}
       <style jsx global>{`
-        @media (min-width: 768px) {
+        @container page (min-width: 48rem) {
           .dashboard-grid { grid-auto-rows: var(--row-h); }
           .dashboard-panel {
             grid-column: calc(var(--grid-x) + 1) / span var(--grid-w);
@@ -871,14 +890,14 @@ export default function AnnotationRunner({
             max-height: calc(var(--grid-h) * var(--row-h)) !important;
           }
         }
-        @media (max-width: 767px) {
+        @container page (max-width: 47.999rem) {
           .dashboard-grid { grid-template-columns: 1fr !important; grid-auto-rows: auto !important; }
           .dashboard-panel {
             grid-column: 1 !important;
             grid-row: auto !important;
-            height: auto !important;
-            max-height: calc(var(--grid-h) * var(--row-h)) !important;
-            min-height: unset !important;
+            height: clamp(17.5rem, calc(var(--grid-h) * var(--row-h)), 70dvh) !important;
+            min-height: 0 !important;
+            max-height: none !important;
           }
         }
       `}</style>
@@ -954,8 +973,10 @@ export default function AnnotationRunner({
                         "max-md:row-span-1"
                       )}
                       style={{
-                        // Desktop uses safeH, mobile clamped via CSS max-height
-                        minHeight: `${mobileH * gridGeo.rowHeight}px`,
+                        // A floor, not a target — the CSS above decides the real
+                        // height per layout. Small enough that a stacked panel on
+                        // a phone is not mostly empty space.
+                        minHeight: `${Math.min(mobileH, 4) * gridGeo.rowHeight}px`,
                         zIndex: 1,
                         // CSS custom properties consumed by `.dashboard-panel`
                         // in the `<style jsx global>` block above. Custom

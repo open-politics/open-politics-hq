@@ -2833,7 +2833,7 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
 
   return (
     <Dialog open={show} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-[98vw] w-[98vw] h-[96vh] max-h-none p-0 gap-0 rounded-xl overflow-hidden flex flex-col [&>button]:hidden">
+      <DialogContent className="@container/editor max-w-[98vw] w-[98vw] h-[96dvh] max-h-none p-0 gap-0 rounded-xl overflow-hidden flex flex-col [&>button]:hidden">
         <DialogTitle className="sr-only">
           {mode === "create" ? "Create Schema" : mode === "edit" ? "Edit Schema" : "Schema"}
         </DialogTitle>
@@ -2862,8 +2862,8 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
             <SchemaTemplateBar onPick={handlePickTemplate} disabled={isDisabled} />
           )}
 
-          <div className="flex-1 min-h-0 flex">
-            <aside className="w-[256px] shrink-0 border-r min-h-0">
+          <div className="flex-1 min-h-0 flex @max-4xl/editor:flex-col @max-4xl/editor:overflow-y-auto">
+            <aside className="w-[256px] shrink-0 border-r min-h-0 @max-4xl/editor:w-full @max-4xl/editor:border-b @max-4xl/editor:border-r-0 @max-4xl/editor:max-h-[40vh] @max-4xl/editor:overflow-y-auto">
               <NavTree
                 structure={formData.structure}
                 selectedNodeId={selectedNodeId}
@@ -2893,7 +2893,7 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
                 disabled={isDisabled}
               />
             </main>
-            <aside className="w-[360px] shrink-0 border-l min-h-0">
+            <aside className="w-[360px] shrink-0 border-l min-h-0 @max-4xl/editor:w-full @max-4xl/editor:border-l-0 @max-4xl/editor:border-t">
               <AuxPanel
                 resolution={resolution}
                 onUpdateField={updateSelectedField}

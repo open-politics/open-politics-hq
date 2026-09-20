@@ -622,8 +622,14 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
   const [mapLoaded, setMapLoaded] = useState(false);
   const [styleVersion, setStyleVersion] = useState(0);
   const [isGlobeView, setIsGlobeView] = useState(false);
-  // Default the locations list open so the geocoded places are visible alongside the map.
-  const [locationsPanelOpen, setLocationsPanelOpen] = useState(true);
+  // Default the locations list open so the geocoded places are visible alongside
+  // the map — where there is an "alongside". On a phone the list is a bottom
+  // drawer over the map, and opening on arrival buried half the thing you came
+  // to look at. (This component never server-renders — the HQ shell mounts only
+  // on the client — so reading the window in the initialiser is safe.)
+  const [locationsPanelOpen, setLocationsPanelOpen] = useState(
+    () => typeof window === 'undefined' || window.innerWidth >= 768,
+  );
   const [locationsSearch, setLocationsSearch] = useState('');
   const { theme: pageTheme } = useTheme();
 
@@ -1816,10 +1822,17 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         </div>
       ) : null}
 
-      <div className="flex-1 min-h-0 relative annotation-map-host">
+      <div className="@container/map flex-1 min-h-0 relative annotation-map-host">
       <style>
         {`.annotation-map-host .mapboxgl-ctrl-bottom-right { display: none; }`}
       </style>
+      {/* The two side rails — locations (224px, left) and point detail (256px,
+          right) — are 480px of chrome over a map that is 390px wide on a phone,
+          the same overlap the graph panes had. Below `@xl/map` both become
+          bottom drawers. The detail drawer stacks above the list: a point is a
+          drill-down *into* that list, so covering it and revealing it again on
+          close is the navigation, not a collision. Pure container queries — the
+          map panel in a two-column dashboard on a desktop gets the same treatment. */}
       <div
         ref={mapContainerRef}
         className="h-full w-full"
@@ -1848,8 +1861,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           : sorted;
         return (
           <div
-            className="absolute top-2 left-0 z-30 w-56 max-w-[calc(100%-1rem)] rounded-r-md border-y border-r border-border/50 bg-background/55 backdrop-blur-sm flex flex-col"
-            style={{ maxHeight: 'calc(100% - 1rem)' }}
+ className="absolute top-2 left-0 z-30 w-56 max-w-[calc(100%-1rem)] max-h-[calc(100%-1rem)] rounded-r-md border-y border-r surface-overlay flex flex-col @max-xl/map:inset-x-2 @max-xl/map:top-auto @max-xl/map:bottom-2 @max-xl/map:w-auto @max-xl/map:max-w-none @max-xl/map:max-h-[45%] @max-xl/map:rounded-md @max-xl/map:border @max-xl/map:bg-background/85"
           >
             <div className="flex items-center justify-between gap-1 px-2 pt-1 pb-0.5">
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground/80 font-medium">
@@ -1969,13 +1981,13 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           projection, theme, legend toggle). Hidden when the panel is collapsed
           or in focus mode (showControls=false), leaving a clean canvas. */}
       {showControls && (
-      <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-10 flex flex-col items-end gap-1">
-        <ButtonGroup className="bg-background/80 backdrop-blur-sm border shadow-lg rounded-md">
+      <div className="absolute top-2 right-2 @sm/map:top-4 @sm/map:right-4 z-10 flex flex-col items-end gap-1">
+ <ButtonGroup className="surface-overlay border rounded-md">
           <Button
             onClick={handleKickGeocode}
             variant="secondary"
             size="icon"
-            className="relative bg-transparent hover:bg-background/90 h-8 w-8 sm:h-9 sm:w-9 overflow-hidden"
+            className="relative bg-transparent hover:bg-background/90 h-8 w-8 @sm/map:h-9 @sm/map:w-9 [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:w-10 overflow-hidden"
             disabled={!locationField || isGeocoding || isGeocodingActive}
             title={
               !locationField
@@ -2001,7 +2013,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
               onClick={() => setLocationsPanelOpen((v) => !v)}
               aria-pressed={locationsPanelOpen}
               className={cn(
-                'relative bg-transparent hover:bg-background/90 h-8 w-8 sm:h-9 sm:w-9 overflow-hidden',
+                'relative bg-transparent hover:bg-background/90 h-8 w-8 @sm/map:h-9 @sm/map:w-9 [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:w-10 overflow-hidden',
                 locationsPanelOpen && 'bg-background/70',
               )}
               title={`${processedPoints.length} location${processedPoints.length === 1 ? '' : 's'}${
@@ -2025,7 +2037,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
             onClick={() => setMapMode(mapMode === 'markers' ? 'areaGeometryMeasures' : 'markers')}
             variant="secondary"
             size="sm"
-            className="h-8 sm:h-9 px-2 bg-transparent hover:bg-background/90 text-[11px]"
+            className="h-8 @sm/map:h-9 px-2 bg-transparent hover:bg-background/90 text-[11px]"
             title={mapMode === 'markers' ? 'Active: per-row markers — click for Area' : 'Active: Area Geometry aggregate — click for markers'}
           >
             {mapMode === 'markers' ? (
@@ -2038,7 +2050,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
             onClick={() => setViewMode(viewMode === 'pointer' ? 'polygon' : 'pointer')}
             variant="secondary"
             size="icon"
-            className="relative bg-transparent hover:bg-background/90 h-8 w-8 sm:h-9 sm:w-9 overflow-hidden"
+            className="relative bg-transparent hover:bg-background/90 h-8 w-8 @sm/map:h-9 @sm/map:w-9 [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:w-10 overflow-hidden"
             disabled={!mapLoaded}
             title={viewMode === 'pointer'
               ? 'Active: pin markers — click for polygon view'
@@ -2069,7 +2081,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
             onClick={toggleProjection}
             variant="secondary"
             size="icon"
-            className="bg-transparent hover:bg-background/90 h-8 w-8 sm:h-9 sm:w-9"
+            className="bg-transparent hover:bg-background/90 h-8 w-8 @sm/map:h-9 @sm/map:w-9 [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:w-10"
             disabled={!mapLoaded}
             title={isGlobeView ? 'Switch to flat view' : 'Switch to globe view'}
           >
@@ -2084,7 +2096,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
               variant="secondary"
               size="icon"
               onClick={() => setLegendVisible(true)}
-              className="bg-transparent hover:bg-background/90 h-8 w-8 sm:h-9 sm:w-9"
+              className="bg-transparent hover:bg-background/90 h-8 w-8 @sm/map:h-9 @sm/map:w-9 [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:w-10"
               title="Show color legend"
             >
               <Palette className="h-4 w-4" />
@@ -2094,7 +2106,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
             onClick={toggleTheme}
             variant="secondary"
             size="icon"
-            className="bg-transparent hover:bg-background/90 h-8 w-8 sm:h-9 sm:w-9"
+            className="bg-transparent hover:bg-background/90 h-8 w-8 @sm/map:h-9 @sm/map:w-9 [@media(pointer:coarse)]:h-10 [@media(pointer:coarse)]:w-10"
             title={`Switch map to ${mapTheme === 'dark' ? 'light' : 'dark'} mode`}
           >
             {mapTheme === 'dark' ? (
@@ -2109,12 +2121,12 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           && pointsWithMeaningfulAreas.length === 0
           && !isGeocoding
           && !isGeocodingActive && (
-          <div className="max-w-xs rounded-md border bg-background/80 backdrop-blur-sm shadow-lg px-2 py-1 text-[11px] text-muted-foreground">
+ <div className="max-w-xs rounded-md border surface-overlay px-2 py-1 text-[11px] text-muted-foreground">
             No bounding boxes yet — re-run geocoding to backfill polygons.
           </div>
         )}
         {geocodeError && (
-          <div className="max-w-xs rounded-md border border-destructive/40 bg-background/80 backdrop-blur-sm shadow-lg px-2 py-1 text-[11px] text-destructive">
+ <div className="max-w-xs rounded-md border border-destructive/40 surface-overlay px-2 py-1 text-[11px] text-destructive">
             {geocodeError.message}
           </div>
         )}
@@ -2127,7 +2139,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
           {labelConfigInfos.map((info) => (
             <div
               key={`${info.schemaId}:${info.fieldKey}`}
-              className="inline-flex items-center gap-1 rounded-md border bg-background/80 backdrop-blur-sm px-1.5 py-0.5 text-[11px] text-muted-foreground"
+ className="inline-flex items-center gap-1 rounded-md border surface-overlay px-1.5 py-0.5 text-[11px] text-muted-foreground"
             >
               <Eye className="h-3 w-3" />
               <span className="truncate max-w-[10rem]" title={`${info.fieldName} (${info.fieldType})`}>
@@ -2147,7 +2159,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
               type="button"
               onClick={() => setLegendCollapsed(false)}
               title={`Color legend (${colorEntries.length})`}
-              className="absolute left-1/2 -translate-x-1/2 bottom-2 z-20 inline-flex items-center gap-1 rounded-full border bg-background/85 backdrop-blur-sm px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-background"
+ className="absolute left-1/2 -translate-x-1/2 bottom-2 z-20 inline-flex items-center gap-1 rounded-full border surface-overlay px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-background"
             >
               <Palette className="h-3 w-3" />
               <span className="tabular-nums">{colorEntries.length}</span>
@@ -2161,7 +2173,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
             style={{ pointerEvents: 'none' }}
           >
             <div
-              className="flex items-center gap-1 px-1.5 py-1 rounded-full bg-background/85 backdrop-blur-sm border shadow-sm overflow-x-auto"
+ className="flex items-center gap-1 px-1.5 py-1 rounded-full surface-overlay border overflow-x-auto"
               style={{ pointerEvents: 'auto' }}
             >
               {colorEntries.map(({ value, color, count }) => {
@@ -2287,8 +2299,9 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         return (
           <div
             className={cn(
-              'absolute right-0 z-30 w-64 max-w-[calc(100%-1rem)] rounded-l-md border-y border-l border-border/50 bg-background/55 backdrop-blur-sm flex flex-col',
-              'top-44 sm:top-52 bottom-2',
+ 'absolute right-0 z-30 w-64 max-w-[calc(100%-1rem)] rounded-l-md border-y border-l surface-overlay flex flex-col',
+              'top-44 @sm/map:top-52 bottom-2',
+              '@max-xl/map:inset-x-2 @max-xl/map:top-auto @max-xl/map:z-40 @max-xl/map:w-auto @max-xl/map:max-w-none @max-xl/map:max-h-[55%] @max-xl/map:rounded-md @max-xl/map:border @max-xl/map:bg-background/90',
             )}
           >
             <div className="flex items-start justify-between gap-1 px-2 pt-1 pb-0.5">

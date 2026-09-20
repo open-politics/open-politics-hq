@@ -185,9 +185,20 @@ export default function AnnotationRunnerDock({
     if (dockMode === 'open' && activeInfospace?.id) fetchBundles(activeInfospace.id);
   }, [dockMode, activeInfospace?.id, fetchBundles]);
   const { loadSchemas: refreshSchemasFromHook } = useAnnotationSystem();
-  const { apiKeys, selections, setApiKey } = useProvidersStore();
+  const { apiKeys, selections, setApiKey, getProvider, needsApiKey } = useProvidersStore();
+
   const selectedProvider = selections.annotation?.providerId || null;
   const selectedModel = selections.annotation?.modelId || null;
+
+  // A model declares whether it can read images. Where the catalog has no entry
+  // for it (runtime-discovered, never probed), fall back to "the endpoint runs
+  // locally", which is the old behaviour and no worse than it was.
+  const selectedModelIsMultimodal = useMemo(() => {
+    const meta = getProvider(selectedProvider);
+    if (!meta) return false;
+    const model = meta.models?.find(m => m.name === selectedModel);
+    return model ? !!model.supports_multimodal : !!meta.is_local;
+  }, [selectedProvider, selectedModel, getProvider]);
 
   // Sort runs with favorites first, then by most recent
   const sortedRuns = useMemo(() => {
@@ -236,8 +247,10 @@ export default function AnnotationRunnerDock({
       return false;
     }
     
-    // Ollama doesn't require an API key since it runs locally
-    if (selectedProvider === 'ollama') {
+    // A provider that needs no key is ready as soon as it is selected. Asking
+    // the declaration beats naming a provider: any local or env-backed endpoint
+    // answers this, not just the one we happened to hardcode.
+    if (!needsApiKey(selectedProvider)) {
       return true;
     }
     
@@ -279,8 +292,8 @@ export default function AnnotationRunnerDock({
       return;
     }
     if (!isAiConfigured) {
-      if (selectedProvider === 'ollama') {
-        toast.error("Please ensure Ollama is running and has at least one model installed.");
+      if (getProvider(selectedProvider)?.is_local) {
+        toast.error(`Please ensure ${selectedProvider} is running and has at least one model installed.`);
       } else {
         toast.error("Please configure an AI provider and API key before running annotations.");
       }
@@ -649,11 +662,18 @@ export default function AnnotationRunnerDock({
     <TooltipProvider>
       <div className={cn(
         "fixed flex flex-col bg-card/95 backdrop-blur-lg text-card-foreground shadow-2xl z-40 transition-all duration-300 ease-in-out rounded-md",
+        // Every mode clears the navigation rail. `--app-rail` is 0 wherever
+        // there is no rail, so this is one expression rather than a breakpoint.
+        "bottom-[calc(0.5rem+var(--app-rail,0px))]",
         dockMode === 'mini'
-          ? "bottom-2 left-12 w-12 h-12 shadow-2xl ring-1 ring-primary/20"
+          ? "left-12 w-12 h-12 shadow-2xl ring-1 ring-primary/20"
           : dockMode === 'open'
-            ? "bottom-2 left-1/2 transform -translate-x-1/2 w-[95vw] sm:w-auto sm:min-w-[500px] sm:max-w-[1500px] max-w-[95vw] shadow-lg hover:shadow-xl border border-border/50 rounded-md"
-            : "bottom-2 left-1/2 transform -translate-x-1/2 w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[700px] sm:max-w-[700px] shadow-none ring-1 ring-primary/20"
+            // Open on a phone was `w-[95vw]` with no height bound at all, so a
+            // long panel list simply ran off the top of the screen with nothing
+            // to scroll. Bound it to the space actually available and let the
+            // body inside scroll.
+            ? "left-1/2 transform -translate-x-1/2 w-[95vw] max-w-[95vw] max-h-[calc(100dvh-1rem-var(--app-rail,0px))] sm:w-auto sm:min-w-[500px] sm:max-w-[1500px] shadow-lg hover:shadow-xl border border-border/50 rounded-md"
+            : "left-1/2 transform -translate-x-1/2 w-12 h-12 sm:w-auto sm:h-auto sm:min-w-[700px] sm:max-w-[700px] shadow-none ring-1 ring-primary/20"
       )}>
         <div className="flex items-center justify-center sm:justify-between px-2 sm:px-4 py-0.5 cursor-pointer hover:bg-muted/30 transition-colors rounded-none " onClick={() => {
           if (dockMode === 'mini') {
@@ -1204,7 +1224,12 @@ export default function AnnotationRunnerDock({
                                   : 'Images will be skipped. Only text content will be analyzed. Enable this for image/PDF analysis.'
                                 }
                               </p>
-                              {selectedProvider === 'ollama' && enableVisionProcessing && (
+                              {/* The selected model's own declared capability, which is
+                                  the only thing that actually answers "can this read an
+                                  image". Falls back to the provider being local only when
+                                  the model is unknown to the catalog — a runtime-discovered
+                                  model reports nothing until it is probed. */}
+                              {selectedModelIsMultimodal && enableVisionProcessing && (
                                 <p className="text-[10px] text-amber-600 dark:text-amber-500 ml-6 mt-1">
                                   Note: Ensure your Ollama model supports vision (check model capabilities)
                                 </p>
@@ -1239,15 +1264,15 @@ export default function AnnotationRunnerDock({
                               <ProviderSelector capability="annotation" />
                               
                               {/* API Key Management */}
-                              {selectedProvider && selectedProvider !== 'ollama' && (
+                              {selectedProvider && needsApiKey(selectedProvider) && (
                                 <div className="space-y-1.5 max-w-full">
                                   <div className="flex items-center justify-between">
                                     <Label className="text-[11px] font-medium text-muted-foreground">
                                       API Key for {selectedProvider}
                                     </Label>
-                                    {selectedProvider === 'gemini_native' && (
+                                    {getProvider(selectedProvider)?.api_key_url && (
                                       <a 
-                                        href="https://aistudio.google.com/app/apikey" 
+                                        href={getProvider(selectedProvider)!.api_key_url!} 
                                         target="_blank" 
                                         rel="noopener noreferrer" 
                                         className="text-[11px] text-blue-600 hover:text-blue-800 hover:underline"
@@ -1301,15 +1326,15 @@ export default function AnnotationRunnerDock({
                                   <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
                                   <span className="text-[11px] text-green-700 font-medium">
                                     {selectedProvider} configured ({selectedModel || 'default model'})
-                                    {selectedProvider === 'ollama' && ' - Local'}
+                                    {getProvider(selectedProvider)?.is_local && ' - Local'}
                                   </span>
                                 </div>
                               ) : (
                                 <div className="flex items-center gap-1.5 p-1.5 rounded-md bg-amber-50 border border-amber-200">
                                   <div className="w-1.5 h-1.5 rounded-full bg-amber-500"></div>
                                   <span className="text-[11px] text-amber-700">
-                                    {selectedProvider === 'ollama'
-                                      ? 'Ollama is ready - no API key needed'
+                                    {selectedProvider && !needsApiKey(selectedProvider)
+                                      ? `${selectedProvider} is ready - no API key needed`
                                       : selectedProvider 
                                         ? `Please add an API key for ${selectedProvider}` 
                                         : 'Please configure an AI provider'
@@ -1392,9 +1417,9 @@ export default function AnnotationRunnerDock({
                               : "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/20 dark:text-red-400 dark:border-red-800"
                           )}>
                             {isAiConfigured 
-                              ? `${selectedProvider}${selectedProvider === 'ollama' ? ' (Local)' : ''}` 
-                              : selectedProvider === 'ollama'
-                                ? 'Ollama Ready'
+                              ? `${selectedProvider}${getProvider(selectedProvider)?.is_local ? ' (Local)' : ''}` 
+                              : selectedProvider && !needsApiKey(selectedProvider)
+                                ? `${selectedProvider} Ready`
                                 : selectedProvider 
                                   ? 'Missing API key'
                                   : 'Not configured'

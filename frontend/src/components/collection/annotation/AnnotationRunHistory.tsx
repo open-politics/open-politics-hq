@@ -62,6 +62,42 @@ import ShareAnnotationRunDialog from './ShareAnnotationRunDialog';
 import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
 import { TopbarSlot } from '@/components/layout/TopbarSlot';
 
+/** A run that re-runs itself as new content arrives.
+ *
+ *  A pulsing dot rather than a static badge: the distinction being drawn is
+ *  "this is still moving", which a motionless label does not carry. Paired with
+ *  the Activity sort, a live run that just ingested sorts to the top AND says
+ *  why it is there.
+ */
+const LiveIndicator: React.FC<{ compact?: boolean }> = ({ compact = false }) => (
+  <TooltipProvider delayDuration={100}>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className={cn(
+          "flex items-center gap-1 rounded-full border shrink-0",
+          "border-emerald-300 dark:border-emerald-700",
+          "bg-emerald-50 dark:bg-emerald-900/40",
+          compact ? "px-1 py-0.5" : "px-1.5 py-0.5",
+        )}>
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </span>
+          {!compact && (
+            <span className="text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+              Live
+            </span>
+          )}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent>
+        <p>Live — re-runs as new content reaches its bundle</p>
+      </TooltipContent>
+    </Tooltip>
+  </TooltipProvider>
+);
+
+
 const FavoriteRunCard: React.FC<{
   run: AnnotationRunRead & { timestamp: string; documentCount: number; schemeCount: number };
   activeRunId?: number | null;
@@ -139,6 +175,7 @@ const FavoriteRunCard: React.FC<{
           <h3 className="font-semibold text-base text-foreground line-clamp-1" title={run.name}>
             {run.name}
           </h3>
+          {run.live && <LiveIndicator />}
           {isRecurring && (
             <TooltipProvider delayDuration={100}>
               <Tooltip>
@@ -256,6 +293,7 @@ const RunTableRow: React.FC<{
               <span className="font-semibold text-foreground truncate group-hover:text-foreground/80 transition-colors" title={run.name}>
                 {run.name}
               </span>
+              {run.live && <LiveIndicator />}
               {isRecurring && (
                 <TooltipProvider delayDuration={100}>
                   <Tooltip>
@@ -340,7 +378,11 @@ const RunHistoryPanel: React.FC<{
   onSelectRun: (runId: number) => void;
 }> = ({ runs, activeRunId, onSelectRun }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortBy, setSortBy] = useState<'date' | 'name'>('date');
+  // 'activity' = updated_at. A live run is created once and then keeps growing,
+  // so created_at answers "when was this set up", not "what is moving" — which
+  // is the question a monitoring list is actually asked.
+  const [sortBy, setSortBy] = useState<'activity' | 'date' | 'name'>('activity');
+  const [liveOnly, setLiveOnly] = useState(false);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [isFavoritesExpanded, setIsFavoritesExpanded] = useState(true);
   const [sharingRun, setSharingRun] = useState<AnnotationRunRead | null>(null);
@@ -455,13 +497,20 @@ const RunHistoryPanel: React.FC<{
 
   const filteredRuns = useMemo(() => {
     return displayRuns.filter(run =>
-      run.name.toLowerCase().includes(searchTerm.toLowerCase())
+      run.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
+      (!liveOnly || run.live)
     );
-  }, [displayRuns, searchTerm]);
+  }, [displayRuns, searchTerm, liveOnly]);
+
+  const liveCount = useMemo(() => displayRuns.filter(r => r.live).length, [displayRuns]);
 
   const sortedRuns = useMemo(() => {
     return [...filteredRuns].sort((a, b) => {
-      if (sortBy === 'date') {
+      if (sortBy === 'activity') {
+        const timeA = parseISO(a.updated_at ?? a.created_at).getTime();
+        const timeB = parseISO(b.updated_at ?? b.created_at).getTime();
+        return sortOrder === 'asc' ? timeA - timeB : timeB - timeA;
+      } else if (sortBy === 'date') {
         const timeA = parseISO(a.created_at).getTime();
         const timeB = parseISO(b.created_at).getTime();
         return sortOrder === 'asc' ? timeA - timeB : timeB - timeA;
@@ -500,6 +549,7 @@ const RunHistoryPanel: React.FC<{
                   <h1 className="text-sm font-semibold truncate">Run History</h1>
                   <p className="hidden sm:block text-[11px] text-muted-foreground">
                     {runs.length} total • {favoriteRunsFromList.length} favorited
+                    {liveCount > 0 && ` • ${liveCount} live`}
                   </p>
                 </div>
               </div>
@@ -512,6 +562,35 @@ const RunHistoryPanel: React.FC<{
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="h-8 w-40 sm:w-56 lg:w-72 bg-background/50 border-primary/40 focus:border-primary/50 focus:bg-background transition-colors"
                 />
+                {/* Shown only when there is something to filter to — a toggle for
+                    an empty set is noise. */}
+                {liveCount > 0 && (
+                  <Button
+                    variant={liveOnly ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setLiveOnly(v => !v)}
+                    title={liveOnly ? 'Showing live runs only' : 'Show live runs only'}
+                    className={cn(
+                      "h-8 gap-1.5 transition-colors",
+                      liveOnly
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600"
+                        : "bg-background/50 border-border/60 hover:bg-muted/80",
+                    )}
+                  >
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className={cn(
+                        "absolute inline-flex h-full w-full animate-ping rounded-full opacity-75",
+                        liveOnly ? "bg-white" : "bg-emerald-400",
+                      )} />
+                      <span className={cn(
+                        "relative inline-flex h-1.5 w-1.5 rounded-full",
+                        liveOnly ? "bg-white" : "bg-emerald-500",
+                      )} />
+                    </span>
+                    Live
+                    <span className="opacity-70">{liveCount}</span>
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -542,7 +621,8 @@ const RunHistoryPanel: React.FC<{
                       <div className="space-y-2">
                         <Label className="text-xs text-muted-foreground">Sort by</Label>
                         <div className="flex gap-2">
-                          <Button size="sm" variant={sortBy === 'date' ? 'default' : 'outline'} onClick={() => setSortBy('date')} className="flex-1">Date</Button>
+                          <Button size="sm" variant={sortBy === 'activity' ? 'default' : 'outline'} onClick={() => setSortBy('activity')} className="flex-1">Activity</Button>
+                          <Button size="sm" variant={sortBy === 'date' ? 'default' : 'outline'} onClick={() => setSortBy('date')} className="flex-1">Created</Button>
                           <Button size="sm" variant={sortBy === 'name' ? 'default' : 'outline'} onClick={() => setSortBy('name')} className="flex-1">Name</Button>
                         </div>
                       </div>
@@ -672,6 +752,7 @@ const RunHistoryPanel: React.FC<{
                           <Play className="h-3 w-3 text-blue-600 dark:text-blue-400" />
                         </Button>
                         <h3 className="font-medium text-sm truncate min-w-0">{run.name}</h3>
+                        {run.live && <LiveIndicator compact />}
                       </div>
                       <Badge 
                         variant="outline" 

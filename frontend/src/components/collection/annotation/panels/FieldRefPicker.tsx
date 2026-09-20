@@ -329,7 +329,7 @@ export function FieldRefPicker({
             <ChevronsUpDown className="h-3 w-3 opacity-50 flex-shrink-0 ml-1" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-[480px] p-0" align="start">
+        <PopoverContent className="w-[min(480px,calc(100vw-1rem))] p-0" align="start">
           <div className="border-b p-2 space-y-1.5">
             <div className="relative">
               <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />

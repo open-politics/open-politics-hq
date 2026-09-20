@@ -304,7 +304,14 @@ export function EvidenceDrawer({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-3xl flex flex-col px-2">
+      {/* The drill-down every chart, pie, graph and map panel opens into — so
+          this one sheet decides what "look closer" feels like on a phone.
+          `side="auto"` makes it a full-width bottom sheet there (it was the
+          default right sheet, `w-3/4` of a phone, for a list of titled rows with
+          two badges each), and a fixed height gives the list a definite box to
+          scroll in. `@container/evidence` lets rows shed detail by the sheet's
+          own width. */}
+      <SheetContent side="auto" className="@container/evidence flex flex-col px-2 sm:max-w-3xl max-md:h-[85dvh]">
         <SheetHeader>
           <SheetTitle>Evidence</SheetTitle>
           <SheetDescription>
@@ -426,7 +433,7 @@ export function EvidenceDrawer({
                     <button
                       type="button"
                       onClick={() => toggleExpanded(assetId)}
-                      className="h-8 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                      className="h-8 w-7 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-10"
                       title={isExpanded ? 'Collapse' : 'Expand'}
                       aria-expanded={isExpanded}
                     >
@@ -440,7 +447,7 @@ export function EvidenceDrawer({
                       type="button"
                       onClick={() => handleOpenAsset(assetId)}
                       className={cn(
-                        'flex-1 min-w-0 text-left px-1 py-2 flex items-center gap-2',
+                        'flex-1 min-w-0 text-left px-1 py-2 flex items-center gap-2 [@media(pointer:coarse)]:py-3',
                         'hover:bg-muted/50 transition-colors',
                         'focus:outline-none focus:ring-1 focus:ring-primary/50',
                       )}
@@ -453,7 +460,7 @@ export function EvidenceDrawer({
                         {asset?.title ?? `Asset #${assetId}`}
                       </span>
                       {asset?.parent_title && (
-                        <span className="truncate text-[10px] text-muted-foreground flex-shrink-0 max-w-[140px]">
+                        <span className="hidden truncate text-[10px] text-muted-foreground flex-shrink-0 max-w-[140px] @md/evidence:block">
                           in {asset.parent_title}
                         </span>
                       )}

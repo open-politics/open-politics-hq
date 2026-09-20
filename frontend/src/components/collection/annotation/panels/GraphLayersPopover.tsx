@@ -35,7 +35,7 @@ import { cn } from '@/lib/utils';
 import {
   HUD_LABEL, HUD_PROSE, HUD_SURFACE, HudButton, HudGroup, HudOverline,
   HudReadout,
-} from '@/components/collection/graph/chrome';
+} from '@/components/ui/chrome';
 
 /** One resolved projection, as the engine ran it. Mirrors `_graph_meta`. */
 export interface GraphLayer {

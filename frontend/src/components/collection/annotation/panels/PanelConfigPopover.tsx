@@ -25,6 +25,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Settings2, ChevronDown, ChevronRight, ChevronUp, AlertCircle, Maximize2 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  ResponsivePopover,
+  ResponsivePopoverContent,
+  ResponsivePopoverTrigger,
+} from '@/components/ui/responsive-popover';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -811,8 +816,8 @@ export function PanelConfigPopover({
   const formula = (panel.formula as any) ?? {};
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
+    <ResponsivePopover open={open} onOpenChange={setOpen}>
+      <ResponsivePopoverTrigger asChild>
         <Button
           variant="ghost"
           size="sm"
@@ -828,9 +833,15 @@ export function PanelConfigPopover({
             <AlertCircle className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 text-amber-600 dark:text-amber-400" />
           )}
         </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        className="w-[560px] max-w-[95vw] p-2 space-y-2"
+      </ResponsivePopoverTrigger>
+      {/* 560px and three sections, anchored under a 24px button. On a phone that
+          either collided off the edge or ran past the bottom of the screen with
+          nothing to scroll; it is a bottom sheet there now, and a height-bounded
+          popover everywhere else. */}
+      <ResponsivePopoverContent
+        title={`Configure ${panel.name || 'panel'}`}
+        className="w-[min(560px,calc(100vw-1rem))] p-2 space-y-2"
+        sheetClassName="space-y-2"
         align="start"
         side="bottom"
       >
@@ -940,7 +951,7 @@ export function PanelConfigPopover({
             </div>
           )}
         </Section>
-      </PopoverContent>
-    </Popover>
+      </ResponsivePopoverContent>
+    </ResponsivePopover>
   );
 }

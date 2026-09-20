@@ -41,6 +41,7 @@ import { PanelHeaderSlotProvider, PanelHeaderSlotRenderer } from './panels/Panel
 import { PanelConfigPopover } from './panels/PanelConfigPopover';
 import { isPanelConfigured } from '@/lib/annotations/panelCompile';
 import { resolveGridGeometry, quickSize, quickSizeLabel, heightUnits, type QuickSize } from '@/lib/annotations/grid';
+import { PanelHeader } from '@/components/layout/PanelHeader';
 
 // Grid constants. The column count + row height are resolved per-dashboard from
 // ``layout`` (see lib/annotations/grid.ts); these are only floors.
@@ -662,8 +663,12 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
     <PanelHeaderSlotProvider>
     <div
       className={cn(
-        "flex flex-col relative group transition-all duration-200 h-full rounded-sm w-full overflow-y-auto",
-        "bg-background/60 and backdrop-blur-sm",
+        // `overflow-hidden`: the body below is the one scroll container. The frame
+        // used to scroll too, as did the body wrapper, as did the body — three
+        // nested scrollers, so a swipe on a phone moved whichever one happened
+        // to be under the finger.
+        "flex flex-col relative group transition-all duration-200 h-full rounded-sm w-full overflow-hidden",
+        "bg-background/60 backdrop-blur-sm",
         isDragging && "opacity-50 scale-95 rotate-1",
       )}
       onDragOver={handleDragOver}
@@ -709,7 +714,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
           painted handle. Hidden entirely in focus mode. */}
       {!focusMode && (
         <div
-          className="absolute top-0 left-1/2 transform -translate-x-1/2 w-8 h-3 cursor-move z-20"
+          className="absolute top-0 left-1/2 transform -translate-x-1/2 w-8 h-3 cursor-move z-20 @max-3xl/page:hidden"
           draggable
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
@@ -721,7 +726,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
           the drag target: cursor change carries the affordance. */}
       {!isCollapsed && !focusMode && (
         <div
-          className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize z-10"
+          className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize z-10 @max-3xl/page:hidden"
           aria-label="Resize panel"
         onMouseDown={(e) => {
           e.preventDefault();
@@ -771,96 +776,49 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         />
       )}
 
-      {/* Header — always present so the panel keeps its name/description.
-          In focus mode the interactive bits (scope affordances + the control
-          cluster) drop away; only the title bar remains. */}
-      <div className="flex flex-row items-center justify-between border-b px-2 py-1 flex-shrink-0">
-        {/* Panel Name */}
-        <div className="flex items-center gap-1.5 min-w-0 flex-shrink-1">
-          <div className="flex items-center gap-1 min-w-0">
-            <span className="text-xs font-semibold truncate">{panel.name}</span>
-          </div>
-          {/* Inline description hint */}
-          {panel.description && !isEditingMetadata && (
-            <span className="text-[10px] text-muted-foreground truncate max-w-[200px] hidden sm:inline" title={panel.description}>
-              {panel.description}
-            </span>
-          )}
-          {/* Scope affordances — interactive, so hidden in focus mode. */}
-          {!focusMode && (
-            <>
-              {/* Scope badge — shows count of incoming cross-panel scopes */}
-              <ScopeBadge
-                panelConfig={panel}
-                allPanels={dashboardConfig?.panels || []}
-                onRemoveScope={(scopeId) => {
-                  const { removeScope } = useAnnotationRunStore.getState();
-                  removeScope(panel.id, scopeId);
-                }}
-              />
-              {/* Scope target picker — click-based fallback. Drag-based handoff
-                  is live via DraggableScopeChip alongside. Both resolve the same
-                  pendingScopeGesture. */}
-              {pendingScopeGesture && (
-                <>
-                  <ScopeTargetPicker
-                    sourcePanelId={panel.id}
-                    allPanels={dashboardConfig?.panels || []}
-                    onPush={(targetId) => handleScopeTarget(targetId, 'push')}
-                    onLink={(targetId) => handleScopeTarget(targetId, 'link')}
-                    trigger={
-                      <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] animate-pulse">
-                        Push selection...
-                      </Button>
-                    }
-                  />
-                  {dragScope.pending?.sourcePanelId === panel.id && (
-                    <DraggableScopeChip />
-                  )}
-                </>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Description editing overlay */}
-        {isEditingMetadata && (
-          <div className="absolute top-8 left-2 right-2 z-20 bg-background border p-2">
-            <div className="space-y-2">
-              <Input
-                value={editingName}
-                onChange={(e) => setEditingName(e.target.value)}
-                onKeyDown={handleNameKeyDown}
-                className="text-xs h-8"
-                placeholder="Panel name"
-                autoFocus
-              />
-              <div className="flex items-start gap-2">
-                <Textarea
-                  value={editingDescription}
-                  onChange={(e) => setEditingDescription(e.target.value)}
-                  onKeyDown={handleDescriptionKeyDown}
-                  className="text-xs min-h-[50px] flex-1 min-w-0"
-                  placeholder="Panel description (optional)"
+      {/* The panel's title bar — always present, so the panel keeps its name.
+          Geometry, truncation and what gives way first live in PanelHeader;
+          the scope affordances and the control cluster are interactive, so
+          both drop away in focus mode and only the title remains. */}
+      <PanelHeader
+        className="border-b"
+        title={panel.name}
+        hint={isEditingMetadata ? undefined : panel.description}
+        extras={!focusMode && (
+          <>
+            {/* Scope badge — shows count of incoming cross-panel scopes */}
+            <ScopeBadge
+              panelConfig={panel}
+              allPanels={dashboardConfig?.panels || []}
+              onRemoveScope={(scopeId) => {
+                const { removeScope } = useAnnotationRunStore.getState();
+                removeScope(panel.id, scopeId);
+              }}
+            />
+            {/* Scope target picker — click-based fallback. Drag-based handoff
+                is live via DraggableScopeChip alongside. Both resolve the same
+                pendingScopeGesture. */}
+            {pendingScopeGesture && (
+              <>
+                <ScopeTargetPicker
+                  sourcePanelId={panel.id}
+                  allPanels={dashboardConfig?.panels || []}
+                  onPush={(targetId) => handleScopeTarget(targetId, 'push')}
+                  onLink={(targetId) => handleScopeTarget(targetId, 'link')}
+                  trigger={
+                    <Button variant="outline" size="sm" className="h-6 px-2 text-[10px] animate-pulse">
+                      Push selection...
+                    </Button>
+                  }
                 />
-                <div className="flex flex-col gap-1 flex-shrink-0">
-                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleSaveDescription}>
-                    <Check className="h-3 w-3" />
-                  </Button>
-                  <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleCancelDescriptionEdit}>
-                    <XCircle className="h-3 w-3" />
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
+                {dragScope.pending?.sourcePanelId === panel.id && (
+                  <DraggableScopeChip />
+                )}
+              </>
+            )}
+          </>
         )}
-
-        
-
-        {/* Panel controls — hidden in focus mode, leaving just the title. */}
-        {!focusMode && (
-        <div className="flex items-center ml-1 flex-shrink-0">
+        actions={!focusMode && (
           <ButtonGroup >
             {/* Per-panel display knobs (mark, layout, density, geocoding,
                 graph edits, etc.) mount here via PanelHeaderSlot — they stay
@@ -891,7 +849,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
             </Button>
             <Popover open={showLayoutControls} onOpenChange={setShowLayoutControls}>
               <PopoverTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs">
+                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs @max-3xl/page:hidden">
                   <LayoutPanelTop className="h-3 w-3" />
                 </Button>
               </PopoverTrigger>
@@ -970,12 +928,44 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
               <X className="h-3 w-3" />
             </Button>
           </ButtonGroup>
-        </div>
         )}
-      </div>
+      />
 
-      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-        {/* Main Content */}
+      {/* Description editing overlay */}
+      {isEditingMetadata && (
+        <div className="absolute top-8 left-2 right-2 z-20 bg-background border p-2">
+          <div className="space-y-2">
+            <Input
+              value={editingName}
+              onChange={(e) => setEditingName(e.target.value)}
+              onKeyDown={handleNameKeyDown}
+              className="text-xs h-8"
+              placeholder="Panel name"
+              autoFocus
+            />
+            <div className="flex items-start gap-2">
+              <Textarea
+                value={editingDescription}
+                onChange={(e) => setEditingDescription(e.target.value)}
+                onKeyDown={handleDescriptionKeyDown}
+                className="text-xs min-h-[50px] flex-1 min-w-0"
+                placeholder="Panel description (optional)"
+              />
+              <div className="flex flex-col gap-1 flex-shrink-0">
+                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleSaveDescription}>
+                  <Check className="h-3 w-3" />
+                </Button>
+                <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleCancelDescriptionEdit}>
+                  <XCircle className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 flex flex-col min-h-0">
+        {/* Main Content — the frame's single scroll container. */}
         <div className="flex-1 min-h-0 overflow-y-auto">
           {content}
         </div>

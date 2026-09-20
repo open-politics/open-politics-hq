@@ -72,6 +72,9 @@ import { FormattedAnnotation } from '@/lib/annotations/types';
 import ShareAnnotationRunDialog from './ShareAnnotationRunDialog';
 import { VariableSplittingControls } from './VariableSplittingControls';
 import { useCanons } from '@/hooks/useCanons';
+import { PanelHeader } from '@/components/layout/PanelHeader';
+import { ActionOverflow } from '@/components/layout/ActionOverflow';
+import { useContainerWidth } from '@/hooks/useContainerWidth';
 
 const panelTypes = [
   { type: 'table', name: 'Data Table', description: 'Tabular view with filtering and sorting', icon: Table, color: 'bg-blue-500 dark:bg-blue-600' },
@@ -302,16 +305,41 @@ export default function AnnotationRunnerHeader({
 
   const hasProgress = isRunning && activeRun.progress_total != null && activeRun.progress_total > 0;
 
+  // Nineteen controls do not fit an app bar that is ~310px wide on a phone.
+  // They used to overflow it and get clipped by the shell's `overflow-hidden`,
+  // which left them on screen in the sense that they were rendered and off it
+  // in every sense that matters. Below this width the whole cluster moves into
+  // a sheet instead.
+  //
+  // Measured on the bar, not the window: this header is also squeezed when the
+  // dock opens a split beside it, and that is the same problem at a wide
+  // viewport. `null` (before the first measurement) leans compact so a phone's
+  // first paint is already correct rather than flashing the full strip.
+  const { ref: barRef, width: barWidth } = useContainerWidth<HTMLDivElement>();
+  const compactActions = barWidth === null || barWidth < 520;
+
   return (
     <>
       <TopbarSlot>
-            <div className="flex w-full items-center justify-between gap-x-3">
-              {/* LEFT — identity + status */}
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                <Play className="h-4 w-4 text-muted-foreground shrink-0" />
-                <span className="text-sm font-medium truncate max-w-[30vw]" title={activeRun.name}>
+            {/* The run name used to be capped at `max-w-[30vw]` and the
+                description at `max-w-[20vw] hidden md:inline` — both measuring
+                the browser window, which is not the thing they sit in. This bar
+                is hoisted into the app top bar and shares it with the sidebar
+                trigger, and on the runner it can also be squeezed into a dock
+                split. PanelHeader measures the bar itself, so the description
+                retires when the bar is short rather than when the screen is. */}
+            <PanelHeader
+              ref={barRef}
+              className="w-full gap-x-2 px-0"
+              lead={<Play className="h-4 w-4 shrink-0 text-muted-foreground" />}
+              title={
+                <span className="text-sm font-medium" title={activeRun.name}>
                   {activeRun.name}
                 </span>
+              }
+              hint={activeRun.description ? `\u201C${activeRun.description}\u201D` : undefined}
+              extras={
+                <>
                 <button
                   type="button"
                   onClick={() => setIsExpanded((v) => !v)}
@@ -331,7 +359,7 @@ export default function AnnotationRunnerHeader({
                 </TooltipProvider>
 
                 {hasProgress && (
-                  <div className="flex items-center gap-1.5 min-w-[100px] max-w-[140px]">
+                  <div className="flex items-center gap-1.5 min-w-[3rem] max-w-[140px] @sm/panelheader:min-w-[100px]">
                     <Progress value={((activeRun.progress_current ?? 0) / activeRun.progress_total!) * 100} className="h-1.5 flex-1" />
                     <span className="text-[10px] text-muted-foreground whitespace-nowrap">
                       {activeRun.progress_current ?? 0}/{activeRun.progress_total}
@@ -340,18 +368,12 @@ export default function AnnotationRunnerHeader({
                 )}
 
                 {!isCompleted && !isRunning && (
-                  <span className="text-[10px] text-muted-foreground capitalize whitespace-nowrap">{statusLabel}</span>
-                )}
-
-                {activeRun.description && (
-                  <span className="text-[11px] text-muted-foreground truncate max-w-[20vw] hidden md:inline" title={activeRun.description}>
-                    &ldquo;{activeRun.description}&rdquo;
-                  </span>
+                  <span className="hidden text-[10px] text-muted-foreground capitalize whitespace-nowrap @sm/panelheader:inline">{statusLabel}</span>
                 )}
 
                 {canonIds.length > 0 && (
                   <span
-                    className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground shrink-0"
+                    className="hidden items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground shrink-0 @md/panelheader:inline-flex"
                     title={`Resolves into canon: ${canonNames}`}
                   >
                     <Library className="h-3 w-3" />
@@ -362,26 +384,30 @@ export default function AnnotationRunnerHeader({
                 {isDashboardDirty && (
                   <div className="flex items-center gap-1 shrink-0">
                     <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
-                    <span className="text-[10px] text-amber-600 whitespace-nowrap">Unsaved</span>
+                    <span className="hidden text-[10px] text-amber-600 whitespace-nowrap @sm/panelheader:inline">Unsaved</span>
                   </div>
                 )}
-              </div>
-
-              {/* RIGHT — grouped action buttons */}
-              <div className="flex items-center shrink-0">
+                </>
+              }
+              actions={
+                <ActionOverflow
+                  compact={compactActions}
+                  label="Run actions"
+                  description={activeRun.name}
+                >
                 <ButtonGroup>
                   {/* Group 1: Data */}
                   <ButtonGroup>
                     <Button variant="outline" size="sm" className="h-6 text-[11px] px-1.5" onClick={onOpenAssetsDialog} disabled={currentRunAssets.length === 0}>
                       <FileText className="h-3 w-3 mr-1 text-green-600 dark:text-green-400" />
-                      <span className="hidden lg:inline">Assets</span> ({currentRunAssets.length})
+                      <span className="control-label">Assets</span> ({currentRunAssets.length})
                     </Button>
                     {canExtend && (onExtendAssets || onExtendSchemas) && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="outline" size="sm" className="h-6 text-[11px] px-1.5" title="Add data to this run">
                             <Plus className="h-3 w-3 mr-1 text-emerald-600 dark:text-emerald-400" />
-                            {/* <span className="hidden lg:inline">Add</span> */}
+                            {/* <span className="control-label">Add</span> */}
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-56">
@@ -408,7 +434,7 @@ export default function AnnotationRunnerHeader({
                     )}
                     <Button variant="outline" size="sm" className="h-6 text-[11px] px-1.5" onClick={onOpenSchemasDialog} disabled={runSchemes.length === 0}>
                       <Microscope className="h-3 w-3 mr-1 text-sky-600 dark:text-sky-400" />
-                      <span className="hidden lg:inline">Schemas</span> ({runSchemes.length})
+                      <span className="control-label">Schemas</span> ({runSchemes.length})
                     </Button>
                   </ButtonGroup>
 
@@ -419,7 +445,7 @@ export default function AnnotationRunnerHeader({
                       <DropdownMenuTrigger asChild>
                         <Button variant="outline" size="sm" className="h-6 text-[11px] px-2">
                           <Plus className="h-3 w-3 mr-1 text-blue-600 dark:text-blue-400" />
-                          <span className="hidden sm:inline">Panel</span>
+                          <span className="control-label">Panel</span>
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-72">
@@ -455,7 +481,7 @@ export default function AnnotationRunnerHeader({
                       <DropdownMenuTrigger asChild>
                         <Button variant="outline" size="sm" className="h-6 text-[11px] px-1.5" title="Layout actions">
                           <Grid3X3 className="h-3 w-3 mr-1 text-muted-foreground/70" />
-                          <span className="hidden lg:inline">Layout</span>
+                          <span className="control-label">Layout</span>
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-44">
@@ -488,11 +514,11 @@ export default function AnnotationRunnerHeader({
                       ) : (
                         <Save className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
                       )}
-                      <span className="ml-1 hidden sm:inline">Save</span>
+                      <span className="control-label ml-1">Save</span>
                     </Button>
                     <Button variant="outline" size="sm" className="h-6 text-[11px] px-1.5" onClick={handleOpenSettings}>
                       <Settings2 className="h-3 w-3 mr-1 text-gray-500 dark:text-gray-400" />
-                      <span className="hidden lg:inline">Settings</span>
+                      <span className="control-label">Settings</span>
                     </Button>
                   </ButtonGroup>
 
@@ -500,11 +526,11 @@ export default function AnnotationRunnerHeader({
                   <ButtonGroup>
                     <Button variant="outline" size="sm" className="h-6 text-[11px] px-1.5" onClick={() => setIsShareDialogOpen(true)}>
                       <Share2 className="h-3 w-3 mr-1 text-indigo-600 dark:text-indigo-400" />
-                      <span className="hidden lg:inline">Share</span>
+                      <span className="control-label">Share</span>
                     </Button>
                     <Button variant="outline" size="sm" className="h-6 text-[11px] px-1.5" onClick={onClearRun}>
                       <XCircle className="h-3 w-3 mr-1 text-red-300/70 dark:text-red-400" />
-                      <span className="hidden lg:inline">Clear</span>
+                      <span className="control-label">Clear</span>
                     </Button>
                     {(isFailed || isPartial) && (
                       <Button
@@ -515,7 +541,7 @@ export default function AnnotationRunnerHeader({
                         disabled={isProcessing || isRetryingJob}
                       >
                         <RefreshCw className={cn('h-3 w-3 mr-1 text-amber-600 dark:text-amber-400', isRetryingJob && 'animate-spin')} />
-                        <span className="hidden lg:inline">{isFailed ? 'Retry' : 'Retry'}</span>
+                        <span className="control-label">{isFailed ? 'Retry' : 'Retry'}</span>
                       </Button>
                     )}
                     {/* Overflow — import/export/delete */}
@@ -554,8 +580,9 @@ export default function AnnotationRunnerHeader({
                     </DropdownMenu>
                   </ButtonGroup>
                 </ButtonGroup>
-              </div>
-            </div>
+                </ActionOverflow>
+              }
+            />
       </TopbarSlot>
 
       {/* Run details — inline editor on the run page (not the bar) */}

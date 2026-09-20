@@ -21,7 +21,7 @@ import { cn } from '@/lib/utils';
 import {
   HUD_NUM, HUD_PROSE, HUD_SURFACE, HudButton, HudChip, HudMeter,
   HudOption, HudOverline, HudReadout,
-} from '@/components/collection/graph/chrome';
+} from '@/components/ui/chrome';
 import {
   AXIS_BUDGET, CAMERAS, FRAME_COST, FRAME_HINT, FRAME_LABEL,
   canAfford, defaultAxisBudget, freeFrames, spent,

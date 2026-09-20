@@ -32,7 +32,7 @@ import type { GraphEdits } from '@/lib/annotations/types';
 import { ForceGraph, type ForceGraphHandle, GraphNode, GraphEdge, type Clock, viewGraphToGraphData, GraphViewConfig, defaultGraphViewConfig, GraphSettingsPopover, GraphFilterPanel, edgeFieldRange, bundleEdges, bundleIdForEdge, bundleIdForPair, type BundledEdge } from '@/components/collection/graph';
 import {
   HudBar, HudButton, HudGroup, HudReadout, HudRule, HudSegmented,
-} from '@/components/collection/graph/chrome';
+} from '@/components/ui/chrome';
 import { useFullscreen } from '@/components/collection/graph/forcegraph/useFullscreen';
 import { ZoomToolbar } from '@/components/collection/graph/forcegraph/ZoomToolbar';
 import { NodeDetailHUD, type EvidenceItem as HUDEvidenceItem, type DocumentBadge as HUDDocBadge, type AssetFieldRow as HUDAssetFieldRow, type EligibleField as HUDEligibleField } from '@/components/collection/graph/forcegraph/NodeDetailHUD';
